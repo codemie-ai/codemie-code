@@ -567,6 +567,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Display ASCII logo with configuration
       console.log(
         renderProfileInfo({
+          title: 'Profile',
           profile: profileName,
           provider,
           model,
@@ -952,11 +953,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     const isSSOProvider = provider?.authType === 'sso';
     const isJWTAuth = env.CODEMIE_AUTH_METHOD === 'jwt';
+    const isAzureOpenAIProvider = providerName === 'azure-openai';
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
     // Proxy is only for model API authentication/forwarding. Analytics sync can
     // be configured independently and must not force native providers through it.
-    return (isSSOProvider || isJWTAuth) && isProxyEnabled;
+    return (isSSOProvider || isJWTAuth || isAzureOpenAIProvider) && isProxyEnabled;
   }
 
   /**
@@ -1033,7 +1035,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Update environment with proxy URL
       env.CODEMIE_BASE_URL = url;
-      env.CODEMIE_API_KEY = 'proxy-handled';
+      env.CODEMIE_PROXY_ACTIVE = '1';
+      if (env.CODEMIE_PROVIDER !== 'azure-openai') {
+        env.CODEMIE_API_KEY = 'proxy-handled';
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Proxy setup failed: ${errorMessage}`);

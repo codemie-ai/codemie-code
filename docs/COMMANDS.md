@@ -601,7 +601,7 @@ codemie profile refresh              # Refresh SSO credentials
 **Profile List Details:**
 The `codemie profile` command displays comprehensive information for each profile:
 - Profile name and active status
-- Provider (ai-run-sso, openai, azure, bedrock, litellm, gemini)
+- Provider (ai-run-sso, openai, azure-openai, bedrock, litellm, gemini)
 - Base URL
 - Model
 - Timeout settings

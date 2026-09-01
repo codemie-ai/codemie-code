@@ -27,6 +27,11 @@ export { registerProvider } from './core/decorators.js';
 export { BaseHealthCheck } from './core/base/BaseHealthCheck.js';
 export { BaseModelProxy } from './core/base/BaseModelProxy.js';
 export { HTTPClient } from './core/base/http-client.js';
+export {
+  fetchAzureDeploymentModels,
+  getAzureConnectionConfig,
+} from './core/azure-deployment-catalog.js';
+export type { AzureConnectionConfig } from './core/azure-deployment-catalog.js';
 export type { HTTPClientConfig, HTTPResponse } from './core/base/http-client.js';
 
 // Import plugins to trigger auto-registration
@@ -38,6 +43,7 @@ import './plugins/litellm/index.js';
 import './plugins/bedrock/index.js';
 import './plugins/anthropic-subscription/index.js';
 import './plugins/moonshot-subscription/index.js';
+import './plugins/azure-openai/index.js';
 
 // Re-export plugin modules for direct access if needed
 export * as Ollama from './plugins/ollama/index.js';
@@ -47,3 +53,4 @@ export * as LiteLLM from './plugins/litellm/index.js';
 export * as Bedrock from './plugins/bedrock/index.js';
 export * as AnthropicSubscription from './plugins/anthropic-subscription/index.js';
 export * as MoonshotSubscription from './plugins/moonshot-subscription/index.js';
+export * as AzureOpenAI from './plugins/azure-openai/index.js';

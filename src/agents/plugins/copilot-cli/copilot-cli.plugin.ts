@@ -11,9 +11,14 @@ import {
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
 import {
+  assertExplicitCopilotDeploymentAllowed,
   assertExplicitCopilotModelAllowed,
   resolveCopilotModel,
 } from './copilot-cli.models.js';
+import {
+  fetchAzureDeploymentModels,
+  getAzureConnectionConfig,
+} from '../../../providers/core/azure-deployment-catalog.js';
 
 export {
   COPILOT_CLI_AGENT_NAME,
@@ -23,7 +28,7 @@ export {
 
 const COPILOT_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.70';
-const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
+const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm', 'azure-openai'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
@@ -55,7 +60,9 @@ function buildCopilotProviderEnv(env: NodeJS.ProcessEnv): Record<string, string>
     );
   }
 
-  const providerType = /^claude/i.test(env.CODEMIE_MODEL) ? 'anthropic' : 'openai';
+  const providerType = env.CODEMIE_PROVIDER === 'azure-openai'
+    ? 'openai'
+    : (/^claude/i.test(env.CODEMIE_MODEL) ? 'anthropic' : 'openai');
   const providerEnv: Record<string, string> = {
     COPILOT_PROVIDER_BASE_URL: env.CODEMIE_BASE_URL,
     COPILOT_PROVIDER_TYPE: providerType,
@@ -65,8 +72,10 @@ function buildCopilotProviderEnv(env: NodeJS.ProcessEnv): Record<string, string>
     COPILOT_OFFLINE: 'true',
   };
 
-  if (/^gpt[-_.]?5/i.test(env.CODEMIE_MODEL)) {
+  if (env.CODEMIE_PROVIDER !== 'azure-openai' && /^gpt[-_.]?5/i.test(env.CODEMIE_MODEL)) {
     providerEnv.COPILOT_PROVIDER_WIRE_API = 'responses';
+  } else if (env.CODEMIE_PROVIDER === 'azure-openai') {
+    providerEnv.COPILOT_PROVIDER_WIRE_API = 'completions';
   }
 
   if (env.CODEMIE_API_KEY) {
@@ -81,7 +90,7 @@ function assertCopilotProviderSupported(config: AgentConfig): void {
   const provider = config.provider;
   if (!provider || !COPILOT_COMPATIBLE_PROVIDERS.includes(provider as (typeof COPILOT_COMPATIBLE_PROVIDERS)[number])) {
     throw new ConfigurationError(
-      'GitHub Copilot CLI via CodeMie currently supports only AI/Run SSO and LiteLLM profiles. ' +
+      'GitHub Copilot CLI via CodeMie currently supports AI/Run SSO, LiteLLM, and Azure OpenAI profiles. ' +
       'Run codemie setup to choose a supported provider.'
     );
   }
@@ -187,7 +196,11 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         .map((entry) => entry.trim())
         .filter(Boolean);
       if (env.CODEMIE_MODEL) {
-        assertExplicitCopilotModelAllowed(env.CODEMIE_MODEL, availableModels);
+        if (env.CODEMIE_PROVIDER === 'azure-openai') {
+          assertExplicitCopilotDeploymentAllowed(env.CODEMIE_MODEL, availableModels);
+        } else {
+          assertExplicitCopilotModelAllowed(env.CODEMIE_MODEL, availableModels);
+        }
       }
 
       const providerEnv = buildCopilotProviderEnv(env);
@@ -275,6 +288,18 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+    if (env.CODEMIE_PROVIDER === 'azure-openai') {
+      if (env.CODEMIE_MODEL) {
+        const models = await fetchAzureDeploymentModels(
+          getAzureConnectionConfig(env),
+          env.CODEMIE_MODEL,
+        );
+        env.CODEMIE_COPILOT_AVAILABLE_MODELS = models.map(model => model.id).join(',');
+      }
+      await super.setupProxy(env);
+      return;
+    }
+
     if (env.CODEMIE_PROVIDER !== 'ai-run-sso' && env.CODEMIE_AUTH_METHOD !== 'jwt') {
       await super.setupProxy(env);
       return;

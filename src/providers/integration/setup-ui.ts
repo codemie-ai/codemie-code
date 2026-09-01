@@ -6,7 +6,7 @@
  */
 
 import chalk from 'chalk';
-import type { ProviderTemplate } from '../core/types.js';
+import type { ProviderTemplate, ModelInfo } from '../core/types.js';
 import { getSystemCapabilities, modelFitsSystem } from '../../utils/hardware.js';
 
 /**
@@ -179,6 +179,15 @@ export function formatModelChoice(
 ): { name: string; value: string; disabled?: boolean | string } {
   const metadata = template?.modelMetadata?.[modelId];
 
+  // Note for Azure OpenAI models — reasoning/thinking disabled
+  let featureNote = '';
+  if (
+    template?.name === 'azure-openai' &&
+    (!modelId.toLowerCase().includes('gpt') && !modelId.toLowerCase().includes('openai'))
+  ) {
+    featureNote = ' [no reasoning]';
+  }
+
   // Check if model is recommended. `isRecommendedOverride` — precomputed by
   // getAllModelChoices via computeRecommendedModelIds so only the latest
   // version per family is starred — wins when provided; otherwise fall back
@@ -199,11 +208,11 @@ export function formatModelChoice(
 
   // If no metadata and not recommended, return plain format
   if (!metadata && !isRecommended) {
-    return { name: modelId, value: modelId, disabled };
+    return { name: modelId + featureNote, value: modelId, disabled };
   }
 
   const popularBadge = isRecommended ? chalk.yellow('⭐ ') : '';
-  const mainLine = `${popularBadge}${chalk.white.bold(metadata?.name || modelId)}`;
+  const mainLine = `${popularBadge}${chalk.white.bold(metadata?.name || modelId)}${featureNote}`;
 
   const details: string[] = [];
   if (metadata?.description) {
@@ -237,25 +246,41 @@ export function formatModelChoice(
  * exceeds the current system are included but disabled with an explanation.
  */
 export function getAllModelChoices(
-  models: string[],
+  models: string[] | ModelInfo[],
   template?: ProviderTemplate
 ): Array<{ name: string; value: string; disabled?: boolean | string }> {
-  const recommendedIds = computeRecommendedModelIds(models, template?.recommendedModels);
+  const normalizedModels = models.map(model => typeof model === 'string' ? model : model.id);
+  const infoMap = new Map<string, ModelInfo>();
+  for (const model of models) {
+    if (typeof model !== 'string') {
+      infoMap.set(model.id, model);
+    }
+  }
+
+  const recommendedIds = computeRecommendedModelIds(normalizedModels, template?.recommendedModels);
 
   // Sort models using common rules
-  const sortedModels = [...models].sort((a, b) => {
+  const sortedModels = [...normalizedModels].sort((a, b) => {
     const aRecommended = recommendedIds.has(a);
     const bRecommended = recommendedIds.has(b);
 
-    // Recommended models first
     if (aRecommended && !bRecommended) return -1;
     if (!aRecommended && bRecommended) return 1;
 
-    // Then sort alphabetically
     return a.localeCompare(b);
   });
 
-  return sortedModels.map(model => formatModelChoice(model, template, recommendedIds.has(model)));
+  return sortedModels.map(model => {
+    const choice = formatModelChoice(model, template, recommendedIds.has(model));
+    const modelInfo = infoMap.get(model);
+    if (modelInfo?.description && !template?.modelMetadata?.[model]?.description) {
+      return {
+        ...choice,
+        name: `${choice.name}\n   ${chalk.dim(modelInfo.description)}`
+      };
+    }
+    return choice;
+  });
 }
 
 /**

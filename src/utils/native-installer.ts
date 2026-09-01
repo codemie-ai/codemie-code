@@ -113,21 +113,28 @@ function buildInstallerCommand(
 
 	// Build platform-specific command
 	if (platform === 'windows') {
+		if (url.toLowerCase().endsWith('.ps1')) {
+			// PowerShell installers such as Kimi use environment variables for version
+			// selection rather than accepting a positional version argument.
+			const versionEnv = version ? `set KIMI_VERSION=${version} && ` : '';
+			return `curl -fsSL ${url} -o install.ps1 && ${versionEnv}powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1 && del install.ps1`;
+		}
+
 		// Windows CMD command (simpler and more universal than PowerShell)
 		// Download install.cmd, execute with args, then delete
 		const versionArg = version ? ` ${version}` : '';
 		const flagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
 		return `curl -fsSL ${url} -o install.cmd && install.cmd${versionArg}${flagsArg} && del install.cmd`;
-		} else {
-			// macOS/Linux shell script command
-			const scriptArgs = [
-				...(version ? [version] : []),
-				...(installFlags || []),
-			];
-			const argsArg = scriptArgs.length > 0 ? ` -s -- ${scriptArgs.join(' ')}` : '';
-			return `curl -fsSL ${url} | bash${argsArg}`;
-		}
+	} else {
+		// macOS/Linux shell script command
+		const scriptArgs = [
+			...(version ? [version] : []),
+			...(installFlags || []),
+		];
+		const argsArg = scriptArgs.length > 0 ? ` -s -- ${scriptArgs.join(' ')}` : '';
+		return `curl -fsSL ${url} | bash${argsArg}`;
 	}
+}
 
 /**
  * Verify installation by running the verify command

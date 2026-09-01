@@ -52,6 +52,15 @@ export class ProviderRegistry {
   }
 
   /**
+   * Register provider template together with its setup steps
+   */
+  static registerProviderSetup<T extends ProviderTemplate>(template: T, steps: ProviderSetupSteps): T {
+    this.registerProvider(template);
+    this.registerSetupSteps(template.name, steps);
+    return template;
+  }
+
+  /**
    * Get provider by name
    */
   static getProvider(name: string): ProviderTemplate | undefined {

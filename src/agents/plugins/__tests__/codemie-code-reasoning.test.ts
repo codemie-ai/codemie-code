@@ -107,6 +107,14 @@ vi.mock('../opencode/opencode-dynamic-models.js', () => ({
   fetchDynamicModelConfigs: vi.fn(() => Promise.resolve({})),
 }));
 
+// Mock AzureOpenAIModelProxy so azure-openai provider path doesn't make real requests
+vi.mock('../../../providers/plugins/azure-openai/azure-openai.models.js', () => ({
+  AzureOpenAIModelProxy: vi.fn().mockImplementation(() => ({
+    fetchDeploymentInfos: vi.fn(() => Promise.resolve([])),
+    fetchModels: vi.fn(() => Promise.resolve([])),
+  })),
+}));
+
 // Mock fs
 vi.mock('fs', () => ({
   existsSync: vi.fn(() => true),
@@ -242,6 +250,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
       expect(config.plugin).toContain('file:///mock/hooks-plugin.js');
       expect(config.plugin).toContain('file:///mock/reasoning-sanitizer.ts');
     });
+
   });
 
   describe('Cleanup — onSessionEnd', () => {

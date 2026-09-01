@@ -42,10 +42,15 @@ let modulePath: string;
 /** Load the plugin factory the way the OpenCode runtime would. */
 async function loadHooks(hookNames: string[]): Promise<Record<string, HookHandler>> {
   const hooks: Record<string, unknown[]> = {};
+  // Use PowerShell on Windows because execSync invokes cmd.exe, which lacks cat.
+  const captureCommand = process.platform === 'win32'
+    ? `powershell.exe -NoProfile -NonInteractive -Command "$data = [Console]::In.ReadToEnd(); [IO.File]::AppendAllText('${capturePath.replace(/'/g, "''")}', $data)"`
+    : `cat >> ${capturePath}`;
+
   for (const name of hookNames) {
     // A shell command that appends whatever arrives on stdin, standing in for
     // the real `codemie hook` binary.
-    hooks[name] = [{ hooks: [{ type: 'command', command: `cat >> ${capturePath}` }] }];
+    hooks[name] = [{ hooks: [{ type: 'command', command: captureCommand }] }];
   }
 
   process.env.OPENCODE_HOOKS = JSON.stringify({ hooks });

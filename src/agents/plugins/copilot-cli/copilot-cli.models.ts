@@ -242,3 +242,12 @@ export function assertExplicitCopilotModelAllowed(model: string, availableModels
     );
   }
 }
+
+export function assertExplicitCopilotDeploymentAllowed(model: string, availableModels: string[]): void {
+  if (availableModels.length > 0 && !availableModels.includes(model)) {
+    throw new ConfigurationError(
+      `Azure OpenAI deployment "${model}" is not available for codemie-copilot. ` +
+      `Available deployments: ${availableModels.join(', ')}`
+    );
+  }
+}

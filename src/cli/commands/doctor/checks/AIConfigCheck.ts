@@ -84,6 +84,7 @@ export class AIConfigCheck implements HealthCheck {
       } else {
         onProgress?.('Checking base URL');
         // For other providers, show Base URL
+        // Azure OpenAI stores its endpoint in baseUrl (set by buildConfig)
         if (hasBaseUrl) {
           details.push({
             status: 'ok',

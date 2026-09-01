@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../providers/core/registry.js', () => ({
   ProviderRegistry: {
-    registerProvider: vi.fn((template: unknown) => template),
-    registerSetupSteps: vi.fn(),
-    registerHealthCheck: vi.fn(),
-    registerModelProxy: vi.fn(),
-    getProvider: vi.fn(),
-    getProviderNames: vi.fn(() => []),
+    registerProvider:      vi.fn((template: unknown) => template),
+    registerSetupSteps:    vi.fn(),
+    registerHealthCheck:   vi.fn(),
+    registerModelProxy:    vi.fn(),
+    registerProviderSetup: vi.fn((template: unknown) => template),
+    getProvider:           vi.fn(),
+    getProviderNames:      vi.fn(() => []),
   },
 }));
 

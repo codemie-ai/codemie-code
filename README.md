@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, Azure OpenAI, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -23,7 +23,7 @@
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
 - ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, GitHub Copilot CLI, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
-- 🔄 **Multi-Provider Support** - CodeMie SSO, Bearer Authorization, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, and Moonshot Subscription.
+- 🔄 **Multi-Provider Support** - CodeMie SSO, Bearer Authorization, LiteLLM, Azure OpenAI, AWS Bedrock, Ollama, Anthropic Subscription, and Moonshot Subscription.
 - 🚀 **Built-in Agent** - `codemie-code` ships with the CLI: file operations, command execution, planning mode, and native plugins.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
 - 🔗 **MCP Proxy** - Connect to remote MCP servers with automatic OAuth authorization.
@@ -197,7 +197,7 @@ codemie-code --plugin-dir ./my-plugins        # load native plugins
 codemie-code --debug                          # debug logging
 ```
 
-Providers: CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama.
+Providers: CodeMie SSO, Bearer Auth, LiteLLM, Azure OpenAI, AWS Bedrock, Ollama.
 
 ### External Agents
 
@@ -260,7 +260,7 @@ Supported managed path for this release:
 - **Uninstall:** `codemie uninstall copilot`
 - **Launch:** `codemie-copilot`
 - **One-shot task:** `codemie-copilot --task "Explain this service"`
-- **Supported providers:** CodeMie SSO and LiteLLM
+- **Supported providers:** CodeMie SSO, LiteLLM, and Azure OpenAI (classic Chat Completions)
 
 Requirements and behavior:
 
@@ -326,12 +326,23 @@ A profile binds an agent to a provider. Run `codemie setup` to create one, or `c
 | CodeMie SSO | enterprise SSO | Enterprise default — centralized model management, proxy routing, analytics |
 | Bearer Authorization | JWT via CLI or env var | CI, service accounts, self-hosted gateways |
 | LiteLLM | API key | Universal gateway to 100+ LLM providers (OpenAI, Azure, Vertex, …) |
+| Azure OpenAI | API key + endpoint | OpenAI-compatible classic Chat Completions clients |
 | AWS Bedrock | AWS access key + secret | Claude, Llama, Mistral & more via Amazon Bedrock |
 | Ollama | none | Local open-source models, offline work |
 | Anthropic Subscription | native Claude Code login | Bring your own Claude subscription |
 | Moonshot Subscription | native Kimi Code login | Bring your own Moonshot subscription (Kimi Code) |
 
 See [Authentication](docs/AUTHENTICATION.md) and [Configuration](docs/CONFIGURATION.md) for setup details.
+
+### Azure for Protocol-Specific Agents
+
+The `azure-openai` provider is intentionally not supported directly by `codemie-claude`,
+`codemie-claude-acp`, `codemie-codex`, or `codemie-gemini`. These agents use different
+client protocols: Anthropic Messages, OpenAI Responses, and Gemini's native API.
+
+To use Azure-backed models with these agents, run LiteLLM as an externally managed gateway.
+Configure LiteLLM to expose the protocol expected by the client and route the request to the
+Azure deployment. CodeMie stores the LiteLLM URL and key but does not install or run LiteLLM.
 
 ### CodeMie Assistants as Claude Skills or Subagents
 
@@ -474,7 +485,7 @@ codemie-pi --resume <session-id>              # open a specific session
 | **Required packages** | `pi-mcp-adapter` (Pi ships without built-in MCP), `pi-subagents`, `superpowers` — installed at setup. |
 | **Session analytics** | An injected extension records tokens, tools, and models per session and syncs at session end; visible in `codemie analytics`. |
 
-Providers: CodeMie SSO, Bearer Auth, LiteLLM.
+Providers: CodeMie SSO, Bearer Auth, LiteLLM, Azure OpenAI (classic Chat Completions).
 
 ## Claude Code Statusline
 

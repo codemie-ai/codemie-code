@@ -35,7 +35,7 @@ export const OpenWikiPluginMetadata: AgentMetadata = {
     apiKey: ['OPENAI_COMPATIBLE_API_KEY'],
     model: ['OPENWIKI_MODEL_ID'],
   },
-  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama', 'moonshot-subscription'],
+  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama', 'moonshot-subscription', 'azure-openai'],
   blockedModelPatterns: [],
   ssoConfig: { enabled: true, clientType: 'codemie-openwiki' },
   ownedSubcommands: ['init'],

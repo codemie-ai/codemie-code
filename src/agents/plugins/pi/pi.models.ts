@@ -2,10 +2,15 @@ import { mkdir, writeFile } from 'fs/promises';
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 import type { ModelPrice } from '../../../utils/pricing.js';
 import { lookupPrice } from '../../../utils/pricing.js';
 import { getPiAgentDir, getPiModelsPath } from './pi.paths.js';
+import {
+  fetchAzureDeploymentModels,
+  getAzureConnectionConfig,
+} from '../../../providers/core/azure-deployment-catalog.js';
 
 export interface PiModelClassification {
   provider: 'codemie-proxy' | 'codemie-anthropic';
@@ -196,9 +201,14 @@ function resolveModelCost(model: LlmModel, id: string): PiModelCost | undefined 
   return unpriced ? undefined : cost;
 }
 
-export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
+export function convertLlmModelToPiEntry(
+  model: LlmModel,
+  modelHint?: string,
+  forceChat = false,
+): PiModelEntry {
   const id = model.deployment_name || model.base_name || model.label;
-  const limits = detectLimits(id);
+  const capabilityId = modelHint?.trim() || id;
+  const limits = detectLimits(capabilityId);
 
   const entry: PiModelEntry = {
     id,
@@ -208,21 +218,23 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     maxTokens: limits.maxTokens,
   };
 
-  const classification = classifyPiModel(id);
+  const classification = forceChat
+    ? { provider: 'codemie-proxy' as const }
+    : classifyPiModel(capabilityId);
   if (classification.api) {
     entry.api = classification.api;
   }
 
-  if (isReasoningModel(id)) {
+  if (isReasoningModel(capabilityId)) {
     entry.reasoning = true;
     entry.thinkingLevelMap = defaultThinkingLevelMap();
   }
 
   if (
-    id.startsWith('claude-sonnet-4-6') ||
-    id.startsWith('claude-sonnet-5') ||
-    /^claude-opus-4-[6-8]/.test(id) ||
-    id.startsWith('claude-opus-5')
+    capabilityId.startsWith('claude-sonnet-4-6') ||
+    capabilityId.startsWith('claude-sonnet-5') ||
+    /^claude-opus-4-[6-8]/.test(capabilityId) ||
+    capabilityId.startsWith('claude-opus-5')
   ) {
     entry.compat = { forceAdaptiveThinking: true };
   }
@@ -273,12 +285,15 @@ function buildModelsConfig(
   entries: PiModelEntry[],
   baseUrl: string,
   apiKey: string,
+  forceProxy = false,
 ): PiModelsConfig {
   const proxyModels: PiModelEntry[] = [];
   const anthropicModels: PiModelEntry[] = [];
 
   for (const entry of entries) {
-    const classification = classifyPiModel(entry.id);
+    const classification = forceProxy
+      ? { provider: 'codemie-proxy' as const }
+      : classifyPiModel(entry.id);
     if (classification.provider === 'codemie-anthropic') {
       anthropicModels.push(entry);
     } else {
@@ -411,6 +426,31 @@ export async function fetchAndBuildPiModels(
     return;
   }
 
+  if (env.CODEMIE_PROVIDER === 'azure-openai') {
+    const selectedModel = env.CODEMIE_MODEL;
+    if (!selectedModel) {
+      throw new ConfigurationError('No Azure OpenAI deployment configured for codemie-pi. Run codemie setup to select a deployment.');
+    }
+
+    const deployments = await fetchAzureDeploymentModels(
+      getAzureConnectionConfig(env),
+      selectedModel,
+    );
+    const entries = deployments.map(deployment => {
+      const synthetic = createSyntheticLlmModel(deployment.id);
+      synthetic.label = deployment.name || deployment.id;
+      const modelHint = typeof deployment.metadata?.model === 'string'
+        ? deployment.metadata.model
+        : undefined;
+      return convertLlmModelToPiEntry(synthetic, modelHint, true);
+    });
+    const baseUrl = env.CODEMIE_BASE_URL || 'http://127.0.0.1';
+    const apiKey = 'proxy-handled';
+    const config = buildModelsConfig(entries, baseUrl, apiKey, true);
+    await writeFile(getPiModelsPath(cwd), JSON.stringify(config, null, 2), 'utf-8');
+    return;
+  }
+
   const baseUrl = env.CODEMIE_BASE_URL || '';
   const apiKey = env.CODEMIE_API_KEY || 'proxy-handled';
 
@@ -419,7 +459,7 @@ export async function fetchAndBuildPiModels(
     const rawModels = await fetchCodeMieModels(env);
     entries = rawModels
       .filter(model => model.enabled)
-      .map(convertLlmModelToPiEntry);
+      .map(model => convertLlmModelToPiEntry(model));
     logger.debug(`[pi-models] Loaded ${entries.length} models from CodeMie API`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

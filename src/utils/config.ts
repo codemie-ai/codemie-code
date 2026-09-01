@@ -197,6 +197,17 @@ export class ConfigLoader {
       Object.assign(config, this.removeUndefined(cliOverrides));
     }
 
+    if (config.provider?.toLowerCase() === 'azure-openai') {
+      const deployment = cliOverrides?.model
+        || envConfig.azureDeployment
+        || config.azureDeployment
+        || config.model;
+      if (deployment) {
+        config.model = deployment;
+        config.azureDeployment = deployment;
+      }
+    }
+
     return config;
   }
 
@@ -423,6 +434,12 @@ export class ConfigLoader {
     }
     if (process.env.CODEMIE_MODEL) {
       env.model = process.env.CODEMIE_MODEL;
+    }
+    if (process.env.CODEMIE_AZURE_OPENAI_API_VERSION) {
+      env.azureApiVersion = process.env.CODEMIE_AZURE_OPENAI_API_VERSION;
+    }
+    if (process.env.CODEMIE_AZURE_OPENAI_DEPLOYMENT) {
+      env.azureDeployment = process.env.CODEMIE_AZURE_OPENAI_DEPLOYMENT;
     }
     if (process.env.CODEMIE_TIMEOUT) {
       env.timeout = parseInt(process.env.CODEMIE_TIMEOUT, 10);
@@ -886,7 +903,13 @@ export class ConfigLoader {
     const configDir = path.join(workingDir, '.codemie');
     await fs.mkdir(configDir, { recursive: true });
 
-    // Create multi-provider config structure
+    // Load existing local config to preserve other profiles and settings
+    const existingConfig = (await this.loadLocalMultiProviderConfig(workingDir).catch(() => ({
+      version: 2 as const,
+      activeProfile: 'default',
+      profiles: {}
+    }))) as MultiProviderConfig;
+
     const profileName = overrides?.profileName || 'default';
     const rawOverrides: Partial<CodeMieConfigOptions> = {};
 
@@ -900,9 +923,10 @@ export class ConfigLoader {
     const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
 
     const config: MultiProviderConfig = {
-      version: 2,
+      ...existingConfig,
       activeProfile: profileName,
       profiles: {
+        ...existingConfig.profiles,
         [profileName]: profile as any
       },
       ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {})
@@ -1234,6 +1258,7 @@ export class ConfigLoader {
     const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
     const workspace = await this.resolveWorkspace(workingDir);
+    const envConfig = this.loadFromEnv();
 
     const configs: ConfigLayer[] = [
       {
@@ -1256,7 +1281,7 @@ export class ConfigLoader {
         source: workspaceSource
       },
       {
-        data: this.loadFromEnv(),
+        data: envConfig,
         source: 'env'
       }
     ];
@@ -1280,6 +1305,14 @@ export class ConfigLoader {
 
     // Build merged config
     const config = await this.load(workingDir, cliOverrides);
+
+    if (
+      config.provider?.toLowerCase() === 'azure-openai'
+      && envConfig.azureDeployment
+      && !cliOverrides?.model
+    ) {
+      sources.model = { value: config.model, source: 'env' };
+    }
 
     return {
       config,

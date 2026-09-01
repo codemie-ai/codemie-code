@@ -2,7 +2,11 @@ import { join } from 'path';
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
-import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
+import {
+  fetchAzureOpenCodeModelConfigs,
+  fetchDynamicModelConfigs,
+} from './opencode-dynamic-models.js';
+import { getAzureConnectionConfig } from '../../../providers/core/azure-deployment-catalog.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -110,7 +114,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     apiKey: [],
     model: []
   },
-  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth', 'azure-openai'],
   ssoConfig: { enabled: true, clientType: OPENCODE_CLIENT_TYPE },
 
   // Tool names are lower-cased before they reach the aggregator, and
@@ -273,7 +277,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // boundaries at all, so active_duration_ms stayed 0.
       env.OPENCODE_HOOKS = JSON.stringify({ hooks: buildMergedHooks(env) });
 
-      const provider = env.CODEMIE_PROVIDER;
+      function normalizeProvider(provider: string | undefined, baseUrl: string | undefined): string | undefined {
+        if (provider === 'azure-openai') return 'azure-openai';
+        if (provider === 'bedrock' && baseUrl && /openai\.azure\.com/i.test(baseUrl)) return 'azure-openai';
+        return provider;
+      }
+
+      const provider = normalizeProvider(env.CODEMIE_PROVIDER, env.CODEMIE_BASE_URL);
       const baseUrl = env.CODEMIE_BASE_URL;
 
       if (!baseUrl) {
@@ -285,17 +295,16 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
-      // Fetch live model catalogue from the CodeMie API.
-      // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
-      const allModels = await fetchDynamicModelConfigs(
-        baseUrl,
-        env.CODEMIE_URL,
-        env.CODEMIE_JWT_TOKEN,
-      );
-
       // Model selection priority: env var > config > default
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+      const allModels = provider === 'azure-openai'
+        ? await fetchAzureOpenCodeModelConfigs(getAzureConnectionConfig(env), selectedModel)
+        : await fetchDynamicModelConfigs(
+          baseUrl,
+          env.CODEMIE_URL,
+          env.CODEMIE_JWT_TOKEN,
+        );
       const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
 
       const { providerOptions } = modelConfig;
@@ -306,7 +315,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
-      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
+      const isProxy = provider !== 'ollama' && !isBedrock;
+      const proxyBaseUrl = isProxy ? baseUrl : undefined;
       const ollamaBaseUrl = provider === 'ollama'
         ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
         : 'http://localhost:11434/v1';
@@ -315,8 +325,17 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // - ollama: uses ollama provider directly
       // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
       // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+      const modelId = isBedrock
+        ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
+        : modelConfig.id;
+      const activeProvider = provider === 'ollama'
+        ? 'ollama'
+        : (isBedrock
+          ? 'amazon-bedrock'
+          : (provider === 'azure-openai'
+            ? (Object.prototype.hasOwnProperty.call(responsesApiModels, modelId) ? 'openai' : 'azure-openai')
+            : 'codemie-proxy'));
 
       // Always enable openai CUSTOM_LOADER when Responses API models exist.
       // This fixes model-switching: if user starts with Claude and switches to GPT,
@@ -328,13 +347,32 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       const hasResponsesApiModels = Object.keys(responsesApiModels).length > 0;
       const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock'],
+        enabled_providers: [
+          'codemie-proxy',
+          'openai',
+          'ollama',
+          'amazon-bedrock',
+          ...(provider === 'azure-openai' ? ['azure-openai'] : []),
+        ],
         share: 'disabled',
         provider: {
-          ...(proxyBaseUrl && {
+          ...(proxyBaseUrl && provider !== 'azure-openai' && {
             'codemie-proxy': {
               npm: '@ai-sdk/openai-compatible',
               name: 'CodeMie SSO',
+              options: {
+                baseURL: `${proxyBaseUrl}/`,
+                apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: chatModels
+            }
+          }),
+          ...(proxyBaseUrl && provider === 'azure-openai' && {
+            'azure-openai': {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'Azure OpenAI',
               options: {
                 baseURL: `${proxyBaseUrl}/`,
                 apiKey: 'proxy-handled',
@@ -370,7 +408,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
             }
           }
         },
-        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
+        model: `${activeProvider}/${modelId}`
       };
 
       // Inject the shell-hooks plugin — it is what delivers OPENCODE_HOOKS

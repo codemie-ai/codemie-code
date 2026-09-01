@@ -72,4 +72,13 @@ describe('copilot-cli model resolution', () => {
     expect(() => assertExplicitCopilotModelAllowed('o4-mini', ['gpt-5.5', 'claude-sonnet-4.6']))
       .toThrow(/GPT-family or Claude-family model/);
   });
+
+  it('allows arbitrary Azure deployment IDs when discovery returns them', async () => {
+    const { assertExplicitCopilotDeploymentAllowed } = await import('../copilot-cli.models.js');
+
+    expect(() => assertExplicitCopilotDeploymentAllowed('production-chat', ['production-chat']))
+      .not.toThrow();
+    expect(() => assertExplicitCopilotDeploymentAllowed('missing-chat', ['production-chat']))
+      .toThrow(/not available/);
+  });
 });

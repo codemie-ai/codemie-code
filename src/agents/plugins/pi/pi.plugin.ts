@@ -279,7 +279,7 @@ export const PiPluginMetadata: AgentMetadata = {
     model: [],
   },
 
-  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama'],
+  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama', 'azure-openai'],
 
   ssoConfig: {
     enabled: true,
@@ -339,16 +339,15 @@ export const PiPluginMetadata: AgentMetadata = {
       // CodeMie backends and would misroute them to `codemie-proxy`.
       const providerId = process.env.CODEMIE_PROVIDER === 'ollama'
         ? 'ollama'
-        : classifyPiModel(model).provider;
+        : process.env.CODEMIE_PROVIDER === 'azure-openai'
+          ? 'codemie-proxy'
+          : classifyPiModel(model).provider;
 
       // `--task` is not handled here: `flagMappings` rewrites it to Pi's `-p`, which
       // BaseAgentAdapter applies after this hook. Consuming it here would leave a bare
       // positional, and Pi treats a bare positional as an interactive opening prompt.
       const result = ['--provider', providerId, '--model', model, ...args];
 
-      // Share CodeMie's session id with Pi so discovery can exact-match the
-      // transcript. Pi exits with code 1 if this is combined with a flag that
-      // already selects a session, so those runs correlate by run window instead.
       const sessionId = process.env.CODEMIE_SESSION_ID;
       if (sessionId && !result.includes('--session-id') && !hasSessionSelectionFlag(result)) {
         result.push('--session-id', sessionId);

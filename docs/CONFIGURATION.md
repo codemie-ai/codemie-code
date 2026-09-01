@@ -101,6 +101,16 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "apiKey": "sk-***",
       "model": "gpt-4.1",
       "timeout": 300
+    },
+    "azure-openai": {
+      "name": "azure-openai",
+      "provider": "azure-openai",
+      "baseUrl": "https://resource.openai.azure.com",
+      "apiKey": "azure-key-***",
+      "model": "gpt-5.6-luna-2026-07-09",
+      "azureApiVersion": "2025-04-01-preview",
+      "azureDeployment": "gpt-5.6-luna-2026-07-09",
+      "timeout": 300
     }
   }
 }
@@ -112,10 +122,20 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
 
 - **ai-run-sso** - AI/Run CodeMie SSO (unified enterprise gateway)
 - **openai** - OpenAI API
-- **azure** - Azure OpenAI
+- **azure-openai** - Azure OpenAI for OpenAI-compatible clients
 - **bedrock** - AWS Bedrock
 - **litellm** - LiteLLM Proxy (universal gateway to 100+ providers)
 - **ollama** - Ollama (local models)
+
+### Azure and Protocol-Specific Agents
+
+Direct `azure-openai` is intentionally excluded from Claude Code/ACP, Codex, and Gemini
+profiles. Their native request formats are Anthropic Messages, OpenAI Responses, and Gemini's
+native API, while the CodeMie Azure endpoint exposes classic Azure OpenAI Chat Completions.
+
+Use an externally managed LiteLLM gateway when these agents need Azure-backed models. The
+LiteLLM profile should expose the client-facing protocol and route to the Azure deployment.
+CodeMie does not install or manage the LiteLLM process.
 
 ## Manual Configuration
 
@@ -127,7 +147,7 @@ Environment variables override config file values and are useful for CI/CD, Dock
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `CODEMIE_PROVIDER` | AI provider (ai-run-sso, litellm, openai, azure, bedrock) | - | `litellm` |
+| `CODEMIE_PROVIDER` | AI provider (ai-run-sso, litellm, openai, azure-openai, bedrock) | - | `litellm` |
 | `CODEMIE_BASE_URL` | Base URL for API endpoint | - | `https://api.openai.com/v1` |
 | `CODEMIE_API_KEY` | API key for authentication | - | `sk-...` |
 | `CODEMIE_MODEL` | Model to use | - | `claude-sonnet-4-5-20250929` |
@@ -158,8 +178,11 @@ Environment variables override config file values and are useful for CI/CD, Dock
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `AZURE_OPENAI_API_VERSION` | Azure API version | `2024-02-01` | `2024-02-01` |
-| `OPENAI_ORG_ID` | OpenAI organization ID | - | `org-...` |
+| `CODEMIE_AZURE_OPENAI_API_VERSION` | Azure API version for deployment discovery and requests | `2025-04-01-preview` | `2025-04-01-preview` |
+| `CODEMIE_AZURE_OPENAI_DEPLOYMENT` | Optional Azure deployment override; otherwise `CODEMIE_MODEL` is used | - | `gpt-5.6-luna-2026-07-09` |
+
+`CODEMIE_AZURE_OPENAI_DEPLOYMENT` overrides `CODEMIE_MODEL` when both are set; both are used as the deployment ID.
+`OPENAI_ORG_ID` is not supported for Azure OpenAI.
 
 #### Analytics Configuration
 
