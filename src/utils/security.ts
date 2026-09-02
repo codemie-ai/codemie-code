@@ -11,6 +11,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { URL } from 'url';
 import { SSOCredentials, JWTCredentials } from '../providers/core/types.js';
 import { getCodemiePath } from './paths.js';
 
@@ -301,12 +302,25 @@ export class CredentialStore {
   }
 
   /**
-   * Generate a storage key for a given base URL
-   * @param baseUrl - The base URL to hash
+   * Generate a storage key for a given URL.
+   *
+   * Reduces the URL to protocol+host before hashing so storage and retrieval
+   * always agree on a key regardless of which path a caller passes in (e.g.
+   * a bare portal URL from `codemie setup` vs. a full API URL from
+   * `codemie profile login --url <api-url>`). Only stripping a trailing
+   * slash here (without dropping the path) would make the key sensitive to
+   * whichever URL variant happened to be passed at store time.
+   * @param baseUrl - The URL to hash (path/query/hash, if any, are discarded)
    * @returns Storage key (e.g., "sso-abc123...")
    */
   private getUrlStorageKey(baseUrl: string): string {
-    const normalized = baseUrl.replace(/\/$/, '').toLowerCase();
+    let normalized: string;
+    try {
+      const parsed = new URL(baseUrl);
+      normalized = `${parsed.protocol}//${parsed.host}`.toLowerCase();
+    } catch {
+      normalized = baseUrl.replace(/\/$/, '').toLowerCase();
+    }
     const hash = crypto.createHash('sha256').update(normalized).digest('hex');
     return `sso-${hash}`;
   }
