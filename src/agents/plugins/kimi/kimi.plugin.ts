@@ -7,7 +7,11 @@ import { rm } from 'fs/promises';
 import { KimiSessionAdapter } from './kimi.session.js';
 import { KimiExtensionInstaller } from './kimi.extension-installer.js';
 import { KimiHookTransformer } from './kimi.hook-transformer.js';
-import { assertExplicitKimiModelAllowed, resolveKimiModel } from './kimi.models.js';
+import {
+  assertExplicitKimiDeploymentAllowed,
+  assertExplicitKimiModelAllowed,
+  resolveKimiModel,
+} from './kimi.models.js';
 import { installNativeAgent } from '../../../utils/native-installer.js';
 import {
   AgentInstallationError,
@@ -19,6 +23,10 @@ import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
+import {
+  fetchAzureDeploymentModels,
+  getAzureConnectionConfig,
+} from '../../../providers/core/azure-deployment-catalog.js';
 
 const KIMI_SUPPORTED_VERSION = '0.16.0';
 const KIMI_MINIMUM_SUPPORTED_VERSION = '0.15.0';
@@ -48,7 +56,7 @@ export const KimiPluginMetadata: AgentMetadata = {
     apiKey: ['KIMI_MODEL_API_KEY'],
     model: ['KIMI_MODEL_NAME'],
   },
-  supportedProviders: ['moonshot-subscription', 'ai-run-sso'],
+  supportedProviders: ['moonshot-subscription', 'ai-run-sso', 'azure-openai'],
   blockedModelPatterns: [],
   recommendedModels: ['kimi-k2.6', 'kimi-for-coding', 'kimi-k2'],
   ssoConfig: { enabled: true, clientType: 'codemie-kimi' },
@@ -80,7 +88,11 @@ export const KimiPluginMetadata: AgentMetadata = {
         .map(model => model.trim())
         .filter(Boolean);
 
-      assertExplicitKimiModelAllowed(explicitModel, availableModels);
+      if (process.env.CODEMIE_PROVIDER === 'azure-openai') {
+        assertExplicitKimiDeploymentAllowed(explicitModel, availableModels);
+      } else {
+        assertExplicitKimiModelAllowed(explicitModel, availableModels);
+      }
       return args;
     },
   },
@@ -190,7 +202,9 @@ export class KimiPlugin extends BaseAgentAdapter {
           timeout: 300000,
           verifyCommand: this.metadata.cliCommand || undefined,
           verifyPath:
-            process.platform === 'win32' ? undefined : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
+            process.platform === 'win32'
+              ? resolveHomeDir(`${KIMI_NATIVE_BINARY_PATH}.exe`)
+              : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
         },
       );
 
@@ -370,6 +384,18 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+    if (env.CODEMIE_PROVIDER === 'azure-openai') {
+      if (env.CODEMIE_MODEL) {
+        const models = await fetchAzureDeploymentModels(
+          getAzureConnectionConfig(env),
+          env.CODEMIE_MODEL,
+        );
+        env.CODEMIE_KIMI_AVAILABLE_MODELS = models.map(model => model.id).join(',');
+      }
+      await super.setupProxy(env);
+      return;
+    }
+
     if (env.CODEMIE_PROVIDER === 'ai-run-sso' || env.CODEMIE_AUTH_METHOD === 'jwt') {
       // Resolve before BaseAgentAdapter builds the proxy config because CODEMIE_MODEL
       // is part of the proxy startup contract.

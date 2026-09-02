@@ -51,6 +51,10 @@ Anthropic's official CLI with advanced code understanding.
 - Interactive conversations
 - Non-interactive mode with `-p` flag
 
+**Provider compatibility:**
+- LiteLLM, AI/Run SSO, AWS Bedrock, Bearer Auth, Anthropic Subscription, and Ollama are supported.
+- Direct Azure OpenAI is not supported; use an external LiteLLM gateway for Azure-backed Claude models.
+
 **Usage:**
 ```bash
 codemie-claude                   # Interactive mode
@@ -70,7 +74,8 @@ ACP (Agent Communication Protocol) is a stdio-based JSON-RPC protocol that enabl
 
 **Requirements:**
 - Node.js 20.0.0 or higher
-- Supported providers: LiteLLM, AI/Run SSO, or direct Anthropic API access
+- Supported providers: LiteLLM, AI/Run SSO, AWS Bedrock, Bearer Auth, Anthropic Subscription, or Ollama
+- Direct Azure OpenAI is not supported; use an external LiteLLM gateway for Azure-backed models
 - IDE with ACP support (Zed, JetBrains, Emacs, etc.)
 
 **Features:**
@@ -133,9 +138,9 @@ Google's Gemini AI coding assistant with advanced code understanding.
 **Installation:** `codemie install gemini`
 
 **Requirements:**
-- **Requires a valid Google Gemini API key** from https://aistudio.google.com/apikey
+- **Direct API access requires a valid Google Gemini API key** from https://aistudio.google.com/apikey
 - **Requires Gemini-compatible models only** (gemini-2.5-flash, gemini-2.5-pro, etc.)
-- LiteLLM or AI-Run SSO API keys will **not** work with Gemini CLI
+- **Direct Azure OpenAI is not supported**; use an external LiteLLM gateway for Azure-backed Gemini models
 
 **Setup:**
 ```bash
@@ -174,7 +179,7 @@ GitHub Copilot CLI managed by CodeMie for CodeMie-routed SSO and LiteLLM session
 **Requirements:**
 - Node.js 20.0.0 or higher
 - An authenticated CodeMie profile (`codemie setup`)
-- Supported providers: **AI/Run SSO** or **LiteLLM**
+- Supported providers: **AI/Run SSO**, **LiteLLM**, or **Azure OpenAI** (classic Chat Completions)
 
 **Managed-mode behavior:**
 - Launch with `codemie-copilot`
@@ -214,7 +219,7 @@ Open-source AI coding assistant with comprehensive session analytics.
 
 **Requirements:**
 - Node.js 20.0.0 or higher
-- Supported providers: LiteLLM, AI/Run SSO, or direct API access
+- Supported providers: LiteLLM, AI/Run SSO, Azure OpenAI (classic Chat Completions), or direct API access
 - OpenCode CLI installed globally (`opencode-ai` npm package)
 
 **Features:**
@@ -283,7 +288,7 @@ OpenWiki (https://github.com/langchain-ai/openwiki) — an agent that writes and
 **Requirements:**
 - Node.js 22.0.0 or higher (OpenWiki upstream requirement)
 - An authenticated CodeMie profile (`codemie setup`)
-- Supported providers: **AI/Run SSO**, **Bearer Auth (JWT)**, **LiteLLM**, **Ollama**, **Moonshot subscription**
+- Supported providers: **AI/Run SSO**, **Bearer Auth (JWT)**, **LiteLLM**, **Ollama**, **Moonshot subscription**, or **Azure OpenAI** (classic Chat Completions)
 
 **How CodeMie runs it:**
 OpenWiki reads its model access from `OPENWIKI_PROVIDER=openai-compatible` plus `OPENAI_COMPATIBLE_BASE_URL`/`OPENAI_COMPATIBLE_API_KEY`/`OPENWIKI_MODEL_ID`. The CodeMie adapter maps the active profile onto those variables: SSO/JWT profiles go through the local CodeMie proxy (authentication and `X-CodeMie-*` attribution headers are injected there), other providers forward their configured base URL and key. The profile model becomes `OPENWIKI_MODEL_ID`.

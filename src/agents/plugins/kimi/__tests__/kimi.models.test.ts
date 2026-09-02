@@ -20,6 +20,7 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
 });
 
 import {
+  assertExplicitKimiDeploymentAllowed,
   isKimiCompatibleModelName,
   resolveKimiModel,
   assertExplicitKimiModelAllowed,
@@ -196,5 +197,14 @@ describe('assertExplicitKimiModelAllowed', () => {
 
   it('skips the availability check when the list is empty (cannot adjudicate)', () => {
     expect(() => assertExplicitKimiModelAllowed('kimi-k2', [])).not.toThrow();
+  });
+});
+
+describe('assertExplicitKimiDeploymentAllowed', () => {
+  it('allows arbitrary Azure deployment IDs when discovery returns them', () => {
+    expect(() => assertExplicitKimiDeploymentAllowed('production-chat', ['production-chat']))
+      .not.toThrow();
+    expect(() => assertExplicitKimiDeploymentAllowed('missing-chat', ['production-chat']))
+      .toThrow(/not available/);
   });
 });

@@ -19,6 +19,8 @@ import { CodexRequestNormalizerPlugin } from './codex-request-normalizer.plugin.
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
 import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-content-sanitizer.plugin.js';
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
+import { AzureOpenAISanitizerPlugin } from './azure-openai-sanitizer.plugin.js';
+import { AzureOpenAIRoutingPlugin } from './azure-openai-routing.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
@@ -37,8 +39,10 @@ export function registerCorePlugins(): void {
   registry.register(new JWTAuthPlugin());
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
+  registry.register(new AzureOpenAIRoutingPlugin()); // Priority 13 - resolves classic Azure deployment URLs
   registry.register(new CodexRequestNormalizerPlugin()); // Priority 14 - maps the Codex app's undated model names onto dated CodeMie deployments
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
+  registry.register(new AzureOpenAISanitizerPlugin()); // Priority 15 - Azure OpenAI request compatibility
   registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - forwards Responses reasoning state; strips it only after upstream rejects a replay
   registry.register(new CopilotEncryptedContentSanitizerPlugin()); // Priority 16 - retries Copilot once after encrypted reasoning replay rejection
   registry.register(new VsCodeRequestNormalizerPlugin()); // Priority 17 - constrains VS Code user identifiers
@@ -65,6 +69,8 @@ export {
   CodexEncryptedContentSanitizerPlugin,
   CopilotEncryptedContentSanitizerPlugin,
   VsCodeRequestNormalizerPlugin,
+  AzureOpenAISanitizerPlugin,
+  AzureOpenAIRoutingPlugin,
   LoggingPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';

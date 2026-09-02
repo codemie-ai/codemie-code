@@ -1,6 +1,7 @@
 import { exec, type ExecResult } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
 import { AgentInstallationError } from '@/utils/errors.js';
+import { getCommandPath } from '@/utils/processes.js';
 
 export const REQUIRED_PI_PACKAGES: readonly string[] = [
   'git:github.com/obra/superpowers',
@@ -22,7 +23,13 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 export async function installRequiredPiPackages(
   options: InstallPiPackagesOptions = {},
 ): Promise<void> {
-  const cliCommand = options.cliCommand || 'pi';
+  const requestedCommand = options.cliCommand || 'pi';
+  const windowsCommand = requestedCommand.toLowerCase().endsWith('.cmd')
+    ? requestedCommand
+    : `${requestedCommand}.cmd`;
+  const cliCommand = process.platform === 'win32'
+    ? await getCommandPath(windowsCommand) || requestedCommand
+    : requestedCommand;
   const cwd = options.cwd ?? process.cwd();
   const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
 
@@ -36,6 +43,7 @@ export async function installRequiredPiPackages(
       result = await exec(cliCommand, ['install', pkg], {
         cwd,
         timeout,
+        shell: process.platform === 'win32',
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

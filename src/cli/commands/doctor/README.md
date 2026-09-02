@@ -193,7 +193,7 @@ The system currently supports these providers:
 
 - **ai-run-sso**: AI-Run SSO authentication with integration validation
 - **openai**: OpenAI API with model verification
-- **azure**: Azure OpenAI with endpoint validation
+- **azure-openai**: Azure OpenAI with endpoint validation
 - **litellm**: LiteLLM proxy gateway
 - **gemini**: Google Gemini API
 

@@ -218,3 +218,12 @@ export function assertExplicitKimiModelAllowed(model: string, availableModels: s
     );
   }
 }
+
+export function assertExplicitKimiDeploymentAllowed(model: string, availableModels: string[]): void {
+  if (availableModels.length > 0 && !availableModels.includes(model)) {
+    throw new ConfigurationError(
+      `Azure OpenAI deployment "${model}" is not available for codemie-kimi. ` +
+      `Available deployments: ${availableModels.join(', ')}`
+    );
+  }
+}

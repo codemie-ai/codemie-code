@@ -52,6 +52,7 @@ export interface ProviderProfile {
   name?: string;  // Optional - set during save
   provider?: string;
   baseUrl?: string;
+  azureOpenAIBaseUrl?: string;
   apiKey?: string;
   model?: string;
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
@@ -92,6 +93,10 @@ export interface ProviderProfile {
   // Token configuration (for Claude Code with Bedrock)
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
+
+  // Azure OpenAI-specific fields
+  azureApiVersion?: string;
+  azureDeployment?: string;
 
   // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
   codemieAssistants?: CodemieAssistant[];
