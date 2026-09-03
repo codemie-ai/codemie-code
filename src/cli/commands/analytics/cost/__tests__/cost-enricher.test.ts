@@ -2,11 +2,27 @@
  * Cost enricher unit tests (dependency-injected — no fs/registry).
  */
 
-import { describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
+
+// Module-level mock (must live at file top level for Vitest's hoisting transform).
+// Only redirects the 'sessions' subpath used by realDeps.loadAgentSessionFile's
+// correlation-file fallback; everything else falls through to the real implementation.
+const mockSessionsDir = join(tmpdir(), `codemie-cost-enricher-hadlog-test-${process.pid}`);
+
+vi.mock('../../../../../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../../utils/paths.js')>();
+  return {
+    ...actual,
+    getCodemiePath: (...segments: string[]) =>
+      segments[0] === 'sessions' ? join(mockSessionsDir, ...segments.slice(1)) : actual.getCodemiePath(...segments),
+  };
+});
 
 const raw = [{ sessionId: 's1', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
 
@@ -556,6 +572,60 @@ describe('acceptance: TTL-aware pricing against real transcripts', () => {
     const { index } = await enrichCosts(sessions, realDeps);
     const total = [...index.values()].reduce((s, c) => s + c.costUSD, 0);
     expect(total).toBeCloseTo(1.27628500, 3);
+  });
+});
+
+describe('realDeps.loadAgentSessionFile — hadLog must mean the transcript actually exists', () => {
+  const ownedTranscript = join(mockSessionsDir, 'owned.jsonl');
+
+  beforeEach(() => {
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+    mkdirSync(mockSessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+  });
+
+  it('resolves the correlation-file path when the referenced transcript exists', async () => {
+    writeFileSync(ownedTranscript, '{"type":"user"}\n');
+    writeFileSync(
+      join(mockSessionsDir, 's1.json'),
+      JSON.stringify({ correlation: { agentSessionFile: ownedTranscript } })
+    );
+    const path = await realDeps.loadAgentSessionFile({ sessionId: 's1' } as never);
+    expect(path).toBe(ownedTranscript);
+  });
+
+  it('returns null when the correlation record names a transcript that no longer exists', async () => {
+    // The coding agent's own retention (e.g. Claude Code's default 30-day cleanup) can
+    // rotate a transcript away long after the session ran; the correlation record still
+    // names it. Regression for hadLog=true against a deleted file — 122 of 291 real Claude
+    // sessions were reporting hadLog=true this way, inflating the Coverage table's
+    // "Native log" count for sessions whose usage data was actually gone.
+    writeFileSync(
+      join(mockSessionsDir, 's2.json'),
+      JSON.stringify({ correlation: { agentSessionFile: join(mockSessionsDir, 'rotated-away.jsonl') } })
+    );
+    const path = await realDeps.loadAgentSessionFile({ sessionId: 's2' } as never);
+    expect(path).toBeNull();
+  });
+
+  it('returns null for a native-discovered path (raw.agentSessionFile) that does not exist', async () => {
+    const path = await realDeps.loadAgentSessionFile({
+      sessionId: 's3',
+      agentSessionFile: join(mockSessionsDir, 'never-existed.jsonl'),
+    } as never);
+    expect(path).toBeNull();
+  });
+
+  it('resolves a native-discovered path (raw.agentSessionFile) that does exist', async () => {
+    writeFileSync(ownedTranscript, '{"type":"user"}\n');
+    const path = await realDeps.loadAgentSessionFile({
+      sessionId: 's4',
+      agentSessionFile: ownedTranscript,
+    } as never);
+    expect(path).toBe(ownedTranscript);
   });
 });
 
