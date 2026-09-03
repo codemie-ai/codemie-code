@@ -77,6 +77,14 @@ export interface MetricDelta {
     durationMs?: number;         // Tool execution time (from tool_result)
   }[];
 
+  // Token usage (Anthropic usage object, captured per completed turn)
+  tokens?: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheCreation?: number;
+  };
+
   // Model tracking (raw names, unnormalized)
   models?: string[];             // All models used in this turn
 

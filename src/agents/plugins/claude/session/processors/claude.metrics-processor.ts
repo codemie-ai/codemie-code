@@ -324,6 +324,16 @@ export class MetricsProcessor implements SessionProcessor {
         ? completedMsg.message.content[0].text
         : undefined;
 
+      const usage = completedMsg.message?.usage;
+      const tokens = usage
+        ? {
+            input: usage.input_tokens ?? 0,
+            output: usage.output_tokens ?? 0,
+            ...(usage.cache_read_input_tokens !== undefined && { cacheRead: usage.cache_read_input_tokens }),
+            ...(usage.cache_creation_input_tokens !== undefined && { cacheCreation: usage.cache_creation_input_tokens }),
+          }
+        : undefined;
+
       const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
         recordId,
         sessionId,
@@ -334,6 +344,7 @@ export class MetricsProcessor implements SessionProcessor {
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
         ...(completedMsg.message?.model && { models: [completedMsg.message.model] }),
         ...(apiErrorMessage && { apiErrorMessage }),
+        ...(tokens && { tokens }),
         // Named invocations are session-wide — attach all three to the first delta only.
         ...(deltas.length === 0 && Object.keys(sessionNamed.skillInvocations).length > 0 && { skillInvocations: sessionNamed.skillInvocations }),
         ...(deltas.length === 0 && Object.keys(sessionNamed.agentInvocations).length > 0 && { agentInvocations: sessionNamed.agentInvocations }),
