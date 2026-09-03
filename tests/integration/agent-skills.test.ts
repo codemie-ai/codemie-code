@@ -18,7 +18,8 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodeMieClient } from 'codemie-sdk';
@@ -55,6 +56,30 @@ const SKILL_CONTENT = [
   'When invoked, respond with a single random number between 1 and 10.',
   'Your entire response must be exactly the number — no words, punctuation, or explanation.',
 ].join('\n');
+
+/**
+ * The `setup skills` wizard's "Global" scope installs into the real
+ * ~/.claude/skills/ (src/cli/commands/skills/setup/generators/claude-skill-generator.ts
+ * hardcodes os.homedir() there since .claude/ is Claude Code's own directory,
+ * not something CODEMIE_HOME redirection reaches). That install therefore
+ * escapes the temp CODEMIE_HOME used elsewhere in this suite and must be
+ * cleaned up explicitly. The on-disk slug is `${skillName}-${project}-global`;
+ * matching by prefix avoids duplicating the exact slug algorithm here.
+ */
+function removeLeakedGlobalSkillDirs(skillName: string): void {
+  const globalSkillsDir = join(homedir(), '.claude', 'skills');
+  let entries: string[];
+  try {
+    entries = readdirSync(globalSkillsDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry === skillName || entry.startsWith(`${skillName}-`)) {
+      rmSync(join(globalSkillsDir, entry), { recursive: true, force: true });
+    }
+  }
+}
 
 describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
   let jwtToken: string;
@@ -187,6 +212,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
       // Small delay for Windows to release file handles from PTY processes.
       await new Promise((r) => setTimeout(r, 500));
       rmSync(testHome, { recursive: true, force: true });
+      removeLeakedGlobalSkillDirs(SKILL_NAME);
     });
 
     it(`agent responds to /${SKILL_NAME} and returns a number 1-10`, async () => {
