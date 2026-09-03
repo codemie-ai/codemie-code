@@ -198,13 +198,21 @@ export const realNativeDeps: NativeLoaderDeps = {
     if (!ownershipIndexCache) ownershipIndexCache = buildOwnershipIndex();
     if (ownershipIndexCache.has(safeRealPath(filePath))) return true;
 
-    // CR-002: bounded transcript scan (4 KB) for legacy sessions without sidecar
+    // CR-002: bounded transcript scan for legacy sessions without a sidecar marker.
+    // A SessionStart hook can inject a large `hookAdditionalContext` blob (CLAUDE.md,
+    // memory files, ...) as one of the transcript's first lines — observed up to ~100KB
+    // on real sessions — which pushed the codemie_session_start marker past both the old
+    // 4KB byte budget and the old 10-line cap. 153 CodeMie-owned Claude sessions were
+    // misreported as native-external for exactly this reason. 256KB covers the worst case
+    // seen with headroom; scanning is bounded by bytes read, not by a line count, since a
+    // large early line (not the marker) can consume most of a small budget by itself.
+    const SCAN_BYTES = 262_144;
     try {
       const fd = openSync(filePath, 'r');
-      const buf = Buffer.alloc(4096);
+      const buf = Buffer.alloc(SCAN_BYTES);
       let bytesRead: number;
       try {
-        bytesRead = readSync(fd, buf, 0, 4096, 0);
+        bytesRead = readSync(fd, buf, 0, SCAN_BYTES, 0);
       } finally {
         closeSync(fd);
       }
@@ -212,7 +220,6 @@ export const realNativeDeps: NativeLoaderDeps = {
         .subarray(0, bytesRead)
         .toString('utf-8')
         .split('\n')
-        .slice(0, 10)
         .some((line) => {
           try {
             return (JSON.parse(line) as { type?: string }).type === 'codemie_session_start';

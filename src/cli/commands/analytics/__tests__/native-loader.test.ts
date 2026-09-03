@@ -351,6 +351,40 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
     const { realNativeDeps } = await import('../native-loader.js');
     expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
   });
+
+  it('finds the in-band marker past a 4KB early SessionStart hook payload (no sidecar/index match)', async () => {
+    // Reproduces 153 real Claude sessions misreported as native-external: a SessionStart
+    // hook (e.g. one injecting CLAUDE.md/memory content via hookAdditionalContext) can push
+    // codemie_session_start well past the old 4KB/10-line scan budget — observed up to ~100KB
+    // on real transcripts.
+    const bigHookLine = JSON.stringify({
+      type: 'user',
+      attachment: { type: 'hook_success', hookName: 'SessionStart:clear', content: 'x'.repeat(80_000) },
+    });
+    const noSidecarTranscript = join(mockSessionsDir, 'no-sidecar-late-marker.jsonl');
+    const lines = [
+      '{"type":"mode","mode":"normal"}',
+      bigHookLine,
+      '{"type":"codemie_session_start"}',
+      '{"type":"user"}',
+    ];
+    writeFileSync(noSidecarTranscript, lines.join('\n') + '\n');
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(noSidecarTranscript)).toBe(true);
+  });
+
+  it('still returns false when no marker exists anywhere in a large early-line transcript', async () => {
+    const bigHookLine = JSON.stringify({
+      type: 'user',
+      attachment: { type: 'hook_success', hookName: 'SessionStart:clear', content: 'x'.repeat(80_000) },
+    });
+    const noMarkerTranscript = join(mockSessionsDir, 'no-marker-large.jsonl');
+    writeFileSync(noMarkerTranscript, [bigHookLine, '{"type":"user"}'].join('\n') + '\n');
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(noMarkerTranscript)).toBe(false);
+  });
 });
 
 describe('synthesizeCodexRawSession', () => {
