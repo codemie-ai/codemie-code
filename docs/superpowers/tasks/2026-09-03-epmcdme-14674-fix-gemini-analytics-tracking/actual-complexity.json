@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "generated": "2026-09-03T10:45:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "11-14",
+  "files_changed": 6,
+  "routing": "standard",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches Gemini plugin adapter, metrics processor, and pricing utility."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Deals with stream JSONL parsing, in-place turn message merging, and Serena MCP tool name resolution."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files (3 source files, 3 test files)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Two layers: session parsing adapter and metrics processor."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
