@@ -412,6 +412,7 @@ export class AnalyticsAggregator {
       startTime: startEvent.data.startTime,
       endTime,
       duration,
+      activeDurationMs: raw.activeDurationMs,
       totalTurns: deltas.length,
       totalFileOperations,
       totalLinesAdded,

@@ -118,6 +118,14 @@ export interface RawSessionData {
    * `completed_`-prefixed metadata).
    */
   agentSessionFile?: string;
+  /**
+   * CodeMie's own tracked active time for this session, in ms — set on both active and
+   * completed sessions, independent of `endEvent`. Present whenever the session JSON
+   * carries it; the aggregator prefers this over the endTime-minus-startTime wall-clock
+   * span, which counts idle/overnight gaps as "duration" and can overstate active work
+   * by an order of magnitude on a long-lived resumed session.
+   */
+  activeDurationMs?: number;
 }
 
 /**
@@ -264,7 +272,9 @@ export class MetricsDataLoader {
         // Metrics file doesn't exist or can't be read - that's okay, session might have no metrics yet
       }
 
-      return { sessionId, startEvent, endEvent, deltas, agentSessionFile: sessionMetadata.correlation?.agentSessionFile };
+      const activeDurationMs =
+        typeof sessionMetadata.activeDurationMs === 'number' ? sessionMetadata.activeDurationMs : undefined;
+      return { sessionId, startEvent, endEvent, deltas, agentSessionFile: sessionMetadata.correlation?.agentSessionFile, activeDurationMs };
     } catch {
       return null;
     }

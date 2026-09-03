@@ -87,7 +87,15 @@ export interface SessionAnalytics {
   primaryBranch: string;
   startTime: number;
   endTime: number;
+  /** Wall-clock span: endTime − startTime (or endEvent.data.duration). Counts idle/overnight
+   *  gaps — a session resumed across days reports a "duration" far larger than any time
+   *  actually spent working. See {@link activeDurationMs} for CodeMie's tracked active time. */
   duration: number;
+  /** CodeMie's own tracked active time, ms — present only when the source session JSON
+   *  carried `activeDurationMs`. Session-level only: deliberately not rolled up into branch/
+   *  project/root aggregates, which have their own known double-counting issue for a session
+   *  touching multiple branches (aggregateBranchFromDeltas) that this field must not inherit. */
+  activeDurationMs?: number;
 
   // Counts
   totalTurns: number;

@@ -13,12 +13,26 @@ import type {
   ToolStats,
   LanguageStats
 } from './types.js';
+import type { SessionCostIndex, CostSummary } from './cost/types.js';
 
 export class AnalyticsFormatter {
   private verbose: boolean;
+  private costIndex?: SessionCostIndex;
+  private costSummary?: CostSummary;
 
-  constructor(verbose = false) {
+  /**
+   * `costIndex`/`costSummary` are optional so a caller with no cost data (e.g. an OTEL
+   * source with none, or cost enrichment disabled) still gets the rest of the console
+   * output — cost lines are simply omitted rather than printed as $0.
+   */
+  constructor(verbose = false, costIndex?: SessionCostIndex, costSummary?: CostSummary) {
     this.verbose = verbose;
+    this.costIndex = costIndex;
+    this.costSummary = costSummary;
+  }
+
+  private formatCurrency(usd: number): string {
+    return `$${usd.toFixed(2)}`;
   }
 
   /**
@@ -30,6 +44,18 @@ export class AnalyticsFormatter {
     console.log(chalk.bold.cyan('='.repeat(60)));
 
     this.displayStats(analytics);
+
+    // Total cost across every session the run considered (not just this root's, which the
+    // aggregate stats above are — cost enrichment runs once over the whole filtered set, so
+    // this is printed here rather than re-derived per project/branch, where a session that
+    // touched multiple branches would otherwise have its cost double-counted the same way
+    // aggregateBranchFromDeltas already double-counts duration/session-count).
+    if (this.costSummary) {
+      const { totalCostUSD, pricedSessions, totalSessions } = this.costSummary;
+      console.log(
+        `${chalk.cyan('Est. Cost:')} ${this.formatCurrency(totalCostUSD)} ${chalk.dim(`(priced ${pricedSessions}/${totalSessions} sessions — native agent logs required for the rest)`)}`
+      );
+    }
 
     // Display model distribution
     if (analytics.models.length > 0) {
@@ -173,8 +199,25 @@ export class AnalyticsFormatter {
           ? chalk.gray('native [not CodeMie-managed — analytics only]')
           : session.provider;
     console.log(chalk.gray(`      Provider:  `) + providerLabel);
-    console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)}`));
+    console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)} (wall-clock span)`));
+    if (session.activeDurationMs != null) {
+      // CodeMie's own tracked active time — can be an order of magnitude below the
+      // wall-clock span above for a session resumed across an idle gap (overnight,
+      // waiting on a scheduled wakeup, etc).
+      console.log(chalk.gray(`      Active:    ${this.formatDuration(session.activeDurationMs)}`));
+    }
     console.log(chalk.gray(`      Turns:     ${session.totalTurns}`));
+    const sessionCost = this.costIndex?.get(session.sessionId);
+    if (sessionCost) {
+      const costLabel = sessionCost.priced
+        ? this.formatCurrency(sessionCost.costUSD)
+        : chalk.dim('no usage recovered from the native log');
+      console.log(chalk.gray(`      Cost:      ${costLabel}`));
+    } else if (this.costIndex) {
+      // costIndex was supplied but has no entry for this session — its native log
+      // couldn't be located or read (deleted transcript, unsupported agent format, ...).
+      console.log(chalk.gray(`      Cost:      ${chalk.dim('unknown (native log not found)')}`));
+    }
 
     // Models
     if (session.models.length > 0) {
