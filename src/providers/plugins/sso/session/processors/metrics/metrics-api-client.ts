@@ -492,7 +492,8 @@ export class MetricsSender {
     status: SessionEndStatus,
     durationMs: number,
     error?: SessionError,
-    activeDurationMs?: number
+    activeDurationMs?: number,
+    tokens?: { input?: number; output?: number; cacheRead?: number; cacheCreation?: number }
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -515,6 +516,10 @@ export class MetricsSender {
       // Session metadata
       session_duration_ms: durationMs,
       ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
+      ...(tokens?.input !== undefined && tokens.input > 0 && { input_tokens: tokens.input }),
+      ...(tokens?.output !== undefined && tokens.output > 0 && { output_tokens: tokens.output }),
+      ...(tokens?.cacheRead !== undefined && tokens.cacheRead > 0 && { cache_read_tokens: tokens.cacheRead }),
+      ...(tokens?.cacheCreation !== undefined && tokens.cacheCreation > 0 && { cache_creation_tokens: tokens.cacheCreation }),
       start_time: session.startTime,
       end_time: Date.now(),
       had_errors: status.status === 'failed',

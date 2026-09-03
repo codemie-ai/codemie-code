@@ -267,6 +267,36 @@ describe('MetricsSender upload contract', () => {
     expect(server.captured).toHaveLength(0);
   });
 
+  it('includes non-zero token fields on sendSessionEnd when tokens are provided', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc' });
+    await sender.sendSessionEnd(
+      makeSession(home), home, { status: 'completed' }, 1000, undefined, undefined,
+      { input: 100, output: 40, cacheRead: 5, cacheCreation: 0 }
+    );
+
+    const payload = JSON.parse(server.last.body) as SessionMetric;
+    const attrs = payload.attributes as { input_tokens?: number; output_tokens?: number; cache_read_tokens?: number; cache_creation_tokens?: number };
+    expect(attrs.input_tokens).toBe(100);
+    expect(attrs.output_tokens).toBe(40);
+    expect(attrs.cache_read_tokens).toBe(5);
+    expect(attrs.cache_creation_tokens).toBeUndefined();
+  });
+
+  it('omits all token fields when sendSessionEnd is called without a tokens argument', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc' });
+    await sender.sendSessionEnd(makeSession(home), home, { status: 'completed' }, 1000);
+
+    const payload = JSON.parse(server.last.body) as SessionMetric;
+    const attrs = payload.attributes as { input_tokens?: number };
+    expect(attrs.input_tokens).toBeUndefined();
+  });
+
   it('sends aggregated tool-usage metrics verbatim via sendSessionMetric', async () => {
     server = new MockServer();
     await server.start(jsonOk);
