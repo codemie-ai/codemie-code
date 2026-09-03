@@ -144,6 +144,10 @@ class MetricsApiClient {
         files_deleted: 'files_deleted' in metric.attributes ? metric.attributes.files_deleted : undefined,
         total_lines_added: 'total_lines_added' in metric.attributes ? metric.attributes.total_lines_added : undefined,
         total_lines_removed: 'total_lines_removed' in metric.attributes ? metric.attributes.total_lines_removed : undefined,
+        input_tokens: 'input_tokens' in metric.attributes ? metric.attributes.input_tokens : undefined,
+        output_tokens: 'output_tokens' in metric.attributes ? metric.attributes.output_tokens : undefined,
+        cache_read_tokens: 'cache_read_tokens' in metric.attributes ? metric.attributes.cache_read_tokens : undefined,
+        cache_creation_tokens: 'cache_creation_tokens' in metric.attributes ? metric.attributes.cache_creation_tokens : undefined,
       },
     });
 
@@ -557,6 +561,10 @@ export class MetricsSender {
             status: status.status,
             reason: status.reason,
             duration_ms: durationMs,
+            ...(attributes.input_tokens !== undefined && { input_tokens: attributes.input_tokens }),
+            ...(attributes.output_tokens !== undefined && { output_tokens: attributes.output_tokens }),
+            ...(attributes.cache_read_tokens !== undefined && { cache_read_tokens: attributes.cache_read_tokens }),
+            ...(attributes.cache_creation_tokens !== undefined && { cache_creation_tokens: attributes.cache_creation_tokens }),
             ...(error && { error_type: error.type })
           }
         }
