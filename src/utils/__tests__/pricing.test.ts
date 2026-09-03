@@ -36,6 +36,23 @@ describe('lookupPrice', () => {
     expect(k2Dash!.output).toBe(forCoding!.output);
   });
 
+  it('returns a price for Gemini models', () => {
+    const flash37 = lookupPrice('gemini-3.7-flash');
+    expect(flash37).not.toBeNull();
+    expect(flash37!.input).toBe(0.5);
+    expect(flash37!.output).toBe(3.0);
+
+    const flash35 = lookupPrice('gemini-3-5-flash');
+    expect(flash35).not.toBeNull();
+    expect(flash35!.input).toBe(0.5);
+    expect(flash35!.output).toBe(3.0);
+
+    const gemini = lookupPrice('gemini');
+    expect(gemini).not.toBeNull();
+    expect(gemini!.input).toBe(0.5);
+    expect(gemini!.output).toBe(3.0);
+  });
+
   it('matches Kimi Code wire-log model names via normalization', () => {
     const p = lookupPrice('kimi-code/kimi-for-coding');
     expect(p).not.toBeNull();
