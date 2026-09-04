@@ -35,6 +35,30 @@ async function resolveClaudeCommand(): Promise<{ command: string; shell: boolean
   };
 }
 
+async function runClaudeMcpCommand(claudeCommand: string, useShell: boolean, args: string[]): Promise<never> {
+  try {
+    const result = await exec(claudeCommand, args, {
+      interactive: true,
+      shell: useShell,
+    });
+    process.exit(result.code);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('ENOENT')) {
+      console.error('claude CLI not found. Install Claude Code: https://claude.ai/code');
+      process.exit(1);
+    }
+
+    if (message.includes('terminated by signal')) {
+      process.exit(1);
+    }
+
+    // exec rejects on non-zero exit in interactive mode — extract and propagate the code
+    const match = /code (\d+)/.exec(message);
+    process.exit(match ? parseInt(match[1], 10) : 1);
+  }
+}
+
 function createMcpAddCommand(): Command {
   const command = new Command('add');
 
@@ -82,28 +106,64 @@ function createMcpAddCommand(): Command {
 
       args.push(name, '--', 'codemie-mcp-proxy', url);
 
-      try {
-        const result = await exec(claudeCommand, args, {
-          interactive: true,
-          shell: useShell,
-        });
-        process.exit(result.code);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('ENOENT')) {
-          console.error('claude CLI not found. Install Claude Code: https://claude.ai/code');
-          process.exit(1);
-        }
-
-        if (message.includes('terminated by signal')) {
-          process.exit(1);
-        }
-
-        // exec rejects on non-zero exit in interactive mode — extract and propagate the code
-        const match = /code (\d+)/.exec(message);
-        process.exit(match ? parseInt(match[1], 10) : 1);
-      }
+      await runClaudeMcpCommand(claudeCommand, useShell, args);
     });
+
+  return command;
+}
+
+function createMcpRemoveCommand(): Command {
+  const command = new Command('remove');
+
+  command
+    .description('Remove a registered MCP server')
+    .argument('<name>', 'Name of the MCP server to remove')
+    .option('--scope <scope>', 'Scope for the MCP server (e.g. project, user)')
+    .action(async (name: string, options: { scope?: string }) => {
+      // Reject names that look like flags to avoid corrupting the claude command
+      if (name.startsWith('-')) {
+        console.error(`Invalid server name: ${name}`);
+        process.exit(1);
+      }
+
+      let claudeCommand: string;
+      let useShell: boolean;
+      try {
+        ({ command: claudeCommand, shell: useShell } = await resolveClaudeCommand());
+      } catch {
+        console.error('claude CLI not found. Install Claude Code: https://claude.ai/code');
+        process.exit(1);
+      }
+
+      const args: string[] = ['mcp', 'remove'];
+
+      if (options.scope) {
+        args.push('--scope', options.scope);
+      }
+
+      args.push(name);
+
+      await runClaudeMcpCommand(claudeCommand, useShell, args);
+    });
+
+  return command;
+}
+
+function createMcpListCommand(): Command {
+  const command = new Command('list');
+
+  command.description('List registered MCP servers').action(async () => {
+    let claudeCommand: string;
+    let useShell: boolean;
+    try {
+      ({ command: claudeCommand, shell: useShell } = await resolveClaudeCommand());
+    } catch {
+      console.error('claude CLI not found. Install Claude Code: https://claude.ai/code');
+      process.exit(1);
+    }
+
+    await runClaudeMcpCommand(claudeCommand, useShell, ['mcp', 'list']);
+  });
 
   return command;
 }
@@ -111,5 +171,7 @@ function createMcpAddCommand(): Command {
 export function createMcpCommand(): Command {
   const mcp = new Command('mcp').description('Manage MCP servers');
   mcp.addCommand(createMcpAddCommand());
+  mcp.addCommand(createMcpRemoveCommand());
+  mcp.addCommand(createMcpListCommand());
   return mcp;
 }
