@@ -94,13 +94,24 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
     },
     'claude': {
       enrichArgs(args: string[], _config: AgentConfig): string[] {
-        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+        let result = args;
 
-        if (!pluginDir || args.some(arg => arg === '--plugin-dir')) {
-          return args;
+        // Carry the explicit CLI --model straight through to the claude binary.
+        // Sourced from CODEMIE_CLI_MODEL (set by AgentCLI only when the user passed
+        // -m/--model this launch) — never from the stored profile, so a pre-existing
+        // profile's stale model is ignored. Claude Code owns entitlement/refusal.
+        const cliModel = process.env.CODEMIE_CLI_MODEL;
+        const hasModelFlag = result.some(arg => arg === '--model' || arg.startsWith('--model='));
+        if (cliModel && !hasModelFlag) {
+          result = ['--model', cliModel, ...result];
         }
 
-        return ['--plugin-dir', pluginDir, ...args];
+        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+        if (pluginDir && !result.some(arg => arg === '--plugin-dir')) {
+          result = ['--plugin-dir', pluginDir, ...result];
+        }
+
+        return result;
       }
     }
   },

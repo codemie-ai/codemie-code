@@ -253,15 +253,22 @@ async function handlePluginSetup(
 
     // Step 3: Model selection
     let selectedModel: string;
-    const preselectedModel = setupSteps.selectModel
-      ? await setupSteps.selectModel(credentials, models, providerTemplate)
-      : undefined;
-
-    if (preselectedModel) {
-      selectedModel = preselectedModel;
-      logger.success(`Model selected automatically: ${selectedModel}`);
+    if (providerName === ProviderName.ANTHROPIC_SUBSCRIPTION) {
+      // Model is chosen per session by Claude Code + the user's Anthropic
+      // subscription; storing one here would never take effect (exportEnvVars
+      // blanks it) and would later be shown as a stale value.
+      selectedModel = '';
     } else {
-      selectedModel = await promptForModelSelection(models, providerTemplate);
+      const preselectedModel = setupSteps.selectModel
+        ? await setupSteps.selectModel(credentials, models, providerTemplate)
+        : undefined;
+
+      if (preselectedModel) {
+        selectedModel = preselectedModel;
+        logger.success(`Model selected automatically: ${selectedModel}`);
+      } else {
+        selectedModel = await promptForModelSelection(models, providerTemplate);
+      }
     }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama)

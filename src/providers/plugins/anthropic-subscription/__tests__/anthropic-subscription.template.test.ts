@@ -190,6 +190,51 @@ describe('AnthropicSubscriptionTemplate', () => {
     });
   });
 
+  describe('agentHooks - enrichArgs (claude) --model passthrough', () => {
+    beforeEach(() => {
+      delete process.env.CODEMIE_CLI_MODEL;
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+    });
+    afterEach(() => {
+      delete process.env.CODEMIE_CLI_MODEL;
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+    });
+
+    const enrich = (args: string[]): string[] => {
+      const hook = AnthropicSubscriptionTemplate.agentHooks?.['claude'];
+      return hook!.enrichArgs!(args, { agent: 'claude' });
+    };
+
+    it('injects --model when CODEMIE_CLI_MODEL is set', () => {
+      process.env.CODEMIE_CLI_MODEL = 'claude-opus-4-5';
+      expect(enrich(['--task', 'hi'])).toEqual(['--model', 'claude-opus-4-5', '--task', 'hi']);
+    });
+
+    it('injects nothing when CODEMIE_CLI_MODEL is unset', () => {
+      expect(enrich(['--task', 'hi'])).toEqual(['--task', 'hi']);
+    });
+
+    it('does not double-inject when --model is already present', () => {
+      process.env.CODEMIE_CLI_MODEL = 'claude-opus-4-5';
+      expect(enrich(['--model', 'claude-haiku-4-5'])).toEqual(['--model', 'claude-haiku-4-5']);
+    });
+
+    it('does not double-inject when --model=value (equals form) is already present', () => {
+      // Reachable only via raw passthrough after `--` (e.g. `-m X -- --model=Y`); the
+      // guard must still recognise the equals form so the binary never gets two --model.
+      process.env.CODEMIE_CLI_MODEL = 'claude-opus-4-5';
+      expect(enrich(['--model=claude-haiku-4-5'])).toEqual(['--model=claude-haiku-4-5']);
+    });
+
+    it('composes with the --plugin-dir injection (plugin-dir first, then model)', () => {
+      process.env.CODEMIE_CLI_MODEL = 'claude-opus-4-5';
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/ext';
+      expect(enrich(['--task', 'hi'])).toEqual([
+        '--plugin-dir', '/ext', '--model', 'claude-opus-4-5', '--task', 'hi'
+      ]);
+    });
+  });
+
   describe('exportEnvVars', () => {
     it('always exports CODEMIE_API_KEY as empty string', () => {
       const env = AnthropicSubscriptionTemplate.exportEnvVars!({} as any);

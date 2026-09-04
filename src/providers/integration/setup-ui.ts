@@ -259,6 +259,18 @@ export function getAllModelChoices(
 }
 
 /**
+ * The setup-summary model line. On the Anthropic Subscription profile there is no
+ * stored model to show — the model is chosen per session by Claude Code and the
+ * user's Anthropic subscription — so state that instead of an (empty) model name.
+ */
+export function setupModelSummaryLine(provider: string, model: string): string {
+  if (provider === 'anthropic-subscription') {
+    return '🤖 Model: chosen per session by Claude Code and your Anthropic subscription';
+  }
+  return `🤖 Model: ${model}`;
+}
+
+/**
  * Display success message
  *
  * Shows formatted success message with configuration summary
@@ -270,7 +282,7 @@ export function displaySetupSuccess(
 ): void {
   console.log(chalk.bold.green(`\n✅ Profile "${profileName}" configured successfully!\n`));
   console.log(chalk.cyan(`🔗 Provider: ${provider}`));
-  console.log(chalk.cyan(`🤖 Model: ${model}`));
+  console.log(chalk.cyan(setupModelSummaryLine(provider, model)));
   console.log(chalk.cyan(`📁 Config: ~/.codemie/codemie-cli.config.json\n`));
   
   console.log(chalk.bold('  Next Steps:'));

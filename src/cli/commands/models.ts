@@ -4,8 +4,22 @@ import { ConfigLoader } from '../../utils/config.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { logger } from '../../utils/logger.js';
 import type { ModelInfo } from '../../providers/core/types.js';
+import { ProviderName } from '../../providers/core/types.js';
 
 const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
+
+/**
+ * Anthropic Subscription has no CodeMie model catalog — models come from the user's
+ * Anthropic subscription and the installed Claude Code version. `models list` explains
+ * that instead of erroring, and points the user at Claude Code's in-session /model.
+ */
+export function subscriptionModelsListMessage(): string {
+  return [
+    'Models for this profile come from your Anthropic subscription and the installed Claude Code version.',
+    'CodeMie does not maintain a model list for it.',
+    'Run codemie-claude and use /model inside Claude Code to see or change the model for a session.',
+  ].join('\n');
+}
 
 function formatTable(models: ModelInfo[]): void {
   const ID_WIDTH = 40;
@@ -63,6 +77,11 @@ export function createModelsCommand(): Command {
         if (!provider) {
           console.error(chalk.red('No provider configured. Run ' + chalk.cyan('codemie setup') + ' to get started.'));
           process.exit(1);
+        }
+
+        if (provider === ProviderName.ANTHROPIC_SUBSCRIPTION) {
+          console.log(subscriptionModelsListMessage());
+          return; // exit 0 — this is informational, not an error
         }
 
         if (UNSUPPORTED_PROVIDERS.has(provider)) {

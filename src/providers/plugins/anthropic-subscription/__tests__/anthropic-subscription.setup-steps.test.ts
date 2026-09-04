@@ -93,5 +93,15 @@ describe('AnthropicSubscriptionSetupSteps', () => {
 
       expect(config.baseUrl).toBe(AnthropicSubscriptionTemplate.defaultBaseUrl);
     });
+
+    it('stores no model when setup passes an empty model (chosen per session by Claude Code)', () => {
+      const config = AnthropicSubscriptionSetupSteps.buildConfig(
+        { baseUrl: 'https://api.anthropic.com', apiKey: '', additionalConfig: { authMethod: 'manual' } },
+        ''
+      );
+
+      expect(config.model).toBeUndefined();
+      expect(config.provider).toBe('anthropic-subscription');
+    });
   });
 });

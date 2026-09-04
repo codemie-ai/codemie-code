@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "gate": "code-review.final",
+  "decision": "request-changes",
+  "confidence": "high",
+  "risk_flags": [],
+  "rationale": "Three lenses ran (blind, edge-case, acceptance); the edge-case lens (repo access) cleared all functional concerns except one confirmed by two lenses. One real correctness bug (CR-001: stale shell CODEMIE_CLI_MODEL leaks into a no---model subscription launch, violating the D3 contract and the 'no --model -> Claude Code default' AC) and two approved-plan test gaps (CR-003 moonshot regression guard; CR-002 buildConfig-empty test + field-omit cleanliness). Dismissed 3 non-issues: --model= dedup form and dual-provider-source (edge-case verified safe for real invocation paths), and an untyped-params false positive from an abbreviated blind-lens diff. Standards clean: 5 Conventional commits with Refs: EPMCDME-14341, code-quality and security pass.",
+  "business_review": [
+    {"criterion": "subscription --model reaches claude; no --model -> default (CS1+CS2)", "status": "partial", "notes": "Set path correct; missing clear-before-set lets a shell-preset value leak (CR-001)."},
+    {"criterion": "model stated to user at launch (CS4)", "status": "pass"},
+    {"criterion": "setup not asked for a model; per-session summary (CS6)", "status": "partial", "notes": "Prompt skipped and summary wired; buildConfig still returns model:'' and test-plan item 5 unmet (CR-002)."},
+    {"criterion": "models list explains source, no unsupported error (CS5)", "status": "pass"},
+    {"criterion": "version: newer->continue default; older note; below-min unchanged; subscription-scoped (CS3/D2)", "status": "pass"},
+    {"criterion": "D1 no entitlement logic; refusal relayed", "status": "pass"},
+    {"criterion": "D4 tests included", "status": "partial", "notes": "Items 2 (moonshot guard) and 5 (buildConfig-empty) missing (CR-002, CR-003)."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow (Conventional Commits + ticket ref)", "status": "pass", "notes": "5 feat(scope) commits, subjects <100, Refs: EPMCDME-14341 on all."},
+    {"standard": "code-quality", "status": "pass", "notes": "ESM .js imports, explicit return types on new exports, no any, why-only comments."},
+    {"standard": "security", "status": "pass", "notes": "No secrets/injection/unsafe process handling; CODEMIE_CLI_MODEL is a model-id string."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 205,
+      "problem": "CODEMIE_CLI_MODEL is set only when options.model is truthy but never cleared first. A value already present in process.env (e.g. shell-exported) survives into anthropic-subscription enrichArgs on a launch with no --model.",
+      "impact": "Violates the D3 env-var contract ('only when the user passed -m/--model this launch') and the AC 'no --model -> Claude Code default': a stale value is silently injected as --model while the banner still shows the per-session phrase.",
+      "recommendation": "Add `delete process.env.CODEMIE_CLI_MODEL;` immediately before the conditional set so each launch starts clean."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/anthropic-subscription/anthropic-subscription.setup-steps.ts",
+      "line": 126,
+      "problem": "buildConfig still returns model: selectedModel, so the subscription profile persists model:'' rather than omitting the field; spec CS6 says 'stores no model' and test-plan item 5 (buildConfig stores no model) is unimplemented. Functionally inert at runtime (edge-case lens verified) but leaves an empty-string in persisted config.",
+      "impact": "Spec-fidelity gap and an empty-string-in-config value that can surface on a get->update round-trip; the new behavior is untested.",
+      "recommendation": "Omit the field for an empty model: `...(selectedModel ? { model: selectedModel } : {})`; add a test asserting buildConfig(creds, '').model is undefined."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/moonshot-subscription/__tests__/moonshot-subscription.template.test.ts",
+      "line": 1,
+      "problem": "Spec test-plan item 2 (moonshot-subscription enrichArgs unaffected by CODEMIE_CLI_MODEL) has no test. Scope was verified manually (0 moonshot files changed) but the regression guard the plan committed to is absent.",
+      "impact": "No automated guard that the new CODEMIE_CLI_MODEL mechanism stays anthropic-subscription-only; a future shared-base edit could regress moonshot silently.",
+      "recommendation": "Add a test setting CODEMIE_CLI_MODEL and asserting the moonshot template does not inject --model (unchanged args)."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "gate": "code-review.check",
+  "decision": "approve",
+  "confidence": "high",
+  "risk_flags": [],
+  "rationale": "All three prior blocking findings resolved against the fix-up diff (6 files, +91/-6). CR-001: applyCliModelEnv deletes CODEMIE_CLI_MODEL before the conditional set, closing the stale-shell-value leak, with a test covering the shell-preset case. CR-002: buildConfig omits the model field for an empty model and a buildConfig('')->undefined test was added. CR-003: moonshot regression guard added and passing. No new high-risk issue introduced by the fix-up (env helper is a pure delete-then-set; buildConfig spread is clean; remainder is test-only), so no confirmation pass was required. Full unit suite 3969/3969, lint and typecheck clean.",
+  "business_review": [
+    {"criterion": "subscription --model reaches claude; no --model -> default (CS1+CS2)", "status": "pass", "notes": "CR-001 fix removes the stale-value leak; no --model now reliably yields Claude Code default."},
+    {"criterion": "setup not asked for a model; per-session summary (CS6)", "status": "pass", "notes": "CR-002 fix: buildConfig stores no model field."},
+    {"criterion": "D4 tests included", "status": "pass", "notes": "Test-plan items 2 and 5 now implemented."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow (Conventional Commits + ticket ref)", "status": "pass", "notes": "Fix-up: fix(agents), fix(providers), test(providers), all with Refs: EPMCDME-14341."},
+    {"standard": "code-quality", "status": "pass"},
+    {"standard": "security", "status": "pass"}
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "applyCliModelEnv clears before set; tested including shell-preset case."},
+    {"id": "CR-002", "status": "resolved", "notes": "buildConfig omits model field when empty; buildConfig('')->undefined tested."},
+    {"id": "CR-003", "status": "resolved", "notes": "moonshot regression guard added and passing."}
+  ],
+  "findings": []
+}

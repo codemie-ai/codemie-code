@@ -15,6 +15,7 @@
 | OpenCode | Open-source AI assistant | SSO/API Key | Via CodeMie proxy |
 | MCP Servers | Remote MCP tool servers | OAuth 2.0 (auto) | `codemie-mcp-proxy` |
 | Enterprise SSO | Corporate auth | SAML/OAuth | `SSO_BASE_URL` |
+| Anthropic Subscription | Claude via user's Anthropic account | None (subscription) | `anthropic-subscription` provider |
 
 ---
 
@@ -276,6 +277,43 @@ Claude Code injects `!bash` commands as synthetic `type:'user'` messages. The pr
 `file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:667-688`, `856-871`
 
 ---
+
+## Anthropic Subscription Provider
+
+The `anthropic-subscription` provider runs Claude Code against the user's own Anthropic subscription rather than a CodeMie-managed API key. Its model-selection pipeline differs from all other providers.
+
+### Model Is Not Stored in the Profile
+
+Setup omits the `model` field from the profile entirely when none is selected; an empty string is never persisted. The model is chosen per-session inside Claude Code (via `/model`).
+
+| Concern | Behavior |
+|---|---|
+| Profile `model` field | Absent — conditionally omitted at setup, never stored as empty string |
+| Launch banner model line | `CODEMIE_CLI_MODEL` value if set; else `'chosen per session by Claude Code / your Anthropic subscription'` |
+| `models list` command | Prints an informational message; exits 0 — no CodeMie model catalog exists for this provider |
+
+`file:src/providers/plugins/anthropic-subscription/anthropic-subscription.setup-steps.ts:129`
+`file:src/agents/core/launch-model-display.ts:13`
+`file:src/cli/commands/models.ts:82`
+
+### CODEMIE_CLI_MODEL Side-Channel
+
+An explicit `-m/--model` flag writes `CODEMIE_CLI_MODEL` via `applyCliModelEnv()`, clearing any pre-existing value first (stale-shell guard). The `enrichArgs` hook for the `claude` agent reads this var and prepends `--model <value>` to the claude binary argv; a dedup guard prevents double injection when `--model` or `--model=` is already present. Without an explicit `-m`, the var is unset and Claude Code picks the model independently.
+
+| Step | File | Line |
+|---|---|---|
+| Set by AgentCLI | `src/agents/core/AgentCLI.ts` | 210 |
+| Implementation | `src/agents/core/cli-model-env.ts` | 1 |
+| Consumed in enrichArgs | `src/providers/plugins/anthropic-subscription/anthropic-subscription.template.ts` | 103 |
+
+This is the only provider that carries the CLI model via a side-channel env var. All other providers use the `CODEMIE_MODEL → ANTHROPIC_MODEL` pipeline or equivalent.
+
+### Version-Prompt Policy
+
+When installed Claude Code is newer than the CodeMie-verified pin, the upgrade/downgrade prompt defaults to `'continue'` for `anthropic-subscription` (keep the newer binary — model availability depends on it) and `'install'` for all other providers (downgrade to tested pin). The minimum-version hard block is unaffected.
+
+`file:src/agents/core/version-prompt-policy.ts:1`
+`file:src/agents/core/BaseAgentAdapter.ts:472`
 
 ## skills.sh Wrapper (`codemie skills`)
 

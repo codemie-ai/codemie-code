@@ -1,0 +1,92 @@
+{
+  "task": "Add Anthropic Subscription model access support (EPMCDME-14341): stale-env clearing, per-session model display in launch banner, subscription-aware version-prompt defaults, buildConfig model-omit fix, moonshot guard, and three pure-helper extractions across agent core, CLI commands, and provider plugin layers.",
+  "generated": "2026-08-31T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "AgentCLI, BaseAgentAdapter, cli-model-env helper, launch-model-display helper, version-prompt-policy helper, models CLI command, setup CLI command, setup-ui utilities, AnthropicSubscriptionTemplate, AnthropicSubscriptionSetupSteps",
+      "layers": "Agent-Tool, Workflow, CLI, Service, Provider-Plugin"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Three code-review fix-ups (stale-env clear, buildConfig omit, moonshot guard) emerged during review rather than upfront; all were low-risk additive changes fully resolved before merge — no unresolved gaps remain"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Authentication flow touched in AnthropicSubscriptionSetupSteps (Claude browser login orchestration, CodeMie SSO auth); template.ts beforeRun removes ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY and runs the Claude extension installer; moonshot guard deletes ANTHROPIC_DEFAULT_*_MODEL and CLAUDE_CODE_SUBAGENT_MODEL to prevent cross-provider contamination",
+      "mitigation": "All auth changes are additive conditional branches bounded to the anthropic-subscription provider code path; pure-helper extractions (cli-model-env.ts, launch-model-display.ts, version-prompt-policy.ts) are trivially reversible; existing AgentCLI and BaseAgentAdapter patterns reused throughout with no structural changes to those base classes"
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/agents/core/AgentCLI.ts",
+        "src/agents/core/BaseAgentAdapter.ts",
+        "src/cli/commands/models.ts",
+        "src/cli/commands/setup.ts",
+        "src/providers/integration/setup-ui.ts",
+        "src/providers/plugins/anthropic-subscription/anthropic-subscription.setup-steps.ts",
+        "src/providers/plugins/anthropic-subscription/anthropic-subscription.template.ts"
+      ],
+      "new_files": 11,
+      "new_file_list": [
+        "src/agents/core/cli-model-env.ts",
+        "src/agents/core/launch-model-display.ts",
+        "src/agents/core/version-prompt-policy.ts",
+        "8 test files (names not provided in changed_files input; ~3 new for the new helpers + ~5 updated for modified sources)"
+      ],
+      "affected_dirs": [
+        "src/agents/core",
+        "src/cli/commands",
+        "src/providers/integration",
+        "src/providers/plugins/anthropic-subscription"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["CLI", "Service", "Agent-Tool", "Provider-Plugin"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 18,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "diffstat N=18 maps to 16+ = XXL: 7 modified source files (AgentCLI.ts, BaseAgentAdapter.ts, models.ts, setup.ts, setup-ui.ts, anthropic-subscription.setup-steps.ts, anthropic-subscription.template.ts) + 3 new pure-helper modules (cli-model-env.ts, launch-model-display.ts, version-prompt-policy.ts) + 8 test files"
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Bumped M (3) to L (4) by 'affects multiple agents' red flag: applyCliModelEnv() inserted into AgentCLI.ts runs on every agent launch regardless of provider; four distinct component clusters touched: agent core base classes (AgentCLI + BaseAgentAdapter), three new pure-helper modules, two CLI commands, and the full anthropic-subscription plugin (template + setup-steps)"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Bumped M (3) to L (4) by 'affects authentication or authorization' red flag: AnthropicSubscriptionSetupSteps orchestrates Claude browser login and CodeMie SSO auth; template.ts beforeRun hook removes ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY before the Claude process starts and invokes the extension installer; moonshot guard targets ANTHROPIC_DEFAULT_*_MODEL and CLAUDE_CODE_SUBAGENT_MODEL to block cross-provider contamination"
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct architectural layers: CLI (models.ts + setup.ts commands), Service (setup-ui.ts provider-integration utilities), Agent-Tool/Workflow (AgentCLI + BaseAgentAdapter base classes + three helpers), Provider-Plugin (anthropic-subscription template and setup-steps) — exceeds the M threshold of 2-3 layers; no persistence/migration layer involved"
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): applyCliModelEnv() call added to AgentCLI.ts handleRun() runs on every agent launch path — 'affects multiple workflows or agents' red flag.",
+    "Technical Risk bumped from M (3) to L (4): AnthropicSubscriptionSetupSteps orchestrates Claude browser login and CodeMie SSO authentication; template.ts beforeRun removes Anthropic auth env vars from the spawned process environment — 'affects authentication or authorization' red flag."
+  ],
+  "split_recommendation": null
+}

@@ -123,7 +123,10 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
       provider: 'anthropic-subscription',
       baseUrl: credentials.baseUrl || AnthropicSubscriptionTemplate.defaultBaseUrl,
       apiKey: '',
-      model: selectedModel,
+      // This provider stores no model — it is chosen per session by Claude Code and
+      // the user's Anthropic subscription. Omit the field entirely rather than persist
+      // an empty string when setup passes none.
+      ...(selectedModel ? { model: selectedModel } : {}),
       authMethod: 'manual',
       codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,
       codeMieProject: credentials.additionalConfig?.codeMieProject as string | undefined,

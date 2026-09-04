@@ -138,3 +138,26 @@ describe('MoonshotSubscriptionTemplate', () => {
     });
   });
 });
+
+describe('MoonshotSubscriptionTemplate - CODEMIE_CLI_MODEL isolation', () => {
+  // Regression guard: the --model passthrough is anthropic-subscription only.
+  // Moonshot pairs with the Kimi launcher and must never inject --model from
+  // CODEMIE_CLI_MODEL, even if it gains an enrichArgs hook in the future.
+  beforeEach(() => { process.env.CODEMIE_CLI_MODEL = 'claude-opus-4-5'; });
+  afterEach(() => { delete process.env.CODEMIE_CLI_MODEL; });
+
+  it('wires no claude enrichArgs and never injects --model from CODEMIE_CLI_MODEL', () => {
+    expect(MoonshotSubscriptionTemplate.agentHooks?.['claude']?.enrichArgs).toBeUndefined();
+
+    const hooks = (MoonshotSubscriptionTemplate.agentHooks ?? {}) as Record<
+      string,
+      { enrichArgs?: (args: string[], config: { agent: string }) => string[] }
+    >;
+    for (const key of Object.keys(hooks)) {
+      const enrichArgs = hooks[key]?.enrichArgs;
+      if (enrichArgs) {
+        expect(enrichArgs(['--task', 'hi'], { agent: 'kimi' })).not.toContain('--model');
+      }
+    }
+  });
+});
