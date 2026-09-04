@@ -44,7 +44,7 @@ interface GeminiSessionFile {
 interface GeminiMessage {
   id: string;
   timestamp: string;
-  type: 'user' | 'gemini';
+  type: 'user' | 'gemini' | 'assistant';
   content: string;
   toolCalls?: GeminiToolCall[];
   thoughts?: string[];
@@ -169,7 +169,9 @@ export class GeminiSessionAdapter implements SessionAdapter {
     const chatsDir = join(tmpRoot, hash, 'chats');
     let chatFiles: string[];
     try {
-      chatFiles = (await readdir(chatsDir)).filter((f) => f.endsWith('.json'));
+      chatFiles = (await readdir(chatsDir)).filter(
+        (f) => (f.endsWith('.json') || f.endsWith('.jsonl')) && !f.includes('-marker')
+      );
     } catch {
       logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
       return [];
@@ -190,9 +192,34 @@ export class GeminiSessionAdapter implements SessionAdapter {
     cutoffMs: number,
     options?: SessionDiscoveryOptions
   ): Promise<SessionDescriptor | null> {
-    let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
+    let session: { sessionId?: string; startTime?: string; lastUpdated?: string } = {};
     try {
-      session = JSON.parse(await readFile(filePath, 'utf-8'));
+      if (filePath.endsWith('.jsonl')) {
+        const content = await readFile(filePath, 'utf-8');
+        const lines = content.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            try {
+              const obj = JSON.parse(trimmed);
+              if (obj.sessionId) session.sessionId = obj.sessionId;
+              if (obj.startTime) session.startTime = obj.startTime;
+              if (obj.lastUpdated) session.lastUpdated = obj.lastUpdated;
+              if (obj.$set) {
+                if (obj.$set.startTime) session.startTime = obj.$set.startTime;
+                if (obj.$set.lastUpdated) session.lastUpdated = obj.$set.lastUpdated;
+              }
+              if (session.sessionId && session.startTime) {
+                break; // Found sufficient info
+              }
+            } catch {
+              // skip line errors
+            }
+          }
+        }
+      } else {
+        session = JSON.parse(await readFile(filePath, 'utf-8'));
+      }
     } catch {
       logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
       return null;
@@ -208,7 +235,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
     const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
 
     return {
-      sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
+      sessionId: session.sessionId ?? chatFile.replace(/\.(json|jsonl)$/, ''),
       filePath,
       projectPath: undefined,
       createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
@@ -219,13 +246,106 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
   /**
    * Parse Gemini session file to unified format.
-   * Reads JSON file (not JSONL) and extracts both raw messages and metrics.
+   * Reads JSON or JSONL file and extracts both raw messages and metrics.
    */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
-      // Read JSON file
-      const content = await readFile(filePath, 'utf-8');
-      const sessionData: GeminiSessionFile = JSON.parse(content);
+      let sessionData: GeminiSessionFile;
+
+      if (filePath.endsWith('.jsonl')) {
+        const content = await readFile(filePath, 'utf-8');
+        const lines = content.trim().split('\n');
+
+        let sessionIdFromData = sessionId;
+        let projectHash = '';
+        let startTime = '';
+        let lastUpdated = '';
+        const messageMap = new Map<string, GeminiMessage>();
+        let insertIndex = 0;
+
+        const upsertMessage = (msg: any) => {
+          if (!msg || !msg.id) return;
+          const existing = messageMap.get(msg.id);
+          if (existing) {
+            if (msg.content !== undefined) {
+              existing.content = msg.content;
+            }
+            if (msg.toolCalls !== undefined) {
+              existing.toolCalls = msg.toolCalls;
+            }
+            if (msg.tokens !== undefined) {
+              existing.tokens = msg.tokens;
+            }
+            if (msg.thoughts !== undefined) {
+              existing.thoughts = msg.thoughts;
+            }
+            if (msg.model !== undefined) {
+              existing.model = msg.model;
+            }
+            if (msg.type !== undefined) {
+              existing.type = msg.type;
+            }
+            if (msg.timestamp !== undefined) {
+              existing.timestamp = msg.timestamp;
+            }
+          } else {
+            messageMap.set(msg.id, { ...msg, _index: insertIndex++ } as any);
+          }
+        };
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const lineData = JSON.parse(trimmed);
+            if (lineData.sessionId) sessionIdFromData = lineData.sessionId;
+            if (lineData.projectHash) projectHash = lineData.projectHash;
+            if (lineData.startTime) startTime = lineData.startTime;
+            if (lineData.lastUpdated) lastUpdated = lineData.lastUpdated;
+
+            if (lineData.$set) {
+              if (Array.isArray(lineData.$set.messages)) {
+                for (const msg of lineData.$set.messages) {
+                  upsertMessage(msg);
+                }
+              }
+              if (lineData.$set.lastUpdated) lastUpdated = lineData.$set.lastUpdated;
+              if (lineData.$set.startTime) startTime = lineData.$set.startTime;
+            } else if (lineData.type === 'user' || lineData.type === 'gemini' || lineData.type === 'assistant' || lineData.type === 'info') {
+              upsertMessage(lineData);
+            } else if (Array.isArray(lineData.messages)) {
+              for (const msg of lineData.messages) {
+                upsertMessage(msg);
+              }
+            }
+          } catch {
+            logger.debug(`[gemini-adapter] Skipped malformed JSONL line in ${filePath}`);
+          }
+        }
+
+        const messagesList = Array.from(messageMap.values());
+        messagesList.sort((a, b) => {
+          const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+          const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+          if (tA !== tB) return tA - tB;
+          return (a as any)._index - (b as any)._index;
+        });
+
+        for (const m of messagesList) {
+          delete (m as any)._index;
+        }
+
+        sessionData = {
+          sessionId: sessionIdFromData,
+          projectHash,
+          startTime,
+          lastUpdated,
+          messages: messagesList,
+        };
+      } else {
+        const content = await readFile(filePath, 'utf-8');
+        sessionData = JSON.parse(content);
+      }
 
       // Handle empty message array gracefully
       if (!sessionData.messages || sessionData.messages.length === 0) {
@@ -333,18 +453,24 @@ export class GeminiSessionAdapter implements SessionAdapter {
     args: Record<string, unknown>,
     operations: Array<{ type: 'write' | 'edit' | 'delete'; path: string }>
   ): void {
-    const filePath = args.file_path as string | undefined;
+    const filePath = (args.file_path ?? args.path ?? args.relative_path ?? args.filePath ?? args.TargetFile ?? args.target_file) as string | undefined;
     if (!filePath) return;
 
     // Map tool names to operation types
-    const toolToOpType: Record<string, 'write' | 'edit' | 'delete'> = {
-      'write_file': 'write',
-      'replace': 'edit',
-      'edit_file': 'edit',
-      // Add more mappings as needed
-    };
+    const writeTools = new Set(['create_text_file', 'mcp_serena_create_text_file', 'mcp_serena_write_file', 'write_file', 'Write', 'write_to_file']);
+    const editTools = new Set([
+      'replace_content', 'mcp_serena_replace_content', 'replace_in_files', 'mcp_serena_replace_in_files',
+      'replace_symbol_body', 'mcp_serena_replace_symbol_body', 'insert_after_symbol', 'mcp_serena_insert_after_symbol',
+      'insert_before_symbol', 'mcp_serena_insert_before_symbol', 'safe_delete_symbol', 'mcp_serena_safe_delete_symbol',
+      'replace_file_content', 'replace', 'edit_file', 'Edit'
+    ]);
+    const deleteTools = new Set(['delete_file']);
 
-    const opType = toolToOpType[toolName];
+    let opType: 'write' | 'edit' | 'delete' | undefined;
+    if (writeTools.has(toolName)) opType = 'write';
+    else if (editTools.has(toolName)) opType = 'edit';
+    else if (deleteTools.has(toolName)) opType = 'delete';
+
     if (opType) {
       operations.push({ type: opType, path: filePath });
     }
