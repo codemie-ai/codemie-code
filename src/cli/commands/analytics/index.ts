@@ -87,14 +87,17 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     }
 
     // Cost: authoritative from the source (OTEL) when present; otherwise enrich from correlated
-    // logs, but only when a report needs it. Retain zero-delta sessions with real token usage.
+    // logs. Previously this only ran for --report, so the plain console command — the one most
+    // invocations use — never computed or showed cost at all. It now always runs so `Est. Cost`
+    // and each session's `Cost:` line are populated on every path; --report reuses the same
+    // result rather than re-enriching. Retain zero-delta sessions with real token usage either way.
     let costResult = cost;
     let keepSessionIds: Set<string> | undefined;
     if (cost) {
       keepSessionIds = new Set(
         [...cost.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
       );
-    } else if (wantReport) {
+    } else {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
       costResult = await enrichCosts(rawSessions, realDeps);
       keepSessionIds = new Set(
@@ -112,7 +115,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     }
 
     // Display results
-    const formatter = new AnalyticsFormatter(options.verbose);
+    const formatter = new AnalyticsFormatter(options.verbose, costResult?.index, costResult?.summary);
     formatter.displayRoot(analytics);
     formatter.displayProjects(analytics.projects);
 
@@ -125,9 +128,9 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       }
       const outputPath = options.output || AnalyticsExporter.getDefaultOutputPath(format, process.cwd());
       if (format === 'json') {
-        AnalyticsExporter.exportJSON(analytics, outputPath);
+        AnalyticsExporter.exportJSON(analytics, outputPath, costResult?.index, costResult?.summary);
       } else {
-        AnalyticsExporter.exportCSV(analytics, outputPath);
+        AnalyticsExporter.exportCSV(analytics, outputPath, costResult?.index);
       }
     }
 

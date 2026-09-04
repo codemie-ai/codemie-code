@@ -28,6 +28,10 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
   reason?: string;
   session_duration_ms: number;
   active_duration_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
   start_time?: number;
   end_time?: number;
   had_errors: boolean;
@@ -77,12 +81,16 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
 /**
  * Attributes for codemie_cli_tool_usage_total
  * Periodic sync of tool/file metrics (replaces codemie_cli_usage_total)
- * NOTE: No token fields.
+ * NOTE: tool_counts stays banned (see below) — flat numeric token totals are carried instead.
  */
 export interface ToolUsageAttributes extends MetricIdentity {
   llm_model: string;
   total_user_prompts: number;
   session_duration_ms: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
   had_errors: boolean;
   error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
   error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "generated": "2026-09-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 26,
+  "size": "XL",
+  "band_range": "27-31",
+  "files_changed": 32,
+  "routing": "split-required",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 4+ distinct subsystems that share one contract: the CLI hook processor (hook.ts — SessionEnd token summation wired into MetricsSender.sendSessionEnd), the Claude agent plugin (claude.metrics-processor.ts per-turn token capture, statusline.mjs's new live cumulative-token display), the SSO provider's metrics pipeline (MetricsWriter, metrics-aggregator.ts, metrics-api-client.ts, metrics-types.ts), the desktop telemetry runtime (DesktopTelemetryRuntime.ts — a separate long-running daemon process), and the CLI analytics command surface (aggregator/cost-enricher/data-loader/exporter/formatter/native-loader/types). All of these consume the core MetricDelta contract (src/agents/core/metrics/types.ts), which this change also touches directly — the 'touches core shared utilities' red flag applies."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for propagating live cumulative per-session token totals into a hot render path: statusline.mjs's new resolveSessionTokens scans ~/.codemie/sessions to reverse-map the Claude session id and sums a JSONL delta file on every statusline render. The implementation is careful (schema-versioned cache with TTL, a 60-file bounded directory scan, never-throw guarantees) but is new engineering territory layered onto the established JSONL-delta pattern, and 'live'/real-time cumulative display is exactly the real-time-requirements red flag."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "32 files changed (1330 insertions / 61 deletions) — well into the 16+ modified-file XXL band, spanning src/agents/, src/providers/, src/cli/commands/analytics/, src/cli/commands/hook.ts, and src/telemetry/."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "UI (statusline.mjs terminal rendering of the new Σ token segment), Persistence (MetricsWriter JSONL append/read, session-store files), Service (metrics-aggregator.ts, cost-enricher.ts, DesktopTelemetryRuntime.ts), and External (metrics-api-client.ts POSTing token totals to the CodeMie backend /v1/metrics endpoint) are all touched — full-stack-plus-integration-layer, cross-cutting across several layers."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): live/real-time cumulative session-token display (statusline.mjs resolveSessionTokens) matches the 'Real-time/Streaming requirements' red flag.",
+    "Component Scope bumped from XL (5) to XXL (6): the change touches the core shared MetricDelta contract (src/agents/core/metrics/types.ts) consumed across agents/providers/analytics — the 'touches core shared utilities' red flag.",
+    "Borderline total (26) leaned up to the XL band per the Step 6 borderline rule: both Technical Risk (XL) and Component Scope (XXL) are at or above XL, so the 26→27 transition leans higher rather than settling at L."
+  ],
+  "split_recommendation": "by-component, ordered: (1) core token-propagation plumbing — MetricDelta/MetricsWriter summation + metrics-aggregator.ts + metrics-api-client.ts/metrics-types.ts + hook.ts SessionEnd wiring — as the foundation; (2) DesktopTelemetryRuntime.ts session-end token wiring as a dependent follow-on reusing the same MetricsWriter summation; (3) statusline.mjs live cumulative-token display as an independent UI-only slice; (4) the analytics command-surface changes (aggregator/cost-enricher/exporter/formatter/native-loader) as a separate, independently reviewable slice."
+}

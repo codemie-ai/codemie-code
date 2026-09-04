@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "task": "Extend MetricDelta and agent metrics processors to capture per-turn token usage, then add backend-agreed token fields to the live /v1/metrics payload for anthropic-subscription sessions without ever computing cost client-side.",
+  "generated": "2026-09-03T12:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 5+ distinct subsystems: the core MetricDelta type (src/agents/core/metrics/types.ts), the claude.metrics-processor.ts agent-plugin processor, the SSO provider's metrics transport layer (metrics-types.ts, metrics-api-client.ts, metrics-aggregator.ts, metrics-sync-processor.ts), the CLI hook layer (hook.ts:sendSessionEndMetrics, which needs a new delta-read path built from scratch), and the desktop telemetry runtime (DesktopTelemetryRuntime.ts, a second independent caller of MetricsSender.sendSessionEnd). MetricDelta and the SessionLifecycleAttributes/ToolUsageAttributes types are shared contracts spanning every agent plugin and provider, matching the XXL 'shared contracts / architectural boundaries' criterion directly."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The task assumes 'backend-agreed token fields' already exist, but the technical analysis confirms no such field-name agreement is discoverable anywhere in this repository (no guide, ADR, or ticket reference) — the exact wire-field names (e.g. input_tokens/output_tokens vs prompt_tokens/completion_tokens) must come from an external source before implementation can safely proceed, since an unagreed or wrongly-shaped field is silently dropped by the backend with no client error."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Backend documented behavior: unrecognized or dict-shaped payload fields are silently dropped (the existing tool_counts: never ban is the precedent) — an incorrectly named or shaped token field causes undetectable metric loss in production, not a visible failure. Compounding this: the Anthropic usage object is read as untyped any today and has never had its exact field names verified against a live transcript; MetricsApiClient, SessionLifecycleAttributes/ToolUsageAttributes, buildSessionAttributes, and the claude.metrics-processor.ts usage path all show zero existing test coverage; and a second independent caller (DesktopTelemetryRuntime.sendSessionEndMetric) is affected by any signature change to sendSessionEnd."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "At least 8 files touched across 5 directories: src/agents/core/metrics/types.ts, src/agents/plugins/claude/session/processors/claude.metrics-processor.ts, src/providers/plugins/sso/session/processors/metrics/{metrics-types.ts, metrics-api-client.ts, metrics-aggregator.ts, metrics-sync-processor.ts}, src/cli/commands/hook.ts, and src/telemetry/runtime/DesktopTelemetryRuntime.ts. The technical analysis explicitly flags that the task's named 4-file surface understates the real surface once hook.ts's missing delta-read path and metrics-aggregator.ts's missing token-accumulation logic are accounted for."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): MetricDelta and the SessionLifecycleAttributes/ToolUsageAttributes payload types are shared contracts consumed by every agent plugin and provider (touches core shared utilities); the change also spans multiple workflows (session-end sync, periodic tool-usage sync) and two independent callers of MetricsSender.sendSessionEnd.",
+    "Requirements Clarity bumped from M (3) to L (4): backend-agreed token field names are undiscoverable in-repo and must be confirmed via the ticket/spec or a backend-team conversation before implementation; an unagreed field name is silently dropped by the backend with no client-side error."
+  ],
+  "split_recommendation": null
+}

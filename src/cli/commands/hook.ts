@@ -1220,6 +1220,26 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
     const wallClockDurationMs = Date.now() - session.startTime;
     const activeDurationMs = session.activeDurationMs || undefined;
 
+    // Sum per-turn Anthropic token usage across the session's metrics-delta file.
+    // MetricsWriter.readAll() tolerates a missing/empty file by returning [], so this
+    // never throws and always yields a (possibly all-zero) tokens object.
+    const { MetricsWriter } = await import(
+      '../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js'
+    );
+    const metricsWriter = new MetricsWriter(sessionId);
+    const allDeltas = await metricsWriter.readAll();
+    const tokens = allDeltas.reduce(
+      (acc, delta) => {
+        if (!delta.tokens) return acc;
+        acc.input += delta.tokens.input || 0;
+        acc.output += delta.tokens.output || 0;
+        acc.cacheRead = (acc.cacheRead || 0) + (delta.tokens.cacheRead || 0);
+        acc.cacheCreation = (acc.cacheCreation || 0) + (delta.tokens.cacheCreation || 0);
+        return acc;
+      },
+      { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }
+    );
+
     // Build status object with reason from event
     // Status is "completed" for normal session endings, with reason from Claude (e.g., "exit", "logout")
     const status = {
@@ -1282,7 +1302,8 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       status,
       wallClockDurationMs,
       undefined, // error parameter - undefined for normal termination
-      activeDurationMs
+      activeDurationMs,
+      tokens
     );
 
     logger.info('[hook:SessionEnd] Session end metrics sent successfully', {

@@ -144,6 +144,10 @@ class MetricsApiClient {
         files_deleted: 'files_deleted' in metric.attributes ? metric.attributes.files_deleted : undefined,
         total_lines_added: 'total_lines_added' in metric.attributes ? metric.attributes.total_lines_added : undefined,
         total_lines_removed: 'total_lines_removed' in metric.attributes ? metric.attributes.total_lines_removed : undefined,
+        input_tokens: 'input_tokens' in metric.attributes ? metric.attributes.input_tokens : undefined,
+        output_tokens: 'output_tokens' in metric.attributes ? metric.attributes.output_tokens : undefined,
+        cache_read_tokens: 'cache_read_tokens' in metric.attributes ? metric.attributes.cache_read_tokens : undefined,
+        cache_creation_tokens: 'cache_creation_tokens' in metric.attributes ? metric.attributes.cache_creation_tokens : undefined,
       },
     });
 
@@ -492,7 +496,8 @@ export class MetricsSender {
     status: SessionEndStatus,
     durationMs: number,
     error?: SessionError,
-    activeDurationMs?: number
+    activeDurationMs?: number,
+    tokens?: { input?: number; output?: number; cacheRead?: number; cacheCreation?: number }
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -515,6 +520,10 @@ export class MetricsSender {
       // Session metadata
       session_duration_ms: durationMs,
       ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
+      ...(tokens?.input !== undefined && tokens.input > 0 && { input_tokens: tokens.input }),
+      ...(tokens?.output !== undefined && tokens.output > 0 && { output_tokens: tokens.output }),
+      ...(tokens?.cacheRead !== undefined && tokens.cacheRead > 0 && { cache_read_tokens: tokens.cacheRead }),
+      ...(tokens?.cacheCreation !== undefined && tokens.cacheCreation > 0 && { cache_creation_tokens: tokens.cacheCreation }),
       start_time: session.startTime,
       end_time: Date.now(),
       had_errors: status.status === 'failed',
@@ -552,6 +561,10 @@ export class MetricsSender {
             status: status.status,
             reason: status.reason,
             duration_ms: durationMs,
+            ...(attributes.input_tokens !== undefined && { input_tokens: attributes.input_tokens }),
+            ...(attributes.output_tokens !== undefined && { output_tokens: attributes.output_tokens }),
+            ...(attributes.cache_read_tokens !== undefined && { cache_read_tokens: attributes.cache_read_tokens }),
+            ...(attributes.cache_creation_tokens !== undefined && { cache_creation_tokens: attributes.cache_creation_tokens }),
             ...(error && { error_type: error.type })
           }
         }

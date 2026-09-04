@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "branch": "fix/analytics-log-accuracy-and-cost-display",
+  "head": "5027c636e3b45ffc23f0ec57211216382e33fc80",
+  "runner": "npm",
+  "started_at": "2026-09-04T08:22:19Z",
+  "completed_at": "2026-09-04T08:31:10Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1300,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Script actually enforces an allow-list of dependency SPDX licenses (license-checker --onlyAllow), not Apache-2.0 header presence in src/ as the guide's Pass/Fail text describes; mismatch between guide description and actual script behavior."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2540,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2503,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4155,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10993,
+      "command": "npm run test:unit",
+      "exit_code": 0,
+      "notes": "271 files / 3982 tests passed. The stale-CSV-header assertion recorded as FAIL in the prior gate-run (head 526c06e3) was fixed by commit 5027c636e3 (test(cli): update stale CSV header assertion for new export columns), which is included in this HEAD."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13631,
+      "command": "npm run test:integration",
+      "exit_code": 0,
+      "notes": "First attempt failed 1 test (tests/integration/cli-commands/self-update.test.ts, TC-030) with 'Could not check for updates... Please check your internet connection' even though the npm registry was independently reachable (curl 200, ping ok) and the same test passed in isolation. Re-ran the full suite: 272/272 tests passed (36 files, 1 pre-existing skip). Treated as a transient network flake in a test that queries the live npm registry, unrelated to this diff's files."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 818,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: output was exactly \"No staged changes to scan\" — the script scans the staged git diff and nothing is staged in this checkout (all commits already committed). To run for real locally: stage the relevant diff and re-run. CI's separate gitleaks-action job (ci-sourced 'secrets-detection' gate below) already ran unconditionally against this exact PR and passed."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 350,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Only validates HEAD~1..HEAD; superseded in coverage by the ci-sourced commitlint-range gate which validates the full origin/main...HEAD range actually enforced by CI's validate-commits job."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 413,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: output was \"lint-staged could not find any staged files.\" Nothing is staged in this checkout, so the chained eslint --max-warnings=0 and vitest related --run tasks never executed. Full-tree lint and full unit suite already ran above as separate gates covering the same code."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 307,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Mirrors CI's validate-commits job scope (base SHA..HEAD), wider than the guide's commitlint:last (HEAD~1..HEAD). All 16 commits on the branch pass."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 250,
+      "command": "gh pr view 530 --json title -q .title | npx commitlint --verbose",
+      "exit_code": 0,
+      "notes": "Open PR #530 exists for this branch; title 'fix(analytics): accurate log/cost reporting and always-on cost display' passes commitlint."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npm run test:unit && npm run test:integration (windows-latest runner)",
+      "notes": "Cannot reach a Windows runner from this macOS checkout. Remote GitHub Actions 'Test (Windows)' job for PR #530 passed at commit 14ca851be5 (3m15s); current local HEAD 5027c636e3 adds one further commit that only updates a test assertion string, not touched by the Windows-specific CRLF risk area, but this has not been re-verified on Windows since that commit was made locally."
+    }
+  ],
+  "failures": {}
+}

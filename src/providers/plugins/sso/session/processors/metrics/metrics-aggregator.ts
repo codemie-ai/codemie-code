@@ -126,6 +126,12 @@ function buildSessionAttributes(
   let linesAdded = 0;
   let linesRemoved = 0;
 
+  // Token usage (Anthropic usage object, summed across deltas)
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+
   // Model tracking (count occurrences)
   const modelCounts: Record<string, number> = {};
 
@@ -172,6 +178,14 @@ function buildSessionAttributes(
         linesAdded += op.linesAdded || 0;
         linesRemoved += op.linesRemoved || 0;
       }
+    }
+
+    // Token usage
+    if (delta.tokens) {
+      inputTokens += delta.tokens.input || 0;
+      outputTokens += delta.tokens.output || 0;
+      cacheReadTokens += delta.tokens.cacheRead || 0;
+      cacheCreationTokens += delta.tokens.cacheCreation || 0;
     }
 
     // Models
@@ -256,6 +270,12 @@ function buildSessionAttributes(
     files_deleted: filesDeleted,
     total_lines_added: linesAdded,
     total_lines_removed: linesRemoved,
+
+    // Token usage totals (omitted when zero)
+    ...(inputTokens > 0 && { input_tokens: inputTokens }),
+    ...(outputTokens > 0 && { output_tokens: outputTokens }),
+    ...(cacheReadTokens > 0 && { cache_read_tokens: cacheReadTokens }),
+    ...(cacheCreationTokens > 0 && { cache_creation_tokens: cacheCreationTokens }),
 
     // Session Metadata
     session_duration_ms: sessionDuration,

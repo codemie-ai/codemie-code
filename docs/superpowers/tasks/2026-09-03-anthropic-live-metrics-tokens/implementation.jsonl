@@ -1,0 +1,4 @@
+{"task_id":"task-1","status":"done","commit":"c83a54a462","test_command":"npx vitest run src/agents/plugins/claude/session/processors/__tests__/claude.metrics-processor-tokens.test.ts"}
+{"task_id":"task-2","status":"done","commit":"547ef7a184","test_command":"npx vitest run src/providers/plugins/sso/session/processors/metrics/__tests__/metrics-aggregator-tokens.test.ts"}
+{"task_id":"task-3","status":"done","commit":"ffc784ac0c","test_command":"npx vitest run src/providers/plugins/sso/session/processors/metrics/__tests__/metrics-upload-contract.test.ts src/cli/commands/__tests__/hook.session-end-tokens.test.ts"}
+{"task_id":"task-4","status":"done","commit":"213289d96b","test_command":"npx vitest run src/providers/plugins/sso/session/processors/metrics/__tests__/metrics-upload-contract.test.ts"}

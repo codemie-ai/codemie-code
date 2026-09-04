@@ -315,7 +315,9 @@
       ['Sessions', fmtNum(fs.length), ''],
       ['Duration', fmtDuration(sum(fs, function (s) { return s.durationMs; })), 'wall-clock span'],
       ['Turns', fmtNum(sum(fs, function (s) { return s.turns; })), fs.length ? (Math.round(sum(fs, function (s) { return s.turns; }) / fs.length) + ' / session') : ''],
-      ['Files touched', fmtNum(sum(fs, function (s) { return s.fileOps; })), 'net ' + (sum(fs, function (s) { return s.netLines; }) >= 0 ? '+' : '') + fmtNum(sum(fs, function (s) { return s.netLines; })) + ' lines'],
+      // "operations" (creates/edits, can repeat a file) — distinct from the "Files"/"Files changed"
+      // columns elsewhere in this report (filesChanged), which count unique files once each.
+      ['File operations', fmtNum(sum(fs, function (s) { return s.fileOps; })), 'net ' + (sum(fs, function (s) { return s.netLines; }) >= 0 ? '+' : '') + fmtNum(sum(fs, function (s) { return s.netLines; })) + ' lines'],
       ['Tool calls', fmtNum(sum(fs, function (s) { return s.toolCallsTotal; })), successRate(fs) + '% success'],
       ['Est. cost', totalCost ? fmtUSD(totalCost) : '—', priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions) : 'tokens × pricing']
     ];

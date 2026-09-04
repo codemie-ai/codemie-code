@@ -12,8 +12,13 @@ vi.mock('../aggregator.js', () => ({ AnalyticsAggregator: { aggregate: (...a: un
 vi.mock('../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+const formatterConstructorMock = vi.fn();
 vi.mock('../formatter.js', () => ({
-  AnalyticsFormatter: class { displayRoot = vi.fn(); displayProjects = vi.fn(); },
+  AnalyticsFormatter: class {
+    displayRoot = vi.fn();
+    displayProjects = vi.fn();
+    constructor(...args: unknown[]) { formatterConstructorMock(...args); }
+  },
 }));
 
 // Dynamic import mocks (hoisted by vitest)
@@ -166,6 +171,18 @@ describe('runAnalytics CLI metadata wiring', () => {
     const ctx = buildPayloadMock.mock.calls[0][3];
     expect(ctx.periodStart).toBeUndefined();
     expect(ctx.periodEnd).toBeUndefined();
+  });
+
+  it('enriches costs and passes them to the formatter on the plain (non-report) path', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({} as never, mockSource() as never);
+
+    expect(enrichCostsMock).toHaveBeenCalledTimes(1);
+    expect(formatterConstructorMock).toHaveBeenCalledWith(
+      undefined,
+      enrichResult.index,
+      enrichResult.summary
+    );
   });
 
   it('invokes buildPayload for a bare report (no filters at all)', async () => {

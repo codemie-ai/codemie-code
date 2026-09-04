@@ -15,7 +15,7 @@
  * assertions pin the CURRENT contract.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { MetricsSender } from '../metrics-api-client.js';
 import type { SessionMetric } from '../metrics-types.js';
+import { logger } from '../../../../../../../utils/logger.js';
 
 interface CapturedRequest {
   method: string | undefined;
@@ -267,6 +268,36 @@ describe('MetricsSender upload contract', () => {
     expect(server.captured).toHaveLength(0);
   });
 
+  it('includes non-zero token fields on sendSessionEnd when tokens are provided', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc' });
+    await sender.sendSessionEnd(
+      makeSession(home), home, { status: 'completed' }, 1000, undefined, undefined,
+      { input: 100, output: 40, cacheRead: 5, cacheCreation: 0 }
+    );
+
+    const payload = JSON.parse(server.last.body) as SessionMetric;
+    const attrs = payload.attributes as { input_tokens?: number; output_tokens?: number; cache_read_tokens?: number; cache_creation_tokens?: number };
+    expect(attrs.input_tokens).toBe(100);
+    expect(attrs.output_tokens).toBe(40);
+    expect(attrs.cache_read_tokens).toBe(5);
+    expect(attrs.cache_creation_tokens).toBeUndefined();
+  });
+
+  it('omits all token fields when sendSessionEnd is called without a tokens argument', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc' });
+    await sender.sendSessionEnd(makeSession(home), home, { status: 'completed' }, 1000);
+
+    const payload = JSON.parse(server.last.body) as SessionMetric;
+    const attrs = payload.attributes as { input_tokens?: number };
+    expect(attrs.input_tokens).toBeUndefined();
+  });
+
   it('sends aggregated tool-usage metrics verbatim via sendSessionMetric', async () => {
     server = new MockServer();
     await server.start(jsonOk);
@@ -304,5 +335,62 @@ describe('MetricsSender upload contract', () => {
     const payload = JSON.parse(server.last.body) as SessionMetric;
     expect(payload.name).toBe('codemie_cli_tool_usage_total');
     expect((payload.attributes as { tool_names: string[] }).tool_names).toEqual(['Read', 'Edit']);
+  });
+
+  it('includes token fields in the sendRequest debug-log projection', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const debugSpy = vi.spyOn(logger, 'debug');
+    const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc' });
+    const metric: SessionMetric = {
+      name: MetricsSender.METRIC_TOOL_USAGE_TOTAL,
+      attributes: {
+        agent: 'claude',
+        agent_version: '1.0.0',
+        codemie_client: 'codemie-cli',
+        repository: 'owner/repo',
+        session_id: 'sess-123',
+        branch: 'main',
+        count: 1,
+        llm_model: 'gpt-test',
+        total_user_prompts: 3,
+        session_duration_ms: 1000,
+        had_errors: false,
+        tool_names: ['Read', 'Edit'],
+        total_tool_calls: 2,
+        successful_tool_calls: 2,
+        failed_tool_calls: 0,
+        files_created: 0,
+        files_modified: 1,
+        files_deleted: 0,
+        total_lines_added: 5,
+        total_lines_removed: 1,
+        input_tokens: 5,
+        output_tokens: 2,
+      },
+    };
+
+    await sender.sendSessionMetric(metric);
+
+    const call = debugSpy.mock.calls.find((c) => c[0] === '[MetricsApiClient] Sending metric payload');
+    const attrs = call?.[1] as { attributes: { input_tokens?: number; output_tokens?: number } } | undefined;
+    expect(attrs?.attributes.input_tokens).toBe(5);
+    expect(attrs?.attributes.output_tokens).toBe(2);
+  });
+
+  it('includes token totals in the sendSessionEnd dry-run log', async () => {
+    const infoSpy = vi.spyOn(logger, 'info');
+    const sender = new MetricsSender({ baseUrl: 'http://127.0.0.1:1', cookies: 'session=abc', dryRun: true });
+
+    await sender.sendSessionEnd(
+      makeSession(home), home, { status: 'completed' }, 1000, undefined, undefined,
+      { input: 5, output: 2 }
+    );
+
+    const call = infoSpy.mock.calls.find((c) => c[0] === '[MetricsSender] [DRY-RUN] Would send session end metric:');
+    const logged = call?.[1] as { metric: { attributes: { input_tokens?: number; output_tokens?: number } } } | undefined;
+    expect(logged?.metric.attributes.input_tokens).toBe(5);
+    expect(logged?.metric.attributes.output_tokens).toBe(2);
   });
 });

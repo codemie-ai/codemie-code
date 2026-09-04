@@ -9,6 +9,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
@@ -60,14 +61,22 @@ export const realDeps: EnricherDeps = {
   async loadAgentSessionFile(raw) {
     // Native-discovered sessions carry their log path directly (no CodeMie correlation file).
     if (raw.agentSessionFile) {
-      return raw.agentSessionFile;
+      return existsSync(raw.agentSessionFile) ? raw.agentSessionFile : null;
     }
     try {
       const metaPath = getCodemiePath('sessions', `${raw.sessionId}.json`);
       const meta = JSON.parse(await readFile(metaPath, 'utf-8')) as {
         correlation?: { agentSessionFile?: string };
       };
-      return meta.correlation?.agentSessionFile ?? null;
+      const file = meta.correlation?.agentSessionFile;
+      // The correlation record can name a transcript the coding agent has since rotated
+      // away under its own retention (e.g. Claude Code's default 30-day cleanup) — the
+      // session ran, but its usage data is gone. Verifying existence here is what makes
+      // hadLog mean "we actually have this session's data", not just "a path was recorded
+      // once": 122 of 291 real Claude sessions in one report claimed hadLog=true despite
+      // the referenced file no longer existing, misrepresenting the Coverage table's
+      // "Native log" count and hiding how much history retention had already erased.
+      return file && existsSync(file) ? file : null;
     } catch {
       return null;
     }
