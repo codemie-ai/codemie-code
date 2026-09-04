@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { MetricsSender } from '../metrics-api-client.js';
 import type { SessionMetric } from '../metrics-types.js';
+import { logger } from '../../../../../../../utils/logger.js';
 
 interface CapturedRequest {
   method: string | undefined;
@@ -107,6 +108,10 @@ describe('MetricsSender upload contract', () => {
     }
     if (originalHome === undefined) delete process.env.CODEMIE_HOME;
     else process.env.CODEMIE_HOME = originalHome;
+    // Flush and close the singleton logger's write stream before deleting the
+    // temp home: it opens the log file asynchronously, and deleting the
+    // directory mid-open surfaces as an unhandled ENOENT later in the run.
+    await logger.close();
     // Windows can briefly hold a handle (logger) on files under the temp home;
     // retry and never let a cleanup failure fail the test.
     try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }

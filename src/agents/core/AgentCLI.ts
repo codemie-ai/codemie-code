@@ -10,6 +10,7 @@ import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
+import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
@@ -70,7 +71,6 @@ export class AgentCLI {
     this.program
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
-      .version(this.version)
       .option('-s, --silent', 'Enable silent mode')
       .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
@@ -147,9 +147,11 @@ export class AgentCLI {
    */
   private displayWindowsPathGuidance(): void {
     if (process.platform === 'win32') {
-      console.log(chalk.yellow(`⚠️  Windows users: If you just installed ${this.adapter.displayName},`));
-      console.log(chalk.yellow('   you may need to restart your terminal/PowerShell/CMD'));
-      console.log(chalk.yellow('   for PATH changes to take effect.\n'));
+      // stderr: this guidance only ever accompanies an error, and stdout must
+      // stay clean for wrappers that parse it.
+      console.error(chalk.yellow(`⚠️  Windows users: If you just installed ${this.adapter.displayName},`));
+      console.error(chalk.yellow('   you may need to restart your terminal/PowerShell/CMD'));
+      console.error(chalk.yellow('   for PATH changes to take effect.\n'));
     }
   }
 
@@ -160,9 +162,11 @@ export class AgentCLI {
     try {
       // Check if agent is installed
       if (!(await this.adapter.isInstalled())) {
-        console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
-        console.log(chalk.white('Install it with:\n'));
-        console.log(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
+        // stderr, not stdout: callers that capture our stdout (t3code, SDKs)
+        // must not receive install instructions in the stream they parse.
+        console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+        console.error(chalk.white('Install it with:\n'));
+        console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
         // Windows-specific guidance for PATH refresh issue
         this.displayWindowsPathGuidance();
@@ -170,11 +174,18 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      // Auto-enable silent mode in non-interactive mode (--task flag present)
-      // or when only printing the generated config (--print-config).
-      // This suppresses welcome/goodbye messages and interactive prompts.
-      const isNonInteractiveMode = !!options.task;
-      const shouldBeSilent = options.silent || isNonInteractiveMode || !!options.printConfig;
+      // Auto-enable silent mode whenever this wrapper is not driving an
+      // interactive terminal session. Programmatic consumers (t3code, the Claude
+      // SDK, ACP editors, CI pipelines) capture our stdio, so the ASCII logo,
+      // welcome/goodbye messages and update notices would corrupt the stream
+      // they parse. Triggers:
+      //   - --task flag is present (explicit single-task invocation)
+      //   - stdin is not a TTY (spawned by a parent process / piped input),
+      //     which also means we must never reach an inquirer prompt
+      //   - stdout is not a TTY (captured to a pipe or redirected to a file)
+      const isNonInteractiveMode =
+        !!options.task || isNonInteractiveEnvironment() || !process.stdout.isTTY;
+      const shouldBeSilent = Boolean(options.silent) || isNonInteractiveMode;
 
       // Apply silent mode from CLI flag or auto-detected non-interactive mode
       if (shouldBeSilent) {
@@ -484,18 +495,14 @@ export class AgentCLI {
           console.log(`Version: ${version}`);
         }
       } else {
-        const isWindows = process.platform === 'win32';
-
-        console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
-        console.log(chalk.white('Install it with:\n'));
-        console.log(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
+        // Failure diagnostics go to stderr; the non-zero exit code is the
+        // machine-readable signal for health-check callers.
+        console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+        console.error(chalk.white('Install it with:\n'));
+        console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
         // Windows-specific guidance for PATH refresh issue
-        if (isWindows) {
-          console.log(chalk.yellow(`⚠️  Windows users: If you just installed ${this.adapter.displayName},`));
-          console.log(chalk.yellow('   you may need to restart your terminal/PowerShell/CMD'));
-          console.log(chalk.yellow('   for PATH changes to take effect.\n'));
-        }
+        this.displayWindowsPathGuidance();
 
         process.exit(1);
       }
@@ -741,9 +748,92 @@ export class AgentCLI {
   }
 
   /**
+   * Handle a bare `--version` / `-V` invocation by reporting the DOWNSTREAM
+   * agent version rather than the CodeMie wrapper version.
+   *
+   * External tooling (e.g. t3code) shells out to `codemie-<agent> --version` to
+   * decide whether the underlying harness is a supported version and whether it
+   * needs an update. It must therefore see the agent's own version on stdout and
+   * nothing else — no banner, no colour, no wrapper version.
+   *
+   * IMPORTANT: this is deliberately NOT registered via Commander's `.version()`,
+   * because resolving the agent version is async and Commander's version handler
+   * is synchronous. That makes `run()` the SOLE entry point for version handling:
+   * calling `this.program.parseAsync()` directly (in a test or a future refactor)
+   * bypasses this interception and silently reverts to wrapper-version output.
+   * Route every invocation through `run()`.
+   *
+   * @param argv - Raw process argv (node + script + args)
+   * @returns true when the invocation was handled and the caller must stop
+   */
+  private async tryHandleVersionRequest(argv: string[]): Promise<boolean> {
+    const args = argv.slice(2); // strip node + script
+
+    // Only intercept when a version flag is the sole argument. A raw scan for
+    // `--version` anywhere would hijack invocations that merely carry the flag
+    // (e.g. `codemie-<agent> run --version`) and exit early instead of
+    // forwarding them to the downstream agent.
+    const isVersionOnlyRequest =
+      args.length === 1 && (args[0] === '--version' || args[0] === '-V');
+
+    if (!isVersionOnlyRequest) {
+      return false;
+    }
+
+    let agentVersion: string | null = null;
+    try {
+      agentVersion = await this.adapter.getVersion();
+    } catch (error) {
+      // Adapters are expected to swallow exec/spawn failures and return null,
+      // but a throwing adapter must not surface as an unhandled rejection.
+      logger.debug(`[AgentCLI] getVersion() threw while resolving agent version: ${error instanceof Error ? error.message : String(error)}`);
+      agentVersion = null;
+    }
+
+    if (agentVersion !== null) {
+      console.log(agentVersion);
+      return true;
+    }
+
+    // No agent version available. Distinguish the two reasons, because a
+    // version-checking caller must not be handed a plausible-but-wrong number:
+    //   - agent missing  -> reporting the CodeMie wrapper version here would be
+    //     read as the agent's own version (e.g. "Gemini CLI 0.14.1") and silently
+    //     produce a bogus supported/needs-update verdict. Stay silent on stdout
+    //     and fail, so the caller sees the agent as unavailable.
+    //   - agent present but versionless (built-in agents, ACP adapters that
+    //     intentionally report no version) -> the wrapper version is the only
+    //     meaningful answer, so keep `--version` parseable.
+    let installed = false;
+    try {
+      installed = await this.adapter.isInstalled();
+    } catch (error) {
+      logger.debug(`[AgentCLI] isInstalled() threw while resolving agent version: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (!installed) {
+      console.error(chalk.red(`✗ ${this.adapter.displayName} is not installed`));
+      console.error(chalk.white(`  Install it with: ${getAgentInstallCommand(this.adapter.name)}`));
+      process.exitCode = 1;
+      return true;
+    }
+
+    console.log(this.version);
+    return true;
+  }
+
+  /**
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
+    if (await this.tryHandleVersionRequest(argv)) {
+      // Return instead of process.exit(0): when stdout is a pipe (which is
+      // exactly how t3code and other wrappers read us) writes are asynchronous,
+      // and exiting immediately can truncate the version line. Letting run()
+      // return lets Node drain stdout and exit 0 on its own.
+      return;
+    }
+
     await this.program.parseAsync(argv);
   }
 }
