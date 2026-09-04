@@ -1,0 +1,57 @@
+{
+  "decision": "request-changes",
+  "rationale": "All five original findings are resolved, three of them verified adversarially by an independent checker that re-derived the evidence rather than trusting the author. The check round also found two NEW major defects introduced by the first fix-up: installing the guards from the AgentCLI constructor mutated global process state (listener counts measured going 1->2, with four unit test files constructing AgentCLI), and the added execSync timeout stopped CI wedging without making a hang detectable (ETIMEDOUT yields status: null, which collapsed to exitCode 1 while stderr already held the remediation, so all four cases passed during a genuine 15s hang). Both were fixed and each fix was empirically demonstrated rather than asserted. The decision remains request-changes for one reason only: those two fixes were authored AFTER the independent check and have not themselves been independently verified, and the review contract forbids a third automated round. This is an escalation for a human decision, not an unresolved defect list. AC4 remains unmet by design and is recommended for a separate ticket.",
+  "confidence": "medium",
+  "risk_flags": ["auth", "acceptance-criteria-unmet", "unverified-fixup"],
+  "business_review": [
+    {"id": "AC1", "criterion": "Non-TTY stdin skips interactive prompt.", "status": "pass", "notes": "Carried forward. Regression coverage is now genuinely able to fail: CR-005's timedOut assertion closes the hole where a hang passed every assertion."},
+    {"id": "AC2", "criterion": "CLI exits non-zero with clear remediation.", "status": "pass", "notes": "Carried forward. Re-confirmed end-to-end after both fix-up rounds: exit 1, single actionable stderr line, no stack trace."},
+    {"id": "AC3", "criterion": "Optional --non-interactive or --ci behavior is supported or documented.", "status": "partial", "notes": "Carried forward, improved by CR-004. The documentation now states the pty-CI boundary explicitly instead of implying completeness. Remains 'documented' rather than 'supported' per the EPMCDME-13953 decision and the user's scope call."},
+    {"id": "AC4", "criterion": "Killing during prompt does not produce readline lifecycle crash.", "status": "fail", "notes": "Unchanged and unmet. Reclassified honestly as 'precondition not constructed, criterion never exercised' with a concrete reproduction recipe carried forward. Recommended for a separate ticket."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md - Conventional Commits, scope-enum", "status": "pass", "notes": "Carried forward. All five commits use fix(cli)/docs(cli), both in scope-enum."},
+    {"standard": "code-quality.md - ESLint --max-warnings=0", "status": "pass", "notes": "Carried forward; re-run clean after both fix-up rounds."},
+    {"standard": "code-quality.md - explicit return types, .js extensions", "status": "pass", "notes": "Carried forward; typecheck clean."},
+    {"standard": "testing-patterns.md - unit tests co-located in src/**/__tests__/", "status": "pass", "notes": "Carried forward. The new logfile companion suite is also correctly placed."},
+    {"standard": "development-practices.md - do not log stack traces to console; log errors with logger.error", "status": "pass", "notes": "Was fail. Now resolved: the stack reaches the log file (proven by reverting the fix and watching the new test fail with ENOENT) while the console keeps only the actionable line."}
+  ],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Independently verified. The checker reverted reportFatal to the object-literal form and confirmed the new logfile test fails with ENOENT, proving persistFatalSync is load-bearing and the test is non-vacuous. sanitizeLogArgs index confirmed correct; append flag 'a' on both writers confirmed atomic w.r.t. offset. Two residuals raised by the checker were then also closed: the logfile test now asserts logPath is truthy instead of silently early-returning, so it can no longer pass vacuously."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "Independently verified: the false spinner-mitigation claim is gone, surviving only inside an explicitly labelled retraction that quotes it and states nothing in this MR mitigates AC4. The checker grepped both documents for any surviving sentence implying mitigation and found none. Two internal contradictions it flagged were then also fixed: Case D no longer claims signals were sent 'while parked on the prompt' (an assumption the pty work disproved), and the AC table no longer cites retracted Case C as evidence."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Was partially-resolved. The checker confirmed all 11 agent entrypoints reach the AgentCLI constructor, closing the stated coverage gap, but measured that construction now mutated global process state - see CR-006. Re-fixed by installing per entrypoint instead. Note the checker's suggested alternative (move to AgentCLI.run()) was independently checked and rejected: tests drive run() as their seam, so it would not have helped."
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "notes": "Independently verified as accurate against src/utils/interactive.ts and judged prominent rather than hedged. One residual overstatement the checker flagged upstream of the callout ('as in CI pipelines' implying CI-implies-no-TTY) has since been softened to 'as in most CI pipelines'."
+    },
+    {
+      "id": "CR-005",
+      "status": "resolved",
+      "notes": "Was partially-resolved. The checker confirmed the timeout survives the options spread (CI no longer wedges) but empirically demonstrated that a hang still passed all four assertions - see CR-007. Re-fixed; independently reproduced before and after."
+    },
+    {
+      "id": "CR-006",
+      "status": "resolved",
+      "notes": "NEW, introduced by the first fix-up. installProcessGuards() in the AgentCLI constructor made construction mutate global process state; the checker measured uncaughtException and unhandledRejection listener counts going 1->2 inside a Vitest worker, with four unit test files constructing AgentCLI directly. A later unhandled rejection would hard-exit the worker instead of surfacing as a test failure. Fixed by installing in each of the 11 agent entrypoints; AgentCLI reverted to zero references. Daemons deliberately excluded - exiting on first unhandled rejection is wrong for a long-running process, and codemie-mcp-proxy owns handlers with a survive-on-rejection policy. NOT independently re-verified."
+    },
+    {
+      "id": "CR-007",
+      "status": "resolved",
+      "notes": "NEW, introduced by the first fix-up. The execSync timeout prevented CI wedging but left a hang undetectable: ETIMEDOUT reports status null, runSilent's `error.status || 1` collapsed it to 1, and stderr already carried the remediation printed before the block, so all four cases passed during a real hang - including the one named for it. Reproduced directly against a child that prints then hangs, confirming the old assertions pass and the new guard catches it. Fixed by adding timedOut to CommandResult and asserting it. NOT independently re-verified."
+    }
+  ],
+  "findings": []
+}

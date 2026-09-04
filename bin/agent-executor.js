@@ -10,6 +10,9 @@
 
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
+import { installProcessGuards } from '../dist/utils/process-guards.js';
+
+installProcessGuards();
 
 // Load built-in agent (codemie-code)
 const agent = AgentRegistry.getAgent('codemie-code');

@@ -87,7 +87,7 @@ describe('Auth Utilities', () => {
       );
     });
 
-    it('should throw error if re-authentication fails', async () => {
+    it('should preserve the actionable setup message if re-authentication fails', async () => {
       const authError = new ConfigurationError('SSO authentication required. Please run "codemie setup" with SSO provider first.');
 
       getCodemieClient.mockRejectedValue(authError);
@@ -101,7 +101,12 @@ describe('Auth Utilities', () => {
 
       const { getAuthenticatedClient } = await import('../auth.js');
 
-      await expect(getAuthenticatedClient(mockConfig)).rejects.toThrow(ConfigurationError);
+      // The generic 'Authentication expired' throw inside promptReauthentication
+      // must not shadow the upstream message that names the remediation.
+      const thrown = await getAuthenticatedClient(mockConfig).catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(ConfigurationError);
+      expect((thrown as ConfigurationError).message).toContain('codemie setup');
       expect(getCodemieClient).toHaveBeenCalledTimes(1);
     });
 

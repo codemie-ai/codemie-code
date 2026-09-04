@@ -11,10 +11,17 @@ import z, { ZodError } from "zod";
 
 /**
  * Get an authenticated CodeMie SDK client
+ *
+ * Every sdk action calls this outside its own try/catch, so this is the single
+ * gate keeping a missing session from printing a raw stack (EPMCDME-14148).
  */
 export async function getSdkClient(): Promise<CodeMieClient> {
-  const config = await ConfigLoader.load();
-  return getAuthenticatedClient(config);
+  try {
+    const config = await ConfigLoader.load();
+    return await getAuthenticatedClient(config);
+  } catch (error) {
+    handleSdkError(error, "authenticate");
+  }
 }
 
 /**

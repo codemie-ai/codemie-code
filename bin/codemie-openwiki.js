@@ -7,6 +7,9 @@
 
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
+import { installProcessGuards } from '../dist/utils/process-guards.js';
+
+installProcessGuards();
 
 const agent = AgentRegistry.getAgent('openwiki');
 if (!agent) {

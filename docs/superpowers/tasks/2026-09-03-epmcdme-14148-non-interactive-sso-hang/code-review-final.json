@@ -1,0 +1,116 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran. The core two-part fix (getSdkClient wrap + auth.ts message preservation) is sound and independently verified end-to-end by the acceptance lens, and AC2 holds CLI-wide rather than only for the sdk family. Blocking issues are concentrated in the adjacent scope items rather than the core fix: the process-guards module destroys the diagnostic it promises to relocate (stack stringifies to [object Object]; the log entry can be dropped entirely by the exit race), it is wired into 1 of 14 bin entrypoints and not the agent binaries where the auth path actually lives, the AC1 regression test cannot fail on a hang because execSync receives no timeout, and the documentation overstates detection as stdin-TTY-only without naming the pty-allocating-CI blind spot that is the original reported failure. Separately, ac4-investigation.md contains one unearned mitigation claim that inspection refutes, and AC4 was never actually exercised (0 of 8 attempts reached the prompt), so it must be reclassified rather than closed as not-reproducible. 8 hypotheses were refuted with evidence and dropped; 6 minor findings deferred (spinner gates on stdin rather than the output stream, discarded re-auth error has no debug breadcrumb, defensive throw after handleSdkError, ConfigLoader.load sharing the 'authenticate' error label, brittle 'at ' assertion, reproduction.md's stale 'undocumented' wording). Confidence is low because AC4's disposition is a product decision, not an implementation one.",
+  "confidence": "low",
+  "risk_flags": ["auth", "observability", "acceptance-criteria-unmet"],
+  "business_review": [
+    {
+      "id": "AC1",
+      "criterion": "Non-TTY stdin skips interactive prompt.",
+      "status": "pass",
+      "notes": "Verified against git, not just docs: PR #471 (5b2de4b7) introduced the guard and this MR does not touch the condition. Empirically confirmed at 1.4s, exit 1, no prompt. But see CR-005 - the new regression test cannot fail on a hang."
+    },
+    {
+      "id": "AC2",
+      "criterion": "CLI exits non-zero with clear remediation.",
+      "status": "pass",
+      "notes": "Both halves implemented and both load-bearing. Independently reproduced: stderr carries exactly the actionable line, exit 1, no 'at ' frames, no ConfigurationError prefix, no Node banner. Acceptance lens confirmed the auth.ts fix also improves assistants/chat, assistants/setup and skills/setup, so AC2 holds CLI-wide."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Optional --non-interactive or --ci behavior is supported or documented.",
+      "status": "partial",
+      "notes": "Citing existing documentation is a legitimate reading of 'supported OR documented', and the pre-existing text was confirmed to predate this MR. Not a clean pass because the documentation asserts detection is 'based solely on whether stdin is a TTY' without naming the blind spot: a pty-allocating CI runner or docker run -t still reaches the prompt. See CR-006."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Killing during prompt does not produce readline lifecycle crash.",
+      "status": "fail",
+      "notes": "No code addresses it and no test asserts it. Decisively, the investigation's own table records 'Reached the re-auth prompt: 0' across all 8 pty attempts - the criterion was never exercised. 'Cannot reproduce the crash' and 'cannot construct the precondition' are different claims and only the second is supported. See CR-002."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git-workflow.md - Conventional Commits, scope-enum",
+      "status": "pass",
+      "notes": "Both commits use fix(cli), which is in scope-enum. fix(auth)/fix(sdk) correctly avoided."
+    },
+    {
+      "standard": "code-quality.md - ESLint --max-warnings=0",
+      "status": "pass",
+      "notes": "Full lint clean. no-useless-catch did not fire; both new catches transform rather than bare-rethrow."
+    },
+    {
+      "standard": "code-quality.md - explicit return types, .js extensions, no console.log left in code",
+      "status": "pass",
+      "notes": "Typecheck clean. New module exports declare return types."
+    },
+    {
+      "standard": "testing-patterns.md - unit tests co-located in src/**/__tests__/",
+      "status": "pass",
+      "notes": "All three new unit suites are under src/**/__tests__/, avoiding the tests/unit/ dead zone where five files match no vitest glob."
+    },
+    {
+      "standard": "development-practices.md - do not log stack traces to console; log errors with logger.error",
+      "status": "fail",
+      "notes": "Console side is correct (no stack printed). The logger side is broken: the stack never reaches the log file. See CR-001."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/process-guards.ts",
+      "line": "16-24",
+      "problem": "reportFatal calls logger.error(msg, { stack: payload.stack }) with a plain object. logger.error only extracts .stack when the second argument is instanceof Error, so it falls through to String(error) and writes '[object Object]'. Independently confirmed by both the edge-case and acceptance lenses against a real build. Compounding it, process.exit(1) fires before the logger's fs.WriteStream flushes its first write, so on a cold stream the entry is dropped entirely and the logs directory stays empty.",
+      "impact": "The guard removes the stack from stderr (intended) but then fails to put it anywhere else, so for the exact class of unexpected failure this module exists to report, diagnostic information is destroyed rather than relocated. The module's own header comment asserts the opposite. The new unit tests cannot catch this because they mock ../logger.js wholesale and assert only on stderr.",
+      "recommendation": "Pass the payload straight through: logger.error(`${kind}: ${message}`, payload) - logger already handles both Error and non-Error. For the flush race, use a synchronous write for the fatal entry or set process.exitCode and let the loop drain. Add one test that does not mock the logger and asserts the stack reaches the file.",
+      "sources": ["edge-case EC-2", "edge-case EC-3", "acceptance"]
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "docs/superpowers/tasks/2026-09-03-epmcdme-14148-non-interactive-sso-hang/ac4-investigation.md",
+      "line": "47",
+      "problem": "The document justifies shipping without an AC4 fix by claiming the spinner suppression 'removes one plausible contributor (a spinner writing to a torn-down TTY)'. That is provably false: the suppression is gated on isNonInteractiveEnvironment(), so it only takes effect when NO TTY is attached, while AC4's scenario requires a TTY by definition. The guard can never fire in it. The spinner implicated in the original escape-sequence observation is the one inside promptForReauth (sso.setup-steps.ts:294), which this MR does not touch.",
+      "impact": "This is the single piece of reasoning offered for why shipping without addressing AC4 is acceptable, and it does not survive inspection - it lends the closure a false appearance of partial mitigation. Separately, AC4 was never exercised at all: 0 of 8 pty attempts reached the prompt, so 'not reproducible' overstates what was established.",
+      "recommendation": "Strike the sentence from ac4-investigation.md and from the MR description. Reclassify AC4 as 'precondition not constructed, criterion not exercised' and split it to a follow-up ticket carrying the concrete recipe the acceptance lens supplied: plant SSO credentials whose apiUrl points at a closed local port so validateAuth fails deterministically with no network dependency, then drive tests/helpers/pty-session.ts and signal during the prompt. This is a product call on whether 14148 can close with AC4 unmet.",
+      "sources": ["acceptance"]
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "bin/codemie.js",
+      "line": "10-14",
+      "problem": "installProcessGuards() is wired into 1 of 14 bin/ entrypoints. agent-executor.js, codemie-claude.js, codemie-codex.js, codemie-gemini.js, codemie-kimi*.js, codemie-opencode.js, codemie-pi.js, codemie-openwiki.js, codemie-copilot.js, proxy-daemon.js are all unguarded - and per this branch's own technical-analysis.md, AgentCLI.handleRun is the entry point every agent binary uses and is where the SSO auth-failure path lives.",
+      "impact": "The commit message and docs imply the clean-failure behavior is universal. It is absent from precisely the binaries that carry the primary auth path, so behavior is now inconsistent across entrypoints.",
+      "recommendation": "Call installProcessGuards() from the shared AgentCLI constructor/run path so all agent binaries inherit it, or add the import to each bin/* entrypoint. Narrow the docs claim accordingly.",
+      "sources": ["edge-case EC-4", "blind"]
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/AUTHENTICATION.md",
+      "line": "104-124",
+      "problem": "The page states non-interactive detection is 'based solely on whether stdin is a TTY' and presents that as sufficient for CI. interactive.ts:15 is literally !process.stdin.isTTY with no CI env-var fallback, so CI runners and containers that allocate a pty (docker run -t, several Jenkins/GitLab configurations) still reach the interactive prompt and hang - the precise failure this ticket was filed about. The doc offers no flag, env var, or troubleshooting note.",
+      "impact": "AC3 is being satisfied by documentation that overstates the guarantee. A CI user following this page can still hit the original hang. The limitation is inherited from PR #471, not introduced here, but this MR is the one asserting completeness.",
+      "recommendation": "Either honor process.env.CI in isNonInteractiveEnvironment() (a one-line change that would move AC3 from 'documented' to 'supported'), or amend the doc to state the boundary explicitly and point pty-CI users at JWT auth or pre-persisted credentials.",
+      "sources": ["acceptance", "blind"]
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "tests/integration/cli-commands/non-interactive-auth.test.ts",
+      "line": "31-45",
+      "problem": "The case named 'exits non-zero instead of hanging on a re-authentication prompt' asserts only exitCode !== 0. It routes through CLIRunner.runSilent, which is execSync-based (tests/helpers/cli-runner.ts:44) and receives no timeout option. Because execSync blocks the worker synchronously, Vitest's 30s testTimeout cannot interrupt it.",
+      "impact": "The AC1 disposition rests on 'already met, covered by regression test', so the safety net is nominal. A change reintroducing the hang would stall CI until the job-level timeout instead of failing with a pointer to the cause - the slowest and most confusing failure mode for exactly this bug.",
+      "recommendation": "Add timeout: 15_000 to the options passed to runSilent in runWithoutTty and assert on the resulting non-zero/SIGTERM outcome so a hang surfaces as a named test failure. Also tighten the remediation assertion to the exact message and assert stdout is empty, since the stderr-vs-stdout split is a headline doc claim with no test behind it.",
+      "sources": ["acceptance", "blind"]
+    }
+  ]
+}

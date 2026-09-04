@@ -7,6 +7,9 @@
 
 import { MigrationRunner } from '../dist/migrations/index.js';
 import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
+import { installProcessGuards } from '../dist/utils/process-guards.js';
+
+installProcessGuards();
 
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
