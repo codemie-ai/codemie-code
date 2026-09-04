@@ -68,7 +68,16 @@ export class MetricsWriter {
       const content = await readFile(this.filePath, 'utf-8');
       const lines = content.trim().split('\n').filter(line => line.length > 0);
 
-      return lines.map(line => JSON.parse(line) as MetricDelta);
+      const deltas: MetricDelta[] = [];
+      for (const line of lines) {
+        try {
+          deltas.push(JSON.parse(line) as MetricDelta);
+        } catch (parseError) {
+          const errorContext = createErrorContext(parseError);
+          logger.warn('[MetricsWriter] Skipping malformed metrics-delta line', formatErrorForLog(errorContext));
+        }
+      }
+      return deltas;
 
     } catch (error) {
       const errorContext = createErrorContext(error);
