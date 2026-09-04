@@ -3,6 +3,7 @@ import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { MetricsWriter } from '@/providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import type {
@@ -286,6 +287,23 @@ export class DesktopTelemetryRuntime {
       timeout: 10000
     });
 
+    // Sum per-turn token usage across the session's metrics-delta file, mirroring
+    // hook.ts's sendSessionEndMetrics. MetricsWriter.readAll() tolerates a
+    // missing/empty file by returning [], so this never throws.
+    const metricsWriter = new MetricsWriter(session.sessionId);
+    const allDeltas = await metricsWriter.readAll();
+    const tokens = allDeltas.reduce(
+      (acc, delta) => {
+        if (!delta.tokens) return acc;
+        acc.input += delta.tokens.input || 0;
+        acc.output += delta.tokens.output || 0;
+        acc.cacheRead = (acc.cacheRead || 0) + (delta.tokens.cacheRead || 0);
+        acc.cacheCreation = (acc.cacheCreation || 0) + (delta.tokens.cacheCreation || 0);
+        return acc;
+      },
+      { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }
+    );
+
     await sender.sendSessionEnd(
       {
         sessionId: session.correlation.agentSessionId || session.sessionId,
@@ -299,7 +317,8 @@ export class DesktopTelemetryRuntime {
       { status: 'completed', reason: session.reason || 'desktop-session-complete' },
       Math.max(0, (session.endTime || Date.now()) - session.startTime),
       undefined,
-      session.activeDurationMs
+      session.activeDurationMs,
+      tokens
     );
   }
 }

@@ -39,6 +39,13 @@ vi.mock('@/telemetry/runtime/checkpoints.js', () => ({
   setRuntimeCheckpoint: vi.fn()
 }));
 
+const mockReadAll = vi.fn().mockResolvedValue([]);
+vi.mock('@/providers/plugins/sso/session/processors/metrics/MetricsWriter.js', () => ({
+  MetricsWriter: vi.fn(function (this: Record<string, unknown>) {
+    this.readAll = mockReadAll;
+  })
+}));
+
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
 import type {
   LocalTelemetryAdapter,
@@ -105,5 +112,31 @@ describe('DesktopTelemetryRuntime', () => {
     expect(mockSendSessionEnd).toHaveBeenCalledOnce();
     const [sessionArg] = mockSendSessionEnd.mock.calls[0];
     expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+  });
+
+  it('sums per-session MetricsWriter token deltas into sendSessionEnd', async () => {
+    mockReadAll.mockResolvedValueOnce([
+      { tokens: { input: 10, output: 5, cacheRead: 2, cacheCreation: 1 } },
+      { tokens: { input: 3, output: 1 } },
+      {}
+    ]);
+
+    const mockSessionStore = {
+      findSessionByExternalId: vi.fn().mockResolvedValue(null),
+      saveSession: vi.fn().mockResolvedValue(undefined),
+      loadSession: vi.fn()
+    };
+
+    const runtime = new DesktopTelemetryRuntime(mockAdapter, config);
+    const session = await (runtime as any).ensureSession(discovered);
+
+    mockSessionStore.loadSession.mockResolvedValue({ ...session, status: 'active' });
+    (runtime as any).sessionStore.loadSession = mockSessionStore.loadSession;
+
+    await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+    expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+    const tokensArg = mockSendSessionEnd.mock.calls[0][6];
+    expect(tokensArg).toEqual({ input: 13, output: 6, cacheRead: 2, cacheCreation: 1 });
   });
 });
