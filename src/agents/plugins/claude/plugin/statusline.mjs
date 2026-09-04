@@ -168,16 +168,19 @@ export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tok
   const bar = ctxBar(ctxPct);
   if (bar) line2.push(bar);
 
-  // Live context-window snapshot (main-thread occupancy; resets on compaction).
+  // Live context-window occupancy (main-thread; resets on compaction). Labeled `ctx` so it reads
+  // as "how full is the window", not tokens billed — a different quantity from the cumulative Σ.
   const stats = [];
   if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
   if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
-  if (stats.length) line2.push(c(C.gray, stats.join(' ')));
+  if (stats.length) line2.push(c(C.gray, `ctx ${stats.join(' ')}`));
 
   // Cumulative session totals from the metrics-delta file — cache-aware and (where the deltas
-  // carry sidechain turns) subagent-inclusive. Prefixed Σ to distinguish from the snapshot above.
+  // carry sidechain turns) subagent-inclusive. `new` is the per-turn uncached input Anthropic
+  // reports in `input_tokens`; the cached context is counted separately under cR (read) / cW
+  // (creation), so `new` reads far smaller than cR by design — that is expected, not a miscount.
   if (sessionTokens) {
-    const seg = [`Σ in:${fmt(sessionTokens.in)}`, `out:${fmt(sessionTokens.out)}`];
+    const seg = [`Σ new:${fmt(sessionTokens.in)}`, `out:${fmt(sessionTokens.out)}`];
     if (sessionTokens.cacheRead)     seg.push(`cR:${fmt(sessionTokens.cacheRead)}`);
     if (sessionTokens.cacheCreation) seg.push(`cW:${fmt(sessionTokens.cacheCreation)}`);
     line2.push(c(C.gray, seg.join(' ')));
