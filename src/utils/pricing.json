@@ -353,12 +353,6 @@
     "cacheRead": 0.05,
     "cacheWrite": 0.5
   },
-  "gemini": {
-    "input": 0.5,
-    "output": 3.0,
-    "cacheRead": 0.05,
-    "cacheWrite": 0.5
-  },
   "gemini-3-1-flash-lite": {
     "input": 0.25,
     "output": 1.5,

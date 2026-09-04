@@ -44,7 +44,7 @@ interface GeminiSessionFile {
 interface GeminiMessage {
   id: string;
   timestamp: string;
-  type: 'user' | 'gemini';
+  type: 'user' | 'gemini' | 'assistant';
   content: string;
   toolCalls?: GeminiToolCall[];
   thoughts?: string[];

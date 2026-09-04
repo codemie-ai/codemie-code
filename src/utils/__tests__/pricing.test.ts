@@ -48,9 +48,10 @@ describe('lookupPrice', () => {
     expect(flash35!.output).toBe(3.0);
 
     const gemini = lookupPrice('gemini');
-    expect(gemini).not.toBeNull();
-    expect(gemini!.input).toBe(0.5);
-    expect(gemini!.output).toBe(3.0);
+    expect(gemini).toBeNull();
+
+    const unknownFutureModel = lookupPrice('gemini-4-ultra');
+    expect(unknownFutureModel).toBeNull();
   });
 
   it('matches Kimi Code wire-log model names via normalization', () => {
