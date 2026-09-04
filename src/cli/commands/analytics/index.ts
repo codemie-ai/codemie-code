@@ -128,9 +128,9 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       }
       const outputPath = options.output || AnalyticsExporter.getDefaultOutputPath(format, process.cwd());
       if (format === 'json') {
-        AnalyticsExporter.exportJSON(analytics, outputPath);
+        AnalyticsExporter.exportJSON(analytics, outputPath, costResult?.index, costResult?.summary);
       } else {
-        AnalyticsExporter.exportCSV(analytics, outputPath);
+        AnalyticsExporter.exportCSV(analytics, outputPath, costResult?.index);
       }
     }
 
