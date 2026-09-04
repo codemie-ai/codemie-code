@@ -327,10 +327,10 @@ export class MetricsProcessor implements SessionProcessor {
       const usage = completedMsg.message?.usage;
       const tokens = usage
         ? {
-            input: usage.input_tokens ?? 0,
-            output: usage.output_tokens ?? 0,
-            ...(usage.cache_read_input_tokens !== undefined && { cacheRead: usage.cache_read_input_tokens }),
-            ...(usage.cache_creation_input_tokens !== undefined && { cacheCreation: usage.cache_creation_input_tokens }),
+            input: Number(usage.input_tokens) || 0,
+            output: Number(usage.output_tokens) || 0,
+            ...(usage.cache_read_input_tokens !== undefined && { cacheRead: Number(usage.cache_read_input_tokens) || 0 }),
+            ...(usage.cache_creation_input_tokens !== undefined && { cacheCreation: Number(usage.cache_creation_input_tokens) || 0 }),
           }
         : undefined;
 

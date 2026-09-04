@@ -110,4 +110,19 @@ describe('MetricsProcessor token capture', () => {
     expect(deltas).toHaveLength(1);
     expect(deltas[0].tokens).toEqual({ input: 7, output: 3 });
   });
+
+  it('coerces non-numeric usage fields to 0 instead of propagating strings', async () => {
+    const msgs = [
+      makeAssistantMsg('a3', {
+        // @ts-expect-error - simulating a malformed transcript entry
+        input_tokens: '12abc',
+        // @ts-expect-error - simulating a malformed transcript entry
+        output_tokens: null,
+        cache_read_input_tokens: 4,
+      }),
+    ];
+    const deltas = await runProcessor(msgs);
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].tokens).toEqual({ input: 0, output: 0, cacheRead: 4 });
+  });
 });
