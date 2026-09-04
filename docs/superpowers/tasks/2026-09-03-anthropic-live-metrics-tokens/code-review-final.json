@@ -1,0 +1,113 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses plus the standards audit ran clean against a present spec; 7 findings survive triage as unambiguous major-severity patches on newly-introduced code (no defer, no decision_needed) — DesktopTelemetryRuntime never sums tokens for desktop-detected sessions, a corrupt metrics-delta line aborts the whole session-end metrics send (not just tokens), the native-loader ownership scan has no fallback past its 256KB budget, unvalidated numeric token coercion in claude.metrics-processor.ts, analytics export omitting the new cost/active-duration fields, and two test-coverage gaps (activeDurationMs passthrough, non-report cost enrichment). 7 other lens-flagged concerns were dismissed after verifying the surrounding code already handles them (cost-enricher.ts already isolates per-session failures with try/catch; the per-agent token gate and dual incremental/cumulative token reporting are confirmed intentional by spec.md) or found speculative/below the emission floor. Standards review passed clean with no coverage gap.",
+  "confidence": "high",
+  "risk_flags": ["public-api"],
+  "business_review": [
+    { "kind": "spec", "item": "MetricDelta optional tokens field {input,output,cacheRead?,cacheCreation?}; other processors unaffected", "status": "pass", "notes": "types.ts:80-85; only claude.metrics-processor.ts populates it" },
+    { "kind": "spec", "item": "claude.metrics-processor.ts populates tokens from usage on every completed assistant turn", "status": "pass", "notes": "claude.metrics-processor.ts:327-336,347; covered by claude.metrics-processor-tokens.test.ts" },
+    { "kind": "spec", "item": "SessionLifecycleAttributes/ToolUsageAttributes carry 4 flat optional numeric token fields; no dict/map field", "status": "pass", "notes": "metrics-types.ts:31-34,82-85; scalars only, never the nested tokens object" },
+    { "kind": "spec", "item": "ToolUsageAttributes tokens = incremental since-last-sync; SessionLifecycleAttributes tokens = whole-session cumulative", "status": "pass", "notes": "aggregator sums pendingDeltas only; hook.ts sums all readAll() rows by design" },
+    { "kind": "spec", "item": "Missing/empty metrics-delta file yields omitted/zero tokens at session-end, never a thrown error", "status": "pass", "notes": "MetricsWriter.readAll() returns [] for a missing file, tested; see CR-006 for the corrupt-file case" },
+    { "kind": "spec", "item": "sendSessionEnd's new params optional; DesktopTelemetryRuntime call site compiles/runs unchanged", "status": "pass", "notes": "metrics-api-client.ts adds optional trailing params; see CR-007, it compiles but never populates tokens" },
+    { "kind": "spec", "item": "No code path computes or transmits a monetary/cost value", "status": "pass", "notes": "token capture/propagation paths only sum/emit raw counts, never a price" },
+    { "kind": "spec", "item": "Debug-log and dry-run log projections include the four new fields", "status": "pass", "notes": "metrics-api-client.ts sendRequest and dry-run logs; covered by metrics-upload-contract.test.ts" },
+    { "kind": "spec", "item": "Token fields populate identically for claude-agent sessions regardless of provider; no provider gate", "status": "pass", "notes": "no provider check anywhere in the token capture/propagation diff hunks" },
+    { "kind": "spec", "item": "Non-goal: no anthropic-subscription-only provider gate", "status": "pass", "notes": "confirmed absent" },
+    { "kind": "spec", "item": "Non-goal: no cost/price computation or transmission by client", "status": "pass", "notes": "token paths carry only raw counts" },
+    { "kind": "spec", "item": "Non-goal: no changes to gemini/kimi/codex/pi/opencode.metrics-processor.ts", "status": "pass", "notes": "none of the five sibling processor files touched" },
+    { "kind": "spec", "item": "Non-goal: no schema_version bump on either attributes interface", "status": "pass", "notes": "metrics-types.ts adds only the four numeric fields" },
+    { "kind": "spec", "item": "Non-goal: no new backend-schema negotiation process or ticket", "status": "na", "notes": "organizational non-goal; no evidence of such a process being added" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "All 8 commit subjects match <type>(<scope>): <subject>; types/scopes are in commitlint.config.cjs enum; subjects imperative, under 100 chars." },
+    { "kind": "code-quality", "status": "pass", "notes": "Exported functions have explicit return types, .js imports, interfaces, JSDoc. No new console.log/require(). Pre-existing oversized files only get small additive blocks." },
+    { "kind": "security", "status": "pass", "notes": "No attribution-header/JWT paths touched. New token-count fields are non-sensitive telemetry logged via logger.debug/info. No secrets, unsanitized paths, or header/cookie logging introduced." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts",
+      "line": 328,
+      "title": "Unvalidated numeric token usage fields",
+      "problem": "usage.input_tokens/output_tokens/cache_read_input_tokens/cache_creation_input_tokens are used directly via `?? 0` without numeric coercion; completedMsg.message.usage is read from an untyped transcript entry with no runtime guard against non-numeric values.",
+      "impact": "A non-numeric usage value would flow into delta.tokens, and downstream `+=` summation in hook.ts and metrics-aggregator.ts would silently coerce into string concatenation, corrupting all downstream token totals for that session with no error surfaced. Reachability from a live malformed transcript is unconfirmed since Anthropic API responses are normally well-typed, so this is a defensive-coding gap rather than an observed failure.",
+      "recommendation": "Coerce with `Number(usage.input_tokens) || 0` (and the other three fields) before building the tokens object."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/aggregator.ts",
+      "line": 415,
+      "title": "No test coverage for activeDurationMs passthrough",
+      "problem": "activeDurationMs is read in data-loader.ts, passed through aggregator.ts into SessionAnalytics, and rendered by formatter.ts's 'Active:' line, but no test in the chain asserts the field is present or correctly rendered.",
+      "impact": "A regression that drops or miscomputes activeDurationMs in the aggregator would silently remove or corrupt the 'Active:' console line on every codemie analytics invocation, and no existing test would catch it — aggregator.test.ts and data-loader.test.ts never reference activeDurationMs, and no formatter test exists.",
+      "recommendation": "Add an aggregator test asserting sessionAnalytics[0].activeDurationMs matches the raw session value, and/or a formatter test asserting the 'Active:' line renders correctly."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/exporter.ts",
+      "line": 14,
+      "title": "Cost and active duration missing from analytics export",
+      "problem": "--export json/csv serialize the plain analytics (RootAnalytics) tree, which never receives the costIndex/costSummary merge that the console path uses; exportCSV's fixed column list also has no Active Duration or Cost column at all.",
+      "impact": "The Est. Cost / per-session Cost values now shown on every console run (and, for CSV, activeDurationMs) are silently absent from exported files, so a user exporting a report for further analysis gets an inconsistent, incomplete dataset compared to what they just saw on screen.",
+      "recommendation": "Merge costIndex/costSummary into the exported payload before exportJSON, and add Active Duration / Cost columns to exportCSV."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 96,
+      "title": "No test for cost enrichment on the non-report path",
+      "problem": "Cost enrichment now runs unconditionally in runAnalytics (previously only when wantReport), but no test calls runAnalytics without report/reportFormat/reportOutput/open set; every case in analytics-cli-metadata.test.ts passes report: true.",
+      "impact": "A regression that makes cost enrichment conditional again (e.g. reverting to `else if (wantReport)`) would silently stop showing 'Est. Cost'/'Cost:' lines for the majority of invocations — the plain codemie analytics command — while the full existing test suite keeps passing.",
+      "recommendation": "Add a test calling runAnalytics with no report flags asserting enrichCosts (or the AnalyticsFormatter cost constructor args) was invoked."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/native-loader.ts",
+      "line": 196,
+      "title": "Ownership-marker scan has no fallback past 256KB",
+      "problem": "hasOwnershipMarker's bounded scan reads a fixed 262,144-byte budget looking for the codemie_session_start marker line, with no fallback or logging when the marker still falls beyond that budget.",
+      "impact": "This raise from 4KB to 256KB fixes the specific 153-session regression observed, but a hookAdditionalContext blob larger than the new budget would reproduce the exact same 'misreported as native-external' bug this change targets, at a higher size threshold, with nothing to detect or flag the recurrence.",
+      "recommendation": "When bytesRead === SCAN_BYTES and no marker was found, fall back to a full-file line scan (or log a warning) instead of returning false outright."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1230,
+      "title": "Corrupt metrics-delta line aborts session-end metrics entirely",
+      "problem": "MetricsWriter.readAll() re-throws on a single unparseable JSONL line (e.g. from a crash mid-append); hook.ts's sendSessionEndMetrics awaits readAll() with no local try/catch, so that exception propagates out of the whole function body.",
+      "impact": "The outer catch in sendSessionEndMetrics logs a warning and swallows the error, but by then the entire session-end metrics send has been skipped — not just token totals, but status, duration, and everything else that call would have reported — for one corrupted delta line. This goes beyond the explicit 'missing/empty file' resilience requirement and silently drops a session's telemetry.",
+      "recommendation": "Wrap the per-line JSON.parse in MetricsWriter.readAll() (or the call site) so a single malformed line is skipped/logged rather than aborting the whole read."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "line": 274,
+      "title": "Desktop-detected sessions never get token totals",
+      "problem": "DesktopTelemetryRuntime.sendSessionEndMetric calls sender.sendSessionEnd(...) with undefined for the tokens argument; unlike hook.ts's session-end path, it never sums the session's MetricsWriter deltas before sending.",
+      "impact": "A Claude Desktop session that ends via this poller (rather than the CLI SessionEnd hook) never reports input/output/cache token totals at all, silently diverging from the CLI path's cumulative token metric with no signal that this caller was left behind.",
+      "recommendation": "Sum MetricsWriter(session.sessionId).readAll() tokens in sendSessionEndMetric, mirroring hook.ts's sendSessionEndMetrics, before calling sendSessionEnd."
+    }
+  ]
+}

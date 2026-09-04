@@ -1,0 +1,38 @@
+[
+  {
+    "location": "src/cli/commands/hook.ts:1226-1241",
+    "trigger_condition": "metrics-delta JSONL has one truncated/corrupt line (crash mid-append)",
+    "guard_snippet": "try { allDeltas = await metricsWriter.readAll(); } catch { allDeltas = []; }",
+    "potential_consequence": "MetricsWriter.readAll() throws on JSON.parse, aborting the whole sendSessionEndMetrics call — not just token totals"
+  },
+  {
+    "location": "src/telemetry/runtime/DesktopTelemetryRuntime.ts:274-304",
+    "trigger_condition": "a Claude Desktop session ends via this poller instead of the CLI SessionEnd hook",
+    "guard_snippet": "sum MetricsWriter(session.sessionId).readAll() tokens here too before sendSessionEnd(...)",
+    "potential_consequence": "desktop-proxy-detected sessions never get input/output/cache token totals on session end, unlike hook.ts sessions"
+  },
+  {
+    "location": "src/cli/commands/analytics/index.ts:100-106",
+    "trigger_condition": "plain `codemie analytics` (no --report) run against a large/long session history",
+    "guard_snippet": "add a `--no-cost`/size-gated opt-out before unconditionally calling enrichCosts(rawSessions, ...)",
+    "potential_consequence": "every default invocation now concurrently re-parses every native log file, regressing latency where previously only --report paid that cost"
+  },
+  {
+    "location": "src/cli/commands/analytics/exporter.ts:14-23,29-48",
+    "trigger_condition": "`--export json` or `--export csv` after cost/activeDurationMs are computed",
+    "guard_snippet": "merge costIndex/costSummary into the exported payload; add an Active Duration / Cost CSV column",
+    "potential_consequence": "the new Est. Cost / per-session Cost values (and, for CSV, activeDurationMs) shown in console/report are silently absent from exported files"
+  },
+  {
+    "location": "src/cli/commands/analytics/native-loader.ts:196-233",
+    "trigger_condition": "a SessionStart hook payload larger than the new 256KB scan budget precedes the marker line",
+    "guard_snippet": "if (bytesRead === SCAN_BYTES) fall back to a full-file line scan before returning false",
+    "potential_consequence": "sessions with an even larger hookAdditionalContext blob are still misreported as native-external — same bug this fix targets, at a higher threshold"
+  },
+  {
+    "location": "src/agents/plugins/claude/session/processors/claude.metrics-processor.ts:328-335",
+    "trigger_condition": "message.usage fields are non-numeric (string/NaN) from an untyped `any` transcript entry",
+    "guard_snippet": "input: Number(usage.input_tokens) || 0 (and same for the other three fields)",
+    "potential_consequence": "a string token count silently coerces `+=` into string concatenation in hook.ts's/aggregator's summation, corrupting all downstream totals"
+  }
+]

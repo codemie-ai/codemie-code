@@ -1,0 +1,37 @@
+{
+  "decision": "approve",
+  "rationale": "All 7 blocking findings from the prior request-changes verdict (CR-001..CR-007) are resolved and verified against current HEAD source: numeric coercion added for usage fields, activeDurationMs passthrough test added, cost/active-duration merged into JSON/CSV exports, plain-path cost-enrichment test added, native-loader ownership scan falls back past its byte budget, MetricsWriter.readAll() now skips malformed lines instead of throwing, and DesktopTelemetryRuntime now sums and forwards token totals in the correct sendSessionEnd argument position. No new findings raised — the out-of-band statusline.mjs token-display addition is unrelated to any prior finding and outside this targeted verifier's scope per the dispatch instruction. business_review and standards_review carried forward unchanged from the prior verdict, since review-standards is a final-round-only actor.",
+  "confidence": "high",
+  "risk_flags": ["public-api"],
+  "business_review": [
+    { "kind": "spec", "item": "MetricDelta optional tokens field {input,output,cacheRead?,cacheCreation?}; other processors unaffected", "status": "pass", "notes": "types.ts:80-85; only claude.metrics-processor.ts populates it" },
+    { "kind": "spec", "item": "claude.metrics-processor.ts populates tokens from usage on every completed assistant turn", "status": "pass", "notes": "claude.metrics-processor.ts:327-336,347; covered by claude.metrics-processor-tokens.test.ts" },
+    { "kind": "spec", "item": "SessionLifecycleAttributes/ToolUsageAttributes carry 4 flat optional numeric token fields; no dict/map field", "status": "pass", "notes": "metrics-types.ts:31-34,82-85; scalars only, never the nested tokens object" },
+    { "kind": "spec", "item": "ToolUsageAttributes tokens = incremental since-last-sync; SessionLifecycleAttributes tokens = whole-session cumulative", "status": "pass", "notes": "aggregator sums pendingDeltas only; hook.ts sums all readAll() rows by design" },
+    { "kind": "spec", "item": "Missing/empty metrics-delta file yields omitted/zero tokens at session-end, never a thrown error", "status": "pass", "notes": "MetricsWriter.readAll() returns [] for a missing file, tested; corrupt-line case now also tolerated (CR-006)" },
+    { "kind": "spec", "item": "sendSessionEnd's new params optional; DesktopTelemetryRuntime call site compiles/runs unchanged", "status": "pass", "notes": "metrics-api-client.ts adds optional trailing params; DesktopTelemetryRuntime now also populates tokens (CR-007 resolved)" },
+    { "kind": "spec", "item": "No code path computes or transmits a monetary/cost value", "status": "pass", "notes": "token capture/propagation paths only sum/emit raw counts, never a price" },
+    { "kind": "spec", "item": "Debug-log and dry-run log projections include the four new fields", "status": "pass", "notes": "metrics-api-client.ts sendRequest and dry-run logs; covered by metrics-upload-contract.test.ts" },
+    { "kind": "spec", "item": "Token fields populate identically for claude-agent sessions regardless of provider; no provider gate", "status": "pass", "notes": "no provider check anywhere in the token capture/propagation diff hunks" },
+    { "kind": "spec", "item": "Non-goal: no anthropic-subscription-only provider gate", "status": "pass", "notes": "confirmed absent" },
+    { "kind": "spec", "item": "Non-goal: no cost/price computation or transmission by client", "status": "pass", "notes": "token paths carry only raw counts" },
+    { "kind": "spec", "item": "Non-goal: no changes to gemini/kimi/codex/pi/opencode.metrics-processor.ts", "status": "pass", "notes": "none of the five sibling processor files touched" },
+    { "kind": "spec", "item": "Non-goal: no schema_version bump on either attributes interface", "status": "pass", "notes": "metrics-types.ts adds only the four numeric fields" },
+    { "kind": "spec", "item": "Non-goal: no new backend-schema negotiation process or ticket", "status": "na", "notes": "organizational non-goal; no evidence of such a process being added" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "All 8 commit subjects match <type>(<scope>): <subject>; types/scopes are in commitlint.config.cjs enum; subjects imperative, under 100 chars." },
+    { "kind": "code-quality", "status": "pass", "notes": "Exported functions have explicit return types, .js imports, interfaces, JSDoc. No new console.log/require(). Pre-existing oversized files only get small additive blocks." },
+    { "kind": "security", "status": "pass", "notes": "No attribution-header/JWT paths touched. New token-count fields are non-sensitive telemetry logged via logger.debug/info. No secrets, unsanitized paths, or header/cookie logging introduced." }
+  ],
+  "findings": [],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "Number(usage.*) || 0 coercion added for all four fields; new test asserts non-numeric input coerces to 0." },
+    { "id": "CR-002", "status": "resolved", "notes": "New aggregator test asserts activeDurationMs passthrough matches the raw session value." },
+    { "id": "CR-003", "status": "resolved", "notes": "exportJSON/exportCSV now accept and merge costIndex/costSummary; new Active Duration/Cost columns; call sites updated." },
+    { "id": "CR-004", "status": "resolved", "notes": "New test asserts enrichCosts/formatter cost args are invoked on the plain (non-report) runAnalytics path." },
+    { "id": "CR-005", "status": "resolved", "notes": "hasOwnershipMarker falls back to a full-file scan when the 256KB bounded scan finds nothing, with a debug log; new test covers it." },
+    { "id": "CR-006", "status": "resolved", "notes": "Fixed at the recommendation's alternate site: MetricsWriter.readAll() now catches per-line JSON.parse errors and skips the malformed line instead of throwing." },
+    { "id": "CR-007", "status": "resolved", "notes": "DesktopTelemetryRuntime now sums MetricsWriter deltas and passes tokens as sendSessionEnd's 7th positional arg, matching metrics-api-client.ts's signature; new test confirms summed totals." }
+  ]
+}
