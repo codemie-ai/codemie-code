@@ -185,6 +185,19 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.DISABLE_AUTOUPDATER = '1';
       }
 
+      // ...but keep *plugin* auto-updates working. Upstream gates them on the
+      // same predicate as the binary updater:
+      //   Pmt() = autoUpdaterDisabled() && !FORCE_AUTOUPDATE_PLUGINS
+      // which both skips the background plugin update pass and hides the
+      // per-marketplace "Enable auto-update" item from the /plugin Marketplaces
+      // menu entirely. Without this, pinning the binary above silently leaves
+      // every CodeMie user on whatever plugin version they first installed,
+      // with no visible control to change it.
+      // https://code.claude.com/docs/en/discover-plugins#configure-auto-updates
+      if (!env.FORCE_AUTOUPDATE_PLUGINS) {
+        env.FORCE_AUTOUPDATE_PLUGINS = '1';
+      }
+
       // WORKAROUND: Disable tool search feature introduced in 2.1.69+
       // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
       if (!env.ENABLE_TOOL_SEARCH) {
