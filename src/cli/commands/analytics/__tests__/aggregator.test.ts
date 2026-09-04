@@ -156,6 +156,17 @@ describe('AnalyticsAggregator branch attribution', () => {
     expect(sessions.find((s) => s.sessionId === 'A')?.agentSessionFile).toBe('/logs/a.jsonl');
     expect(sessions.find((s) => s.sessionId === 'B')?.agentSessionFile).toBeUndefined();
   });
+
+  it('carries activeDurationMs through from RawSessionData when present, and leaves it undefined otherwise', () => {
+    const withActive = session('A', '/repo', [delta('A', 'main', 0)]);
+    (withActive as { activeDurationMs?: number }).activeDurationMs = 42_000;
+    const withoutActive = session('B', '/repo', [delta('B', 'main', 0)]);
+
+    const root = AnalyticsAggregator.aggregate([withActive, withoutActive]);
+    const sessions = root.projects[0].branches[0].sessions;
+    expect(sessions.find((s) => s.sessionId === 'A')?.activeDurationMs).toBe(42_000);
+    expect(sessions.find((s) => s.sessionId === 'B')?.activeDurationMs).toBeUndefined();
+  });
 });
 
 describe('NamedInvocationStats — type presence', () => {
