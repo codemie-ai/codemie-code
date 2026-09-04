@@ -172,15 +172,15 @@ describe('AnalyticsExporter', () => {
     const lines = text.split('\n');
 
     expect(lines[0]).toBe(
-      'Session ID,Agent,Provider,Project,Branch,Start Time,Duration (s),Turns,Primary Model,Files Modified,Lines Added,Lines Removed,Net Lines'
+      'Session ID,Agent,Provider,Project,Branch,Start Time,Duration (s),Active Duration (s),Turns,Primary Model,Files Modified,Lines Added,Lines Removed,Net Lines,Cost (USD)'
     );
-    // Session 1: duration 65000ms -> 65s, 2 files, added 15, removed 5, net 10, model 'sonnet'
+    // Session 1: duration 65000ms -> 65s, no activeDurationMs/cost -> blank, 2 files, added 15, removed 5, net 10, model 'sonnet'
     expect(lines[1]).toBe(
-      's1,claude,ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,65,3,sonnet,2,15,5,10'
+      's1,claude,ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,65,,3,sonnet,2,15,5,10,'
     );
     // Session 2: comma field quoted, quote field doubled+quoted, no model -> N/A, zeros
     expect(lines[2]).toBe(
-      '"s2,x","co""de",ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,0,0,N/A,0,0,0,0'
+      '"s2,x","co""de",ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,0,,0,N/A,0,0,0,0,'
     );
     expect(lines).toHaveLength(3);
   });
