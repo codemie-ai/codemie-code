@@ -1,0 +1,64 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses ran (blind, edge-case, acceptance). The core fix is correct and all six acceptance criteria trace green except AC5 (Windows evidence). However two independent lenses plus an orchestrator probe converged on a regression the fix introduces: new URL() does not throw on scheme:rest strings, so scheme-less host:port inputs collapse to an empty-host key and collide across ports, sharing credentials between instances. A second convergent finding: the key change orphans previously stored credentials so logout can no longer delete them. One test defect (shared-directory assertion) was found by two lenses. Triage: 3 patch, 1 decision_needed, 4 dismissed, 2 deferred. Dismissed includes the blind lens's claim that test 2 is a no-op tautology - refuted: getStoredCredentials normalizes the lookup URL at sso.auth.ts:182-184, which the blind lens could not see, and the orchestrator's RED run showed test 2 failing against unfixed code. Deferred (not emitted, non-blocking): the missing-codeMieUrl recovery branch at connect-orchestrator.ts:633-637, explicitly scoped out and gate-approved, needs a linked follow-up ticket before this closes; and a duplicate key derivation in analytics-cli.js:166-169 whose comment now misstates that it matches CredentialStore. Confidence is low because a decision_needed finding remains (AC5 waiver is the ticket owner's call, not the reviewer's).",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"criterion": "Ticket AC1 - profile login --url <api-url> stores credentials usable immediately by proxy connect desktop", "status": "pass", "notes": "Traced end to end; write (sso.auth.ts:137) and read (normalizeToBase, sso.auth.ts:182-184) now derive the identical key. Evidence is code trace plus mocked integration tests; no live SSO server run recorded."},
+    {"criterion": "Ticket AC2 - accurate recovery instruction from proxy connect desktop", "status": "pass", "notes": "Satisfied by making the printed command correct rather than rewording it. Residual: the sibling missing-codeMieUrl branch still advises a command that cannot fix it - scoped out, see deferred findings."},
+    {"criterion": "Ticket AC3 - no missing-credential error after successful SSO auth", "status": "pass", "notes": "All 30 getStoredCredentials call sites go through the normalizer; no path bypasses it to call retrieveSSOCredentials directly."},
+    {"criterion": "Ticket AC4 - consistent behaviour across profile login, profile status, proxy connect desktop", "status": "pass", "notes": "All three converge on hash(protocol//host). Also removes the logout-vs-expiry asymmetry (sso.auth.ts:201 and :213)."},
+    {"criterion": "Ticket AC5 - verified on Windows PowerShell with the default profile", "status": "partial", "notes": "Not performed. Platform-independence argument holds for the hashing function, but the surrounding login flow does contain Windows-specific code (explorer.exe launch, sso.auth.ts:113-119; Windows Credential Vault as keytar backend). Criterion is an evidence requirement and no Windows run is recorded."},
+    {"criterion": "Ticket AC6 - no regression in existing SSO login, status, refresh, proxy flows", "status": "pass", "notes": "typecheck clean, eslint clean, 345 proxy/SSO integration tests and 489 provider/security unit tests pass. Bare portal URLs hash identically before and after; only already-broken URL forms change key."},
+    {"criterion": "Scope adherence - IN #525 normalization, #506 comment, tests; OUT #506 caller code, missing-codeMieUrl, docs", "status": "pass", "notes": "Exactly 3 files, +108/-3. #506's caller-level normalization correctly not applied. Attribution intact: 745a4efa retains Anton_Yeromin; 03d3de0f carries the Co-authored-by trailer."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md - Conventional Commits", "status": "pass", "notes": "Both subjects conform; scopes utils/providers valid; 71 and 63 chars, under the 100 limit."},
+    {"standard": "git-workflow.md - CRITICAL attribution-header check", "status": "na", "notes": "Diff touches no X-CodeMie-* header, JWT claim override, or Responses user field. Trigger does not fire."},
+    {"standard": "code-quality.md - lint and types", "status": "pass", "notes": "eslint --max-warnings=0 clean on all three changed files; tsc --noEmit clean."},
+    {"standard": "security-practices.md - credential handling", "status": "partial", "notes": "No secrets logged, no console.log, no generic Error. But the change alters credential key derivation and leaves prior credential material unreachable and undeletable (CR-002), and can collide credentials across instances (CR-001)."},
+    {"standard": "testing-patterns.md - vitest conventions", "status": "partial", "notes": "vi.mock module-level pattern followed correctly. Test 1 asserts on a directory shared across the cli project (CR-003)."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "new URL() accepts scheme:rest strings with an empty host, collapsing scheme-less host:port inputs to one key",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "The try/catch assumes non-URL strings throw, but new URL() succeeds on any string containing a colon: 'localhost:8080' and 'localhost:9090' both parse as protocol 'localhost:' with host '', so both normalize to 'localhost://' and hash to the same key. The catch fallback never fires. Reachable via profile login --url (auth.ts:14, consumed unvalidated at :64) and CODEMIE_URL (config.ts:441); the interactive prompt validates the scheme (codemie-auth-helpers.ts:64-66) but these paths do not. Separately, a scheme-less URL with a path throws and falls back to raw-string hashing, still reproducing the original store/retrieve mismatch.",
+      "impact": "This is a regression the fix introduces. Before the change, 'localhost:8080' and 'localhost:9090' hashed distinctly and a lookup simply missed. After it, both store and retrieve resolve to one slot: a second login silently overwrites the first, and getStoredCredentials returns instance A's session cookie for instance B. The credentialBase !== baseUrl guard at sso.auth.ts:186-193 only protects the global fallback, not the per-URL path, so sso.proxy.ts attaches the wrong instance's cookie to requests for another host - a credential sent to an endpoint it was not issued for.",
+      "recommendation": "After parsing, require parsed.host to be non-empty and parsed.protocol to be http: or https:, otherwise fall through to the raw-string branch. Optionally validate at the entry points (--url, CODEMIE_URL) with the same http(s) check promptForCodeMieUrl already applies.",
+      "evidence": "src/utils/security.ts:316-326; verified: new URL('localhost:8080').host === '' and new URL('localhost:9090').host === '', both hashing to db14be3ea039; src/cli/commands/profile/auth.ts:14,64; src/utils/config.ts:441"
+    },
+    {
+      "id": "CR-002",
+      "title": "Key change orphans previously stored credentials; logout can no longer delete them",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Nothing reads or deletes the old key. For any user whose stored URL carried a path, old and new keys differ (sso-986c4ba167... vs sso-cb66bf94a6...). clearSSOCredentials (security.ts:386-409) and handleLogout (profile/auth.ts:101-117) both derive the delete target through the changed getUrlStorageKey, so the old entry is unreachable by every code path in the tree. Path-bearing login URLs are not hypothetical: sso.proxy.ts:96 instructs users to run profile login --url <targetApiUrl>, which includes /code-assistant-api.",
+      "impact": "The abandoned entry holds a live codemie_access_token cookie, persisted in the OS keychain and at ~/.codemie/credentials/sso-<oldhash>.enc, encrypted with a key derived only from os.hostname()+platform()+arch() (security.ts:556-560) - non-secret machine facts. codemie profile logout now reports success while the blob survives indefinitely. For users whose configured URL contained the path, logout previously did delete it, so this is a regression for that population.",
+      "recommendation": "Add a legacy-key path: compute both the legacy key (raw lowercase, trailing slash stripped) and the new host key. On retrieve, fall back to the legacy key and re-store under the new one; on clearSSOCredentials/clearJWTCredentials, delete both keychain accounts and both .enc files. A one-shot migrate-and-delete on first retrieve is the minimum needed for logout to be truthful.",
+      "evidence": "src/utils/security.ts:316-326, 386-409; src/cli/commands/profile/auth.ts:101-117; src/providers/plugins/sso/proxy/sso.proxy.ts:96"
+    },
+    {
+      "id": "CR-003",
+      "title": "Key-invariant test asserts on a directory shared by every file in the cli vitest project",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "listCredentialFiles() reads getCodemiePath('credentials'), which resolves to a single CODEMIE_HOME shared across the whole cli project run (vitest.config.ts:12, 64-67). The project sets no fileParallelism:false or maxWorkers, and tests/integration/sso-per-url-credentials.test.ts stores and clears .enc files in that same directory. The test asserts a cardinality delta of exactly 1 and whole-listing equality across two readdir calls separated by a store.",
+      "impact": "A neighbouring suite creating or unlinking inside that window turns a correct implementation into a red build whose message looks like a credential-key regression. It can also fail open, masking a real regression. Did not reproduce across 12 and 5 back-to-back paired runs, so it presents as a rare CI flake in a merge-blocking gate rather than a consistent failure.",
+      "recommendation": "Assert identity rather than cardinality: compute the two candidate filenames (sha256 of BASE_URL and of API_URL) and assert the base-hash .enc exists while the api-hash .enc does not. Deterministic and immune to parallel neighbours. While there, add the two coverage gaps the blind lens named: a distinctness test (different hosts/ports/schemes still produce different keys - this would have caught CR-001) and a test exercising the catch fallback branch.",
+      "evidence": "tests/integration/sso-credential-key-normalization.test.ts:63-70; vitest.config.ts:12,64-67; tests/integration/sso-per-url-credentials.test.ts:88-110"
+    },
+    {
+      "id": "CR-004",
+      "title": "Ticket AC5 (Windows PowerShell verification) waived by argument, not satisfied by evidence",
+      "severity": "major",
+      "triage": "decision_needed",
+      "problem": "The ticket requires verification on Windows PowerShell with the default profile. The spec substitutes a platform-independence argument (spec.md:76) and no Windows run exists in any task artifact. Recorded verification is a macOS test-level A/B/A on the patch, not an end-to-end CLI run on any platform.",
+      "impact": "An explicit verbatim acceptance criterion is unmet on evidence. The argument is sound for the hashing function but does not cover Windows-only code in the same flow (explorer.exe browser launch at sso.auth.ts:113-119; Windows Credential Vault as the keytar backend), so a Windows-specific failure in login-then-connect would not have been caught.",
+      "recommendation": "Either run profile login --url <api-url> followed by proxy connect desktop once on Windows PowerShell with the default profile and attach the output, or have the ticket owner explicitly accept the platform-independence waiver and record that acceptance. This is the ticket owner's decision, not the reviewer's.",
+      "evidence": "docs/superpowers/tasks/2026-09-02-epmcdme-14132-sso-login-url-key-mismatch/spec.md:76"
+    }
+  ]
+}
