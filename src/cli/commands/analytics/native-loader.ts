@@ -207,6 +207,14 @@ export const realNativeDeps: NativeLoaderDeps = {
     // seen with headroom; scanning is bounded by bytes read, not by a line count, since a
     // large early line (not the marker) can consume most of a small budget by itself.
     const SCAN_BYTES = 262_144;
+    const hasMarkerLine = (text: string): boolean =>
+      text.split('\n').some((line) => {
+        try {
+          return (JSON.parse(line) as { type?: string }).type === 'codemie_session_start';
+        } catch {
+          return false;
+        }
+      });
     try {
       const fd = openSync(filePath, 'r');
       const buf = Buffer.alloc(SCAN_BYTES);
@@ -216,17 +224,18 @@ export const realNativeDeps: NativeLoaderDeps = {
       } finally {
         closeSync(fd);
       }
-      return buf
-        .subarray(0, bytesRead)
-        .toString('utf-8')
-        .split('\n')
-        .some((line) => {
-          try {
-            return (JSON.parse(line) as { type?: string }).type === 'codemie_session_start';
-          } catch {
-            return false;
-          }
-        });
+      if (hasMarkerLine(buf.subarray(0, bytesRead).toString('utf-8'))) {
+        return true;
+      }
+      // The bounded scan filled its whole budget without finding the marker — it may
+      // still be further into the file (a hookAdditionalContext blob larger than
+      // SCAN_BYTES would reproduce the same misreported-as-native-external bug at a
+      // higher threshold). Fall back to a full-file scan rather than giving up.
+      if (bytesRead === SCAN_BYTES) {
+        logger.debug(`[native] ownership scan exceeded ${SCAN_BYTES}-byte budget, falling back to full-file scan: ${filePath}`);
+        return hasMarkerLine(readFileSync(filePath, 'utf-8'));
+      }
+      return false;
     } catch {
       return false;
     }

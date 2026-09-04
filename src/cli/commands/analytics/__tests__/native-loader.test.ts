@@ -374,6 +374,26 @@ describe('realNativeDeps.hasOwnershipMarker — ownership index excludes externa
     expect(realNativeDeps.hasOwnershipMarker(noSidecarTranscript)).toBe(true);
   });
 
+  it('falls back to a full-file scan when the marker falls past the 256KB bounded-scan budget', async () => {
+    // A hookAdditionalContext blob bigger than the 256KB scan budget should not
+    // reproduce the same "misreported as native-external" bug at a higher threshold.
+    const hugeHookLine = JSON.stringify({
+      type: 'user',
+      attachment: { type: 'hook_success', hookName: 'SessionStart:clear', content: 'x'.repeat(300_000) },
+    });
+    const pastBudgetTranscript = join(mockSessionsDir, 'past-budget-marker.jsonl');
+    const lines = [
+      '{"type":"mode","mode":"normal"}',
+      hugeHookLine,
+      '{"type":"codemie_session_start"}',
+      '{"type":"user"}',
+    ];
+    writeFileSync(pastBudgetTranscript, lines.join('\n') + '\n');
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(pastBudgetTranscript)).toBe(true);
+  });
+
   it('still returns false when no marker exists anywhere in a large early-line transcript', async () => {
     const bigHookLine = JSON.stringify({
       type: 'user',
