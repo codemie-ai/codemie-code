@@ -244,7 +244,7 @@ export async function resolveBudget({
     return { budget: null, budgetError: errorMsg };
   }
   if (!headers) {
-    return { budget: null, budgetError: 'no auth - run codemie profile login' };
+    return { budget: null, budgetError: 'reauthenticate - run codemie profile login' };
   }
 
   try {

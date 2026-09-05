@@ -222,7 +222,7 @@ describe('resolveBudget', () => {
       }));
     const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
-    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
+    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate - run codemie profile login' });
   });
 
   it('returns the HTTP error message when the fetch fails', async () => {
