@@ -85,7 +85,14 @@ afterEach(async () => {
   openLoggers = [];
   if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
   else delete process.env.CODEMIE_HOME;
-  rmSync(tmpHome, { recursive: true, force: true });
+  // Windows can still hold log file handles briefly after stream.end(); force +
+  // maxRetries only suppress ENOENT, so treat residual ENOTEMPTY/EBUSY as
+  // best-effort teardown (matches claude.metrics-processor-names.test.ts).
+  try {
+    rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* ignore temp-dir cleanup races */
+  }
   vi.restoreAllMocks();
 });
 
