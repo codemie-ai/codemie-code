@@ -27,16 +27,27 @@ const ENCRYPTION_KEY = (() => {
 function decrypt(text) {
   const parts = text.split(':');
   if (parts.length === 3) {
-    const iv = Buffer.from(parts[0], 'hex');
-    const authTag = Buffer.from(parts[1], 'hex');
-    const d = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-    d.setAuthTag(authTag);
-    return d.update(parts[2], 'hex', 'utf8') + d.final('utf8');
+    // Current GCM format: iv:authTag:encrypted
+    try {
+      const iv = Buffer.from(parts[0], 'hex');
+      const authTag = Buffer.from(parts[1], 'hex');
+      const d = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+      d.setAuthTag(authTag);
+      return d.update(parts[2], 'hex', 'utf8') + d.final('utf8');
+    } catch (gcmError) {
+      // If GCM fails, try CBC as fallback for malformed data
+      console.error(`[CodeMie Statusline] GCM decryption failed, trying CBC fallback: ${gcmError.message}`);
+    }
   }
   // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
-  const iv = Buffer.from(parts[0], 'hex');
-  const d = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
-  return d.update(parts[1], 'hex', 'utf8') + d.final('utf8');
+  try {
+    const iv = Buffer.from(parts[0], 'hex');
+    const d = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    return d.update(parts[1], 'hex', 'utf8') + d.final('utf8');
+  } catch (cbcError) {
+    console.error(`[CodeMie Statusline] CBC decryption failed: ${cbcError.message}`);
+    throw new Error('Failed to decrypt credentials - please re-authenticate with codemie profile login');
+  }
 }
 
 function urlHash(rawUrl) {
@@ -225,10 +236,15 @@ export async function resolveBudget({
   try {
     headers = await getAuthHeadersImpl(codeMieUrl);
   } catch (e) {
-    return { budget: null, budgetError: e.message };
+    const errorMsg = e.message || String(e);
+    // Provide more specific error messages instead of generic "reauthenticate"
+    if (errorMsg.includes('decrypt') || errorMsg.includes('cipher') || errorMsg.includes('authentication')) {
+      return { budget: null, budgetError: 'auth error - try codemie profile login' };
+    }
+    return { budget: null, budgetError: errorMsg };
   }
   if (!headers) {
-    return { budget: null, budgetError: 'reauthenticate' };
+    return { budget: null, budgetError: 'reauthenticate - run codemie profile login' };
   }
 
   try {

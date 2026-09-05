@@ -53,7 +53,23 @@ export async function installStatusline(): Promise<InstallStatuslineResult> {
     }
   }
 
-  const alreadyConfigured = Boolean(settings.statusLine);
+  // Check if there's an existing CodeMie statusline configuration that needs migration
+  const existingStatusLine = settings.statusLine as Record<string, unknown> | undefined;
+  let alreadyConfigured = false;
+
+  if (existingStatusLine) {
+    // Check if the existing statusLine points to a CodeMie script (old or new)
+    const command = String(existingStatusLine.command || '');
+    if (command.includes('codemie-budget-status.js') || command.includes('codemie-statusline.mjs')) {
+      // This is a CodeMie-managed statusline - migrate it to the current script
+      logger.info('[Statusline] Migrating existing CodeMie statusline configuration to current script');
+      alreadyConfigured = true;
+    } else {
+      // This is a non-CodeMie statusline - don't touch it
+      logger.debug('[Statusline] Existing statusLine is not CodeMie-managed, leaving unchanged');
+      return { scriptPath, alreadyConfigured: true };
+    }
+  }
 
   settings.statusLine = {
     type: 'command',
