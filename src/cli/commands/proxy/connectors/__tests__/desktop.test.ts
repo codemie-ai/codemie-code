@@ -31,14 +31,17 @@ import {
   writeDesktopConfig,
 } from '../desktop.js';
 
-// Mirrors the real gateway response shape — includes vertex/non-claude/dated
-// variants so we exercise the filter and resolver logic together.
+// Mirrors the real gateway response shape — includes latest Opus/Sonnet,
+// vertex/non-claude/dated variants so we exercise filter + resolver together.
 const MODEL_LIST_RESPONSE = {
   data: [
     { id: 'claude-sonnet-4-5-20250929' },
     { id: 'claude-4-5-sonnet' },
+    { id: 'claude-sonnet-5' },
     { id: 'claude-sonnet-4-6' },
     { id: 'claude-sonnet-4-6-vertex' },
+    { id: 'claude-opus-5' },
+    { id: 'claude-opus-4-8' },
     { id: 'claude-opus-4-5-20251101' },
     { id: 'claude-opus-4-6-20260205' },
     { id: 'claude-opus-4-6-vertex' },
@@ -252,7 +255,16 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-haiku-4-5']);
+    expect(models).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-opus-3',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ]);
   });
 
   it('throws when response is not ok', async () => {
@@ -332,7 +344,9 @@ describe('selectPreferredClaudeModels', () => {
   const available = [
     'claude-sonnet-4-5-20250929',
     'claude-4-5-sonnet',
+    'claude-sonnet-5',
     'claude-sonnet-4-6',
+    'claude-opus-5',
     'claude-opus-4-5-20251101',
     'claude-opus-4-6-20260205',
     'claude-opus-4-7',
@@ -341,10 +355,26 @@ describe('selectPreferredClaudeModels', () => {
 
   it('returns exact matches when present and dated fallbacks otherwise', () => {
     expect(selectPreferredClaudeModels(available)).toEqual([
-      'claude-sonnet-4-6',        // exact
+      'claude-opus-5',            // exact (latest)
       'claude-opus-4-7',          // exact
       'claude-opus-4-6-20260205', // dated fallback
+      'claude-sonnet-5',          // exact (latest)
+      'claude-sonnet-4-6',        // exact
       'claude-haiku-4-5-20251001',// dated fallback
+    ]);
+  });
+
+  it('falls back through older preferred entries when Opus 5 / Sonnet 5 are absent', () => {
+    expect(selectPreferredClaudeModels([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ])).toEqual([
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
     ]);
   });
 
@@ -374,7 +404,23 @@ describe('selectPreferredClaudeModels', () => {
 });
 
 describe('selectDesktopClaudeModels', () => {
-  it('exposes only Opus 4.8 when the gateway serves it', () => {
+  it('exposes Opus 5, Sonnet 5, and Haiku when the gateway serves the latest lineup', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ]);
+    expect(result).toEqual([
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+    ]);
+  });
+
+  it('exposes only Opus 4.8 when Opus 5 is absent and the gateway serves 4.8', () => {
     const result = selectDesktopClaudeModels([
       'claude-sonnet-4-6',
       'claude-opus-4-8',
@@ -383,13 +429,13 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-8',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
     ]);
   });
 
-  it('falls back to the highest available opus when 4.8 is absent', () => {
+  it('falls back to the highest available opus when 5 and 4.8 are absent', () => {
     const result = selectDesktopClaudeModels([
       'claude-sonnet-4-6',
       'claude-opus-4-7',
@@ -397,8 +443,8 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-7',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
     ]);
   });
@@ -413,6 +459,17 @@ describe('selectDesktopClaudeModels', () => {
       'claude-opus-4-8-20260601',
       'claude-opus-4-7',
     ])).toEqual(['claude-opus-4-8-20260601']);
+  });
+
+  it('collapses multiple sonnets to the highest-priority preferred match', () => {
+    expect(selectDesktopClaudeModels([
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
+    ])).toEqual([
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001',
+    ]);
   });
 
   it('returns no opus entry when the gateway serves none', () => {
@@ -496,12 +553,12 @@ describe('writeDesktopConfig', () => {
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
   });
 
-  it('populates inferenceModels with the curated preferred Claude set (single opus)', async () => {
+  it('populates inferenceModels with the curated preferred Claude set (single opus + sonnet)', async () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-opus-4-7' },
+      { name: 'claude-opus-5' },
+      { name: 'claude-sonnet-5' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
@@ -517,8 +574,8 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-opus-4-7' },
+      { name: 'claude-opus-5' },
+      { name: 'claude-sonnet-5' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });

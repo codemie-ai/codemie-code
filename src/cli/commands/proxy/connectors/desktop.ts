@@ -54,15 +54,20 @@ interface CodeMieLlmModel {
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
  *
- * The opus entries are listed in descending preference (`4-8 → 4-7 → 4-6`):
- * {@link selectDesktopClaudeModels} collapses them to the single highest-priority
- * opus the gateway actually serves, so Desktop never shows more than one Opus.
+ * Opus and Sonnet entries are listed in descending preference
+ * (`opus: 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5 → 4-6`):
+ * {@link selectDesktopClaudeModels} collapses each family to the single
+ * highest-priority ID the gateway actually serves, so Desktop never shows more
+ * than one Opus or one Sonnet (matching the latest cloud Desktop lineup).
  */
 export const PREFERRED_CLAUDE_MODELS = [
-  'claude-sonnet-4-6',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-opus-3',
+  'claude-sonnet-5',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5',
 ] as const;
 
@@ -225,11 +230,13 @@ export function selectPreferredClaudeModels(
  * Build the exact model set Claude Desktop should be offered.
  *
  * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus family to a single entry: the first (highest-priority)
- * opus that resolved. With opus ids ordered `4-8 → 4-7 → 4-6` in
- * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 4.8 when the gateway serves
- * it and otherwise falls back to the next-best available opus. Non-opus models
- * are passed through untouched and order is preserved.
+ * then collapses the opus and sonnet families to a single entry each: the first
+ * (highest-priority) ID that resolved. With preferred order
+ * `opus: 5 → 4-8 → 4-7 → 4-6 → 3` and `sonnet: 5 → 4-6` in
+ * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 5 / Sonnet 5 when the
+ * gateway serves them and otherwise falls back to the next-best available ID
+ * in each family. Haiku and any other non-opus/non-sonnet models are passed
+ * through untouched; order is preserved.
  */
 export function selectDesktopClaudeModels(
   available: string[],
@@ -237,10 +244,18 @@ export function selectDesktopClaudeModels(
 ): string[] {
   const resolved = selectPreferredClaudeModels(available, preferred);
   let opusKept = false;
+  let sonnetKept = false;
   return resolved.filter((id) => {
-    if (!/^claude-opus-/i.test(id)) return true;
-    if (opusKept) return false;
-    opusKept = true;
+    if (/^claude-opus-/i.test(id)) {
+      if (opusKept) return false;
+      opusKept = true;
+      return true;
+    }
+    if (/^claude-sonnet-/i.test(id)) {
+      if (sonnetKept) return false;
+      sonnetKept = true;
+      return true;
+    }
     return true;
   });
 }
