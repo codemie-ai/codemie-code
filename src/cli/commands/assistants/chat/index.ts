@@ -419,6 +419,21 @@ async function handleChatError(error: unknown, config: ProviderProfile): Promise
   const context = createErrorContext(error);
   logger.error('Assistant chat API call failed', context);
 
+  // Log the actual error details for debugging (instead of [object Object])
+  if (error instanceof Error) {
+    logger.error('Assistant chat error details', {
+      message: error.message,
+      name: error.name,
+      code: (error as any).code,
+      stack: error.stack
+    });
+  } else {
+    logger.error('Assistant chat error details (non-Error)', {
+      error: String(error),
+      type: typeof error
+    });
+  }
+
   if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
     await promptReauthentication(config);
   }
