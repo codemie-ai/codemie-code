@@ -112,6 +112,19 @@ export class SessionSyncer {
       }
 
       if (!sessionMetadata.correlation || sessionMetadata.correlation.status !== 'matched') {
+        // Handle 'file_not_found' status specially - this is expected for some interactive sessions
+        if (sessionMetadata.correlation?.status === 'file_not_found') {
+          logger.info(
+            `[SessionSyncer] Skipping session ${sessionId} - transcript file not found (status: file_not_found). ` +
+            `This is expected for some interactive PTY sessions where the transcript is not persisted.`
+          );
+          return {
+            success: true,
+            message: 'Session skipped - transcript file not found (expected for some interactive sessions)',
+            processorResults: {},
+            failedProcessors: []
+          };
+        }
         return {
           success: false,
           message: `Session not correlated (status: ${sessionMetadata.correlation?.status || 'unknown'})`,

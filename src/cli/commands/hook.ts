@@ -807,9 +807,22 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       existing.status = 'active';
       if (gitBranch) existing.gitBranch = gitBranch;
       if (remoteRepository) existing.repository = remoteRepository;
+
+      // Check if the transcript file actually exists on disk before marking correlation as matched
+      const { existsSync } = await import('node:fs');
+      const transcriptFileExists = event.transcript_path ? existsSync(event.transcript_path) : false;
+      const correlationStatus = transcriptFileExists ? 'matched' as const : 'file_not_found' as const;
+
+      if (!transcriptFileExists && event.transcript_path) {
+        logger.warn(
+          `[hook:SessionStart] Transcript path reported but file does not exist: ${event.transcript_path}. ` +
+          `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
+        );
+      }
+
       existing.correlation = {
         ...existing.correlation,
-        status: 'matched',
+        status: correlationStatus,
         ...(event.session_id && { agentSessionId: event.session_id }),
         ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
       };
@@ -837,12 +850,25 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
       '../../agents/core/session/session-origin-audit.js'
     );
+    const { existsSync } = await import('node:fs');
     const origin =
       getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME
         ? SESSION_ORIGIN.EXTERNAL_RESUME
         : undefined;
 
-    // Create session record with correlation already matched
+    // Check if the transcript file actually exists on disk before marking correlation as matched
+    // This prevents metrics processing from failing on non-existent files (e.g., interactive PTY sessions)
+    const transcriptFileExists = event.transcript_path ? existsSync(event.transcript_path) : false;
+    const correlationStatus = transcriptFileExists ? 'matched' as const : 'file_not_found' as const;
+
+    if (!transcriptFileExists && event.transcript_path) {
+      logger.warn(
+        `[hook:SessionStart] Transcript path reported but file does not exist: ${event.transcript_path}. ` +
+        `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
+      );
+    }
+
+    // Create session record with correlation status based on file existence
     const session = {
       sessionId,
       agentName,
@@ -856,7 +882,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
       correlation: {
-        status: 'matched' as const,
+        status: correlationStatus,
         agentSessionId: event.session_id,
         agentSessionFile: event.transcript_path,
         retryCount: 0
