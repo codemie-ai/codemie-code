@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 5
+            "timeout": 10
           },
           {
             "type": "command",
@@ -33,7 +33,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 2
+            "timeout": 10
           },
           {
             "type": "command",
@@ -48,7 +48,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 3
+            "timeout": 10
           }
         ]
       }
@@ -59,7 +59,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 2
+            "timeout": 10
           },
           {
             "type": "command",
@@ -74,7 +74,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 2
+            "timeout": 10
           },
           {
             "type": "command",
@@ -89,7 +89,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 2
+            "timeout": 10
           }
         ]
       }
