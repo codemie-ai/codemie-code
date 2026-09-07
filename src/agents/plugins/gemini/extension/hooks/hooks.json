@@ -20,7 +20,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie Session End",
-            "timeout": 100000
+            "timeout": 30000
           }
         ]
       }
