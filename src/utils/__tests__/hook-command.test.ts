@@ -51,21 +51,41 @@ describe('hook-command resolver', () => {
     spy.mockRestore();
   });
 
-  it('resolveCodemieBinary: on Windows, a .js argv[1] fallback is prefixed with the node executable', async () => {
+  it('resolveCodemieBinary: on Windows, a .js argv[1] fallback is prefixed with node and uses forward slashes', async () => {
     vi.doMock('../processes.js', () => ({ getCommandPath: vi.fn().mockResolvedValue(null) }));
     const argvSpy = vi.spyOn(process, 'argv', 'get').mockReturnValue(['node', 'C:\\Users\\u\\app\\codemie.js']);
     const platSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const execSpy = vi.spyOn(process, 'execPath', 'get').mockReturnValue('C:\\Program Files\\nodejs\\node.exe');
     const { resolveCodemieBinary, resolveHookCommand } = await import('../hook-command.js');
     const bin = await resolveCodemieBinary();
-    // A raw .js path is not invocable as a Windows hook command; prefix node.
-    expect(bin).toBe('"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\u\\app\\codemie.js"');
+    // Backslashes are converted to forward slashes so bash (Git Bash / WSL) can execute the path.
+    expect(bin).toBe('"C:/Program Files/nodejs/node.exe" "C:/Users/u/app/codemie.js"');
     expect(resolveHookCommand('codemie hook', bin)).toBe(
-      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\u\\app\\codemie.js" hook',
+      '"C:/Program Files/nodejs/node.exe" "C:/Users/u/app/codemie.js" hook',
     );
     argvSpy.mockRestore();
     platSpy.mockRestore();
     execSpy.mockRestore();
+  });
+
+  it('resolveCodemieBinary: on Windows, getCommandPath result with backslashes is converted to forward slashes', async () => {
+    vi.doMock('../processes.js', () => ({
+      getCommandPath: vi.fn().mockResolvedValue('C:\\Users\\u\\AppData\\Local\\CodeMie\\bin\\codemie.cmd'),
+    }));
+    const platSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const { resolveCodemieBinary } = await import('../hook-command.js');
+    expect(await resolveCodemieBinary()).toBe('C:/Users/u/AppData/Local/CodeMie/bin/codemie.cmd');
+    platSpy.mockRestore();
+  });
+
+  it('resolveCodemieBinary: on Windows, getCommandPath result with spaces and backslashes is quoted with forward slashes', async () => {
+    vi.doMock('../processes.js', () => ({
+      getCommandPath: vi.fn().mockResolvedValue('C:\\Program Files\\CodeMie\\bin\\codemie.cmd'),
+    }));
+    const platSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const { resolveCodemieBinary } = await import('../hook-command.js');
+    expect(await resolveCodemieBinary()).toBe('"C:/Program Files/CodeMie/bin/codemie.cmd"');
+    platSpy.mockRestore();
   });
 
   it('resolveCodemieBinary: on non-Windows, a .js argv[1] fallback stays a bare path (shebang-executable)', async () => {

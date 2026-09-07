@@ -16,24 +16,32 @@ function alwaysQuote(p: string): string {
   return p.startsWith('"') ? p : `"${p}"`;
 }
 
+// Convert Windows backslashes to forward slashes so the resolved path survives
+// bash (Git Bash / WSL) execution without \X sequences being consumed as escapes.
+// No-op on paths that already use forward slashes. See EPMCDME-14035.
+function toForwardSlash(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
 // Prefer the PATH-resolved shim, then the running entry (argv[1]), then bare `codemie`.
 // Never throws — it runs in launch-critical hook paths, so errors degrade to the next fallback.
 export async function resolveCodemieBinary(): Promise<string> {
   try {
     const resolved = await getCommandPath('codemie');
-    if (resolved) return quoteIfNeeded(resolved);
+    if (resolved) return quoteIfNeeded(toForwardSlash(resolved));
   } catch {
     // fall through
   }
 
   const argv1 = process.argv[1];
   if (argv1) {
-    // A Windows .js argv[1] is not directly invocable as a hook command — cmd.exe
-    // needs a `node` prefix; both tokens are quoted to survive spaces.
+    // A Windows .js argv[1] is not directly invocable as a hook command — bash
+    // needs a `node` prefix; both tokens use forward slashes and are quoted to
+    // survive spaces in paths like "C:/Program Files/...".
     if (process.platform === 'win32' && /\.[cm]?js$/i.test(argv1)) {
-      return `${alwaysQuote(process.execPath)} ${alwaysQuote(argv1)}`;
+      return `${alwaysQuote(toForwardSlash(process.execPath))} ${alwaysQuote(toForwardSlash(argv1))}`;
     }
-    return quoteIfNeeded(argv1);
+    return quoteIfNeeded(toForwardSlash(argv1));
   }
 
   return 'codemie';
