@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "branch": "feature/EPMCDME-12353_run-workflows-cli",
+  "runner": "npm",
+  "started_at": "2026-09-08T14:55:00Z",
+  "completed_at": "2026-09-08T14:57:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2500,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "integration-tests",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5500,
+      "command": "npx vitest run tests/integration/cli-commands/workflow.test.ts",
+      "exit_code": 0,
+      "notes": "All workflow CLI and SDK command integration tests passed cleanly (6 tests total)."
+    }
+  ]
+}
