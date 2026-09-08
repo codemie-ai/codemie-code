@@ -66,3 +66,13 @@ export async function deleteWorkflow(
 ): Promise<void> {
   await client.workflows.delete(workflowId);
 }
+
+export async function runWorkflow(
+  client: CodeMieClient,
+  workflowId: string,
+  userInput?: string | Record<string, unknown> | unknown[] | number | boolean,
+  fileName?: string,
+  sessionId?: string,
+): Promise<unknown> {
+  return client.workflows.run(workflowId, userInput, fileName, sessionId);
+}

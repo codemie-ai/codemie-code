@@ -12,9 +12,9 @@ import z, { ZodError } from "zod";
 /**
  * Get an authenticated CodeMie SDK client
  */
-export async function getSdkClient(): Promise<CodeMieClient> {
+export async function getSdkClient(quiet = false): Promise<CodeMieClient> {
   const config = await ConfigLoader.load();
-  return getAuthenticatedClient(config);
+  return getAuthenticatedClient(config, quiet);
 }
 
 /**

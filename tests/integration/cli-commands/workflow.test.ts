@@ -37,3 +37,32 @@ describe('Workflow Commands', () => {
     expect(workflowResult.exitCode).toBe(0);
   });
 });
+
+describe('Workflow Run and Workflows Run commands', () => {
+  setupTestIsolation();
+
+  it('should display help text for the workflow run command', () => {
+    const result = cli.runSilent('workflow run --help');
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('Execute a custom or shared workflow');
+    expect(result.output).toContain('--workflow');
+    expect(result.output).toContain('--input');
+    expect(result.output).toContain('--file');
+    expect(result.output).toContain('--no-wait');
+  });
+
+  it('should display help text for sdk workflows run command', () => {
+    const result = cli.runSilent('sdk workflows run --help');
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('Execute a custom or shared workflow by ID or name');
+    expect(result.output).toContain('--input');
+    expect(result.output).toContain('--file');
+    expect(result.output).toContain('--no-wait');
+  });
+
+  it('should error when workflow run is called without a workflow ID or name', () => {
+    const result = cli.runSilent('workflow run');
+    expect(result.exitCode).toBe(1);
+    expect(result.error).toContain('Error: Workflow ID or name is required');
+  });
+});
