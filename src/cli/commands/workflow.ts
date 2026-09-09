@@ -519,7 +519,7 @@ Examples:
               uploadSpinner.fail(chalk.red(`Failed to upload file: ${uploadErr.message || uploadErr}`));
               process.exit(1);
             }
-          } catch (readErr: any) {
+          } catch {
             console.error(chalk.red(`❌ Error: File "${options.file}" not found or could not be read.`));
             process.exit(1);
           }
