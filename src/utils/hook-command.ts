@@ -54,6 +54,35 @@ export function resolveHookCommand(command: string, binary: string): string {
   return command;
 }
 
+// Recursively convert backslashes to forward slashes in every string `command` field.
+// Fixes paths written by migration 006 before EPMCDME-14762; no-op on forward-slash paths.
+// Mutates in place; returns true if anything changed.
+export function fixCommandTreeSlashes(node: unknown): boolean {
+  if (Array.isArray(node)) {
+    let changed = false;
+    for (const item of node) {
+      if (fixCommandTreeSlashes(item)) changed = true;
+    }
+    return changed;
+  }
+
+  if (node && typeof node === 'object') {
+    const record = node as Record<string, unknown>;
+    let changed = false;
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'command' && typeof value === 'string' && value.includes('\\')) {
+        record[key] = toForwardSlash(value);
+        changed = true;
+      } else if (fixCommandTreeSlashes(value)) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  return false;
+}
+
 // Recursively rewrite every string `command` field anywhere in a hooks structure.
 // Shape-agnostic (no hardcoded layout). Mutates in place; returns true if anything changed.
 export function rewriteHooksCommandTree(node: unknown, binary: string): boolean {

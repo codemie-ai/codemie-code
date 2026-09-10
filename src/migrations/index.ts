@@ -29,3 +29,4 @@ import './004-skills-assistants-top-level.migration.js';
 import './005-skill-slug-format.migration.js';
 import './006-resolve-hook-command-paths.migration.js';
 import './007-decouple-provider-workspace-config.migration.js';
+import './008-fix-windows-hook-path-slashes.migration.js';
