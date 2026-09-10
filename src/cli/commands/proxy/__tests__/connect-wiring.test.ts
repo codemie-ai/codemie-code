@@ -44,8 +44,19 @@ describe('proxy connect — unified command and deprecated aliases', () => {
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeDesktop: true, vscode: true, vscodeClaudeCode: true, codexDesktop: false },
+        targets: { claudeDesktop: true, vscode: true, vscodeClaudeCode: true, codexDesktop: false, cursorIde: false },
       })
+    );
+  });
+
+  it('unified connect maps --cursor-ide into the ConnectTargets set', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['connect', '--cursor-ide'], { from: 'user' });
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ targets: expect.objectContaining({ cursorIde: true }) })
     );
   });
 
@@ -175,7 +186,7 @@ describe('deprecated aliases forward their flags under real CLI nesting', () => 
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeDesktop: false, vscode: true, vscodeClaudeCode: false, codexDesktop: false },
+        targets: { claudeDesktop: false, vscode: true, vscodeClaudeCode: false, codexDesktop: false, cursorIde: false },
         profile: 'p',
       })
     );

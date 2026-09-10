@@ -1,0 +1,2 @@
+{"ts":"2026-09-10T16:32:01Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"Plan reviewed and approved by user; leaves clean extension point for future --analytics flag","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-09-10T16:47:43Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"Automated review safe-failed (no dispatch tool available); user manually reviewed the frozen diff and approved","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}

@@ -244,6 +244,20 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it('--cursor-ide alone prints the analytics-only note and does no daemon/profile work', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { cursorIde: true } });
+
+    expect(ConfigLoader.load).not.toHaveBeenCalled();
+    expect(checkStatus).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Only analytics is supported'));
+    expect(process.exitCode).toBe(0);
+  });
+
   it('--insiders with only --claude-desktop warns and continues', async () => {
     await setupHappyMocks();
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');

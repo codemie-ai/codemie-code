@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14834/cursor-ide-otlp-integration",
+  "head": "3e9e0c7924f8ce39bedd39d7feea7a236f47237f",
+  "runner": "npm",
+  "started_at": "2026-09-10T16:50:00Z",
+  "completed_at": "2026-09-10T16:58:31Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3647,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9567,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8724,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9054,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 78401,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "267 files / 3957 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 57650,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "First two attempts showed spurious failures unrelated to this branch's diff: (1) an ambient CODEMIE_MODEL env var set in this shell caused sso-claude-plugin.test.ts to fail because the test does not clean that var (fixed by rerunning with a clean env, matching CI's job env); (2) with clean env, version.test.ts and skills.test.ts hit hookTimeout/testTimeout failures from subprocess e2e CLI spawns under machine load, which passed in isolation and on a subsequent full clean rerun (37 files / 279 passed, 10 skipped). Recorded result is the final clean, non-flaky rerun: 289 tests, 0 failures."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1149,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script prints \"No staged changes to scan\" and exits 0 because validate-secrets.js only scans `git diff --staged` (scripts/validate-secrets.js:87-96); no files were staged during this run. To run it for real locally, `git add` the changed files before invoking `npm run validate:secrets`. CI's gitleaks-action scans the full PR diff unconditionally, so this check is still owed to CI."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1346,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD per the guide; CI's validate-commits job instead checks the full PR base..head range and also lints the PR title, neither of which is reproducible outside a GitHub PR context (owed to CI)."
+    }
+  ],
+  "failures": {}
+}

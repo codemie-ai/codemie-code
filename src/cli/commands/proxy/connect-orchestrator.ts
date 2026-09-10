@@ -58,6 +58,7 @@ export interface ConnectTargets {
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
+  cursorIde?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -269,6 +270,7 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
+  '  --cursor-ide           Cursor IDE — analytics only for now',
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -280,7 +282,7 @@ const TARGET_LIST = [
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
+  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.cursorIde);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -291,6 +293,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
+  if (t.cursorIde) { flags.push('--cursor-ide'); labels.push('Cursor IDE'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }
@@ -591,6 +594,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
+    return;
+  }
+
+  if (targets.cursorIde && !targets.claudeDesktop && !targets.vscode && !targets.vscodeClaudeCode && !targets.codexDesktop) {
+    console.log(chalk.yellow('Note: Only analytics is supported for --cursor-ide.'));
     return;
   }
 

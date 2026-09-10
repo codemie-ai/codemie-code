@@ -1,0 +1,2 @@
+{"task_id":"task-1","status":"done","commit":"2013498","test_command":"npx vitest run src/cli/commands/proxy/__tests__/connect-wiring.test.ts"}
+{"task_id":"task-2","status":"done","commit":"3e9e0c7","test_command":"npx vitest run src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts"}
