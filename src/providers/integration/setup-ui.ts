@@ -229,8 +229,10 @@ export function formatModelChoice(
  * Get all model choices with metadata
  *
  * Returns array of formatted model choices, sorted by:
- * 1. Recommended models first — only the latest version within each
- *    recommendedModels family (see computeRecommendedModelIds)
+ * 1. Recommended models first — either `recommendedOverrideIds` (a live,
+ *    provider-computed set - see ProviderSetupSteps.getRecommendedModels)
+ *    when given, or only the latest version within each of the template's
+ *    static recommendedModels families otherwise (see computeRecommendedModelIds)
  * 2. Alphabetically by model ID
  *
  * Choices whose declared memory requirement (modelMetadata.minMemoryGb)
@@ -238,9 +240,10 @@ export function formatModelChoice(
  */
 export function getAllModelChoices(
   models: string[],
-  template?: ProviderTemplate
+  template?: ProviderTemplate,
+  recommendedOverrideIds?: Set<string>
 ): Array<{ name: string; value: string; disabled?: boolean | string }> {
-  const recommendedIds = computeRecommendedModelIds(models, template?.recommendedModels);
+  const recommendedIds = recommendedOverrideIds ?? computeRecommendedModelIds(models, template?.recommendedModels);
 
   // Sort models using common rules
   const sortedModels = [...models].sort((a, b) => {

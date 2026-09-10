@@ -18,31 +18,11 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   defaultBaseUrl: 'http://localhost:11434',
   requiresAuth: false,
   authType: 'none',
-  recommendedModels: [
-    'qwen2.5-coder',
-    'gpt-oss:120b-cloud',
-    'deepseek-coder-v2'
-  ],
-  modelMetadata: {
-    'qwen2.5-coder': {
-      name: 'Qwen 2.5 Coder',
-      description: 'Excellent coding model with tool support (7B, ~5GB download)',
-      popular: true,
-      minMemoryGb: 8
-    },
-    'gpt-oss:120b-cloud': {
-      name: 'GPT-OSS 120B (cloud)',
-      description: 'OpenAI open-weight model on Ollama cloud - no local memory required',
-      popular: true
-      // No minMemoryGb: runs on ollama.com, not on the local machine
-    },
-    'deepseek-coder-v2': {
-      name: 'DeepSeek Coder V2',
-      description: 'Advanced coding model with tool support (16B, ~9GB download)',
-      popular: true,
-      minMemoryGb: 12
-    }
-  },
+  // No hardcoded model list: the setup wizard offers installed local models,
+  // the ollama.com cloud catalog, and live search against Ollama's full
+  // model library (OllamaSetupSteps.searchModel in ollama.setup-steps.ts) -
+  // all real data instead of a curated set that inevitably goes stale.
+  recommendedModels: [],
   capabilities: ['streaming', 'tools', 'embeddings', 'model-management'],
   supportsModelInstallation: true,
   healthCheckEndpoint: '/api/version',
@@ -101,15 +81,15 @@ curl -fsSL https://ollama.com/install.sh | sh
 ### Windows
 Download from: https://ollama.com/download
 
-## Recommended Coding Models (Tool Support Required)
+## Choosing a Model (Tool Support Required)
 
-**Important**: Some agents require models with function calling/tool support.
+**Important**: Some agents require models with function calling/tool support
+(models without it, like plain codellama, will fail with those agents).
 
-- **qwen2.5-coder**: Excellent for coding tasks with tool support (7B, ~5GB)
-- **gpt-oss:120b-cloud**: OpenAI's open-weight model via Ollama cloud (120B, no download)
-- **deepseek-coder-v2**: Advanced coding model with tool support (16B, ~9GB)
-
-**Note**: Models without tool support (like codellama) will fail with agents that require function calling.
+Setup shows installed local models plus the ollama.com cloud catalog, and
+offers a "Search Ollama library..." option to find and install anything else
+in Ollama's full model library on demand - no need to remember exact model
+names or tags in advance.
 
 ## Ollama Cloud (ollama.com)
 

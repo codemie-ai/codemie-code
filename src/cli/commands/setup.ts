@@ -261,7 +261,7 @@ async function handlePluginSetup(
       selectedModel = preselectedModel;
       logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
-      selectedModel = await promptForModelSelection(models, providerTemplate);
+      selectedModel = await promptForModelSelection(models, providerTemplate, setupSteps, credentials);
     }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama)
@@ -446,14 +446,40 @@ async function promptForProfileName(providerName: string): Promise<string> {
  */
 async function promptForModelSelection(
   models: string[],
-  providerTemplate?: any
+  providerTemplate?: any,
+  setupSteps?: any,
+  credentials?: any
 ): Promise<string> {
+  const canSearch = typeof setupSteps?.searchModel === 'function';
+
   if (models.length === 0) {
+    if (canSearch) {
+      const { entryMethod } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'entryMethod',
+          message: 'No models found. How would you like to choose a model?',
+          choices: [
+            { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
+            { name: 'Enter model name manually', value: 'manual' }
+          ]
+        }
+      ]);
+
+      if (entryMethod === 'search') {
+        const searched = await setupSteps.searchModel(credentials);
+        if (searched) {
+          return searched;
+        }
+        // User backed out of search - fall through to manual entry
+      }
+    }
+
     const { manualModel } = await inquirer.prompt([
       {
         type: 'input',
         name: 'manualModel',
-        message: 'No models found. Enter model name manually:',
+        message: 'Enter model name manually:',
         default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
         validate: (input: string) => input.trim() !== '' || 'Model name is required'
       }
@@ -461,35 +487,63 @@ async function promptForModelSelection(
     return manualModel ? manualModel.trim() : manualModel;
   }
 
-  // Use getAllModelChoices for enriched display with metadata
-  const choices = [
-    ...getAllModelChoices(models, providerTemplate),
-    { name: chalk.white('Custom model (manual entry)...'), value: 'custom' }
-  ];
-
-  const { selectedModel } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'selectedModel',
-      message: `Choose a model (${models.length} available):`,
-      choices,
-      pageSize: 15
+  // Live-computed recommendations (fits this machine + agent-ready + most
+  // popular) when the provider supports it; falls back to the template's
+  // static recommendedModels inside getAllModelChoices otherwise.
+  let recommendedOverrideIds: Set<string> | undefined;
+  if (typeof setupSteps?.getRecommendedModels === 'function') {
+    const recommendSpinner = ora('Finding recommended models...').start();
+    try {
+      const recommended = await setupSteps.getRecommendedModels(models, credentials);
+      recommendedOverrideIds = new Set(recommended);
+      recommendSpinner.stop();
+    } catch {
+      recommendSpinner.stop();
+      // Non-fatal - just show the list without recommendations.
     }
-  ]);
-
-  if (selectedModel === 'custom') {
-    const { customModel } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'customModel',
-        message: 'Enter model name:',
-        validate: (input: string) => input.trim() !== '' || 'Model is required'
-      }
-    ]);
-    return customModel ? customModel.trim() : customModel;
   }
 
-  return selectedModel;
+  // Loop so backing out of search re-shows this list instead of dead-ending
+  for (;;) {
+    // Use getAllModelChoices for enriched display with metadata
+    const choices = [
+      ...getAllModelChoices(models, providerTemplate, recommendedOverrideIds),
+      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' },
+      ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
+    ];
+
+    const { selectedModel } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'selectedModel',
+        message: `Choose a model (${models.length} available):`,
+        choices,
+        pageSize: 15
+      }
+    ]);
+
+    if (selectedModel === 'search') {
+      const searched = await setupSteps.searchModel(credentials);
+      if (searched) {
+        return searched;
+      }
+      continue;
+    }
+
+    if (selectedModel === 'custom') {
+      const { customModel } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customModel',
+          message: 'Enter model name:',
+          validate: (input: string) => input.trim() !== '' || 'Model is required'
+        }
+      ]);
+      return customModel ? customModel.trim() : customModel;
+    }
+
+    return selectedModel;
+  }
 }
 
 /**

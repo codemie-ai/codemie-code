@@ -104,25 +104,11 @@ function isCodingModel(modelName: string): boolean {
 }
 
 /**
- * Get metadata for a coding model from OllamaTemplate
+ * Get metadata for a coding model based on its name pattern
  */
 function getCodingModelMetadata(modelId: string): Partial<ModelInfo> {
-  // Extract base name (without tag)
   const baseName = modelId.split(':')[0];
 
-  // Get metadata from template (single source of truth) -
-  // prefer the full id, fall back to the base name
-  const metadata = OllamaTemplate.modelMetadata?.[modelId] ?? OllamaTemplate.modelMetadata?.[baseName];
-
-  if (metadata) {
-    return {
-      name: metadata.name,
-      description: metadata.description,
-      popular: metadata.popular ?? false
-    };
-  }
-
-  // If not in template but matches coding pattern, mark as coding model
   if (isCodingModel(baseName)) {
     return {
       name: modelId,
@@ -193,7 +179,9 @@ export class OllamaModelProxy extends BaseModelProxy {
   /**
    * Fetch available models (for setup/discovery)
    * Returns installed models merged with the ollama.com cloud catalog
-   * (public endpoint); falls back to recommended models otherwise.
+   * (public endpoint). Live discovery beyond this narrow set happens via
+   * OllamaSetupSteps.searchModel (ollama.setup-steps.ts), which searches
+   * Ollama's full model library on demand instead of a hardcoded list.
    * An API key is only needed to *run* cloud models directly on
    * ollama.com, not to list them.
    */
@@ -239,20 +227,7 @@ export class OllamaModelProxy extends BaseModelProxy {
       logger.debug('Failed to fetch Ollama cloud models:', error);
     }
 
-    if (merged.size > 0) {
-      return [...merged.values()];
-    }
-
-    // Fall back to template's recommended models with metadata from template
-      return OllamaTemplate.recommendedModels.map(modelId => {
-        const metadata = OllamaTemplate.modelMetadata?.[modelId];
-        return {
-            id: modelId,
-            name: metadata?.name || modelId,
-            description: metadata?.description,
-            popular: metadata?.popular ?? true // All recommended models are popular by default
-        };
-    });
+    return [...merged.values()];
   }
 
   /**
@@ -352,20 +327,6 @@ export class OllamaModelProxy extends BaseModelProxy {
 
       if (!basicInfo) {
         return null;
-      }
-
-      // Get detailed info from template if available
-      const baseName = modelName.split(':')[0];
-      const templateMetadata = OllamaTemplate.modelMetadata?.[modelName] ?? OllamaTemplate.modelMetadata?.[baseName];
-
-      if (templateMetadata) {
-        return {
-          ...basicInfo,
-          name: templateMetadata.name,
-          description: templateMetadata.description,
-          popular: templateMetadata.popular,
-          contextWindow: templateMetadata.contextWindow
-        };
       }
 
       return basicInfo;
