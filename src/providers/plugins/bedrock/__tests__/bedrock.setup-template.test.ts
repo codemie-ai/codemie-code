@@ -309,18 +309,21 @@ describe('BedrockTemplate claude hook - model-tier routing', () => {
     expect(out.MAX_THINKING_TOKENS).toBe('1024');
   });
 
-  it('multi-tier tenant: all three defaults set, subagent routes to sonnet', async () => {
+  it('multi-tier tenant: all three defaults set, subagent default left unpinned (EPMCDME-14355)', async () => {
     const out = await claude()({ CODEMIE_HAIKU_MODEL: 'h', CODEMIE_SONNET_MODEL: 's', CODEMIE_OPUS_MODEL: 'o' }, cfg());
     expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('h');
     expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('s');
     expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('o');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('s');
+    // With a distinct sonnet tier the upstream binary already uses it as the subagent
+    // default. Pinning CLAUDE_CODE_SUBAGENT_MODEL on top would override both `model: inherit`
+    // and per-subagent `model` params, so it must stay unset.
+    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
 
-  it('sonnet-only tenant: sonnet default + subagent set, opus/haiku unset', async () => {
+  it('sonnet-only tenant: sonnet default set, subagent default left unpinned, opus/haiku unset', async () => {
     const out = await claude()({ CODEMIE_SONNET_MODEL: 's' }, cfg());
     expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('s');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('s');
+    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
     expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
   });

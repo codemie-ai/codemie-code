@@ -81,7 +81,38 @@ const COMPATIBLE_CODEX_MODEL_PATTERNS: RegExp[] = [
   /codex/i,
   /^gpt[-.]?5(?:[-.]|\b)/i,
   /^gpt[-.]?6(?:[-.]|\b)/i,
+  // Router / switchyard aliases (`gpt-smart-router`, `gpt-fast-router`). The gateway picks
+  // the concrete deployment per request, so the alias carries no version digits for the
+  // patterns above to match. Anchored to a `gpt-` prefix on purpose: a provider-agnostic
+  // router could pick a Claude model, which the Responses API wire format cannot drive.
+  // Claude-named routers stay rejected by INCOMPATIBLE_MODEL_PATTERNS above.
+  /^gpt[-._](?:[a-z0-9]+[-._])*router\b/i,
 ];
+
+// CODEMIE_MODEL_SOURCE values that mean the user picked this model (`--model`, or the
+// environment) rather than it coming from a saved profile. Set by AgentCLI.
+const EXPLICIT_MODEL_SOURCES = new Set(['cli', 'env']);
+
+function isExplicitModelChoice(env: NodeJS.ProcessEnv): boolean {
+  return EXPLICIT_MODEL_SOURCES.has(env.CODEMIE_MODEL_SOURCE ?? '');
+}
+
+/**
+ * Build a catalog entry for a model the CodeMie catalog does not enumerate.
+ *
+ * Router aliases are commonly served by the gateway without being listed as deployments, so
+ * an explicitly requested one has to be injected: `availableModels` gates our own assertion
+ * and the generated models.json gates Codex's `--model` validation, and a model missing from
+ * either is rejected before a single request is made.
+ */
+function syntheticRankedModel(id: string): RankedModel {
+  return {
+    id,
+    model: { base_name: id, deployment_name: id, label: id, enabled: true },
+    // Ranks ahead of every catalog entry so it becomes the default selection.
+    score: [Number.MAX_SAFE_INTEGER],
+  };
+}
 
 const REASONING_LEVELS: CodexCatalogReasoningLevel[] = [
   { effort: 'low', description: 'Fast responses with lighter reasoning' },
@@ -365,12 +396,32 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     );
   }
 
-  const rankedIds = rankedModels.map(entry => entry.id);
+  let catalogModels = rankedModels;
+  let rankedIds = rankedModels.map(entry => entry.id);
+
+  // A compatible model the user asked for by name is honoured even when the catalog does not
+  // list it. Router aliases are the motivating case: the gateway resolves them per request
+  // and does not necessarily publish them as deployments, so requiring catalog membership
+  // would make them permanently unusable. Restricted to an explicit choice — a stale profile
+  // value still gets re-resolved against the live catalog as before.
+  if (
+    isCodexCompatibleModelName(currentModel) &&
+    !rankedIds.includes(currentModel) &&
+    isExplicitModelChoice(env)
+  ) {
+    catalogModels = [syntheticRankedModel(currentModel), ...rankedModels];
+    rankedIds = catalogModels.map(entry => entry.id);
+    console.error(
+      `[codemie-codex] Model "${currentModel}" is not listed in the CodeMie catalog; using it anyway because it was requested explicitly.`
+    );
+    logger.info(`[codex-models] Honouring explicitly requested uncatalogued model ${currentModel}`);
+  }
+
   const selectedModel =
     isCodexCompatibleModelName(currentModel) && rankedIds.includes(currentModel)
       ? currentModel
-      : rankedModels[0].id;
-  const catalogPath = await writeCatalogFile(buildCodexCatalog(rankedModels));
+      : catalogModels[0].id;
+  const catalogPath = await writeCatalogFile(buildCodexCatalog(catalogModels));
 
   if (isCodexCompatibleModelName(currentModel) && currentModel !== selectedModel) {
     console.error(`[codemie-codex] Requested model "${currentModel}" is not available; using ${selectedModel} instead.`);
@@ -382,7 +433,7 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
   return {
     selectedModel,
     catalogPath,
-    availableModels: rankedModels.map(entry => entry.id),
+    availableModels: rankedIds,
   };
 }
 
