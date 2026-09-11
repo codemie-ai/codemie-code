@@ -46,11 +46,20 @@ describe('statusline-installer', () => {
     vi.restoreAllMocks();
   });
 
+  // Path-aware rather than call-ordered. installStatusline reads several files (the statusline
+  // source, the deployed rate card, settings.json); queueing mockResolvedValueOnce by call index
+  // silently feeds the wrong content to the wrong read as soon as that set changes.
+  const mockReads = ({ settings }: { settings: string }) =>
+    vi.mocked(fsp.readFile).mockImplementation((async (filePath: string) => {
+      const p = String(filePath);
+      if (p.endsWith('settings.json')) return settings;
+      if (p.endsWith('pricing.json')) return '{}';
+      return '#!/usr/bin/env node\n// statusline';
+    }) as never);
+
   describe('installStatusline', () => {
     it('deploys the script and reports alreadyConfigured=false when settings.json has no statusLine yet', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('#!/usr/bin/env node\n// statusline' as any) // script source
-        .mockResolvedValueOnce(JSON.stringify({ theme: 'dark' }) as any);   // settings.json
+      mockReads({ settings: JSON.stringify({ theme: 'dark' }) });
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -69,9 +78,7 @@ describe('statusline-installer', () => {
     });
 
     it('reports alreadyConfigured=true (and still refreshes settings) when statusLine already exists', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('// script' as any)
-        .mockResolvedValueOnce(JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) as any);
+      mockReads({ settings: JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) });
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);

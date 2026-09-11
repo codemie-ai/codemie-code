@@ -3,16 +3,22 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getDirname, resolveHomeDir } from '@/utils/paths.js';
+import { priceTable } from '@/utils/pricing.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { ConfigurationError } from '@/utils/errors.js';
 
 export const STATUSLINE_NAME = 'statusline';
 export const STATUSLINE_DISPLAY_NAME = 'CodeMie Statusline';
-export const STATUSLINE_DESCRIPTION = 'Budget usage, project, branch, model, context & token stats for Claude Code';
+// Describes what buildStatusLine actually renders. The budget segment and the in/out token stats
+// were removed; SCRIPT_FILENAME deliberately still reads 'codemie-budget-status.js' because renaming
+// it would orphan the statusLine command in every existing ~/.claude/settings.json.
+export const STATUSLINE_DESCRIPTION = 'Project, branch, model, context usage, session cost & duration for Claude Code';
 
 const SCRIPT_FILENAME = 'codemie-budget-status.js';
 const LEGACY_SCRIPT_FILENAME = 'codemie-statusline.mjs';
+// Must match PRICING_FILENAME in plugin/statusline.mjs — the script resolves it beside itself.
+const PRICING_FILENAME = 'codemie-pricing.json';
 const REFRESH_INTERVAL = 60;
 
 export interface InstallStatuslineResult {
@@ -37,6 +43,28 @@ export async function installStatusline(): Promise<InstallStatuslineResult> {
   await writeFile(scriptPath, scriptContent, 'utf-8');
   if (process.platform !== 'win32') {
     await chmod(scriptPath, 0o755);
+  }
+
+  // The statusline prices each session from the transcript itself, so it needs the rate card at
+  // runtime. It runs standalone (`node <path>` after this process exits) and cannot import from
+  // the project, so deploy the table beside it rather than duplicating rates into the script.
+  //
+  // Serialize priceTable(), NOT the raw pricing.json: the vendored file has no `claude-smart-router`
+  // row — that rate lives in CODEMIE_PRICES and is merged in only when the table is built. Copying
+  // the raw file left the statusline unable to price exactly the router sessions this feature exists
+  // for, scoring them $0 and degrading the total to an estimate.
+  // Best-effort: without it the statusline falls back to Claude Code's own cost figure.
+  try {
+    await writeFile(
+      join(claudeHome, PRICING_FILENAME),
+      JSON.stringify(priceTable()),
+      'utf-8'
+    );
+  } catch (error) {
+    logger.warn(
+      '[Statusline] Could not deploy pricing.json; session cost will fall back to Claude Code\'s estimate',
+      ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
+    );
   }
 
   let settings: Record<string, unknown> = {};

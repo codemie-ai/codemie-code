@@ -49,6 +49,22 @@ export const CLAUDE_SUPPORTED_VERSION = '2.1.218';
 const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.208';
 
 /**
+ * Providers whose gateway is known to round-trip what tool search requires: the
+ * `tool-search-tool-2025-10-19` beta header, `defer_loading` tool fields and `tool_reference`
+ * content blocks.
+ *
+ * - `ai-run-sso` — the local CodeMie proxy forwards every request header except `host`/`connection`
+ *   (`sso.proxy.ts`), and this was verified end to end (44,396 -> 24,353 turn-one tokens).
+ * - `litellm` — documents passing the beta header, `defer_loading` and `tool_reference` through.
+ *
+ * `beforeRun` is provider-agnostic and runs for bedrock, ollama and subscription endpoints too, for
+ * which no such evidence exists — and a gateway that takes the body fields without the header answers
+ * HTTP 400. So the tool-search defaults below are applied only here; every other provider keeps the
+ * conservative values, and either variable set explicitly in the environment still wins everywhere.
+ */
+const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
+
+/**
  * Claude Code installer URLs
  * Official Anthropic installer scripts for native installation
  */
@@ -57,6 +73,43 @@ const CLAUDE_INSTALLER_URLS = {
   windows: 'https://claude.ai/install.cmd',
   linux: 'https://claude.ai/install.sh',
 };
+
+/**
+ * Sanitize a config-sourced value before rendering it to the terminal.
+ *
+ * Shared by the settings-conflict banner and the model-substitution notice: both print
+ * profile/settings values (URLs, model IDs) that the user does not necessarily control.
+ *
+ * ASCII allowlist: accept only printable ASCII (0x20–0x7E) after stripping ANSI
+ * sequences. This blocks C0/C1 bytes, Bidi override chars, soft hyphen,
+ * zero-width chars, combining marks, and every other non-ASCII Unicode vector.
+ *
+ * DCS pre-strip: strip-ansi only removes the 2-byte introducer (\x1bP etc.),
+ * leaving the payload as plain ASCII. Strip the full sequence — from introducer
+ * to BEL/ST/C1-ST terminator — before handing off to strip-ansi. If no terminator
+ * is found, consume to end-of-string (greedy fallback) to prevent partial leakage.
+ *
+ * URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
+ * ASCII so the allowlist cannot catch it — URL parsing is required.
+ */
+function safeTerminalValue(s: string): string {
+  // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9d(OSC) \x9e \x9f
+  const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
+  const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
+  try {
+    const url = new URL(stripped);
+    if (url.username || url.password || url.search || url.hash) {
+      url.username = '';
+      url.password = '';
+      url.search = '';
+      url.hash = '';
+      return `[credentials removed] ${url.toString()}`;
+    }
+  } catch {
+    // Not a parseable URL — return stripped string as-is
+  }
+  return stripped;
+}
 
 /**
  * Claude Code Plugin Metadata
@@ -165,9 +218,21 @@ export const ClaudePluginMetadata: AgentMetadata = {
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {
-      // Disable experimental betas if not already set
+      // Whether this provider's gateway is known to carry the tool-search payload — see
+      // TOOL_SEARCH_VERIFIED_PROVIDERS. CODEMIE_PROVIDER is populated before this hook runs.
+      const toolSearchVerified = TOOL_SEARCH_VERIFIED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '');
+
+      // Allow experimental betas on a verified provider. This is a prerequisite for tool search
+      // below: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS suppresses the tool-search beta header
+      // (`tool-search-tool-2025-10-19`) and wins over ENABLE_TOOL_SEARCH, so leaving it at '1'
+      // makes the tool-search default unreachable.
+      // Parsed as a boolean upstream, so '0' reads as false — do NOT use '' here: the
+      // `!env.X` guard treats an empty string as unset and would restore the default.
+      // Set to '1' in the environment to opt back out (e.g. if a gateway rejects
+      // `context_management` / `output_config` body fields with HTTP 400).
+      // https://code.claude.com/docs/en/llm-gateway-protocol
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = toolSearchVerified ? '0' : '1';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
@@ -198,10 +263,25 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.FORCE_AUTOUPDATE_PLUGINS = '1';
       }
 
-      // WORKAROUND: Disable tool search feature introduced in 2.1.69+
-      // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
+      // Enable tool search: MCP/deferrable tool definitions are withheld from the context
+      // window and loaded on demand instead of upfront, which cuts a large fixed cost from
+      // every turn. Measured on a trivial prompt: 44,396 -> 24,353 turn-one tokens (-45%).
+      //
+      // This must be forced explicitly rather than left unset. Claude Code turns tool search
+      // off by itself whenever ANTHROPIC_BASE_URL is not a first-party Anthropic host, on the
+      // assumption that a proxy will not round-trip `tool_reference` blocks — and CodeMie
+      // always points it at the local SSO proxy. Ours does forward them (sso.proxy.ts strips
+      // only `host`/`connection`, and LiteLLM passes the beta header, `defer_loading` and
+      // `tool_reference` through), so the assumption does not hold here.
+      //
+      // Superseded the pre-2.1.69 '0' workaround, which no longer reproduces.
+      // Only enabled for a verified provider (see toolSearchVerified above); everything else keeps
+      // the conservative '0', because a gateway that receives `tool_reference` blocks it cannot
+      // round-trip answers HTTP 400 rather than degrading.
+      // Set to '0'/'false' in the environment to opt out; 'true'/'auto:N' to opt in anywhere.
+      // https://code.claude.com/docs/en/agent-sdk/tool-search
       if (!env.ENABLE_TOOL_SEARCH) {
-        env.ENABLE_TOOL_SEARCH = '0';
+        env.ENABLE_TOOL_SEARCH = toolSearchVerified ? 'true' : '0';
       }
 
       if (!env.ENABLE_PROMPT_CACHING_1H) {
@@ -251,53 +331,24 @@ export const ClaudePluginMetadata: AgentMetadata = {
         const { detectSettingsConflict } = await import('./settings-conflict.js');
         const conflict = await detectSettingsConflict(env);
         if (conflict) {
-          // ASCII allowlist: accept only printable ASCII (0x20–0x7E) after stripping ANSI
-          // sequences. This blocks C0/C1 bytes, Bidi override chars, soft hyphen,
-          // zero-width chars, combining marks, and every other non-ASCII Unicode vector.
-          //
-          // DCS pre-strip: strip-ansi only removes the 2-byte introducer (\x1bP etc.),
-          // leaving the payload as plain ASCII. Strip the full sequence — from introducer
-          // to BEL/ST/C1-ST terminator — before handing off to strip-ansi. If no terminator
-          // is found, consume to end-of-string (greedy fallback) to prevent partial leakage.
-          //
-          // URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
-          // ASCII so the allowlist cannot catch it — URL parsing is required.
-          const safeUrl = (s: string): string => {
-            // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9d(OSC) \x9e \x9f
-            const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
-            const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
-            try {
-              const url = new URL(stripped);
-              if (url.username || url.password || url.search || url.hash) {
-                url.username = '';
-                url.password = '';
-                url.search = '';
-                url.hash = '';
-                return `[credentials removed] ${url.toString()}`;
-              }
-            } catch {
-              // Not a parseable URL — return stripped string as-is
-            }
-            return stripped;
-          };
           // The fallback literal contains U+2014 (em dash) which the ASCII allowlist strips.
           // Bypass safeUrl for the known-safe constant; only user-controlled values need it.
           console.error(chalk.yellow('\n⚠️  ~/.claude/settings.json overrides detected'));
           console.error(chalk.yellow('─'.repeat(60)));
           if (conflict.settingsUrl) {
             const profileDisplay = conflict.profileUrl
-              ? safeUrl(conflict.profileUrl)
+              ? safeTerminalValue(conflict.profileUrl)
               : '(not set — direct Anthropic API)';
-            const activeDisplay = safeUrl(conflict.settingsUrl);
+            const activeDisplay = safeTerminalValue(conflict.settingsUrl);
             console.error(chalk.yellow(`  Profile URL   │ ${profileDisplay}`));
             console.error(chalk.yellow(`  Active URL    │ ${activeDisplay}  ← settings.json wins`));
             console.error(chalk.yellow(''));
           }
           if (conflict.settingsModel) {
             const profileModelDisplay = conflict.profileModel
-              ? safeUrl(conflict.profileModel)
+              ? safeTerminalValue(conflict.profileModel)
               : '(not set — profile default)';
-            const activeModelDisplay = safeUrl(conflict.settingsModel);
+            const activeModelDisplay = safeTerminalValue(conflict.settingsModel);
             console.error(chalk.yellow(`  Profile model │ ${profileModelDisplay}`));
             console.error(chalk.yellow(`  Active model  │ ${activeModelDisplay}  ← settings.json wins`));
             console.error(chalk.yellow(''));
@@ -343,6 +394,19 @@ export const ClaudePluginMetadata: AgentMetadata = {
             if (!resolution) continue;
 
             const { generic, native } = TIER_TARGET_VARS[tier];
+            // Swapping the model the user asked for is a decision they need to see: it changes
+            // which model answers every turn, and logger.* only reaches the debug file. The
+            // session tier is the one a person selects (`--model`, `codemie setup`), so surface
+            // that one on stderr; the haiku/sonnet/opus tiers stay quiet in the log.
+            const previousModel = env[generic];
+            if (tier === 'model' && previousModel && previousModel !== resolution.selectedModel) {
+              console.error(
+                chalk.yellow(
+                  `⚠ Model "${safeTerminalValue(previousModel)}" is not available in this CodeMie catalog — using ${safeTerminalValue(resolution.selectedModel)} instead.`
+                )
+              );
+              console.error(chalk.yellow('  Run "codemie models list" to see the available model IDs.'));
+            }
             env[generic] = resolution.selectedModel;
             for (const nativeVar of native) {
               // Never overwrite a native var the user (or another hook) already
@@ -375,6 +439,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
         logger.info(
           `[Claude] Provisioned tiers: haiku=${hasHaiku ? 'yes' : 'no'}, sonnet=${hasSonnet ? 'yes' : 'no'}, opus=${hasOpus ? 'yes' : 'no'}. Subagent default: ${subagentDefault}.`
         );
+        // A pinned CLAUDE_CODE_SUBAGENT_MODEL is read before both the agent's frontmatter
+        // `model` and the Agent tool's `model` parameter, so it silently wins over BOTH —
+        // including `model: inherit`, which is what a subagent gets when it declares no model
+        // at all. The pin only survives when it matches the session model (see
+        // BaseAgentAdapter.transformEnvVars), but say so explicitly: without this line the
+        // "pinned to X" notice reads as a default rather than an override.
+        if (env.CLAUDE_CODE_SUBAGENT_MODEL) {
+          logger.warn(
+            `[Claude] Subagent model is pinned to ${env.CLAUDE_CODE_SUBAGENT_MODEL} — this overrides both \`model: inherit\` in agent frontmatter and any per-subagent \`model\` parameter. Provision a distinct sonnet tier (CODEMIE_SONNET_MODEL) to restore per-subagent model selection.`
+          );
+        }
         // The silent-fallback problem is symmetric across tiers, not haiku-specific: a subagent
         // dispatched with model:"opus" (or "sonnet") on a tenant that lacks that tier lands on
         // the subagent default just as a model:"haiku" request does. So warn for EVERY absent
