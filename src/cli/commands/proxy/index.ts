@@ -323,8 +323,14 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .action(async (opts: { codexDesktop?: boolean }) => {
-      await disconnectTargets({ targets: { codexDesktop: Boolean(opts.codexDesktop) } });
+    .option('--cursor-ide', 'Remove codemie-authored entries from .cursor/hooks.json')
+    .action(async (opts: { codexDesktop?: boolean; cursorIde?: boolean }) => {
+      await disconnectTargets({
+        targets: {
+          codexDesktop: Boolean(opts.codexDesktop),
+          cursorIde: Boolean(opts.cursorIde),
+        },
+      });
     });
 
   // Deprecated aliases — kept working, mapped onto the unified target flags.

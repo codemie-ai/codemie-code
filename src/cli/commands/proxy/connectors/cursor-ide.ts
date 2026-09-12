@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -233,4 +233,103 @@ export async function writeCursorIdeHooksConfig(
   const projectRoot = options.projectRoot ?? resolveProjectRoot();
   const configPath = join(projectRoot, '.cursor', 'hooks.json');
   return writeCursorIdeHooksConfigAtPath(configPath);
+}
+
+export interface RemoveCursorIdeHooksResult {
+  removed: boolean;
+  usedBackup: boolean;
+  path: string | null;
+}
+
+/**
+ * Everything that remains once codemie's own entries are gone. `hooks` is
+ * "empty" once every event key it held has been dropped, and the config is
+ * empty once no foreign top-level key survives either - `version` doesn't
+ * count, since `mergeHooksConfig` sets it unconditionally (defaulting to 1)
+ * even for a file we created from scratch.
+ */
+function isConfigEmpty(config: CursorHooksConfig): boolean {
+  const hooks = config.hooks ?? {};
+  const hasRemainingHookEntries = Object.values(hooks).some(
+    (entries) => Array.isArray(entries) && entries.length > 0
+  );
+  if (hasRemainingHookEntries) return false;
+
+  const otherKeys = Object.keys(config).filter((key) => key !== 'version' && key !== 'hooks');
+  return otherKeys.length === 0;
+}
+
+/**
+ * Remove only codemie-authored entries at an explicit path - the disconnect
+ * counterpart to `writeCursorIdeHooksConfigAtPath`. Test seam mirroring the
+ * write side; the resolving wrapper below is the one every real caller uses.
+ */
+export async function removeCursorIdeHooksConfigAtPath(
+  configPath: string
+): Promise<RemoveCursorIdeHooksResult> {
+  if (!existsSync(configPath)) {
+    return { removed: false, usedBackup: false, path: null };
+  }
+
+  const existing = await readHooksConfig(configPath);
+  const hooks = existing.hooks ?? {};
+  const hadCodemieEntry = Object.values(hooks).some(
+    (entries) => Array.isArray(entries) && entries.some(isCodemieEntry)
+  );
+
+  if (!hadCodemieEntry) {
+    return { removed: false, usedBackup: false, path: configPath };
+  }
+
+  // Strip our entries, dropping an event key entirely once its list is empty
+  // rather than leaving `"eventName": []` behind.
+  const nextHooks: Record<string, unknown> = {};
+  for (const [eventName, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) {
+      nextHooks[eventName] = entries;
+      continue;
+    }
+    const remaining = entries.filter((entry) => !isCodemieEntry(entry));
+    if (remaining.length > 0) {
+      nextHooks[eventName] = remaining;
+    }
+  }
+
+  const stripped: CursorHooksConfig = { ...existing, hooks: nextHooks };
+  const backupPath = `${configPath}${CURSOR_IDE_HOOKS_BACKUP_SUFFIX}`;
+  let usedBackup = false;
+
+  if (isConfigEmpty(stripped)) {
+    if (existsSync(backupPath)) {
+      // Codemie's entries were the file's only content - restore the true
+      // pre-connect original rather than writing a near-empty shell.
+      const backupContent = await readFile(backupPath, 'utf-8');
+      await writeAtomically(configPath, backupContent);
+      usedBackup = true;
+    } else {
+      // No pre-connect backup exists, so we created this file ourselves;
+      // nothing else to preserve, so remove it entirely.
+      await unlink(configPath);
+    }
+  } else {
+    await writeAtomically(configPath, `${JSON.stringify(stripped, null, 2)}\n`);
+  }
+
+  logger.info(
+    '[proxy] Removed Cursor IDE hooks',
+    ...sanitizeLogArgs({ configPath, usedBackup })
+  );
+
+  return { removed: true, usedBackup, path: configPath };
+}
+
+/**
+ * Remove/merge `.cursor/hooks.json` at `<projectRoot>/.cursor/hooks.json`,
+ * resolved the same way `writeCursorIdeHooksConfig` does.
+ */
+export async function removeCursorIdeHooksConfig(
+  projectRoot: string = resolveProjectRoot()
+): Promise<RemoveCursorIdeHooksResult> {
+  const configPath = join(projectRoot, '.cursor', 'hooks.json');
+  return removeCursorIdeHooksConfigAtPath(configPath);
 }
