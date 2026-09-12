@@ -631,6 +631,64 @@ async function handlePreCompact(event: BaseHookEvent): Promise<void> {
 }
 
 /**
+ * Handle SubagentStart event
+ * Observational only: hands off to the per-agent raw event capture (see
+ * appendCursorEventLog). Kept allocation-light and non-blocking - it fires
+ * on the agent's hot path.
+ */
+async function handleSubagentStart(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:SubagentStart] tool_use_id=${event.tool_use_id ?? ''}`);
+}
+
+/**
+ * Handle PreToolUse event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handlePreToolUse(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:PreToolUse] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
+}
+
+/**
+ * Handle PostToolUse event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handlePostToolUse(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:PostToolUse] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
+}
+
+/**
+ * Handle PostToolUseFailure event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handlePostToolUseFailure(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:PostToolUseFailure] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
+}
+
+/**
+ * Handle AgentResponse event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handleAgentResponse(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:AgentResponse] session_id=${event.session_id}`);
+}
+
+/**
+ * Handle AgentThought event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handleAgentThought(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:AgentThought] session_id=${event.session_id}`);
+}
+
+/**
+ * Handle WorkspaceOpen event
+ * Observational only: hands off to the per-agent raw event capture.
+ */
+async function handleWorkspaceOpen(event: BaseHookEvent): Promise<void> {
+  logger.debug(`[hook:WorkspaceOpen] cwd=${event.cwd ?? ''}`);
+}
+
+/**
  * Normalize event name using agent-specific mapping
  * Maps agent-specific event names to internal event names
  *
@@ -725,6 +783,34 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
       case 'PreCompact':
         logger.info(`[hook:router] Calling handlePreCompact`);
         await handlePreCompact(event);
+        break;
+      case 'SubagentStart':
+        logger.info(`[hook:router] Calling handleSubagentStart`);
+        await handleSubagentStart(event);
+        break;
+      case 'PreToolUse':
+        logger.info(`[hook:router] Calling handlePreToolUse`);
+        await handlePreToolUse(event);
+        break;
+      case 'PostToolUse':
+        logger.info(`[hook:router] Calling handlePostToolUse`);
+        await handlePostToolUse(event);
+        break;
+      case 'PostToolUseFailure':
+        logger.info(`[hook:router] Calling handlePostToolUseFailure`);
+        await handlePostToolUseFailure(event);
+        break;
+      case 'AgentResponse':
+        logger.info(`[hook:router] Calling handleAgentResponse`);
+        await handleAgentResponse(event);
+        break;
+      case 'AgentThought':
+        logger.info(`[hook:router] Calling handleAgentThought`);
+        await handleAgentThought(event);
+        break;
+      case 'WorkspaceOpen':
+        logger.info(`[hook:router] Calling handleWorkspaceOpen`);
+        await handleWorkspaceOpen(event);
         break;
       default:
         logger.info(`[hook:router] Unsupported event: ${normalizedEventName} (silently ignored)`);
