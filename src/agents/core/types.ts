@@ -664,6 +664,23 @@ export interface AgentHookConfig {
    * }
    */
   eventNameMapping?: Record<string, InternalHookEventName>;
+
+  /**
+   * When true, `validateHookEvent` treats `transcript_path`/`transcript_paths`
+   * as optional for every event from this agent, not just SessionStart/SessionEnd.
+   * Set by agents (e.g. cursor-ide) whose native payloads frequently omit a
+   * transcript path.
+   */
+  transcriptOptional?: boolean;
+
+  /**
+   * When true, the `codemie hook` CLI path never exits non-zero for this
+   * agent: JSON-parse failures and `validateHookEvent` failures degrade to a
+   * non-blocking failure (thrown internally, caught, and turned into a
+   * successful exit) instead of `process.exit(2)`. Set by agents whose host
+   * treats a non-zero exit as a hard block on the user's action.
+   */
+  neverBlockingExit?: boolean;
 }
 
 /**

@@ -130,8 +130,16 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
  * @returns The CodeMie session ID from environment
  * @throws Error if required environment variables are missing
  */
-function initializeLoggerContext(): string {
-  const agentName = process.env.CODEMIE_AGENT;
+/**
+ * Resolve the agent name for this hook invocation.
+ *
+ * Precedence: explicit `--agent <name>` flag beats `CODEMIE_AGENT` env; when
+ * neither is present the current throwing behavior is unchanged (a hook
+ * process CodeMie did not spawn, e.g. Cursor's `hooks.json` has no `env` key
+ * to inherit `CODEMIE_AGENT` through, so it must self-identify via the flag).
+ */
+function resolveAgentName(agentFlag?: string): string {
+  const agentName = agentFlag || process.env.CODEMIE_AGENT;
   if (!agentName) {
     // Debug: Log all environment variables that start with CODEMIE_
     const codemieEnvVars = Object.keys(process.env)
@@ -141,7 +149,23 @@ function initializeLoggerContext(): string {
     console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
     throw new Error('CODEMIE_AGENT environment variable is required');
   }
+  return agentName;
+}
 
+/**
+ * Initialize logger context using CODEMIE_SESSION_ID
+ *
+ * Uses CODEMIE_SESSION_ID from environment for:
+ * - Logging (logger.setSessionId)
+ * - Session files (~/.codemie/sessions/{sessionId}.json)
+ * - Metrics files (~/.codemie/sessions/{sessionId}_metrics.jsonl)
+ * - Conversation files (~/.codemie/sessions/{sessionId}_conversation.jsonl)
+ *
+ * @param agentName - Resolved agent name (flag, then CODEMIE_AGENT env)
+ * @returns The CodeMie session ID from environment
+ * @throws Error if required environment variables are missing
+ */
+function initializeLoggerContext(agentName: string): string {
   // Use CODEMIE_SESSION_ID from environment
   const sessionId = process.env.CODEMIE_SESSION_ID;
   if (!sessionId) {
@@ -1299,57 +1323,92 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 }
 
 /**
+ * Look up whether an agent has declared `neverBlockingExit` on its
+ * `metadata.hookConfig` — a fully declarative gate (no agent-name literal)
+ * that lets a hook path degrade to non-blocking failure instead of exiting
+ * non-zero. Set only by agents (e.g. cursor-ide) whose host never tolerates
+ * a blocking exit code.
+ */
+function agentNeverBlocks(agentName?: string): boolean {
+  if (!agentName) {
+    return false;
+  }
+  try {
+    const agent = AgentRegistry.getAgent(agentName);
+    return Boolean(agent?.metadata?.hookConfig?.neverBlockingExit);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Look up whether an agent has declared `transcriptOptional` on its
+ * `metadata.hookConfig` — lets `validateHookEvent` treat transcript_path as
+ * optional for every event for that agent, not just SessionStart/SessionEnd.
+ */
+function agentTranscriptOptional(agentName?: string): boolean {
+  if (!agentName) {
+    return false;
+  }
+  try {
+    const agent = AgentRegistry.getAgent(agentName);
+    return Boolean(agent?.metadata?.hookConfig?.transcriptOptional);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Validate hook event required fields
  * @param event - Hook event to validate
  * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
- * @throws Error if validation fails and config is provided
+ * @param agentName - Resolved agent name (CLI mode only); used to look up declarative
+ *   `neverBlockingExit`/`transcriptOptional` hook-config flags via AgentRegistry
+ * @throws Error if validation fails and config is provided, or the resolved agent
+ *   declares `neverBlockingExit`
  */
-function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig): void {
-  if (!event.session_id) {
-    const error = new Error('Missing required field: session_id');
-    if (config) {
+function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig, agentName?: string): void {
+  const neverBlocks = agentNeverBlocks(agentName);
+
+  const fail = (message: string): void => {
+    const error = new Error(message);
+    if (config || neverBlocks) {
       throw error;
     }
-    logger.error('[hook] Missing required field: session_id');
+    logger.error(`[hook] ${message}`);
     logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
     process.exitCode = 2;
+  };
+
+  if (!event.session_id) {
+    fail('Missing required field: session_id');
     return;
   }
 
   if (!event.hook_event_name) {
-    const error = new Error('Missing required field: hook_event_name');
-    if (config) {
-      throw error;
-    }
-    logger.error('[hook] Missing required field: hook_event_name');
-    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-    process.exitCode = 2;
+    fail('Missing required field: hook_event_name');
     return;
   }
 
   // transcript_path/transcript_paths are optional for SessionStart/SessionEnd in
   // programmatic mode (transcript may not exist yet at start, or may not be
-  // discoverable at end). Some agents provide multiple transcript paths.
+  // discoverable at end). Some agents provide multiple transcript paths, and an
+  // agent may declare transcript_path optional for every event via hookConfig.
   const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
   const hasTranscriptPath = Boolean(event.transcript_path) || (event.transcript_paths && event.transcript_paths.length > 0);
-  if (!hasTranscriptPath && !transcriptOptionalEvents.includes(event.hook_event_name)) {
-    const error = new Error('Missing required field: transcript_path');
-    if (config) {
-      throw error;
-    }
-    logger.error('[hook] Missing required field: transcript_path');
-    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-    process.exitCode = 2;
-    return;
+  const transcriptOptional = agentTranscriptOptional(agentName) || transcriptOptionalEvents.includes(event.hook_event_name);
+  if (!hasTranscriptPath && !transcriptOptional) {
+    fail('Missing required field: transcript_path');
   }
 }
 
 /**
  * Initialize hook context (logger and session/agent info)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param agentFlag - Optional `--agent <name>` CLI flag value (CLI mode only); beats `CODEMIE_AGENT` env
  * @returns Object with sessionId and agentName
  */
-function initializeHookContext(config?: HookProcessingConfig): { sessionId: string; agentName: string } {
+function initializeHookContext(config?: HookProcessingConfig, agentFlag?: string): { sessionId: string; agentName: string } {
   let sessionId: string;
   let agentName: string;
 
@@ -1365,9 +1424,9 @@ function initializeHookContext(config?: HookProcessingConfig): { sessionId: stri
       logger.setProfileName(config.profileName);
     }
   } else {
-    // Use environment variables (CLI mode)
-    sessionId = initializeLoggerContext();
-    agentName = process.env.CODEMIE_AGENT || 'unknown';
+    // Use environment variables (CLI mode), with the --agent flag taking precedence
+    agentName = resolveAgentName(agentFlag);
+    sessionId = initializeLoggerContext(agentName);
   }
 
   return { sessionId, agentName };
@@ -1427,7 +1486,7 @@ function normalizeAndLogEvent(event: BaseHookEvent, sessionId: string, agentName
  */
 export async function processEvent(event: BaseHookEvent, config?: HookProcessingConfig): Promise<void> {
   // Validate required fields
-  validateHookEvent(event, config);
+  validateHookEvent(event, config, config?.agentName);
   if (process.exitCode === 2) {
     return; // Validation failed in CLI mode
   }
@@ -1454,11 +1513,17 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
-    .action(async () => {
+    .option('--agent <name>', 'Agent name for hook attribution (overrides CODEMIE_AGENT)')
+    .action(async (opts: { agent?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
 
       try {
+        // Resolve the agent name up front (flag beats CODEMIE_AGENT env) so
+        // agent-specific gating (e.g. non-blocking exit) is known even before
+        // stdin is read/parsed.
+        const agentName = resolveAgentName(opts.agent);
+
         // Read JSON from stdin
         const input = await readStdin();
 
@@ -1472,44 +1537,37 @@ export function createHookCommand(): Command {
           const parseMsg = parseError instanceof Error ? parseError.message : String(parseError);
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);
           logger.debug(`[hook] Invalid JSON: ${input.substring(0, 200)}...`);
-          process.exit(2); // Blocking error
-        }
-
-        // Validate required fields from hook input schema
-        if (!event.session_id) {
-          logger.error('[hook] Missing required field: session_id');
-          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-          process.exit(2); // Blocking error
-        }
-
-        if (!event.hook_event_name) {
-          logger.error('[hook] Missing required field: hook_event_name');
-          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          if (agentNeverBlocks(agentName)) {
+            return; // Non-blocking agent: fail without exiting 2
+          }
           process.exit(2); // Blocking error
         }
 
         // Initialize logger context using CODEMIE_SESSION_ID from environment
-        // This ensures consistent session ID across all hooks
-        const { sessionId, agentName } = initializeHookContext();
+        // (or, for agents whose session id is payload-derived, from the
+        // transformed event below).
+        const { sessionId, agentName: resolvedAgentName } = initializeHookContext(undefined, agentName);
 
         // Apply hook transformation if agent provides a transformer.
         // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
         // hook payload; the transformer computes it from agent-specific session
-        // layout before we validate the internal event shape.
-        const transformedEvent = applyHookTransformation(event, agentName);
+        // layout before we validate the internal event shape. Transform runs
+        // before validation so agent-specific transformers can populate
+        // fields such as transcript_path/session_id ahead of the check
+        // below — validateHookEvent (via `session_id`/`hook_event_name`)
+        // already covers the fields the old pre-transform checks duplicated.
+        const transformedEvent = applyHookTransformation(event, resolvedAgentName);
 
-        // Validate required fields after transformation so agent-specific
-        // transformers can populate fields such as transcript_path.
-        validateHookEvent(transformedEvent);
+        validateHookEvent(transformedEvent, undefined, resolvedAgentName);
         if (process.exitCode === 2) {
           return; // Validation failed
         }
 
         // Normalize event name and log processing info
-        normalizeAndLogEvent(transformedEvent, sessionId, agentName);
+        normalizeAndLogEvent(transformedEvent, sessionId, resolvedAgentName);
 
         // Route to appropriate handler with transformed event and session ID
-        await routeHookEvent(transformedEvent, input, sessionId, agentName);
+        await routeHookEvent(transformedEvent, input, sessionId, resolvedAgentName);
 
         // Log successful completion
         const totalDuration = Date.now() - hookStartTime;
