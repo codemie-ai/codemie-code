@@ -690,6 +690,17 @@ export interface AgentHookConfig {
    * treats a non-zero exit as a hard block on the user's action.
    */
   neverBlockingExit?: boolean;
+
+  /**
+   * Optional per-agent stdout response contract, invoked with the
+   * agent-native event name (`event.hook_event_name`, unmutated by
+   * `eventNameMapping`) after the hook has been routed. Lets a host that
+   * inspects stdout for a synchronous response (e.g. Cursor's
+   * `{"permission":"allow"}`/`{"continue":true}`) get one without adding an
+   * agent-name literal to `hook.ts` — set only by agents whose host reads a
+   * response from stdout.
+   */
+  writeStdoutResponse?: (nativeEventName: string) => void;
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { AgentMetadata, HookTransformer } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { CursorIdeHookTransformer } from './cursor-ide.hook-transformer.js';
+import { writeCursorResponse } from './cursor-ide.response.js';
 import {
   CURSOR_IDE_AGENT_NAME,
   CURSOR_IDE_CLIENT_TYPE,
@@ -80,6 +81,10 @@ export const CursorIdePluginMetadata: AgentMetadata = {
     // Exit code 2 is equivalent to `permission: "deny"` in Cursor and blocks
     // the user's action - analytics ingestion must never be capable of that.
     neverBlockingExit: true,
+    // Cursor reads a JSON response off stdout for a subset of its events
+    // (see cursor-ide.response.ts) - this is the sole gate that calls it,
+    // set only for this agent.
+    writeStdoutResponse: writeCursorResponse,
   },
 };
 
