@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14834/cursor-ide-otlp-integration",
+  "head": "74a6bfa01e5c0c803a91494836a7f236c9b43508",
+  "runner": "npm",
+  "started_at": "2026-09-12T12:48:00Z",
+  "completed_at": "2026-09-12T12:52:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2873,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4666,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5494,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8497,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 34519,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "267 test files, 3957 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30574,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "First attempt (exit 1, 4 failed specs in tests/integration/sso-claude-plugin.test.ts) was caused by ANTHROPIC_MODEL/ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN env vars leaking from this agent session's own shell (proxy-injected for the running Claude Code process), not by the branch diff. Re-ran with those vars unset: 37 passed | 1 skipped (38 files), 279 passed | 10 skipped (289 tests). This is an environment-contamination false failure specific to running gates from inside an active codemie proxy session, not a code defect."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 484,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script output 'No staged changes to scan' - scans `git diff --staged` only (scripts/validate-secrets.js:87-96), and the working tree has no staged changes (all branch changes are already committed). To exercise it locally, stage a diff (e.g. `git diff HEAD~1..HEAD | git apply --cached` equivalent, or re-run mid-development before committing). CI's gitleaks-action step scans the full PR diff unconditionally regardless of staging state."
+    },
+    {
+      "id": "lint-staged-affected",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged (eslint --max-warnings=0 on staged *.ts, vitest related --run on staged *.ts, npm run license-check on staged package.json)",
+      "notes": "No staged changes present (git status shows a clean tree aside from this run's own task artifacts); lint-staged/vitest-related only has a diff to act on at commit time. Underlying eslint and license-check are already covered PASS by the standalone lint/license-check gates above; the 'vitest related' affected-test slice specifically could not be exercised without a staged diff."
+    },
+    {
+      "id": "commitlint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 609,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checked HEAD~1..HEAD (single most recent commit per gate-plan scope); found 0 problems, 0 warnings."
+    }
+  ],
+  "failures": {}
+}
