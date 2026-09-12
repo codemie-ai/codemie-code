@@ -52,7 +52,7 @@ describe('KimiPlugin', () => {
       expect(installNativeAgent).toHaveBeenCalledWith(
         'kimi',
         KimiPluginMetadata.installerUrls,
-        '0.16.0',
+        KimiPluginMetadata.supportedVersion,
         expect.any(Object),
       );
     });
