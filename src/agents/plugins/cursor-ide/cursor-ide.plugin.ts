@@ -2,6 +2,7 @@ import type { AgentMetadata, HookTransformer } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { CursorIdeHookTransformer } from './cursor-ide.hook-transformer.js';
 import { writeCursorResponse } from './cursor-ide.response.js';
+import { appendCursorEventLog } from './cursor-ide.event-log.js';
 import {
   CURSOR_IDE_AGENT_NAME,
   CURSOR_IDE_CLIENT_TYPE,
@@ -85,6 +86,11 @@ export const CursorIdePluginMetadata: AgentMetadata = {
     // (see cursor-ide.response.ts) - this is the sole gate that calls it,
     // set only for this agent.
     writeStdoutResponse: writeCursorResponse,
+    // Primary acceptance signal: capture every delivered event verbatim
+    // (sanitized) to a project-local JSONL trace (see
+    // cursor-ide.event-log.ts). Gated internally behind
+    // CODEMIE_CURSOR_HOOK_TRACE; never throws, never blocks the hook.
+    captureEvent: appendCursorEventLog,
   },
 };
 

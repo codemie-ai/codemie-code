@@ -701,6 +701,17 @@ export interface AgentHookConfig {
    * response from stdout.
    */
   writeStdoutResponse?: (nativeEventName: string) => void;
+
+  /**
+   * Optional per-agent raw event capture, invoked for every routed event
+   * with the transformed payload, the agent-native event name, the internal
+   * event name it maps onto, and the resolved session id. Lets an agent
+   * capture its own events verbatim (e.g. cursor-ide's project-local JSONL
+   * trace) without adding an agent-name literal to `hook.ts` - set only by
+   * agents that need this. Must never throw; must never block or slow the
+   * hook's own processing.
+   */
+  captureEvent?: (payload: unknown, nativeEventName: string, internalEventName: string, sessionId: string) => Promise<void>;
 }
 
 /**

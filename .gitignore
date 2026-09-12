@@ -61,6 +61,10 @@ local/*
 /.serena/
 /.agents/skills/bmad*
 .codemie
+# Project-local cursor-ide hook trace (raw payloads, sanitized but never
+# committable) - explicit even though the bare `.codemie` entry above
+# already covers it.
+.codemie/logs/
 .claude/telemetry
 
 .playwright-mcp/

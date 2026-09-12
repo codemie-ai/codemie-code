@@ -756,6 +756,12 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     const normalizedEventName = normalizeEventName(originalEventName, agentName);
     logger.info(`[hook:router] Normalized event name: "${normalizedEventName}"`);
 
+    // Declarative raw-event capture (e.g. cursor-ide's project-local JSONL
+    // trace) - a no-op for agents that don't declare hookConfig.captureEvent.
+    // Fire before routing so every delivered event is captured even if its
+    // handler throws.
+    await captureAgentEvent(agentName, event, originalEventName, normalizedEventName, sessionId);
+
     switch (normalizedEventName) {
       case 'SessionStart':
         logger.info(`[hook:router] Calling handleSessionStart`);
@@ -1487,6 +1493,41 @@ function writeAgentStdoutResponse(agentName: string | undefined, nativeEventName
     }
   } catch (error) {
     logger.debug('[hook] Failed to write agent stdout response (non-blocking):', error);
+  }
+}
+
+/**
+ * Invoke an agent's declarative raw-event capture, if it has one
+ * (`metadata.hookConfig.captureEvent` - see cursor-ide.event-log.ts). A
+ * no-op for every agent that doesn't declare one. Never throws and never
+ * awaited by the caller's critical path beyond this call: a capture
+ * failure must not turn a successful hook into a failed one, and capture
+ * must never slow the agent down.
+ *
+ * @param agentName - Resolved agent name
+ * @param payload - The transformed event payload
+ * @param nativeEventName - The agent-native event name (`event.hook_event_name`)
+ * @param internalEventName - The internal event name it was routed as
+ * @param sessionId - Resolved session id
+ */
+async function captureAgentEvent(
+  agentName: string | undefined,
+  payload: unknown,
+  nativeEventName: string,
+  internalEventName: string,
+  sessionId: string
+): Promise<void> {
+  if (!agentName) {
+    return;
+  }
+  try {
+    const agent = AgentRegistry.getAgent(agentName);
+    const capture = agent?.metadata?.hookConfig?.captureEvent;
+    if (typeof capture === 'function') {
+      await capture(payload, nativeEventName, internalEventName, sessionId);
+    }
+  } catch (error) {
+    logger.debug('[hook] Failed to capture agent event (non-blocking):', error);
   }
 }
 
