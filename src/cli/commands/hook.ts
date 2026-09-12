@@ -165,9 +165,11 @@ function resolveAgentName(agentFlag?: string): string {
  * @returns The CodeMie session ID from environment
  * @throws Error if required environment variables are missing
  */
-function initializeLoggerContext(agentName: string): string {
-  // Use CODEMIE_SESSION_ID from environment
-  const sessionId = process.env.CODEMIE_SESSION_ID;
+function initializeLoggerContext(agentName: string, fallbackSessionId?: string): string {
+  // Use CODEMIE_SESSION_ID from environment, falling back to a payload-derived
+  // session id (e.g. cursor-ide's transformed conversation_id) when a hook
+  // process CodeMie did not spawn has no CODEMIE_SESSION_ID to inherit.
+  const sessionId = process.env.CODEMIE_SESSION_ID || fallbackSessionId;
   if (!sessionId) {
     throw new Error('CODEMIE_SESSION_ID environment variable is required');
   }
@@ -1408,7 +1410,11 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig, 
  * @param agentFlag - Optional `--agent <name>` CLI flag value (CLI mode only); beats `CODEMIE_AGENT` env
  * @returns Object with sessionId and agentName
  */
-function initializeHookContext(config?: HookProcessingConfig, agentFlag?: string): { sessionId: string; agentName: string } {
+function initializeHookContext(
+  config?: HookProcessingConfig,
+  agentFlag?: string,
+  fallbackSessionId?: string
+): { sessionId: string; agentName: string } {
   let sessionId: string;
   let agentName: string;
 
@@ -1426,7 +1432,7 @@ function initializeHookContext(config?: HookProcessingConfig, agentFlag?: string
   } else {
     // Use environment variables (CLI mode), with the --agent flag taking precedence
     agentName = resolveAgentName(agentFlag);
-    sessionId = initializeLoggerContext(agentName);
+    sessionId = initializeLoggerContext(agentName, fallbackSessionId);
   }
 
   return { sessionId, agentName };
@@ -1543,20 +1549,22 @@ export function createHookCommand(): Command {
           process.exit(2); // Blocking error
         }
 
-        // Initialize logger context using CODEMIE_SESSION_ID from environment
-        // (or, for agents whose session id is payload-derived, from the
-        // transformed event below).
-        const { sessionId, agentName: resolvedAgentName } = initializeHookContext(undefined, agentName);
+        // Apply hook transformation if agent provides a transformer, before
+        // initializing logger/session context. Some agents (e.g. Kimi) do
+        // not emit a transcript_path in their raw hook payload; others (e.g.
+        // cursor-ide) send conversation_id instead of session_id. The
+        // transformer computes/maps these fields before we resolve the
+        // CodeMie session id or validate the internal event shape.
+        const transformedEvent = applyHookTransformation(event, agentName);
 
-        // Apply hook transformation if agent provides a transformer.
-        // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
-        // hook payload; the transformer computes it from agent-specific session
-        // layout before we validate the internal event shape. Transform runs
-        // before validation so agent-specific transformers can populate
-        // fields such as transcript_path/session_id ahead of the check
-        // below — validateHookEvent (via `session_id`/`hook_event_name`)
-        // already covers the fields the old pre-transform checks duplicated.
-        const transformedEvent = applyHookTransformation(event, resolvedAgentName);
+        // Initialize logger context using CODEMIE_SESSION_ID from environment,
+        // falling back to the transform-derived session id when a hook
+        // process CodeMie did not spawn has nothing to inherit it from.
+        const { sessionId, agentName: resolvedAgentName } = initializeHookContext(
+          undefined,
+          agentName,
+          transformedEvent.session_id
+        );
 
         validateHookEvent(transformedEvent, undefined, resolvedAgentName);
         if (process.exitCode === 2) {

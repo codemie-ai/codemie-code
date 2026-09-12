@@ -644,7 +644,14 @@ export type InternalHookEventName =
   | 'Stop'
   | 'UserPromptSubmit'
   | 'SubagentStop'
-  | 'PreCompact';
+  | 'PreCompact'
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'PostToolUseFailure'
+  | 'SubagentStart'
+  | 'AgentResponse'
+  | 'AgentThought'
+  | 'WorkspaceOpen';
 
 /**
  * Agent-specific hook configuration.
@@ -655,7 +662,9 @@ export interface AgentHookConfig {
    * Keys are event names emitted by the agent; values are names used by the hook router.
    *
    * Valid internal values: SessionStart, SessionEnd, PermissionRequest, Stop,
-   * UserPromptSubmit, SubagentStop, PreCompact.
+   * UserPromptSubmit, SubagentStop, PreCompact, PreToolUse, PostToolUse,
+   * PostToolUseFailure, SubagentStart, AgentResponse, AgentThought,
+   * WorkspaceOpen.
    *
    * @example
    * eventNameMapping: {
@@ -701,6 +710,10 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  tool_name?: string;              // PreToolUse/PostToolUse/PostToolUseFailure: tool identifier
+  tool_input?: unknown;            // PreToolUse/PostToolUse/PostToolUseFailure: tool arguments
+  tool_output?: unknown;           // PostToolUse: tool result
+  tool_use_id?: string;            // Correlates a PreToolUse call with its PostToolUse/failure
 }
 
 // Forward declaration for extension installer
