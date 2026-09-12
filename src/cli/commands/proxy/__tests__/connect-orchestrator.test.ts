@@ -244,7 +244,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(process.exitCode).toBe(0);
   });
 
-  it('--cursor-ide alone prints the analytics-only note and does no daemon/profile work', async () => {
+  it('--cursor-ide alone (without --analytics) explains --analytics is required and does no daemon/profile work', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
@@ -254,7 +254,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(ConfigLoader.load).not.toHaveBeenCalled();
     expect(checkStatus).not.toHaveBeenCalled();
     expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Only analytics is supported'));
+    expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('--cursor-ide requires --analytics'));
     expect(process.exitCode).toBe(0);
   });
 

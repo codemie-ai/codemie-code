@@ -47,6 +47,7 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
+import { writeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -70,6 +71,8 @@ export interface ConnectOptions {
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
+  /** Gate for the cursor-ide target — analytics-only hook ingestion. */
+  analytics?: boolean;
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
@@ -270,13 +273,14 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --cursor-ide           Cursor IDE — analytics only for now',
+  '  --cursor-ide           Cursor IDE — writes .cursor/hooks.json (requires --analytics)',
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
+  '  codemie proxy connect --cursor-ide --analytics',
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -590,6 +594,43 @@ async function runCodexDesktop(
 /** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
 export const runCodexDesktopForTest = runCodexDesktop;
 
+interface CursorIdeRunOptions {
+  force?: boolean;
+}
+
+/**
+ * Writes/merges `.cursor/hooks.json`. Unlike every other target, cursor-ide
+ * needs no daemon: hooks POST directly to `/v1/metrics` via the metrics API
+ * client, not through the proxy (spec \u00a7Task 7 "Daemon"). Callable standalone,
+ * before any daemon lifecycle.
+ */
+async function runCursorIde(options: CursorIdeRunOptions): Promise<TargetResult> {
+  const label = 'Cursor IDE';
+  try {
+    const result = await writeCursorIdeHooksConfig({ force: options.force });
+    console.log(chalk.green(`\u2713 Cursor IDE hooks configured (${result.path})`));
+    console.log(chalk.dim(`  ${result.events.length} event(s) wired to codemie hook --agent cursor-ide`));
+    if (result.backupPath) {
+      console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
+    }
+    console.log(chalk.yellow('  Workspace must be trusted for project hooks to run in Cursor.'));
+    console.log(chalk.dim('  Cursor hot-reloads hooks.json; restart Cursor if hooks do not pick up.'));
+    console.log(chalk.dim('  Enable transcripts in Cursor for transcript_path to be populated.'));
+    console.log(chalk.dim(
+      '  Cloud agents skip sessionStart/sessionEnd, the MCP hooks, the Tab hooks, and workspaceOpen.'
+    ));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Cursor IDE hooks', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Cursor IDE hooks: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
+/** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
+export const runCursorIdeForTest = runCursorIde;
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
   if (!hasAnyTarget(targets)) {
@@ -597,9 +638,36 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     return;
   }
 
-  if (targets.cursorIde && !targets.claudeDesktop && !targets.vscode && !targets.vscodeClaudeCode && !targets.codexDesktop) {
-    console.log(chalk.yellow('Note: Only analytics is supported for --cursor-ide.'));
+  const analytics = Boolean(opts.analytics);
+
+  if (targets.cursorIde && !analytics) {
+    console.log(chalk.yellow(
+      'Note: --cursor-ide requires --analytics. Re-run with --cursor-ide --analytics.'
+    ));
     return;
+  }
+
+  if (analytics && !targets.cursorIde) {
+    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide.'));
+  }
+
+  const otherTargets = Boolean(
+    targets.claudeDesktop || targets.vscode || targets.vscodeClaudeCode || targets.codexDesktop
+  );
+
+  // cursor-ide needs no daemon \u2014 run it standalone, before any daemon lifecycle.
+  // When it is the sole target, print the summary and return without ever
+  // calling resolveSsoProxyConfig/ensureDaemon.
+  let cursorIdeResult: TargetResult | undefined;
+  if (targets.cursorIde) {
+    cursorIdeResult = await runCursorIde({ force: Boolean(opts.force) });
+    if (!otherTargets) {
+      printSummary([cursorIdeResult]);
+      if (!cursorIdeResult.ok) {
+        process.exitCode = 1;
+      }
+      return;
+    }
   }
 
   const verbose = Boolean(opts.verbose);
@@ -687,6 +755,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   const results: TargetResult[] = [];
+  if (cursorIdeResult) results.push(cursorIdeResult);
   if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
   if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));

@@ -36,6 +36,7 @@ interface UnifiedConnectOptions {
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
   cursorIde?: boolean;
+  analytics?: boolean;
   profile?: string;
   force?: boolean;
   verbose?: boolean;
@@ -293,7 +294,8 @@ export function createProxyCommand(): Command {
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
-    .option('--cursor-ide', 'Configure Cursor IDE — analytics only for now')
+    .option('--cursor-ide', 'Configure Cursor IDE — writes .cursor/hooks.json (requires --analytics)')
+    .option('--analytics', 'Enable analytics-only hook ingestion (applies to --cursor-ide)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
@@ -313,6 +315,7 @@ export function createProxyCommand(): Command {
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
+        analytics: Boolean(opts.analytics),
       });
     });
 
