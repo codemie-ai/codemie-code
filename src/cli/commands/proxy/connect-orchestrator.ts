@@ -457,7 +457,9 @@ async function runVscodeByok(
   verbose: boolean
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, insiders);
+    const result = config.model
+      ? await writeVsCodeLanguageModelsConfig(state.url, insiders, config.model)
+      : await writeVsCodeLanguageModelsConfig(state.url, insiders);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({

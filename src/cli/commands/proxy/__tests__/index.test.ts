@@ -492,7 +492,8 @@ describe('proxy connect vscode', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
-      false
+      false,
+      'shared-profile-model'
     );
   });
 

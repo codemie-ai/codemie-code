@@ -6,10 +6,13 @@ import { ConfigurationError } from '@/utils/errors.js';
 import {
   VS_CODE_SUPPORTED_MODELS,
   type VsCodeApiType,
+  type VsCodeModelDefinition,
   type VsCodeReasoningEffort,
 } from './vscode-models.js';
 
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
+const OPENAI_PROVIDER_PREFIX_PATTERN = /^openai\./i;
+const RELEASE_DATE_SUFFIX_PATTERN = /-\d{4}-\d{2}-\d{2}$/;
 
 interface VsCodeLanguageModelProvider {
   [key: string]: unknown;
@@ -104,8 +107,32 @@ function getApiPath(apiType: VsCodeApiType): string {
   return '/v1/chat/completions';
 }
 
-function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
-  return VS_CODE_SUPPORTED_MODELS.map(definition => {
+function getConfiguredModelDefinitions(
+  profileModel: string | undefined
+): readonly VsCodeModelDefinition[] {
+  const configuredModel = profileModel?.trim();
+  if (!configuredModel) return VS_CODE_SUPPORTED_MODELS;
+
+  const modelWithoutProviderPrefix = configuredModel
+    .replace(OPENAI_PROVIDER_PREFIX_PATTERN, '');
+  const definition = VS_CODE_SUPPORTED_MODELS.find(candidate =>
+    candidate.id === configuredModel ||
+    candidate.id.replace(RELEASE_DATE_SUFFIX_PATTERN, '') === modelWithoutProviderPrefix
+  );
+
+  if (!definition) return VS_CODE_SUPPORTED_MODELS;
+
+  // CodeMie gateway model IDs can be provider-qualified while VS Code needs the
+  // capability metadata from its versioned catalog entry. Register the gateway ID
+  // so the request reaches the deployment selected by the active profile.
+  return [{ ...definition, id: configuredModel }];
+}
+
+function buildManagedModels(
+  proxyUrl: string,
+  profileModel: string | undefined
+): VsCodeManagedModel[] {
+  return getConfiguredModelDefinitions(profileModel).map(definition => {
     const model: VsCodeManagedModel = {
       id: definition.id,
       name: definition.id,
@@ -138,7 +165,8 @@ function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
 
 function mergeManagedProviders(
   providers: VsCodeLanguageModelProvider[],
-  proxyUrl: string
+  proxyUrl: string,
+  profileModel: string | undefined
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
   const existingSettings = Object.assign(
@@ -154,7 +182,7 @@ function mergeManagedProviders(
     name: 'CodeMie',
     vendor: 'customendpoint',
     apiType: 'chat-completions',
-    models: buildManagedModels(proxyUrl),
+    models: buildManagedModels(proxyUrl, profileModel),
   };
 
   // VS Code owns effort selections. Preserve them instead of racing with the editor.
@@ -225,17 +253,20 @@ export async function writeAtomically(configPath: string, content: string): Prom
 
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
-  insiders = false
+  insiders = false,
+  profileModel?: string
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
-    proxyUrl
+    proxyUrl,
+    profileModel
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
-  proxyUrl: string
+  proxyUrl: string,
+  profileModel?: string
 ): Promise<WriteVsCodeConfigResult> {
   const providers = await readProviders(configPath);
   const managedProviderIndexes = providers
@@ -245,7 +276,7 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
     .map(index => providers[index])
     .filter(isManagedProvider);
   const { provider: managedProvider, requiresSecretConfiguration } =
-    mergeManagedProviders(managedProviders, proxyUrl);
+    mergeManagedProviders(managedProviders, proxyUrl, profileModel);
   const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
   const managedProviderIndexSet = new Set(managedProviderIndexes);
   const reconciledProviders = providers.flatMap((provider, index) => {
