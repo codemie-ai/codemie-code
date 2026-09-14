@@ -13,6 +13,7 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../BaseProcessor.js';
+import { shouldStopSync } from '../../../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
@@ -180,8 +181,19 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
       const successfulRecordIds = new Set<string>();
       const failedByRecordId = new Map<string, string>();
+      let deferred = false;
+      let processedBranches = 0;
 
       for (const metric of metrics) {
+        // Stop BEFORE sending the next branch metric when the caller's sync
+        // deadline expired or an abort was signaled (leftover deltas stay
+        // pending for the next run).
+        if (shouldStopSync(context)) {
+          deferred = true;
+          break;
+        }
+        processedBranches++;
+
         const branchDeltas = pendingDeltas.filter((delta) =>
           (delta.gitBranch || '') === metric.attributes.branch
         );
@@ -210,7 +222,9 @@ export class MetricsSyncProcessor implements SessionProcessor {
         }
       }
 
-      // 8. Mark deltas as synced/failed in JSONL (atomic rewrite)
+      // 8. Mark deltas as synced/failed in JSONL (atomic rewrite).
+      // Runs even when the loop stopped early: per-branch outcomes collected so
+      // far are persisted, unprocessed branches keep their deltas pending.
       const syncedAt = Date.now();
 
       const updatedDeltas = allDeltas.map((d): MetricDelta => {
@@ -241,8 +255,13 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       const successCount = successfulRecordIds.size;
       const failedCount = failedByRecordId.size;
-      const message = `Synced ${successCount}/${pendingDeltas.length} deltas across ${metrics.length} branches`;
-      if (failedCount > 0) {
+      // Deferral is not a failure: remaining branch metrics stay pending for the next run
+      const message = deferred
+        ? `Sync deferred: ${metrics.length - processedBranches} items remaining (deadline/abort)`
+        : `Synced ${successCount}/${pendingDeltas.length} deltas across ${metrics.length} branches`;
+      if (deferred) {
+        logger.info(`[${this.name}] ${message} (${successCount} deltas synced before stop)`);
+      } else if (failedCount > 0) {
         logger.warn(`[${this.name}] ${message}; ${failedCount} failed`);
       } else {
         logger.info(`[${this.name}] Successfully ${message}`);
@@ -260,7 +279,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       });
 
       return {
-        success: failedCount === 0,
+        success: deferred ? true : failedCount === 0,
         message,
         metadata: {
           deltasProcessed: successCount,

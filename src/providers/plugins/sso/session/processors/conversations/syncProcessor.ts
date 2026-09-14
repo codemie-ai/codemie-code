@@ -12,6 +12,7 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/providers/plugins/sso/session/BaseProcessor.js';
+import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
@@ -85,10 +86,19 @@ export function createSyncProcessor(): SessionProcessor {
       // Send each pending payload to API
       let successCount = 0;
       let totalMessages = 0;
+      let deferred = false;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
 
       for (const pendingPayload of pendingPayloads) {
+        // Stop BEFORE sending the next payload when the caller's sync deadline
+        // expired or an abort was signaled (the SessionEnd hook can be killed at
+        // any moment; leftovers stay pending for the next run).
+        if (shouldStopSync(context)) {
+          deferred = true;
+          break;
+        }
+
         const payloadId = getPayloadId(pendingPayload);
         const { conversationId, history, assistantId, folder, llmModel } = pendingPayload.payload;
         const resolvedAssistantId = assistantId || CODEMIE_ASSISTANT_ID;
@@ -100,6 +110,7 @@ export function createSyncProcessor(): SessionProcessor {
           `isTurnContinuation=${pendingPayload.isTurnContinuation}`
         );
 
+        let syncError: string | undefined;
         try {
 
           // Send to API
@@ -113,58 +124,49 @@ export function createSyncProcessor(): SessionProcessor {
 
           if (!response.success) {
             logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to sync conversation ${conversationId}: ${response.message}`);
-            failedByPayloadId.set(payloadId, response.message);
-            // Continue with other payloads even if one fails
-            continue;
+            syncError = response.message;
+          } else {
+            logger.info(`[${CONVERSATION_PROCESSOR_NAME}] Successfully synced conversation ${conversationId} (${response.new_messages} new, ${response.total_messages} total)`);
+            successCount++;
+            totalMessages += history.length;
+            successfulPayloadIds.add(payloadId);
           }
-
-          logger.info(`[${CONVERSATION_PROCESSOR_NAME}] Successfully synced conversation ${conversationId} (${response.new_messages} new, ${response.total_messages} total)`);
-          successCount++;
-          totalMessages += history.length;
-          successfulPayloadIds.add(payloadId);
 
         } catch (error: any) {
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Error syncing conversation ${conversationId}:`, error.message);
-          failedByPayloadId.set(payloadId, error.message || 'Unknown error');
-          // Continue with other payloads
+          syncError = error.message || 'Unknown error';
+        }
+
+        if (syncError) {
+          failedByPayloadId.set(payloadId, syncError);
+        }
+
+        // Persist THIS payload's outcome immediately (atomic full-file rewrite).
+        // A kill mid-loop must never lose progress made so far.
+        applyPayloadOutcome(allPayloads, payloadId, syncError);
+        try {
+          await writeJSONLAtomic(conversationsFile, allPayloads);
+        } catch (writeError) {
+          // Keep going: in-memory state is ahead of disk, a later iteration may persist it
+          logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist payload outcome:`, writeError);
         }
       }
 
-      // Mark payloads as synced in JSONL (atomic rewrite)
       const syncedAt = Date.now();
+      const attemptedCount = successfulPayloadIds.size + failedByPayloadId.size;
+      const remainingCount = pendingPayloads.length - attemptedCount;
 
-      const updatedPayloads = allPayloads.map((p): ConversationPayloadRecord => {
-        const payloadId = getPayloadId(p);
-        if (successfulPayloadIds.has(payloadId)) {
-          return {
-            ...p,
-            status: CONVERSATION_SYNC_STATUS.SUCCESS,
-            syncAttempts: (p.syncAttempts ?? 0) + 1,
-            error: undefined,
-            response: {
-              syncedCount: p.payload.history.length
-            }
-          };
-        }
+      const message = deferred
+        ? `Sync deferred: ${remainingCount} items remaining (deadline/abort)`
+        : `Synced ${successCount}/${pendingPayloads.length} conversations`;
 
-        const error = failedByPayloadId.get(payloadId);
-        if (error) {
-          return {
-            ...p,
-            status: CONVERSATION_SYNC_STATUS.FAILED,
-            syncAttempts: (p.syncAttempts ?? 0) + 1,
-            error,
-          };
-        }
-
-        return p;
-      });
-
-      await writeJSONLAtomic(conversationsFile, updatedPayloads);
-
-      logger.info(
-        `[${CONVERSATION_PROCESSOR_NAME}] Successfully synced ${successCount}/${pendingPayloads.length} conversations (${totalMessages} messages)`
-      );
+      if (deferred) {
+        logger.info(`[${CONVERSATION_PROCESSOR_NAME}] ${message} (${successCount} synced before stop)`);
+      } else {
+        logger.info(
+          `[${CONVERSATION_PROCESSOR_NAME}] Successfully synced ${successCount}/${pendingPayloads.length} conversations (${totalMessages} messages)`
+        );
+      }
 
       // Calculate sync updates for the adapter to persist
       let maxHistoryIndex = -1;
@@ -210,15 +212,15 @@ export function createSyncProcessor(): SessionProcessor {
         syncedAt: new Date(syncedAt).toISOString(),
         payloadIds: Array.from(successfulPayloadIds),
         failedPayloadIds: Array.from(failedByPayloadId.keys()),
-        totalPayloadsInFile: updatedPayloads.length,
-        syncedCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).length,
-        failedCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.FAILED).length,
-        pendingCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.PENDING).length
+        totalPayloadsInFile: allPayloads.length,
+        syncedCount: allPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).length,
+        failedCount: allPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.FAILED).length,
+        pendingCount: allPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.PENDING).length
       });
 
       return {
         success: true,
-        message: `Synced ${successCount}/${pendingPayloads.length} conversations`,
+        message,
         metadata: {
           conversationId: session.sessionId,
           messagesProcessed: totalMessages,
@@ -287,6 +289,40 @@ function getPayloadId(payload: ConversationPayloadRecord): string {
   return payload.payloadId ||
     payload.lastProcessedMessageUuid ||
     `${payload.payload.conversationId}:${payload.timestamp}`;
+}
+
+/**
+ * Apply a single payload's sync outcome to the in-memory records (in place).
+ * Mirrors the per-payload success/failure mapping so the file can be rewritten
+ * after every payload instead of only at the end of the loop.
+ */
+function applyPayloadOutcome(
+  allPayloads: ConversationPayloadRecord[],
+  payloadId: string,
+  syncError: string | undefined
+): void {
+  const index = allPayloads.findIndex(p => getPayloadId(p) === payloadId);
+  if (index === -1) {
+    return;
+  }
+
+  const p = allPayloads[index];
+  allPayloads[index] = syncError
+    ? {
+      ...p,
+      status: CONVERSATION_SYNC_STATUS.FAILED,
+      syncAttempts: (p.syncAttempts ?? 0) + 1,
+      error: syncError,
+    }
+    : {
+      ...p,
+      status: CONVERSATION_SYNC_STATUS.SUCCESS,
+      syncAttempts: (p.syncAttempts ?? 0) + 1,
+      error: undefined,
+      response: {
+        syncedCount: p.payload.history.length
+      }
+    };
 }
 
 function parseSourceIndex(value: unknown): number {
