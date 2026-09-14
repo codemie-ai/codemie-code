@@ -3,7 +3,7 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
+import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent, ModelTimelinePoint } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
 /** One flat record per session — the client aggregates everything from these. */
@@ -46,7 +46,22 @@ export interface ReportSessionRecord {
   // this and hadLog never disagree.
   agentSessionFile?: string;
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
+
+  // === Routing classifier cost (included in costUSD; see routingCostKnown) ===
+  judgeCostUSD?: number; // USD spent on the routing classifier LLM
+  judgeInputTokens?: number;
+  judgeOutputTokens?: number;
+  judgeCachedTokens?: number;
+  judgeCacheCreationTokens?: number;
+  /**
+   * True when every routed turn in this session reported its classifier cost — always the
+   * case on Switchyard, and on LiteLLM builds that emit `x-litellm-classifier-cost`. False
+   * when any routed turn reported none, making `judgeCostUSD` an understatement rather than a
+   * measurement. Absent when the session had no routed turns at all.
+   */
+  routingCostKnown?: boolean;
 
   // === Usage provenance (optional; absent for agents that always record full usage) ===
   /**

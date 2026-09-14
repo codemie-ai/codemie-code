@@ -119,20 +119,32 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
         if (env.CODEMIE_HAIKU_MODEL) {
           env.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.CODEMIE_HAIKU_MODEL;
         }
+        // Pin the subagent default only when it cannot change what `model: inherit` resolves
+        // to. Upstream Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL before both the agent's
+        // frontmatter `model` and the Agent tool's `model` parameter, so any value other than
+        // the literal "inherit" overrides them all — including the `inherit` that subagents
+        // get by default. Mirrors BaseAgentAdapter.transformEnvVars (EPMCDME-14355).
+        const pinSubagentDefault = (fallbackModel: string): void => {
+          if (env.CODEMIE_MODEL && env.CODEMIE_MODEL !== fallbackModel) return;
+          env.CLAUDE_CODE_SUBAGENT_MODEL = fallbackModel;
+        };
         if (env.CODEMIE_SONNET_MODEL && env.CODEMIE_SONNET_MODEL !== env.CODEMIE_HAIKU_MODEL) {
+          // Distinct sonnet tier: ANTHROPIC_DEFAULT_SONNET_MODEL alone is enough — the
+          // upstream binary picks it as the subagent default and still honours per-subagent
+          // `model` params and `model: inherit`. CLAUDE_CODE_SUBAGENT_MODEL must stay unset
+          // here or it suppresses both (EPMCDME-14355).
           env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_SONNET_MODEL;
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_SONNET_MODEL;
         } else if (env.CODEMIE_OPUS_MODEL) {
           // Opus-only tenant: route subagent to opus; ANTHROPIC_DEFAULT_SONNET_MODEL is
           // intentionally left unset to prevent duplicate-ID display (EPMCDME-12779 FR-002).
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_OPUS_MODEL;
+          pinSubagentDefault(env.CODEMIE_OPUS_MODEL);
         } else if (env.CODEMIE_HAIKU_MODEL) {
           // Haiku-only tenant: set CLAUDE_CODE_SUBAGENT_MODEL so background tasks use the
           // provisioned model. ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset.
           // Routing haiku through the sonnet slot caused a duplicate because Claude Code
           // shows its built-in haiku default even when ANTHROPIC_DEFAULT_HAIKU_MODEL is not
           // set (EPMCDME-12779).
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_HAIKU_MODEL;
+          pinSubagentDefault(env.CODEMIE_HAIKU_MODEL);
         }
         if (env.CODEMIE_OPUS_MODEL) {
           env.ANTHROPIC_DEFAULT_OPUS_MODEL = env.CODEMIE_OPUS_MODEL;

@@ -898,3 +898,106 @@ describe('gatherUsageDeduped / gatherDedupedUsageRecords — pi fork replay', ()
     expect([...viaDedup.entries()]).toEqual([...viaReader.entries()]);
   });
 });
+
+/**
+ * Routing classifier ("judge") cost extraction, for both header families.
+ * Fixtures mirror the shapes observed in real transcripts: the proxy copies routing response
+ * headers onto the message object verbatim (`x-litellm-*` keep hyphens, `x-codemie-*` become
+ * underscores) — see proxy/plugins/routing-header-injector.plugin.ts.
+ */
+describe('extractClaudeUsageRecords — routing classifier cost', () => {
+  const usage = { input_tokens: 10, output_tokens: 5 };
+  const session = (message: Record<string, unknown>) =>
+    ({
+      sessionId: 'r1',
+      agentName: 'Claude Code',
+      metadata: {},
+      messages: [{ message: { model: 'claude-sonnet-4-5', usage, ...message } }],
+    }) as never;
+
+  const LITELLM_CLASSIFIER = {
+    'x-litellm-router-tier': 'SIMPLE',
+    'x-litellm-router-cause': 'llm_classifier',
+    'x-litellm-router-classifier-model': 'claude-4-5-haiku',
+    'x-litellm-classifier-cost': '0.0072204',
+    'x-litellm-classifier-prompt-tokens': '6394',
+    'x-litellm-classifier-completion-tokens': '34',
+    'x-litellm-classifier-total-tokens': '6428',
+  };
+
+  it('extracts cost and tokens from LiteLLM classifier headers', () => {
+    const [r] = extractClaudeUsageRecords(session(LITELLM_CLASSIFIER));
+    expect(r.routingFamily).toBe('litellm');
+    expect(r.judgeCostUSD).toBeCloseTo(0.0072204, 8);
+    expect(r.judgeInputTokens).toBe(6394);
+    expect(r.judgeOutputTokens).toBe(34);
+    expect(r.classifierModel).toBe('claude-4-5-haiku');
+    // LiteLLM emits no cache headers — these stay Switchyard-only.
+    expect(r.judgeCachedTokens).toBeUndefined();
+    expect(r.judgeCacheCreationTokens).toBeUndefined();
+  });
+
+  it('reads prompt+completion consistently with the reported total', () => {
+    const [r] = extractClaudeUsageRecords(session(LITELLM_CLASSIFIER));
+    const total = parseInt(LITELLM_CLASSIFIER['x-litellm-classifier-total-tokens'], 10);
+    expect((r.judgeInputTokens ?? 0) + (r.judgeOutputTokens ?? 0)).toBe(total);
+  });
+
+  it('keeps Switchyard values when both families are present', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({
+        ...LITELLM_CLASSIFIER,
+        x_codemie_routing_tier: 'capable',
+        x_codemie_routing_source: 'judge',
+        x_codemie_routing_judge_cost_usd: '0.002475',
+        x_codemie_routing_judge_input_tokens: '1200',
+        x_codemie_routing_judge_output_tokens: '80',
+      })
+    );
+    expect(r.routingFamily).toBe('switchyard');
+    expect(r.judgeCostUSD).toBeCloseTo(0.002475, 8);
+    expect(r.judgeInputTokens).toBe(1200);
+    expect(r.judgeOutputTokens).toBe(80);
+  });
+
+  it('marks routing cost known on Switchyard even when no classifier ran', () => {
+    const [r] = extractClaudeUsageRecords(session({ x_codemie_routing_tier: 'efficient' }));
+    expect(r.routingCostKnown).toBe(true);
+    expect(r.judgeCostUSD).toBeUndefined();
+  });
+
+  it('marks routing cost known on LiteLLM turns that report it', () => {
+    const [r] = extractClaudeUsageRecords(session(LITELLM_CLASSIFIER));
+    expect(r.routingCostKnown).toBe(true);
+  });
+
+  it('marks routing cost unknown on LiteLLM turns without classifier headers', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({ 'x-litellm-router-tier': 'COMPLEX', 'x-litellm-router-cause': 'llm_classifier' })
+    );
+    expect(r.routingFamily).toBe('litellm');
+    expect(r.routingCostKnown).toBe(false);
+    expect(r.judgeCostUSD).toBeUndefined();
+  });
+
+  it('treats a malformed classifier cost as unmeasured rather than NaN', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({ ...LITELLM_CLASSIFIER, 'x-litellm-classifier-cost': 'n/a' })
+    );
+    expect(r.judgeCostUSD).toBeUndefined();
+    expect(r.routingCostKnown).toBe(false);
+  });
+
+  it('classifies a turn carrying only the classifier block as LiteLLM-routed', () => {
+    const [r] = extractClaudeUsageRecords(session({ 'x-litellm-classifier-cost': '0.0064691' }));
+    expect(r.routingFamily).toBe('litellm');
+    expect(r.routingCostKnown).toBe(true);
+  });
+
+  it('leaves non-routed turns free of routing metadata', () => {
+    const [r] = extractClaudeUsageRecords(session({}));
+    expect(r.routingFamily).toBeUndefined();
+    expect(r.routingCostKnown).toBeUndefined();
+    expect(r.judgeCostUSD).toBeUndefined();
+  });
+});

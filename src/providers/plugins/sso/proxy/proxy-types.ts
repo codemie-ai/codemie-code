@@ -31,6 +31,8 @@ export interface ProxyConfig {
   syncApiUrl?: string;           // Optional CodeMie API URL for analytics/session sync
   syncCodeMieUrl?: string;       // Optional CodeMie org URL for credential lookup
   gatewayKey?: string;           // Static bearer key for gateway/daemon mode
+  /** Optional routing mode appended as `?routing=<mode>` to every upstream request. */
+  routing?: 'signal' | 'classifier';
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;

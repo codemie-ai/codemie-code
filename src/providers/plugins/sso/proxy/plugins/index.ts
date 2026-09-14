@@ -20,6 +20,7 @@ import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-
 import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-content-sanitizer.plugin.js';
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
+import { RoutingHeaderInjectorPlugin } from './routing-header-injector.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
 /**
@@ -44,6 +45,7 @@ export function registerCorePlugins(): void {
   registry.register(new VsCodeRequestNormalizerPlugin()); // Priority 17 - constrains VS Code user identifiers
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
+  registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
 }
 
@@ -66,6 +68,7 @@ export {
   CopilotEncryptedContentSanitizerPlugin,
   VsCodeRequestNormalizerPlugin,
   LoggingPlugin,
+  RoutingHeaderInjectorPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';

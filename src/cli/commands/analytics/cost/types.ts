@@ -30,6 +30,36 @@ export interface CostSeriesPoint {
   tokens: number; // cumulative total tokens up to and including this turn
 }
 
+/** One point in the per-turn model/tier/decision timeline shown in the session modal. */
+export interface ModelTimelinePoint {
+  t: number; // epoch ms when all records are timed, else the 1-based turn ordinal
+  model: string; // normalized model name that was actually used
+  costUSD: number; // per-turn cost attributed to this model
+  tokens: number; // per-turn total tokens for this turn
+  requestedModel?: string; // capable model that was originally requested
+  capableModel?: string; // alias for requestedModel
+  routingFamily?: 'switchyard' | 'litellm'; // which header family carried the decision
+  routingTier?: 'efficient' | 'capable' | string;
+  routingTierRaw?: string; // tier as emitted, before the two vocabularies are folded
+  routedModel?: string; // model the router actually dispatched to
+  classifierModel?: string; // LLM that made the routing decision
+  routerType?: string; // router strategy, e.g. 'complexity'
+  routerScore?: number; // numeric score from LiteLLM's heuristic scorer
+  routingConfidence?: number;
+  routingSource?: 'stage_router' | 'judge' | 'classifier' | string;
+  decisionSource?: string;
+  signalScore?: number;
+  signalConfidence?: number;
+  signalSeverity?: number;
+  signalSpinning?: number;
+  signalExploring?: number;
+  signalProductionIntensity?: number;
+  judgePSolve?: number;
+  judgeCrux?: string;
+  judgePrimaryRule?: string;
+  judgeCapabilityBoundary?: string;
+}
+
 /** Max points kept per session series — downsample guard so the embedded payload stays small. */
 export const MAX_SERIES_POINTS = 40;
 
@@ -60,6 +90,7 @@ export interface SessionCost {
   costUSD: number; // summed across models
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
@@ -72,6 +103,20 @@ export interface SessionCost {
    * to show" — those two must always agree.
    */
   agentSessionFile?: string;
+
+  // === Routing classifier cost (additive to costUSD; see routingCostKnown) ===
+  judgeCostUSD?: number; // USD spent on the routing classifier LLM
+  judgeInputTokens?: number;
+  judgeOutputTokens?: number;
+  judgeCachedTokens?: number;
+  judgeCacheCreationTokens?: number;
+  /**
+   * True when every routed turn in this session reported its classifier cost — always the
+   * case on Switchyard, and on LiteLLM builds that emit `x-litellm-classifier-cost`. False
+   * when any routed turn reported none, making `judgeCostUSD` an understatement rather than a
+   * measurement. Absent when the session had no routed turns at all.
+   */
+  routingCostKnown?: boolean;
 
   // === Usage provenance (from ParsedSession.usageMeta) ===
   /**

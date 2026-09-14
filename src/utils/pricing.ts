@@ -29,6 +29,20 @@ interface RawPrice {
   cacheWrite1h?: number;
 }
 
+/**
+ * CodeMie-specific ids the vendored table will never carry. Merged over the vendored rows
+ * in {@link table}, so re-copying `pricing.json` from agentlytics does not silently drop them.
+ *
+ * `claude-smart-router` is a Switchyard routing alias, not a generation model. The alias bills
+ * only the Haiku classifier hop that picks a target; the generation itself is billed against the
+ * model the router dispatched to, which arrives in the response body's own `model` field and is
+ * priced from its own row. Haiku rates therefore price what this id actually costs — without a
+ * row at all, `lookupPrice` returns null and the turn drops out of every cost total.
+ */
+const CODEMIE_PRICES: Record<string, RawPrice> = {
+  'claude-smart-router': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
+};
+
 const HERE = getDirname(import.meta.url);
 
 let TABLE: Record<string, ModelPrice> | null = null;
@@ -39,7 +53,7 @@ function table(): Record<string, ModelPrice> {
   }
   const raw = JSON.parse(readFileSync(join(HERE, 'pricing.json'), 'utf-8')) as Record<string, RawPrice>;
   const built: Record<string, ModelPrice> = {};
-  for (const [key, p] of Object.entries(raw)) {
+  for (const [key, p] of Object.entries({ ...raw, ...CODEMIE_PRICES })) {
     if (key.startsWith('_')) {
       continue; // skip _meta and similar
     }
@@ -139,6 +153,16 @@ function claudeTierFallback(normalized: string, prices: Record<string, ModelPric
     }
   }
   return best ? { key: best.key, price: best.price } : null;
+}
+
+/**
+ * The fully built rate card: the vendored table with {@link CODEMIE_PRICES} merged over it and every
+ * key lowercased. Exported so consumers that cannot import this module — the standalone Claude
+ * statusline, which runs as a detached `node <path>` process — can be handed the same rates rather
+ * than a copy of the raw `pricing.json`, which carries none of the CodeMie-only rows.
+ */
+export function priceTable(): Record<string, ModelPrice> {
+  return table();
 }
 
 /**
