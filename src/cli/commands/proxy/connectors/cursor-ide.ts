@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { resolveCodemieBinary } from '@/utils/hook-command.js';
+import { resolveCodemieBinary, resolveCodemieBinaryFromPackage } from '@/utils/hook-command.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import { writeAtomically } from './vscode.js';
 
@@ -188,7 +188,7 @@ export async function writeCursorIdeHooksConfigAtPath(
   const existing = await readHooksConfig(configPath);
   const backupPath = await backupIfUnmanaged(configPath, existing);
 
-  const binary = await resolveCodemieBinary();
+  const binary = resolveCodemieBinaryFromPackage() ?? (await resolveCodemieBinary());
   const command = `${binary} hook --agent cursor-ide`;
   const { config: merged, events } = mergeHooksConfig(existing, command);
 

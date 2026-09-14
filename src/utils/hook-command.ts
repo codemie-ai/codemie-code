@@ -3,7 +3,10 @@
  * bare `codemie hook` no longer fails with `command not found` when the hook
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { getCommandPath } from './processes.js';
+import { getDirname } from './paths.js';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
 const NEEDS_QUOTING = /[ \t,;=()&|<>^%[\]{}]/;
@@ -45,6 +48,26 @@ export async function resolveCodemieBinary(): Promise<string> {
   }
 
   return 'codemie';
+}
+
+// Resolve `bin/codemie.js` relative to this module's own package root (this
+// file compiles to `dist/utils/hook-command.js`, so the root is two levels
+// up) instead of via PATH or argv[1]. `bin/codemie.js` imports from `../dist/*`
+// relative to itself, so a hook command built from this path always tracks
+// this exact package install's own `dist/` output - including a dev checkout
+// linked via `npm link`, where `npm run build` alone is then enough to update
+// what the hook runs, with no re-link step. Returns null when the layout
+// doesn't hold (e.g. bundled/relocated builds without a sibling `bin/`), so
+// callers can fall back to `resolveCodemieBinary()`.
+export function resolveCodemieBinaryFromPackage(): string | null {
+  try {
+    const packageRoot = join(getDirname(import.meta.url), '..', '..');
+    const binPath = join(packageRoot, 'bin', 'codemie.js');
+    if (!existsSync(binPath)) return null;
+    return `${alwaysQuote(toForwardSlash(process.execPath))} ${alwaysQuote(toForwardSlash(binPath))}`;
+  } catch {
+    return null;
+  }
 }
 
 // Rewrite a leading `codemie` token to `binary`; other commands pass through.
