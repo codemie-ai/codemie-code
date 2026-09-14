@@ -205,10 +205,13 @@ describe('fetchClaudeModels', () => {
       json: async () => [
         { base_name: 'claude-sonnet-4-5-20250929' },
         { base_name: 'claude-4-5-sonnet' },
+        { base_name: 'claude-sonnet-5' },
         { base_name: 'claude-sonnet-4-6' },
         { base_name: 'claude-opus-4-5-20251101' },
         { base_name: 'claude-opus-4-6-20260205' },
         { base_name: 'claude-opus-4-7' },
+        { base_name: 'claude-opus-4-8' },
+        { base_name: 'claude-opus-5' },
         { base_name: 'claude-haiku-4-5-20251001' },
         { base_name: 'claude-opus-4-6-vertex' },
         { base_name: 'gpt-5.5-2026-04-24' },
@@ -219,10 +222,13 @@ describe('fetchClaudeModels', () => {
     expect(models).toEqual([
       'claude-sonnet-4-5-20250929',
       'claude-4-5-sonnet',
+      'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-opus-4-5-20251101',
       'claude-opus-4-6-20260205',
       'claude-opus-4-7',
+      'claude-opus-4-8',
+      'claude-opus-5',
       'claude-haiku-4-5-20251001',
     ]);
   });
@@ -252,7 +258,15 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-haiku-4-5']);
+    expect(models).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+        ]);
   });
 
   it('throws when response is not ok', async () => {
@@ -298,7 +312,7 @@ describe('fetchClaudeModels', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       headers: mkHeaders('text/html; charset=utf-8'),
-      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+      json: async () => { throw new SyntaxError('Unexpected token '<''); },
     }) as unknown as typeof globalThis.fetch;
 
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
@@ -341,11 +355,11 @@ describe('selectPreferredClaudeModels', () => {
 
   it('returns exact matches when present and dated fallbacks otherwise', () => {
     expect(selectPreferredClaudeModels(available)).toEqual([
-      'claude-sonnet-4-6',        // exact
-      'claude-opus-4-7',          // exact
+      'claude-opus-4-7', // exact
       'claude-opus-4-6-20260205', // dated fallback
-      'claude-haiku-4-5-20251001',// dated fallback
-    ]);
+      'claude-sonnet-4-6', // exact
+      'claude-haiku-4-5-20251001', // dated fallback
+        ]);
   });
 
   it('preserves the order of the preferred list', () => {
@@ -383,10 +397,10 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-8',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-    ]);
+        ]);
   });
 
   it('falls back to the highest available opus when 4.8 is absent', () => {
@@ -397,10 +411,10 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-7',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-    ]);
+        ]);
   });
 
   it('uses the next opus down when only 4.6 is available', () => {
@@ -500,10 +514,10 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
-    ]);
+        ]);
   });
 
   it('replaces existing inferenceModels entries — does not merge user-added ones', async () => {
@@ -517,10 +531,10 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
-    ]);
+        ]);
   });
 
   it('fails fast when discovery returns nothing', async () => {

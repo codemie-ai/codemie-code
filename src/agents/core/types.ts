@@ -199,8 +199,8 @@ export interface VersionCompatibilityResult {
   compatible: boolean;              // true if installed version is compatible
   installedVersion: string | null;  // null if not installed
   supportedVersion: string;         // version from metadata
-  isNewer: boolean;                 // true if installed > supported (requires warning)
-  hasUpdate: boolean;               // true if newer supported version available (for info prompt)
+  isNewer: boolean;                 // true if installed > supported (one-time notice)
+  hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
   minimumSupportedVersion?: string; // minimum version required to run (from metadata)
 }
@@ -219,8 +219,8 @@ export interface AgentMetadata {
   cliCommand: string | null;       // 'claude' or null for built-in
 
   /**
-   * Latest supported version tested with CodeMie backend
-   * Used for version compatibility checks
+   * Latest version tested with the CodeMie backend — a recommendation, not a
+   * requirement. A mismatch produces one non-blocking notice per version.
    *
    * Format: Semantic version string (e.g., '2.0.30')
    * Special values: 'latest', 'stable' (channels)
@@ -228,9 +228,9 @@ export interface AgentMetadata {
   supportedVersion?: string;
 
   /**
-   * Minimum version required to run the agent with CodeMie
-   * Agent startup is blocked if installed version is below this threshold
-   * Configured the same way as supportedVersion (per-agent in metadata)
+   * Oldest version that still works with CodeMie. Versions below this are
+   * known-broken (protocol breaks), so startup is refused — the only hard gate
+   * left in version handling.
    *
    * Format: Semantic version string (e.g., '2.0.0')
    */
@@ -836,6 +836,13 @@ export interface AgentAdapter {
    * @returns Version compatibility result
    */
   checkVersionCompatibility?(): Promise<VersionCompatibilityResult>;
+
+  /**
+   * Emit a one-time notice when the installed version differs from the
+   * recommended one, and record it so later launches stay silent. Never
+   * prompts, never blocks, never throws.
+   */
+  warnOnceIfUntested(): Promise<void>;
 
   /**
    * Detect installation method (optional, for installation-aware agents)

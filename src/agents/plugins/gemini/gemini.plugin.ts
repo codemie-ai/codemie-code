@@ -13,17 +13,18 @@ import { validateGeminiModel } from './gemini.models.js';
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
-const GEMINI_SUPPORTED_VERSION = '0.29.5';
+const GEMINI_SUPPORTED_VERSION = '0.59.0';
 
 /**
- * Minimum supported Gemini CLI version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below GEMINI_SUPPORTED_VERSION
- * e.g. supported = 0.29.5 → minimum = 0.29.0 (patch floored at 0 since 5 - 10 < 0)
+ * Minimum supported Gemini CLI version — the only hard gate; below it the agent
+ * refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * GEMINI_SUPPORTED_VERSION, move its old value down to here.
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
-const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.0';
+const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.5';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {

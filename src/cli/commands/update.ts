@@ -211,26 +211,25 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
   // Special handling for Claude (uses native installer)
   if (agent.name === 'claude' && agent.installVersion) {
     await agent.installVersion('supported');
-    return;
-  }
-
-  // Special handling for built-in agent — update the CLI package
-  if (agent.metadata.isBuiltIn) {
+  } else if (agent.metadata.isBuiltIn) {
+    // Special handling for built-in agent — update the CLI package
     await npm.installGlobal('@codemieai/code', { version: latestVersion, force: true });
-    return;
+  } else {
+    // Standard npm-based agents
+    const npmPackage = agent.metadata.npmPackage;
+    if (!npmPackage) {
+      throw new AgentInstallationError(
+        agent.name,
+        `${agent.displayName} cannot be updated (no npm package configured)`
+      );
+    }
+
+    // Use force: true to avoid ENOTEMPTY errors when updating global packages
+    await npm.installGlobal(npmPackage, { version: latestVersion, force: true });
   }
 
-  // Standard npm-based agents
-  const npmPackage = agent.metadata.npmPackage;
-  if (!npmPackage) {
-    throw new AgentInstallationError(
-      agent.name,
-      `${agent.displayName} cannot be updated (no npm package configured)`
-    );
-  }
-
-  // Use force: true to avoid ENOTEMPTY errors when updating global packages
-  await npm.installGlobal(npmPackage, { version: latestVersion, force: true });
+  // Acknowledge the freshly installed version so the next launch stays quiet.
+  await agent.warnOnceIfUntested();
 }
 
 export function createUpdateCommand(): Command {

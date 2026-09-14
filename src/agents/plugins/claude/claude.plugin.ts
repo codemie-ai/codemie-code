@@ -31,22 +31,24 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Supported Claude Code version
- * Latest version tested and verified with CodeMie backend
+ * Recommended Claude Code version — the one CodeMie verifies against.
+ * A different installed version produces one non-blocking notice, never a block.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-export const CLAUDE_SUPPORTED_VERSION = '2.1.218';
+export const CLAUDE_SUPPORTED_VERSION = '2.1.269';
 
 /**
- * Minimum supported Claude Code version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.218 → minimum = 2.1.208
+ * Minimum supported Claude Code version — the only hard gate; below it the
+ * agent refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * CLAUDE_SUPPORTED_VERSION, move its old value down to here — users stay
+ * supported for one full recommendation cycle before they are cut off.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.208';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.218';
 
 /**
  * Claude Code installer URLs

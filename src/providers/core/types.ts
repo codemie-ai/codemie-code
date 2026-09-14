@@ -316,6 +316,23 @@ export interface ProviderSetupSteps {
   ): Promise<string | null | undefined>;
 
   /**
+   * Optional: interactive live search against an external model catalog
+   * (e.g. Ollama's model library). Runs its own prompts and returns the
+   * chosen model id, or null if the user cancelled/backed out - the caller
+   * falls back to the normal model list in that case.
+   */
+  searchModel?(credentials: ProviderCredentials): Promise<string | null>;
+
+  /**
+   * Optional: compute which of the given models should be marked/starred
+   * as recommended, using live signals (fits the current machine, has the
+   * capabilities a coding agent needs, real-world popularity) instead of a
+   * static hardcoded list. Returning fewer/no ids is fine - callers treat
+   * this as "no recommendation" rather than an error.
+   */
+  getRecommendedModels?(models: string[], credentials: ProviderCredentials): Promise<string[]>;
+
+  /**
    * Step 3: Build final configuration
    *
    * Transform credentials + model selection into CodeMieConfigOptions

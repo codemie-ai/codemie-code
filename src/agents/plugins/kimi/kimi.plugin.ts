@@ -20,8 +20,11 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-const KIMI_SUPPORTED_VERSION = '0.16.0';
-const KIMI_MINIMUM_SUPPORTED_VERSION = '0.15.0';
+// Recommended version (one non-blocking notice on mismatch) and the hard gate
+// below which the agent refuses to launch. Rule: the minimum is the previously
+// recommended version — when bumping the former, move its old value to the latter.
+const KIMI_SUPPORTED_VERSION = '0.42.0';
+const KIMI_MINIMUM_SUPPORTED_VERSION = '0.16.0';
 const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
 
 const KIMI_INSTALLER_URLS = {
