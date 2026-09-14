@@ -167,9 +167,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {
-      // Disable experimental betas if not already set
+      // Keep experimental betas enabled if not already set
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '0';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
@@ -200,10 +200,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.FORCE_AUTOUPDATE_PLUGINS = '1';
       }
 
-      // WORKAROUND: Disable tool search feature introduced in 2.1.69+
-      // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
+      // Enable tool search feature if not already set
       if (!env.ENABLE_TOOL_SEARCH) {
-        env.ENABLE_TOOL_SEARCH = '0';
+        env.ENABLE_TOOL_SEARCH = 'true';
       }
 
       if (!env.ENABLE_PROMPT_CACHING_1H) {
