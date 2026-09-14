@@ -633,22 +633,27 @@ export const runCursorIdeForTest = runCursorIde;
 
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
+  const analytics = Boolean(opts.analytics);
+
+  // --analytics carries no target flag of its own, so it must be checked
+  // ahead of hasAnyTarget — otherwise "--analytics" alone (or with unrelated
+  // flags but no target) silently falls through to the generic target list
+  // instead of explaining that --analytics only applies to --cursor-ide.
+  if (analytics && !targets.cursorIde) {
+    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide.'));
+    return;
+  }
+
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
     return;
   }
-
-  const analytics = Boolean(opts.analytics);
 
   if (targets.cursorIde && !analytics) {
     console.log(chalk.yellow(
       'Note: --cursor-ide requires --analytics. Re-run with --cursor-ide --analytics.'
     ));
     return;
-  }
-
-  if (analytics && !targets.cursorIde) {
-    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide.'));
   }
 
   const otherTargets = Boolean(
