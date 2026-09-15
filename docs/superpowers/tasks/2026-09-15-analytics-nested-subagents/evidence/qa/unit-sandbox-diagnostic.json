@@ -1,5 +1,0 @@
-{
-  "sandbox_listen_probe": "EPERM binding 127.0.0.1 port 0",
-  "initial_run_exit": 130,
-  "reason": "Interrupted the sandboxed unit run after reproducing denied loopback sockets; retained the entire partial output and reran the exact configured command with scoped local permissions."
-}
