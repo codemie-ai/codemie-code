@@ -4,6 +4,22 @@ import * as path from 'path';
 import { sanitizeLogArgs } from './security.js';
 import { getCodemiePath } from './paths.js';
 
+/**
+ * Format a non-Error value for logging.
+ * `String(plainObject)` yields the unhelpful "[object Object]", so objects are
+ * JSON-stringified instead; primitives and circular structures fall back to String().
+ */
+function formatNonErrorValue(value: unknown): string {
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 export enum LogLevel {
   DEBUG = 'debug',
   INFO = 'info',
@@ -332,7 +348,7 @@ class Logger {
           errorDetails += `\n${error.stack}`;
         }
       } else {
-        errorDetails = String(error);
+        errorDetails = formatNonErrorValue(error);
       }
     }
 
@@ -349,7 +365,7 @@ class Logger {
                     console.error(chalk.white(error.stack));
                 }
             } else {
-                console.error(chalk.red(String(error)));
+                console.error(chalk.red(formatNonErrorValue(error)));
             }
         }
     }
