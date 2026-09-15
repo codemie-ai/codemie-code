@@ -24,6 +24,30 @@ const baseDeps: EnricherDeps = {
 };
 
 describe('enrichCosts', () => {
+  it('transports actual captured bounds and native estimate provenance without exposing the parsed family', async () => {
+    const start = 1_700_000_000_000;
+    const captured = { sessionId: 'captured', agentName: 'claude', metadata: {}, messages: [{
+      message: { model: 'claude-sonnet-5', usage: { input_tokens: 1_000_000 }, content: 'PRIVATE_CAPTURE_BODY' },
+    }] };
+    const { index } = await enrichCosts([{
+      sessionId: 'captured', agentSessionFile: '/fake/captured.jsonl', deltas: [],
+      startEvent: { agentName: 'claude', data: { startTime: start } },
+      endEvent: { data: { endTime: start + 9_000, duration: 9_000 } },
+      [INTERNAL_PARSED_FAMILY]: { parsed: captured, capturedAt: start + 10_000 },
+    }] as never[], { ...baseDeps, parseNative: async () => { throw new Error('must reuse captured family'); } });
+    expect(index.get('captured')).toMatchObject({ capturedAt: start + 10_000, observedStart: start, observedEnd: start + 9_000,
+      costSource: 'native-estimate', costBasis: 'standard-api-tokens', dispatchesComplete: true, costUSD: 2 });
+    expect(JSON.stringify(index.get('captured'))).not.toContain('PRIVATE_CAPTURE_BODY');
+  });
+
+  it('labels repriced SDK usage as an estimate without manufacturing a capture time', async () => {
+    const { index } = await enrichCosts(raw, { ...baseDeps, parseNative: async () => ({
+      sessionId: 's1', agentName: 'claude-desktop', metadata: {}, messages: [{ type: 'result', modelUsage: { 'claude-sonnet-5': { inputTokens: 1_000_000 } } }],
+    }) as never });
+    expect(index.get('s1')).toMatchObject({ costUSD: 2, costSource: 'native-estimate', costBasis: 'standard-api-tokens' });
+    expect(index.get('s1')!.capturedAt).toBeUndefined();
+  });
+
   it('prices an internal captured family without reparsing its native log', async () => {
     const captured = ({
       sessionId: 'captured', agentName: 'claude', metadata: {},

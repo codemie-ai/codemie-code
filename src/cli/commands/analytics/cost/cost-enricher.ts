@@ -96,6 +96,9 @@ interface ParsedEntry {
   filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
+  capturedAt?: number;
+  observedStart?: number;
+  observedEnd?: number;
 }
 
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
@@ -103,9 +106,15 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
-  const parsed = raw[INTERNAL_PARSED_FAMILY]?.parsed
+  const capture = raw[INTERNAL_PARSED_FAMILY];
+  const parsed = capture?.parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
-  return { sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
+  return {
+    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
+    ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
+    ...(capture && Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
+  };
 }
 
 /** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
@@ -456,6 +465,13 @@ export async function enrichCosts(
       records = [];
     }
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
+    if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
+    if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;
+    if (cost.priced) {
+      cost.costSource = 'native-estimate';
+      cost.costBasis = 'standard-api-tokens';
+    }
     if (entry.filePath) {
       // Same path that made hadLog/pricing true — so a consumer never sees "priced" and
       // "no file to show" disagree (see CR-002 in the file-location UI review).
@@ -482,6 +498,7 @@ export async function enrichCosts(
         const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
         if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
           enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
+          cost.dispatchesComplete = true;
         } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
         }

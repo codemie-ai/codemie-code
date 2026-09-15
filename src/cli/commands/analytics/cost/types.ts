@@ -83,6 +83,15 @@ export interface SessionCost {
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
+  /** True only when dispatch extraction retained the full invocation list. Legacy lists may be capped. */
+  dispatchesComplete?: boolean;
+  /** Actual native-family capture time and observed activity bounds, in epoch milliseconds. */
+  capturedAt?: number;
+  observedStart?: number;
+  observedEnd?: number;
+  /** Native token estimates are distinct from amounts reported by the source itself. */
+  costSource?: 'native-estimate' | 'authoritative';
+  costBasis?: 'standard-api-tokens' | 'source-reported';
   perModel: ModelCost[];
   /** Disjoint Claude root allocation. Session = root own + top-level inclusive + unlinked. */
   rootOwnTokens?: TokenUsage;

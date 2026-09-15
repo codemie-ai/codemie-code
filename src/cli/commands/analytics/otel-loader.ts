@@ -145,6 +145,11 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     addTokens(sc.tokens, e);
     const cost = num(attr(e, 'cost_usd'));
     sc.costUSD += cost;
+    const reportedCost = attr(e, 'cost_usd');
+    if ((typeof reportedCost === 'number' || (typeof reportedCost === 'string' && reportedCost.trim() !== '')) && Number.isFinite(Number(reportedCost))) {
+      sc.costSource = 'authoritative';
+      sc.costBasis = 'source-reported';
+    }
 
     // Normalize so bedrock/converse spellings collapse onto the canonical model.
     const model = normalizeModelName(String(attr(e, 'model') || '(unknown)'));
