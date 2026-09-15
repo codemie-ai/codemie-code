@@ -739,6 +739,32 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
 }
 
 /**
+ * Resolves correlation status for a SessionStart event.
+ *
+ * Several agent plugins (codemie-code, codex, copilot-cli, opencode, pi) fire SessionStart
+ * with an empty transcript_path by design, because the path isn't known until later
+ * (e.g. SessionEnd). That is not a failure and must stay 'matched'. Only a transcript_path
+ * that was actually reported but doesn't exist on disk (e.g. interactive PTY sessions that
+ * never persist a transcript) should be downgraded to 'file_not_found'.
+ */
+function resolveCorrelationStatus(
+  transcriptPath: string | undefined,
+  existsSync: (path: string) => boolean
+): 'matched' | 'file_not_found' {
+  if (!transcriptPath) {
+    return 'matched';
+  }
+  if (!existsSync(transcriptPath)) {
+    logger.warn(
+      `[hook:SessionStart] Transcript path reported but file does not exist: ${transcriptPath}. ` +
+      `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
+    );
+    return 'file_not_found';
+  }
+  return 'matched';
+}
+
+/**
  * Helper: Create and save session record
  * Uses correlation information from hook event
  *
@@ -808,17 +834,10 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       if (gitBranch) existing.gitBranch = gitBranch;
       if (remoteRepository) existing.repository = remoteRepository;
 
-      // Check if the transcript file actually exists on disk before marking correlation as matched
+      // Check if a reported transcript file actually exists on disk before marking correlation
+      // as matched. No transcript_path at all is not a failure - some plugins discover it later.
       const { existsSync } = await import('node:fs');
-      const transcriptFileExists = event.transcript_path ? existsSync(event.transcript_path) : false;
-      const correlationStatus = transcriptFileExists ? 'matched' as const : 'file_not_found' as const;
-
-      if (!transcriptFileExists && event.transcript_path) {
-        logger.warn(
-          `[hook:SessionStart] Transcript path reported but file does not exist: ${event.transcript_path}. ` +
-          `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
-        );
-      }
+      const correlationStatus = resolveCorrelationStatus(event.transcript_path, existsSync);
 
       existing.correlation = {
         ...existing.correlation,
@@ -856,17 +875,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         ? SESSION_ORIGIN.EXTERNAL_RESUME
         : undefined;
 
-    // Check if the transcript file actually exists on disk before marking correlation as matched
-    // This prevents metrics processing from failing on non-existent files (e.g., interactive PTY sessions)
-    const transcriptFileExists = event.transcript_path ? existsSync(event.transcript_path) : false;
-    const correlationStatus = transcriptFileExists ? 'matched' as const : 'file_not_found' as const;
-
-    if (!transcriptFileExists && event.transcript_path) {
-      logger.warn(
-        `[hook:SessionStart] Transcript path reported but file does not exist: ${event.transcript_path}. ` +
-        `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
-      );
-    }
+    // Check if a reported transcript file actually exists on disk before marking correlation
+    // as matched. No transcript_path at all is not a failure - some plugins discover it later.
+    const correlationStatus = resolveCorrelationStatus(event.transcript_path, existsSync);
 
     // Create session record with correlation status based on file existence
     const session = {

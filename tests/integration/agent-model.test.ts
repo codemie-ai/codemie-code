@@ -309,7 +309,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
       // Known upstream gap (#523): an interactively-driven Claude Code session may not
       // persist its transcript JSONL at the path it reports to the hooks. When that
       // happens there is no data source for per-model metrics, CodeMie downgrades the
-      // session's correlation matched → failed, and no *_metrics.jsonl is written. That
+      // session's correlation to 'file_not_found', and no *_metrics.jsonl is written. That
       // is now a graceful, expected outcome — skip rather than fail, so this test still
       // asserts the happy path wherever the transcript IS persisted (e.g. --task-backed
       // runs or once the upstream behavior is fixed) and does not mask an unrelated
@@ -326,9 +326,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
           ? (JSON.parse(readFileSync(join(sessionsDir, recordFile), 'utf-8')) as { correlation?: { status?: string } })
               .correlation?.status
           : undefined;
-        if (correlationStatus === 'failed') {
+        if (correlationStatus === 'failed' || correlationStatus === 'file_not_found') {
           ctx.skip(
-            `Claude did not persist an interactive transcript (correlation downgraded to failed); ` +
+            `Claude did not persist an interactive transcript (correlation status: ${correlationStatus}); ` +
             `per-model metrics are unavailable for this session. See ` +
             `https://github.com/codemie-ai/codemie-code/issues/523.\n` +
             `Last PTY lines:\n${ptyLines.slice(-15).join('\n')}`,
