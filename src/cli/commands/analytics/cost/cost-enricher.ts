@@ -9,7 +9,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import type { RawSessionData } from '../data-loader.js';
+import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
@@ -102,7 +102,8 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
-  const parsed = filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null;
+  const parsed = raw[INTERNAL_PARSED_FAMILY]?.parsed
+    ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return { sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
 }
 

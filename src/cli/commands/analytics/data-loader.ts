@@ -10,6 +10,19 @@ import type { AnalyticsFilter } from './types.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
 import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
+import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
+
+/**
+ * Private hand-off between native discovery and report-time enrichment.
+ * Symbol keys are intentionally omitted by JSON serialization, so raw transcript messages
+ * cannot leak into analytics payloads or report exports.
+ */
+export const INTERNAL_PARSED_FAMILY: unique symbol = Symbol('analytics.parsedFamily');
+
+export interface InternalParsedFamilyCapture {
+  parsed: ParsedSession;
+  capturedAt: number;
+}
 
 /**
  * Session start event (special record type)
@@ -118,6 +131,8 @@ export interface RawSessionData {
    * `completed_`-prefixed metadata).
    */
   agentSessionFile?: string;
+  /** Internal native-log snapshot; never serialized into report data. */
+  [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }
 
 /**

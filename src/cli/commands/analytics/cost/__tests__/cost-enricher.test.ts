@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
+import { INTERNAL_PARSED_FAMILY } from '../../data-loader.js';
 
 const raw = [{ sessionId: 's1', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
 
@@ -23,6 +24,24 @@ const baseDeps: EnricherDeps = {
 };
 
 describe('enrichCosts', () => {
+  it('prices an internal captured family without reparsing its native log', async () => {
+    const captured = ({
+      sessionId: 'captured', agentName: 'claude', metadata: {},
+      messages: [{ message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }],
+    }) as never;
+    const capturedRaw = [{
+      sessionId: 'captured', agentSessionFile: '/fake/captured.jsonl', startEvent: { agentName: 'claude' }, deltas: [],
+      [INTERNAL_PARSED_FAMILY]: { parsed: captured, capturedAt: 1234 },
+    }] as never[];
+
+    const { index } = await enrichCosts(capturedRaw, {
+      ...baseDeps,
+      parseNative: async () => { throw new Error('captured transcript was parsed again'); },
+    });
+
+    expect(index.get('captured')?.tokens.input).toBe(1_000_000);
+  });
+
   it('prices a session from its native log', async () => {
     const { index, summary } = await enrichCosts(raw, baseDeps);
     const c = index.get('s1')!;

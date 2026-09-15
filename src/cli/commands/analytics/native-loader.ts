@@ -14,7 +14,7 @@
 
 import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { RawSessionData } from './data-loader.js';
+import { INTERNAL_PARSED_FAMILY, type RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
@@ -338,6 +338,17 @@ interface NativeSessionFacts {
   openingPrompt?: string;
 }
 
+/** Timestamp envelope across the root transcript and every parsed descendant. */
+function claudeFamilyBounds(parsed: ParsedSession): { startTime: number; endTime: number } | null {
+  const messages = [parsed.messages ?? [], ...(parsed.subagents ?? []).map((subagent) => subagent.messages ?? [])]
+    .flat() as RawMessage[];
+  const timestamps = messages.map((message) => toMs(message.timestamp)).filter((time): time is number => time !== null);
+  if (timestamps.length === 0) {
+    return null;
+  }
+  return { startTime: Math.min(...timestamps), endTime: Math.max(...timestamps) };
+}
+
 /**
  * Assemble {@link RawSessionData} from per-agent facts.
  *
@@ -411,6 +422,7 @@ function buildNativeRawSession(
       data: { endTime, duration: Math.max(0, endTime - startTime), totalTurns: turns },
     },
     deltas,
+    [INTERNAL_PARSED_FAMILY]: { parsed, capturedAt: Date.now() },
   };
 }
 
@@ -569,12 +581,13 @@ export function synthesizeRawSession(
   const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
   const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const assistantMsgs = messages.filter(isAssistant);
+  const familyBounds = claudeFamilyBounds(parsed);
 
   return buildNativeRawSession(agentName, descriptor, parsed, {
     cwd: messages.find((m) => m.cwd)?.cwd ?? descriptor.projectPath ?? 'Unknown',
     branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)),
-    startTime: timestamps.length ? Math.min(...timestamps) : descriptor.createdAt,
-    endTime: timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt,
+    startTime: familyBounds?.startTime ?? (timestamps.length ? Math.min(...timestamps) : descriptor.createdAt),
+    endTime: familyBounds?.endTime ?? (timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt),
     turns: Math.max(assistantMsgs.length, 1),
     models: assistantMsgs.map((m) => m.message?.model).filter((m): m is string => !!m),
     openingPrompt: firstUserText(messages),
