@@ -18,6 +18,7 @@ import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from '@/utils/pricing.js';
 import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
 import { extractDispatchEvents } from './dispatch-extractor.js';
+import { buildClaudeTraceIndex, type ClaudeTraceIndex } from './claude-trace.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
 import { getCodemiePath } from '../../../../utils/paths.js';
 import { AgentRegistry } from '../../../../agents/registry.js';
@@ -174,9 +175,7 @@ export function buildCostSeries(records: UsageRecord[]): CostSeriesPoint[] {
     const price = lookupPrice(normalizeModelName(r.model));
     cumCost += price ? costBreakdown(r.usage, price).total : 0;
     cumTokens += r.usage.total;
-    // Round cumulative cost to 8 decimals to shrink the embedded series (well within the
-    // endpoint test's 6-decimal tolerance); tokens are exact integer sums.
-    points.push({ t: useTs ? (r.ts as number) : i + 1, cost: Math.round(cumCost * 1e8) / 1e8, tokens: cumTokens });
+    points.push({ t: useTs ? (r.ts as number) : i + 1, cost: cumCost, tokens: cumTokens });
   });
   return downsample(points);
 }
@@ -223,8 +222,104 @@ function enrichSkillDispatchCost(dispatch: DispatchEventRaw, sessionRecords: Usa
     }
     totalTokens = addUsage(totalTokens, usage);
   }
-  if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
+  if (priced) dispatch.costUSD = totalCost;
   dispatch.tokens = totalTokens;
+}
+
+/** Prices exactly the accepted records being allocated, using the session's model rules. */
+function priceAllocation(records: UsageRecord[]): { tokens: TokenUsage; costUSD?: number } {
+  const { cost } = priceUsage('', true, sumUsageRecords(records));
+  return {
+    tokens: cost.tokens,
+    ...((!records.length || cost.perModel.some((model) => !model.unpriced)) && { costUSD: cost.costUSD }),
+  };
+}
+
+/** Ancestry comes only from the trace index; visited owners also guard malformed inferred cycles. */
+function subtreeOwners(ownerId: string, index: ClaudeTraceIndex): { owners: Set<string>; cycle: boolean } {
+  const owners = new Set<string>();
+  const pending = [ownerId];
+  let cycle = false;
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (owners.has(current)) {
+      cycle = true;
+      continue;
+    }
+    owners.add(current);
+    pending.push(...(index.childAgentsByOwner.get(current) ?? []));
+  }
+  return { owners, cycle };
+}
+
+/** Progressive rows and inherited tool calls count once for the canonical transcript owner. */
+function claudeOwnerTools(ownerId: string, index: ClaudeTraceIndex): Array<{ name: string; calls: number }> {
+  const counts = new Map<string, number>();
+  const seen = new Set<string>();
+  for (const raw of (index.owners.get(ownerId)?.messages ?? []) as Array<{ message?: { content?: unknown } }>) {
+    if (!Array.isArray(raw.message?.content)) continue;
+    for (const block of raw.message.content as Array<{ type?: string; id?: string; name?: string }>) {
+      if (block.type !== 'tool_use' || !block.name) continue;
+      if (block.id) {
+        if (seen.has(block.id) || index.toolOwners.get(block.id) !== ownerId) continue;
+        seen.add(block.id);
+      }
+      counts.set(block.name, (counts.get(block.name) ?? 0) + 1);
+    }
+  }
+  return [...counts].map(([name, calls]) => ({ name, calls })).sort((left, right) => right.calls - left.calls).slice(0, 8);
+}
+
+/** Allocate session-owned responses without reparsing or claiming replayed usage a second time. */
+function enrichClaudeDispatchCosts(
+  dispatches: DispatchEventRaw[], parsed: ParsedSession, records: UsageRecord[], cost: SessionCost,
+): void {
+  const index = buildClaudeTraceIndex(parsed);
+  const byOwner = new Map<string, UsageRecord[]>();
+  for (const record of records) {
+    if (record.ownerAgentId === undefined) continue;
+    const owned = byOwner.get(record.ownerAgentId) ?? [];
+    owned.push(record);
+    byOwner.set(record.ownerAgentId, owned);
+  }
+  // SDK modelUsage rollups have no response ownership. Keep their totals authoritative,
+  // but never manufacture zero-valued allocations that appear to reconcile those rollups.
+  const ownsRecords = records.length > 0 || !cost.priced;
+  if (ownsRecords) {
+    const linked = subtreeOwners(index.rootOwnerId, index).owners;
+    const root = priceAllocation(byOwner.get(index.rootOwnerId) ?? []);
+    const unlinked = priceAllocation(records.filter((record) => !linked.has(record.ownerAgentId ?? '')));
+    cost.rootOwnTokens = root.tokens;
+    cost.rootOwnCostUSD = root.costUSD ?? 0;
+    cost.unlinkedTokens = unlinked.tokens;
+    cost.unlinkedCostUSD = unlinked.costUSD ?? 0;
+    cost.unlinkedAgentIds = [...index.agents.keys()].filter((agentId) => !linked.has(agentId));
+  }
+  for (const dispatch of dispatches) {
+    dispatch.attributionStatus = 'unavailable';
+    dispatch.attributionScope = dispatch.kind === 'agent' ? 'own' : 'owner-window';
+    if (!ownsRecords) continue;
+    if (dispatch.kind !== 'agent') {
+      const owned = dispatch.ownerAgentId ? byOwner.get(dispatch.ownerAgentId) ?? [] : [];
+      enrichSkillDispatchCost(dispatch, owned);
+      if (dispatch.tokens) dispatch.attributionStatus = 'estimated';
+      continue;
+    }
+    const agent = dispatch.agentId ? index.agents.get(dispatch.agentId) : undefined;
+    if (!agent) continue;
+    const subtree = subtreeOwners(agent.agentId, index);
+    if (agent.relationshipStatus !== 'resolved' || dispatch.relationshipStatus !== 'resolved' || subtree.cycle) {
+      dispatch.attributionStatus = 'ambiguous';
+      continue;
+    }
+    Object.assign(dispatch, priceAllocation(byOwner.get(agent.agentId) ?? []));
+    const inclusive = priceAllocation([...subtree.owners].flatMap((owner) => byOwner.get(owner) ?? []));
+    dispatch.inclusiveTokens = inclusive.tokens;
+    dispatch.inclusiveCostUSD = inclusive.costUSD;
+    dispatch.attributionStatus = 'exact';
+    const tools = claudeOwnerTools(agent.agentId, index);
+    if (tools.length) dispatch.tools = tools;
+  }
 }
 
 /**
@@ -276,7 +371,7 @@ function enrichDispatchCosts(
         if (price) { totalCost += costBreakdown(usage, price).total; priced = true; }
         totalTokens = addUsage(totalTokens, usage);
       }
-      if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
+      if (priced) dispatch.costUSD = totalCost;
       dispatch.tokens = totalTokens;
     }
 
@@ -385,8 +480,12 @@ export async function enrichCosts(
 
       try {
         const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
-        if (dispatches.length) {
+        if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
+          enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
+        } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
+        }
+        if (dispatches.length) {
           // Strip internal _toolUseId before storing in the public cost index
           cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
         }

@@ -55,8 +55,14 @@ export interface DispatchEvent {
   /** Authoritative completion span, or observed subtree activity for incomplete work. */
   elapsedMs?: number;
   status?: 'completed' | 'failed' | 'incomplete' | 'unknown';
-  tokens?: TokenUsage; // from subagent transcript; absent when no meta match or unpriced model
-  costUSD?: number;    // priced from tokens; absent when unpriced or no meta match
+  tokens?: TokenUsage; // own accepted usage; excludes descendants and cross-session replay
+  costUSD?: number;    // priced own usage; absent when unpriced or attribution is unavailable
+  /** Own accepted usage plus descendants with resolved ancestry. Overlaps ancestor totals. */
+  inclusiveTokens?: TokenUsage;
+  inclusiveCostUSD?: number;
+  attributionStatus?: 'exact' | 'estimated' | 'unavailable' | 'ambiguous';
+  /** Skill/command windows are overlapping estimates within their canonical owner only. */
+  attributionScope?: 'own' | 'owner-window';
   tools?: Array<{ name: string; calls: number }>; // top tool call counts from subagent; max 8
 }
 
@@ -78,6 +84,13 @@ export interface SessionCost {
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
   perModel: ModelCost[];
+  /** Disjoint Claude root allocation. Session = root own + top-level inclusive + unlinked. */
+  rootOwnTokens?: TokenUsage;
+  rootOwnCostUSD?: number;
+  /** Accepted usage whose owner cannot be reached from the root through resolved ancestry. */
+  unlinkedTokens?: TokenUsage;
+  unlinkedCostUSD?: number;
+  unlinkedAgentIds?: string[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)
   /**
