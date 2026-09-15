@@ -30,6 +30,8 @@ const BIN = join(REPO_ROOT, 'bin', 'codemie.js');
 
 const BLOCK_HEADER =
   'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.';
+/** Hard cap per hook invocation; must stay well under vitest's 30s testTimeout. */
+const HOOK_TIMEOUT_MS = 20_000;
 
 interface HookResult {
   code: number | null;
@@ -46,7 +48,12 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
 
   afterEach(() => {
     try {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(home, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     } catch {
       /* ignore cleanup errors */
     }
@@ -65,8 +72,11 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
 
   /**
    * Drive `codemie hook` with a UserPromptSubmit event on stdin.
-   * `extraEnv` supplies the analytics-relevant configuration; the child gets a
-   * deliberately minimal environment so nothing leaks from the test runner.
+   *
+   * The child inherits the runner environment (required on Windows — a stripped
+   * env without SystemRoot/COMSPEC/TEMP makes Node children hang or fail),
+   * but every CODEMIE_* var is stripped first, then the isolated temp home and
+   * the case-specific config are applied.
    */
   function runHook(extraEnv: Record<string, string>): HookResult {
     const transcript = join(home, 'transcript.jsonl');
@@ -77,20 +87,41 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
       transcript_path: transcript,
     };
 
-    const result = spawnSync('node', [BIN, 'hook'], {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    // Remove any analytics config leaking in from the runner.
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("CODEMIE_")) delete env[key];
+    }
+    // Isolated home for both POSIX and Windows homedir resolution.
+    env.HOME = home;
+    env.USERPROFILE = home;
+    env.APPDATA = join(home, "AppData", "Roaming");
+    env.LOCALAPPDATA = join(home, "AppData", "Local");
+    env.DO_NOT_TRACK = "1";
+    // Baseline hook config, then the case-specific overrides.
+    env.CODEMIE_HOME = home;
+    env.CODEMIE_AGENT = "claude";
+    env.CODEMIE_SESSION_ID = "codemie-session-under-test";
+    env.CODEMIE_SKIP_UPDATE_CHECK = "true";
+    Object.assign(env, extraEnv);
+
+    const result = spawnSync(process.execPath, [BIN, "hook"], {
       input: JSON.stringify(event),
-      encoding: 'utf-8',
+      encoding: "utf-8",
       cwd: REPO_ROOT,
-      env: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        CODEMIE_HOME: home,
-        CODEMIE_AGENT: 'claude',
-        CODEMIE_SESSION_ID: 'codemie-session-under-test',
-        CODEMIE_SKIP_UPDATE_CHECK: 'true',
-        ...extraEnv,
-      },
+      env,
+      timeout: HOOK_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      windowsHide: true,
     });
+
+    if (result.error) {
+      throw new Error(
+        `codemie hook failed to run within ${HOOK_TIMEOUT_MS}ms` +
+        (result.signal ? ` (killed via ${result.signal})` : "") +
+        `\nstderr: ${result.stderr ?? ""}`,
+      );
+    }
 
     return {
       code: result.status,

@@ -1,5 +1,10 @@
 /**
  * Installed agents health check
+ *
+ * Reports each installed agent's version against the version CodeMie
+ * recommends: a match is `ok`, a mismatch is a `warn` carrying the
+ * recommendation, and a version below the minimum supported one is an `error`
+ * (that is the only version state that actually blocks the agent).
  */
 
 import { AgentRegistry } from '../../../../agents/registry.js';
@@ -29,34 +34,51 @@ export class AgentsCheck implements ItemWiseHealthCheck {
     return null;
   }
 
+  private async buildDetail(agent: AgentAdapter): Promise<HealthCheckDetail> {
+    const version = await agent.getVersion();
+    const versionStr = version ? ` (${version})` : '';
+
+    const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
+    if (deprecationWarning) {
+      return deprecationWarning;
+    }
+
+    if (!version || !agent.checkVersionCompatibility) {
+      return { status: 'ok', message: `${agent.displayName}${versionStr}` };
+    }
+
+    const compat = await agent.checkVersionCompatibility();
+
+    if (compat.isBelowMinimum) {
+      return {
+        status: 'error',
+        message: `${agent.displayName}${versionStr} - below minimum supported v${compat.minimumSupportedVersion}`,
+        hint: `codemie install ${agent.name} --supported`
+      };
+    }
+
+    if (version !== compat.supportedVersion) {
+      return {
+        status: 'warn',
+        message: `${agent.displayName}${versionStr} - CodeMie recommends v${compat.supportedVersion}`,
+        hint: `codemie install ${agent.name} --supported`
+      };
+    }
+
+    return { status: 'ok', message: `${agent.displayName}${versionStr}` };
+  }
+
   async run(): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
-    let success = true;
 
     const installedAgents = await AgentRegistry.getInstalledAgents();
 
     if (installedAgents.length > 0) {
       // Parallelize version + installation method checks across all agents
-      const agentResults = await Promise.all(
-        installedAgents.map(async (agent) => {
-          const version = await agent.getVersion();
-          const versionStr = version ? ` (${version})` : '';
-          const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
-          return { agent, versionStr, deprecationWarning };
-        })
+      const agentDetails = await Promise.all(
+        installedAgents.map((agent) => this.buildDetail(agent))
       );
-
-      for (const { agent, versionStr, deprecationWarning } of agentResults) {
-        if (deprecationWarning) {
-          details.push(deprecationWarning);
-          continue;
-        }
-
-        details.push({
-          status: 'ok',
-          message: `${agent.displayName}${versionStr}`
-        });
-      }
+      details.push(...agentDetails);
     } else {
       details.push({
         status: 'info',
@@ -64,7 +86,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       });
     }
 
-    return { name: this.name, success, details };
+    return { name: this.name, success: !details.some((d) => d.status === 'error'), details };
   }
 
   async runWithItemDisplay(
@@ -72,28 +94,13 @@ export class AgentsCheck implements ItemWiseHealthCheck {
     onDisplayItem: (detail: HealthCheckDetail) => void
   ): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
-    let success = true;
 
     const installedAgents = await AgentRegistry.getInstalledAgents();
 
     if (installedAgents.length > 0) {
       for (const agent of installedAgents) {
         onStartItem(`Checking ${agent.displayName}...`);
-        const version = await agent.getVersion();
-        const versionStr = version ? ` (${version})` : '';
-
-        // Check for deprecated npm installation
-        const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
-        if (deprecationWarning) {
-          details.push(deprecationWarning);
-          onDisplayItem(deprecationWarning);
-          continue;
-        }
-
-        const detail: HealthCheckDetail = {
-          status: 'ok',
-          message: `${agent.displayName}${versionStr}`
-        };
+        const detail = await this.buildDetail(agent);
         details.push(detail);
         onDisplayItem(detail);
       }
@@ -106,6 +113,6 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       onDisplayItem(detail);
     }
 
-    return { name: this.name, success, details };
+    return { name: this.name, success: !details.some((d) => d.status === 'error'), details };
   }
 }

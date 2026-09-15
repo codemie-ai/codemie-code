@@ -21,6 +21,7 @@ codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
+codemie mcp <command>            # Manage MCP servers registered with Claude Code
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie docs <command>           # Manage documentation & knowledge tools
@@ -925,6 +926,33 @@ codemie plugin disable <name>
 - Config `plugins.dirs` (lowest)
 
 For full documentation, see [Plugin System](./PLUGINS.md).
+
+## MCP Command
+
+Manage MCP servers registered with Claude Code. Both subcommands are thin wrappers around `claude mcp add`/`claude mcp remove`.
+
+```bash
+codemie mcp add <name> <url> [--scope <scope>]     # Register an MCP server via codemie-mcp-proxy
+codemie mcp remove <name> [--scope <scope>]        # Remove a registered MCP server
+codemie mcp list                                   # List registered MCP servers
+```
+
+**`codemie mcp add`**
+- `<name>` — Name for the MCP server
+- `<url>` — MCP server URL (must be a valid HTTP/HTTPS URL)
+- `--scope <scope>` — Scope for the MCP server (e.g. `project`, `user`)
+
+Registers the server by running `claude mcp add <name> -- codemie-mcp-proxy <url>`, so the server is launched through the [MCP proxy](#mcp-proxy-command) for OAuth support.
+
+**`codemie mcp remove`**
+- `<name>` — Name of the MCP server to remove
+- `--scope <scope>` — Scope for the MCP server (e.g. `project`, `user`)
+
+Removes the server by running `claude mcp remove <name>`.
+
+**`codemie mcp list`**
+
+Lists registered servers by running `claude mcp list`.
 
 ## MCP Proxy Command
 

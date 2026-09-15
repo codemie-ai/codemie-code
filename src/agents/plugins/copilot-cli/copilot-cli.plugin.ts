@@ -21,8 +21,11 @@ export {
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
 
-const COPILOT_SUPPORTED_VERSION = '1.0.79';
-const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.70';
+// Recommended version (one non-blocking notice on mismatch) and the hard gate
+// below which the agent refuses to launch. Rule: the minimum is the previously
+// recommended version — when bumping the former, move its old value to the latter.
+const COPILOT_SUPPORTED_VERSION = '1.0.83';
+const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 

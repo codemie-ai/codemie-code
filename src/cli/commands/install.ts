@@ -222,15 +222,11 @@ export function createInstallCommand(): Command {
               await agent.additionalInstallation(options);
             }
 
-            // Show warning if installed version is newer than supported
-            if (displayVersion && agent.checkVersionCompatibility) {
-              const compat = await agent.checkVersionCompatibility();
-              if (compat.isNewer) {
-                console.log();
-                console.log(chalk.yellow(`⚠️  Note: This version (${displayVersion}) is newer than the supported version (${compat.supportedVersion}).`));
-                console.log(chalk.yellow(`   You may encounter compatibility issues with the CodeMie backend.`));
-                console.log(chalk.yellow(`   To install the supported version, run:`), chalk.blueBright(`${getAgentInstallCommand(agent.name)} --supported`));
-              }
+            // One-time notice when the installed version differs from the
+            // recommended one; also records the marker so the first launch
+            // afterwards stays quiet.
+            if (displayVersion) {
+              await agent.warnOnceIfUntested();
             }
 
             // Show how to run the newly installed agent

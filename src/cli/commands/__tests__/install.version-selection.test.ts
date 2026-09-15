@@ -62,6 +62,7 @@ describe('install command version selection', () => {
       installVersion,
       checkVersionCompatibility,
       getVersion: vi.fn().mockResolvedValue('0.129.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
     });
 
     const { createInstallCommand } = await import('../install.js');
@@ -99,6 +100,7 @@ describe('install command version selection', () => {
         minimumSupportedVersion: '2.1.199',
       }),
       getVersion,
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
     });
 
     const { createInstallCommand } = await import('../install.js');
@@ -134,6 +136,7 @@ describe('install command version selection', () => {
         minimumSupportedVersion: '2.1.199',
       }),
       getVersion,
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
     });
 
     const { createInstallCommand } = await import('../install.js');
@@ -171,6 +174,7 @@ describe('install command version selection', () => {
         minimumSupportedVersion: '2.1.199',
       }),
       getVersion,
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
     });
 
     const { createInstallCommand } = await import('../install.js');

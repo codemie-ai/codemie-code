@@ -22,6 +22,7 @@ import {
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
+import { VersionWarningStore } from '../../../utils/version-warnings.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -29,7 +30,13 @@ export function createDoctorCommand(): Command {
   command
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-    .action(async (options: { verbose?: boolean }) => {
+    .option('--reset-version-warnings', 'Show agent version recommendations again on next launch')
+    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean }) => {
+      if (options.resetVersionWarnings) {
+        const { removed } = await VersionWarningStore.clear();
+        console.log(chalk.blueBright(`Cleared version warnings — ${removed} marker(s) removed.\n`));
+      }
+
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';

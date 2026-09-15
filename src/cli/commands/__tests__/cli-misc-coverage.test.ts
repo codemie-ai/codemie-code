@@ -396,6 +396,7 @@ describe('createUpdateCommand', () => {
       metadata: { isBuiltIn: false, npmPackage: '@google/gemini-cli' },
       isInstalled: vi.fn(async () => true),
       getVersion: vi.fn(async () => '1.0.0'),
+      warnOnceIfUntested: vi.fn(async () => undefined),
     };
     registryMock.getAgent.mockReturnValue(agent as never);
     npmMock.getLatestVersion.mockResolvedValue('2.0.0');
