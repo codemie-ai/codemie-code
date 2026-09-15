@@ -39,6 +39,22 @@ export interface DispatchEvent {
   name: string;
   start: number;       // epoch ms of the tool_use / command
   durationMs: number;  // tool_result − tool_use; 0 for skills/commands/unmatched
+  /** Stable invocation identity. Native Claude dispatches use the tool-use ID. */
+  id?: string;
+  /** Stable identity of the agent invocation that owns this step. */
+  ownerAgentId?: string;
+  /** Agent ID assigned by Claude to an Agent/Task invocation. */
+  agentId?: string;
+  /** Parent agent invocation's dispatch ID. Absent for root-owned steps. */
+  parentId?: string;
+  depth?: number;
+  relationshipStatus?: 'resolved' | 'root' | 'missing' | 'conflict' | 'cycle';
+  acknowledgedAt?: number;
+  observedEnd?: number;
+  completedAt?: number;
+  /** Authoritative completion span, or observed subtree activity for incomplete work. */
+  elapsedMs?: number;
+  status?: 'completed' | 'failed' | 'incomplete' | 'unknown';
   tokens?: TokenUsage; // from subagent transcript; absent when no meta match or unpriced model
   costUSD?: number;    // priced from tokens; absent when unpriced or no meta match
   tools?: Array<{ name: string; calls: number }>; // top tool call counts from subagent; max 8

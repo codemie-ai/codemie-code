@@ -1,110 +1,113 @@
-/**
- * Per-session dispatch-timeline extraction.
- *
- * Walks a parsed native session and pairs each TOP-LEVEL agent/skill `tool_use` with its
- * matching `tool_result` (by `tool_use_id`) to recover when each invocation ran and how long
- * it took. Slash commands are point events (no duration). Sub-agent (sidechain) dispatches are
- * skipped so a parent's bar never visually contains its children.
- *
- * Note: this recovers *timing*, not per-agent cost — in the CodeMie CLI sub-agents run as
- * separate sessions (their tokens are not in the parent log), so cost-by-agent is a separate
- * cross-session correlation concern.
- */
-
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
-import type { DispatchEventRaw } from './types.js';
-import { MAX_DISPATCHES } from './types.js';
 import { extractCodexDispatchEvents } from '../../../../agents/plugins/codex/session/codex-dispatch-extractor.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { buildClaudeTraceIndex, normalizeClaudeTrace } from './claude-trace.js';
+import type { DispatchEventRaw } from './types.js';
 
 interface RawBlock {
   type?: string;
   name?: string;
   id?: string;
   tool_use_id?: string;
-  input?: {
-    skill?: unknown;
-    subagent_type?: unknown;
-    name?: unknown;
-    description?: unknown;
-  };
+  input?: { skill?: unknown; subagent_type?: unknown; name?: unknown };
   text?: unknown;
 }
-interface RawMsg {
-  isSidechain?: boolean;
+
+interface RawRow {
   timestamp?: string;
+  toolUseResult?: { isAsync?: boolean; status?: string; agentId?: string; taskId?: string };
   message?: { role?: string; content?: unknown };
+}
+
+interface Pending {
+  event: DispatchEventRaw;
+  ownerAgentId: string;
 }
 
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
 
-/** Extract timed top-level dispatches (agents/skills) + command point events, sorted by start. */
+const rowTimestamp = (row: RawRow): number | undefined => {
+  const parsed = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const blocks = (row: RawRow): RawBlock[] => Array.isArray(row.message?.content)
+  ? row.message.content as RawBlock[]
+  : [];
+
+/** Extract every native invocation while retaining stable ownership and lifecycle evidence. */
 export function extractDispatchEvents(parsed: ParsedSession, agentName?: string): DispatchEventRaw[] {
   const agent = (agentName ?? parsed.agentName ?? '').toLowerCase();
-  if (isCodexFamilyAgent(agent)) {
-    return extractCodexDispatchEvents(parsed);
-  }
-  const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
-  const pending = new Map<string, { kind: 'agent' | 'skill'; name: string; start: number; toolUseId?: string }>();
-  const events: DispatchEventRaw[] = [];
+  if (isCodexFamilyAgent(agent)) return extractCodexDispatchEvents(parsed);
 
-  const scanCommands = (text: string, at: number): void => {
-    if (!text.includes('<command-message>')) {
-      return;
-    }
+  const index = buildClaudeTraceIndex(parsed);
+  const pending = new Map<string, Pending>();
+  const events: DispatchEventRaw[] = [];
+  const emittedTools = new Set<string>();
+
+  const scanCommands = (text: string, start: number, ownerAgentId: string): void => {
+    if (!text.includes('<command-message>')) return;
     COMMAND_TAG.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = COMMAND_TAG.exec(text)) !== null) {
-      const cmd = m[1].replace(/^\//, '').trim();
-      if (cmd) {
-        events.push({ kind: 'command', name: cmd, start: at, durationMs: 0 });
-      }
+    let match: RegExpExecArray | null;
+    while ((match = COMMAND_TAG.exec(text)) !== null) {
+      const name = match[1].replace(/^\//, '').trim();
+      if (!name) continue;
+      events.push({
+        kind: 'command', name, start, durationMs: 0,
+        id: `${ownerAgentId}:command:${start}:${name}`, ownerAgentId,
+        relationshipStatus: ownerAgentId === index.rootOwnerId ? 'root' : 'resolved', status: 'completed', elapsedMs: 0,
+      });
     }
   };
 
-  for (const raw of messages as RawMsg[]) {
-    if (raw?.isSidechain === true) {
-      continue; // only top-level dispatches — skip nested sub-agent invocations
-    }
-    const parsedTs = raw?.timestamp ? Date.parse(raw.timestamp) : NaN;
-    const ts = Number.isFinite(parsedTs) ? parsedTs : null;
-    const content = raw?.message?.content;
-    const isUser = raw?.message?.role === 'user';
-
-    if (typeof content === 'string') {
-      if (isUser && ts != null) {
-        scanCommands(content, ts);
+  for (const owner of index.owners.values()) {
+    for (const row of owner.messages as RawRow[]) {
+      const start = rowTimestamp(row);
+      const content = row.message?.content;
+      if (typeof content === 'string') {
+        if (row.message?.role === 'user' && start !== undefined) scanCommands(content, start, owner.id);
+        continue;
       }
-      continue;
-    }
-    if (!Array.isArray(content)) {
-      continue;
-    }
-
-    for (const b of content as RawBlock[]) {
-      if (b?.type === 'tool_use' && ts != null && b.id) {
-        if (b.name === 'Agent' || b.name === 'Task') {
-          const agentName = [b.input?.subagent_type, b.input?.name]
-            .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-          pending.set(b.id, { kind: 'agent', name: agentName?.trim() ?? 'agent', start: ts, toolUseId: b.id });
-        } else if (b.name === 'Skill' && typeof b.input?.skill === 'string') {
-          pending.set(b.id, { kind: 'skill', name: b.input.skill.trim() || 'skill', start: ts });
+      for (const block of blocks(row)) {
+        if (block.type === 'tool_use' && start !== undefined && block.id && !emittedTools.has(block.id)) {
+          if (index.toolOwners.get(block.id) !== owner.id) continue;
+          let kind: 'agent' | 'skill' | undefined;
+          let name: string | undefined;
+          if (block.name === 'Agent' || block.name === 'Task') {
+            kind = 'agent';
+            name = [block.input?.subagent_type, block.input?.name].find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() ?? 'agent';
+          } else if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
+            kind = 'skill';
+            name = block.input.skill.trim() || 'skill';
+          }
+          if (kind && name) {
+            emittedTools.add(block.id);
+            pending.set(block.id, { ownerAgentId: owner.id, event: {
+              kind, name, start, durationMs: 0, id: block.id, _toolUseId: kind === 'agent' ? block.id : undefined,
+              ownerAgentId: owner.id, relationshipStatus: owner.id === index.rootOwnerId ? 'root' : 'resolved',
+            } });
+          }
+        } else if (block.type === 'tool_result' && block.tool_use_id) {
+          const item = pending.get(block.tool_use_id);
+          if (!item) continue;
+          pending.delete(block.tool_use_id);
+          const acknowledgedAt = start;
+          const isAsync = row.toolUseResult?.isAsync === true || row.toolUseResult?.status === 'async_launched';
+          events.push({
+            ...item.event,
+            durationMs: acknowledgedAt === undefined ? 0 : Math.max(0, acknowledgedAt - item.event.start),
+            ...(acknowledgedAt !== undefined && { acknowledgedAt }),
+            ...(typeof row.toolUseResult?.agentId === 'string' && { agentId: row.toolUseResult.agentId }),
+            status: item.event.kind === 'agent' && isAsync ? 'incomplete' : 'completed',
+          });
+        } else if (row.message?.role === 'user' && block.type === 'text' && typeof block.text === 'string' && start !== undefined) {
+          scanCommands(block.text, start, owner.id);
         }
-      } else if (b?.type === 'tool_result' && b.tool_use_id && pending.has(b.tool_use_id)) {
-        const p = pending.get(b.tool_use_id)!;
-        pending.delete(b.tool_use_id);
-        events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: ts != null ? Math.max(0, ts - p.start) : 0, _toolUseId: p.kind === 'agent' ? p.toolUseId : undefined });
-      } else if (isUser && b?.type === 'text' && typeof b.text === 'string' && ts != null) {
-        scanCommands(b.text, ts);
       }
     }
   }
 
-  // Dispatches whose tool_result never appeared (truncated/streaming log) → 0-duration markers.
-  for (const p of pending.values()) {
-    events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: 0, _toolUseId: p.kind === 'agent' ? p.toolUseId : undefined });
-  }
-
-  events.sort((a, b) => a.start - b.start);
-  return events.slice(0, MAX_DISPATCHES);
+  for (const item of pending.values()) events.push({ ...item.event, status: item.event.kind === 'agent' ? 'unknown' : 'incomplete' });
+  events.sort((left, right) => left.start - right.start || (left.id ?? '').localeCompare(right.id ?? ''));
+  return normalizeClaudeTrace(events, parsed, index);
 }
