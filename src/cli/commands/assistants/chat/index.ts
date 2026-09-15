@@ -435,12 +435,6 @@ async function handleChatError(error: unknown, config: ProviderProfile): Promise
   }
 
   if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
-    try {
-      await promptReauthentication(config);
-    } catch (reauthError) {
-      logger.debug('Re-authentication not performed or declined', {
-        message: reauthError instanceof Error ? reauthError.message : String(reauthError)
-      });
-    }
+    await promptReauthentication(config);
   }
 }

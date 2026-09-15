@@ -141,5 +141,4 @@ describe('Assistants Chat Command', () => {
       expect(command).toBeDefined();
     });
   });
-
 });

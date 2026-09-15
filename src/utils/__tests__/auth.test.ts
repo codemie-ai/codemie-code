@@ -173,20 +173,5 @@ describe('Auth Utilities', () => {
       await expect(promptReauthentication(mockConfig)).rejects.toThrow(ConfigurationError);
       expect(handleAuthValidationFailure).not.toHaveBeenCalled();
     });
-
-    it('should return false when session is valid without calling handleAuthValidationFailure', async () => {
-      const mockSetupSteps = {
-        validateAuth: vi.fn().mockResolvedValue({ valid: true, expiresAt: 9999999999 })
-      };
-
-      ProviderRegistry.getSetupSteps.mockReturnValue(mockSetupSteps);
-
-      const { promptReauthentication } = await import('../auth.js');
-      const result = await promptReauthentication(mockConfig);
-
-      expect(result).toBe(false);
-      expect(mockSetupSteps.validateAuth).toHaveBeenCalledWith(mockConfig);
-      expect(handleAuthValidationFailure).not.toHaveBeenCalled();
-    });
   });
 });

@@ -65,14 +65,8 @@ export async function promptReauthentication(config: ProviderProfile): Promise<b
 
   if (setupSteps?.validateAuth) {
     const validationResult = await setupSteps.validateAuth(config);
-
-    if (validationResult.valid) {
-      // Session is fine — whatever triggered this call (e.g. a 403 from a
-      // specific API call) isn't an auth problem, so don't mislabel it.
-      return false;
-    }
-
     const reauthed = await handleAuthValidationFailure(validationResult, setupSteps, config);
+
     if (reauthed) {
       console.log(chalk.green('\n✓ Re-authentication successful\n'));
       return true;
