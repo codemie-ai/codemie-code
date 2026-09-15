@@ -10,22 +10,23 @@
 
 import { readFile } from 'node:fs/promises';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
-import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from '@/utils/pricing.js';
 import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
-import { extractDispatchEvents } from './dispatch-extractor.js';
-import { buildClaudeTraceIndex, type ClaudeTraceIndex } from './claude-trace.js';
+import { extractDispatchResult } from './dispatch-extractor.js';
+import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
+import { enrichSkillDispatchCost } from './dispatch-allocation.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
-import { getCodemiePath } from '../../../../utils/paths.js';
-import { AgentRegistry } from '../../../../agents/registry.js';
-import { ClaudeSessionAdapter } from '../../../../agents/plugins/claude/claude.session.js';
-import { ClaudePluginMetadata } from '../../../../agents/plugins/claude/claude.plugin.js';
+import { getCodemiePath } from '@/utils/paths.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
+import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
-import { logger } from '../../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
@@ -204,134 +205,6 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
 }
 
 /**
- * Attribute cost to a `skill` dispatch from the session's OWN already-priced usage records
- * whose timestamp falls inside the skill's [start, start + durationMs] window. Skills run
- * inline in the parent transcript (no separate subagent log to pull tokens from), so this is a
- * re-attribution of tokens already counted in the session total — same "ALLOCATION, don't add
- * to `seen`" semantics as the agent-dispatch path below. A dispatch with durationMs === 0 (no
- * matching tool_result found — see dispatch-extractor.ts) has no window to attribute from and is
- * left as "unknown" (absent costUSD/tokens), not zero.
- */
-function enrichSkillDispatchCost(dispatch: DispatchEventRaw, sessionRecords: UsageRecord[]): void {
-  if (!dispatch.durationMs) return;
-  const windowEnd = dispatch.start + dispatch.durationMs;
-  const matched = sessionRecords.filter((r) => r.ts != null && r.ts >= dispatch.start && r.ts <= windowEnd);
-  if (!matched.length) return;
-
-  const usageByModel = sumUsageRecords(matched);
-  let totalCost = 0;
-  let totalTokens = emptyUsage();
-  let priced = false;
-  for (const [rawModel, usage] of usageByModel) {
-    const model = normalizeModelName(rawModel);
-    const price = lookupPrice(model);
-    if (price) {
-      totalCost += costBreakdown(usage, price).total;
-      priced = true;
-    }
-    totalTokens = addUsage(totalTokens, usage);
-  }
-  if (priced) dispatch.costUSD = totalCost;
-  dispatch.tokens = totalTokens;
-}
-
-/** Prices exactly the accepted records being allocated, using the session's model rules. */
-function priceAllocation(records: UsageRecord[]): { tokens: TokenUsage; costUSD?: number } {
-  const { cost } = priceUsage('', true, sumUsageRecords(records));
-  return {
-    tokens: cost.tokens,
-    ...((!records.length || cost.perModel.some((model) => !model.unpriced)) && { costUSD: cost.costUSD }),
-  };
-}
-
-/** Ancestry comes only from the trace index; visited owners also guard malformed inferred cycles. */
-function subtreeOwners(ownerId: string, index: ClaudeTraceIndex): { owners: Set<string>; cycle: boolean } {
-  const owners = new Set<string>();
-  const pending = [ownerId];
-  let cycle = false;
-  while (pending.length) {
-    const current = pending.pop()!;
-    if (owners.has(current)) {
-      cycle = true;
-      continue;
-    }
-    owners.add(current);
-    pending.push(...(index.childAgentsByOwner.get(current) ?? []));
-  }
-  return { owners, cycle };
-}
-
-/** Progressive rows and inherited tool calls count once for the canonical transcript owner. */
-function claudeOwnerTools(ownerId: string, index: ClaudeTraceIndex): Array<{ name: string; calls: number }> {
-  const counts = new Map<string, number>();
-  const seen = new Set<string>();
-  for (const raw of (index.owners.get(ownerId)?.messages ?? []) as Array<{ message?: { content?: unknown } }>) {
-    if (!Array.isArray(raw.message?.content)) continue;
-    for (const block of raw.message.content as Array<{ type?: string; id?: string; name?: string }>) {
-      if (block.type !== 'tool_use' || !block.name) continue;
-      if (block.id) {
-        if (seen.has(block.id) || index.toolOwners.get(block.id) !== ownerId) continue;
-        seen.add(block.id);
-      }
-      counts.set(block.name, (counts.get(block.name) ?? 0) + 1);
-    }
-  }
-  return [...counts].map(([name, calls]) => ({ name, calls })).sort((left, right) => right.calls - left.calls).slice(0, 8);
-}
-
-/** Allocate session-owned responses without reparsing or claiming replayed usage a second time. */
-function enrichClaudeDispatchCosts(
-  dispatches: DispatchEventRaw[], parsed: ParsedSession, records: UsageRecord[], cost: SessionCost,
-): void {
-  const index = buildClaudeTraceIndex(parsed);
-  const byOwner = new Map<string, UsageRecord[]>();
-  for (const record of records) {
-    if (record.ownerAgentId === undefined) continue;
-    const owned = byOwner.get(record.ownerAgentId) ?? [];
-    owned.push(record);
-    byOwner.set(record.ownerAgentId, owned);
-  }
-  // SDK modelUsage rollups have no response ownership. Keep their totals authoritative,
-  // but never manufacture zero-valued allocations that appear to reconcile those rollups.
-  const ownsRecords = records.length > 0 || !cost.priced;
-  if (ownsRecords) {
-    const linked = subtreeOwners(index.rootOwnerId, index).owners;
-    const root = priceAllocation(byOwner.get(index.rootOwnerId) ?? []);
-    const unlinked = priceAllocation(records.filter((record) => !linked.has(record.ownerAgentId ?? '')));
-    cost.rootOwnTokens = root.tokens;
-    cost.rootOwnCostUSD = root.costUSD ?? 0;
-    cost.unlinkedTokens = unlinked.tokens;
-    cost.unlinkedCostUSD = unlinked.costUSD ?? 0;
-    cost.unlinkedAgentIds = [...index.agents.keys()].filter((agentId) => !linked.has(agentId));
-  }
-  for (const dispatch of dispatches) {
-    dispatch.attributionStatus = 'unavailable';
-    dispatch.attributionScope = dispatch.kind === 'agent' ? 'own' : 'owner-window';
-    if (!ownsRecords) continue;
-    if (dispatch.kind !== 'agent') {
-      const owned = dispatch.ownerAgentId ? byOwner.get(dispatch.ownerAgentId) ?? [] : [];
-      enrichSkillDispatchCost(dispatch, owned);
-      if (dispatch.tokens) dispatch.attributionStatus = 'estimated';
-      continue;
-    }
-    const agent = dispatch.agentId ? index.agents.get(dispatch.agentId) : undefined;
-    if (!agent) continue;
-    const subtree = subtreeOwners(agent.agentId, index);
-    if (agent.relationshipStatus !== 'resolved' || dispatch.relationshipStatus !== 'resolved' || subtree.cycle) {
-      dispatch.attributionStatus = 'ambiguous';
-      continue;
-    }
-    Object.assign(dispatch, priceAllocation(byOwner.get(agent.agentId) ?? []));
-    const inclusive = priceAllocation([...subtree.owners].flatMap((owner) => byOwner.get(owner) ?? []));
-    dispatch.inclusiveTokens = inclusive.tokens;
-    dispatch.inclusiveCostUSD = inclusive.costUSD;
-    dispatch.attributionStatus = 'exact';
-    const tools = claudeOwnerTools(agent.agentId, index);
-    if (tools.length) dispatch.tools = tools;
-  }
-}
-
-/**
  * Second-pass enrichment: for each agent dispatch that has a matching subagent entry
  * (linked by toolUseId from the .meta.json), extract usage from the subagent's messages,
  * price it, and attach costUSD + tokens + tools to the dispatch event in place.
@@ -495,16 +368,16 @@ export async function enrichCosts(
       }
 
       try {
-        const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
+        const { events: dispatches, complete } = extractDispatchResult(entry.parsed, entry.agentName);
         if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
           enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
-          cost.dispatchesComplete = true;
+          cost.dispatchesComplete = complete;
         } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
         }
         if (dispatches.length) {
           // Strip internal _toolUseId before storing in the public cost index
-          cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
+          cost.dispatches = dispatches.map(({ _toolUseId: _id, _taskId: _task, ...d }) => d);
         }
       } catch (e) {
         logger.debug(`[cost] dispatch extraction failed for ${entry.sessionId}:`, e);

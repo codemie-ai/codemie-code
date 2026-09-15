@@ -70,7 +70,7 @@ export interface DispatchEvent {
  * Internal dispatch event used during cost enrichment — carries _toolUseId to join
  * against parsed.subagents. Stripped before the event is stored in SessionCost.dispatches.
  */
-export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string };
+export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string; _taskId?: string };
 
 /** Max dispatch events kept per session — payload guard for very long runs. */
 export const MAX_DISPATCHES = 60;

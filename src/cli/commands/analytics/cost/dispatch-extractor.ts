@@ -1,113 +1,150 @@
-import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
-import { extractCodexDispatchEvents } from '../../../../agents/plugins/codex/session/codex-dispatch-extractor.js';
+import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
+import { extractCodexDispatchEvents } from '@/agents/plugins/codex/session/codex-dispatch-extractor.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
-import { buildClaudeTraceIndex, normalizeClaudeTrace } from './claude-trace.js';
+import { buildClaudeTraceIndex, normalizeClaudeTrace, type ClaudeTraceIndex } from './claude-trace.js';
+import { claudeBlocks, claudeTimestamp, type ClaudeNativeBlock, type ClaudeNativeRow } from './claude-native.js';
 import type { DispatchEventRaw } from './types.js';
 
-interface RawBlock {
-  type?: string;
-  name?: string;
-  id?: string;
-  tool_use_id?: string;
-  input?: { skill?: unknown; subagent_type?: unknown; name?: unknown };
-  text?: unknown;
+interface ToolOccurrence {
+  row: ClaudeNativeRow;
+  block: ClaudeNativeBlock;
+  physicalOwner: string;
 }
 
-interface RawRow {
-  timestamp?: string;
-  toolUseResult?: { isAsync?: boolean; status?: string; agentId?: string; taskId?: string };
-  message?: { role?: string; content?: unknown };
+/** Invocation extraction completeness is independent of whether any timed steps were found. */
+export interface DispatchExtraction {
+  events: DispatchEventRaw[];
+  complete: boolean;
 }
 
-interface Pending {
-  event: DispatchEventRaw;
-  ownerAgentId: string;
+function toolKind(block: ClaudeNativeBlock): { kind: 'agent' | 'skill'; name: string } | undefined {
+  if (block.name === 'Agent' || block.name === 'Task') {
+    const name = [block.input?.subagent_type, block.input?.name].find((value): value is string => typeof value === 'string' && !!value.trim())?.trim() ?? 'agent';
+    return { kind: 'agent', name };
+  }
+  return block.name === 'Skill' ? { kind: 'skill', name: typeof block.input?.skill === 'string' ? block.input.skill.trim() || 'skill' : 'skill' } : undefined;
 }
 
-const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
-
-const rowTimestamp = (row: RawRow): number | undefined => {
-  const parsed = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-const blocks = (row: RawRow): RawBlock[] => Array.isArray(row.message?.content)
-  ? row.message.content as RawBlock[]
-  : [];
-
-/** Extract every native invocation while retaining stable ownership and lifecycle evidence. */
-export function extractDispatchEvents(parsed: ParsedSession, agentName?: string): DispatchEventRaw[] {
-  const agent = (agentName ?? parsed.agentName ?? '').toLowerCase();
-  if (isCodexFamilyAgent(agent)) return extractCodexDispatchEvents(parsed);
-
-  const index = buildClaudeTraceIndex(parsed);
-  const pending = new Map<string, Pending>();
-  const events: DispatchEventRaw[] = [];
-  const emittedTools = new Set<string>();
-
-  const scanCommands = (text: string, start: number, ownerAgentId: string): void => {
-    if (!text.includes('<command-message>')) return;
-    COMMAND_TAG.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = COMMAND_TAG.exec(text)) !== null) {
-      const name = match[1].replace(/^\//, '').trim();
-      if (!name) continue;
-      events.push({
-        kind: 'command', name, start, durationMs: 0,
-        id: `${ownerAgentId}:command:${start}:${name}`, ownerAgentId,
-        relationshipStatus: ownerAgentId === index.rootOwnerId ? 'root' : 'resolved', status: 'completed', elapsedMs: 0,
-      });
-    }
-  };
-
+function toolOccurrences(index: ClaudeTraceIndex, type: string): Map<string, ToolOccurrence[]> {
+  const occurrences = new Map<string, ToolOccurrence[]>();
   for (const owner of index.owners.values()) {
-    for (const row of owner.messages as RawRow[]) {
-      const start = rowTimestamp(row);
-      const content = row.message?.content;
-      if (typeof content === 'string') {
-        if (row.message?.role === 'user' && start !== undefined) scanCommands(content, start, owner.id);
-        continue;
-      }
-      for (const block of blocks(row)) {
-        if (block.type === 'tool_use' && start !== undefined && block.id && !emittedTools.has(block.id)) {
-          if (index.toolOwners.get(block.id) !== owner.id) continue;
-          let kind: 'agent' | 'skill' | undefined;
-          let name: string | undefined;
-          if (block.name === 'Agent' || block.name === 'Task') {
-            kind = 'agent';
-            name = [block.input?.subagent_type, block.input?.name].find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() ?? 'agent';
-          } else if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
-            kind = 'skill';
-            name = block.input.skill.trim() || 'skill';
-          }
-          if (kind && name) {
-            emittedTools.add(block.id);
-            pending.set(block.id, { ownerAgentId: owner.id, event: {
-              kind, name, start, durationMs: 0, id: block.id, _toolUseId: kind === 'agent' ? block.id : undefined,
-              ownerAgentId: owner.id, relationshipStatus: owner.id === index.rootOwnerId ? 'root' : 'resolved',
-            } });
-          }
-        } else if (block.type === 'tool_result' && block.tool_use_id) {
-          const item = pending.get(block.tool_use_id);
-          if (!item) continue;
-          pending.delete(block.tool_use_id);
-          const acknowledgedAt = start;
-          const isAsync = row.toolUseResult?.isAsync === true || row.toolUseResult?.status === 'async_launched';
-          events.push({
-            ...item.event,
-            durationMs: acknowledgedAt === undefined ? 0 : Math.max(0, acknowledgedAt - item.event.start),
-            ...(acknowledgedAt !== undefined && { acknowledgedAt }),
-            ...(typeof row.toolUseResult?.agentId === 'string' && { agentId: row.toolUseResult.agentId }),
-            status: item.event.kind === 'agent' && isAsync ? 'incomplete' : 'completed',
-          });
-        } else if (row.message?.role === 'user' && block.type === 'text' && typeof block.text === 'string' && start !== undefined) {
-          scanCommands(block.text, start, owner.id);
-        }
+    for (const row of owner.messages as ClaudeNativeRow[]) {
+      if (!row || typeof row !== 'object') continue;
+      for (const block of claudeBlocks(row)) {
+        const id = type === 'tool_use' ? block.id : block.tool_use_id;
+        if (block.type !== type || !id) continue;
+        const values = occurrences.get(id) ?? [];
+        values.push({ row, block, physicalOwner: owner.id });
+        occurrences.set(id, values);
       }
     }
   }
+  return occurrences;
+}
 
-  for (const item of pending.values()) events.push({ ...item.event, status: item.event.kind === 'agent' ? 'unknown' : 'incomplete' });
-  events.sort((left, right) => left.start - right.start || (left.id ?? '').localeCompare(right.id ?? ''));
-  return normalizeClaudeTrace(events, parsed, index);
+function preferredOccurrence(values: ToolOccurrence[], owner?: string): ToolOccurrence {
+  return [...values].sort((left, right) => {
+    const leftTimed = claudeTimestamp(left.row);
+    const rightTimed = claudeTimestamp(right.row);
+    if ((leftTimed === undefined) !== (rightTimed === undefined)) return leftTimed === undefined ? 1 : -1;
+    const preference = Number(right.physicalOwner === owner) - Number(left.physicalOwner === owner);
+    return preference || (leftTimed ?? 0) - (rightTimed ?? 0) || left.physicalOwner.localeCompare(right.physicalOwner);
+  })[0];
+}
+
+function completeTool(event: DispatchEventRaw, occurrence: ToolOccurrence | undefined): DispatchEventRaw {
+  if (!occurrence) return { ...event, status: event.kind === 'agent' ? 'unknown' : 'incomplete' };
+  const { row, block } = occurrence;
+  const acknowledgedAt = claudeTimestamp(row);
+  const ack = row.toolUseResult;
+  const failed = block.is_error === true || block.isError === true || block.status === 'failed'
+    || ack?.is_error === true || ack?.isError === true || ack?.status === 'failed';
+  const async = ack?.isAsync === true || ack?.status === 'async_launched';
+  return {
+    ...event, durationMs: acknowledgedAt === undefined ? 0 : Math.max(0, acknowledgedAt - event.start),
+    ...(acknowledgedAt !== undefined && { acknowledgedAt }),
+    ...(ack?.agentId && { agentId: ack.agentId }), ...(ack?.taskId && { _taskId: ack.taskId }),
+    status: failed ? 'failed' : event.kind === 'agent' && async ? 'incomplete' : 'completed',
+  };
+}
+
+function extractTools(index: ClaudeTraceIndex, result: DispatchExtraction): void {
+  const results = toolOccurrences(index, 'tool_result');
+  for (const [id, values] of toolOccurrences(index, 'tool_use')) {
+    const ownerAgentId = index.toolOwners.get(id);
+    const occurrence = preferredOccurrence(values, ownerAgentId);
+    const kind = toolKind(occurrence.block);
+    if (!kind) continue;
+    const start = claudeTimestamp(occurrence.row);
+    if (start === undefined) { result.complete = false; continue; }
+    const event: DispatchEventRaw = {
+      ...kind, start, durationMs: 0, id, _toolUseId: kind.kind === 'agent' ? id : undefined, ownerAgentId,
+      relationshipStatus: ownerAgentId === undefined ? 'conflict' : ownerAgentId === index.rootOwnerId ? 'root' : 'resolved',
+    };
+    const matches = results.get(id);
+    result.events.push(completeTool(event, matches ? preferredOccurrence(matches, ownerAgentId) : undefined));
+  }
+}
+
+function commandNames(row: ClaudeNativeRow): string[] {
+  if (row.message?.role !== 'user') return [];
+  const content = row.message.content;
+  const texts = typeof content === 'string' ? [content] : claudeBlocks(row).filter((block) => block.type === 'text').map((block) => block.text);
+  return texts.flatMap((text) => {
+    if (typeof text !== 'string' || !text.includes('<command-message>')) return [];
+    return [...text.matchAll(/<command-name>([^<]+)<\/command-name>/g)].map((match) => match[1].replace(/^\//, '').trim()).filter(Boolean);
+  });
+}
+
+function extractCommands(index: ClaudeTraceIndex, result: DispatchExtraction): void {
+  const emitted = new Set<string>();
+  const collisions = new Map<string, number>();
+  for (const owner of index.owners.values()) {
+    for (const row of owner.messages as ClaudeNativeRow[]) {
+      if (!row || typeof row !== 'object') continue;
+      const names = commandNames(row);
+      if (!names.length) continue;
+      const ownerAgentId = row.uuid ? index.messageOwners.get(row.uuid) : owner.id;
+      if (row.uuid && ownerAgentId && ownerAgentId !== owner.id) continue;
+      const start = claudeTimestamp(row);
+      if (start === undefined) { result.complete = false; continue; }
+      names.forEach((name, ordinal) => {
+        const nativeId = row.uuid ? `command:${row.uuid}:${ordinal}` : undefined;
+        if (nativeId && emitted.has(nativeId)) return;
+        const fallback = `${owner.id}:command:${start}:${name}`;
+        const count = collisions.get(fallback) ?? 0;
+        const id = nativeId ?? `${fallback}${count ? `:${count}` : ''}`;
+        collisions.set(fallback, count + 1);
+        emitted.add(id);
+        result.events.push({ kind: 'command', name, start, durationMs: 0, id, ownerAgentId,
+          relationshipStatus: !ownerAgentId ? 'conflict' : ownerAgentId === index.rootOwnerId ? 'root' : 'resolved', status: 'completed', elapsedMs: 0 });
+      });
+    }
+  }
+}
+
+function hasUnidentifiedTools(index: ClaudeTraceIndex): boolean {
+  for (const owner of index.owners.values()) {
+    for (const row of owner.messages as ClaudeNativeRow[]) {
+      if (row && claudeBlocks(row).some((block) => block.type === 'tool_use' && !block.id && toolKind(block))) return true;
+    }
+  }
+  return false;
+}
+
+/** Extract complete native invocations plus an honest flag for omissions with unavailable identity/timing. */
+export function extractDispatchResult(parsed: ParsedSession, agentName?: string): DispatchExtraction {
+  const agent = (agentName ?? parsed.agentName ?? '').toLowerCase();
+  if (isCodexFamilyAgent(agent)) return { events: extractCodexDispatchEvents(parsed), complete: false };
+  const index = buildClaudeTraceIndex(parsed);
+  const result: DispatchExtraction = { events: [], complete: !hasUnidentifiedTools(index) };
+  extractTools(index, result);
+  extractCommands(index, result);
+  result.events.sort((left, right) => left.start - right.start || (left.id ?? '').localeCompare(right.id ?? ''));
+  return { events: normalizeClaudeTrace(result.events, parsed, index), complete: result.complete };
+}
+
+/** Compatibility entry point returning the invocation list. */
+export function extractDispatchEvents(parsed: ParsedSession, agentName?: string): DispatchEventRaw[] {
+  return extractDispatchResult(parsed, agentName).events;
 }

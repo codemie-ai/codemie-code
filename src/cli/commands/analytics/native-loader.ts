@@ -339,14 +339,22 @@ interface NativeSessionFacts {
 }
 
 /** Timestamp envelope across the root transcript and every parsed descendant. */
-function claudeFamilyBounds(parsed: ParsedSession): { startTime: number; endTime: number } | null {
-  const messages = [parsed.messages ?? [], ...(parsed.subagents ?? []).map((subagent) => subagent.messages ?? [])]
-    .flat() as RawMessage[];
-  const timestamps = messages.map((message) => toMs(message.timestamp)).filter((time): time is number => time !== null);
-  if (timestamps.length === 0) {
-    return null;
+function claudeFamilyBounds(parsed: ParsedSession, rootMessages: RawMessage[]): { startTime: number; endTime: number } | null {
+  let startTime = Infinity;
+  let endTime = -Infinity;
+  const include = (messages: RawMessage[]): void => {
+    for (const message of messages) {
+      const time = toMs(message?.timestamp);
+      if (time === null || !Number.isFinite(time)) continue;
+      startTime = Math.min(startTime, time);
+      endTime = Math.max(endTime, time);
+    }
+  };
+  include(rootMessages);
+  for (const subagent of parsed.subagents ?? []) {
+    if (Array.isArray(subagent.messages)) include(subagent.messages as RawMessage[]);
   }
-  return { startTime: Math.min(...timestamps), endTime: Math.max(...timestamps) };
+  return Number.isFinite(startTime) ? { startTime, endTime } : null;
 }
 
 /**
@@ -579,15 +587,14 @@ export function synthesizeRawSession(
     return synthesizePiRawSession(agentName, descriptor, parsed);
   }
   const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
-  const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const assistantMsgs = messages.filter(isAssistant);
-  const familyBounds = claudeFamilyBounds(parsed);
+  const familyBounds = claudeFamilyBounds(parsed, messages);
 
   return buildNativeRawSession(agentName, descriptor, parsed, {
     cwd: messages.find((m) => m.cwd)?.cwd ?? descriptor.projectPath ?? 'Unknown',
     branch: modal(messages.map((m) => m.gitBranch).filter((b): b is string => !!b)),
-    startTime: familyBounds?.startTime ?? (timestamps.length ? Math.min(...timestamps) : descriptor.createdAt),
-    endTime: familyBounds?.endTime ?? (timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt),
+    startTime: familyBounds?.startTime ?? descriptor.createdAt,
+    endTime: familyBounds?.endTime ?? descriptor.updatedAt ?? descriptor.createdAt,
     turns: Math.max(assistantMsgs.length, 1),
     models: assistantMsgs.map((m) => m.message?.model).filter((m): m is string => !!m),
     openingPrompt: firstUserText(messages),

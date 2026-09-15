@@ -72,7 +72,7 @@ describe('Claude dispatch trace extraction', () => {
     ]);
     const byId = new Map(extractDispatchEvents(value).map((event) => [event.id, event]));
     expect(byId.get('tool-a')).toEqual(expect.objectContaining({ relationshipStatus: 'conflict', parentId: undefined }));
-    expect(byId.get('tool-b')).toEqual(expect.objectContaining({ relationshipStatus: 'cycle', parentId: undefined }));
+    expect(byId.get('tool-b')).toEqual(expect.objectContaining({ relationshipStatus: 'conflict', parentId: undefined }));
     expect(buildClaudeTraceIndex(value).agents.get('duplicate')?.relationshipStatus).toBe('conflict');
     expect(buildClaudeTraceIndex(value).agents.get('missing')?.relationshipStatus).toBe('missing');
   });

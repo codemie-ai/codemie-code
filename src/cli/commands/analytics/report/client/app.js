@@ -1453,7 +1453,7 @@
     modalEsc = function (ev) {
       if (ev.key === 'Escape') { closeSessionModal(); return; }
       if (ev.key !== 'Tab') return;
-      var focusable = Array.from(modal.querySelectorAll('button:not([disabled]), a[href], input, select, textarea, [tabindex="0"]')).filter(function (node) { return node.offsetParent !== null; });
+      var focusable = Array.from(modal.querySelectorAll('button:not([disabled]), a[href], input, select, textarea, summary, [tabindex="0"]')).filter(function (node) { return node.offsetParent !== null; });
       if (!focusable.length) return;
       var first = focusable[0], last = focusable[focusable.length - 1];
       if (ev.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) { ev.preventDefault(); last.focus(); }

@@ -7,7 +7,8 @@
  * enricher treats as "unpriced".
  */
 
-import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
+import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
@@ -156,6 +157,7 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
 export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
   const keyedRecords = new Map<string, UsageRecord>();
+  const ownership = buildClaudeOwnership(parsed);
   const owners = [{ ownerAgentId: parsed.sessionId, messages: messagesOf(parsed) }];
   for (const sub of parsed.subagents ?? []) {
     if (Array.isArray(sub.messages)) owners.push({ ownerAgentId: sub.agentId, messages: sub.messages });
@@ -184,7 +186,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         key,
         ts,
         model,
-        ownerAgentId,
+        ownerAgentId: key === null ? ownerAgentId : ownership.responseOwners.get(key),
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
       });
     }
