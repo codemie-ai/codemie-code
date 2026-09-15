@@ -1,0 +1,5 @@
+# Recreate these generated fixture outputs with generate-browser-fixtures.mjs.
+/legacy-nonclaude-incomplete.html
+/legacy-nonclaude-incomplete.json
+/synthetic-deep-traces.html
+/synthetic-deep-traces.json

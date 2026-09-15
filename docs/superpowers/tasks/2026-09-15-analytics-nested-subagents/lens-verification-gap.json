@@ -1,0 +1,20 @@
+[
+  {
+    "location": "src/cli/commands/analytics/cost/claude-trace.ts:187",
+    "trigger_condition": "A nested Agent/Task receives its authoritative completed or failed notification in its owning subagent transcript instead of the root transcript.",
+    "guard_snippet": "Collect lifecycle evidence from the canonical owner transcripts, and verify that a notification inside subagents[parent].messages sets the nested dispatch status, completedAt and elapsedMs.",
+    "potential_consequence": "normalizeClaudeTrace reads lifecycleEvents(parsed.messages) only. The nested invocation therefore remains incomplete and ends at its last observed activity even when its parent transcript records completion or failure; the report also loses that invocation success/failure count.",
+    "gap_shape": "other",
+    "consumer": "extractDispatchEvents in src/cli/commands/analytics/cost/dispatch-extractor.ts:112, consumed by enrichCosts at src/cli/commands/analytics/cost/cost-enricher.ts:498 and invocationStats via src/cli/commands/analytics/report/payload-builder.ts:116",
+    "evidence": "Re-read claude-trace.ts:139-163,186-209 and dispatch-extractor.test.ts:20-63. Both terminal-notification assertions put notifications in root messages; the nested fixture at lines 28-36 checks identity/ancestry only, and lines 55-63 deliberately contain no terminal notification. The adapter test at claude-session-family.test.ts:97-121 preserves a task-notification in a subagent transcript but never sends it through dispatch extraction. Repository symbol/import searches for normalizeClaudeTrace, extractDispatchEvents, claude-trace.js and dispatch-extractor.js found no other native lifecycle assertion."
+  },
+  {
+    "location": "src/cli/commands/analytics/cost/__tests__/dispatch-extractor.test.ts:8",
+    "trigger_condition": "The rewritten test suite deletes the prior Task dispatch compatibility case and supplies only Agent or Skill tool-use fixtures.",
+    "guard_snippet": "Exercise a native tool_use with name Task through extractDispatchEvents and assert the agent invocation identity, name and synchronous duration after its matching tool_result.",
+    "potential_consequence": "Removing the Task alternative from dispatch-extractor.ts would no longer fail the tests inspected. Older Claude transcripts would lose all Task invocations, while enrichCosts marks the list complete and buildPayload replaces the available aggregate agent counts with that incomplete list.",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "src/cli/commands/analytics/cost/dispatch-extractor.ts:76 and src/cli/commands/analytics/report/payload-builder.ts:116",
+    "evidence": "The frozen diff removes the old handles Task test. Re-read the entire current dispatch-extractor.test.ts:1-89: use defaults to Agent and the only explicit tool override is Skill at line 41. Searched repository source/test symbols and imports for extractDispatchEvents, dispatch-extractor.js and enrichCosts/cost-enricher.js, plus Task references in analytics tests. The dispatch-enrichment fixtures use Agent; the CLI and session-report tests mock enrichCosts at analytics-cli-metadata.test.ts:20-24 and session-report.test.ts:9-14. The optional real-transcript cases in cost-enricher.test.ts:695-735 assert only cost totals and do not protect Task extraction."
+  }
+]

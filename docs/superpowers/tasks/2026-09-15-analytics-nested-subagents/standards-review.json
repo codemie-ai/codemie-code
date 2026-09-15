@@ -1,0 +1,40 @@
+{
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All seven subjects in 6ef1fcd7ff61de502255df4e4ef1fad7320f3d0e..HEAD use an allowed fix/feat type and analytics scope, imperative wording, and subjects below the documented 100-character limit."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Exported functions retain explicit return types and ES-module extensions, but the new trace module uses a prohibited deep relative import, its ownership-index function exceeds the documented function size, and the modified cost-enricher crosses the documented file-size limit. Evidence is limited to the 25 Git-tracked changed paths; the untracked run directory was excluded."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "The default .ai-run/guides/development/security-patterns.md is absent; AGENTS.md identifies the existing canonical .ai-run/guides/security/security-practices.md, which was read instead. No concrete new security issue was found: raw transcript captures use an internal symbol, dispatch exports allowlist fields, and new timeline labels use escaping or text nodes. No outbound attribution-header changes or hardcoded credentials were identified."
+    }
+  ],
+  "blocking_findings": [
+    {
+      "location": "src/cli/commands/analytics/cost/claude-trace.ts:1",
+      "violation": "AGENTS.md:175 directs deep relative imports to the @/ alias. The new file imports ParsedSession through ../../../../agents/core/session/BaseSessionAdapter.js.",
+      "why_blocking": "The new module does not conform to the repository canonical import convention.",
+      "remedy": "Import ParsedSession from @/agents/core/session/BaseSessionAdapter.js."
+    },
+    {
+      "location": "src/cli/commands/analytics/cost/claude-trace.ts:70",
+      "violation": ".ai-run/guides/standards/code-quality.md:95 and :133 prescribe functions under 50 lines. The new buildClaudeTraceIndex implementation occupies lines 70-130, including 57 nonblank lines, and combines owner indexing, cycle detection, and relationship resolution.",
+      "why_blocking": "The introduced function exceeds the documented code-structure limit and combines the independently described indexing stages.",
+      "remedy": "Extract the cycle-detection and relationship-index construction stages into named helpers so each function meets the documented limit."
+    },
+    {
+      "location": "src/cli/commands/analytics/cost/cost-enricher.ts:283",
+      "violation": ".ai-run/guides/standards/code-quality.md:97 prescribes files under 500 lines. The changed cost-enricher.ts grows from 408 source lines at the base to 525, with new Claude ownership and allocation helpers added alongside the existing general enrichment pipeline.",
+      "why_blocking": "The change introduces a file-size violation of the documented code-structure guideline.",
+      "remedy": "Move the cohesive Claude-specific dispatch allocation helpers into a sibling module and keep the general cost-enrichment entry point below the documented size limit."
+    }
+  ],
+  "coverage_gap": false
+}

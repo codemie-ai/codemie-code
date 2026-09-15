@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-autonomous",
+  "decided_at": "2026-09-15T10:43:54Z",
+  "complexity": {"size": "L", "total": 21},
+  "signals": {"risk_flags": ["data-contract"], "ui": "unknown", "docs_only": false, "ticket_adapter": false, "requirements": "clear"},
+  "stages": {"spec": "run", "feature_verification": "conditional", "actual_complexity": "run"},
+  "reasons": {"spec_reason": "risk flags present (data-contract)", "feature_verification_reason": "decide at Stage 7 from the diff against gate-plan.local.json ui_globs", "actual_complexity_reason": "complexity total 21 >= 15 — calibration value is highest here"},
+  "escalate_on": ["security","breaking-change"]
+}

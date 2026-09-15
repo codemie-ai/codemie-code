@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "head": "667bdc219292b55958fc4f21ef8eb74fed0d0d99",
+  "feature_id": "synthetic-deep-traces",
+  "tool": "playwright",
+  "coverage_source": "generated-test",
+  "test_command": "mcp__playwright__browser_run_code_unsafe({ filename: \"/Users/Vadym_Vlasenko/AI/projects/codemie-code/docs/superpowers/tasks/2026-09-15-analytics-nested-subagents/dynamic-tests/synthetic-deep-traces.browser.js\" })",
+  "app_url": "file:///Users/Vadym_Vlasenko/AI/projects/codemie-code/docs/superpowers/tasks/2026-09-15-analytics-nested-subagents/dynamic-tests/synthetic-deep-traces.html",
+  "screenshot_path": "/Users/Vadym_Vlasenko/AI/projects/codemie-code/docs/superpowers/tasks/2026-09-15-analytics-nested-subagents/evidence/screenshots/synthetic-deep-traces-timeline-0.png",
+  "console_errors": [],
+  "network_failures": [],
+  "result": "PASS"
+}

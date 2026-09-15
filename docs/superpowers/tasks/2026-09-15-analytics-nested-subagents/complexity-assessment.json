@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "task": "Correct Claude nested-subagent analytics hierarchy, asynchronous trace timing, own/inclusive usage attribution, session bounds and Sonnet 5 pricing, validated against the supplied real-session snapshot.",
+  "generated": "2026-09-15T10:43:46.099Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL"
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS"
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M"
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The correction joins Claude transcript discovery, the shared parsed-session contract, dispatch extraction, usage/cost enrichment, native session orchestration, report payload/browser rendering and shared pricing data. Base XL for multiple coupled subsystems and new hierarchy/lifecycle attribution; the core shared-utility red flag raises scope to XXL."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The supplied session and completed research establish measurable failures and invariants: preserve the 61,193,817-token/528-response snapshot, include all 37 agents at three depths, correct asynchronous completion bounds, avoid double counting inclusive allocations and apply verified prices. Only minor presentation and unknown-state details remain for the spec."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The closest existing patterns are deduplicated Claude usage records, injected pure enrichers, per-file defensive parsing and additive report payloads. They cover counting and pricing but do not provide an exact precedent for lifecycle notifications, replay ownership across ancestor/descendant costs or consistent live-file snapshots. Incorrect joins can silently double count spend or report launches as completions, warranting L. Existing fixture and defensive-dedup templates mean no separate missing-template risk bump is applied."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Research indicates approximately 11–13 source files across the adapter/core contract, analytics native loader/orchestration, dispatch and cost helpers, report contracts/client and shared pricing data, with at most a small helper addition. This lies in the 11–15-file band; no data migration or dependency manifest change is expected."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "All required work uses existing TypeScript, filesystem, pricing and browser-report facilities; no new packages, runtime upgrades or configuration additions are indicated."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "The change spans UI (embedded report), Service (analytics derivation and pricing) and DB-Persistence (reading native transcript snapshots and metadata). It does not rewrite native data, migrate a schema, change infrastructure or add an external service."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Calibration: project anchor profile-provider-decoupling.json is L/23 with a persisted-config migration; this task remains L/21 because it has no migration and clearer reproduced requirements despite broad shared scope. The adjacent bundled epmcdme-10203-add-rest-endpoint-with-business-logic.json is M/15 with an established endpoint pattern, fewer files and materially less attribution/lifecycle uncertainty. Neither anchor contradicts the selected band."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): touches the shared ParsedSession contract and shared pricing utility data used beyond the Claude report path."
+  ],
+  "split_recommendation": null
+}
