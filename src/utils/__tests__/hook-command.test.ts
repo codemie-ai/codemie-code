@@ -2,7 +2,10 @@
  * Unit tests for the shared codemie hook-command resolver.
  * @group unit
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('hook-command resolver', () => {
   beforeEach(() => {
@@ -86,6 +89,50 @@ describe('hook-command resolver', () => {
     const { resolveCodemieBinary } = await import('../hook-command.js');
     expect(await resolveCodemieBinary()).toBe('"C:/Program Files/CodeMie/bin/codemie.cmd"');
     platSpy.mockRestore();
+  });
+
+  describe('resolveCodemieBinary: PATH `codemie` owned by another npm package', () => {
+    let root: string;
+
+    // Lays out <root>/node_modules/<pkgName>/bin/<binFile> plus a node_modules/.bin/codemie
+    // symlink to it — what npm creates for any dependency declaring `bin: { codemie }`.
+    function installFakePackage(pkgName: string, binFile: string): string {
+      const pkgDir = join(root, 'node_modules', ...pkgName.split('/'));
+      mkdirSync(join(pkgDir, 'bin'), { recursive: true });
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: pkgName, version: '0.0.0' }));
+      writeFileSync(join(pkgDir, 'bin', binFile), '#!/bin/sh\n');
+      // Symlinks need elevated rights on Windows; the resolved package path exercises the same check.
+      if (process.platform === 'win32') return join(pkgDir, 'bin', binFile);
+      const binLinkDir = join(root, 'node_modules', '.bin');
+      mkdirSync(binLinkDir, { recursive: true });
+      const link = join(binLinkDir, 'codemie');
+      symlinkSync(join(pkgDir, 'bin', binFile), link);
+      return link;
+    }
+
+    beforeEach(() => {
+      root = realpathSync(mkdtempSync(join(tmpdir(), 'hook-command-')));
+    });
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('skips a shadowing `codemie` from @codemieai/codemie-opencode and falls back to argv[1]', async () => {
+      const foreign = installFakePackage('@codemieai/codemie-opencode', 'codemie');
+      vi.doMock('../processes.js', () => ({ getCommandPath: vi.fn().mockResolvedValue(foreign) }));
+      const argvSpy = vi.spyOn(process, 'argv', 'get').mockReturnValue(['node', '/home/u/.npm/bin/codemie']);
+      const { resolveCodemieBinary } = await import('../hook-command.js');
+      expect(await resolveCodemieBinary()).toBe('/home/u/.npm/bin/codemie');
+      argvSpy.mockRestore();
+    });
+
+    it('keeps a PATH `codemie` that resolves into @codemieai/code', async () => {
+      const own = installFakePackage('@codemieai/code', 'codemie.js');
+      vi.doMock('../processes.js', () => ({ getCommandPath: vi.fn().mockResolvedValue(own) }));
+      const { resolveCodemieBinary } = await import('../hook-command.js');
+      expect(await resolveCodemieBinary()).toBe(own.replace(/\\/g, '/'));
+    });
   });
 
   it('resolveCodemieBinary: on non-Windows, a .js argv[1] fallback stays a bare path (shebang-executable)', async () => {

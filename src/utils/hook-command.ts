@@ -3,7 +3,11 @@
  * bare `codemie hook` no longer fails with `command not found` when the hook
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { dirname, join } from 'path';
 import { getCommandPath } from './processes.js';
+
+const CODEMIE_PACKAGE_NAME = '@codemieai/code';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
 const NEEDS_QUOTING = /[ \t,;=()&|<>^%[\]{}]/;
@@ -23,12 +27,39 @@ function toForwardSlash(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-// Prefer the PATH-resolved shim, then the running entry (argv[1]), then bare `codemie`.
+// True when binPath resolves into an installed npm package other than @codemieai/code.
+// Any dependency declaring `bin: { codemie }` (e.g. @codemieai/codemie-opencode <= 0.0.47)
+// is linked into node_modules/.bin and wins `which codemie` inside npm scripts; writing
+// that into hooks runs the wrong program. Paths outside node_modules (npm link, standalone
+// installs, Windows shims) and unreadable paths are trusted as before.
+function isForeignPackageBinary(binPath: string): boolean {
+  try {
+    let current = dirname(realpathSync(binPath));
+    if (!current.split(/[\\/]/).includes('node_modules')) return false;
+
+    while (true) {
+      const manifestPath = join(current, 'package.json');
+      if (existsSync(manifestPath)) {
+        const { name } = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { name?: string };
+        // Nameless manifests (e.g. {"type":"module"} markers) don't own the binary; keep walking.
+        if (name) return name !== CODEMIE_PACKAGE_NAME;
+      }
+      const parent = dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+  } catch {
+    return false;
+  }
+}
+
+// Prefer the PATH-resolved shim (unless another package owns it), then the running entry
+// (argv[1]), then bare `codemie`.
 // Never throws — it runs in launch-critical hook paths, so errors degrade to the next fallback.
 export async function resolveCodemieBinary(): Promise<string> {
   try {
     const resolved = await getCommandPath('codemie');
-    if (resolved) return quoteIfNeeded(toForwardSlash(resolved));
+    if (resolved && !isForeignPackageBinary(resolved)) return quoteIfNeeded(toForwardSlash(resolved));
   } catch {
     // fall through
   }
