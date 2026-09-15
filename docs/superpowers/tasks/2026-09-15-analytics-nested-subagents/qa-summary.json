@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "head": "667bdc219292b55958fc4f21ef8eb74fed0d0d99",
+  "passed": true,
+  "source": "qa-gates-runner final digest",
+  "unit": {
+    "filesPassed": 273,
+    "testsPassed": 4026,
+    "testsFailed": 0
+  },
+  "integration": {
+    "filesPassed": 37,
+    "filesSkipped": 1,
+    "testsPassed": 279,
+    "testsSkipped": 10,
+    "testsFailed": 0
+  },
+  "fullCi": "PASS",
+  "checksPassed": [
+    "dependency licenses",
+    "lint",
+    "typecheck",
+    "build",
+    "unit",
+    "CLI integration",
+    "commitlint",
+    "pre-commit aggregate",
+    "CI aggregate",
+    "commit-range lint",
+    "committed-range Gitleaks scan (8 commits, 0 findings)"
+  ],
+  "limitations": [
+    "Nine SSO scenarios and one live VS Code scenario require opt-in external services.",
+    "Windows CI and GitHub Gitleaks-action context are not available locally.",
+    "No PR exists, so PR-title validation is not applicable."
+  ],
+  "notes": [
+    "The quality guide describes license headers, but the actual license-check command scans dependency licenses via npx license-checker. Network-enabled retry passed without changing dependencies.",
+    "Local socket permissions were needed by tests; exact commands passed after scoped retry.",
+    "No source drift or automatic approval rejection occurred.",
+    "Artifact commit initially exceeded the staged secrets hook buffer (ENOBUFS). Regenerable synthetic HTML/JSON fixture copies were kept local and ignored; the normal hooks then passed, including Gitleaks on approximately 280 KB of staged artifacts.",
+    "The artifact helper uses its final argument as the commit type; docs was supplied to meet the repository Conventional Commits policy."
+  ],
+  "supplementalSecrets": {
+    "artifact": "supplemental-secret-scan.json",
+    "commitsScanned": 8,
+    "findings": 0,
+    "network": "disabled",
+    "repositoryMount": "read-only"
+  }
+}

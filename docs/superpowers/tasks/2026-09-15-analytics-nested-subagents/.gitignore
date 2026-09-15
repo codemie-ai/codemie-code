@@ -1,0 +1,4 @@
+# Machine-local SDLC state, materialized diffs and command logs.
+/*.local.json
+/*.local.diff
+/*.local.log
