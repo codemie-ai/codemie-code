@@ -43,6 +43,10 @@ export interface ParsedSession {
     messages: unknown[];
     toolUseId?: string;   // from agent-<id>.meta.json — links to parent tool_use.id
     agentType?: string;   // from agent-<id>.meta.json — the agent type string
+    parentAgentId?: string;
+    spawnDepth?: number;
+    requestShape?: string;
+    requestNonInteractive?: boolean;
   }>;
 
   /**
