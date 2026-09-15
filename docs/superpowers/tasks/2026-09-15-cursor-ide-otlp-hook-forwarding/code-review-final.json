@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "review_mode": "manual_hitl",
+  "note": "code-review-orchestrator subagent safe-failed twice (no nested Agent-dispatch capability in this session). User manually dispatched 3 of 5 lenses (blind, edge-case, acceptance) and directed triage: fix real defects, dismiss polish/overkill given PoC scope.",
+  "lenses_run": ["review-lens-blind", "review-lens-edge-case", "review-lens-acceptance"],
+  "lenses_skipped": ["review-lens-verification-gap", "review-standards"],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocking",
+      "summary": "connectTargets never calls runCursorIde(); .cursor/hooks.json is never written, making the whole OTLP-forwarding feature unreachable from its documented entry point.",
+      "location": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "status": "fixed",
+      "fix": "Added `if (targets.cursorIde) results.push(await runCursorIde({ force: Boolean(opts.force) }));` to the per-target dispatch block; removed two contradictory stale comments left at the same spot."
+    },
+    {
+      "id": "F2",
+      "severity": "minor",
+      "summary": "Orphaned JSDoc block referencing removed handleSubagentStart/appendCursorEventLog mechanism.",
+      "location": "src/cli/commands/hook.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "F3",
+      "severity": "minor",
+      "summary": "Orphaned JSDoc block referencing removed captureEvent/cursor-ide.event-log.ts mechanism; validateHookEvent docstring referenced already-removed transcriptOptional hook-config flag.",
+      "location": "src/cli/commands/hook.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "F4",
+      "severity": "minor",
+      "summary": "InternalHookEventName carried 7 unused variants (PreToolUse/PostToolUse/PostToolUseFailure/SubagentStart/AgentResponse/AgentThought/WorkspaceOpen) and BaseHookEvent carried 4 unused fields (tool_name/tool_input/tool_output/tool_use_id) — dead code added contrary to the plan's remove-don't-add intent, since cursor-ide bypasses normalizeEventName/routeHookEvent entirely via otlpIngestion.",
+      "location": "src/agents/core/types.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "F5",
+      "severity": "cosmetic",
+      "summary": "Indentation change in hook.ts switch/default flagged by lens-blind as a possible lint violation.",
+      "status": "dismissed",
+      "rationale": "Verified via direct `npx eslint` run — clean, no violation. False alarm."
+    },
+    {
+      "id": "F6",
+      "severity": "minor",
+      "summary": "cursor-ide-only setup now requires SSO-backed profile (loses previous no-daemon standalone path); no warning printed when --cursor-ide combined with higher-priority daemon-identity targets; fallback session-id widened to all agents, not just cursor-ide; JSONL append concurrency not guarded; payload.raw empty-string edge case; OtlpIngestPlugin URL match doesn't strip query/trailing slash; no local POST-failure fallback; blocking await behavior of forwardOtlpEvent; test coverage gaps for --cursor-ide --analytics success path.",
+      "status": "dismissed",
+      "rationale": "User explicit instruction: PoC scope, dismiss overkill/polish findings. None of these break the documented entry point once F1 is fixed; all are reasonable follow-up hardening for a later iteration, not this PoC."
+    }
+  ],
+  "verification": {
+    "typecheck": "clean",
+    "lint": "clean (--max-warnings=0)",
+    "build": "clean (full build incl. plugin asset copy steps)"
+  },
+  "verdict": "approve"
+}

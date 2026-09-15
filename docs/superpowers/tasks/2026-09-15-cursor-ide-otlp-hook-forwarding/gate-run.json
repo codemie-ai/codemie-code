@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14834/cursor-ide-otlp-integration",
+  "head": "20db1b264d67d6667aef8756ed690ba949b77258",
+  "runner": "npm",
+  "started_at": "2026-09-15T13:34:06Z",
+  "completed_at": "2026-09-15T13:39:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2471,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5375,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5988,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10432,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45074,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "267 test files / 3957 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 56963,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "4 failures, all in tests/integration/sso-claude-plugin.test.ts (enrichArgs --model injection assertions). Reproduced identically with the working-tree diff stashed (i.e. at plain HEAD 20db1b2, before this task's src/agents/core/types.ts / hook.ts / connect-orchestrator.ts edits) — pre-existing failure unrelated to the reviewed changes, not caused by them."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "FAIL",
+      "duration_ms": 40453,
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude 'tests/integration/cli-commands/models.test.ts' src/agents/core/types.ts src/cli/commands/hook.ts src/cli/commands/proxy/connect-orchestrator.ts",
+      "exit_code": 1,
+      "notes": "lint-staged hook command (`vitest related --run`). Same 4 pre-existing sso-claude-plugin.test.ts failures as the integration gate, plus 1 flaky failure in src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts:171 (upstreamClosed timing assertion) that passed cleanly (12/12) on two consecutive standalone re-runs of that file — timing-sensitive when run alongside the full related-tests batch, not related to the reviewed changes."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1269,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "First run reported 'No staged changes to scan' (self-skip — validate-secrets.js/Gitleaks only scans staged files). Re-ran after staging the 3 changed files (git add, then git reset to restore the original unstaged working tree): gitleaks scanned ~5.67 KB, no leaks found."
+    }
+  ],
+  "failures": {
+    "integration": "FAIL |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Flag Injection (enrichArgs hook) > should skip injection if env not set\nAssertionError: expected [ '--model', 'claude-sonnet-5', ...(2) ] to deeply equal [ 'test', 'task' ]\n- Expected\n+ Received\n  [\n+   \"--model\",\n+   \"claude-sonnet-5\",\n    \"test\",\n    \"task\",\n  ]\n at tests/integration/sso-claude-plugin.test.ts:183:28\n\nFAIL |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install -> inject\nAssertionError: expected [ '--model', 'claude-sonnet-5', ...(4) ] to deeply equal [ '--plugin-dir', ...(3) ]\n- Expected\n+ Received\n  [\n+   \"--model\",\n+   \"claude-sonnet-5\",\n    \"--plugin-dir\",\n    \"/var/folders/1y/j6fl4v150w9cfxfpt4bb7f9r0000gn/T/codemie-test-claude-plugin/claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n at tests/integration/sso-claude-plugin.test.ts:233:28\n\n(4th failure, 'should skip injection if --plugin-dir already specified', same --model injection mismatch pattern, truncated by tail)\n\nTest Files  1 failed | 36 passed | 1 skipped (38)\nTests  4 failed | 275 passed | 10 skipped (289)\nDuration  54.64s\n\nVerification: `git stash` (removing the 3 reviewed file edits) then re-running just tests/integration/sso-claude-plugin.test.ts reproduced the identical 4 failures at plain HEAD 20db1b2 -- this is a pre-existing failure on the branch, not introduced by the reviewed diff.",
+    "affected": "FAIL |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Flag Injection (enrichArgs hook) > should skip injection if env not set\nAssertionError: expected [ '--model', 'claude-sonnet-5', ...(2) ] to deeply equal [ 'test', 'task' ]\n(same pre-existing failure set as the integration gate; see that entry for the git-stash verification)\n\nFAIL |unit| src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts > transparent VS Code proxy integration > forwards SSE bytes incrementally and unchanged for /v1/chat/completions\nAssertionError: expected true to be false // Object.is equality\n- Expected\n+ Received\n- false\n+ true\n at src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts:171:30\n    169|       const first = await reader.read();\n    170|\n    171|       expect(upstreamClosed).toBe(false);\n\nTest Files  2 failed | 107 passed (109)\nTests  5 failed | 1557 passed (1562)\nDuration  33.67s\n\nVerification: ran this file standalone twice (`npx vitest run --project unit <file>`), both times 12/12 passed -- timing-sensitive/flaky under the full related-tests batch, not caused by the reviewed changes."
+  }
+}

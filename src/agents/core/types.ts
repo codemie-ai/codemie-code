@@ -644,14 +644,7 @@ export type InternalHookEventName =
   | 'Stop'
   | 'UserPromptSubmit'
   | 'SubagentStop'
-  | 'PreCompact'
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'SubagentStart'
-  | 'AgentResponse'
-  | 'AgentThought'
-  | 'WorkspaceOpen';
+  | 'PreCompact';
 
 /**
  * Agent-specific hook configuration.
@@ -662,9 +655,7 @@ export interface AgentHookConfig {
    * Keys are event names emitted by the agent; values are names used by the hook router.
    *
    * Valid internal values: SessionStart, SessionEnd, PermissionRequest, Stop,
-   * UserPromptSubmit, SubagentStop, PreCompact, PreToolUse, PostToolUse,
-   * PostToolUseFailure, SubagentStart, AgentResponse, AgentThought,
-   * WorkspaceOpen.
+   * UserPromptSubmit, SubagentStop, PreCompact.
    *
    * @example
    * eventNameMapping: {
@@ -674,13 +665,6 @@ export interface AgentHookConfig {
    */
   eventNameMapping?: Record<string, InternalHookEventName>;
 
-  /**
-   * When true, `validateHookEvent` treats `transcript_path`/`transcript_paths`
-   * as optional for every event from this agent, not just SessionStart/SessionEnd.
-   * Set by agents (e.g. cursor-ide) whose native payloads frequently omit a
-   * transcript path.
-   */
-  transcriptOptional?: boolean;
 
   /**
    * When true, the `codemie hook` CLI path never exits non-zero for this
@@ -702,16 +686,13 @@ export interface AgentHookConfig {
    */
   writeStdoutResponse?: (nativeEventName: string) => void;
 
+
   /**
-   * Optional per-agent raw event capture, invoked for every routed event
-   * with the transformed payload, the agent-native event name, the internal
-   * event name it maps onto, and the resolved session id. Lets an agent
-   * capture its own events verbatim (e.g. cursor-ide's project-local JSONL
-   * trace) without adding an agent-name literal to `hook.ts` - set only by
-   * agents that need this. Must never throw; must never block or slow the
-   * hook's own processing.
+   * When true, the hook action forwards every event as-is to the local proxy
+   * daemon (see forwardOtlpEvent) and returns immediately, before the shared
+   * transform/validate/route pipeline and its legacy analytics handlers run.
    */
-  captureEvent?: (payload: unknown, nativeEventName: string, internalEventName: string, sessionId: string) => Promise<void>;
+  otlpIngestion?: boolean;
 }
 
 /**
@@ -732,10 +713,6 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
-  tool_name?: string;              // PreToolUse/PostToolUse/PostToolUseFailure: tool identifier
-  tool_input?: unknown;            // PreToolUse/PostToolUse/PostToolUseFailure: tool arguments
-  tool_output?: unknown;           // PostToolUse: tool result
-  tool_use_id?: string;            // Correlates a PreToolUse call with its PostToolUse/failure
 }
 
 // Forward declaration for extension installer

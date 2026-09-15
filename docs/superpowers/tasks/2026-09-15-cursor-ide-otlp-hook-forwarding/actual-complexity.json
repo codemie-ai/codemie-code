@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated": "2026-09-15T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 23,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 6+ distinct components across 4 subsystems: the agent-plugin layer (new AgentHookConfig.otlpIngestion flag in agents/core/types.ts, new cursor-ide agent plugin, registry.ts registration), the shared CLI hook pipeline (hook.ts's createHookCommand action gains the otlpIngestion bypass, stdout-response contract, and neverBlockingExit gating), the proxy CLI workflow (connect-orchestrator.ts's DaemonIdentity/EffectiveClientType extended, early-return fast path removed, new .cursor/hooks.json connector, disconnect-orchestrator wiring), and the proxy server layer (new OtlpIngestPlugin registered in plugins/index.ts). Two new shared utilities (project-root.ts, hook-command.ts's resolveCodemieBinaryFromPackage) were also introduced."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for a full-bypass declarative hook flag or for removing an existing target's daemon-skip fast path (a behavior change that touches the shared connectTargets flow used by every other proxy target). Red flag applied: the new /v1/otlp/hook-events route and the daemon-lifecycle change both touch authentication/authorization (OtlpIngestPlugin requires ctx.metadata.gatewayKeyValidated from gateway-key.plugin.ts, and cursor-ide now goes through the same SSO-credentialed ensureDaemon flow as every other target) — bumped Technical Risk from M to L. Mitigated by reusing the established ProxyPlugin/handleRequest and connector (writeAtomically, backup-on-first-modification) patterns."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "23 files touched (15 modified, 8 new) spanning agents/core, agents/plugins/cursor-ide (new dir), agents/registry.ts, agents/__tests__, cli/commands (hook.ts, proxy/index.ts, proxy/connect-orchestrator.ts, proxy/disconnect-orchestrator.ts, proxy/connectors — new file, proxy/__tests__ x2), providers/plugins/sso/proxy/plugins (index.ts + new otlp-ingest.plugin.ts), utils (hook-command.ts, logger.ts, new project-root.ts), plus docs/ARCHITECTURE-PROXY.md, package.json, .gitignore, and plan.md — 16+ modified/new-file band, matching XXL."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 distinct layers touched: Service/business logic (agent registry + hookConfig declarative dispatch in hook.ts), API/CLI (proxy connect/disconnect command surface, new --cursor-ide/--analytics flags), Infrastructure (proxy daemon lifecycle — DaemonIdentity extended, early-return fast path removed for cursor-ide, new server-side plugin route), and local persistence (new hook-events.jsonl append, .cursor/hooks.json write/merge) — no DB schema migration, so capped at L rather than XL."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): the new /v1/otlp/hook-events route and the cursor-ide daemon-lifecycle change both touch authentication/authorization (gateway-key validation, shared SSO-credentialed daemon spawn path)."
+  ],
+  "split_recommendation": null
+}

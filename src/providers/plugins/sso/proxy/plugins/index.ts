@@ -21,6 +21,7 @@ import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-cont
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
+import { OtlpIngestPlugin } from './otlp-ingest.plugin.js';
 
 /**
  * Register core plugins
@@ -45,6 +46,7 @@ export function registerCorePlugins(): void {
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
+  registry.register(new OtlpIngestPlugin()); // Priority 10 - OTLP hook event ingestion
 }
 
 // Auto-register on import
@@ -68,5 +70,6 @@ export {
   LoggingPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
+export { OtlpIngestPlugin } from './otlp-ingest.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';

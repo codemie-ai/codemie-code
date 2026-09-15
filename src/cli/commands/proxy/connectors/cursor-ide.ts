@@ -22,10 +22,8 @@ import { writeAtomically } from './vscode.js';
 export const CURSOR_IDE_HOOKS_BACKUP_SUFFIX = '.codemie-backup';
 
 /**
- * Cursor's full native hook surface (21 events, per
- * `cursor-ide.plugin.ts`'s `CURSOR_IDE_EVENT_NAME_MAPPING`). Kept in sync
- * with that mapping's keys so the connector and the internal router always
- * agree on Cursor's event surface.
+ * Cursor's full native hook surface (21 events). This list is used to wire
+ * all events into `.cursor/hooks.json` pointing to `codemie hook --agent cursor-ide`.
  */
 export const CURSOR_IDE_HOOK_EVENTS: readonly string[] = [
   'sessionStart',

@@ -76,7 +76,7 @@ export interface ConnectOptions {
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop';
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -90,7 +90,8 @@ export interface DaemonIdentity {
   spawnOptions:
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
-    | { clientType: 'codex-desktop' };
+    | { clientType: 'codex-desktop' }
+    | { clientType: 'cursor-ide' };
 }
 
 /**
@@ -105,6 +106,9 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
+  }
+  if (targets.cursorIde) {
+    return { clientType: 'cursor-ide', spawnOptions: { clientType: 'cursor-ide' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }
@@ -599,10 +603,11 @@ interface CursorIdeRunOptions {
 }
 
 /**
- * Writes/merges `.cursor/hooks.json`. Unlike every other target, cursor-ide
- * needs no daemon: hooks POST directly to `/v1/metrics` via the metrics API
- * client, not through the proxy (spec \u00a7Task 7 "Daemon"). Callable standalone,
- * before any daemon lifecycle.
+ * Writes/merges `.cursor/hooks.json`. cursor-ide now goes through the same
+ * daemon lifecycle as every other target (its hooks forward OTLP events to
+ * the daemon's `/v1/otlp/hook-events` route) \u2014 this just writes the hooks
+ * config file itself, dispatched alongside the other per-target runners
+ * after the daemon is ensured.
  */
 async function runCursorIde(options: CursorIdeRunOptions): Promise<TargetResult> {
   const label = 'Cursor IDE';
@@ -654,25 +659,6 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       'Note: --cursor-ide requires --analytics. Re-run with --cursor-ide --analytics.'
     ));
     return;
-  }
-
-  const otherTargets = Boolean(
-    targets.claudeDesktop || targets.vscode || targets.vscodeClaudeCode || targets.codexDesktop
-  );
-
-  // cursor-ide needs no daemon \u2014 run it standalone, before any daemon lifecycle.
-  // When it is the sole target, print the summary and return without ever
-  // calling resolveSsoProxyConfig/ensureDaemon.
-  let cursorIdeResult: TargetResult | undefined;
-  if (targets.cursorIde) {
-    cursorIdeResult = await runCursorIde({ force: Boolean(opts.force) });
-    if (!otherTargets) {
-      printSummary([cursorIdeResult]);
-      if (!cursorIdeResult.ok) {
-        process.exitCode = 1;
-      }
-      return;
-    }
   }
 
   const verbose = Boolean(opts.verbose);
@@ -760,7 +746,6 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   const results: TargetResult[] = [];
-  if (cursorIdeResult) results.push(cursorIdeResult);
   if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
   if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
@@ -772,6 +757,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
+  if (targets.cursorIde) results.push(await runCursorIde({ force: Boolean(opts.force) }));
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);

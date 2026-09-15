@@ -1,8 +1,6 @@
-import type { AgentMetadata, HookTransformer } from '../../core/types.js';
+import type { AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
-import { CursorIdeHookTransformer } from './cursor-ide.hook-transformer.js';
 import { writeCursorResponse } from './cursor-ide.response.js';
-import { appendCursorEventLog } from './cursor-ide.event-log.js';
 import {
   CURSOR_IDE_AGENT_NAME,
   CURSOR_IDE_CLIENT_TYPE,
@@ -14,40 +12,6 @@ export {
   CURSOR_IDE_CLIENT_TYPE,
   CURSOR_IDE_DISPLAY_NAME,
 } from './cursor-ide.constants.js';
-
-/**
- * Cursor's 21 native hook events, mapped onto CodeMie's internal event
- * names. `hook_event_name` is left untouched by the transformer (Cursor's
- * native name survives routing), so this mapping is what makes the
- * many-to-one collapse (e.g. every tool-permission event onto `PreToolUse`)
- * lossless - `normalizeEventName` resolves the internal name into a local
- * variable without mutating the event.
- *
- * See: https://cursor.com/docs/hooks
- */
-const CURSOR_IDE_EVENT_NAME_MAPPING = {
-  sessionStart: 'SessionStart',
-  sessionEnd: 'SessionEnd',
-  beforeSubmitPrompt: 'UserPromptSubmit',
-  stop: 'Stop',
-  preCompact: 'PreCompact',
-  subagentStart: 'SubagentStart',
-  subagentStop: 'SubagentStop',
-  preToolUse: 'PreToolUse',
-  beforeShellExecution: 'PreToolUse',
-  beforeMCPExecution: 'PreToolUse',
-  beforeReadFile: 'PreToolUse',
-  beforeTabFileRead: 'PreToolUse',
-  postToolUse: 'PostToolUse',
-  afterShellExecution: 'PostToolUse',
-  afterMCPExecution: 'PostToolUse',
-  afterFileEdit: 'PostToolUse',
-  afterTabFileEdit: 'PostToolUse',
-  postToolUseFailure: 'PostToolUseFailure',
-  afterAgentResponse: 'AgentResponse',
-  afterAgentThought: 'AgentThought',
-  workspaceOpen: 'WorkspaceOpen',
-} as const;
 
 export const CursorIdePluginMetadata: AgentMetadata = {
   name: CURSOR_IDE_AGENT_NAME,
@@ -75,10 +39,6 @@ export const CursorIdePluginMetadata: AgentMetadata = {
   },
 
   hookConfig: {
-    eventNameMapping: CURSOR_IDE_EVENT_NAME_MAPPING,
-    // Cursor's transcript_path is nullable ("null if transcripts disabled")
-    // for every event, not just SessionStart/SessionEnd.
-    transcriptOptional: true,
     // Exit code 2 is equivalent to `permission: "deny"` in Cursor and blocks
     // the user's action - analytics ingestion must never be capable of that.
     neverBlockingExit: true,
@@ -86,26 +46,16 @@ export const CursorIdePluginMetadata: AgentMetadata = {
     // (see cursor-ide.response.ts) - this is the sole gate that calls it,
     // set only for this agent.
     writeStdoutResponse: writeCursorResponse,
-    // Primary acceptance signal: capture every delivered event verbatim
-    // (sanitized) to a project-local JSONL trace (see
-    // cursor-ide.event-log.ts). Gated internally behind
-    // CODEMIE_CURSOR_HOOK_TRACE; never throws, never blocks the hook.
-    captureEvent: appendCursorEventLog,
+    // Fire-and-forget forward raw events to the local proxy daemon's
+    // /v1/otlp/hook-events route, bypassing the shared transform/validate/route
+    // pipeline and its legacy analytics handlers.
+    otlpIngestion: true,
   },
 };
 
 export class CursorIdePlugin extends BaseAgentAdapter {
-  private hookTransformer?: HookTransformer;
-
   constructor(metadata: AgentMetadata = CursorIdePluginMetadata) {
     super(metadata);
-  }
-
-  getHookTransformer(): HookTransformer {
-    if (!this.hookTransformer) {
-      this.hookTransformer = new CursorIdeHookTransformer();
-    }
-    return this.hookTransformer;
   }
 
   override async isInstalled(): Promise<boolean> {

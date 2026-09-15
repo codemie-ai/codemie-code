@@ -5,6 +5,7 @@ import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } fro
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
+import { forwardOtlpEvent } from '@/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -632,64 +633,6 @@ async function handlePreCompact(event: BaseHookEvent): Promise<void> {
 }
 
 /**
- * Handle SubagentStart event
- * Observational only: hands off to the per-agent raw event capture (see
- * appendCursorEventLog). Kept allocation-light and non-blocking - it fires
- * on the agent's hot path.
- */
-async function handleSubagentStart(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:SubagentStart] tool_use_id=${event.tool_use_id ?? ''}`);
-}
-
-/**
- * Handle PreToolUse event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handlePreToolUse(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:PreToolUse] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
-}
-
-/**
- * Handle PostToolUse event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handlePostToolUse(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:PostToolUse] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
-}
-
-/**
- * Handle PostToolUseFailure event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handlePostToolUseFailure(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:PostToolUseFailure] tool_name=${event.tool_name ?? ''} tool_use_id=${event.tool_use_id ?? ''}`);
-}
-
-/**
- * Handle AgentResponse event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handleAgentResponse(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:AgentResponse] session_id=${event.session_id}`);
-}
-
-/**
- * Handle AgentThought event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handleAgentThought(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:AgentThought] session_id=${event.session_id}`);
-}
-
-/**
- * Handle WorkspaceOpen event
- * Observational only: hands off to the per-agent raw event capture.
- */
-async function handleWorkspaceOpen(event: BaseHookEvent): Promise<void> {
-  logger.debug(`[hook:WorkspaceOpen] cwd=${event.cwd ?? ''}`);
-}
-
-/**
  * Normalize event name using agent-specific mapping
  * Maps agent-specific event names to internal event names
  *
@@ -756,13 +699,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     const normalizedEventName = normalizeEventName(originalEventName, agentName);
     logger.info(`[hook:router] Normalized event name: "${normalizedEventName}"`);
 
-    // Declarative raw-event capture (e.g. cursor-ide's project-local JSONL
-    // trace) - a no-op for agents that don't declare hookConfig.captureEvent.
-    // Fire before routing so every delivered event is captured even if its
-    // handler throws.
-    await captureAgentEvent(agentName, event, originalEventName, normalizedEventName, sessionId);
-
-    switch (normalizedEventName) {
+switch (normalizedEventName) {
       case 'SessionStart':
         logger.info(`[hook:router] Calling handleSessionStart`);
         await handleSessionStart(event as SessionStartEvent, rawInput, sessionId, config);
@@ -791,35 +728,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         logger.info(`[hook:router] Calling handlePreCompact`);
         await handlePreCompact(event);
         break;
-      case 'SubagentStart':
-        logger.info(`[hook:router] Calling handleSubagentStart`);
-        await handleSubagentStart(event);
-        break;
-      case 'PreToolUse':
-        logger.info(`[hook:router] Calling handlePreToolUse`);
-        await handlePreToolUse(event);
-        break;
-      case 'PostToolUse':
-        logger.info(`[hook:router] Calling handlePostToolUse`);
-        await handlePostToolUse(event);
-        break;
-      case 'PostToolUseFailure':
-        logger.info(`[hook:router] Calling handlePostToolUseFailure`);
-        await handlePostToolUseFailure(event);
-        break;
-      case 'AgentResponse':
-        logger.info(`[hook:router] Calling handleAgentResponse`);
-        await handleAgentResponse(event);
-        break;
-      case 'AgentThought':
-        logger.info(`[hook:router] Calling handleAgentThought`);
-        await handleAgentThought(event);
-        break;
-      case 'WorkspaceOpen':
-        logger.info(`[hook:router] Calling handleWorkspaceOpen`);
-        await handleWorkspaceOpen(event);
-        break;
-      default:
+default:
         logger.info(`[hook:router] Unsupported event: ${normalizedEventName} (silently ignored)`);
         return;
     }
@@ -1437,17 +1346,17 @@ function agentNeverBlocks(agentName?: string): boolean {
 }
 
 /**
- * Look up whether an agent has declared `transcriptOptional` on its
- * `metadata.hookConfig` — lets `validateHookEvent` treat transcript_path as
- * optional for every event for that agent, not just SessionStart/SessionEnd.
+ * Look up whether an agent has declared `otlpIngestion` on its
+ * `metadata.hookConfig` — lets the hook action forward OTLP events
+ * directly to the proxy daemon and bypass the shared pipeline.
  */
-function agentTranscriptOptional(agentName?: string): boolean {
+function agentOtlpIngestion(agentName?: string): boolean {
   if (!agentName) {
     return false;
   }
   try {
     const agent = AgentRegistry.getAgent(agentName);
-    return Boolean(agent?.metadata?.hookConfig?.transcriptOptional);
+    return Boolean(agent?.metadata?.hookConfig?.otlpIngestion);
   } catch {
     return false;
   }
@@ -1497,46 +1406,11 @@ function writeAgentStdoutResponse(agentName: string | undefined, nativeEventName
 }
 
 /**
- * Invoke an agent's declarative raw-event capture, if it has one
- * (`metadata.hookConfig.captureEvent` - see cursor-ide.event-log.ts). A
- * no-op for every agent that doesn't declare one. Never throws and never
- * awaited by the caller's critical path beyond this call: a capture
- * failure must not turn a successful hook into a failed one, and capture
- * must never slow the agent down.
- *
- * @param agentName - Resolved agent name
- * @param payload - The transformed event payload
- * @param nativeEventName - The agent-native event name (`event.hook_event_name`)
- * @param internalEventName - The internal event name it was routed as
- * @param sessionId - Resolved session id
- */
-async function captureAgentEvent(
-  agentName: string | undefined,
-  payload: unknown,
-  nativeEventName: string,
-  internalEventName: string,
-  sessionId: string
-): Promise<void> {
-  if (!agentName) {
-    return;
-  }
-  try {
-    const agent = AgentRegistry.getAgent(agentName);
-    const capture = agent?.metadata?.hookConfig?.captureEvent;
-    if (typeof capture === 'function') {
-      await capture(payload, nativeEventName, internalEventName, sessionId);
-    }
-  } catch (error) {
-    logger.debug('[hook] Failed to capture agent event (non-blocking):', error);
-  }
-}
-
-/**
  * Validate hook event required fields
  * @param event - Hook event to validate
  * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
- * @param agentName - Resolved agent name (CLI mode only); used to look up declarative
- *   `neverBlockingExit`/`transcriptOptional` hook-config flags via AgentRegistry
+ * @param agentName - Resolved agent name (CLI mode only); used to look up the declarative
+ *   `neverBlockingExit` hook-config flag via AgentRegistry
  * @throws Error if validation fails and config is provided, or the resolved agent
  *   declares `neverBlockingExit`
  */
@@ -1565,12 +1439,10 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig, 
 
   // transcript_path/transcript_paths are optional for SessionStart/SessionEnd in
   // programmatic mode (transcript may not exist yet at start, or may not be
-  // discoverable at end). Some agents provide multiple transcript paths, and an
-  // agent may declare transcript_path optional for every event via hookConfig.
+  // discoverable at end). Some agents provide multiple transcript paths.
   const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
   const hasTranscriptPath = Boolean(event.transcript_path) || (event.transcript_paths && event.transcript_paths.length > 0);
-  const transcriptOptional = agentTranscriptOptional(agentName) || transcriptOptionalEvents.includes(event.hook_event_name);
-  if (!hasTranscriptPath && !transcriptOptional) {
+  if (!hasTranscriptPath && !transcriptOptionalEvents.includes(event.hook_event_name)) {
     fail('Missing required field: transcript_path');
   }
 }
@@ -1732,6 +1604,17 @@ export function createHookCommand(): Command {
             return; // Non-blocking agent: fail without exiting 2
           }
           process.exit(2); // Blocking error
+        }
+
+        // OTLP ingestion bypass: if agent declares otlpIngestion, forward the
+        // raw event to the local proxy daemon and exit immediately, bypassing
+        // the shared transform/validate/route pipeline and its legacy analytics.
+        if (agentOtlpIngestion(agentName)) {
+          await forwardOtlpEvent(input, agentName);
+          writeAgentStdoutResponse(agentName, event.hook_event_name);
+          await logger.close();
+          process.exitCode = 0;
+          return;
         }
 
         // Apply hook transformation if agent provides a transformer, before
