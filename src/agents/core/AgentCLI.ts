@@ -347,6 +347,13 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
+      // Mark an explicit --model CLI flag so plugin-level auto-heal logic (e.g.
+      // Claude's live-catalog fallback) can tell it apart from a value that just
+      // came from a persisted profile, and never silently substitute it.
+      if (options.model) {
+        providerEnv.CODEMIE_MODEL_SOURCE = 'cli';
+      }
+
       // JWT token from CLI overrides the profile's auth method in envOverrides.
       // Without this, exportProviderEnvVars would emit CODEMIE_AUTH_METHOD='sso'
       // which gets spread after process.env in BaseAgentAdapter.run(), erasing the
