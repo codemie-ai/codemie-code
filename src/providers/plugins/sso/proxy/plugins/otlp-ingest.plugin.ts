@@ -204,4 +204,19 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
       logger.debug(`[otlp-ingest] pushToBackend: ${msg}`);
     }
   }
+
+  // TODO(colleague): implement OTLP metrics forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_METRICS
+  private async pushMetrics(_data: unknown): Promise<void> {
+    return;
+  }
+
+  // TODO(colleague): implement OTLP logs forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS
+  private async pushLogs(_data: unknown): Promise<void> {
+    return;
+  }
+
+  // TODO(colleague): implement OTLP traces forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES
+  private async pushTraces(_data: unknown): Promise<void> {
+    return;
+  }
 }
