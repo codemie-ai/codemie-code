@@ -133,10 +133,11 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
 function initializeLoggerContext(): string {
   const agentName = process.env.CODEMIE_AGENT;
   if (!agentName) {
-    // Debug: Log all environment variables that start with CODEMIE_
+    // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
+    // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
+    // and stderr is surfaced by agent UIs and transcripts.
     const codemieEnvVars = Object.keys(process.env)
       .filter(key => key.startsWith('CODEMIE_'))
-      .map(key => `${key}=${process.env[key]}`)
       .join(', ');
     console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
     throw new Error('CODEMIE_AGENT environment variable is required');
@@ -1339,6 +1340,7 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
     }
     logger.error('[hook] Missing required field: transcript_path');
     logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    console.error('codemie hook: missing required field in hook input: transcript_path');
     process.exitCode = 2;
     return;
   }
@@ -1472,6 +1474,7 @@ export function createHookCommand(): Command {
           const parseMsg = parseError instanceof Error ? parseError.message : String(parseError);
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);
           logger.debug(`[hook] Invalid JSON: ${input.substring(0, 200)}...`);
+          console.error(`codemie hook: failed to parse hook input JSON: ${parseMsg}`);
           process.exit(2); // Blocking error
         }
 
@@ -1479,12 +1482,14 @@ export function createHookCommand(): Command {
         if (!event.session_id) {
           logger.error('[hook] Missing required field: session_id');
           logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: session_id');
           process.exit(2); // Blocking error
         }
 
         if (!event.hook_event_name) {
           logger.error('[hook] Missing required field: hook_event_name');
           logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: hook_event_name');
           process.exit(2); // Blocking error
         }
 
@@ -1544,6 +1549,10 @@ export function createHookCommand(): Command {
 
         // Flush logger before exit
         await logger.close();
+        // Surface a one-line reason on stderr: agents report a bare "Failed with
+        // non-blocking status code: No stderr output" when the hook exits
+        // non-zero silently, leaving the real cause only in the file log.
+        console.error(`codemie hook: ${eventName} failed: ${message}`);
         // Use process.exitCode instead of process.exit() to allow graceful shutdown
         // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
         process.exitCode = 1;
