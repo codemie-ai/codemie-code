@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Wire the proxy leg of cursor-ide OTLP event-hook forwarding to the CodeMie backend as a PoC no-op passthrough with fire-and-forget push and scaffolding stubs for metrics/logs/traces.",
+  "generated": "2026-09-16T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 11,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "OtlpIngestInterceptor gains a constructor, transformToEventHookRecord, pushToBackend, and three no-op stub methods, plus a small CODEMIE_ENDPOINTS addition in sso.http-client.ts — 2 components in the same proxy-plugin/SSO-client tier, both patterns clearly established (SSOSessionSyncPlugin.createInterceptor, forwardOtlpEvent)." },
+    { "dimension": "technical_risk", "reason": "Fire-and-forget fetch and credentials-resolution are directly copyable from existing precedent (forwardOtlpEvent, SSOSessionSyncPlugin), but the specific combination — unconditionally-registered plugin with optional backend connectivity and no ConfigurationError gate — has no exact precedent in this repo, and otlp-ingest.plugin.ts has zero existing test coverage, so a thrown error inside the new code could regress the working local-JSONL-append 202 response into a 500 if the 'never throws' contract slips." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-09-16-cursor-ide-otlp-event-hooks (2026-09-16)
+
+- **Unbounded request body before JSON.parse/appendFile** — `src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts:97-124`. `ctx.requestBody` is read and passed to `toString()`/`JSON.parse()`/`appendFile()` with no size cap, so a very large Cursor payload (e.g. a large transcript/tool-output) causes unbounded memory use per request. Pre-existing: every proxy plugin that reads `ctx.requestBody` (request-sanitizer, mcp-auth, codex/claude/kimi/vscode request-normalizers) shares the same unbounded-body characteristic from the shared `readBody()` in `sso.proxy.ts`; this diff does not introduce or change that behavior, it only adds one more consumer of the existing pattern.

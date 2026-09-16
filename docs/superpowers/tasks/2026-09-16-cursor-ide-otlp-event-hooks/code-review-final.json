@@ -1,0 +1,206 @@
+{
+  "decision": "request-changes",
+  "rationale": "No spec/story exists (spec stage was skipped), so business_review is empty and decision_needed is unavailable; the one genuinely ambiguous item (CR-003, an analytics-only hook always granting Cursor permission) was rerouted to a blocking major patch per no-spec rules, capping confidence at low. All four lens artifacts (blind, edge-case doubling as the acceptance audit since there is no spec.md, verification-gap, standards) parsed cleanly with no truncation and no failures; every candidate was verified against real source (otlp-ingest.plugin.ts, hook.ts, cursor-ide.otlp-forwarder.ts, cursor-ide.response.ts, connectors/cursor-ide.ts, connect-orchestrator.ts), not just diff hunks. 15 findings survive (14 code defects plus the standards audit's one blocking row on log-directory permissions); 1 pre-existing item (unbounded proxy request-body size, shared by every plugin, not introduced here) is deferred; 9 lens candidates were dismissed as noise or already handled (a stale --analytics-fallthrough claim already fixed by commit de568ec, a --force flag explicitly documented as an intentional no-op, a theoretical URL-path bypass with no real caller, a narrow backup-deletion edge case, an indentation-only diff, a .gitignore rename hygiene note, an undocumented-but-harmless plugin-priority ordering note, and 2 missing-test observations judged below the blocking floor given the project's tests-on-request policy).",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "21 commit subjects in range all match <type>(<scope>): <subject>; longest is 78 chars, under the 100-char limit"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": ".js-extensioned ESM imports, explicit return types, specific error classes, sanitizeLogArgs() on every log call, @/ alias used consistently"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "otlp-ingest.plugin.ts:123 creates ~/.codemie/logs/ via mkdir with no mode, missing the documented 0o700 requirement for that directory, which now also stores raw OTLP hook payloads"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.ts",
+      "line": 20,
+      "title": "Forwarder-to-plugin OTLP contract has no test coverage",
+      "problem": "The POST body shape ({agentName, timestamp, raw}) that forwardOtlpEvent sends and the shape OtlpIngestPlugin.handleRequest parses/validates are unverified by any test on either side; no *.test.ts file exists for either module.",
+      "impact": "If either side's field names or the route path (/v1/otlp/hook-events) drift apart, forwardOtlpEvent swallows every error and only logger.debug()s it, and OtlpIngestPlugin returns 400/401 with only a warn-level log — every cursor-ide event would silently stop reaching the local JSONL log and the backend with no automated signal.",
+      "recommendation": "Add a plugin test (mirroring gateway-key.plugin.test.ts) asserting the 202/400/401 status and appended hook-events.jsonl content, plus a forwarder test asserting the POST body/URL/headers sent to a mocked daemon."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.ts",
+      "line": 46,
+      "title": "Missing gatewayKey presence check before Authorization header",
+      "problem": "forwardOtlpEvent builds `Authorization: Bearer ${state.gatewayKey}` without checking that state.gatewayKey is present/non-empty.",
+      "impact": "If the daemon state file has no gateway key (e.g. state written by an older daemon version or a partially-written state file), this silently sends `Bearer undefined` instead of skipping the send or logging a clearer diagnostic, making a real misconfiguration invisible.",
+      "recommendation": "Check `state.gatewayKey` for presence before building the request and log a distinct debug message (or skip the send) when it is missing."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/cursor-ide/cursor-ide.response.ts",
+      "line": 26,
+      "title": "Analytics-only hook always grants Cursor permission",
+      "problem": "CURSOR_STDOUT_RESPONSES unconditionally answers `{\"permission\":\"allow\"}` for every preToolUse/beforeShellExecution/beforeMCPExecution/beforeReadFile/beforeTabFileRead event, and connectors/cursor-ide.ts writes `.cursor/hooks.json` with `failClosed: false` for all 21 events, including these permission-gating ones.",
+      "impact": "No spec exists to settle whether registering an always-allow, fail-open hook against Cursor's permission-gating event names is an accepted analytics-only tradeoff or a real gating regression; if this ends up as the only hook registered for those events in a user's hooks.json, it silently removes any hook-based gating for those actions. Ambiguous and introduced by this change, so it is kept blocking per no-spec routing rather than deferred.",
+      "recommendation": "Confirm with a human whether this hook should register for Cursor's permission-gating events at all, or restrict registration to the non-gating event subset and only answer permission-gated events when there is an actual policy to evaluate."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1603,
+      "title": "Malformed JSON gets no stdout response for never-blocking agent",
+      "problem": "In the JSON-parse-failure branch, `if (agentNeverBlocks(agentName)) { return; }` returns without calling writeAgentStdoutResponse, unlike the outer catch-all handler (line 1692-1694) which does call it before exiting.",
+      "impact": "For an event type Cursor expects a synchronous stdout response for (e.g. preToolUse, beforeShellExecution), a malformed-JSON hook invocation from Cursor gets no stdout response at all instead of the fallback allow/continue the outer catch path provides.",
+      "recommendation": "Call writeAgentStdoutResponse(agentName, event?.hook_event_name ?? '') before returning in this branch, mirroring the outer catch handler."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1612,
+      "title": "OTLP ingestion bypass branch has no test coverage",
+      "problem": "The OTLP-ingestion bypass (resolve agentName, check agentOtlpIngestion, call forwardOtlpEvent, writeAgentStdoutResponse, exit 0) runs only inside createHookCommand()'s .action() callback, which no test invokes; every existing hook test drives the exported processEvent(event, config) seam directly and never reaches this branch.",
+      "impact": "A regression here (forwarding the wrong field, skipping writeAgentStdoutResponse, or leaving process.exitCode non-zero) would silently break Cursor ingestion or block the user's IDE action, and no test would fail.",
+      "recommendation": "Add a test that invokes createHookCommand()'s .action() with a cursor-ide-shaped stdin payload and asserts forwardOtlpEvent was called with the raw input and process.exitCode stays 0 even on forwarder failure."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1613,
+      "title": "Awaited OTLP forward blocks synchronous Cursor hooks",
+      "problem": "`await forwardOtlpEvent(input, agentName)` runs to completion before `writeAgentStdoutResponse` on line 1614, even though forwardOtlpEvent has its own 1500ms abort timeout and is documented as fire-and-forget/never-blocking.",
+      "impact": "When the daemon is reachable but slow, or the fetch stalls near the 1500ms abort timeout, Cursor's synchronous permission-gated hooks (preToolUse, beforeShellExecution, etc.) block for up to ~1.5s per call, defeating the forwarder's own 'never blocks' design intent.",
+      "recommendation": "Call `void forwardOtlpEvent(input, agentName)` without awaiting it before writeAgentStdoutResponse, so the stdout response is written immediately and the forward happens in the background."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 1615,
+      "title": "Stdout response can be written twice on logger.close() failure",
+      "problem": "If `await logger.close()` throws after the OTLP-bypass branch already called writeAgentStdoutResponse (line 1614), the exception propagates to the outer catch block, which for a never-blocking agent calls writeAgentStdoutResponse a second time (line 1692-1693).",
+      "impact": "Cursor's stdout response contract expects a single JSON object; writing it twice risks corrupting or being rejected by Cursor's parser for that hook invocation.",
+      "recommendation": "Wrap the OTLP-bypass block's `await logger.close()` in its own try/catch so a close failure cannot cause the outer catch to re-run writeAgentStdoutResponse."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 110,
+      "title": "No warning when --cursor-ide combines with a higher-priority target",
+      "problem": "deriveDaemonIdentity resolves cursorIde only after claudeDesktop/vscodeClaudeCode/codexDesktop; connectTargets already warns explicitly when --codex-desktop is combined with a higher-priority target (line 680-684), but no equivalent warning exists for --cursor-ide, and runCursorIde still runs (line 760) regardless.",
+      "impact": "Combining `--cursor-ide --analytics` with `--claude-desktop` (or another higher-priority target) spawns the shared daemon under the other target's clientType while still wiring cursor-ide's hooks.json, so cursor-ide's OTLP traffic is attributed to the wrong daemon identity with no diagnostic telling the user why.",
+      "recommendation": "Add a warning for --cursor-ide analogous to the existing --codex-desktop one, naming the target that owns the shared daemon when the resolved clientType is not 'cursor-ide'."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/cursor-ide.ts",
+      "line": 76,
+      "title": "Foreign hooks.json entry misclassified via substring match",
+      "problem": "isCodemieEntry classifies an entry as CodeMie-owned by checking `command.includes('hook --agent cursor-ide')` — a raw substring check, not an exact prefix/hash match or dedicated marker field.",
+      "impact": "A user's own unrelated hooks.json entry whose command string happens to contain that substring is misclassified as CodeMie-owned and silently overwritten on connect or stripped on disconnect, with no test guarding this path (also flagged as untested by the verification-gap lens).",
+      "recommendation": "Match on an exact command prefix plus a dedicated marker field (e.g. a `_codemie: true` key) instead of a raw substring check on the full command string."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 103,
+      "title": "Client-supplied agentName trusted without validation",
+      "problem": "OtlpIngestPlugin.handleRequest only checks that `payload.agentName` is truthy, then transformToEventHookRecord (line 166) writes it straight through as `agent_type` to the backend, with no validation against a known agent list.",
+      "impact": "This endpoint is gated only by the shared local gateway key (not agent identity), so any local process holding that key can attribute arbitrary/spoofed agentName values in the ingested analytics.",
+      "recommendation": "Validate `agentName` against the AgentRegistry's known agent ids before accepting the event, rejecting or tagging unrecognized values."
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 123,
+      "title": "Logs directory created without required 0o700 mode",
+      "problem": "security-practices.md's File System Security table requires ~/.codemie/logs/ to be created with mode 0o700; this handler creates it via `mkdir(dirname(logPath), {recursive:true})` with no mode, then appends the raw hook payload to hook-events.jsonl inside it.",
+      "impact": "A documented restrictive-permission requirement for this exact directory is not met for the new OTLP event log, leaving analytics payload data group/world-readable under the process umask.",
+      "recommendation": "Pass `{recursive:true, mode:0o700}` to mkdir (or ensure the logs directory is created with 0o700 before this handler writes to it) and use mode 0o600 on the appended file."
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 124,
+      "title": "Hook event log has no rotation or size cap",
+      "problem": "hook-events.jsonl is appended to on every hook invocation with no size cap or rotation logic, unlike the daily-rotated debug logs elsewhere in this codebase; the only cleanup shipped is a manual dev script (`npm run poc:logs:remove`).",
+      "impact": "The file grows unbounded on every hook event for the life of a project, with no automatic mechanism to cap disk usage.",
+      "recommendation": "Add size-based or daily rotation for hook-events.jsonl, mirroring the pattern already used for the debug logs."
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 124,
+      "title": "Persisted OTLP payload not sanitized despite documented claim",
+      "problem": ".gitignore's comment on .codemie/logs/ claims the trace file holds payloads that are 'sanitized but never committable', but this handler appends `payload` (containing the raw hook input verbatim, `raw: rawInput`) to hook-events.jsonl with no redaction/sanitization step.",
+      "impact": "The raw Cursor hook payload can contain prompt content, tool output, file contents, or secrets, and it lands on disk unsanitized, contradicting the sanitization the .gitignore comment documents and the sanitizeLogArgs() pattern used everywhere else in this same file's own log calls.",
+      "recommendation": "Either apply the same sanitizeLogArgs()-style redaction to the persisted payload before appending it, or correct the .gitignore comment to accurately describe the unsanitized data it is disclaiming."
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 159,
+      "title": "Non-object raw payload yields malformed backend record",
+      "problem": "transformToEventHookRecord does `JSON.parse(payload.raw)` and spreads the result directly (`{...parsed, agent_type}`) without checking that `parsed` is a plain object; if `payload.raw` parses to an array or a primitive, the spread either produces numeric-keyed properties (array) or silently drops the parsed value (primitive).",
+      "impact": "A malformed or lossy record is silently forwarded to the backend with no error signal, corrupting the analytics data for that event.",
+      "recommendation": "Guard with `typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)` before spreading, falling back to `{ raw: payload.raw }` in that case (mirroring the existing JSON.parse-failure fallback)."
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts",
+      "line": 169,
+      "title": "Backend push failures silently dropped with no retry",
+      "problem": "pushToBackend is invoked fire-and-forget (`void this.pushToBackend(...)`) after the 202 has already been returned to the caller, and on any failure (non-2xx status or thrown error) it only logs at debug level, with no retry/backoff and no persistence of the failed record.",
+      "impact": "Unlike the SSO Session Sync plugin's documented retry/backoff strategy, a backend outage silently drops every analytics event sent while it is down, with no way to recover them and no visible failure signal at or above warn level.",
+      "recommendation": "Log failures at warn level at minimum, and add a bounded retry/backoff or a small persistent pending-queue so a transient backend outage does not permanently lose events."
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14834/cursor-ide-otlp-integration",
+  "head": "b352778b2c9f8944861af02ed14694a6b92d5549",
+  "runner": "npm",
+  "started_at": "2026-09-16T13:57:00Z",
+  "completed_at": "2026-09-16T14:02:15Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3082,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5215,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8639,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12468,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 54221,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "267 files / 3957 tests passed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 44157,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 files passed, 1 skipped; 279 tests passed, 10 skipped. First attempt (44157ms measured run used ANTHROPIC_MODEL/CODEMIE_MODEL unset) failed 4 assertions in tests/integration/sso-claude-plugin.test.ts because this shell session has ambient ANTHROPIC_MODEL and CODEMIE_MODEL env vars that leak into the CLI enrichment logic under test, injecting an unexpected '--model claude-sonnet-5' into argv the test expects untouched. Isolated re-run of that single spec with both vars unset passed cleanly (14/14), confirming it is environment pollution from this agent's own runtime, not a code regression. Full suite re-run with both vars unset (recorded here) is the authoritative result."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1055,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script printed 'No staged changes to scan' — it only scans `git diff --staged`, and every change on this branch is already committed (nothing staged). To run it for real locally, stage the branch diff (e.g. `git diff origin/main...HEAD > /tmp/d.diff && git apply --cached /tmp/d.diff` or `git reset --soft origin/main && git add -A`) before invoking. CI's secrets-detection job (gitleaks-action) runs unconditionally on the PR diff regardless of local staging state, so this check is still owed to CI per the guide's own caveat."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 819,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1401,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Guide's commitlint gate only checks HEAD~1..HEAD, but CI's validate-commits job checks the full PR range (base sha to HEAD) and branch is 20 commits ahead of origin/main; ran the union to cover what CI actually enforces. All 20 commit messages pass Conventional Commits."
+    },
+    {
+      "id": "secrets-detection-ci",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "GitHub Actions gitleaks-action job requires a live PR context (pull_request event, GITHUB_TOKEN, gitleaks-action container) not reachable from this local checkout; local validate:secrets gate above is the closest available proxy and was SKIPPED (see its notes)."
+    }
+  ],
+  "failures": {}
+}

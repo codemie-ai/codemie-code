@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-autonomous",
+  "decided_at": "2026-09-16T09:36:01Z",
+  "complexity": {"size": "S", "total": 11},
+  "signals": {"risk_flags": [], "ui": "unknown", "docs_only": false, "ticket_adapter": false, "requirements": "clear"},
+  "stages": {"spec": "skip", "feature_verification": "conditional", "actual_complexity": "skip"},
+  "reasons": {"spec_reason": "complexity total 11 < 15, no risk flags, requirements clear", "feature_verification_reason": "decide at Stage 7 from the diff against gate-plan.local.json ui_globs", "actual_complexity_reason": "complexity total 11 < 15 and no ticket adapter — nothing consumes the score"},
+  "escalate_on": ["security","breaking-change"]
+}
