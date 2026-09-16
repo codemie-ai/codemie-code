@@ -1,9 +1,0 @@
-{
-  "decision": "request-changes",
-  "rationale": "code-review-orchestrator could not dispatch any review lens or review-standards after two attempts: its session reports 'No such tool available: Task' (no Agent/Task dispatch tool enabled in that subagent context). review-triage was therefore never dispatched and no automated verdict could be produced. Diff was frozen successfully (1537 lines, 6 files, sha256 0927cea5f990ff892ac96252ef7492239493f32be264c5ca06fe282a56069c0d) but never reviewed.",
-  "confidence": "low",
-  "risk_flags": [],
-  "business_review": [],
-  "standards_review": [],
-  "findings": []
-}
