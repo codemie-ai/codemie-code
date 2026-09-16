@@ -148,7 +148,7 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
         mode: 0o600,
       });
 
-      logger.debug(
+      logger.info(
         '[otlp-ingest] Appended event',
         ...sanitizeLogArgs({
           agentName: payload.agentName,
@@ -198,9 +198,13 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
   }
 
   private async pushToBackend(record: Record<string, unknown>): Promise<void> {
+    const url = `${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
     try {
       if (!this.credentials || !this.baseUrl) {
-        logger.debug('[otlp-ingest] pushToBackend: no credentials/baseUrl, skipping');
+        logger.info(
+          '[otlp-ingest] pushToBackend: no credentials/baseUrl, skipping',
+          ...sanitizeLogArgs({ hasCredentials: Boolean(this.credentials), baseUrl: this.baseUrl })
+        );
         return;
       }
 
@@ -210,29 +214,37 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
       } else if (isJWTCredentials(this.credentials)) {
         headers = buildAuthHeaders(this.credentials.token);
       } else {
-        logger.debug('[otlp-ingest] pushToBackend: unrecognized credentials shape, skipping');
+        logger.info('[otlp-ingest] pushToBackend: unrecognized credentials shape, skipping');
         return;
       }
       headers['Content-Type'] = 'application/x-ndjson';
 
+      logger.info('[otlp-ingest] pushToBackend: sending', ...sanitizeLogArgs({ url }));
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 1500);
       try {
-        const response = await fetch(`${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`, {
+        const response = await fetch(url, {
           method: 'POST',
           headers,
           body: `${JSON.stringify(record)}\n`,
           signal: controller.signal,
         });
         if (!response.ok) {
-          logger.debug(`[otlp-ingest] pushToBackend: received status ${response.status}`);
+          const bodyText = await response.text().catch(() => '');
+          logger.info(
+            `[otlp-ingest] pushToBackend: received status ${response.status}`,
+            ...sanitizeLogArgs({ url, body: bodyText.slice(0, 500) })
+          );
+        } else {
+          logger.info(`[otlp-ingest] pushToBackend: success (status ${response.status})`, ...sanitizeLogArgs({ url }));
         }
       } finally {
         clearTimeout(timeout);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug(`[otlp-ingest] pushToBackend: ${msg}`);
+      logger.info(`[otlp-ingest] pushToBackend: ${msg}`, ...sanitizeLogArgs({ url }));
     }
   }
 

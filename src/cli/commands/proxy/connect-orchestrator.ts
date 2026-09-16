@@ -212,13 +212,19 @@ export async function resolveSsoProxyConfig(
     };
   }
 
-  const activeConfig = await ConfigLoader.load(process.cwd());
+  // Resolve the active profile by name first so ConfigLoader.load()'s
+  // profile-protection branch engages - otherwise env vars like
+  // CODEMIE_BASE_URL silently clobber the profile's baseUrl below.
+  const activeProfileName = await ConfigLoader.getActiveProfileName(process.cwd());
+  const activeConfig = await ConfigLoader.load(
+    process.cwd(),
+    activeProfileName ? { name: activeProfileName } : undefined
+  );
   const activeProvider = ProviderRegistry.getProvider(activeConfig.provider ?? '');
   if (activeProvider?.authType === 'sso') {
     return { config: activeConfig, profileSource: 'active' };
   }
 
-  const activeProfileName = await ConfigLoader.getActiveProfileName(process.cwd());
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
@@ -371,7 +377,10 @@ async function ensureDaemon(
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
       ...identity.spawnOptions,
-      syncApiUrl: config.ssoConfig?.apiUrl,
+      // config.ssoConfig is never populated anywhere in this codebase - it's a
+      // dead field. Fall back to codeMieUrl/baseUrl, the same convention
+      // sso.models.ts uses to resolve the CodeMie backend API URL.
+      syncApiUrl: config.codeMieUrl || config.baseUrl,
       syncCodeMieUrl: config.codeMieUrl,
     });
     startedInThisRun = true;
