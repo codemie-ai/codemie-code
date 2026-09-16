@@ -118,10 +118,35 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
         return true;
       }
 
-      // Append event to hook-events.jsonl
+      // This endpoint is gated only by the shared local gateway key, not by
+      // agent identity, so reject an agentName that isn't a known agent id
+      // rather than letting an arbitrary/spoofed value be attributed in the
+      // ingested analytics.
+      const { AgentRegistry } = await import('../../../../../agents/registry.js');
+      if (!AgentRegistry.getAgentNames().includes(payload.agentName)) {
+        logger.warn(
+          '[otlp-ingest] Rejected request: unrecognized agentName',
+          ...sanitizeLogArgs({ agentName: payload.agentName })
+        );
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: 'Unrecognized agentName' },
+        }));
+        return true;
+      }
+
+      // Append event to hook-events.jsonl. The directory and file carry the
+      // 0o700/0o600 modes security-practices.md requires for ~/.codemie/logs/,
+      // since this file now stores raw hook payloads that may contain
+      // sensitive content.
       const logPath = getCodemiePath('logs', 'hook-events.jsonl');
-      await mkdir(dirname(logPath), { recursive: true });
-      await appendFile(logPath, `${JSON.stringify(payload)}\n`, 'utf-8');
+      await mkdir(dirname(logPath), { recursive: true, mode: 0o700 });
+      await appendFile(logPath, `${JSON.stringify(payload)}\n`, {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
 
       logger.debug(
         '[otlp-ingest] Appended event',
@@ -157,13 +182,19 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
 
   // Deliberate no-op passthrough pending real Cursor-event -> backend-field mapping.
   private transformToEventHookRecord(payload: OtlpEventPayload): Record<string, unknown> {
-    let parsed: Record<string, unknown>;
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(payload.raw) as Record<string, unknown>;
+      parsed = JSON.parse(payload.raw);
     } catch {
-      parsed = { raw: payload.raw };
+      parsed = undefined;
     }
-    return { ...parsed, agent_type: payload.agentName };
+    // Only spread a genuine plain object - an array or primitive would
+    // either produce numeric-keyed properties or silently drop the parsed
+    // value, corrupting the record with no error signal. Fall back to the
+    // same shape used for a JSON.parse failure in that case.
+    const isPlainObject = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+    const base = isPlainObject ? (parsed as Record<string, unknown>) : { raw: payload.raw };
+    return { ...base, agent_type: payload.agentName };
   }
 
   private async pushToBackend(record: Record<string, unknown>): Promise<void> {
