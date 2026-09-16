@@ -8,6 +8,9 @@ import { getCodemiePath } from '../../../../../utils/paths.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { isSSOCredentials, isJWTCredentials } from '../../../../core/types.js';
+import { buildAuthHeaders } from '../../../../core/codemie-auth-helpers.js';
+import { CODEMIE_ENDPOINTS } from '../../sso.http-client.js';
 
 interface OtlpEventPayload {
   agentName: string;
@@ -128,6 +131,8 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
         })
       );
 
+      void this.pushToBackend(this.transformToEventHookRecord(payload));
+
       // Return 202 Accepted
       res.statusCode = 202;
       res.setHeader('Content-Type', 'application/json');
@@ -147,6 +152,56 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
         error: { type: 'internal_server_error', message: 'Internal server error' },
       }));
       return true;
+    }
+  }
+
+  // Deliberate no-op passthrough pending real Cursor-event -> backend-field mapping.
+  private transformToEventHookRecord(payload: OtlpEventPayload): Record<string, unknown> {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(payload.raw) as Record<string, unknown>;
+    } catch {
+      parsed = { raw: payload.raw };
+    }
+    return { ...parsed, agent_type: payload.agentName };
+  }
+
+  private async pushToBackend(record: Record<string, unknown>): Promise<void> {
+    try {
+      if (!this.credentials || !this.baseUrl) {
+        logger.debug('[otlp-ingest] pushToBackend: no credentials/baseUrl, skipping');
+        return;
+      }
+
+      let headers: Record<string, string>;
+      if (isSSOCredentials(this.credentials)) {
+        headers = buildAuthHeaders(this.credentials.cookies);
+      } else if (isJWTCredentials(this.credentials)) {
+        headers = buildAuthHeaders(this.credentials.token);
+      } else {
+        logger.debug('[otlp-ingest] pushToBackend: unrecognized credentials shape, skipping');
+        return;
+      }
+      headers['Content-Type'] = 'application/x-ndjson';
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1500);
+      try {
+        const response = await fetch(`${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`, {
+          method: 'POST',
+          headers,
+          body: `${JSON.stringify(record)}\n`,
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          logger.debug(`[otlp-ingest] pushToBackend: received status ${response.status}`);
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(`[otlp-ingest] pushToBackend: ${msg}`);
     }
   }
 }
