@@ -1117,22 +1117,26 @@
     else if (d.relationshipStatus == null) panel.appendChild(el('p', 'tl-note', 'Parent relationship was not recorded.'));
     var estimated = d.attributionStatus === 'estimated';
     var hasOwn = d.attributionScope === 'own' || d.inclusiveTokens != null;
+    var hasInclusive = d.inclusiveTokens != null || d.inclusiveCostUSD != null;
+    var hasDescendants = hasInclusive && entry.children.length > 0;
+    var totalCost = d.inclusiveCostUSD != null ? d.inclusiveCostUSD : d.costUSD;
+    var totalTokens = d.inclusiveTokens || d.tokens;
     var incomplete = d.status === 'incomplete' || d.status === 'unknown';
     panel.appendChild(statsEl([
-      [estimated ? 'Estimated cost' : hasOwn ? 'Own cost' : 'Cost', d.costUSD != null ? fmtExactUSD(d.costUSD) : '—', costSourceLabel(s)],
-      [estimated ? 'Estimated tokens' : hasOwn ? 'Own tokens' : 'Tokens', d.tokens ? fmtNum(d.tokens.total) : '—', ''],
+      [estimated ? 'Estimated cost' : hasInclusive ? 'Total cost' : 'Cost', totalCost != null ? fmtExactUSD(totalCost) : '—', costSourceLabel(s)],
+      [estimated ? 'Estimated tokens' : hasInclusive ? 'Total tokens' : 'Tokens', totalTokens ? fmtNum(totalTokens.total) : '—', ''],
       [incomplete ? 'Observed elapsed' : 'Elapsed', d.status === 'unknown' && !d.observedEnd ? 'Unknown' : fmtTimelineDuration(traceElapsed(d)), d.status === 'unknown' && !d.observedEnd ? '' : fmtNum(traceElapsed(d)) + ' ms'],
       ['Started', Number.isFinite(d.start) ? fmtTimelineDuration(Math.max(0, d.start - sessionStart)) : '—', 'into session']
     ]));
-    if (d.inclusiveTokens != null || d.inclusiveCostUSD != null) {
-      var inclusive = el('div', 'tl-side-section');
-      inclusive.appendChild(el('div', 'tl-side-label', 'Including descendants'));
-      inclusive.appendChild(statsEl([
-        ['Inclusive cost', d.inclusiveCostUSD != null ? fmtExactUSD(d.inclusiveCostUSD) : '—', ''],
-        ['Inclusive tokens', d.inclusiveTokens ? fmtNum(d.inclusiveTokens.total) : '—', '']
+    if (hasDescendants) {
+      var orchestration = el('div', 'tl-side-section');
+      orchestration.appendChild(el('div', 'tl-side-label', 'Parent orchestration only'));
+      orchestration.appendChild(statsEl([
+        ['Orchestration cost', d.costUSD != null ? fmtExactUSD(d.costUSD) : '—', ''],
+        ['Orchestration tokens', d.tokens ? fmtNum(d.tokens.total) : '—', '']
       ]));
-      inclusive.appendChild(el('p', 'tl-note', 'Includes this agent and its descendants. These values overlap the child rows; do not add them together.'));
-      panel.appendChild(inclusive);
+      orchestration.appendChild(el('p', 'tl-note', 'The total above includes this parent and every descendant. Orchestration is the parent agent\'s direct model usage only. Child totals overlap the parent total; do not add them together.'));
+      panel.appendChild(orchestration);
     }
     if (estimated) panel.appendChild(el('p', 'tl-note', 'Estimated from this owner’s activity during the step. Overlapping skill or command estimates are not additional session cost.'));
     else if (d.attributionStatus === 'ambiguous') panel.appendChild(el('p', 'tl-note tl-warning', 'Usage cannot be assigned confidently while the relationship is unresolved.'));
@@ -1155,7 +1159,7 @@
         var segment = el('div', 'tl-tok-seg'); segment.style.flex = String(item.val / total * 100); segment.style.background = item.color; barEl.appendChild(segment);
       });
       var tokSec = el('div', 'tl-side-section');
-      tokSec.appendChild(el('div', 'tl-side-label', hasOwn ? 'Own token breakdown' : 'Token breakdown')); tokSec.appendChild(barEl);
+      tokSec.appendChild(el('div', 'tl-side-label', hasDescendants ? 'Orchestration token breakdown' : hasOwn ? 'Direct token breakdown' : 'Token breakdown')); tokSec.appendChild(barEl);
       tokSec.appendChild(statsEl([['Input', fmtNum(tok.input), ''], ['Output', fmtNum(tok.output), ''], ['Cache read', fmtNum(tok.cacheRead), ''], ['Cache write', fmtNum(tok.cacheCreation), '']]));
       panel.appendChild(tokSec);
     }
@@ -1177,6 +1181,7 @@
   }
   function timelineEl(s) {
     var entries = traceEntries(s);
+    var collapsed = new Set();
     var capturedBounds = Number.isFinite(s.observedStart) && Number.isFinite(s.observedEnd) && s.observedEnd >= s.observedStart;
     var firstTimed = entries.find(function (entry) { return Number.isFinite(entry.d.start); });
     var winStart = capturedBounds ? s.observedStart : (Number.isFinite(s.startTime) ? s.startTime : firstTimed ? firstTimed.d.start : 0);
@@ -1196,7 +1201,32 @@
     var sidePane = el('div', 'tl-side'); sidePane.setAttribute('role', 'region'); sidePane.setAttribute('aria-label', 'Selected step details'); sidePane.setAttribute('aria-live', 'polite');
     var selected = entries.filter(function (entry) { return entry.d.kind === 'agent'; })[0] || entries[0] || null;
     var rowByEntry = new Map();
+    function rowLabel(entry) {
+      var disclosure = entry.children.length ? (collapsed.has(entry) ? '▸ ' : '▾ ') : (entry.level ? '↳ ' : '');
+      return disclosure + entry.label + (entry.issue ? ' · unresolved' : '');
+    }
+    function refreshTreeVisibility() {
+      entries.forEach(function (entry) {
+        var ancestor = entry.parent, hidden = false;
+        while (ancestor) {
+          if (collapsed.has(ancestor)) { hidden = true; break; }
+          ancestor = ancestor.parent;
+        }
+        var row = rowByEntry.get(entry);
+        if (!row) return;
+        row.hidden = hidden;
+        var labelEl = row.querySelector('.tl-label');
+        labelEl.textContent = rowLabel(entry);
+        labelEl.title = entry.label;
+        if (entry.children.length) row.setAttribute('aria-expanded', collapsed.has(entry) ? 'false' : 'true');
+      });
+    }
     function selectDispatch(entry, focus) {
+      if (focus) {
+        var ancestor = entry.parent;
+        while (ancestor) { collapsed.delete(ancestor); ancestor = ancestor.parent; }
+        refreshTreeVisibility();
+      }
       selected = entry;
       rowByEntry.forEach(function (row, candidate) { row.classList.toggle('tl-selected', candidate === entry); row.setAttribute('aria-pressed', candidate === entry ? 'true' : 'false'); });
       sidePane.innerHTML = ''; sidePane.appendChild(tlDetailEl(entry, s, winStart, selectDispatch));
@@ -1215,16 +1245,24 @@
       entry.outside = start < winStart || start + duration > winEnd;
       var left = Math.max(0, Math.min(100, (start - winStart) / span * 100));
       var width = Math.max(0, (Math.min(winEnd, start + duration) - Math.max(winStart, start)) / span * 100);
-      var label = (entry.level ? '↳ ' : '') + entry.label + (entry.issue ? ' · unresolved' : '');
+      var label = rowLabel(entry);
       var durationText = d.status === 'unknown' && !d.observedEnd ? 'Unknown' : (d.status === 'incomplete' ? '≥ ' : '') + fmtTimelineDuration(duration);
-      var row = tlRow(label, PALETTE[hashStr(d.kind + ':' + d.name) % PALETTE.length], left, width, durationText, d.costUSD != null && width >= 10 ? fmtUSD(d.costUSD) : '', false);
+      var displayedCost = d.kind === 'agent' && d.inclusiveCostUSD != null ? d.inclusiveCostUSD : d.costUSD;
+      var row = tlRow(label, PALETTE[hashStr(d.kind + ':' + d.name) % PALETTE.length], left, width, durationText, displayedCost != null && width >= 10 ? fmtUSD(displayedCost) : '', false);
       row.setAttribute('data-dispatch', entry.key);
-      row.setAttribute('aria-label', entry.label + ', level ' + (entry.level + 1) + ', ' + traceStatus(d) + (entry.issue ? ', ' + entry.issue : ''));
+      row.setAttribute('aria-label', entry.label + ', level ' + (entry.level + 1) + ', ' + traceStatus(d) + (entry.children.length ? ', expandable' : '') + (entry.issue ? ', ' + entry.issue : ''));
       row.querySelector('.tl-label').style.paddingLeft = Math.min(72, entry.level * 12) + 'px';
       if (entry.unresolved) row.classList.add('tl-unresolved');
-      row.addEventListener('click', function () { selectDispatch(entry, false); });
+      row.addEventListener('click', function () {
+        selectDispatch(entry, false);
+        if (entry.children.length) {
+          if (collapsed.has(entry)) collapsed.delete(entry); else collapsed.add(entry);
+          refreshTreeVisibility();
+        }
+      });
       rowByEntry.set(entry, row); gantt.appendChild(row);
     });
+    refreshTreeVisibility();
     selectDispatch(selected, false);
     container.appendChild(gantt); container.appendChild(sidePane); wrap.appendChild(container);
     return wrap;
@@ -1381,7 +1419,7 @@
     body.appendChild(grid3);
 
     if (s.rootOwnTokens && s.unlinkedTokens) {
-      var allocation = card('Usage allocation', 'each response belongs to one row; inclusive agent details overlap descendants');
+      var allocation = card('Usage allocation', 'each response belongs to one row; parent totals overlap child rows');
       var linkedTokens = Math.max(0, (t.total || 0) - s.rootOwnTokens.total - s.unlinkedTokens.total);
       var linkedCost = s.rootOwnCostUSD != null && s.unlinkedCostUSD != null ? Math.max(0, s.costUSD - s.rootOwnCostUSD - s.unlinkedCostUSD) : null;
       allocation._body.appendChild(el('div', 'tl-allocation', tableHTML(['Owner', 'Tokens', 'Cost'], [
@@ -1390,7 +1428,7 @@
         ['Unlinked usage', fmtNum(s.unlinkedTokens.total), fmtExactUSD(s.unlinkedCostUSD)],
         ['Session total', fmtNum(t.total), fmtExactUSD(s.costUSD)]
       ], [false, true, true])));
-      allocation._body.appendChild(el('p', 'tl-note', 'An agent’s inclusive total includes its descendants. Adding inclusive rows would count their usage again.'));
+      allocation._body.appendChild(el('p', 'tl-note', 'A parent agent’s total includes all descendants. Adding parent and child totals would count their usage again.'));
       if (s.unlinkedAgentIds && s.unlinkedAgentIds.length) {
         var unlinked = el('details', 'tl-unlinked-agents');
         unlinked.appendChild(el('summary', '', 'Unlinked agents (' + fmtNum(s.unlinkedAgentIds.length) + ')'));
@@ -1435,7 +1473,7 @@
 
     // Timeline — every recorded invocation with exact parent/owner links when available.
     var hasDispatches = (s.dispatches || []).length > 0;
-    var tlSubtitle = hasDispatches ? 'select any step for ancestry, own and inclusive usage, and timing evidence' : '';
+    var tlSubtitle = hasDispatches ? 'select any step for ancestry, total and orchestration usage, and timing evidence' : '';
     var tlCard = card('Timeline', tlSubtitle);
     if (hasDispatches) {
       tlCard._body.appendChild(timelineEl(s));
