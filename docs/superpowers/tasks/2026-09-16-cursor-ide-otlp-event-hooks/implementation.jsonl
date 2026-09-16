@@ -1,4 +1,0 @@
-{"task_id":"task-1","status":"done","commit":"bcc4655","test_command":"npx tsc --noEmit -p tsconfig.json"}
-{"task_id":"task-2","status":"done","commit":"dc9a8dd","test_command":"npx tsc --noEmit -p tsconfig.json"}
-{"task_id":"task-3","status":"done","commit":"bf6f1d9","test_command":"npx tsc --noEmit -p tsconfig.json && npx eslint src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts"}
-{"task_id":"task-4","status":"done","commit":"6cd95f1","test_command":"npx tsc --noEmit -p tsconfig.json && npx eslint src/providers/plugins/sso/proxy/plugins/otlp-ingest.plugin.ts"}
