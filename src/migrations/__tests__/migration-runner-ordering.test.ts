@@ -85,7 +85,9 @@ afterEach(async () => {
   openLoggers = [];
   if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
   else delete process.env.CODEMIE_HOME;
-  rmSync(tmpHome, { recursive: true, force: true });
+  // maxRetries absorbs Windows ENOTEMPTY/EBUSY when the OS still holds a handle
+  // on a just-closed log stream under tmpHome/logs.
+  rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   vi.restoreAllMocks();
 });
 
