@@ -7,6 +7,7 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import { getCodemiePath } from '../../../../../utils/paths.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
+import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 
 interface OtlpEventPayload {
   agentName: string;
@@ -20,13 +21,21 @@ export class OtlpIngestPlugin implements ProxyPlugin {
   version = '1.0.0';
   priority = 10; // After gateway-key (priority 7)
 
-  createInterceptor(_context: PluginContext): ProxyInterceptor {
-    return new OtlpIngestInterceptor();
+  createInterceptor(context: PluginContext): ProxyInterceptor {
+    return new OtlpIngestInterceptor(
+      context.syncCredentials || context.credentials,
+      context.config.syncApiUrl
+    );
   }
 }
 
 class OtlpIngestInterceptor implements ProxyInterceptor {
   name = 'otlp-ingest';
+
+  constructor(
+    private readonly credentials?: SSOCredentials | JWTCredentials,
+    private readonly baseUrl?: string
+  ) {}
 
   async handleRequest(
     ctx: ProxyContext,
