@@ -26,6 +26,7 @@
     "bin",
     "scripts",
     "src/workflows/templates/**/*.yml",
+    "src/utils/tips.json",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

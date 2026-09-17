@@ -1,11 +1,22 @@
 /**
  * Feature Tips ("Did you know?") — selection, rotation and rendering logic.
  *
- * The curated catalog (Tip type and TIPS array) lives in ./tips-catalog.ts
- * and is re-exported here, so existing consumers keep importing from tips.js.
+ * The curated catalog lives in src/utils/tips.json (pure data — edit tips
+ * there); this module loads it once at startup and exposes it as TIPS.
  * Tips are shown at session start and end, browseable on demand via
  * `codemie tips`, and sprinkled onto selected CLI surfaces (doctor, first-run
  * screens) via renderTip().
+ *
+ * Catalog maintenance workflow (edit src/utils/tips.json):
+ * - Add a tip: append one `{ "id", "category", "message", "command"? }` object
+ *   to the array. Use a fresh kebab-case id — ids are never reused, because
+ *   the rotation state (~/.codemie/.tips-state.json) remembers them.
+ * - Retire a command: delete its tip in the same PR. If the tip is missed,
+ *   `codemie tips` validates `command` references against the live CLI command
+ *   tree and silently drops (plus debug-logs) tips pointing at retired
+ *   commands — session rendering never validates and never breaks.
+ * - Reword a tip: edit `message` in place and keep `id` stable so the rotation
+ *   history stays meaningful.
  *
  * This module must stay safe to import from the agent runtime, so it depends
  * only on fs/path, chalk, the logger and the paths utility — never on
@@ -20,13 +31,66 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { logger } from './logger.js';
-import { getCodemiePath } from './paths.js';
-import { TIPS } from './tips-catalog.js';
-import type { Tip } from './tips-catalog.js';
+import { getCodemiePath, getDirname } from './paths.js';
 
-// Re-exported so existing consumers keep importing the catalog from tips.js
-export { TIPS };
-export type { Tip };
+/**
+ * A single feature tip.
+ */
+export interface Tip {
+  /** Stable unique id, kebab-case, e.g. 'cmd-skill'. Never reused. */
+  id: string;
+  /** Short category for grouping in `codemie tips`, e.g. 'Commands'. */
+  category: string;
+  /** Full sentence shown to the user. May embed the command inline. */
+  message: string;
+  /**
+   * Optional top-level command name used for validation and display,
+   * e.g. 'skill' or 'proxy'. When the referenced command is retired,
+   * `codemie tips` drops/flags this tip automatically.
+   */
+  command?: string;
+}
+
+/**
+ * Load the tip catalog from src/utils/tips.json at the package root (resolved
+ * relative to this module, so it works from src/utils in dev and dist/utils in
+ * the installed package, where the JSON ships via the package.json files list).
+ *
+ * Best-effort: any failure — missing file, malformed JSON, wrong shape — is
+ * debug-logged and yields an empty catalog. Tips must never break a session.
+ */
+function loadTipsCatalog(): Tip[] {
+  const catalogPath = path.resolve(getDirname(import.meta.url), '../../src/utils/tips.json');
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, 'utf-8')) as unknown;
+    if (!Array.isArray(parsed)) {
+      logger.debug('[tips] tips.json is not an array — using empty catalog', { catalogPath });
+      return [];
+    }
+
+    const tips = parsed.filter((entry): entry is Tip =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof (entry as Tip).id === 'string' &&
+      typeof (entry as Tip).category === 'string' &&
+      typeof (entry as Tip).message === 'string'
+    );
+    if (tips.length !== parsed.length) {
+      logger.debug(`[tips] tips.json: dropped ${parsed.length - tips.length} malformed entrie(s)`, { catalogPath });
+    }
+    return tips;
+  } catch (error) {
+    logger.debug('[tips] Failed to load tips.json — using empty catalog:', error);
+    return [];
+  }
+}
+
+/**
+ * Curated tip catalog, loaded eagerly from src/utils/tips.json. Every
+ * `command` value references a top-level command registered in
+ * src/cli/index.ts; `codemie tips` re-validates these at runtime.
+ */
+export const TIPS: readonly Tip[] = loadTipsCatalog();
 
 /**
  * Rotation state persisted at ~/.codemie/.tips-state.json so consecutive
