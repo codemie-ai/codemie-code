@@ -8,6 +8,16 @@
 import { MigrationRunner } from '../dist/migrations/index.js';
 import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
 
+// Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
+// (e.g. `codemie | head -1`). Without a handler, Node throws on the next write
+// after the pipe closes, crashing the CLI mid-output.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', err => {
+    if (err && err.code === 'EPIPE') process.exit(0);
+    throw err;
+  });
+}
+
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
