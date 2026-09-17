@@ -40,7 +40,7 @@ export class OtlpDispatcher {
   constructor(
     private readonly credentials?: SSOCredentials | JWTCredentials,
     private readonly baseUrl?: string
-  ) {}
+  ) { }
 
   async dispatch(payload: OtlpEventPayload): Promise<void> {
     let event: Record<string, unknown>;
@@ -169,9 +169,6 @@ export class OtlpDispatcher {
   }
 
   private resolveUserEmail(event: Record<string, unknown>): string {
-    if (typeof event['user_email'] === 'string' && event['user_email']) {
-      return event['user_email'];
-    }
     if (this.credentials && isJWTCredentials(this.credentials)) {
       try {
         const claims = this.decodeJwtClaims(this.credentials.token);
@@ -179,6 +176,19 @@ export class OtlpDispatcher {
           return claims['email'];
         }
       } catch { /* ignore decode failures */ }
+    }
+    if (this.credentials && isSSOCredentials(this.credentials)) {
+      const accessToken = this.credentials.cookies['codemie_access_token'];
+      if (accessToken) {
+        try {
+          const claims = this.decodeJwtClaims(accessToken);
+          const email = claims['email'] ?? claims['preferred_username'];
+          if (typeof email === 'string' && email) return email;
+        } catch { /* ignore decode failures */ }
+      }
+    }
+    if (typeof event['user_email'] === 'string' && event['user_email']) {
+      return event['user_email'];
     }
     return '';
   }
@@ -412,7 +422,7 @@ export class OtlpDispatcher {
             ...sanitizeLogArgs({ url, body: bodyText.slice(0, 500) })
           );
         } else {
-          await response.body?.cancel().catch(() => {});
+          await response.body?.cancel().catch(() => { });
         }
       } finally {
         clearTimeout(timeout);
