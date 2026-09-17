@@ -386,11 +386,12 @@ describe('selectPreferredClaudeModels', () => {
     )).toEqual(['claude-sonnet-4-6-vertex']);
   });
 
-  // Philips-shaped fixture, authored fresh here — never the root sample file.
-  const PHILIPS_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
+  // A tenant whose catalog names Claude models version-first (version before
+  // family), authored fresh here — never the root sample file.
+  const VERSION_FIRST_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
 
-  it('resolves version-first (Philips) Claude names for every preferred family', () => {
-    const resolved = selectPreferredClaudeModels(PHILIPS_CLAUDE_FIXTURE);
+  it('resolves version-first Claude names for every preferred family', () => {
+    const resolved = selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE);
     expect(resolved).toContain('claude-5-opus');
     expect(resolved).toContain('claude-4-5-haiku');
     expect(resolved).toContain('claude-4-6-sonnet');

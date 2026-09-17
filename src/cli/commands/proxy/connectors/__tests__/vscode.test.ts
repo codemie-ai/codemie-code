@@ -42,8 +42,10 @@ const EXPECTED_MODEL_IDS = [
   'moonshotai.kimi-k2.5',
 ] as const;
 
-// Philips-shaped fixture, authored fresh here — never the root sample file.
-const PHILIPS_FIXTURE = [
+// A sparse, non-EPAM-shaped tenant catalog — vendor-prefixed undated GPT id,
+// version-first Claude naming, and github-copilot-* noise — authored fresh
+// here, never the root sample file.
+const NON_EPAM_TENANT_FIXTURE = [
   'openai.gpt-5.6-luna',
   'claude-4-6-sonnet',
   'github-copilot-gpt-5-mini',
@@ -321,9 +323,9 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     expect(await readFile(configPath, 'utf-8')).toBe(original);
   });
 
-  describe('tenant-aware resolution (Philips-shaped catalog)', () => {
+  describe('tenant-aware resolution against a non-EPAM-shaped catalog', () => {
     it('AC1: omits a capability-table family with no match in a sparse tenant catalog', async () => {
-      mockCatalog(PHILIPS_FIXTURE);
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
 
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
@@ -333,7 +335,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     });
 
     it('AC2: writes the tenant id verbatim for a family matched under a different token order', async () => {
-      mockCatalog(PHILIPS_FIXTURE);
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
 
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
@@ -352,7 +354,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     });
 
     it('AC3: resolves gpt-5.6-luna to the vendor-prefixed tenant id verbatim, not a canonical form', async () => {
-      mockCatalog(PHILIPS_FIXTURE);
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
 
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
@@ -363,7 +365,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     });
 
     it('AC4: never surfaces a github-copilot-* deployment even alongside a matching same-family entry', async () => {
-      mockCatalog(PHILIPS_FIXTURE);
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
 
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
