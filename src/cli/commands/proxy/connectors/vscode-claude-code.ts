@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { applyEdits, modify, parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -41,8 +42,21 @@ export function getVsCodeClaudeCodeSettingsPath(insiders = false): string {
   return join(productDir, 'User', 'settings.json');
 }
 
-async function readSettings(configPath: string): Promise<Record<string, unknown>> {
-  if (!existsSync(configPath)) return {};
+interface SettingsReadResult {
+  settings: Record<string, unknown>;
+  /** Raw file text, `''` when the file is absent or empty. Preserved so the write
+   * path can apply targeted edits instead of re-serializing the whole object,
+   * keeping comments and formatting the user already had. */
+  raw: string;
+}
+
+/**
+ * Read `settings.json` tolerating the comments and trailing commas VS Code
+ * itself writes and accepts (JSONC), instead of the strict `JSON.parse` that
+ * previously rejected any hand-edited settings file on its first `//` line.
+ */
+async function readSettings(configPath: string): Promise<SettingsReadResult> {
+  if (!existsSync(configPath)) return { settings: {}, raw: '' };
 
   let raw: string;
   try {
@@ -54,22 +68,22 @@ async function readSettings(configPath: string): Promise<Record<string, unknown>
     );
   }
 
-  if (raw.trim().length === 0) return {};
+  if (raw.trim().length === 0) return { settings: {}, raw: '' };
 
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new ConfigurationError(
-        `VS Code settings must contain a JSON object: ${configPath}`
-      );
-    }
-    return parsed as Record<string, unknown>;
-  } catch (error) {
-    if (error instanceof ConfigurationError) throw error;
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(raw, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
     throw new ConfigurationError(
-      `VS Code settings at ${configPath} are not valid JSON and were not changed.`
+      `VS Code settings at ${configPath} could not be read: ` +
+      `${printParseErrorCode(errors[0].error)} at offset ${errors[0].offset}. The file was not changed.`
     );
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigurationError(
+      `VS Code settings must contain a JSON object: ${configPath}`
+    );
+  }
+  return { settings: parsed as Record<string, unknown>, raw };
 }
 
 function isEnvVarEntry(value: unknown): value is ClaudeCodeEnvVar {
@@ -139,20 +153,34 @@ export async function writeVsCodeClaudeCodeConfigAtPath(
   gatewayUrl: string,
   gatewayKey: string
 ): Promise<WriteVsCodeClaudeCodeConfigResult> {
-  const settings = await readSettings(configPath);
+  const { settings, raw } = await readSettings(configPath);
+  const envVars = upsertManagedEnvVars(
+    settings['claudeCode.environmentVariables'],
+    gatewayUrl,
+    gatewayKey
+  );
 
-  const updatedSettings: Record<string, unknown> = {
-    ...settings,
-    'claudeCode.disableLoginPrompt': true,
-    'claudeCode.environmentVariables': upsertManagedEnvVars(
-      settings['claudeCode.environmentVariables'],
-      gatewayUrl,
-      gatewayKey
-    ),
-  };
+  // An absent/empty file has no formatting worth preserving — fall back to the
+  // plain re-serialization path. Otherwise apply targeted edits against the
+  // ORIGINAL text so comments and trailing commas the user already had survive.
+  let nextText: string;
+  if (raw.trim().length === 0) {
+    nextText = `${JSON.stringify(
+      {
+        ...settings,
+        'claudeCode.disableLoginPrompt': true,
+        'claudeCode.environmentVariables': envVars,
+      },
+      null,
+      '\t'
+    )}\n`;
+  } else {
+    const afterFirst = applyEdits(raw, modify(raw, ['claudeCode.disableLoginPrompt'], true, {}));
+    nextText = applyEdits(afterFirst, modify(afterFirst, ['claudeCode.environmentVariables'], envVars, {}));
+  }
 
   try {
-    await writeAtomically(configPath, `${JSON.stringify(updatedSettings, null, '\t')}\n`);
+    await writeAtomically(configPath, nextText);
   } catch (error) {
     throw new ConfigurationError(
       `Failed to update VS Code Claude Code settings at ${configPath}: ` +
