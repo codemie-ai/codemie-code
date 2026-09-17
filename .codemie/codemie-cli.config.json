@@ -15,7 +15,7 @@
     "local-be": {
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
-      "baseUrl": "http://localhost:8080",
+      "baseUrl": "https://codemie.lab.epam.com",
       "model": "claude-sonnet-4-6",
       "haikuModel": "claude-haiku-4-5-20251001",
       "sonnetModel": "claude-sonnet-4-6",
