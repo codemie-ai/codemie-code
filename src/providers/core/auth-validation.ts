@@ -35,7 +35,7 @@ export async function handleAuthValidationFailure(
     return await setupSteps.promptForReauth(config);
   }
 
-  // No re-auth available (or no TTY to prompt on), show full error with instructions
-  console.log(chalk.red(`\n✗ ${validationResult.error}\n`));
+  // stderr, so piped stdout and --json consumers stay clean (EPMCDME-14148).
+  console.error(chalk.red(`\n✗ ${validationResult.error}\n`));
   return false;
 }

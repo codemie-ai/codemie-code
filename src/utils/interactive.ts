@@ -14,3 +14,13 @@
 export function isNonInteractiveEnvironment(): boolean {
   return !process.stdin.isTTY;
 }
+
+/**
+ * Returns true when progress output would not reach a terminal.
+ *
+ * Separate from isNonInteractiveEnvironment() because input and output redirect
+ * independently: `cmd > log 2>&1` still has an interactive stdin.
+ */
+export function isNonInteractiveOutput(): boolean {
+  return !process.stderr.isTTY;
+}

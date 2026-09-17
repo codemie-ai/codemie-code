@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Make the CLI's non-interactive SSO auth failure exit cleanly with actionable remediation by wrapping the shared getSdkClient() choke point and preserving the upstream \"run codemie setup\" message that promptReauthentication currently discards.",
+  "generated": "2026-09-03T00:00:00Z",
+  "dimensions": {
+    "component_scope": { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk": { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies": { "score": 1, "label": "XS" },
+    "affected_layers": { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Base M (2-3 components across 2 layers, clear pattern): the fix is two coordinated edits - getSdkClient() at src/cli/commands/sdk/utils/cli-utils.ts:15-18 (CLI) and the message-discarding throw at src/utils/auth.ts:76 (Utils), plus an optional one-line stdout->stderr change in src/providers/core/auth-validation.ts:39 and a mandatory docs/AUTHENTICATION.md:104-117 update. Bumped to L: src/utils/auth.ts is a core shared utility - getSdkClient is the sole bridge for ~50 sdk actions across 8 files, and getAuthenticatedClient/promptReauthentication have four further consumers (assistants/chat, assistants/setup, skills/setup, AgentCLI) that already exit cleanly and must not regress. The 'affects multiple workflows' red flag was considered but NOT applied on top: the shared-gate approach (PR #471 precedent) keeps the edit confined to one function, so the ~50 actions are consumers rather than edit sites."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Base M (core requirement defined, 1-2 clarifying questions): AC2 - the only live criterion - is unambiguous, and technical-analysis.md has already resolved the implementation path (fix at the choke point + preserve the upstream message; both halves required, neither sufficient alone). Bumped to L: AC3 (--non-interactive/--ci) directly conflicts with a recorded decision - EPMCDME-13953's spec lists it as explicitly out of scope and docs/AUTHENTICATION.md:113 documents the absence as intentional - and its 'supported or documented' wording is arguably already satisfied. AC4 (ERR_USE_AFTER_CLOSE) was not reproduced in 2 attempts and is unproven rather than disproven. Both are scoping/product calls that need resolving before implementation, and the ticket's own premise about the missing try/catch was partly wrong and had to be corrected during research."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Base M (some new patterns required, no exact precedent for the message-preservation half). Bumped to L by the 'affects authentication or authorization' red flag - this change sits directly on the SSO auth path. Concrete traps documented in the analysis: ConfigurationError's constructor accepts only `message`, so preserving the upstream error as `cause` means touching a repo-wide base class or a post-hoc assignment; ESLint no-useless-catch is warn under --max-warnings=0, so a naive catch-and-rethrow fails the lint gate; promptReauthentication's declared Promise<boolean> can only return true or throw, so converting the throw to a `false` return would revive dead code at auth.ts:48/52 and change behaviour at assistants/chat/index.ts:423. Mitigation is strong: every ingredient exists in-repo (isNonInteractiveEnvironment, four never-returning error sinks, and NOT_AUTHENTICATED_MESSAGE in skills/lib/require-auth.ts:15-16 is verbatim the actionable text the ticket asks for), and the change is trivially reversible."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): touches core shared utilities - src/utils/auth.ts and the getSdkClient() gate bridging ~50 sdk command actions across 8 files plus 4 adjacent auth call sites.",
+    "Requirements Clarity bumped from M (3) to L (4): vague/conflicting acceptance criteria - AC3 (--non-interactive/--ci) contradicts EPMCDME-13953's recorded out-of-scope decision and shipped text in docs/AUTHENTICATION.md:113; AC4 is unproven.",
+    "Technical Risk bumped from M (3) to L (4): affects authentication - the change modifies the SSO auth acquisition and failure-reporting path.",
+    "NOT applied - 'affects multiple workflows or agents' (second Component Scope bump): the shared-gate fix confines the edit to one function; the ~50 sdk actions inherit the fix as consumers rather than being edited.",
+    "NOT applied - 'requires data migration' (File Changes bump): no persistence, schema, or migration surface in this change."
+  ],
+  "split_recommendation": null
+}

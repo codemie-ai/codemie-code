@@ -7,6 +7,9 @@
 
 import { MigrationRunner } from '../dist/migrations/index.js';
 import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
+import { installProcessGuards } from '../dist/utils/process-guards.js';
+
+installProcessGuards();
 
 // Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
 // (e.g. `codemie | head -1`). Without a handler, Node throws on the next write

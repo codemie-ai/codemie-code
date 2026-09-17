@@ -11,6 +11,12 @@ export interface CommandResult {
   output: string;
   exitCode: number;
   error?: string;
+  /**
+   * Killed by the `timeout` option rather than exiting on its own. execSync
+   * reports ETIMEDOUT with `status: null`, which would otherwise collapse to
+   * exitCode 1 and let a hang masquerade as a clean failure.
+   */
+  timedOut?: boolean;
 }
 
 export class CLIRunner {
@@ -54,6 +60,7 @@ export class CLIRunner {
         output,
         exitCode: error.status || 1,
         error: errorOutput,
+        timedOut: error.code === 'ETIMEDOUT',
       };
     }
   }

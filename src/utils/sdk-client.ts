@@ -11,6 +11,7 @@ import type { CodeMieConfigOptions } from '../env/types.js';
 import { CodeMieSSO } from '../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from './config.js';
 import { ConfigurationError } from './errors.js';
+import { isNonInteractiveOutput } from './interactive.js';
 import { logger } from './logger.js';
 
 /**
@@ -21,8 +22,11 @@ import { logger } from './logger.js';
  * @throws ConfigurationError if setup is incomplete or credentials are invalid
  */
 export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
+  // ora writes to stderr, so gate on stderr, not stdin (EPMCDME-14148).
+  const showProgress = !quiet && !isNonInteractiveOutput();
+
   let spinner;
-  if (!quiet) {
+  if (showProgress) {
     spinner = ora('Loading configuration...').start();
   }
 

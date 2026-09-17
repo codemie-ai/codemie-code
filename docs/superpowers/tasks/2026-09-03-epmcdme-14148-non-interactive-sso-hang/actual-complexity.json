@@ -1,0 +1,118 @@
+{
+  "task": "Make non-interactive (non-TTY) SSO authentication failure fail fast and cleanly across the CLI — exit non-zero with an actionable stderr message instead of hanging on a re-auth prompt or printing a raw stack trace — via a new process-level guard module installed in every bin/ entrypoint plus TTY-aware auth, SDK-client and provider-validation paths.",
+  "generated": "2026-09-03T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "new process-guard module (src/utils/process-guards.ts), shared auth utility (src/utils/auth.ts), SDK client bootstrap (src/utils/sdk-client.ts), provider-core auth validation (src/providers/core/auth-validation.ts), SDK CLI command utils (src/cli/commands/sdk/utils/cli-utils.ts), all 12 bin/ entrypoints (codemie, agent-executor, claude, claude-acp, codex, copilot, gemini, kimi, kimi-acp, opencode, openwiki, pi), integration test harness (tests/helpers/cli-runner.ts), docs/AUTHENTICATION.md",
+      "layers": "Process/entrypoint bootstrap (bin/), Service (auth + sdk-client utils), Provider-core (SSO auth validation), CLI command utils, Test infrastructure, Docs"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "The headline criterion was unambiguous and directly testable (non-zero exit, no hang, no raw stack trace, actionable remediation string — asserted verbatim in tests/integration/cli-commands/non-interactive-auth.test.ts). Three design decisions were not specified up front and were resolved during implementation: (1) which stream the diagnostic goes to — settled on stderr so piped stdout and --json consumers stay clean; (2) whether the stack is discarded or relocated — settled on synchronous appendFileSync persistence to the log file while the console shows only the actionable line; (3) how far the guard installation should reach — settled on every bin/ entrypoint rather than AgentCLI, so constructing an AgentCLI never mutates global process state."
+    },
+    "technical_risk": {
+      "score": 5,
+      "label": "XL",
+      "risk_factors": "Authentication/authorization failure paths are directly modified (src/utils/auth.ts, src/providers/core/auth-validation.ts, src/utils/sdk-client.ts). No prior precedent in the codebase for process-level error guards — process-guards.ts installs global unhandledRejection/uncaughtException handlers into all 12 entrypoints, mutating global process state and changing exit semantics for the entire CLI surface. Non-obvious async/IO ordering hazard: logger writes through an fs.WriteStream that process.exit() does not drain, so a fatal record is lost on a cold stream — this required a separate synchronous appendFileSync path (persistFatalSync). Subtle control flow in getAuthenticatedClient, where promptReauthentication's generic 'Authentication expired' throw would shadow the upstream message that names the actual remediation. Test-harness hazard: runSilent wraps execSync, which blocks the Vitest worker synchronously so testTimeout cannot interrupt it — a regression to the original hang would wedge CI instead of failing, forcing a new timedOut flag on CommandResult plus an elapsed-time assertion. Realized-risk evidence: two code-review rounds — the first produced 5 blocking findings, and the check round found 2 further defects introduced by the first fix-up, the signature of an under-scoped risk surface.",
+      "mitigation": "Guard is additive and trivially reversible (no migration, no schema, no persisted state); installProcessGuards() is idempotent via an `installed` flag; persistFatalSync swallows its own failures so a logging error can never mask the original fatal; process.exitCode is set before any I/O so an early exit still reports non-zero. Coverage was deliberately layered against mock blindness: process-guards.test.ts mocks the logger, while a dedicated companion (process-guards.logfile.test.ts) runs the REAL logger and asserts the stack actually reaches the log file — added specifically because that contract shipped undetected in review round 1 (CR-001). The end-to-end criterion is pinned by an integration test running against an isolated CODEMIE_HOME with stdin: 'ignore'."
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 20,
+      "modified_file_list": [
+        "bin/agent-executor.js",
+        "bin/codemie-claude-acp.js",
+        "bin/codemie-claude.js",
+        "bin/codemie-codex.js",
+        "bin/codemie-copilot.js",
+        "bin/codemie-gemini.js",
+        "bin/codemie-kimi-acp.js",
+        "bin/codemie-kimi.js",
+        "bin/codemie-opencode.js",
+        "bin/codemie-openwiki.js",
+        "bin/codemie-pi.js",
+        "bin/codemie.js",
+        "docs/AUTHENTICATION.md",
+        "src/cli/commands/sdk/utils/cli-utils.ts",
+        "src/providers/core/auth-validation.ts",
+        "src/utils/auth.ts",
+        "src/utils/sdk-client.ts",
+        "src/utils/__tests__/auth.test.ts",
+        "src/utils/__tests__/sdk-client.test.ts",
+        "tests/helpers/cli-runner.ts"
+      ],
+      "new_files": 6,
+      "new_file_list": [
+        "src/utils/process-guards.ts",
+        "src/utils/__tests__/process-guards.test.ts",
+        "src/utils/__tests__/process-guards.logfile.test.ts",
+        "src/cli/commands/sdk/utils/__tests__/cli-utils.test.ts",
+        "src/providers/core/__tests__/auth-validation.test.ts",
+        "tests/integration/cli-commands/non-interactive-auth.test.ts"
+      ],
+      "affected_dirs": [
+        "bin",
+        "docs",
+        "src/utils",
+        "src/providers/core",
+        "src/cli/commands/sdk/utils",
+        "tests/helpers",
+        "tests/integration/cli-commands"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": [
+        "Process/entrypoint bootstrap (bin/)",
+        "Service (src/utils/auth.ts, src/utils/sdk-client.ts)",
+        "Provider-core / External auth (src/providers/core/auth-validation.ts)",
+        "CLI command utils (src/cli/commands/sdk/utils/cli-utils.ts)",
+        "Test infrastructure (tests/helpers/cli-runner.ts)"
+      ],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 23,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 34,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five substantive components plus a new cross-cutting module: process-guards.ts (new, global unhandledRejection/uncaughtException handling with synchronous fatal log persistence), the shared auth utility (error-shadowing fix so the upstream remediation message survives), the SDK client bootstrap (ora spinner suppressed when no TTY, since it emits raw cursor-control escapes into captured output), provider-core auth validation (skip promptForReauth entirely when isNonInteractiveEnvironment(), avoiding ERR_USE_AFTER_CLOSE), and the SDK CLI utils where getSdkClient() became the single gate routing auth acquisition through handleSdkError. The guard is then wired into every one of the 12 bin/ entrypoints, so the change reaches the whole binary surface of the project. Red flag applied: touches core shared utilities (src/utils/auth.ts, src/utils/sdk-client.ts, new src/utils/process-guards.ts) — bumped from L (4) to XL (5)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Highest-signal dimension and the main driver of the delta from the M (19/36) initial estimate. Modifies authentication failure paths (explicit red flag), and installs global process-level handlers with no prior precedent in the codebase — this mutates global process state and changes exit semantics for every entrypoint. Two genuinely non-obvious hazards were only discovered during implementation: the logger's fs.WriteStream is not drained by process.exit() (so the fatal record — the one that matters most — was silently lost, requiring a separate appendFileSync path), and execSync inside the test runner blocks the Vitest worker so testTimeout cannot interrupt a hang, meaning a regression would have wedged CI rather than failing the test. Realized evidence confirms the score: review round 1 produced 5 blocking findings, and the check round found 2 further defects introduced by the round-1 fix-up."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "26 non-artifact files changed (20 modified, 6 new) across 7 directories; the diffstat total of 34 includes 8 SDLC planning artifacts under docs/superpowers/tasks/ which are not implementation. Scored XL rather than XXL deliberately: 12 of the 20 modified files are bin/ entrypoints receiving the identical mechanical two-line addition (import + installProcessGuards()), which is one substantive change repeated, not twelve. Discounting those leaves 14 substantive files with 6 new across 6 directories spanning multiple subsystems — squarely the XL band. Test files outnumber production files (6 test/harness files vs 5 production source files), reflecting the layered anti-mock-blindness coverage strategy."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four production layers plus test infrastructure: process/entrypoint bootstrap (bin/), Service (auth + sdk-client utils), Provider-core external auth (SSO validation), and CLI command utils — with two cross-cutting concerns added across them simultaneously (auth failure handling and observability, via fatal log-file persistence). Held at L rather than XL because there is no persistence layer, no schema migration, and no new external integration: the SSO path is only made to fail cleanly, not re-plumbed."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects authentication/authorization — the change modifies the SSO auth failure path in src/utils/auth.ts, src/providers/core/auth-validation.ts and src/utils/sdk-client.ts.",
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities — src/utils/auth.ts, src/utils/sdk-client.ts, and the new cross-cutting src/utils/process-guards.ts.",
+    "Component Scope 'affects multiple workflows or agents' red flag noted but NOT double-counted: the 12 agent entrypoint edits are the same underlying fact as the shared-utility bump already applied, and a second bump would have pushed the dimension to XXL on a mechanical two-line repetition.",
+    "No dependency, schema-migration, data-migration, real-time/streaming, performance, or new-external-integration red flags apply."
+  ],
+  "split_recommendation": null
+}

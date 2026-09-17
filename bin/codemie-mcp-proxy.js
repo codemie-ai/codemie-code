@@ -16,6 +16,9 @@ import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
+// No installProcessGuards(): this entrypoint owns its own uncaughtException/
+// unhandledRejection handlers below and deliberately survives rejections.
+
 // Boot-level file logger (before any imports that might touch stdout)
 const logDir = join(homedir(), '.codemie', 'logs');
 const logFile = join(logDir, 'mcp-proxy.log');

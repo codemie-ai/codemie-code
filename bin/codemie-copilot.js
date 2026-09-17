@@ -14,6 +14,9 @@ import { AgentRegistry } from '../dist/agents/registry.js';
 import { resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
 import { ConfigLoader } from '../dist/utils/config.js';
 import { getCodemiePath } from '../dist/utils/paths.js';
+import { installProcessGuards } from '../dist/utils/process-guards.js';
+
+installProcessGuards();
 
 const SAVED_MODEL_PATH = getCodemiePath('agents', 'copilot-cli', 'model.json');
 

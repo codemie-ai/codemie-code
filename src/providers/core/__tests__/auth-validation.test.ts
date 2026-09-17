@@ -39,7 +39,7 @@ describe('handleAuthValidationFailure', () => {
     const { isNonInteractiveEnvironment } = await import('../../../utils/interactive.js');
     isNonInteractiveEnvironmentMock = isNonInteractiveEnvironment as ReturnType<typeof vi.fn>;
     isNonInteractiveEnvironmentMock.mockReturnValue(true);
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { handleAuthValidationFailure } = await import('../auth-validation.js');
     const setupSteps = { promptForReauth: promptForReauthSpy } as unknown as ProviderSetupSteps;
@@ -52,7 +52,7 @@ describe('handleAuthValidationFailure', () => {
 
     expect(promptForReauthSpy).not.toHaveBeenCalled();
     expect(result).toBe(false);
-    expect(consoleLogSpy).toHaveBeenCalledWith(
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('No valid SSO credentials found.')
     );
   });
@@ -61,7 +61,7 @@ describe('handleAuthValidationFailure', () => {
     const { isNonInteractiveEnvironment } = await import('../../../utils/interactive.js');
     isNonInteractiveEnvironmentMock = isNonInteractiveEnvironment as ReturnType<typeof vi.fn>;
     isNonInteractiveEnvironmentMock.mockReturnValue(true);
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { handleAuthValidationFailure } = await import('../auth-validation.js');
     const setupSteps = { promptForReauth: promptForReauthSpy } as unknown as ProviderSetupSteps;
@@ -69,14 +69,14 @@ describe('handleAuthValidationFailure', () => {
 
     await handleAuthValidationFailure(validationResult, setupSteps, testConfig);
 
-    expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
   });
 
   it('should keep existing behavior when setupSteps has no promptForReauth (JWT-style), regardless of TTY', async () => {
     const { isNonInteractiveEnvironment } = await import('../../../utils/interactive.js');
     isNonInteractiveEnvironmentMock = isNonInteractiveEnvironment as ReturnType<typeof vi.fn>;
     isNonInteractiveEnvironmentMock.mockReturnValue(false);
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { handleAuthValidationFailure } = await import('../auth-validation.js');
     const setupSteps = {} as ProviderSetupSteps;
@@ -85,14 +85,14 @@ describe('handleAuthValidationFailure', () => {
     const result = await handleAuthValidationFailure(validationResult, setupSteps, testConfig);
 
     expect(result).toBe(false);
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('JWT token missing'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('JWT token missing'));
   });
 
   it('should return false when setupSteps is null, regardless of TTY', async () => {
     const { isNonInteractiveEnvironment } = await import('../../../utils/interactive.js');
     isNonInteractiveEnvironmentMock = isNonInteractiveEnvironment as ReturnType<typeof vi.fn>;
     isNonInteractiveEnvironmentMock.mockReturnValue(true);
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { handleAuthValidationFailure } = await import('../auth-validation.js');
     const validationResult: AuthValidationResult = { valid: false, error: 'no provider configured' };
@@ -100,5 +100,22 @@ describe('handleAuthValidationFailure', () => {
     const result = await handleAuthValidationFailure(validationResult, null, testConfig);
 
     expect(result).toBe(false);
+  });
+
+  it('should write the failure diagnostic to stderr so piped stdout stays clean', async () => {
+    const { isNonInteractiveEnvironment } = await import('../../../utils/interactive.js');
+    isNonInteractiveEnvironmentMock = isNonInteractiveEnvironment as ReturnType<typeof vi.fn>;
+    isNonInteractiveEnvironmentMock.mockReturnValue(true);
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { handleAuthValidationFailure } = await import('../auth-validation.js');
+    const setupSteps = { promptForReauth: promptForReauthSpy } as unknown as ProviderSetupSteps;
+    const validationResult: AuthValidationResult = { valid: false, error: 'session expired' };
+
+    await handleAuthValidationFailure(validationResult, setupSteps, testConfig);
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('session expired'));
+    expect(consoleLogSpy).not.toHaveBeenCalled();
   });
 });

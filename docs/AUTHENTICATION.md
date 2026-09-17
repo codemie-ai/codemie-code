@@ -104,17 +104,38 @@ codemie setup                    # Run wizard again
 ### Non-Interactive Environments (CI/Automation)
 
 When SSO credentials are missing or expired, the CLI normally offers an interactive
-re-authentication prompt. In a non-interactive environment — no TTY attached to `stdin`, as in CI
+re-authentication prompt. In a non-interactive environment — no TTY attached to `stdin`, as in most CI
 pipelines, cron jobs, or piped/redirected invocations — that prompt is automatically skipped. The
-CLI detects the missing TTY, fails fast with a clear message (e.g. "No valid SSO credentials found.
-Please run `codemie setup` interactively before using this command."), and exits non-zero instead of
-hanging.
+CLI detects the missing TTY, fails fast, and exits non-zero instead of hanging.
+
+The failure is a single actionable line on **stderr**, with no stack trace:
+
+```console
+$ codemie sdk assistants list < /dev/null
+❌ SSO authentication required. Please run "codemie setup" with SSO provider first.
+$ echo $?
+1
+```
+
+Diagnostics go to stderr rather than stdout, so piping stdout or consuming `--json` output stays
+clean. Progress spinners are suppressed whenever their output stream is not a terminal — including
+`codemie … > run.log 2>&1` from an interactive shell — so captured logs do not fill with
+cursor-control escape sequences. Spinner suppression tracks the **output** stream, independently of
+whether `stdin` is redirected.
 
 There is no separate `--non-interactive` flag to set — detection is automatic, based solely on
-whether `stdin` is a TTY. To run unattended in CI, either authenticate ahead of time
+whether `stdin` is a TTY.
+
+> **Known limitation.** Because detection looks only at `stdin`, it does **not** fire in an
+> environment that allocates a pseudo-TTY — `docker run -t`, and some Jenkins and GitLab runner
+> configurations. There, a missing SSO session can still reach the interactive prompt and block. The
+> `CI` environment variable is not consulted. If your runner allocates a TTY, do not rely on
+> automatic detection; use one of the two unattended options below.
+
+To run unattended in CI, either authenticate ahead of time
 (`codemie profile login`) with credentials persisted before the run, or use
 [JWT Bearer Authorization](#jwt-bearer-authorization) instead, which requires no interactive
-session at all.
+session at all. The JWT path never prompts, so it is the safest choice for a pty-allocating runner.
 
 ## Enterprise SSO Features
 
