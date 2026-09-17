@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "task": "Make the VS Code Copilot BYOK, Claude Desktop and VS Code Claude Code proxy connectors configure editors from the tenant's live /v1/llm_models catalog instead of hardcoded EPAM-named constants, and make VS Code settings.json editing comment-preserving (JSONC-safe).",
+  "generated": "2026-09-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 25,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three independent bugs across five existing components plus new shared abstractions: vscode-models.ts (static 25-entry table must become a capability table keyed by model family), vscode.ts (buildManagedModels must intersect that table with the live catalog, plus the strict parse at :189), desktop.ts (PREFERRED_CLAUDE_MODELS and selectPreferredClaudeModels, whose three resolution strategies only append suffixes and never reorder family/version tokens), vscode-claude-code.ts (readSettings + the JSON.stringify writer), and connect-orchestrator.ts target reporting. New abstractions are required: a family-keyed capability table, a cross-convention model-name resolver generalizing the shape of sso/proxy/plugins/codex-model-resolver.ts, and a comment-preserving settings editor. Base L for 4-5 components across the connectors directory and a new shared utility; the multiple-workflows red flag carries it to XL."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The nine acceptance criteria are concrete and independently testable per target, but four open questions are genuinely design-determining and unresolved: whether the gateway accepts the 'openai.' prefix verbatim on /v1/responses (decides whether prefixed identifiers pass through unchanged), whether github-copilot-* deployments belong in the Copilot picker at all (directly contradicts or satisfies an AC depending on the answer), whether the resolver should be general or specific to the two observed naming conventions (an unmade architectural fork), and whether /v1/llm_models is even reachable from the VS Code connect path at config-write time. Rework risk is real if the resolver is built two-convention and a third tenant convention appears. Scored L rather than XL because the AC themselves are crisp — the gaps are explicit open questions, not vague criteria."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent covers the work: desktop.ts:84 proves catalog fetching but not capability intersection, and codex-model-resolver.ts is deliberately GPT-only (/^gpt-(\\d+)(?:-(\\d+))?/) with no Claude branch and no family/version reordering. The repository has no JSONC dependency at all, so comment-preserving surgical editing of a developer's personal settings.json is a new technique on a destructive-if-wrong path — a bad write destroys a real working configuration on the user's machine, and an AC demands the file be left byte-for-byte unchanged on failure. Verification against a real non-EPAM tenant is itself an open question, so correctness may not be provable before release. Base L; the defensive-test-template auto-bump carries it to XL."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Roughly 7 modified (vscode-models.ts, vscode.ts, desktop.ts, vscode-claude-code.ts, connect-orchestrator.ts, package.json, package-lock.json) and 4-6 new (model-name/catalog resolver, JSONC settings helper, and the test files the enumerated edge cases demand), spanning src/cli/commands/proxy/connectors/, src/cli/commands/proxy/, a resolver location, __tests__ directories and the repo root — 3+ directories. Calibration note: the project L anchor .ai-run/references/complexity-assessment/examples/l/profile-provider-decoupling.json scored base XL (5) for 14 files and its accounting counts test files, which would argue for XL here at ~12 files. Held at L because that anchor's modified count was 12 against roughly 7 here, and modified-file churn is the heavier half of this dimension; the band is unaffected either way."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct layers: CLI surface (proxy connect command output and per-target reporting), Service (connector logic, capability intersection, name resolution), persistence (three on-disk config files — chatLanguageModels.json, claude_desktop_config.json and settings.json — with a read/write format compatibility change from strict JSON to JSONC), and External (GET /v1/llm_models against the tenant gateway, newly consulted from the VS Code connect path). The 'new external service' red flag was considered and deliberately NOT applied: /v1/llm_models is already integrated at desktop.ts:84, so this is a new call site rather than a new integration. Scored L on the four-layer count and the file-format change as the persistence analogue of a schema concern, noting there is no schema migration."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): affects multiple workflows — three distinct proxy connect targets (--vscode, --claude-desktop, --vscode-claude-code), each with independent acceptance criteria, plus the Codex connector held in the no-regress blast radius.",
+    "Technical Risk bumped from L (4) to XL (5): the acceptance criteria enumerate specific edge, error and variant cases (settings.json with comments, with trailing commas, genuinely unparseable and required to stay byte-for-byte unchanged; a preferred model family absent from the tenant catalog; a tenant model absent from the capability table) and the technical analysis documents no Testing Landscape and names no existing test template covering that defensive pattern."
+  ],
+  "split_recommendation": null
+}

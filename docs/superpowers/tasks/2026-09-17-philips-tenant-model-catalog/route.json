@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-autonomous",
+  "decided_at": "2026-09-17T15:38:36Z",
+  "complexity": {"size": "L", "total": 25},
+  "signals": {"risk_flags": ["high-blast-radius"], "ui": "unknown", "docs_only": false, "ticket_adapter": true, "requirements": "ambiguous"},
+  "stages": {"spec": "run", "feature_verification": "conditional", "actual_complexity": "run"},
+  "reasons": {"spec_reason": "requirements ambiguous — the spec is where that gets settled", "feature_verification_reason": "decide at Stage 7 from the diff against gate-plan.local.json ui_globs", "actual_complexity_reason": "ticket adapter configured — the score has a consumer"},
+  "escalate_on": ["security","breaking-change"]
+}

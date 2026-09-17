@@ -1,0 +1,6 @@
+{"task_id":"1","status":"done","commit":"d1a11b7f","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/model-name-resolver.test.ts"}
+{"task_id":"2","status":"done","commit":"355f113e","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/vscode-models.test.ts","note":"Committed together with tasks 3-4 (see commit); vscode-models.ts rename alone breaks vscode.ts/connect-orchestrator.ts typecheck, which the repo's pre-commit hook enforces on every commit."}
+{"task_id":"3","status":"done","commit":"355f113e","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/tenant-catalog.test.ts src/cli/commands/proxy/connectors/__tests__/vscode.test.ts"}
+{"task_id":"4","status":"done","commit":"355f113e","test_command":"npx vitest run src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts src/cli/commands/proxy/__tests__/index.test.ts"}
+{"task_id":"5","status":"done","commit":"6d006d63","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/desktop.test.ts"}
+{"task_id":"6","status":"done","commit":"0478379c","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts"}
