@@ -62,4 +62,48 @@ describe('fetchTenantModelCatalog', () => {
     await expect(fetchTenantModelCatalog('http://127.0.0.1:4001', 'gw-key'))
       .rejects.toThrow(ConfigurationError);
   });
+
+  it('applies the id/base_name/deployment_name fallback chain to a data-wrapped response too (CR-005)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: mkHeaders('application/json'),
+      json: async () => ({
+        data: [
+          { id: 'claude-sonnet-4-6' },
+          { base_name: 'openai.gpt-5.6-luna' },
+          { deployment_name: 'qwen.qwen3-coder-30b-a3b-v1' },
+          {},
+        ],
+      }),
+    }) as unknown as typeof globalThis.fetch;
+
+    const ids = await fetchTenantModelCatalog('http://127.0.0.1:4001', 'gw-key');
+    expect(ids).toEqual([
+      'claude-sonnet-4-6',
+      'openai.gpt-5.6-luna',
+      'qwen.qwen3-coder-30b-a3b-v1',
+    ]);
+  });
+
+  it('passes an AbortSignal to the fetch call so a hung gateway does not block forever (CR-004)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: mkHeaders('application/json'),
+      json: async () => [],
+    }) as unknown as typeof globalThis.fetch;
+
+    await fetchTenantModelCatalog('http://127.0.0.1:4001', 'gw-key');
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('raises a timeout-specific ConfigurationError when the fetch call is aborted (CR-004)', async () => {
+    const abortError = new Error('This operation was aborted');
+    abortError.name = 'AbortError';
+    globalThis.fetch = vi.fn().mockRejectedValue(abortError) as unknown as typeof globalThis.fetch;
+
+    await expect(fetchTenantModelCatalog('http://127.0.0.1:4001', 'gw-key'))
+      .rejects.toThrow(/timed out/i);
+  });
 });
