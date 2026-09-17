@@ -11,6 +11,7 @@ import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
@@ -588,6 +589,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Show random welcome message
       console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+
+      const startTip = getSessionTip('start');
+      if (startTip) {
+        console.log('');
+        console.log(formatTipLine(startTip));
+      }
       console.log(''); // Empty line for spacing
 
       // Silently sync registered skills in background (fire-and-forget)
@@ -750,6 +757,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
         if (!this.metadata.silentMode) {
           console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+          const endTip = getSessionTip('end');
+          if (endTip) {
+            console.log('');
+            console.log(formatTipLine(endTip));
+          }
           console.log(''); // Spacing before powered by
           console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
           console.log(''); // Empty line for spacing
@@ -920,6 +932,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           // Show goodbye message with random easter egg (skip in silent mode for ACP)
           if (!this.metadata.silentMode) {
             console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+            const endTip = getSessionTip('end');
+            if (endTip) {
+              console.log('');
+              console.log(formatTipLine(endTip));
+            }
             console.log(''); // Spacing before powered by
             console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
             console.log(''); // Empty line for spacing
