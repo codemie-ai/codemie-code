@@ -422,7 +422,8 @@ export class OtlpDispatcher {
             ...sanitizeLogArgs({ url, body: bodyText.slice(0, 500) })
           );
         } else {
-          await response.body?.cancel().catch(() => { });
+          logger.info(`[otlp-ingest] postOtlp: ok ${response.status}`, ...sanitizeLogArgs({ url }));
+          await response.body?.cancel().catch(() => {});
         }
       } finally {
         clearTimeout(timeout);

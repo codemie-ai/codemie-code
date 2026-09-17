@@ -15,12 +15,18 @@
     "local-be": {
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
-      "baseUrl": "https://codemie.lab.epam.com",
+      "baseUrl": "http://localhost:8080",
       "model": "claude-sonnet-4-6",
       "haikuModel": "claude-haiku-4-5-20251001",
       "sonnetModel": "claude-sonnet-4-6",
       "opusModel": "claude-opus-5",
       "name": "local-be"
+    },
+    "preview": {
+      "provider": "ai-run-sso",
+      "baseUrl": "https://codemie-preview.lab.epam.com/code-assistant-api",
+      "model": "claude-sonnet-4-6",
+      "name": "preview"
     }
   },
   "codemieAssistants": [
@@ -63,7 +69,7 @@
   ],
   "codemieSkills": [],
   "workspace": {
-    "codeMieUrl": "https://codemie.lab.epam.com",
+    "codeMieUrl": "https://codemie-preview.lab.epam.com",
     "codeMieProject": "epm-cdme"
   }
 }
