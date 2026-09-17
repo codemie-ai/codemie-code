@@ -105,18 +105,15 @@ export function getSessionTip(context: 'start' | 'end'): Tip | null {
 }
 
 /**
- * Format a tip for terminal display with high visibility on BOTH dark and
- * light terminal themes: a yellow badge with black text, followed by the
- * message on a blue bar with bright-white bold text. Foreground-only colors
- * always fail on one theme (white text vanishes on white terminals, dark text
- * on black ones), so both segments carry explicit background colors.
+ * Format a tip for terminal display: a gold ✨ prefix followed by the message
+ * in the same warm gold, bold. Yellow is the CLI's established accent color
+ * (matches the Kimi-style prompt echo) — deliberately no background bars or
+ * badge, just plain foreground styling.
  * Shared by session lifecycle rendering (BaseAgentAdapter), renderTip(), and
  * `codemie tips --random` so tips look identical everywhere.
  */
 export function formatTipLine(tip: Tip): string {
-  const badge = chalk.bgYellow.black.bold(' 💡 TIP ');
-  const message = chalk.bgBlue.whiteBright.bold(` ${tip.message} `);
-  return `${badge}${message}`;
+  return chalk.bold.yellow(`✨ ${tip.message}`);
 }
 
 /**
