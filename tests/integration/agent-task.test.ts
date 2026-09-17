@@ -56,7 +56,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Task output tests', () =>
 
   // ── TC-016: --task exits 0 and response appears in stdout ─────────────────
   // Checks the non-interactive output path specifically. PTY-based tests
-  // (TC-024, TC-025) verify interactive session output; this test verifies
+  // (TC-014, TC-025) verify interactive session output; this test verifies
   // that --task mode routes the agent response to the caller's stdout.
   describe('TC-016 — --task run exits 0 and prints agent response to stdout', () => {
     let testHome: string;
