@@ -11,7 +11,6 @@ import { getReleaseNotes, renderReleaseNotes } from '../../utils/whatsnew.js';
 
 interface WhatsnewCommandOptions {
   all?: boolean;
-  version?: string;
 }
 
 export function createWhatsnewCommand(): Command {
@@ -19,14 +18,14 @@ export function createWhatsnewCommand(): Command {
 
   command
     .description('Show release notes (from CHANGELOG.md)')
+    .argument('[version]', 'Show release notes for a specific version (default: current)')
     .option('--all', 'Show release notes for all versions')
-    .option('--version <version>', 'Show release notes for a specific version')
-    .action((options: WhatsnewCommandOptions) => {
-      const targetVersion = options.all ? undefined : (options.version ?? getCurrentVersion());
+    .action((version: string | undefined, options: WhatsnewCommandOptions) => {
+      const targetVersion = options.all ? undefined : (version ?? getCurrentVersion());
       const entries = getReleaseNotes(targetVersion);
 
       if (entries.length === 0) {
-        console.log(chalk.yellow(`\nNo release notes found for ${targetVersion ?? 'this installation'} — try \`codemie whatsnew --all\`\n`));
+        console.log(chalk.yellow('\nNo release notes found — CHANGELOG.md is missing or has no entries.\n'));
         return;
       }
 

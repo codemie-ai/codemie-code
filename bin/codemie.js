@@ -35,7 +35,12 @@ if (!isTestEnvironment) {
 
 // Once-per-upgrade "What's new" notice from CHANGELOG.md (shares the
 // CODEMIE_TIPS off switch with feature tips). Non-blocking, minimal stdout.
-if (!isTestEnvironment) {
+// Skipped for scripted/piped use (stdout not a TTY) and for invocations that
+// produce their own output contract (--version/-V/--task/--help).
+const skipNoticeArgs = new Set(['--version', '-V', '--task', '--help']);
+const hasOutputContractArg = process.argv.slice(2).some(arg => skipNoticeArgs.has(arg));
+const isInteractiveTerminal = process.stdout.isTTY !== false; // undefined -> treat as TTY
+if (!isTestEnvironment && isInteractiveTerminal && !hasOutputContractArg) {
   try {
     const { readFileSync } = await import('node:fs');
     const { default: chalk } = await import('chalk');
@@ -50,14 +55,20 @@ if (!isTestEnvironment) {
     const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
     const currentVersion = packageJson.version;
 
-    if (currentVersion && isWhatsNewEnabled() && getLastSeenVersion() !== currentVersion) {
-      const entries = getReleaseNotes(currentVersion);
-      if (entries.length > 0) {
-        console.log(chalk.dim(`✨ Updated to ${currentVersion} — here's what changed:`));
-        renderReleaseNotes(entries, { maxItems: 6 });
+    if (currentVersion && isWhatsNewEnabled()) {
+      const lastSeenVersion = getLastSeenVersion();
+      if (lastSeenVersion === null) {
+        // Fresh install (no marker) — record silently, no "Updated to" banner
+        markVersionSeen(currentVersion);
+      } else if (lastSeenVersion !== currentVersion) {
+        const entries = getReleaseNotes(currentVersion);
+        if (entries.length > 0) {
+          console.log(chalk.dim(`✨ Updated to ${currentVersion} — here's what changed:`));
+          renderReleaseNotes(entries, { maxItems: 6 });
+        }
+        // Mark seen even when this version has no changelog entry — don't nag again
+        markVersionSeen(currentVersion);
       }
-      // Mark seen even when this version has no changelog entry — don't nag again
-      markVersionSeen(currentVersion);
     }
   } catch (error) {
     // Silently fail - don't block CLI startup
