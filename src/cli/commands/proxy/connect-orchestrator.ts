@@ -18,6 +18,7 @@ import {
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
+import { ensureApiBase } from '../../../providers/core/codemie-auth-helpers.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
@@ -380,7 +381,7 @@ async function ensureDaemon(
       // config.ssoConfig is never populated anywhere in this codebase - it's a
       // dead field. Fall back to codeMieUrl/baseUrl, the same convention
       // sso.models.ts uses to resolve the CodeMie backend API URL.
-      syncApiUrl: config.codeMieUrl || config.baseUrl,
+      syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
       syncCodeMieUrl: config.codeMieUrl,
     });
     startedInThisRun = true;
