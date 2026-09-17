@@ -167,6 +167,25 @@
     ]
   },
   {
+    "id": "cmd-profile-rename",
+    "category": "Getting Started",
+    "message": "Typo in a profile name? `codemie profile rename old new` fixes it in place, and `codemie profile delete old` removes it entirely.",
+    "command": "profile",
+    "commands": [
+      "codemie profile rename old new",
+      "codemie profile delete old"
+    ]
+  },
+  {
+    "id": "cmd-agent-overrides",
+    "category": "Getting Started",
+    "message": "One-off override? `codemie-claude --profile work \"review this PR\"` or `codemie-gemini -m gemini-2.5-flash \"explain this\"` — no config surgery needed.",
+    "commands": [
+      "codemie-claude --profile work \"review this PR\"",
+      "codemie-gemini -m gemini-2.5-flash \"explain this\""
+    ]
+  },
+  {
     "id": "cmd-proxy-connect",
     "category": "Proxy & IDE",
     "message": "Claude Desktop, VS Code or Codex Desktop? `codemie proxy connect --claude-desktop` (or `--vscode`, `--codex-desktop`) routes them through your CodeMie profile.",
@@ -249,6 +268,15 @@
     "command": "proxy",
     "commands": [
       "codemie proxy disconnect --codex-desktop"
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect-codex-model",
+    "category": "Proxy & IDE",
+    "message": "Codex Desktop gets the newest available model by default — pin your own with `codemie proxy connect --codex-desktop --model gpt-5-codex`.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --codex-desktop --model gpt-5-codex"
     ]
   },
   {
@@ -404,6 +432,15 @@
     ]
   },
   {
+    "id": "cmd-agent-init",
+    "category": "Extensions",
+    "message": "Frameworks in one shot: `codemie-claude init bmad` installs a full SDLC setup — `codemie-claude init --list` shows what else your agent supports (speckit, codebase-memory...).",
+    "commands": [
+      "codemie-claude init bmad",
+      "codemie-claude init --list"
+    ]
+  },
+  {
     "id": "hooks-session-lifecycle",
     "category": "Sessions",
     "message": "Every session fires SessionStart and SessionEnd hooks — that is where skill sync and metrics flushing happen automatically.",
@@ -445,6 +482,38 @@
     "id": "flag-silent",
     "category": "Sessions",
     "message": "Scripting around the CLI? Pass -s/--silent to hide the decorative output so stdout stays machine-readable."
+  },
+  {
+    "id": "flag-reasoning-effort",
+    "category": "Sessions",
+    "message": "Hard problem? Crank the thinking budget: `codemie-claude --reasoning-effort high --task \"diagnose the race condition\"` — one vocabulary (minimal to max) across agents.",
+    "commands": [
+      "codemie-claude --reasoning-effort high --task \"<task>\""
+    ]
+  },
+  {
+    "id": "flag-resume",
+    "category": "Sessions",
+    "message": "Pick up where you left off: `codemie-claude --resume <session-id> --task \"now add tests\"` continues the earlier conversation.",
+    "commands": [
+      "codemie-claude --resume <session-id> --task \"<task>\""
+    ]
+  },
+  {
+    "id": "flag-status-bar",
+    "category": "Sessions",
+    "message": "Want model, context usage and cost visible live? `codemie-claude --status` adds a status bar to the session.",
+    "commands": [
+      "codemie-claude --status"
+    ]
+  },
+  {
+    "id": "flag-jwt-ci",
+    "category": "Sessions",
+    "message": "No SSO browser in CI? `codemie-claude --jwt-token \"$TOKEN\" --task \"review this PR\"` runs with zero prior setup.",
+    "commands": [
+      "codemie-claude --jwt-token \"$TOKEN\" --task \"<task>\""
+    ]
   },
   {
     "id": "cmd-analytics",
@@ -544,10 +613,11 @@
   {
     "id": "cmd-docs-init",
     "category": "Insights",
-    "message": "Installed a docs tool? `codemie docs init codegraph` wires it into the current project, MCP config included.",
+    "message": "Installed a docs tool? `codemie docs init codegraph` wires it into the current project — or a different one with `--cwd <path>`.",
     "command": "docs",
     "commands": [
-      "codemie docs init codegraph"
+      "codemie docs init codegraph",
+      "codemie docs init codegraph --cwd ./other-project"
     ]
   },
   {
@@ -576,6 +646,46 @@
     "command": "workflow",
     "commands": [
       "codemie workflow install pr-review --timeout 30 --max-turns 100"
+    ]
+  },
+  {
+    "id": "cmd-codebase-lifecycle",
+    "category": "Insights",
+    "message": "The graph UI runs as a little daemon: `codemie codebase start` boots it in the background, `codemie codebase status` checks in, `codemie codebase stop` shuts it down.",
+    "command": "codebase",
+    "commands": [
+      "codemie codebase start",
+      "codemie codebase status",
+      "codemie codebase stop"
+    ]
+  },
+  {
+    "id": "cmd-analytics-report-format",
+    "category": "Insights",
+    "message": "Feed the numbers to your own tools: `codemie analytics --report --report-format json` writes the exact priced dataset behind the HTML dashboard.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics --report --report-format json"
+    ]
+  },
+  {
+    "id": "cmd-analytics-native",
+    "category": "Insights",
+    "message": "Even plain `claude` sessions show up: analytics scans native agent logs by default, and `codemie analytics --no-scan-native` restricts to CodeMie-tracked runs.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics",
+      "codemie analytics --no-scan-native"
+    ]
+  },
+  {
+    "id": "cmd-log-grep",
+    "category": "Insights",
+    "message": "Hunting a specific failure? `codemie log --grep \"timeout\" --last 24h` searches recent logs, and `codemie log --last 7d --format json -o week.json` exports them for later.",
+    "command": "log",
+    "commands": [
+      "codemie log --grep \"timeout\" --last 24h",
+      "codemie log --last 7d --format json -o week.json"
     ]
   },
   {
@@ -683,5 +793,14 @@
     "id": "env-debug",
     "category": "Diagnostics",
     "message": "When things misbehave, set CODEMIE_DEBUG=true to stream the debug log right into your console."
+  },
+  {
+    "id": "env-mcp-proxy-debug",
+    "category": "Diagnostics",
+    "message": "MCP OAuth misbehaving? `MCP_PROXY_DEBUG=true codemie mcp-proxy <url>` logs the whole handshake to ~/.codemie/logs/mcp-proxy.log.",
+    "command": "mcp-proxy",
+    "commands": [
+      "MCP_PROXY_DEBUG=true codemie mcp-proxy <url>"
+    ]
   }
 ]
