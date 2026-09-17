@@ -79,6 +79,7 @@ function collectKnownCommandNames(command: Command): Set<string> {
 /**
  * Drop tips whose command reference is not a registered top-level command —
  * the self-healing signal when a command is retired but its tip was forgotten.
+ * A tip is stale when its `command` OR any of its `commands` variations fails.
  */
 function dropStaleTips(tips: readonly Tip[], knownCommands: Set<string>): Tip[] {
   return tips.filter(tip => {
@@ -86,8 +87,32 @@ function dropStaleTips(tips: readonly Tip[], knownCommands: Set<string>): Tip[] 
       logger.debug(`[tips] Dropping stale tip '${tip.id}': 'codemie ${tip.command}' is not a registered command`);
       return false;
     }
+    const staleVariation = tip.commands?.find(variation => !isKnownVariation(variation, knownCommands));
+    if (staleVariation) {
+      logger.debug(`[tips] Dropping stale tip '${tip.id}': variation '${staleVariation}' does not match a registered command`);
+      return false;
+    }
     return true;
   });
+}
+
+/**
+ * Validate one variation: locate the bare `codemie` token and check the token
+ * after it against the known command tree. Variations without a checkable
+ * command token — binary form (`codemie-<agent> ...`) or flag-led
+ * (`codemie --task ...`) — are skipped.
+ */
+function isKnownVariation(variation: string, knownCommands: Set<string>): boolean {
+  const tokens = variation.split(/\s+/);
+  const codemieIndex = tokens.indexOf('codemie');
+  if (codemieIndex === -1) {
+    return true;
+  }
+  const topLevel = tokens[codemieIndex + 1];
+  if (!topLevel || topLevel.startsWith('-')) {
+    return true;
+  }
+  return knownCommands.has(topLevel);
 }
 
 function showAllTips(tips: Tip[]): void {
@@ -111,7 +136,11 @@ function showAllTips(tips: Tip[]): void {
     console.log();
     console.log(chalk.bold.cyan(category));
     for (const tip of categoryTips) {
-      const commandRef = tip.command ? chalk.dim(' → ') + chalk.cyan(`codemie ${tip.command}`) : '';
+      // Tips with concrete variations show those; others fall back to the
+      // top-level command reference.
+      const commandRef = tip.commands?.length
+        ? chalk.dim(' → ') + tip.commands.map(cmd => chalk.cyan(cmd)).join(chalk.dim(' · '))
+        : (tip.command ? chalk.dim(' → ') + chalk.cyan(`codemie ${tip.command}`) : '');
       console.log(`  💡 ${tip.message}${commandRef}`);
     }
   }
@@ -127,5 +156,10 @@ function showRandomTip(tips: Tip[]): void {
   const tip = tips[Math.floor(Math.random() * tips.length)];
   console.log();
   console.log(formatTipLine(tip));
+  if (tip.commands && tip.commands.length > 0) {
+    const [first, second] = tip.commands;
+    const shown = tip.commands.length === 2 && second ? `${first} · ${second}` : first;
+    console.log(chalk.dim(`   Try: ${shown}`));
+  }
   console.log();
 }

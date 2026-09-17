@@ -49,7 +49,12 @@ export interface Tip {
    * `codemie tips` drops/flags this tip automatically.
    */
   command?: string;
+  /** Concrete invocation variations taught by this tip. */
+  commands?: string[];
 }
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every(item => typeof item === 'string');
 
 /**
  * Load the tip catalog from src/utils/tips.json at the package root (resolved
@@ -68,13 +73,22 @@ function loadTipsCatalog(): Tip[] {
       return [];
     }
 
-    const tips = parsed.filter((entry): entry is Tip =>
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof (entry as Tip).id === 'string' &&
-      typeof (entry as Tip).category === 'string' &&
-      typeof (entry as Tip).message === 'string'
-    );
+    const tips = parsed
+      .filter((entry): entry is Tip =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as Tip).id === 'string' &&
+        typeof (entry as Tip).category === 'string' &&
+        typeof (entry as Tip).message === 'string'
+      )
+      .map(entry => {
+        // Tolerate a malformed optional `commands` field by dropping just it
+        if (entry.commands !== undefined && !isStringArray(entry.commands)) {
+          logger.debug(`[tips] tips.json: ignoring malformed 'commands' on tip '${entry.id}'`);
+          return { ...entry, commands: undefined };
+        }
+        return entry;
+      });
     if (tips.length !== parsed.length) {
       logger.debug(`[tips] tips.json: dropped ${parsed.length - tips.length} malformed entrie(s)`, { catalogPath });
     }
