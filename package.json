@@ -27,6 +27,7 @@
     "scripts",
     "src/workflows/templates/**/*.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
