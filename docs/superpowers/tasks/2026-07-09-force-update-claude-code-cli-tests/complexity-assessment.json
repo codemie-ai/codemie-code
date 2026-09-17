@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Extend agent-build-setup.ts to enforce CLAUDE_SUPPORTED_VERSION and create claude.plugin.version-support.test.ts following the Codex analog pattern.",
+  "generated": "2026-07-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two distinct test components across different areas: agent-build-setup.ts (globalSetup modification) and claude.plugin.version-support.test.ts (new unit test); pattern is clear from the Codex analog but requires coordination between the integration setup layer and the plugin unit test layer."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The Codex version-support test is an established template, but the Claude adaptation has four documented deviations: mock target must be native-installer.js not processes.js, version string from claude --version output requires prefix stripping before comparison, execSync synchronous constraint in globalSetup must be respected, and the TypeScript import path from agent-build-setup.ts must align with the existing Node.js context precedent."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

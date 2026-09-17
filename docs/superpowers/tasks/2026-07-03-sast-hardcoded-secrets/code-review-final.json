@@ -1,0 +1,25 @@
+{
+  "decision": "approve",
+  "rationale": "All 6 changed lines are test-only value substitutions. Blind lens raised 4 concerns; triage classified 1 as defer (pre-existing gap: apiKey empty-string behavior untested — not introduced by this change) and 3 as dismiss (scanner speculation, mutation-sentinel robustness — cosmetic). Edge-case lens returned no findings. No spec/story artifact present (genuine no-spec round; confidence lowered accordingly so a human can confirm the SAST scanner accepts the new values). 0 blocking findings.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "fix(tests): follows Conventional Commits; type 'fix', scope 'tests', subject within 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "test-only changes; no production code conventions affected"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no production code touched; changes remove hardcoded-like string values from test fixtures"
+    }
+  ],
+  "findings": []
+}

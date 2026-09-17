@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Replace hardcoded secret-looking strings in test files to resolve SAST hardcoded-secrets findings.",
+  "generated": "2026-07-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 6,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Only two test files modified — AgentCLI-effort.test.ts and moonshot-subscription.template.test.ts. No production code or cross-layer concerns involved."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Exactly 2 files changed with 6 insertions and 6 deletions; no new files created. Maps directly to XS (1–2 files)."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

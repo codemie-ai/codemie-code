@@ -1,0 +1,47 @@
+{
+  "decision": "request-changes",
+  "rationale": "No-spec round (sdlc-light has no spec/story artifact) - acceptance lens skipped, confidence forced to low. Blind + edge-case lenses ran and surfaced 2 real, unambiguous defects in the completed_-prefix fix, both bucketed patch/major: a double-counting risk when both filename variants coexist for the same session, and missing test coverage for resolveSessionPath's fallback/precedence/partial-rename cases. 2 findings deferred as pre-existing (not introduced by this diff): the TOCTOU window between existsSync and the later read, and the lack of path validation on the CLI-supplied sessionId (flagged by the security standard but present since the original single-path join()). 1 finding dismissed as unconfirmed speculation (a hypothetical other caller populating sessionId with a completed_ prefix - not found in the codebase by the edge-case lens's repo exploration). Also noting for the human reviewer: this diff includes one unrelated commit (fix(utils): jwt_token -> external_token) needed to unblock the pre-commit typecheck gate, done with explicit user approval mid-flow and committed separately.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All 3 commits use allowed type/scope and subjects under 100 chars, per commitlint.config.cjs and .ai-run/guides/standards/git-workflow.md."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "ES module imports keep .js extensions, no `any`, explicit types on the new resolveSessionPath() signature; consistent with surrounding code and .ai-run/guides/standards/code-quality.md."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "resolveSessionPath() concatenates the CLI-supplied sessionId into a filesystem path with no validation, per .ai-run/guides/security/security-practices.md's path-validation practice. Pre-existing (the original single join() call had the same gap) and not introduced or worsened by this diff - tracked as a deferred, non-blocking observation, not a new finding."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/__tests__/data-loader.test.ts",
+      "title": "Missing coverage for resolveSessionPath fallback edge cases",
+      "problem": "No test exercises resolveSessionPath() when neither <id>.json nor completed_<id>.json exists, when both variants coexist for the same id, or when the .json and _metrics.jsonl files are renamed independently (partial rename).",
+      "impact": "The fallback logic's core guarantees (graceful miss, active-file precedence, independent per-suffix resolution) are unverified; a regression in any of them would ship silently.",
+      "recommendation": "Add three unit tests to data-loader.test.ts: (1) loadSession returns null when neither filename variant exists, (2) the active <id>.json wins when both <id>.json and completed_<id>.json are present for the same id, (3) resolveSessionPath resolves .json and _metrics.jsonl independently when only one has been renamed to the completed_ prefix."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/data-loader.ts",
+      "line": 141,
+      "title": "Duplicate sessionId entries when both filename variants exist",
+      "problem": "loadSessions() iterates every matching .json file and strips the completed_ prefix per-file, but never dedupes by the resulting sessionId. If both <id>.json and completed_<id>.json exist for the same session (e.g. an interrupted/non-atomic hook.ts rename), both filenames now strip to the identical bare UUID, and each loop iteration's loadSession(sessionId) call resolves via resolveSessionPath() to the SAME (active) file - so the same session is loaded and pushed into sessions[] twice.",
+      "impact": "Aggregated analytics (turns, tool calls, lines changed, cost) for that session would be double-counted in the CLI summary, exported JSON/CSV, and the HTML report - silently skewing totals for exactly the completed-session scenario this fix targets.",
+      "recommendation": "In the loadSessions() loop, track sessionIds already added (e.g. a Set) and skip a sessionFile whose derived, prefix-stripped sessionId was already loaded earlier in this scan."
+    }
+  ]
+}

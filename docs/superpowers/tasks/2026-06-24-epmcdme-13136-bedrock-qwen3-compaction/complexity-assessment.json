@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Fix compaction failure for Bedrock Qwen3 Coder 480B by adding modify_params: true to litellm_settings in litellm_config.yaml and optionally extending dummy-tool injection to Bedrock providers in opencode request.ts.",
+  "generated": "2026-06-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 9,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two files touched: litellm_config.yaml (1-line addition to litellm_settings) and optionally opencode packages/opencode/src/session/llm/request.ts (~10 lines mirroring the existing GitHub Copilot dummy-tool pattern). No new components, no architectural boundaries crossed."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Primary fix is Config/Infrastructure layer only. Secondary fix adds the LLM-request-preparation layer within opencode. At most two layers, both with established patterns already present."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "modify_params: true is global across all Bedrock Converse calls through the LiteLLM proxy, but the flag only activates under the specific corner case of tool-call blocks in history without a tools parameter — a condition that should not arise outside compaction. Exact precedent exists: drop_params: true is already set in the same litellm_settings block; GitHub Copilot dummy-tool injection is already in request.ts. Rollback is trivial (revert 1 line or 10-line block)."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

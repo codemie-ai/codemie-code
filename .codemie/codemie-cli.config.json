@@ -6,9 +6,9 @@
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-4-6",
       "haikuModel": "claude-haiku-4-5-20251001",
-      "sonnetModel": "claude-sonnet-5",
+      "sonnetModel": "claude-sonnet-4-6",
       "opusModel": "claude-opus-5",
       "name": "epm-cdme"
     },
@@ -16,9 +16,9 @@
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
       "baseUrl": "http://localhost:8080",
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-4-6",
       "haikuModel": "claude-haiku-4-5-20251001",
-      "sonnetModel": "claude-sonnet-5",
+      "sonnetModel": "claude-sonnet-4-6",
       "opusModel": "claude-opus-5",
       "name": "local-be"
     }
@@ -63,7 +63,7 @@
   ],
   "codemieSkills": [],
   "workspace": {
-    "codeMieUrl": "http://localhost:8080",
+    "codeMieUrl": "https://codemie.lab.epam.com",
     "codeMieProject": "epm-cdme"
   }
 }

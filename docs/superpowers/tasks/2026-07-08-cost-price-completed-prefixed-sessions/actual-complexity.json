@@ -1,0 +1,64 @@
+{
+  "task": "Forward sessionMetadata.correlation.agentSessionFile onto RawSessionData in MetricsDataLoader.loadSession so the cost enricher prices completed_-prefixed CodeMie sessions via its existing native-log branch.",
+  "generated": "2026-07-09",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "MetricsDataLoader.loadSession (analytics data-loader) return literal; RawSessionData interface doc-comment reword",
+      "layers": "Service (analytics data-loading)"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": "Forwards a native log path later read by the cost enricher; optional chaining guards absent/pending/unmatched correlation",
+      "mitigation": "Additive single-field change reusing the enricher's pre-existing first branch; trivially reversible; covered by 3 added regression tests"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/cli/commands/analytics/data-loader.ts",
+        "src/cli/commands/analytics/__tests__/data-loader.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/cli/commands/analytics",
+        "src/cli/commands/analytics/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 7,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "2 files changed (data-loader.ts + its test), 0 new files, 64 insertions / 4 deletions, all within src/cli/commands/analytics" },
+    { "dimension": "component_scope", "reason": "Single method touched: one field (agentSessionFile) wired onto loadSession's return literal plus a doc-comment reword; no layer boundary crossed" },
+    { "dimension": "technical_risk", "reason": "Reuses the cost enricher's already-existing native-log branch; additive, optional-chaining-guarded, fully reversible, no perf/security/schema impact" }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
