@@ -204,6 +204,31 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(rawAfter).toContain('ANTHROPIC_AUTH_TOKEN');
   });
 
+  const SETTINGS_WITH_TAB_INDENTATION = '{\n\t"editor.fontSize": 14\n}\n';
+
+  it('inserts new managed keys using the file\'s own indentation, not jsonc-parser\'s unformatted default (CR-006)', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await writeFile(configPath, SETTINGS_WITH_TAB_INDENTATION);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toContain('\n\t"claudeCode.disableLoginPrompt": true');
+    expect(rawAfter).not.toMatch(/,"claudeCode\.disableLoginPrompt"/);
+  });
+
+  const SETTINGS_WITH_TWO_SPACE_INDENTATION = '{\n  "editor.fontSize": 14\n}\n';
+
+  it('inserts new managed keys on their own indented line for a 2-space-indented file (CR-006)', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await writeFile(configPath, SETTINGS_WITH_TWO_SPACE_INDENTATION);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toContain('\n  "claudeCode.disableLoginPrompt": true');
+  });
+
   it('rejects a genuinely unparseable settings.json with a specific reason and leaves it untouched', async () => {
     await mkdir(join(productDir, 'User'), { recursive: true });
     const unbalanced = '{ "claudeCode.disableLoginPrompt": true';

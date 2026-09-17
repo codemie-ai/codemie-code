@@ -1,7 +1,14 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { applyEdits, modify, parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
+import {
+  applyEdits,
+  modify,
+  parse,
+  printParseErrorCode,
+  type FormattingOptions,
+  type ParseError,
+} from 'jsonc-parser';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -91,6 +98,21 @@ function isEnvVarEntry(value: unknown): value is ClaudeCodeEnvVar {
 }
 
 /**
+ * Detect the indentation and line ending an existing `settings.json` already
+ * uses, so `modify()` edits match it instead of jsonc-parser's own default —
+ * passing `{}` as `ModificationOptions` leaves `formattingOptions` undefined,
+ * which per jsonc-parser's contract inserts the edit completely unformatted
+ * (no newline, no indent) rather than falling back to a 4-space/tab default.
+ */
+function detectFormattingOptions(raw: string): FormattingOptions {
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const indentMatch = raw.match(/\r?\n([ \t]+)\S/);
+  const indent = indentMatch?.[1] ?? '  ';
+  const insertSpaces = !indent.startsWith('\t');
+  return { insertSpaces, tabSize: insertSpaces ? indent.length : 4, eol };
+}
+
+/**
  * Upsert the two CodeMie-managed entries into an existing `claudeCode.environmentVariables`
  * value, tolerating a malformed existing value instead of crashing or silently discarding data:
  * - A non-array `existing` is treated as empty (logged, not silently dropped).
@@ -175,8 +197,15 @@ export async function writeVsCodeClaudeCodeConfigAtPath(
       '\t'
     )}\n`;
   } else {
-    const afterFirst = applyEdits(raw, modify(raw, ['claudeCode.disableLoginPrompt'], true, {}));
-    nextText = applyEdits(afterFirst, modify(afterFirst, ['claudeCode.environmentVariables'], envVars, {}));
+    const formattingOptions = detectFormattingOptions(raw);
+    const afterFirst = applyEdits(
+      raw,
+      modify(raw, ['claudeCode.disableLoginPrompt'], true, { formattingOptions })
+    );
+    nextText = applyEdits(
+      afterFirst,
+      modify(afterFirst, ['claudeCode.environmentVariables'], envVars, { formattingOptions })
+    );
   }
 
   try {
