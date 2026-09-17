@@ -38,6 +38,8 @@ import { createMcpProxyCommand } from './commands/mcp-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
 import { createCodebaseCommand } from './commands/codebase/index.js';
 import { createDocsCommand } from './commands/docs.js';
+import { createTipsCommand } from './commands/tips.js';
+import { createWhatsnewCommand } from './commands/whatsnew.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -58,7 +60,11 @@ program
   .name('codemie')
   .description('AI/Run CodeMie CLI - Professional CLI wrapper for managing multiple AI coding agents')
   .version(version)
-  .option('--task <task>', 'Execute a single task using the built-in agent and exit');
+  .option('--task <task>', 'Execute a single task using the built-in agent and exit')
+  // Root options apply only before the subcommand name, so subcommands can
+  // reuse option names (e.g. `codemie whatsnew --version <v>` must reach the
+  // subcommand instead of triggering the root version print).
+  .enablePositionalOptions();
 
 program.addHelpText('after', `
 Claude Desktop 3P:
@@ -104,6 +110,8 @@ program.addCommand(createMcpProxyCommand());
 program.addCommand(createProxyCommand());
 program.addCommand(createCodebaseCommand());
 program.addCommand(createDocsCommand());
+program.addCommand(createTipsCommand());
+program.addCommand(createWhatsnewCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

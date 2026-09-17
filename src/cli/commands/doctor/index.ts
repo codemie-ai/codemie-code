@@ -23,6 +23,7 @@ import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 import { VersionWarningStore } from '../../../utils/version-warnings.js';
+import { renderTip } from '../../../utils/tips.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -220,6 +221,11 @@ export function createDoctorCommand(): Command {
 
       // Display summary
       await formatter.displaySummary(results);
+
+      // Surface a feature tip after a clean bill of health (non-blocking;
+      // displaySummary exits the process when checks fail, so a failing run
+      // stays focused on the issues)
+      renderTip({ category: 'Diagnostics' });
     });
 
   return command;

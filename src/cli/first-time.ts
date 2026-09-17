@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { ConfigLoader } from '../utils/config.js';
 import { AgentRegistry, BUILTIN_AGENT_NAME } from '../agents/registry.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from '../agents/core/agent-aliases.js';
+import { renderTip } from '../utils/tips.js';
 import type { AgentAdapter } from '../agents/core/types.js';
 
 /**
@@ -66,6 +67,7 @@ export class FirstTimeExperience {
   static async showWelcomeMessage(): Promise<void> {
     this.showEcosystemIntro();
     this.showRecommendations();
+    renderTip({ category: 'Getting Started' });
   }
 
   /**
@@ -150,6 +152,8 @@ export class FirstTimeExperience {
     console.log(chalk.cyan('  codemie list') + chalk.white('              # List all available agents and framework\n'));
 
     console.log(chalk.white('For detailed help, run: ') + chalk.green('codemie --help\n'));
+
+    renderTip();
   }
 
   /**
@@ -245,6 +249,8 @@ export class FirstTimeExperience {
 
       console.log();
     }
+
+    renderTip({ category: 'Configuration' });
   }
 
 }

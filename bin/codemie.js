@@ -33,6 +33,37 @@ if (!isTestEnvironment) {
   }
 }
 
+// Once-per-upgrade "What's new" notice from CHANGELOG.md (shares the
+// CODEMIE_TIPS off switch with feature tips). Non-blocking, minimal stdout.
+if (!isTestEnvironment) {
+  try {
+    const { readFileSync } = await import('node:fs');
+    const { default: chalk } = await import('chalk');
+    const {
+      isWhatsNewEnabled,
+      getLastSeenVersion,
+      getReleaseNotes,
+      renderReleaseNotes,
+      markVersionSeen
+    } = await import('../dist/utils/whatsnew.js');
+
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+    const currentVersion = packageJson.version;
+
+    if (currentVersion && isWhatsNewEnabled() && getLastSeenVersion() !== currentVersion) {
+      const entries = getReleaseNotes(currentVersion);
+      if (entries.length > 0) {
+        console.log(chalk.dim(`✨ Updated to ${currentVersion} — here's what changed:`));
+        renderReleaseNotes(entries, { maxItems: 6 });
+      }
+      // Mark seen even when this version has no changelog entry — don't nag again
+      markVersionSeen(currentVersion);
+    }
+  } catch (error) {
+    // Silently fail - don't block CLI startup
+  }
+}
+
 // Continue with normal CLI initialization
 import('../dist/cli/index.js').catch((error) => {
   console.error('Error:', error.message);
