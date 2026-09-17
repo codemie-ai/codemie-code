@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "mode": "guide-first",
+  "guide": ".ai-run/guides/quality-gates.md",
+  "gates": [
+    {"id": "license-check",  "command": "npm run license-check",              "available": true, "result": "PASS"},
+    {"id": "lint",           "command": "npm run lint",                       "available": true, "result": "BASELINE-FAIL"},
+    {"id": "typecheck",      "command": "npm run typecheck",                  "available": true, "result": "PASS"},
+    {"id": "build",          "command": "npm run build",                      "available": true, "result": "PASS"},
+    {"id": "unit",           "command": "npm run test:unit",                  "available": true, "result": "PASS"},
+    {"id": "integration",    "command": "npm run test:integration",           "available": true, "result": "BASELINE-FAIL"},
+    {"id": "commitlint",     "command": "npx commitlint --from origin/main --to HEAD", "available": true, "result": "PASS"}
+  ],
+  "ui_globs": [],
+  "detected_at": "2026-07-27T10:45:00Z",
+  "notes": "guide-first mode. Both BASELINE-FAIL gates fail on origin/main for reasons unrelated to this branch — see qa-report.md 'Pre-existing baseline noise' section for the full list of untouched files and env issues (missing node-pty, Windows subprocess crash in skills.sh)."
+}

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Fix bash command logging gap in ClaudeConversationsProcessor by adding <bash-input>/<bash-stderr> to isSystemMessage filter list and extending extractCommand to unwrap <bash-input> tags into !<cmd> format, with unit tests",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 8,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two methods modified within ClaudeConversationsProcessor (isSystemMessage prefix list + extractCommand regex branch) plus companion test file updates — single component, but touching 2 distinct methods elevates above trivial single-function XS; session adapter, hook router, and all other layers are explicitly unchanged"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Fix follows well-established patterns already in the codebase (isSystemMessage prefix list additions mirror <local-command-stdout>; XML unwrapping mirrors extractUploadedFiles); primary risk is behavioral change to lastSyncedMessageUuid advancement when bash-input messages are now filtered at isSystemMessage — this is documented and understood, and the existing mid-turn system events test provides a direct safety net for the turn-boundary constraint"
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

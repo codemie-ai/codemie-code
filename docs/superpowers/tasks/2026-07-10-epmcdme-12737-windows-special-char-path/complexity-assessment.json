@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix codemie-code CLI on Windows when user profile path contains special characters (e.g. parentheses) by properly quoting the command path before spawning the subprocess.",
+  "generated": "2026-07-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Spans Core (BaseAgentAdapter.ts) and Utils (exec.ts) across 2 architectural layers. exec.ts is the foundational spawn utility consumed by virtually every process-spawning path in the codebase — red flag for touching core shared utilities applied, bumping from M to L."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Two production files modified (BaseAgentAdapter.ts primary fix ~3-5 lines, exec.ts secondary fix ~5 lines), two existing test files updated (BaseAgentAdapter.test.ts, processes.test.ts), and one new test file created (exec.test.ts). Approximately 4-5 modified files and 1 new file across src/agents/core/ and src/utils/."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): exec.ts is the foundational spawn utility used by virtually every process-spawning code path in the codebase — qualifies as a core shared utility."
+  ],
+  "split_recommendation": null
+}

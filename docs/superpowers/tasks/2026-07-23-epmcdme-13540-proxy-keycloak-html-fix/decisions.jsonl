@@ -1,0 +1,3 @@
+{"gate_id":"spec.approved","decision":"approve","decided_by":"user","decided_at":"2026-07-23T00:00:00Z","note":"User approved spec with proceed"}
+{"gate_id":"plan.approved","decision":"approve","decided_by":"user","decided_at":"2026-07-23T00:00:00Z","note":"User approved plan with proceed"}
+{"gate_id":"code-review.final","decision":"approve","decided_by":"user","decided_at":"2026-07-23T00:00:00Z"}

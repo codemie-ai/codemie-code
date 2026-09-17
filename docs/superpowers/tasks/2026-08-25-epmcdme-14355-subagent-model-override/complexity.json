@@ -1,0 +1,21 @@
+{
+  "ticket": "EPMCDME-14355",
+  "assessed_at": "2026-08-25",
+  "type": "actual (post-implementation, sdlc-light)",
+  "score": 9,
+  "band": "low-medium",
+  "routing_note": "Confirms sdlc-light was the right flow: heuristic-first, no brainstorming needed.",
+  "breakdown": {
+    "files_touched": { "score": 2, "notes": "3 source (types.ts, claude.plugin.ts, BaseAgentAdapter.ts) + 3 test files; +258/-32." },
+    "conceptual_difficulty": { "score": 2, "notes": "Env-var mapping semantics; the subtlety is upstream CLAUDE_CODE_SUBAGENT_MODEL being a global override. Contained, no new abstraction beyond one optional field." },
+    "blast_radius": { "score": 2, "notes": "Behaviour change limited to haiku+sonnet and sonnet-only Claude tenants; haiku-only/opus-only guarded by EPMCDME-12779 regression tests." },
+    "uncertainty": { "score": 1, "notes": "Requirements and approach clear from the ticket; verified against upstream env-var semantics." },
+    "testing_effort": { "score": 1, "notes": "Pure-function transformEnvVars + beforeRun logging; unit-testable without integration harness. 29 targeted tests." },
+    "coordination": { "score": 1, "notes": "Single repo (codemie-code), no cross-repo or backend/proxy changes (explicit non-goals)." }
+  },
+  "red_flags": [],
+  "followups": [
+    "Subagent fallback (opus/haiku redirect) runs only in transformEnvVars, before beforeRun auto-resolve — does not cover catalog auto-resolved (non-pinned) profiles. Pre-existing EPMCDME-12779 limitation; candidate follow-up ticket.",
+    "haiku+opus (no sonnet) pins subagent default to opus rather than haiku (pre-existing branch order). Candidate follow-up."
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "decision": "approve",
+  "rationale": "All 5 blocking findings (CR-001 through CR-005) from code-review-final.json are resolved in the fix-up diff, each with a dedicated regression test that fails before the fix and passes after. No new high-risk issue was introduced by the fix-up (purely additive defensive guards + a schema marker + tests; no new external calls, no security-relevant changes). CR-005 (the critical entrypoint-detection bug) was additionally verified with a manual smoke test against a real path containing a space under a non-symlinked directory (mirroring the actual ~/.claude/ deployment target), confirming the statusline now renders correctly.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "Global Constraint: plugin/statusline.mjs stays import-free of src/ tree and node_modules", "status": "pass", "notes": "Only Node builtins imported (crypto, child_process, fs/promises, os, path)"},
+    {"kind": "spec", "item": "Global Constraint: budget segment shows exactly 3 fields (current_spending, total-as-percentage, budget_reset_at), never budget_limit", "status": "pass", "notes": "formatBudgetSegment builds text from current_spending, row.total (pct), budget_reset_at only; test asserts budget_limit value never appears in output"},
+    {"kind": "spec", "item": "Global Constraint: budget row auto-resolution matches row.project_name === \"${profile.userEmail} (cli)\"", "status": "pass", "notes": "matchBudgetRow builds target string and finds exact match; verified against live API during planning. Case/whitespace robustness gap tracked as CR-001, not a spec violation."},
+    {"kind": "spec", "item": "Global Constraint: basic info (model, project/dir, branch, context-%, session cost, session duration) always renders independent of network/profile state", "status": "partial", "notes": "buildStatusLine/main() are structured to render basic info independent of budget resolution in the normal path, but CR-002 (unguarded numeric fields) and CR-004 (uncaught getAuthHeadersImpl rejection) create real paths where an uncaught exception propagates to main()'s outer catch and blanks the entire line including basic info, contradicting the 'must always render' requirement under those specific conditions."},
+    {"kind": "spec", "item": "Global Constraint: no profile configured -> skip budget segment silently (no warning); profile configured but fetch/auth fails -> minimal inline indicator, basic info still renders", "status": "pass", "notes": "resolveBudget correctly distinguishes silent-skip (missing config/profile fields) from budgetError (auth/fetch failures); buildStatusLine only renders the warning in the latter case"},
+    {"kind": "spec", "item": "Global Constraint: test-first per Vitest conventions, dynamic-import module under test after mocks/spies set up", "status": "pass", "notes": "All three test files use vi.mock(...) followed by dynamic import() inside beforeEach/test bodies"},
+    {"kind": "spec", "item": "Task 1: rewrite statusline.mjs exposing pure testable functions; add __tests__/statusline.test.ts", "status": "pass", "notes": "All named exports present with matching tests; 20 tests pass"},
+    {"kind": "spec", "item": "Task 2: installStatusline returns {scriptPath, alreadyConfigured}; uninstallStatusline also removes legacy artifact; promptBudgetSelection removed; new installer tests", "status": "pass", "notes": "Confirmed in statusline-installer.ts and its 9-test suite"},
+    {"kind": "spec", "item": "Task 3: install.ts CLI wiring updated to new installStatusline() return shape, drops promptBudgetSelection", "status": "pass", "notes": "install.ts:13,272,279-283 updated correctly"},
+    {"kind": "spec", "item": "Task 4: claude.plugin.ts --status path becomes a thin installStatusline() alias with correct session-scoped cleanup semantics", "status": "pass", "notes": "Confirmed via 8 rewritten tests; afterRun correctly left unchanged since it already keyed off the module flag"},
+    {"kind": "spec", "item": "Task 5: remove statuslineBudgetName field from ProviderProfile", "status": "pass", "notes": "Field and comment deleted; zero remaining references repo-wide"},
+    {"kind": "spec", "item": "Task 6: full unit suite, typecheck/lint/build, and manual smoke checks pass", "status": "pass", "notes": "2279 passed/1 skipped (excluding unrelated untracked WIP), typecheck/lint/build clean, manual CLI smoke checks confirmed"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All 6 commits use Conventional Commits format with valid scopes (agents/chore) per commitlint.config.cjs; verified by passing pre-commit/commit-msg hooks on every commit"},
+    {"kind": "code-quality", "status": "pass", "notes": "npm run lint (eslint --max-warnings=0) passes clean on all touched .ts files; statusline.mjs is outside the project's lint scope ({src,tests}/**/*.ts) by design, consistent with pre-existing convention for standalone deployed scripts"},
+    {"kind": "security", "status": "pass", "notes": "No new credential handling, injection, or secrets exposure; the standalone script's crypto/credential-file reads are unchanged from the pre-existing implementation"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "matchBudgetRow now trims + lowercases both the target string and each row's project_name before comparing. New test 'matches regardless of email casing or surrounding whitespace' covers mixed-case and padded-whitespace inputs; passes."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "formatDuration now rejects non-number/NaN/negative ms (returns null instead of 'NaNm NaNs'); buildStatusLine's cost segment now requires typeof cost === 'number' && !Number.isNaN(cost) before formatting. New tests cover both: formatDuration(NaN/-1/'not-a-number') -> null, and buildStatusLine with a non-numeric cost no longer throws and omits the segment while basic info ([my-project]) still renders."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Cache reads/writes now carry a CACHE_SCHEMA=2 marker; resolveBudget's fast path validates cache.schema, cache.value being an object, and cache.value.text being a string before trusting it. New test simulates a pre-upgrade string-shaped cache entry (no schema field) and confirms it is discarded as a cache miss rather than used, falling through to the no-config silent-skip path."
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "notes": "The getAuthHeadersImpl(codeMieUrl) call is now wrapped in try/catch inside resolveBudget, returning { budget: null, budgetError: e.message } on rejection instead of propagating. New test mocks getAuthHeadersImpl to reject with 'keychain locked' and confirms resolveBudget resolves gracefully with that message as budgetError rather than throwing."
+    },
+    {
+      "id": "CR-005",
+      "status": "resolved",
+      "notes": "Entrypoint detection extracted into an exported, independently-testable isMainModule(argv1, metaUrl) function using fileURLToPath() for correct decoding instead of raw string comparison. New tests cover the exact-match case, the space-in-path case (percent-encoded URL vs raw path with a literal space), a non-matching path, and a falsy argv1. Additionally verified with a live manual smoke test: copied the built script to a real path under $HOME containing a space (non-symlinked, mirroring the actual ~/.claude/ deployment target) and confirmed it now renders the statusline correctly, where it previously produced no output at all."
+    }
+  ]
+}

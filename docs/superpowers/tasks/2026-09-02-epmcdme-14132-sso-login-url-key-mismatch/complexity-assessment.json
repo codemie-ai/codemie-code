@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Consolidate two competing PRs for EPMCDME-14132 into one: adopt PR #525's storage-boundary URL normalization in CredentialStore.getUrlStorageKey, carry over PR #506's explanatory call-site comment in sso.auth.ts, and add the regression tests neither PR ships.",
+  "generated": "2026-09-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Implementation risk is low — the diff already exists (PR #525, +17/-3), normalizeToBase provides the exact precedent, docs/AUTHENTICATION.md:270-277 already promises the post-fix contract, and blast radius is nil (the sole SSO writer is sso.auth.ts:136; for path-free portal URLs old and new keys are byte-identical). The risk sits entirely in verification: keytar is unmocked repo-wide and retrieveSSOCredentials reads the real OS keychain before the file store, and CREDENTIALS_DIR/FALLBACK_FILE freeze at module import so setupTestIsolation() cannot redirect them — a stale keychain entry can make a broken fix look green. There is no repo precedent for CredentialStore tests (security.test.ts covers sanitize* helpers only), so the test-isolation approach is new territory. Base M (3) for the novel test approach, bumped to L (4) by the authentication/credential-storage red flag."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "The functional change is a single private method (CredentialStore.getUrlStorageKey, src/utils/security.ts:303-312) plus a non-behavioral comment at the sso.auth.ts:136 call site. Base S (2) — self-contained, private, invisible to all callers. Bumped to M (3) by the shared-utility red flag: getUrlStorageKey is the key-derivation choke point for both the SSO and JWT credential namespaces, so every provider's credential lookup funnels through it."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Roughly 4-5 files across 3 directories: src/utils/security.ts (the fix), src/providers/plugins/sso/sso.auth.ts (comment only), tests/integration/sso-login-url-key-mismatch.test.ts (currently untracked, needs de-duplication and re-pointing at the real code path), and a new CredentialStore key-derivation test in src/utils/__tests__/. Above the S band's 0-1 new-file allowance and spanning 3 directories, but well under the 5-7 modified-file M threshold — scored M (3) on directory spread."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): the change affects authentication credential storage — it alters the key under which SSO tokens are persisted and retrieved.",
+    "Component Scope bumped from S (2) to M (3): touches a core shared utility — CredentialStore.getUrlStorageKey is the single key-derivation choke point shared by the SSO and JWT credential namespaces."
+  ],
+  "split_recommendation": null
+}

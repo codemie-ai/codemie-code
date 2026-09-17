@@ -1,0 +1,59 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three major documentation defects found in MIGRATION.md: wrong npm cleanup command (unlink vs uninstall), Option 2 contradicts the stated security rationale without a caveat, and the claim that npm update -g removes stale symlinks is inaccurate. No spec/story present — acceptance review in no-spec mode (confidence lowered to low). Commit format and security checks pass. 4 defer/dismiss items excluded (Windows 'which' vs 'where', yarn/pnpm coverage, fish/csh shell, vague version range).",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Both commits use valid Conventional Commits types (fix, docs) and scopes (cli); subjects within 100-char limit; ticket reference present."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "No TypeScript files changed; only package.json manifest (1-line deletion) and Markdown documentation."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No secrets, credentials, or unsafe patterns introduced. The collision concern in the migration is correctly framed."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/MIGRATION.md",
+      "line": 60,
+      "title": "Wrong npm command: `npm unlink -g` should be `npm uninstall -g`",
+      "problem": "`npm unlink -g @codemieai/code` is not a reliable cleanup command. The &&-chain means if unlink fails (package not found or not linked), the reinstall never runs, leaving the user with neither a working package nor a cleaned symlink.",
+      "impact": "Users following the cleanup instructions may end up with either a persistent stale symlink or a broken global install with no installed package.",
+      "recommendation": "Replace `npm unlink -g @codemieai/code && npm install -g @codemieai/code` with `npm uninstall -g @codemieai/code && npm install -g @codemieai/code`."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/MIGRATION.md",
+      "line": 34,
+      "title": "Option 2 contradicts the stated security rationale without a caveat",
+      "problem": "The guide removes the `code` alias because it 'collides with the VS Code CLI' and is 'a potential security footgun,' then immediately suggests `alias code=codemie` — re-creating the exact same collision in the user's shell without any warning.",
+      "impact": "Users who follow Option 2 re-introduce the very problem the removal was meant to solve: `code .` will open CodeMie instead of VS Code.",
+      "recommendation": "Add an explicit caveat to Option 2 warning that `alias code=codemie` shadows the VS Code `code` command if VS Code is installed. Consider recommending `alias cm=codemie` as a safer shorthand, or at minimum warn users to only do this if they do not use VS Code's `code` CLI."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/MIGRATION.md",
+      "line": 51,
+      "title": "Inaccurate claim: `npm update -g` does not reliably remove stale bin symlinks",
+      "problem": "The guide states 'Upgrading via `npm update -g @codemieai/code` removes it for a fresh install of the new package' — this is inaccurate. `npm update -g` does not unlink and relink bin entries when a key is removed from package.json; the stale `code` symlink persists after an update.",
+      "impact": "Users who run `npm update -g` believing it cleans up the symlink will still have a stale `code` command pointing to codemie after upgrading.",
+      "recommendation": "Correct the statement: users must run `npm uninstall -g @codemieai/code && npm install -g @codemieai/code` to clear the stale symlink. Remove or correct the misleading `npm update -g` claim."
+    }
+  ]
+}

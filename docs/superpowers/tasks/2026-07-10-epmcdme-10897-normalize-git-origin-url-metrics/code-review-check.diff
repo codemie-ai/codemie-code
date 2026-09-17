@@ -1,0 +1,60 @@
+diff --git a/scripts/validate-secrets.js b/scripts/validate-secrets.js
+index 02d7f81..a96965c 100755
+--- a/scripts/validate-secrets.js
++++ b/scripts/validate-secrets.js
+@@ -58,14 +58,23 @@ function detectEngine() {
+ const engine = detectEngine();
+ 
+ if (!engine) {
+-  console.log('No container engine found - skipping secrets detection');
+-  console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
++  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
++    console.error('No container engine found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
++    console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
++    process.exit(1);
++  }
++  console.log('No container engine found — skipping secrets detection (CODEMIE_SKIP_SECRETS_SCAN=1)');
+   process.exit(0);
+ }
+ 
+ const engineBin = resolveCommand(engine);
+ if (!engineBin) {
+-  console.log('Container engine binary not found — skipping secrets detection');
++  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
++    console.error('Container engine binary not found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
++    console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
++    process.exit(1);
++  }
++  console.log('Container engine binary not found — skipping secrets detection (CODEMIE_SKIP_SECRETS_SCAN=1)');
+   process.exit(0);
+ }
+ // shell:true is used on Windows so paths with spaces must be quoted for the shell.
+diff --git a/src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts b/src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts
+index c616e0c..f747561 100644
+--- a/src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts
++++ b/src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts
+@@ -86,4 +86,24 @@ describe('DesktopTelemetryRuntime', () => {
+     const [sessionArg] = mockSendSessionStart.mock.calls[0];
+     expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+   });
++
++  it('forwards session.repository to MetricsSender.sendSessionEnd', async () => {
++    const mockSessionStore = {
++      findSessionByExternalId: vi.fn().mockResolvedValue(null),
++      saveSession: vi.fn().mockResolvedValue(undefined),
++      loadSession: vi.fn()
++    };
++
++    const runtime = new DesktopTelemetryRuntime(mockAdapter, config);
++    const session = await (runtime as any).ensureSession(discovered);
++
++    mockSessionStore.loadSession.mockResolvedValue({ ...session, status: 'active' });
++    (runtime as any).sessionStore.loadSession = mockSessionStore.loadSession;
++
++    await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
++
++    expect(mockSendSessionEnd).toHaveBeenCalledOnce();
++    const [sessionArg] = mockSendSessionEnd.mock.calls[0];
++    expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
++  });
+ });

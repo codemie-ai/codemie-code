@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Enforce LiteLLM integration in codemie-cli setup by detecting existing LiteLLM integrations, preventing completion without a LiteLLM key, and displaying a clear validation message.",
+  "generated": "2026-07-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 15,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components are touched: setup.ts (CLI wizard), litellm.setup-steps.ts (LiteLLM plugin enforcement), and sso.setup-steps.ts (SSO flow also requires enforcement per technical analysis risk indicator). Red flag applied: affects multiple setup workflows (LiteLLM path + SSO path), bumped from M to L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "fetchCodeMieIntegrations and the ConfigurationError throw pattern already exist in the codebase, covering most of the implementation. Main non-trivial concern: the online detection path adds an SSO/JWT authenticated API call to what was previously a credential-free LiteLLM setup flow. setup.ts is 28 KB and touches the core wizard — moderate blast radius."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "CLI wizard layer (setup.ts), Provider Plugin layer (litellm.setup-steps.ts and sso.setup-steps.ts), and Config/Persistence layer (ConfigLoader.loadLocalConfigProfile for offline detection from local .codemie/ config). Three distinct layers, all within the same CLI subsystem."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): affects multiple setup workflows — both the LiteLLM provider path and the SSO provider path require the same enforcement gate (confirmed by technical analysis section 6 risk indicator)."
+  ],
+  "split_recommendation": null
+}

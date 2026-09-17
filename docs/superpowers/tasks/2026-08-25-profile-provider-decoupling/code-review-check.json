@@ -1,0 +1,102 @@
+{
+  "decision": "approve",
+  "rationale": "All six prior blocking findings are verified resolved by reading the current source: CR-001/CR-002/CR-003/CR-005/CR-006 are code-fixed exactly per their recommendations, each with a matching new/updated unit test (statusline.test.ts, types.test.ts, 006-decouple-provider-workspace-config.migration.test.ts, config-project-override.test.ts); CR-004 (decision_needed) is resolved by a recorded human decision to retain applyProjectOnly, and spec.md's AC was revised to match, consistent with the unchanged code at src/utils/config.ts:124,1224. The confirmation pass (blind + edge-case) returned parseable output but surfaced no new high-risk finding: its 3 blind and 3 edge-case candidates are either already handled in source (resolveWorkspace's global branch already uses `??`, covering an explicit null) or are narrow, pre-existing edge cases (hand-edited malformed/null workspace values, a benign double-read race in loadWithSources's --show-sources labeling) that do not rise to security, public-API, data-loss, or build/runtime-correctness impact, so none qualify as a new finding.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change", "public-api"],
+  "business_review": [
+    {"kind": "spec", "item": "ProviderProfile no longer declares any of the moved fields; WorkspaceConfig declares exactly them", "status": "partial", "notes": "src/env/types.ts:51-98,105-144 correctly relocates all 9 fields; but src/env/__tests__/types.test.ts:190-202 (untouched by diff) still constructs a ProviderProfile literal with codeMieUrl/codeMieIntegration -> type-check break, and src/agents/plugins/claude/plugin/statusline.mjs:214-217 reads profile.codeMieUrl/profile.userEmail directly from the raw config file (bypasses ConfigLoader) and will silently always return null budget after migration 006 runs"},
+    {"kind": "spec", "item": "MultiProviderConfig.workspace exists at both global and local scope, resolved by whole-object override (local wins if defined, else global), never field-mixed", "status": "pass", "notes": "ConfigLoader.resolveWorkspace (src/utils/config.ts:209-217) returns localMultiConfig.workspace entirely if defined, else globalMultiConfig.workspace entirely; covered by src/utils/__tests__/config-project-override.test.ts:693-781"},
+    {"kind": "spec", "item": "ConfigLoader.load()'s returned CodeMieConfigOptions remains flat and contains resolved provider + workspace fields together; no provider plugin source changes", "status": "pass", "notes": "src/utils/config.ts:96-136 Object.assign-merges profile fields then resolveWorkspace() output into one flat object; CodeMieConfigOptions = ProviderProfile & WorkspaceConfig (src/env/types.ts:206); no files under src/providers/plugins/* in the diff"},
+    {"kind": "spec", "item": "PROJECT_FIELDS, filterProjectFields, shouldPreserveProjectContext, applyProjectOnly are removed from src/utils/config.ts", "status": "partial", "notes": "PROJECT_FIELDS, filterProjectFields, shouldPreserveProjectContext are deleted (diff removes src/utils/config.ts:389-431 old locations); applyProjectOnly itself is NOT removed — it still exists as a local const at src/utils/config.ts:124 (load()) and :1219 (loadWithSources()), just without the URL-equality gating logic around it"},
+    {"kind": "spec", "item": "Migration 006 runs unattended on next CLI invocation, is idempotent, and its source-profile-selection rule (active profile if populated else first populated profile, atomic per scope) is implemented exactly as stated", "status": "pass", "notes": "src/migrations/006-decouple-provider-workspace-config.migration.ts registered via src/migrations/index.ts:30; migrate() checks config.workspace !== undefined for idempotency, prefers activeProfile then falls back to first profile with a moving field (lines 394-402), lifts as one atomic snapshot; unit-tested in src/migrations/__tests__/006-decouple-provider-workspace-config.migration.test.ts"},
+    {"kind": "spec", "item": "Switching activeProfile (e.g. codemie-sso -> anthropic) leaves workspace — and therefore codeMieProject, hooks, plugins, assistants.maxHistoryMessages, skillsSearchUrl, claudeAutocompactPct, metrics — unchanged", "status": "pass", "notes": "resolveWorkspace() is independent of selectedProfileName (src/utils/config.ts:209-217); confirmed by test 'switching the selected global profile does not drop workspace context' in src/utils/__tests__/config-project-override.test.ts:618-642"},
+    {"kind": "spec", "item": "Migration 006 has a dedicated unit test file following config.migration.test.ts's pattern (construct migration, call migrate(), assert)", "status": "pass", "notes": "src/migrations/__tests__/006-decouple-provider-workspace-config.migration.test.ts constructs DecoupleProviderWorkspaceConfigMigration and calls migrate() directly, asserting on the returned config"},
+    {"kind": "spec", "item": "Non-Goal: no change to ProviderTemplate.exportEnvVars/agentHooks signatures or any of the 7 provider plugins' source (src/providers/plugins/*)", "status": "pass", "notes": "no src/providers/plugins/* files present in the diff"},
+    {"kind": "spec", "item": "Non-Goal: no change to how codemieSkills/codemieAssistants are stored or merged (migration 004's pattern untouched)", "status": "pass", "notes": "no changes to codemieSkills/codemieAssistants handling in the diff"},
+    {"kind": "spec", "item": "Non-Goal: no CLI UX redesign of profile switch/list/status beyond updating field sources where they read now-moved fields from a profile", "status": "pass", "notes": "src/cli/commands/profile/index.ts and display.ts changes are limited to threading a resolved workspaceCodeMieUrl through existing format/formatList/formatStatus calls"},
+    {"kind": "spec", "item": "Non-Goal: no change to EnvManager (src/env/manager.ts)", "status": "pass", "notes": "src/env/manager.ts not present in the diff"},
+    {"kind": "spec", "item": "Non-Goal: no new CLI surface for viewing/editing workspace directly", "status": "pass", "notes": "no new commands added in the diff"},
+    {"kind": "spec", "item": "Non-Goal: no change to migrations 001-005 or the migration framework itself (types.ts, registry.ts, tracker.ts, runner.ts)", "status": "pass", "notes": "src/migrations/index.ts diff only adds the new 006 import; no changes to 001-005 or framework files"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "5 commit subjects in range (8e8d4ce5..HEAD) all match <type>(<scope>): <subject>; types used are fix/feat/refactor (all in commitlint.config.cjs type-enum) and scope used is cli/config (both in scope-enum); longest subject is 84 chars, under the 100-char subject-max-length rule"},
+    {"kind": "code-quality", "status": "partial", "notes": "Naming (kebab-case files, PascalCase interfaces), .js-extension imports, explicit return types on new exports (ConfigLoader.resolveWorkspace, splitProfileAndWorkspace, DecoupleProviderWorkspaceConfigMigration.up/migrate), and JSDoc on the new public surface all conform to code-quality.md. But code-quality.md's Code Structure Guidelines require files under 500 lines; src/utils/config.ts is 1494 lines and this diff substantially rewrites its workspace logic (ConfigLoader.resolveWorkspace, splitProfileAndWorkspace, saveProfile, initProjectConfig, load) without extracting any of it, leaving the file's heaviest-touched area ~3x over the documented limit (pre-existing at 1497 lines, essentially unchanged by this diff)"},
+    {"kind": "security", "status": "pass", "notes": "No X-CodeMie-* attribution header, Responses user field, or JWT claim-override derivation touched (security-practices.md CRITICAL section does not apply). No hardcoded secrets or credentials introduced. console.log calls in this diff (ProfileDisplay, profile/index.ts) are pre-existing user-facing CLI output, not debug logging of sensitive data, so sanitizeLogArgs is not applicable. CODEMIE_PROFILE_CONFIG (which carries codeMieUrl/codeMieIntegration to subprocesses) still receives the merged config including resolved workspace fields via ConfigLoader.load(), so no attribution/context data is silently dropped by the profile/workspace split"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/plugin/statusline.mjs",
+      "line": 215,
+      "title": "Statusline budget always null post-migration",
+      "problem": "resolveBudget() destructures codeMieUrl and userEmail directly from the raw profile object (config.profiles[config.activeProfile]) read straight from the JSON config file, but migration 006 moves codeMieUrl out of the profile into the new top-level workspace object.",
+      "impact": "After migration 006 runs, codeMieUrl is always undefined on the raw profile, so the `!codeMieUrl` guard on line 216 is always true and resolveBudget() silently returns { budget: null, budgetError: null } for every SSO user — the statusline's budget segment permanently disappears with no error surfaced, and this file is not part of the diff so nothing flags the break.",
+      "recommendation": "Update statusline.mjs to read codeMieUrl from config.workspace (and reconcile userEmail with the top-level MultiProviderConfig.userEmail) instead of the per-profile object, mirroring the new WorkspaceConfig split."
+    },
+    {
+      "id": "CR-002",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/env/__tests__/types.test.ts",
+      "line": 186,
+      "title": "Stale ProviderProfile literal breaks typecheck",
+      "problem": "The pre-existing test 'should accept profile with SSO fields' constructs a ProviderProfile object literal with codeMieUrl and codeMieIntegration, both of which this diff removes from the ProviderProfile interface (moved to WorkspaceConfig).",
+      "impact": "npm run typecheck/ci fails to compile this file, blocking the build/CI pipeline for this change.",
+      "recommendation": "Update the test literal to drop codeMieUrl/codeMieIntegration from the ProviderProfile object (or assert them separately against a WorkspaceConfig/CodeMieConfigOptions value) so it matches the new interface shape."
+    },
+    {
+      "id": "CR-003",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/migrations/006-decouple-provider-workspace-config.migration.ts",
+      "line": 92,
+      "title": "Migration writes empty workspace, breaks fallback",
+      "problem": "migrate() always returns { ...config, profiles, workspace } (lines 92-96), even when no profile ever defined a WORKSPACE_KEYS field, so workspace ends up {} for every project that has a local .codemie/ config. resolveWorkspace() (src/utils/config.ts:211) treats any defined workspace — including {} — as a whole-object override and never falls back to the global scope.",
+      "impact": "On next CLI invocation, every existing project with a local config permanently loses inherited global codeMieUrl/hooks/metrics/plugins/skillsSearchUrl/claudeAutocompactPct, even if that project's profiles never touched a workspace-moving field. Both initProjectConfig (line 904) and saveProfile (line 605) correctly guard with Object.keys(...).length > 0 before writing workspace; the migration is the only write path missing that guard, and no test exercises the migrated-then-resolved path together.",
+      "recommendation": "Mirror the same non-empty guard in migrate() — only include workspace in the returned config when Object.keys(workspace).length > 0 — or make resolveWorkspace() fall back to global when the local workspace is empty."
+    },
+    {
+      "id": "CR-004",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/utils/config.ts",
+      "line": 124,
+      "title": "applyProjectOnly contradicts its removal AC",
+      "problem": "The spec/AC explicitly requires PROJECT_FIELDS, filterProjectFields, shouldPreserveProjectContext, and applyProjectOnly to be removed from src/utils/config.ts. The first three are gone, but applyProjectOnly still exists as a local const in both load() (line 124) and loadWithSources() (line 1219), still gating whether the local team profile's provider/model/credentials apply when a different global profile is selected.",
+      "impact": "The acceptance criterion is marked partial: literally unmet, even though the variable appears to still serve a legitimate purpose (preventing a mismatched local profile's credentials from leaking onto a different active global profile). It is unclear whether the AC's wording was meant literally (eliminate the symbol and find another way to prevent credential leakage) or whether the AC should be revised to reflect applyProjectOnly as an intentional carry-over under the new design.",
+      "recommendation": "Get product/spec-owner sign-off on whether applyProjectOnly should be removed (and replaced with an equivalent mechanism) or whether the AC text should be revised to reflect it as an intentional retained gate."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/config.ts",
+      "line": 211,
+      "title": "workspace: null crashes ConfigLoader.load()",
+      "problem": "resolveWorkspace() only checks localMultiConfig.workspace !== undefined before returning it; a hand-edited or externally-written config with \"workspace\": null passes that check (null !== undefined) and is returned as-is.",
+      "impact": "load() then calls removeUndefined(workspace) (line 136), which does Object.entries(obj) — Object.entries(null) throws a TypeError, crashing every ConfigLoader.load()/loadWithSources() call for that project until the file is manually fixed.",
+      "recommendation": "Guard both the resolveWorkspace() return check and removeUndefined() against null, e.g. `workspace != null` (loose) or an explicit null check before Object.entries."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/config.ts",
+      "line": 1246,
+      "title": "loadWithSources mislabels workspace source",
+      "problem": "The workspace ConfigLayer pushed into loadWithSources() is hardcoded to source: 'project' (line 1246), independent of whether resolveWorkspace() actually resolved the value from the local scope or fell back to the global scope.",
+      "impact": "codemie profile status --show-sources reports codeMieUrl/codeMieProject/hooks/etc. as (project)-sourced even when only the global ~/.codemie config supplied them, misleading users debugging which scope owns a value. The one test exercising this path ('loadWithSources reports workspace-resolved codeMieUrl with source project' in config-project-override.test.ts) sets up a global-only scenario and locks in the wrong label as expected, so the bug is pinned rather than caught.",
+      "recommendation": "Set the workspace layer's source conditionally, e.g. localMultiConfig.workspace !== undefined ? 'project' : 'global', and fix the test to assert 'global' for the global-only scenario."
+    }
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "statusline.mjs:214-219 now reads codeMieUrl from config.workspace?.codeMieUrl and userEmail from config.userEmail instead of the per-profile object; statusline.test.ts adds a regression test 'skips silently when codeMieUrl/userEmail only exist on the profile' plus passing-path tests using the new workspace/userEmail shape"},
+    {"id": "CR-002", "status": "resolved", "notes": "types.test.ts:186-208 now constructs a ProviderProfile literal without codeMieUrl/codeMieIntegration and asserts codeMieIntegration against a separate WorkspaceConfig literal, matching the new interface split"},
+    {"id": "CR-003", "status": "resolved", "notes": "006-decouple-provider-workspace-config.migration.ts:97-103 now computes hasWorkspaceFields = Object.keys(workspace).length > 0 and only spreads workspace into the return when true, mirroring saveProfile/initProjectConfig's existing guard; migration.test.ts:59-73 adds 'leaves workspace unset (not an empty {}) and profiles unchanged when no profile has any moving field', explicitly citing CR-003"},
+    {"id": "CR-004", "status": "resolved", "notes": "Decision recorded in code-review-fix-evidence.json: applyProjectOnly is retained by design (still gates provider-identity resolution to prevent credential leakage across profiles), not removed. spec.md:44 was revised accordingly and the revision matches the unchanged code at src/utils/config.ts:124 and :1224 — code and spec are now consistent, resolving the ambiguity without a code change"},
+    {"id": "CR-005", "status": "resolved", "notes": "config.ts:209-221 resolveWorkspace() now checks `localMultiConfig.workspace != null` (loose, excludes explicit null) before returning it, and falls back via `globalMultiConfig.workspace ?? {}`; removeUndefined() (line 1060-1065) independently guards with `if (obj == null) return {}`, so Object.entries(null) can no longer be reached either way"},
+    {"id": "CR-006", "status": "resolved", "notes": "loadWithSources() (config.ts:1234-1256) now computes workspaceSource = localWorkspaceScope.workspace != null ? 'project' : 'global' and uses it as the ConfigLayer's source instead of the hardcoded 'project'; config-project-override.test.ts:679-735 replaces the previously-pinned wrong assertion with two tests, one per scope ('reports a global-only workspace value with source \"global\"' and 'reports a local-scope workspace value with source \"project\"')"}
+  ]
+}

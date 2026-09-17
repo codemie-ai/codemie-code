@@ -1,0 +1,90 @@
+{
+  "task": "Normalize the SSO credential storage key to protocol+host in CredentialStore, guard against empty-host collisions for scheme-less host:port URLs, and migrate credentials written under the pre-fix raw-URL key on read and on logout.",
+  "generated": "2026-09-02T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "CredentialStore key derivation (src/utils/security.ts — getUrlStorageKey, new getLegacyUrlStorageKey, new hashStorageKey, new normalizeForKey), CredentialStore SSO read/delete paths (retrieveSSOCredentials, clearSSOCredentials, extracted readCredential/deleteCredential/credentialFilePath helpers), CodeMieSSO.getStoredCredentials call site (src/providers/plugins/sso/sso.auth.ts)",
+      "layers": "Service (credential storage), DB-Persistence (keychain + encrypted file store), External (SSO provider auth)"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "The original acceptance criteria covered only the key-derivation fix and said nothing about credentials already persisted under the old raw-URL key; that gap surfaced only as review finding CR-002 (orphaned, unreachable and undeletable entries with logout falsely reporting success) and drove a whole extra commit. AC5 (Windows PowerShell verification) remains unevidenced by design — the owner will verify before merge."
+    },
+    "technical_risk": {
+      "score": 5,
+      "label": "XL",
+      "risk_factors": "Security-sensitive: changes the key under which every SSO and JWT credential is persisted and retrieved. No repo precedent for a credential-key migration, and none for CredentialStore tests at all. The fix introduced a critical defect of its own (CR-001: new URL() yields an empty host for scheme:rest, so every scheme-less host:port collapsed to a single key and two instances would share one credential slot). The CR-002 legacy migration then shipped as dead code in production (CR-005) because the caller pre-normalized the URL before handing it to the store — and the covering tests passed anyway because they called CredentialStore directly instead of going through CodeMieSSO. Green tests over a dead production path was the sharpest risk in this change.",
+      "mitigation": "Empty-host + http(s)-protocol guard in normalizeForKey with explicit non-collapse tests across host, port and scheme. Legacy migration exercised through CodeMieSSO rather than CredentialStore so the production caller is what decides whether the legacy key is probed. keytar mocked with an in-memory map because retrieveSSOCredentials consults the real OS keychain before the file store, so an unmocked run can pass against unfixed code on a stale keychain entry (CR-003 additionally forced exact-filename assertions, since the vitest cli project shares one CODEMIE_HOME temp dir). Test count grew 3 to 7 across four commits."
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/utils/security.ts",
+        "src/providers/plugins/sso/sso.auth.ts"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "tests/integration/sso-credential-key-normalization.test.ts"
+      ],
+      "affected_dirs": [
+        "src/utils",
+        "src/providers/plugins/sso",
+        "tests/integration"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["Service", "DB-Persistence", "External"],
+      "schema_migration": true,
+      "cross_system": false
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 3,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Highest dimension and the one the initial assessment most underestimated. Base M (3): the individual mechanisms (URL parsing, sha256 hashing, file read/unlink) are all standard and the change is cheaply reversible. Bumped to L (4) by the authentication red flag — this is credential storage — and to XL (5) by the data-migration red flag, since already-persisted entries are read, rewritten under the new key and deleted. The empirical justification for XL is the defect record: four review findings, one critical (CR-001 empty-host collision, introduced by the fix itself), and CR-005 found only in the confirmation pass, where the migration was dead code in production while its tests were green."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Base M (3) — 2-3 components across 2 layers: CredentialStore's key derivation and its SSO read/delete paths (four methods added or restructured, plus readCredential/deleteCredential/credentialFilePath extracted), and a behavioral change at the CodeMieSSO.getStoredCredentials call site. Bumped to L (4) by the shared-utility red flag: getUrlStorageKey is the single key-derivation choke point for both the SSO and JWT credential namespaces, so every provider's credential lookup funnels through it. The initial M (3) assumed a single private method plus a non-behavioral comment; the actual change altered the caller's behavior too."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Three distinct layers: Service (CredentialStore key-derivation and migration logic), DB-Persistence (the OS keychain and the encrypted on-disk credential files, whose naming scheme changed and whose legacy entries are migrated), and External (the SSO provider auth module). Base M (3) on layer count alone; lifted to L (4) because the credential storage-key scheme is effectively the schema of the credential store and it changed with a migration for existing records. Caveat for calibration consumers: this is a read-time legacy-key fallback, not a true schema migration — blast radius is far smaller than the migration in profile-provider-decoupling, which also scored 4 here."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Only 3 files (2 modified, 1 new), which is the S band by raw count — but +274/-27 across them is heavy per-file (a substantial rewrite of the CredentialStore SSO methods plus a 172-line test file), and they span 3 directories, exceeding the S band's within-one-directory criterion. The data-migration red flag applies here as well. Scored M (3). Notably this is the one dimension the initial assessment got exactly right, and for roughly the right reason (directory spread), though it predicted 4-5 files and a second unit-test file that was never written."
+    },
+    {
+      "dimension": "borderline",
+      "reason": "Total 20 sits at the exact ceiling of the M band (15-20), one point from L. The guide's borderline rule says to lean higher when Technical Risk is at XL (5), which it is. The size label is recorded as M to keep total, size and band_range internally consistent for calibration, but this task should be read as L-adjacent: an M-sized diff carrying L-sized risk."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): affects authentication — the change alters the key under which SSO and JWT credentials are persisted and retrieved.",
+    "Technical Risk bumped from L (4) to XL (5): requires data migration — credentials written under the pre-fix raw-URL key are migrated on read and deleted on logout.",
+    "Component Scope bumped from M (3) to L (4): touches a core shared utility — getUrlStorageKey is the single key-derivation choke point shared by the SSO and JWT credential namespaces.",
+    "File Change Estimate bumped from S (2) to M (3): same data-migration red flag, compounded by a 3-directory spread that exceeds the S band's single-directory criterion.",
+    "Affected Layers bumped from M (3) to L (4): the persisted credential storage-key scheme changed and existing records require migration."
+  ],
+  "split_recommendation": null
+}

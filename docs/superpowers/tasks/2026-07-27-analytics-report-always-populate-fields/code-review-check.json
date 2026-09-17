@@ -1,0 +1,32 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 is resolved. Fix-up diff (payload-builder.ts +7/-2, payload-builder.test.ts +25) adds Number.isFinite guards on both s.startTime (composed with the existing > 0 check) and s.duration (coerced to 0 when non-finite) exactly as CR-001 recommended, plus a new Vitest case with mixed NaN duration + Infinity startTime + a good session that asserts derived period is stable and no exception is thrown. The Infinity startTime session is correctly skipped by the composite guard; the NaN duration session contributes its finite startTime with duration collapsed to 0. Full test suite now green (20/20 payload-builder cases). No new high-risk issues introduced by the fix-up: the change makes the code more defensive, adds no I/O, no dependencies, no schema changes, and no new attack surface. Standards + security carried forward from the final round unchanged.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "buildPayload tracks minStartMs and maxEndMs in the flatten loop", "status": "pass", "notes": "unchanged from final round; guards strengthened"},
+    {"kind": "spec", "item": "meta.periodStart precedence: ctx → derived → omit", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "meta.periodEnd precedence: ctx → derived → omit", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "No generatedAt fallback — fields omitted when no session data", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "buildPayload remains pure (no I/O, no config reads, no env access)", "status": "pass", "notes": "fix-up adds Number.isFinite only — no I/O"},
+    {"kind": "spec", "item": "parseFilterOptions sets filter.toDate = new Date() for --last", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "BaseAgentAdapter maybeWriteSessionReport falls back to ConfigLoader for userEmail", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "ReportMeta fields remain TypeScript-optional", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "rangeLabel semantics unchanged", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "session-report.ts unchanged", "status": "pass", "notes": "unchanged"},
+    {"kind": "spec", "item": "CLI surface unchanged (help, exit codes)", "status": "pass", "notes": "unchanged"},
+    {"kind": "story-ac", "item": "All four failing modes produce populated meta.userEmail/periodStart/periodEnd", "status": "pass", "notes": "unchanged"},
+    {"kind": "story-ac", "item": "--from/--to behavior unchanged (regression-guarded)", "status": "pass", "notes": "unchanged"},
+    {"kind": "story-ac", "item": "npm run lint, typecheck, build all clean", "status": "pass", "notes": "re-verified after fix-up commit"},
+    {"kind": "story-ac", "item": "No changes to CLI help text or exit codes", "status": "pass", "notes": "unchanged"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Conventional Commits: fix(analytics): guard buildPayload period derivation against NaN/Infinity (CR-001)"},
+    {"kind": "code-quality", "status": "pass", "notes": "Number.isFinite is the standard idiomatic guard; project already uses it in aggregator.ts:400"},
+    {"kind": "security", "status": "pass", "notes": "no new attack surface; guards make code stricter"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "Number.isFinite(s.startTime) && s.startTime > 0 gates the min/max block; s.duration coerced to 0 via Number.isFinite(...) ? Math.max(...,0) : 0. New Vitest case asserts NaN duration + Infinity startTime do not throw and derived period is stable. Fix-up commit 021a0cd."}
+  ]
+}

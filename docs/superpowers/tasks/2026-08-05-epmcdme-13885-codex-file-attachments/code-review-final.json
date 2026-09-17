@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "confidence": "low",
+  "rationale": "Three major correctness bugs found in codexUploadsDetector.ts: (1) localImageIndex counter is shared between input_file and input_image blocks causing filename misalignment in mixed-attachment turns; (2) the backward scan independently locates targetResponseItem and targetEventMsg, so a follow-up user message severs the filename chain from the attachment turn; (3) Buffer.from() allocates the full decoded image before the 100 MB guard, which can OOM-fail and misclassify a valid attachment as invalid base64. Confidence is low because sdlc-light has no spec artifact — no acceptance criteria were available to audit.",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits format",
+      "source": ".ai-run/guides/standards/git-workflow.md",
+      "status": "pass",
+      "notes": "All commits in range follow <type>(<scope>): <description> format. Feature commit: 'feat(assistants): implement Codex rollout-based file attachment detection'."
+    },
+    {
+      "standard": "TypeScript code quality",
+      "source": ".ai-run/guides/standards/code-quality.md",
+      "status": "pass",
+      "notes": "Exported function has explicit return type, interfaces use PascalCase, all imports use .js extension, no bare require(). File naming deviates from kebab-case guide (codexUploadsDetector.ts vs kebab-case) but matches the pre-existing claudeUploadsDetector.ts pattern in the same directory."
+    },
+    {
+      "standard": "Security practices",
+      "source": ".ai-run/guides/security/security-practices.md",
+      "status": "pass",
+      "notes": "No credentials or tokens logged. Base64 image data not echoed to console or logs (only metadata: fileName, mediaType, sizeKB). Data URIs sourced from trusted local Codex rollout files, not external input. Size limit enforced. No path traversal exposure (CWD from process.cwd())."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/assistants/chat/codexUploadsDetector.ts",
+      "location": "extractAttachments() — the localImageIndex counter, lines 202–226",
+      "problem": "localImageIndex is incremented for every attachment block (including input_file), but local_images in CodexEventMsg contains only image paths; when input_file blocks precede input_image blocks in the same user turn, the image-filename lookups into local_images are offset by the number of file blocks.",
+      "impact": "In a mixed file+image upload (e.g., user attaches a PDF and a screenshot together), every input_image block following any input_file block receives the wrong local_images entry as its filename fallback, falling through to the generic 'attachment_N' name and discarding the real filename.",
+      "recommendation": "Use a separate imageOnlyIndex that increments only when block.type === 'input_image', and use that counter for local_images lookups.",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/assistants/chat/codexUploadsDetector.ts",
+      "location": "extractAttachments() — dual backward scan, lines 166–193",
+      "problem": "targetResponseItem and targetEventMsg are located by two independent predicates in a single backward scan that stops when both are found; when the user sends a follow-up text message after uploading a file in the same rollout, the scan finds the follow-up's event_msg (no local_images) while still finding the attachment's response_item, severing the local_images filename chain.",
+      "impact": "Any session where the user types a follow-up message after uploading an attachment will produce attachments with only the generic 'attachment_N' filename instead of the real filename for images whose preceding input_text block does not contain the wrapper pattern.",
+      "recommendation": "After locating targetResponseItem, search backward for an event_msg only among records at a lower index than the response_item, so both records are anchored to the same conversation turn.",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/assistants/chat/codexUploadsDetector.ts",
+      "location": "processImageBlock() — Buffer.from call, line 139",
+      "problem": "Buffer.from(base64Data, 'base64') allocates the full decoded buffer (up to ~75 MB) solely to obtain .length before the size guard is applied; on memory-constrained environments this throws, and the catch block misclassifies a valid attachment as 'Invalid base64 data'.",
+      "impact": "A legitimate image just under the 100 MB limit can be silently dropped and logged as malformed base64 when the process is under memory pressure, with no indication that detection failed due to allocation rather than data corruption.",
+      "recommendation": "Pre-check size with Math.ceil(base64Data.length * 3 / 4) (minus trailing '=' chars) and bail before Buffer.from if the estimate exceeds MAX_FILE_SIZE_BYTES; only allocate for images that pass the guard.",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-004",
+      "severity": "minor",
+      "triage": "defer",
+      "file": "src/cli/commands/assistants/chat/codexUploadsDetector.ts",
+      "location": "processImageBlock(), lines 127–155",
+      "problem": "An image_url of the form 'data:image/png;base64,' (comma present, empty payload) passes all guards and returns a structurally valid DetectedFile with data: '' and sizeBytes: 0.",
+      "impact": "A downstream SDK call receives a well-formed DetectedFile whose data field is an empty string; any code that forwards this as an image will silently produce a zero-byte attachment without an error at detection time.",
+      "recommendation": "Add a guard after extracting base64Data — if (!base64Data) { logger.warn(…); return null; } — to reject empty data URIs.",
+      "sources": ["edge-case"]
+    }
+  ],
+  "dismissed_count": 1,
+  "dismissed_note": "E-003 (Claude path no longer uses --conversation-id for file detection) dismissed — this behavior change is intentional per cherry-picked commit bfb011c8 'fix(assistants): always use CODEMIE_SESSION_ID for file detection, not --conversation-id' from EPMCDME-13907, which is the documented correct behavior."
+}

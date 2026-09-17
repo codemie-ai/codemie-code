@@ -1,0 +1,4 @@
+{"task_id":"1","status":"done","commit":"d903f4cc41","test_command":"npx vitest run --project unit src/utils/__tests__/vitest-codemie-home-isolation.test.ts"}
+{"task_id":"2","status":"done","commit":"12dcba53ad","test_command":"npx vitest run --project unit src/utils/__tests__/logger-notice.test.ts"}
+{"task_id":"3","status":"done","commit":"e0da0ca9fa","test_command":"npx vitest run --project unit src/hooks/__tests__/executor.test.ts"}
+{"task_id":"4","status":"done","commit":"c0804bdc69","test_command":"npx vitest run --project unit src/plugins/loaders/__tests__/hooks-loader.test.ts"}

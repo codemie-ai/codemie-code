@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "decision": "approve",
+  "confidence": "high",
+  "rationale": "All three review lenses ran; acceptance lens confirms every EPMCDME-13675 AC (AC1-AC6) is satisfied. No blocking (critical/major) findings surfaced by triage. Six deferred non-blocking concerns are recorded as follow-ups: (1) add a defensive watchdog on the drain loop; (2) reject empty <bash-input></bash-input> to avoid a bare '!' entry; (3) extend the <bash-stdout>/<bash-stderr> filter to array content shapes; (4) consider whether <bash-input> under a tool_result parent should be excluded from isSyntheticUserPrompt; (5) tighten the T3 test guard from `< 10` to `messages.length`; (6) audit the partial-write behavior of the drain loop (pre-existing single-write also has this weakness). Four other blind-lens concerns were dismissed as cosmetic (duplicate T1 name, silent filter matches existing precedent, monotonicity check is complemented by fixture assertion, fixture visibility is a diff-window artifact) or pre-existing (hardcoded assistant UUID). Two of the three lenses ran fully clean on the diff's substance; the blind lens surfaced defensive concerns none of which fail the acceptance criteria or introduce a regression.",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "AC1: !bash commands recorded in local session log", "status": "pass", "notes": "extractCommand unwraps <bash-input> to !<cmd>; drain loop persists User entry per bash turn"},
+    {"kind": "story-ac", "item": "AC2: Multiple bash commands captured in correct order", "status": "pass", "notes": "T3 asserts ['!ls -al','!pwd','!whoami'] in that order; integration test asserts 4 records with monotonic history_index"},
+    {"kind": "story-ac", "item": "AC3: Following code prompt does not lose bash entries", "status": "pass", "notes": "Drain loop writes all pending turns per invocation; T3 asserts both bash turns and the follow-up question+answer land in history"},
+    {"kind": "story-ac", "item": "AC4: Log distinguishes user prompts, bash commands, assistant responses", "status": "pass", "notes": "Bash User entries carry `!` prefix; regular prompts are plain text; Assistant role for responses"},
+    {"kind": "story-ac", "item": "AC5: Claude Code execution behavior unchanged", "status": "pass", "notes": "Only logging path changed (processor + tests); no changes to session adapter, hooks, sub-agent parsing, metrics, or downstream sync"},
+    {"kind": "story-ac", "item": "AC6: Regression testing covers !ls -al, !ls -al trailing-space, mixed session", "status": "pass", "notes": "Six new unit tests (T1 single + T1 trailing-space + T2 stdout + T2 stderr + T4 triple + T3 mixed) plus updated integration test"}
+  ],
+  "standards_review": [
+    {"standard": "commit-format (git-workflow.md)", "status": "pass", "notes": "Commit subject `fix(agents): log !bash commands ... (EPMCDME-13675)` follows Conventional Commits; type=fix, scope=agents (allowed), ticket suffix"},
+    {"standard": "code-quality.md — ES modules, .js extensions, no `any`", "status": "pass", "notes": "New imports use .js extensions; explicit return types on new API surface; `any` uses are confined to existing test-fixture patterns"},
+    {"standard": "security-practices.md — no secrets, sanitized logging", "status": "pass", "notes": "No secrets or credentials touched; new logger.info line surfaces only turn count, not message content"},
+    {"standard": "testing-patterns.md — Vitest, inline POJO factories", "status": "pass", "notes": "New unit tests reuse the existing user()/assistant()/ts() factories and (proc as any).transformMessages() private-access pattern established in the file"}
+  ],
+  "findings": []
+}

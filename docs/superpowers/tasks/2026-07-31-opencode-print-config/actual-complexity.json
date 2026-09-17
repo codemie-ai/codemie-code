@@ -1,0 +1,74 @@
+{
+  "task": "Add a --print-config dry-run flag to AgentCLI/BaseAgentAdapter that generates the opencode config through the normal beforeRun pipeline, redacts secrets, and prints it to stdout without starting opencode.",
+  "generated": "2026-07-31T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "AgentCLI, BaseAgentAdapter, print-config (new), config-redaction (new), types.ts (AgentAdapter/run contract)",
+      "layers": "API (CLI), Service (core adapter)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "New secret-redaction pattern with no prior precedent in the codebase; correctness-critical (must not leak apiKey/token/secret/password/authorization when printing generated config); dry-run path must still stop the SSO/JWT proxy server or the process hangs after printing",
+      "mitigation": "Regex-based recursive redactSecrets() covering common secret key names, applied at print time; try/finally around proxy.stop() in the dry-run branch of BaseAgentAdapter.run(); dedicated unit tests (config-redaction.test.ts, print-config.test.ts, AgentCLI-print-config.test.ts) plus a real-plugin integration test (tests/integration/opencode/print-config.test.ts)"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 5,
+      "modified_file_list": [
+        "src/agents/core/AgentCLI.ts",
+        "src/agents/core/BaseAgentAdapter.ts",
+        "src/agents/core/__tests__/AgentCLI-resume.test.ts",
+        "src/agents/core/__tests__/BaseAgentAdapter.test.ts",
+        "src/agents/core/types.ts"
+      ],
+      "new_files": 6,
+      "new_file_list": [
+        "src/agents/core/print-config.ts",
+        "src/agents/core/config-redaction.ts",
+        "src/agents/core/__tests__/AgentCLI-print-config.test.ts",
+        "src/agents/core/__tests__/config-redaction.test.ts",
+        "src/agents/core/__tests__/print-config.test.ts",
+        "tests/integration/opencode/print-config.test.ts"
+      ],
+      "affected_dirs": ["src", "tests"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["API", "Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Adds two new shared core modules (print-config.ts, config-redaction.ts) and extends AgentCLI, BaseAgentAdapter, and the AgentAdapter/run type contract — BaseAgentAdapter is the shared base class inherited by every agent adapter, so this counts as touching core shared utilities." },
+    { "dimension": "technical_risk", "reason": "First secret-redaction utility in the codebase, motivated purely by security (avoid leaking apiKey/token/secret/password when printing config to stdout), plus a dry-run early-return path that must still tear down the SSO/JWT proxy correctly." },
+    { "dimension": "file_change_estimate", "reason": "11 files changed per diffstat (5 modified, 6 new), spanning both src/ and tests/, maps to the XL band (11-15 files) even though the change itself is additive (469 insertions, only 9 deletions)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): BaseAgentAdapter is a core shared base class extended by every agent adapter — touches core shared utilities.",
+    "Technical Risk bumped from M (3) to L (4): the feature exists specifically to prevent credential/secret leakage when printing generated config — Security red flag."
+  ],
+  "split_recommendation": null
+}

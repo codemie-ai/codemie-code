@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "branch": "feature/profile-provider-decoupling",
+  "runner": "npm",
+  "started_at": "2026-08-25T17:16:00Z",
+  "completed_at": "2026-08-25T17:18:10Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1136,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2268,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Supersedes the pre-commit hook's lint-staged eslint step (.husky/pre-commit -> npx lint-staged), which is scoped only to staged files with --no-warn-ignored; this gate covers the full src+tests tree with --max-warnings=0."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2164,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also satisfies the pre-commit hook's `npm run typecheck` step and the guide's 'Pre-commit aggregate' (check:pre-commit = typecheck && lint) composite, both of which chain this same command."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3497,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7831,
+      "command": "npm run test:unit",
+      "exit_code": 0,
+      "notes": "216 test files, 3195 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15182,
+      "command": "npm run test:integration",
+      "exit_code": 0,
+      "notes": "29 test files passed, 1 skipped (pre-existing environment-gated skip, not introduced by this branch); 214 tests passed, 1 skipped."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 230,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skipped: exact output was 'No staged changes to scan' -- the script scans only `git diff --staged`, and the working tree has no staged changes relative to HEAD, so it exited 0 without scanning anything. To enable locally: `git add` the changed files before running this script. Docker daemon was reachable, so ran the real gitleaks scan directly for actual coverage (see notes below); recorded here as SKIPPED per the self-skipping-gates rule since a zero exit alone is not evidence this specific command did the work."
+    },
+    {
+      "id": "secrets-direct",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 359,
+      "command": "git diff origin/main...HEAD | docker run --rm -i -v \"$(pwd)/.gitleaks.toml:/gitleaks.toml\" ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Real coverage substitute for the self-skipped guide gate, using the same pinned gitleaks image/config as CI's gitleaks-action job (secrets-detection in .github/workflows/ci.yml). Scanned ~163.5KB of the merge-base diff; result: 'no leaks found'."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 407,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks only HEAD~1..HEAD per the guide's definition; see commitlint-range for full-branch coverage matching what CI's validate-commits job actually enforces."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 338,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "The guide's commitlint gate only checks HEAD~1..HEAD, but .github/workflows/ci.yml's validate-commits job lints every commit from the PR base sha to HEAD. Ran the CI-equivalent full range (10 commits on this branch); all passed with 0 problems."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "validate-commits job in .github/workflows/ci.yml also lints the PR title via `gh pr view --json title` -> commitlint. No open PR exists for this branch (gh pr list returned empty), so there is no live title to fetch; this check requires a real PR and will run automatically once one is opened."
+    },
+    {
+      "id": "windows-crlf-safeguard",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 823,
+      "command": "git check-attr text eol -- src/agents/plugins/claude/plugin/statusline.mjs; perl -pi -e 's/\\n/\\r\\n/ unless /\\r\\n$/' src/agents/plugins/claude/plugin/statusline.mjs && npx vitest run --project unit src/agents/plugins/claude/plugin/__tests__/statusline.test.ts (then reverted via git checkout --)",
+      "exit_code": 1,
+      "notes": "test-windows job in .github/workflows/ci.yml runs on windows-latest, which is unreachable from this machine. This branch touches statusline.mjs, the exact file the quality-gates guide flags for the CRLF/shebang risk, so ran the guide's documented local repro as a substitute: git check-attr confirms `.gitattributes` applies `text=auto eol=lf` to this file; forcing CRLF via the guide's perl one-liner reproduced the documented `SyntaxError: Invalid or unexpected token` in vitest (exit_code 1 here is the expected repro failure, not a gate failure), confirming the safeguard's failure mode is real and the file is protected by .gitattributes. File was reverted via `git checkout --` and confirmed clean via `git status`/`git diff --stat`. Net: local proxy only, not a substitute for the live Windows CI job."
+    }
+  ],
+  "failures": {}
+}

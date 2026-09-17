@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "branch": "feat/analytics-session-modal-copy-buttons",
+  "head": "90c75e4f50665ee57ab619690b8483cbcdc23f01",
+  "runner": "npm",
+  "started_at": "2026-08-26T09:02:34Z",
+  "completed_at": "2026-08-26T09:04:54Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1457,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2185,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2040,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3883,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8382,
+      "command": "npm run test:unit",
+      "exit_code": 0,
+      "notes": "215 test files / 3205 tests passed (vitest --project unit)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12572,
+      "command": "npm run test:integration",
+      "exit_code": 0,
+      "notes": "29 files / 205 tests passed, 1 file / 10 tests skipped (vitest --project cli); pre-existing skip unrelated to this diff (doctor invalid-command probe / live-credential specs)."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 449,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script printed \"No staged changes to scan\" — working tree has no staged files (validate-secrets.js scans `git diff --staged` only). Enable locally by staging the branch diff before running. Real coverage for this diff came from the CI-equivalent \"secrets-full-diff\" gate below (gitleaks over the actual commit range), which found no leaks. CI's gitleaks-action runs unconditionally regardless of local staging state; this local gate is still owed for real by CI."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 312,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Only checks HEAD~1..HEAD (last commit, an amended commit). CI's validate-commits job checks the full PR range (base.sha..HEAD, 5 commits here) — see \"commitlint-range\" CI-sourced gate below, which covers the gap and also passed."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4400,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0,
+      "notes": "typecheck && lint, re-verified as the composite script; identical underlying commands already passed individually above."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 27527,
+      "command": "npm run ci",
+      "exit_code": 0,
+      "notes": "license-check && lint && build && test:unit && test:integration, re-verified as the composite script CI itself invokes via `npm run ci`/`ci:full`."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 529,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: \"lint-staged could not find any staged files.\" Nothing is staged locally since all diff commits are already committed. The guide's full-tree \"lint\" and \"unit\" gates above already exercise these same files at whole-repo scope, so no coverage gap remains for this run; staging the diff before commit is what would exercise this hook command for real."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 369,
+      "command": "npx commitlint --from cd244b089398eee551206408557e173034cd6473 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Mirrors .github/workflows/ci.yml validate-commits step (base.sha..HEAD), which the guide's commitlint-last gate does not cover (last commit only). All 5 commits on this branch pass Conventional Commits rules."
+    },
+    {
+      "id": "secrets-full-diff",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 698,
+      "command": "docker run --rm -v \"$(pwd)\":/repo -v \"$(pwd)/.gitleaks.toml\":/gitleaks.toml -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 detect --source /repo --log-opts=\"cd244b089398eee551206408557e173034cd6473..HEAD\" --config /gitleaks.toml --verbose",
+      "exit_code": 0,
+      "notes": "Replicates .github/workflows/ci.yml secrets-detection job (gitleaks-action, same .gitleaks.toml) which the guide's staged-diff-only validate:secrets gate does not cover once everything is committed. 5 commits scanned, no leaks found."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gh pr view --json title -q '.title' | npx commitlint --verbose",
+      "notes": "No open PR exists yet for this branch (`gh pr view` -> \"no pull requests found for branch \\\"feat/analytics-session-modal-copy-buttons\\\"\"). This .github/workflows/ci.yml validate-commits step runs once a PR is opened; PR creation is a separate manual handoff per repo policy, not performed by this gate run."
+    },
+    {
+      "id": "windows-tests",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npm run test:unit && npm run test:integration (test-windows job, windows-latest)",
+      "notes": "Requires a Windows GitHub Actions runner; unreachable from this macOS (darwin) checkout. No CRLF-sensitive shebang scripts were touched by this diff (only .ts/.js/.html under src/cli/commands/analytics/**), so the guide's local CRLF-repro technique was not needed to de-risk this change; CI's test-windows job remains the authority."
+    },
+    {
+      "id": "ui",
+      "source": "guide",
+      "status": "SKIPPED",
+      "command": "none configured",
+      "notes": "UI surface changed but no configured UI test script; browser verification is a separate caller decision. Diff touches src/cli/commands/analytics/report/client/app.js and report/template.html (match ui_globs '\\.(tsx|jsx|css|html|vue|svelte)$' and 'report/client/'); package.json's test:ui is Vitest's interactive --ui dashboard (a dev tool), not a browser assertion suite, and no Playwright/Puppeteer config exists in the repo."
+    }
+  ],
+  "failures": {}
+}

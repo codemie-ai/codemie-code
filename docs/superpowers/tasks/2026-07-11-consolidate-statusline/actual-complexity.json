@@ -1,0 +1,79 @@
+{
+  "task": "Consolidated two divergent Claude Code statusline implementations (dead --status flag path and working-but-incomplete codemie install statusline path) into a single implementation that auto-resolves CodeMie budget by user email, always renders session cost/duration independent of network, and retires the dead code path as an installStatusline() alias.",
+  "generated": "2026-07-11",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "ClaudePlugin (lifecycle hooks in claude.plugin.ts), statusline-installer.ts (install/uninstall/isStatuslineInstalled — now shared by both the CLI command and the plugin lifecycle hook), statusline.mjs (budget resolution + rendering script), install.ts (CLI command wiring), env/types.ts (config type surface)",
+      "layers": "Agent-Tool, CLI, External, Config"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "Task went through 2 rounds of code review: the first round raised 5 findings including one critical bug, indicating the initial implementation missed edge cases (e.g. cache schema handling, error fallback paths) that were only surfaced during review rather than being fully specified upfront. All 5 were resolved in the fix-up round and the change was approved on the second pass."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Reads and decrypts stored SSO cookies / JWT credentials to build auth headers for the budget API call; makes a network call to the external CodeMie backend to resolve budget by user email; statusline runs as a standalone node script on every prompt render and must never crash the host Claude Code session; introduces a versioned local cache (budget-cache.json) that must safely discard stale/incompatible shapes from prior versions.",
+      "mitigation": "Budget resolution is fully wrapped in try/catch with silent fallback (no budget segment shown on error, session cost/duration still render independent of network); cache uses a TTL plus an explicit schema version stamp to invalidate pre-upgrade cache entries instead of trusting them; the script's main() swallows all unexpected errors so a failure can never surface to or crash Claude Code; feature is toggled via CODEMIE_STATUS env var / explicit `codemie install statusline` with an uninstallStatusline() cleanup path for rollback."
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 6,
+      "modified_file_list": [
+        "src/agents/plugins/claude/claude.plugin.ts",
+        "src/agents/plugins/claude/statusline-installer.ts",
+        "src/agents/plugins/claude/plugin/statusline.mjs",
+        "src/cli/commands/install.ts",
+        "src/env/types.ts",
+        "src/agents/plugins/claude/plugin/__tests__/statusline.test.ts"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        "src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts",
+        "src/agents/plugins/claude/__tests__/statusline-installer.test.ts"
+      ],
+      "affected_dirs": [
+        "src/agents/plugins/claude",
+        "src/agents/plugins/claude/__tests__",
+        "src/agents/plugins/claude/plugin",
+        "src/agents/plugins/claude/plugin/__tests__",
+        "src/cli/commands",
+        "src/env"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["Agent-Tool", "CLI", "External", "Config"],
+      "schema_migration": false,
+      "cross_system": true
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 8,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Consolidation touches 5 distinct components (ClaudePlugin lifecycle, statusline-installer now shared between CLI and plugin, statusline.mjs script, install command, config types) across Agent-Tool/CLI/External/Config — a genuine refactor collapsing two divergent code paths into one shared installer, which bumps this beyond a routine feature add." },
+    { "dimension": "technical_risk", "reason": "Handles decrypted SSO/JWT credentials to build budget API auth headers and makes an external network call on every statusline render, with a critical bug found in the first code-review round — mitigated by fail-safe error swallowing and cache-schema versioning, but the credential/auth touch is what drives the score." },
+    { "dimension": "file_change_estimate", "reason": "8 files changed (6 modified, 2 new) per diffstat, spanning 6 distinct directories across the claude plugin, CLI commands, and env/types — consistent with the 7-10 file L band." },
+    { "dimension": "affected_layers", "reason": "Change spans Agent-Tool (lifecycle hooks), CLI (install command), External (budget API call), and Config (env/types) — four distinct layers, though no DB/schema layer is involved." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: consolidating two divergent statusline implementations into one shared installer and retiring the dead --status code path is a refactor of an existing subsystem (statusline-installer.ts is now touched as a core shared utility used by both the CLI and the plugin lifecycle hook).",
+    "Technical Risk bumped from M to L: the change touches authentication/credential handling (decrypting stored SSO cookies / JWT tokens to build budget API auth headers)."
+  ],
+  "split_recommendation": null
+}

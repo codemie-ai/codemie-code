@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task": "Add a --print-config (dry-run) flag to codemie-opencode that prints the generated opencode config to console and exits without starting opencode.",
+  "generated": "2026-07-31",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches AgentCLI.ts (CLI/Commander layer) and BaseAgentAdapter.ts (core adapter orchestration), both shared across every agent CLI (claude, codex, gemini, kimi, opencode), plus opencode.plugin.ts (plugin layer) which must expose its closure-local config object instead of only leaking it via env-var side effect. Base fits L (3-4 components, 2-3 layers, shared utilities involved); bumped to XL because the change carries cross-agent blast radius." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for a print-only/dry-run flag on this CLI; the generated config can carry real credentials (provider apiKey/headers fields) that must be redacted before printing — a genuine security requirement on top of the standard 'new pattern, may need feature flag' baseline. Zero existing test coverage for beforeRun config assembly, temp-config.ts, or opencode-specific CLI parsing compounds the risk." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): affects multiple workflows/agents — AgentCLI.ts and BaseAgentAdapter.ts are shared core code used by every agent CLI, not just opencode",
+    "Technical Risk bumped from M (3) to L (4): security requirement — generated config may embed real credentials (provider headers/apiKey) that must be redacted before console output"
+  ],
+  "split_recommendation": null
+}

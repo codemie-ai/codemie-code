@@ -1,0 +1,40 @@
+{
+  "decision": "request-changes",
+  "rationale": "Four of the five findings are resolved and verified. CR-001 (empty-host collision) and CR-003 (shared-directory test assertion) are fixed and covered by new tests. CR-002 was NOT resolved by the first fix-up: the scoped confirmation pass on the fix-up diff found that CodeMieSSO.getStoredCredentials pre-normalized the URL before calling the store, so legacyKey always equalled key and the migration was dead code in production - the covering tests passed only because they called CredentialStore directly. That is recorded as CR-005, was fixed in-round (847bef23), and its tests now run through CodeMieSSO so they fail without the fix. CR-004 remains unresolved by design: ticket AC5 requires Windows PowerShell verification, which cannot be produced from this machine; the owner has accepted it and will verify before merge. Decision is request-changes solely because CR-004 is unresolved on evidence - per the round contract an unresolved finding blocks, and only the human can close an evidence criterion they have undertaken to satisfy. No third automated review round was run.",
+  "confidence": "medium",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"criterion": "Ticket AC1 - profile login --url <api-url> stores credentials usable immediately by proxy connect desktop", "status": "pass", "notes": "Carried forward from code-review-final.json; unchanged by the fix-up."},
+    {"criterion": "Ticket AC2 - accurate recovery instruction from proxy connect desktop", "status": "pass", "notes": "Carried forward. Residual missing-codeMieUrl branch remains deferred."},
+    {"criterion": "Ticket AC3 - no missing-credential error after successful SSO auth", "status": "pass", "notes": "Carried forward."},
+    {"criterion": "Ticket AC4 - consistent behaviour across profile login, profile status, proxy connect desktop", "status": "pass", "notes": "Carried forward."},
+    {"criterion": "Ticket AC5 - verified on Windows PowerShell with the default profile", "status": "partial", "notes": "Still unevidenced. Owner has undertaken to verify on Windows before merge; must be closed there, not here."},
+    {"criterion": "Ticket AC6 - no regression in existing SSO login, status, refresh, proxy flows", "status": "pass", "notes": "Re-verified after the fix-up: eslint and tsc clean; 7/7 new tests, 41 SSO/proxy integration tests, 273 provider+security unit tests pass. Confirmation pass verified bare portal URLs, trailing slashes, mixed case, explicit ports, IPv6 literals and userinfo all hash to the same key as before the fix-up, and that the extracted readCredential/deleteCredential helpers are behaviour-preserving against 03d3de0f."},
+    {"criterion": "Scope adherence", "status": "pass", "notes": "Fix-up stayed within credential storage and its tests. sso.auth.ts change is two call arguments plus a comment; no out-of-scope work."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md - Conventional Commits", "status": "pass", "notes": "Carried forward; the two fix-up commits also conform (fix(utils), fix(providers))."},
+    {"standard": "git-workflow.md - CRITICAL attribution-header check", "status": "na", "notes": "Carried forward; fix-up touches no attribution headers."},
+    {"standard": "code-quality.md - lint and types", "status": "pass", "notes": "Re-run after the fix-up: eslint --max-warnings=0 clean, tsc --noEmit clean."},
+    {"standard": "security-practices.md - credential handling", "status": "pass", "notes": "Upgraded from partial. CR-001 and CR-002 both closed: no cross-instance collision, and logout now deletes the legacy entry via the production path. Confirmation pass found no credential written to an unintended location, nothing logged, and no data-loss window in the migration (store is awaited before the legacy delete)."},
+    {"standard": "testing-patterns.md - vitest conventions", "status": "pass", "notes": "Upgraded from partial. Assertions now name exact filenames instead of counting entries in a shared directory."}
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "normalizeForKey now requires a non-empty host and http:/https: protocol, else keeps the raw form. Verified: localhost:8080 and localhost:9090 hash distinctly again, while path-bearing HTTPS URLs still collapse to the intended host key. Covered by 'keeps scheme-less host:port endpoints on separate keys'."},
+    {"id": "CR-002", "status": "resolved", "notes": "Resolved only after CR-005. retrieveSSOCredentials falls back to the legacy key and migrates; clearSSOCredentials deletes both. Now reachable from the production caller and covered by two tests running through CodeMieSSO."},
+    {"id": "CR-003", "status": "resolved", "notes": "Test asserts exact storage filenames instead of directory cardinality, removing the cross-file race. Added distinctness and legacy-key coverage."},
+    {"id": "CR-004", "status": "unresolved", "notes": "Windows PowerShell verification cannot be produced from this machine. Owner accepted and will verify before merge. Blocks this verdict by contract; the human closes it."}
+  ],
+  "findings": [
+    {
+      "id": "CR-005",
+      "title": "Legacy-key migration was unreachable from the production read path",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "CodeMieSSO.getStoredCredentials passed normalizeToBase(url) into retrieveSSOCredentials, so the store received an already-reduced URL and computed legacyKey === key, skipping the migration branch on every real invocation. The two tests certifying CR-002 called CredentialStore directly with a path-bearing URL, the one shape that makes the keys diverge, so they passed against an implementation that did nothing in production.",
+      "impact": "The orphaned credential blobs that motivated CR-002 would have remained unprobed on read and undeleted on logout, while a green suite asserted the opposite - a false green in exactly the class this review was guarding against.",
+      "recommendation": "Fixed in 847bef23: pass the caller's URL through unnormalized so the store can derive both keys; normalizeToBase is retained for the global-fallback comparison. Tests repointed at CodeMieSSO so they fail without the fix (verified RED then GREEN).",
+      "evidence": "src/providers/plugins/sso/sso.auth.ts:184 before the fix; tests/integration/sso-credential-key-normalization.test.ts legacy-key block; RED run showed 'reads a credential stored under the legacy key' failing via the production path while the delete test passed, because clearStoredCredentials never pre-normalized."
+    }
+  ]
+}

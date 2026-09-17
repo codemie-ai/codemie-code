@@ -1,0 +1,22 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "approve",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "criterion": "AC-1: do not set CLAUDE_CODE_SUBAGENT_MODEL when sonnet is provisioned", "status": "pass", "notes": "sonnetModel maps only ANTHROPIC_DEFAULT_SONNET_MODEL; step-1 reset deletes the var; verified for sonnet-only, haiku+sonnet, all-three (tests)." },
+    { "criterion": "AC-2: keep haiku-only fallback (EPMCDME-12779)", "status": "pass", "notes": "haiku-only branch writes CODEMIE_HAIKU_MODEL into subagentDefaultModel; e2e confirms redirect." },
+    { "criterion": "AC-3: keep opus-only fallback", "status": "pass", "notes": "opus branch writes CODEMIE_OPUS_MODEL into subagentDefaultModel; test confirms." },
+    { "criterion": "AC-4: per-subagent overrides flow through; sonnet default via ANTHROPIC_DEFAULT_SONNET_MODEL", "status": "pass", "notes": "var absent on multi-tier tenants; TIER_TARGET_VARS also drops it so auto-resolve no longer re-injects." },
+    { "criterion": "AC-5: non-goals respected", "status": "pass", "notes": "one new field only; no backend/proxy changes; auto-resolve semantics unchanged apart from the required drop." },
+    { "criterion": "AC-6: startup log-warning (info summary + warn when haiku absent)", "status": "pass", "notes": "Widened during review to fire whenever haiku is absent and a fallback tier exists, naming the actual fallback model (was narrowed to !haiku && sonnet). New opus-only + no-tier tests added." }
+  ],
+  "standards_review": [
+    { "standard": "git-workflow (Conventional Commits)", "status": "pass", "notes": "two commits: fix(agents): ... and feat(agents): ... — conform." },
+    { "standard": "code-quality (TypeScript, ES modules, no any)", "status": "pass", "notes": "explicit types, no any, .js import extensions, logger over console." },
+    { "standard": "security (no secrets/unsafe logging)", "status": "pass", "notes": "logs model ids only; no tokens; sanitizeLogArgs used on error paths." }
+  ],
+  "findings": [],
+  "rationale": "Core fix (AC-1..AC-5) fully implemented, correct, and covered by 29 passing tests (targeted) within a green full suite (3420 passing). Three lenses ran (blind, edge-case, acceptance) against the full spec. One in-scope finding (AC-6 warning narrower than the written criterion — no warning on opus-only tenants) was fixed inline during this round: the warn now fires whenever haiku is absent and names the true fallback model; added opus-only and no-tier regression tests. Two DEFERRED (pre-existing, not introduced by this diff): (1) the opus/haiku subagent fallback runs only in transformEnvVars (before beforeRun auto-resolve), so it does not fire for tenants that rely on catalog auto-resolution rather than a pinned profile — a limitation of the EPMCDME-12779 fallback, unchanged by this diff; (2) haiku+opus (no sonnet) pins the subagent default to opus rather than haiku due to pre-existing branch order (opus checked before haiku). Both are worth a follow-up ticket but neither is a regression from EPMCDME-14355. B1 (subagent var now unset on sonnet tenants) dismissed — it is the intended fix. 0 critical, 0 blocking after inline fix.",
+  "coverage": { "lenses_run": ["blind", "edge-case", "acceptance"], "lenses_failed": [], "diff_lines": 431, "changed_files": 6 }
+}

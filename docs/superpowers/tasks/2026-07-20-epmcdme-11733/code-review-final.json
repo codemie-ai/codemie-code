@@ -1,0 +1,117 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "confidence": "medium",
+  "rationale": "CR-001 (critical) identifies that the integration-type filter is missing: any integration type on a project triggers LiteLLM enforcement, directly violating AC-1, AC-2, and AC-5. CR-003 (major) finds the enforcement gate runs unconditionally during update flows, breaking --update UX. CR-004 (major) catches a missing null guard on apiKey in enforcement mode. CR-002 (major) notes ambiguous first-match selection when multiple integrations exist. CR-005 (decision_needed) flags that the catch-all silently bypasses enforcement on auth cancellation — spec is ambiguous on this case. Three of six acceptance criteria are partial; two defer findings (project_name case sensitivity, authResult.apiUrl assertion) excluded from the blocking set.",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "During setup, the system detects when the selected project already has a LiteLLM integration created.",
+      "status": "partial",
+      "notes": "Filter uses project_name only; any integration type triggers enforcement, not just LiteLLM-type integrations."
+    },
+    {
+      "id": "AC-2",
+      "text": "If LiteLLM integration exists, the setup flow enforces its usage for CLI configuration.",
+      "status": "partial",
+      "notes": "Auto-selects litellm correctly when triggered, but trigger condition is too broad (wrong type filter); also silently picks the first when multiple integrations match."
+    },
+    {
+      "id": "AC-3",
+      "text": "User cannot complete CLI setup without providing the required LiteLLM key.",
+      "status": "pass",
+      "notes": "Validator re-prompts on blank input; 'not-required' fallback is suppressed in enforcement mode."
+    },
+    {
+      "id": "AC-4",
+      "text": "Validation message clearly explains why setup cannot continue without LiteLLM credentials.",
+      "status": "pass",
+      "notes": "Header prints integration alias and portal hint; validator message cites the CodeMie portal."
+    },
+    {
+      "id": "AC-5",
+      "text": "The enforced flow does not affect projects that do not have LiteLLM integration created.",
+      "status": "partial",
+      "notes": "Projects with no integrations fall through correctly, but projects with non-LiteLLM integrations are incorrectly gated into the LiteLLM setup path."
+    },
+    {
+      "id": "AC-6",
+      "text": "No invalid CLI configuration state can be saved for projects where LiteLLM integration is mandatory.",
+      "status": "pass",
+      "notes": "Enforcement mode prevents empty key and 'not-required' fallback from being returned or saved."
+    }
+  ],
+  "standards_review": [
+    {
+      "id": "STD-1",
+      "standard": "Conventional Commits format (git-workflow.md)",
+      "status": "pass",
+      "notes": "Commits use allowed types (feat, test) with cli/providers scopes per commitlint.config.cjs; pre-commit hooks passed."
+    },
+    {
+      "id": "STD-2",
+      "standard": "No console.log (code-quality.md pre-commit checklist)",
+      "status": "partial",
+      "notes": "Diff adds console.log() for UX headers; follows established setup.ts pattern; not enforced by ESLint — no additional blocking finding raised."
+    },
+    {
+      "id": "STD-3",
+      "standard": "Optional chaining (code-quality.md best practices)",
+      "status": "partial",
+      "notes": "Normal mode uses answers.apiKey?.trim() but enforcement mode uses answers.apiKey.trim() without the guard — captured in CR-004."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "file": "src/cli/commands/setup.ts",
+      "line": 27,
+      "problem": "projectIntegrations is filtered by project_name only; any integration type (GitHub, Jira, etc.) on the project triggers the LiteLLM enforcement path.",
+      "impact": "Violates AC-1, AC-2, AC-5: projects with non-LiteLLM integrations are forced through LiteLLM setup and cannot choose any other provider.",
+      "recommendation": "Filter by credential_type as well: allIntegrations.filter(i => i.project_name === project && i.credential_type === 'LiteLLM').",
+      "severity": "critical",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-002",
+      "file": "src/cli/commands/setup.ts",
+      "line": 29,
+      "problem": "When multiple integrations match the project, projectIntegrations[0] is silently selected with no user prompt and no documented sort order from the API.",
+      "impact": "Users with multiple LiteLLM integrations may be configured against the wrong proxy endpoint with no recourse.",
+      "recommendation": "If projectIntegrations.length > 1, prompt the user to select the integration, or document and enforce a deterministic tie-breaking rule (e.g. API sort order or most recently created).",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-003",
+      "file": "src/cli/commands/setup.ts",
+      "line": 238,
+      "problem": "detectLiteLLMEnforcement() is called unconditionally on every runSetupWizard invocation, including --update flows (isUpdate === true), forcing an unexpected interactive SSO browser prompt when the user only wants to update an existing config.",
+      "impact": "Breaks codemie setup --update UX; a timeout or unreachable SSO server during an update silently skips enforcement.",
+      "recommendation": "Skip the enforcement check when isUpdate is true and no existingCodeMieUrl override is provided, or pass the isUpdate flag into detectLiteLLMEnforcement() to gate the SSO prompt.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-004",
+      "file": "src/providers/plugins/litellm/litellm.setup-steps.ts",
+      "line": 48,
+      "problem": "answers.apiKey.trim() in enforcement mode lacks the optional chain that the non-enforcement branch uses (answers.apiKey?.trim()); inquirer password prompts can return undefined in headless/CI environments.",
+      "impact": "TypeError crash at the last step of an otherwise successful enforcement-mode setup, leaving no configuration saved.",
+      "recommendation": "Use answers.apiKey?.trim() ?? '' and validate the empty string explicitly, consistent with the code-quality guide's optional-chaining best practice.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-005",
+      "file": "src/cli/commands/setup.ts",
+      "line": 44,
+      "problem": "The catch block returns { enforced: false } on ALL errors including explicit user auth-cancellation (closing the SSO browser window). The spec's error-handling table covers network/timeout fallbacks but is silent on user-initiated cancellation.",
+      "impact": "A user who closes the SSO popup bypasses mandatory LiteLLM enforcement and gains access to unrestricted provider selection.",
+      "recommendation": "Clarify intended behaviour for cancellation in the spec: if the user actively cancels SSO, should setup abort (rethrow) or fall back to normal flow? Update the catch handler accordingly.",
+      "severity": "major",
+      "triage": "decision_needed"
+    }
+  ]
+}

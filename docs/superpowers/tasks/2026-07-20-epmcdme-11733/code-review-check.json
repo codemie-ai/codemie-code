@@ -1,0 +1,93 @@
+{
+  "gate_id": "code-review.check",
+  "decision": "approve",
+  "confidence": "high",
+  "rationale": "All four patch findings (CR-001 through CR-004) are clearly resolved in the 42-line fix-up diff: credential_type filter added, multiple-integration warning added, isUpdate gate skip added, optional chain applied. CR-005 (decision_needed) is superseded — design decision confirmed that fallback on all SSO errors (including cancellation) is intentional per the spec error-handling table; no code change required. No new high-risk issues introduced. Fix-up commit passed pre-commit hooks (ESLint zero warnings, typecheck, related unit tests).",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "During setup, the system detects when the selected project already has a LiteLLM integration created.",
+      "status": "partial",
+      "notes": "Filter uses project_name only; any integration type triggers enforcement, not just LiteLLM-type integrations."
+    },
+    {
+      "id": "AC-2",
+      "text": "If LiteLLM integration exists, the setup flow enforces its usage for CLI configuration.",
+      "status": "partial",
+      "notes": "Auto-selects litellm correctly when triggered, but trigger condition is too broad (wrong type filter); also silently picks the first when multiple integrations match."
+    },
+    {
+      "id": "AC-3",
+      "text": "User cannot complete CLI setup without providing the required LiteLLM key.",
+      "status": "pass",
+      "notes": "Validator re-prompts on blank input; 'not-required' fallback is suppressed in enforcement mode."
+    },
+    {
+      "id": "AC-4",
+      "text": "Validation message clearly explains why setup cannot continue without LiteLLM credentials.",
+      "status": "pass",
+      "notes": "Header prints integration alias and portal hint; validator message cites the CodeMie portal."
+    },
+    {
+      "id": "AC-5",
+      "text": "The enforced flow does not affect projects that do not have LiteLLM integration created.",
+      "status": "partial",
+      "notes": "Projects with no integrations fall through correctly, but projects with non-LiteLLM integrations are incorrectly gated into the LiteLLM setup path."
+    },
+    {
+      "id": "AC-6",
+      "text": "No invalid CLI configuration state can be saved for projects where LiteLLM integration is mandatory.",
+      "status": "pass",
+      "notes": "Enforcement mode prevents empty key and 'not-required' fallback from being returned or saved."
+    }
+  ],
+  "standards_review": [
+    {
+      "id": "STD-1",
+      "standard": "Conventional Commits format (git-workflow.md)",
+      "status": "pass",
+      "notes": "Commits use allowed types (feat, fix, test) with cli/providers scopes per commitlint.config.cjs; pre-commit hooks passed."
+    },
+    {
+      "id": "STD-2",
+      "standard": "No console.log (code-quality.md pre-commit checklist)",
+      "status": "partial",
+      "notes": "Fix-up diff adds no new console.log(); prior partial on main diff stands (established setup.ts UX pattern)."
+    },
+    {
+      "id": "STD-3",
+      "standard": "Optional chaining (code-quality.md best practices)",
+      "status": "partial",
+      "notes": "CR-004 fix applies optional chain to enforcement mode apiKey; prior partial carried forward from final round."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Filter now `allIntegrations.filter(i => i.project_name === project && i.credential_type === 'LiteLLM')` — non-LiteLLM integrations no longer trigger the enforcement path."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "logger.warn added when projectIntegrations.length > 1, naming the selected alias. Deterministic selection (first element) is now documented at the warn site."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Ternary `isUpdate ? { enforced: false as const } : await detectLiteLLMEnforcement()` skips SSO gate on all update flows."
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "notes": "`answers.apiKey?.trim() ?? ''` applied — optional chain prevents TypeError on undefined in headless/CI environments."
+    },
+    {
+      "id": "CR-005",
+      "status": "superseded",
+      "notes": "Design decision confirmed: falling back on all SSO errors (including user-initiated cancellation) is intentional per the spec error-handling table. No code change required."
+    }
+  ]
+}

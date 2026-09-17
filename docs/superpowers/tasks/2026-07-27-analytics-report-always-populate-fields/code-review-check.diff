@@ -1,0 +1,59 @@
+diff --git a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+index c5d35f4..1cd3911 100644
+--- a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+@@ -366,6 +366,31 @@ describe('buildPayload', () => {
+     expect(payload.meta.periodEnd).toBeUndefined();
+   });
+ 
++  it('skips records with non-finite startTime or duration and does not throw', () => {
++    // Guard against RangeError from new Date(NaN|Infinity).toISOString() — a single
++    // malformed session must not crash report generation for every other session.
++    const nanDur = session({ sessionId: 's-nan-dur', startTime: 1_700_000_000_000, duration: Number.NaN });
++    const infStart = session({ sessionId: 's-inf-start', startTime: Number.POSITIVE_INFINITY, duration: 60_000 });
++    const good = session({ sessionId: 's-good', startTime: 1_700_000_300_000, duration: 60_000 });
++    const rootMixed = {
++      ...root,
++      projects: [
++        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [nanDur, infStart, good] }] },
++      ],
++    } as unknown as RootAnalytics;
++    const costIndexMixed: SessionCostIndex = new Map([
++      ['s-nan-dur', { sessionId: 's-nan-dur', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++      ['s-inf-start', { sessionId: 's-inf-start', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++      ['s-good', { sessionId: 's-good', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++    ]);
++    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
++    // nanDur contributes its finite startTime (NaN duration collapses to 0 → endMs=startTime).
++    // infStart is skipped entirely (non-finite startTime fails the guard).
++    // good extends maxEndMs past nanDur's startTime.
++    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
++    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_300_000 + 60_000).toISOString());
++  });
++
+   it('skips records with startTime <= 0 when computing min/max', () => {
+     const zero = session({ sessionId: 's-zero', startTime: 0, duration: 60_000 });
+     const valid = session({ sessionId: 's-valid', startTime: 1_700_000_000_000, duration: 60_000 });
+diff --git a/src/cli/commands/analytics/report/payload-builder.ts b/src/cli/commands/analytics/report/payload-builder.ts
+index ba6eea8..18ccd35 100644
+--- a/src/cli/commands/analytics/report/payload-builder.ts
++++ b/src/cli/commands/analytics/report/payload-builder.ts
+@@ -46,11 +46,16 @@ export function buildPayload(
+           continue;
+         }
+         seen.add(s.sessionId);
+-        if (s.startTime > 0) {
++        // Guard both fields with Number.isFinite so a single malformed session
++        // (NaN/Infinity from a corrupted timestamp event or unreliable native log)
++        // does not propagate into new Date(...).toISOString() and throw RangeError,
++        // which would crash report generation for every user.
++        if (Number.isFinite(s.startTime) && s.startTime > 0) {
+           if (minStartMs === undefined || s.startTime < minStartMs) {
+             minStartMs = s.startTime;
+           }
+-          const endMs = s.startTime + Math.max(s.duration ?? 0, 0);
++          const dur = Number.isFinite(s.duration) ? Math.max(s.duration, 0) : 0;
++          const endMs = s.startTime + dur;
+           if (maxEndMs === undefined || endMs > maxEndMs) {
+             maxEndMs = endMs;
+           }

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "EPMCDME-14072: extend CodeMie CLI managed MCP handling so backend entries can carry a structured oauth object (clientId, scope, callbackHost, callbackPort, authorizationUrl, tokenUrl) instead of only a boolean/enum auth flag, propagated through validation, mapping and the Claude Desktop 3p managedMcpServers config.",
+  "generated": "2026-08-11",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Baseline L: widening a boolean into a structured object across both the client-neutral CanonicalMcpEntry and the client-specific ManagedMcpServerEntry has no exact precedent, no feature flag exists, and rollout safety rests entirely on validation accepting the old auth enum and the new oauth object simultaneously. Concrete traps identified in analysis: the silent auth downgrade (mapCanonicalToDesktop sets oauth: entry.auth === 'oauth', so a payload with no auth key yields oauth: false for every org server while CI stays green), pickCanonicalFields stripping the new field via its six-key allowlist, shallow-copy aliasing of a nested object against the readonly bundled defaults, and the cross-origin Keycloak host versus the proxy's discovery-scoped origin allowlist. Bumped to XL by the authentication red flag."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The inbound payload is specified exactly, but the outbound contract is not: nothing in the repo documents whether Claude Desktop's managedMcpServers accepts an oauth object or only a boolean, and the analysis states this answer changes the design materially and cannot be resolved from this repository. The alternative is that the CLI itself must honour clientId/authorizationUrl/tokenUrl/callbackPort through McpOAuthProvider, which today does dynamic client registration and RFC 8414 discovery rather than static configuration. Additional open items: whether the backend still emits the legacy auth enum during transition, whether the bundled desktop-managed-mcp-servers.json defaults migrate to object form, and which code path owns the pinned callbackPort 3118 (currently unowned and a possible collision with McpOAuthProvider's own callback server)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct layers: CLI (proxy/index.ts logging and wiring), connector/service (managed-mcp-remote.ts validation plus desktop.ts mapping, reconciliation and write), static config asset (desktop-managed-mcp-servers.json, type-bound to ManagedMcpServerEntry), and local persisted state. The persistence layer is not optional: reconciliation identity is name+URL and the marker holds only managedNames, so neither can detect an oauth-config-only change, meaning a rotated clientId or changed authorizationUrl would never reach users without a state-schema change that must also read existing marker files tolerantly."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Held at M rather than L: exactly four production files carry the change and the analysis confirms the VS Code connector, mcp-loader.ts and mcp-config.ts are provably off this path, containing the blast radius to the proxy connector layer. The established two-stage validate-then-project pattern and the fail-soft null-versus-empty-array fetch contract both already exist and are reused rather than replaced."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects authentication/authorization — the change is OAuth configuration for managed MCP servers, and the dominant failure mode is servers silently losing OAuth. The 'security requirements' red flag was considered but not applied separately to avoid double-counting the same fact. The 'integration with new external service' red flag was considered and not applied: the backend endpoint GET /v1/mcp/managed-servers is an existing integration whose response contract is changing, and under the stated propagation-only scope the Keycloak host appears as payload data rather than a service the CLI calls. If brainstorming concludes the CLI must perform the OAuth flow itself, that red flag activates and bumps both Component Scope and Affected Layers, moving this toward XL."
+  ],
+  "split_recommendation": null
+}

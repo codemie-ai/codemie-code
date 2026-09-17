@@ -1,0 +1,7 @@
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"initial","status":"skipped"}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"spec","status":"skipped"}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"skipped"}
+{"schema":1,"ts":"2026-07-30T11:20:00Z","event":"decision.recorded","phase":3,"actor":"decision-router","summary":"Decision recorded for spec.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"spec.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"schema":1,"ts":"2026-07-30T11:21:00Z","event":"decision.recorded","phase":4,"actor":"decision-router","summary":"Decision recorded for plan.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"schema":1,"ts":"2026-07-30T11:35:00Z","event":"decision.recorded","phase":6,"actor":"decision-router","summary":"Decision recorded for code-review.final: approve","artifacts":["decisions.jsonl","code-review-final.json"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"skipped"}

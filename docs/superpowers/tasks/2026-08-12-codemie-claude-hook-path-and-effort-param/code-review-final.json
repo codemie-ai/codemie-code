@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "rationale": "Three lenses ran cleanly. One critical (CR-001): migration 006 returns success:true on a write failure, which the runner records as permanently applied (recordMigration id,true in the skipped branch) so it never retries — a failed rewrite leaves hooks broken forever with only an info log. One major (CR-002): the process.argv[1] fallback in resolveCodemieBinary yields a raw .js path that is not directly invocable as a hook command on Windows (needs a node prefix); this fires exactly in the no-admin/not-on-PATH scenario the ticket targets. Deferred (non-blocking): EC-3 (quote class omits $ and '; very low likelihood since the path comes from which/argv, and double-quoting does not even stop $ expansion in POSIX — needs a considered fix, not a half-fix); Blind-1 (effort gate reuses modelRequiresAdaptiveThinking rather than a dedicated modelSupportsEffort predicate — current behavior correct and tested, future-proofing suggestion); acceptance criterion 7 partial (no live end-to-end session test, but the two unit tests the lens recommends both already exist, and make test-harness covers the live path pre-MR). Dismissed: blind 'use getCodemiePath()' — the Claude installer's getTargetPath hardcodes homedir()/.codemie, so the migration correctly mirrors it; getCodemiePath honors CODEMIE_HOME and would diverge. Out-of-scope note: profile/plugin hooks merged into OPENCODE_HOOKS are not localized (outside ticket scope). 2 findings emitted, 4 deferred/dismissed.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "codemie command available to hook execution after setup", "status": "pass"},
+    {"criterion": "SessionStart hooks do not fail with command not found", "status": "pass"},
+    {"criterion": "UserPromptSubmit hooks do not fail with command not found", "status": "pass"},
+    {"criterion": "claude-4-5-sonnet requests do not include unsupported effort", "status": "pass"},
+    {"criterion": "unsupported params omitted/mapped safely before send", "status": "pass"},
+    {"criterion": "works without admin rights to downgrade CodeMie", "status": "pass"},
+    {"criterion": "regression validation of live start+prompt+response", "status": "partial", "note": "unit tests cover mechanisms (install() e2e + normalizer onRequest); live session covered by make test-harness pre-MR"}
+  ],
+  "standards_review": [
+    {"standard": "commit-format (conventional commits)", "status": "pass", "notes": "commitlint enforced via husky; all commits passed"},
+    {"standard": "code-quality (eslint --max-warnings=0)", "status": "pass", "notes": "lint clean on changed files"},
+    {"standard": "no-hardcoded-.codemie-path pitfall (AGENTS.md)", "status": "na", "notes": "migration path intentionally mirrors installer getTargetPath which uses homedir(); getCodemiePath would diverge"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "Migration 006 returns {success:true, migrated:false} when rewriteHooksCommandTree needs a change but writeFile throws (EACCES/EPERM/disk full). MigrationRunner records success:true (even in the skipped branch) via recordMigration(id,true), so the migration is permanently marked applied and never retried.",
+      "impact": "A user whose hooks.json write fails on first launch after upgrade keeps bare `codemie` commands forever; hooks keep failing with command-not-found and there is no automatic recovery — only an info log.",
+      "recommendation": "Track a write-failure flag in the loop and return {success:false} when a rewrite was needed but could not be written, so the runner leaves it pending and retries next launch.",
+      "location": "src/migrations/006-resolve-hook-command-paths.migration.ts",
+      "sources": ["edge-case:EC-1"]
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "resolveCodemieBinary's process.argv[1] fallback returns the raw .js entry path. On Windows a .js path is not directly invocable as a hook command (needs `node` prefix); this fallback fires precisely when getCommandPath returns null (codemie not on PATH) — the ticket's target scenario.",
+      "impact": "On Windows user-prefix installs without admin, hooks could be written as `C:\\...\\codemie.js hook` and fail to launch, defeating the fix on that platform.",
+      "recommendation": "When falling back to argv[1] and it ends with .js, synthesize an executable invocation (prepend process.execPath / `node`), at least on win32. Unix argv[1] keeps working via shebang.",
+      "location": "src/utils/hook-command.ts",
+      "sources": ["edge-case:EC-2"]
+    }
+  ]
+}

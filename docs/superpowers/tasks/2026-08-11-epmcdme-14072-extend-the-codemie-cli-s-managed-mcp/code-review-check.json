@@ -1,0 +1,155 @@
+{
+  "decision": "request-changes",
+  "rationale": "Both original findings are resolved with clear evidence in the fix-up diff, and no existing test was changed. However the scoped two-lens confirmation pass over the fix-up diff did not refute the suspicion raised by its size (141 changed lines of new selection/merge logic in the auth-and-revocation path) — it confirmed four newly introduced issues, and both lenses converged independently on the two most serious: the new auth guard is bypassed when two backend entries collide with the same bundled default (CR-003, recreating CR-002's downgrade), and dropping a no-auth colliding backend entry revokes a live internal server in favour of the bundled public endpoint on the SUCCESSFUL-fetch path (CR-004, recreating CR-001's harm). Confidence is medium rather than high because the check round runs no reachability verifier, so CR-003's and CR-005's trigger conditions are argued from the code rather than simulated as the final round's findings were.",
+  "confidence": "medium",
+  "risk_flags": ["security"],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: a backend entry carrying the new oauth object is written into configLibrary/<UUID>.json -> managedMcpServers with the object intact, all keys preserved",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: no entry is written with oauth:false when the backend supplied OAuth configuration",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: entries using the legacy auth:'oauth' enum continue to produce oauth:true",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: unknown keys inside the oauth object survive to the Desktop config",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: a backend entry colliding with a bundled default replaces it",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: a transient backend failure still never revokes previously-managed org entries",
+      "status": "partial",
+      "notes": "Carried forward unchanged per the check-round rules. For information only: the failed-fetch path CR-001 described is now fixed by selectDefaultsForFailedFetch, but CR-004 opens a successful-fetch analogue of the same harm, so this criterion should not be treated as cleared."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: a backend emitting only malformed oauth objects does not revoke the tenant's org MCPs",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: npm run lint, typecheck, build and the full test suite pass",
+      "status": "pass",
+      "notes": "Carried forward. Fix-up re-verified: desktop.test.ts 72 passed / 1 skipped, proxy index.test.ts 8 passed, lint and typecheck exit 0."
+    },
+    {
+      "kind": "spec",
+      "item": "Sections 1-4: types, sanity-gate validation, field preservation, six-row precedence table",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "Sections 5-8: dedup flip, aliasing fix, empty-catalog mitigation, observability",
+      "status": "pass",
+      "notes": "Carried forward unchanged per the check-round rules. For information only: CR-006 finds the section 8 observability now misreports, because the new summary is taken over the pre-reconcile candidate set."
+    },
+    {
+      "kind": "spec",
+      "item": "Error-handling table and the fail-soft null-vs-empty contract",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json; not re-derived this round."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goals respected: no CLI-side OAuth flow; McpOAuthProvider, mcp-auth.plugin.ts, SSO origin allowlist, VS Code connector, mcp-loader.ts, mcp-config.ts, marker state shape and the bundled defaults file all untouched",
+      "status": "pass",
+      "notes": "Carried forward, and re-confirmed for the fix-up: the marker state schema { managedNames } is unchanged and the fix-up diff touches only desktop.ts and desktop.test.ts."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json. Re-confirmed for the fix-up commit fccae6b: fix(proxy): guard the managed MCP collision replacement, with Refs: EPMCDME-14072 in the body footer; the six prior commits are untouched and 5e02120 is still its parent."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Carried forward from code-review-final.json. Re-confirmed for the fix-up: lint and typecheck exit 0, no `any` in production code, new exports carry explicit return types, logging routed through logger + sanitizeLogArgs."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "Carried forward from code-review-final.json, and still partial: CR-003 and CR-004 are authentication-affecting defects introduced by the fix-up itself."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-003",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 372,
+      "title": "The new auth guard is bypassed when two backend entries collide with the same bundled default",
+      "problem": "The guard reads `if (!hasManagedOAuth(bundled) || colliding.some(hasManagedOAuth)) continue;`. `colliding.some(...)` asks whether ANY colliding backend entry carries auth, not whether EACH does. When two backend entries collide with the same default — one by name, one by URL — and only one carries OAuth, the condition is satisfied, the bundled default is dropped, and BOTH backend entries are kept, including the no-auth one. Concretely: `{name:'Notion', url:'https://internal/a', oauth:{...}}` plus `{name:'notion-alt', url:'https://mcp.notion.com/mcp'}` results in the public Notion URL being written with `oauth: false`, un-warned.",
+      "impact": "Reintroduces exactly the CR-002 downgrade the guard was added to prevent, through the guard's own logic. Silent — the suppression warn does not fire on this path. Both the blind and edge-case lenses reached this independently.",
+      "recommendation": "Evaluate the guard per colliding entry rather than across the group: suppress each colliding backend entry that resolves to no auth, and keep the bundled default unless every colliding entry carries auth. Add a test with two backend entries colliding with one default via different keys (one by name, one by URL) where only one has OAuth."
+    },
+    {
+      "id": "CR-004",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 376,
+      "title": "Suppressing a no-auth colliding entry revokes a live internal server on the successful-fetch path",
+      "problem": "`mergeManagedMcpServers` drops a colliding backend entry that resolves to no auth. If that entry was written on a previous run, its name is in `previouslyManagedNames`, so on this SUCCESSFUL fetch `reconcileManagedMcpServers` treats the name as owned, removes the user's existing entry, and the bundled default takes its place. A tenant whose internal server legitimately needs no OAuth (auth terminated at a gateway, or header-based) therefore loses it, and the trusted name resolves to the public third-party endpoint.",
+      "impact": "Recreates CR-001's harm — an internal server silently swapped for a public endpoint of the same name — on the successful-fetch path rather than the failed-fetch one. Newly introduced by the CR-002 fix. Flagged independently by both lenses.",
+      "recommendation": "Do not drop the tenant's entry. Prefer keeping it while adopting the bundled default's auth (`{ ...entry, oauth: bundled.oauth }`), or skip suppression when the entry is already live per `previouslyManagedNames`. Either way the tenant's URL must survive. Add a two-run test: run 1 writes the internal entry with auth, run 2 returns it without auth, and the internal URL must still be present afterwards."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 403,
+      "title": "Failed-fetch guard degrades to seeding every default when the existing managed list cannot be parsed",
+      "problem": "`selectDefaultsForFailedFetch` derives its taken-name/taken-URL sets from `parseJsonArray(existing.managedMcpServers)`, which returns `[]` for a malformed, non-array or unexpectedly shaped stored value rather than signalling failure. In that case the function sees an empty config, seeds the full bundled default set, and reconcile then owns those names — the precise eviction the guard was added to prevent. Nothing in the logs distinguishes 'the config held no managed servers' from 'the stored list could not be parsed'. Separately, existing URLs are read as raw `server.url` while names go through `getManagedMcpServerName`, so a non-string or differently-keyed URL is invisible to the URL half of the test.",
+      "impact": "A corrupt or unexpected Desktop config silently re-enables the CR-001 eviction on every failed-fetch run, which is also the run where the user has least ability to recover.",
+      "recommendation": "Distinguish 'parsed to empty' from 'could not parse'. When the stored value is present but does not parse to an array, treat the failed fetch as change-nothing (seed no defaults) and log the parse failure explicitly. Apply the same `isRecord`/string guards to the URL side as to the name side."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 693,
+      "title": "The new oauth-shape summary describes the candidate set, not what is written",
+      "problem": "The summary is computed over `managedSet` while its comment claims it describes 'the shapes we are about to WRITE'. `managedSet` is the pre-reconcile candidate set. On a failed fetch where the config already holds every default, `managedSet` is empty or a narrow subset, so `oauthConfiguredCount`/`oauthFlaggedCount`/`noAuthCount` read as zero in the same log record that reports a non-zero `managedMcpServerCount`.",
+      "impact": "This log was half of CR-002's remediation — the channel meant to make a suppressed default's auth visible in the field. As written it can report zero configured entries on a run that writes many, which is worse than the original gap because it looks authoritative. Both lenses flagged it.",
+      "recommendation": "Summarize the reconciled `managedMcpServers` actually being serialized, or rename the fields and correct the comment so the log states plainly that it describes the candidate set."
+    }
+  ],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "selectDefaultsForFailedFetch drops any bundled default whose name (case-insensitive) or URL is already claimed in the existing config, so a previously written shadowing org entry survives a failed fetch. Covered by a new two-run test. The implementer also extended the fix to URL collisions beyond the recommendation, and justified rejecting the alternative 'seed no defaults on a failed fetch' because orgMcpServers is also null when no CodeMie URL is configured, which would permanently stop seeding defaults for those tenants — a correct catch. Marker state schema unchanged as required. Note CR-004 opens a successful-fetch analogue of the same harm."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "mergeManagedMcpServers now resolves collisions on auth shape: a colliding backend entry resolving to no auth no longer displaces a bundled default carrying oauth, and a logger.warn records the suppression. The single-collision case this finding described is closed; CR-003 records a bypass in the new guard's own group-level predicate, and CR-006 records that the accompanying observability change misreports."
+    }
+  ]
+}

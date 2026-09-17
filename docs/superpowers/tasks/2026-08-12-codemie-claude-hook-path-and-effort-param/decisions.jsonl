@@ -1,0 +1,2 @@
+{"ts":"2026-08-13T00:00:00Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"request-changes","confidence":"high","source":"hitl"},"escalated":false,"prior_orchestrator_verdict":{"decision":"request-changes","confidence":"medium","findings":["CR-001","CR-002"]}}
+{"ts":"2026-08-13T00:10:00Z","gate_id":"code-review.check","mode":"hitl","verdict":{"decision":"approve","confidence":"high","source":"orchestrator"},"escalated":false,"finding_status":[{"CR-001":"resolved"},{"CR-002":"resolved"}]}

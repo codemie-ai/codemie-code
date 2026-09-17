@@ -1,0 +1,548 @@
+diff --git a/src/agents/core/BaseAgentAdapter.ts b/src/agents/core/BaseAgentAdapter.ts
+index 3adf9e0..0e58b5c 100644
+--- a/src/agents/core/BaseAgentAdapter.ts
++++ b/src/agents/core/BaseAgentAdapter.ts
+@@ -66,8 +66,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
+ 
+     try {
+       const { generateSessionReport } = await import('../../cli/commands/analytics/report/session-report.js');
+-      const outputPath = join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${sessionId}.json`);
+-      const result = await generateSessionReport({ sessionId, outputPath });
++
++      // Email is available in CODEMIE_PROFILE_CONFIG (already parsed at adapter startup for other uses).
++      let userEmail: string | undefined;
++      if (env.CODEMIE_PROFILE_CONFIG) {
++        try {
++          const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
++          userEmail = profileConfig.userEmail ?? undefined;
++        } catch {
++          // malformed env — omit email gracefully
++        }
++      }
++
++      const result = await generateSessionReport({ sessionId, userEmail });
+       if (result.written) {
+         logger.debug(`[${this.displayName}] Session analytics report written: ${result.written}`);
+       } else {
+diff --git a/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts b/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
+index d89812d..27a8fb5 100644
+--- a/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
++++ b/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
+@@ -1,6 +1,5 @@
+ // src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+-import { join } from 'path';
+ 
+ const generateSessionReportMock = vi.fn();
+ vi.mock('../../../cli/commands/analytics/report/session-report.js', () => ({
+@@ -31,7 +30,36 @@ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
+     expect(generateSessionReportMock).toHaveBeenCalledTimes(1);
+     const arg = generateSessionReportMock.mock.calls[0][0];
+     expect(arg.sessionId).toBe('s1');
+-    expect(arg.outputPath).toContain(join('docs', 'codemie', 'analytics', 'codemie-analytics-s1.json'));
++    // outputPath is now derived inside session-report.ts; adapter passes sessionId + optional userEmail only
++    expect(arg.outputPath).toBeUndefined();
++  });
++
++  it('extracts userEmail from CODEMIE_PROFILE_CONFIG and passes it to generateSessionReport', async () => {
++    const env = {
++      ...baseEnv,
++      CODEMIE_PROFILE_CONFIG: JSON.stringify({ userEmail: 'carol@example.com' }),
++    } as NodeJS.ProcessEnv;
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
++    expect(generateSessionReportMock).toHaveBeenCalledWith(
++      expect.objectContaining({ userEmail: 'carol@example.com' })
++    );
++  });
++
++  it('omits userEmail when CODEMIE_PROFILE_CONFIG has no email', async () => {
++    const env = {
++      ...baseEnv,
++      CODEMIE_PROFILE_CONFIG: JSON.stringify({ someOtherField: 'value' }),
++    } as NodeJS.ProcessEnv;
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
++    const arg = generateSessionReportMock.mock.calls[0][0];
++    expect(arg.userEmail).toBeUndefined();
++  });
++
++  it('omits userEmail gracefully when CODEMIE_PROFILE_CONFIG is malformed JSON', async () => {
++    const env = { ...baseEnv, CODEMIE_PROFILE_CONFIG: 'not-json' } as NodeJS.ProcessEnv;
++    await expect(new TestAdapter({ sessionAnalyticsReport: true }).call(env)).resolves.toBeUndefined();
++    const arg = generateSessionReportMock.mock.calls[0][0];
++    expect(arg.userEmail).toBeUndefined();
+   });
+ 
+   it('skips when metadata flag is not set', async () => {
+diff --git a/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts b/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts
+new file mode 100644
+index 0000000..315ae86
+--- /dev/null
++++ b/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts
+@@ -0,0 +1,123 @@
++/**
++ * Tests that runAnalytics stamps userEmail, periodStart, periodEnd
++ * into the buildPayload context and uses email-aware default paths.
++ */
++
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { ConfigLoader } from '../../../../utils/config.js';
++
++// Static import mocks
++const aggregateMock = vi.fn();
++vi.mock('../aggregator.js', () => ({ AnalyticsAggregator: { aggregate: (...a: unknown[]) => aggregateMock(...a) } }));
++vi.mock('../../../utils/logger.js', () => ({
++  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
++}));
++vi.mock('../formatter.js', () => ({
++  AnalyticsFormatter: class { displayRoot = vi.fn(); displayProjects = vi.fn(); },
++}));
++
++// Dynamic import mocks (hoisted by vitest)
++const enrichCostsMock = vi.fn();
++vi.mock('../cost/cost-enricher.js', () => ({ enrichCosts: (...a: unknown[]) => enrichCostsMock(...a), realDeps: {} }));
++
++const buildPayloadMock = vi.fn();
++vi.mock('../report/payload-builder.js', () => ({ buildPayload: (...a: unknown[]) => buildPayloadMock(...a) }));
++
++const writeReportMock = vi.fn();
++const getDefaultReportPathMock = vi.fn().mockReturnValue('/tmp/report.html');
++const getDefaultReportJsonPathMock = vi.fn().mockReturnValue('/tmp/report.report.json');
++vi.mock('../report/report-generator.js', () => ({
++  generateReport: vi.fn(),
++  generateReportJson: vi.fn(),
++  getDefaultReportPath: (...a: unknown[]) => getDefaultReportPathMock(...a),
++  getDefaultReportJsonPath: (...a: unknown[]) => getDefaultReportJsonPathMock(...a),
++  writeReportWithFallback: (...a: unknown[]) => writeReportMock(...a),
++}));
++
++const rawSession = { sessionId: 's1' };
++const costEntry = { sessionId: 's1', tokens: { total: 10 }, costUSD: 0.01, priced: true };
++const enrichResult = {
++  index: new Map([['s1', costEntry]]),
++  summary: { totalCostUSD: 0.01, pricedSessions: 1, totalSessions: 1, unpricedModels: [] },
++};
++const analyticsResult = { totalSessions: 1, projects: [] };
++const payloadResult = { meta: { totals: { sessions: 1, pricedSessions: 1 } }, sessions: [] };
++
++function mockSource(sessions = [rawSession]) {
++  return { load: vi.fn().mockResolvedValue({ rawSessions: sessions, cost: null }) };
++}
++
++describe('runAnalytics CLI metadata wiring', () => {
++  let configSpy: ReturnType<typeof vi.spyOn>;
++
++  beforeEach(() => {
++    vi.clearAllMocks();
++    enrichCostsMock.mockResolvedValue(enrichResult);
++    aggregateMock.mockReturnValue(analyticsResult);
++    buildPayloadMock.mockReturnValue(payloadResult);
++    writeReportMock.mockReturnValue({ path: '/tmp/out' });
++    getDefaultReportPathMock.mockReturnValue('/tmp/report.html');
++    getDefaultReportJsonPathMock.mockReturnValue('/tmp/report.report.json');
++    configSpy = vi.spyOn(ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({ userEmail: 'dev@example.com' } as never);
++  });
++
++  it('passes periodStart and periodEnd from --from/--to into buildPayload', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json', from: '2026-07-01', to: '2026-07-21' } as never,
++      mockSource() as never
++    );
++    expect(buildPayloadMock).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      expect.anything(),
++      expect.objectContaining({
++        periodStart: new Date('2026-07-01').toISOString(),
++        periodEnd: new Date('2026-07-21').toISOString(),
++      })
++    );
++  });
++
++  it('passes userEmail from ConfigLoader into buildPayload', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json' } as never,
++      mockSource() as never
++    );
++    expect(buildPayloadMock).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      expect.anything(),
++      expect.objectContaining({ userEmail: 'dev@example.com' })
++    );
++  });
++
++  it('passes userEmail to getDefaultReportPath for the default HTML path', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'html' } as never,
++      mockSource() as never
++    );
++    expect(getDefaultReportPathMock).toHaveBeenCalledWith(expect.any(String), 'dev@example.com');
++  });
++
++  it('passes userEmail to getDefaultReportJsonPath for the default JSON path', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json' } as never,
++      mockSource() as never
++    );
++    expect(getDefaultReportJsonPathMock).toHaveBeenCalledWith(expect.any(String), 'dev@example.com');
++  });
++
++  it('omits userEmail in buildPayload when ConfigLoader throws', async () => {
++    configSpy.mockRejectedValue(new Error('no config'));
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json' } as never,
++      mockSource() as never
++    );
++    const ctx = buildPayloadMock.mock.calls[0][3];
++    expect(ctx.userEmail).toBeUndefined();
++  });
++});
+diff --git a/src/cli/commands/analytics/index.ts b/src/cli/commands/analytics/index.ts
+index c9907c5..447be4e 100644
+--- a/src/cli/commands/analytics/index.ts
++++ b/src/cli/commands/analytics/index.ts
+@@ -12,6 +12,7 @@ import { logger } from '../../../utils/logger.js';
+ import { SessionsSource } from './sources/sessions-source.js';
+ import { OtelSource } from './sources/otel-source.js';
+ import type { AnalyticsSource } from './sources/types.js';
++import { ConfigLoader } from '../../../utils/config.js';
+ 
+ export function createAnalyticsCommand(): Command {
+   const command = new Command('analytics')
+@@ -60,7 +61,7 @@ function applyCommonOptions(command: Command): Command {
+     .option('--report-format <format>', 'Report serialization: html, json, or both (default: html)');
+ }
+ 
+-async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
++export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
+   try {
+     const filter = parseFilterOptions(options);
+     const { rawSessions, cost } = await source.load({
+@@ -140,11 +141,23 @@ async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource):
+         writeReportWithFallback
+       } = await import('./report/report-generator.js');
+ 
++      // Load user email for report metadata and filename; non-fatal if config is unavailable.
++      let userEmail: string | undefined;
++      try {
++        const cfg = await ConfigLoader.loadMultiProviderConfig();
++        userEmail = cfg.userEmail ?? undefined;
++      } catch {
++        // omit email gracefully
++      }
++
+       const { index: costIndex, summary } = costResult;
+       const payload = buildPayload(analytics, costIndex, summary, {
+         rangeLabel: options.last ?? (options.from || options.to ? 'custom' : 'all'),
+         projectFilter: options.project ?? 'all',
+-        generatedAt: new Date().toISOString()
++        generatedAt: new Date().toISOString(),
++        ...(userEmail !== undefined && { userEmail }),
++        ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
++        ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
+       });
+ 
+       const cwd = process.cwd();
+@@ -155,14 +168,14 @@ async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource):
+ 
+       if (reportFormat === 'both') {
+         const base = options.reportOutput?.replace(/\.(html|json)$/i, '');
+-        htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd);
+-        jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd);
++        htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd, userEmail);
++        jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd, userEmail);
+         htmlIsDefault = jsonIsDefault = !base;
+       } else if (reportFormat === 'html') {
+-        htmlPath = options.reportOutput || getDefaultReportPath(cwd);
++        htmlPath = options.reportOutput || getDefaultReportPath(cwd, userEmail);
+         htmlIsDefault = !options.reportOutput;
+       } else {
+-        jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd);
++        jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd, userEmail);
+         jsonIsDefault = !options.reportOutput;
+       }
+ 
+diff --git a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+index 520edd6..e9abec8 100644
+--- a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+@@ -272,6 +272,27 @@ describe('buildPayload', () => {
+     expect(buildPayload(root, idx, summary, ctxAll).sessions[0].dispatches).toEqual(dispatches);
+     expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
+   });
++
++  it('includes userEmail, periodStart, periodEnd in meta when provided in context', () => {
++    const payload = buildPayload(root, costIndex, summary, {
++      rangeLabel: 'custom',
++      projectFilter: 'all',
++      generatedAt: '2026-07-21T00:00:00.000Z',
++      userEmail: 'alice@example.com',
++      periodStart: '2026-07-01T00:00:00.000Z',
++      periodEnd: '2026-07-21T23:59:59.000Z',
++    });
++    expect(payload.meta.userEmail).toBe('alice@example.com');
++    expect(payload.meta.periodStart).toBe('2026-07-01T00:00:00.000Z');
++    expect(payload.meta.periodEnd).toBe('2026-07-21T23:59:59.000Z');
++  });
++
++  it('omits userEmail/periodStart/periodEnd in meta when absent from context', () => {
++    const payload = buildPayload(root, costIndex, summary, ctxAll);
++    expect(payload.meta.userEmail).toBeUndefined();
++    expect(payload.meta.periodStart).toBeUndefined();
++    expect(payload.meta.periodEnd).toBeUndefined();
++  });
+ });
+ 
+ function emptyTokens() {
+diff --git a/src/cli/commands/analytics/report/__tests__/report-generator.test.ts b/src/cli/commands/analytics/report/__tests__/report-generator.test.ts
+index 6f98112..fd797b2 100644
+--- a/src/cli/commands/analytics/report/__tests__/report-generator.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/report-generator.test.ts
+@@ -3,7 +3,7 @@
+  */
+ 
+ import { describe, it, expect } from 'vitest';
+-import { renderReportHtml } from '../report-generator.js';
++import { renderReportHtml, getDefaultReportPath, getDefaultReportJsonPath } from '../report-generator.js';
+ 
+ const template = `<style>/* __CODEMIE_CSS__ */</style>
+ <script>window.__ANALYTICS__ = /*__ANALYTICS_DATA__*/ null;</script>
+@@ -83,3 +83,29 @@ describe('renderReportHtml', () => {
+     expect(JSON.parse(m![1]).sessions[0].sessionId).toBe('<!--<script>alert(1)');
+   });
+ });
++
++describe('getDefaultReportPath', () => {
++  it('includes email slug in filename when email is provided', () => {
++    const p = getDefaultReportPath('/tmp', 'alice@example.com');
++    expect(p).toMatch(/codemie-analytics-alice-example-com-\d{4}-\d{2}-\d{2}\.html$/);
++  });
++
++  it('uses original format when email is absent', () => {
++    const p = getDefaultReportPath('/tmp');
++    expect(p).toMatch(/codemie-analytics-\d{4}-\d{2}-\d{2}\.html$/);
++    expect(p).not.toContain('example');
++  });
++});
++
++describe('getDefaultReportJsonPath', () => {
++  it('includes email slug in filename when email is provided', () => {
++    const p = getDefaultReportJsonPath('/tmp', 'alice@example.com');
++    expect(p).toMatch(/codemie-analytics-alice-example-com-\d{4}-\d{2}-\d{2}\.report\.json$/);
++  });
++
++  it('uses original format when email is absent', () => {
++    const p = getDefaultReportJsonPath('/tmp');
++    expect(p).toMatch(/codemie-analytics-\d{4}-\d{2}-\d{2}\.report\.json$/);
++    expect(p).not.toContain('example');
++  });
++});
+diff --git a/src/cli/commands/analytics/report/__tests__/session-report.test.ts b/src/cli/commands/analytics/report/__tests__/session-report.test.ts
+index 68d902a..a68fc82 100644
+--- a/src/cli/commands/analytics/report/__tests__/session-report.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/session-report.test.ts
+@@ -64,4 +64,70 @@ describe('generateSessionReport', () => {
+     expect(generateReportJsonMock).not.toHaveBeenCalled();
+     expect(res).toEqual({ written: null, sessions: 0 });
+   });
++
++  it('passes userEmail to buildPayload context when provided', async () => {
++    loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 's1' }] });
++    enrichCostsMock.mockResolvedValue({
++      index: new Map([['s1', { sessionId: 's1', tokens: { total: 10 } }]]),
++      summary: { totalCostUSD: 0, pricedSessions: 1, totalSessions: 1 },
++    });
++    aggregateMock.mockReturnValue({ totalSessions: 1, projects: [] });
++    buildPayloadMock.mockReturnValue({ meta: { totals: { sessions: 1 } }, sessions: [] });
++
++    const { generateSessionReport } = await import('../session-report.js');
++    await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/out.json', userEmail: 'bob@example.com' });
++
++    expect(buildPayloadMock).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      expect.anything(),
++      expect.objectContaining({ userEmail: 'bob@example.com' })
++    );
++  });
++
++  it('derives default output path with email slug when outputPath omitted and email provided', async () => {
++    loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 'abc-123' }] });
++    enrichCostsMock.mockResolvedValue({
++      index: new Map([['abc-123', { sessionId: 'abc-123', tokens: { total: 10 } }]]),
++      summary: { totalCostUSD: 0, pricedSessions: 1, totalSessions: 1 },
++    });
++    aggregateMock.mockReturnValue({ totalSessions: 1, projects: [] });
++    buildPayloadMock.mockReturnValue({ meta: { totals: { sessions: 1 } }, sessions: [] });
++
++    const { generateSessionReport } = await import('../session-report.js');
++    await generateSessionReport({ sessionId: 'abc-123', userEmail: 'bob@example.com' });
++
++    // The path passed to generateReportJson should contain the email slug and sessionId
++    const writtenPath: string = generateReportJsonMock.mock.calls[0][1];
++    expect(writtenPath).toContain('codemie-analytics-bob-example-com-abc-123.json');
++  });
++
++  it('passes periodStart/periodEnd to buildPayload when session has start/end events', async () => {
++    loadMock.mockResolvedValue({
++      rawSessions: [{
++        sessionId: 's1',
++        startEvent: { data: { startTime: 1753056000000 } },
++        endEvent: { data: { endTime: 1753059600000 } },
++      }],
++    });
++    enrichCostsMock.mockResolvedValue({
++      index: new Map([['s1', { sessionId: 's1', tokens: { total: 10 } }]]),
++      summary: { totalCostUSD: 0, pricedSessions: 1, totalSessions: 1 },
++    });
++    aggregateMock.mockReturnValue({ totalSessions: 1, projects: [] });
++    buildPayloadMock.mockReturnValue({ meta: { totals: { sessions: 1 } }, sessions: [] });
++
++    const { generateSessionReport } = await import('../session-report.js');
++    await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/out.json' });
++
++    expect(buildPayloadMock).toHaveBeenCalledWith(
++      expect.anything(),
++      expect.anything(),
++      expect.anything(),
++      expect.objectContaining({
++        periodStart: new Date(1753056000000).toISOString(),
++        periodEnd: new Date(1753059600000).toISOString(),
++      })
++    );
++  });
+ });
+diff --git a/src/cli/commands/analytics/report/payload-builder.ts b/src/cli/commands/analytics/report/payload-builder.ts
+index 8b76587..a267c35 100644
+--- a/src/cli/commands/analytics/report/payload-builder.ts
++++ b/src/cli/commands/analytics/report/payload-builder.ts
+@@ -14,6 +14,9 @@ export interface PayloadContext {
+   rangeLabel: string;
+   projectFilter: string;
+   generatedAt: string; // ISO — caller stamps it
++  userEmail?: string;   // caller stamps; absent when not authenticated
++  periodStart?: string; // ISO — caller stamps from filter or session start
++  periodEnd?: string;   // ISO — caller stamps from filter or session end
+ }
+ 
+ export function buildPayload(
+@@ -138,6 +141,9 @@ export function buildPayload(
+     },
+     unpricedModels: summary.unpricedModels,
+     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
++    ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
++    ...(ctx.periodStart !== undefined && { periodStart: ctx.periodStart }),
++    ...(ctx.periodEnd !== undefined && { periodEnd: ctx.periodEnd }),
+   };
+ 
+   return { meta, sessions };
+diff --git a/src/cli/commands/analytics/report/report-generator.ts b/src/cli/commands/analytics/report/report-generator.ts
+index 87478a2..8f457ba 100644
+--- a/src/cli/commands/analytics/report/report-generator.ts
++++ b/src/cli/commands/analytics/report/report-generator.ts
+@@ -61,16 +61,22 @@ export function generateReportJson(payload: ReportPayload, outputPath: string):
+   writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
+ }
+ 
+-export function getDefaultReportPath(cwd: string): string {
++function emailSlug(email: string): string {
++  return email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
++}
++
++export function getDefaultReportPath(cwd: string, userEmail?: string): string {
+   const date = new Date().toISOString().split('T')[0];
+-  return join(cwd, `codemie-analytics-${date}.html`);
++  const slug = userEmail ? `${emailSlug(userEmail)}-` : '';
++  return join(cwd, `codemie-analytics-${slug}${date}.html`);
+ }
+ 
+-export function getDefaultReportJsonPath(cwd: string): string {
++export function getDefaultReportJsonPath(cwd: string, userEmail?: string): string {
+   const date = new Date().toISOString().split('T')[0];
++  const slug = userEmail ? `${emailSlug(userEmail)}-` : '';
+   // `.report.json` (not `.json`) so the default never collides with `--export json`,
+   // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
+-  return join(cwd, `codemie-analytics-${date}.report.json`);
++  return join(cwd, `codemie-analytics-${slug}${date}.report.json`);
+ }
+ 
+ /**
+diff --git a/src/cli/commands/analytics/report/session-report.ts b/src/cli/commands/analytics/report/session-report.ts
+index 9f8e4db..444b2d3 100644
+--- a/src/cli/commands/analytics/report/session-report.ts
++++ b/src/cli/commands/analytics/report/session-report.ts
+@@ -5,6 +5,7 @@
+  * from agent session finalization. Failures propagate to the caller (who logs them).
+  */
+ 
++import { join } from 'node:path';
+ import { SessionsSource } from '../sources/sessions-source.js';
+ import { enrichCosts } from '../cost/cost-enricher.js';
+ import { AnalyticsAggregator } from '../aggregator.js';
+@@ -14,10 +15,12 @@ import { generateReportJson, writeReportWithFallback } from './report-generator.
+ export interface SessionReportOptions {
+   /** Session id to scope the report to. */
+   sessionId: string;
+-  /** Absolute or cwd-relative output path for the JSON report. */
+-  outputPath: string;
++  /** Absolute or cwd-relative output path for the JSON report. Defaults to `docs/codemie/analytics/codemie-analytics-[email-]<sessionId>.json` relative to cwd. */
++  outputPath?: string;
+   /** Include native agent-log discovery (default true). */
+   scanNative?: boolean;
++  /** User email to embed in report metadata and default filename. */
++  userEmail?: string;
+ }
+ 
+ export interface SessionReportResult {
+@@ -46,13 +49,31 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
+     return { written: null, sessions: 0 };
+   }
+ 
++  const session = rawSessions[0];
++  const periodStart = session.startEvent?.data.startTime
++    ? new Date(session.startEvent.data.startTime).toISOString()
++    : undefined;
++  const periodEnd = session.endEvent?.data.endTime
++    ? new Date(session.endEvent.data.endTime).toISOString()
++    : undefined;
++
+   const payload = buildPayload(analytics, index, summary, {
+     rangeLabel: 'all',
+     projectFilter: 'all',
+     generatedAt: new Date().toISOString(),
++    ...(options.userEmail !== undefined && { userEmail: options.userEmail }),
++    ...(periodStart !== undefined && { periodStart }),
++    ...(periodEnd !== undefined && { periodEnd }),
+   });
+ 
++  const emailSlug = options.userEmail
++    ? options.userEmail.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-'
++    : '';
++  const outputPath =
++    options.outputPath ??
++    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailSlug}${options.sessionId}.json`);
++
+   // Explicit path ⇒ no home/tmp fallback; a write error propagates to the caller.
+-  const result = writeReportWithFallback((p) => generateReportJson(payload, p), options.outputPath, false);
++  const result = writeReportWithFallback((p) => generateReportJson(payload, p), outputPath, false);
+   return { written: result.path, sessions: payload.meta.totals.sessions };
+ }
+diff --git a/src/cli/commands/analytics/report/types.ts b/src/cli/commands/analytics/report/types.ts
+index 3c23780..1ea2bed 100644
+--- a/src/cli/commands/analytics/report/types.ts
++++ b/src/cli/commands/analytics/report/types.ts
+@@ -63,6 +63,9 @@ export interface ReportMeta {
+   };
+   unpricedModels: string[];
+   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
++  userEmail?: string;   // identity of the report owner; absent when not authenticated
++  periodStart?: string; // ISO — start of the reported range; absent for unfiltered reports
++  periodEnd?: string;   // ISO — end of the reported range; absent for unfiltered reports
+ }
+ 
+ export interface ReportPayload {

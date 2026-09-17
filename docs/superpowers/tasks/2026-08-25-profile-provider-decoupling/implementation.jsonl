@@ -1,0 +1,5 @@
+{"task_id":"task-1","status":"done","commit":"2f41f93c9f","test_command":"npx tsc --noEmit"}
+{"task_id":"task-2","status":"done","commit":"2261469538","test_command":"npx vitest run src/utils/__tests__/config-project-override.test.ts"}
+{"task_id":"task-3","status":"done","commit":"a2479824f0","test_command":"npx vitest run src/utils/__tests__/config-project-override.test.ts"}
+{"task_id":"task-4","status":"done","commit":"23907dca7c","test_command":"npx vitest run src/migrations/__tests__/006-decouple-provider-workspace-config.migration.test.ts"}
+{"task_id":"task-5","status":"done","commit":"17eb839e51","test_command":"npx vitest run src/cli/commands/profile/__tests__/index.test.ts"}

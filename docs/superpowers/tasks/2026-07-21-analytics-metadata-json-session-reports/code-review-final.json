@@ -1,0 +1,81 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two actionable patch findings. CR-001: emailSlug regex chain is duplicated verbatim between report-generator.ts (private function) and session-report.ts (inline copy) — any future slug change must be applied in two places and can silently diverge. CR-002: both email read-sites use '?? undefined', which passes an empty string through into report meta as userEmail: '' while the filename slug check (falsy for '') adds no prefix — metadata and filename become inconsistent. All 6 acceptance criteria are satisfied. Deferred: NaN-guard on numeric timestamps (EC-002, unlikely corrupt-data case), and HTML UI visibility of new fields (AC-F02, outside current plan scope — fields are present in the embedded data blob).",
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "emailSlug logic is duplicated verbatim in session-report.ts (inline) rather than imported from report-generator.ts. The function in report-generator.ts is private (not exported), which forced the copy.",
+      "impact": "Any future change to the slug algorithm (length cap, Unicode normalisation, edge-case fix) must be applied in two places. The two implementations can silently diverge, producing different filename patterns from the CLI analytics path and the per-session auto-report path for the same email address.",
+      "recommendation": "Export emailSlug from report-generator.ts (`export function emailSlug(email: string): string`) and import it in session-report.ts, replacing the inline regex chain.",
+      "sources": ["blind", "edge-case", "acceptance"]
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "In analytics/index.ts and BaseAgentAdapter.ts, `userEmail = cfg.userEmail ?? undefined` passes an empty string through unchanged. When userEmail is '' the condition `ctx.userEmail !== undefined` is true so '' is spread into report meta as `userEmail: ''`. Meanwhile the filename slug check `userEmail ?` is falsy for '', so no slug is prepended — the file has no email slug but the embedded JSON has `userEmail: ''`.",
+      "impact": "Metadata and filename are inconsistent. Downstream consumers treating userEmail presence as evidence of a known identity see a blank string rather than an absent field. Automated tools parsing filenames to correlate with report owner would fail to find a match.",
+      "recommendation": "Use `userEmail = cfg.userEmail || undefined` (and `userEmail = profileConfig.userEmail || undefined` in BaseAgentAdapter) at both read sites to normalise empty strings to undefined.",
+      "sources": ["edge-case"]
+    }
+  ],
+  "business_review": [
+    {
+      "id": "AC-001",
+      "criterion": "ReportMeta extended with optional userEmail?, periodStart?, periodEnd?",
+      "status": "satisfied",
+      "notes": "All three optional fields added to ReportMeta in types.ts with correct types and inline doc comments."
+    },
+    {
+      "id": "AC-002",
+      "criterion": "PayloadContext extended; buildPayload maps new fields conditionally",
+      "status": "satisfied",
+      "notes": "PayloadContext in payload-builder.ts gains all three fields; buildPayload spreads them using !== undefined guards."
+    },
+    {
+      "id": "AC-003",
+      "criterion": "getDefaultReportPath/JsonPath accept optional email; slug prepended before date when present",
+      "status": "satisfied",
+      "notes": "Private emailSlug() helper added; both exports accept userEmail?; slug is inserted between 'codemie-analytics-' and the date."
+    },
+    {
+      "id": "AC-004",
+      "criterion": "SessionReportOptions.outputPath optional; userEmail? added; periodStart/periodEnd extracted from session events",
+      "status": "satisfied",
+      "notes": "outputPath now optional with computed default; userEmail? added; period extracted from rawSessions[0] start/end events."
+    },
+    {
+      "id": "AC-005",
+      "criterion": "BaseAgentAdapter extracts email from CODEMIE_PROFILE_CONFIG; hardcoded outputPath removed",
+      "status": "satisfied",
+      "notes": "JSON.parse with try/catch; email passed to generateSessionReport; hardcoded outputPath construction removed."
+    },
+    {
+      "id": "AC-006",
+      "criterion": "runAnalytics loads email from ConfigLoader; passes userEmail, periodStart, periodEnd to buildPayload; passes email to default path helpers",
+      "status": "satisfied",
+      "notes": "ConfigLoader statically imported; email loaded via try/catch; all three fields conditionally spread; all default-path calls receive userEmail."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits",
+      "status": "pass",
+      "notes": "All 4 commits follow feat(analytics): format."
+    },
+    {
+      "standard": "TypeScript code quality",
+      "status": "pass",
+      "notes": "Explicit return types on all exported functions, .js extensions on all imports, proper optional typing, no any."
+    },
+    {
+      "standard": "Security",
+      "status": "pass",
+      "notes": "emailSlug strips all non-alphanumeric chars, preventing path traversal. JSON.parse guarded with try/catch. No secrets or credentials introduced."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "high"
+}

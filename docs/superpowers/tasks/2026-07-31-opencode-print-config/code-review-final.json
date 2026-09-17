@@ -1,0 +1,49 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two blocking findings survived triage. CR-001 (critical): setupProxy() starts a real listening HTTP server before the dry-run short-circuit, and dry-run returns without calling proxy.stop() or process.exit(0) — verified the underlying net.Server.listen() call has no .unref(), so `--print-config` hangs forever after printing the config for any opencode profile using SSO/JWT auth (opencode's default supportedProviders is ['ai-run-sso']), defeating the feature's entire purpose for its primary use case. CR-002 (major/security): the redaction regex /apikey|token|secret|authorization/i misses realistic secret-bearing key spellings — hyphenated header names like 'x-api-key' (the hyphen breaks the substring match), plus 'password', 'privateKey', 'cookie', 'credential(s)' — so a --print-config feature explicitly built to be safe for stdout/logs/CI output can leak real credentials under a common header naming convention. Three additional observations (onSessionStart side effects still firing, --resume interaction, hardcoded 'opencode' string gate, extra stderr framing on the CODEMIE_BASE_URL error) were triaged as defer/dismiss: pre-existing/out-of-scope behavior, already-decided design tradeoffs from the approved spec, or cosmetic-only with no functional impact. 1 finding dismissed, 3 deferred (session-start side effects — pre-existing, out of this diff's scope, and explicitly accepted during planning per the integration test's own rationale; --resume interaction — minor UX-only edge case; extra '✗ Failed to run' stderr framing around the documented error message — still satisfies the spec's error-handling table, which only requires the message text and exit code, not exact formatting).",
+  "follow_ups": [],
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"criterion": "Scope: --print-config functional only for opencode; declared once in shared AgentCLI.ts; other agents get 'not supported' error, exit 1", "status": "pass"},
+    {"criterion": "AgentCLI.setupProgram() declares --print-config as a boolean flag", "status": "pass"},
+    {"criterion": "For opencode, forward the intent to the adapter as a dryRun-style option passed into adapter.run()", "status": "pass"},
+    {"criterion": "BaseAgentAdapter.run() executes the normal pipeline through executeBeforeRun unchanged (real config built, real network call happens)", "status": "pass"},
+    {"criterion": "Read env.OPENCODE_CONFIG_CONTENT and JSON.parse; if absent, read/parse the file at env.OPENCODE_CONFIG", "status": "pass"},
+    {"criterion": "If neither channel is present, print the documented error to stderr and exit 1", "status": "partial"},
+    {"criterion": "Redact recursively: any key matching /apikey|token|secret|authorization/i (case-insensitive) at any depth, key names untouched", "status": "partial"},
+    {"criterion": "Print JSON.stringify(redacted, null, 2) to stdout", "status": "pass"},
+    {"criterion": "Return before spawn(); spawn, signal handlers, afterRun/exit-code hooks skipped entirely; exit 0", "status": "fail"},
+    {"criterion": "opencode.plugin.ts is not modified; no plugin/lifecycle-hook signature changes", "status": "pass"},
+    {"criterion": "Existing temp-file cleanup unchanged and still removes the fallback temp file", "status": "pass"},
+    {"criterion": "Files expected to change: AgentCLI.ts, BaseAgentAdapter.ts, plus new/updated tests", "status": "pass"}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md — Conventional Commits format", "status": "pass", "notes": "All 5 feature commits follow <type>(<scope>): <subject>."},
+    {"standard": "code-quality.md — explicit return types on exported functions, no undocumented `any`", "status": "pass", "notes": "redactSecrets and extractGeneratedConfig both declare explicit `unknown` return types; no `any` introduced."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "patch",
+      "severity": "critical",
+      "title": "--print-config hangs forever instead of exiting when the profile uses SSO/JWT auth",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "location": "run(), setupProxy() call at ~line 545 vs. dry-run short-circuit at ~line 586-589",
+      "problem": "setupProxy() (called unconditionally near the top of run(), before executeBeforeRun) starts a real listening HTTP server via `this.proxy = new CodeMieProxy(config); await this.proxy.start();` whenever shouldUseProxy(env) is true (SSO/JWT auth types — opencode's default supportedProviders includes 'ai-run-sso'). The dry-run short-circuit added by this diff prints the config and `return`s without ever calling `this.proxy.stop()` (only reachable in the normal flow at ~line 684) and without calling process.exit(0). The underlying net.Server from sso.proxy.ts's `this.server.listen(...)` is never `.unref()`'d.",
+      "impact": "For the common case of an opencode profile using SSO/JWT auth, `codemie-opencode --print-config` prints the JSON config correctly but the Node process never exits — the open server handle keeps the event loop alive indefinitely. Anyone piping the output, scripting around the flag, or running it in CI would hang. This breaks the feature for its primary use case.",
+      "recommendation": "In the dry-run branch, stop the proxy before returning (`if (this.proxy) { await this.proxy.stop(); }`) — mirroring the cleanup the normal flow does at line 684 — or call `process.exit(0)` after printing, consistent with the exit-0 contract the spec already requires."
+    },
+    {
+      "id": "CR-002",
+      "triage": "patch",
+      "severity": "major",
+      "title": "Redaction regex misses realistic secret-bearing key spellings, including hyphenated header names",
+      "file": "src/agents/core/config-redaction.ts",
+      "location": "SECRET_KEY_PATTERN, line 1",
+      "problem": "`/apikey|token|secret|authorization/i` only matches keys containing those exact substrings with no separators. It does not match hyphenated keys such as `x-api-key` (the hyphen breaks the `apikey` substring match), nor does it cover `password`, `privateKey`/`private_key`, `cookie`, or `credential(s)` — all realistic keys a provider config's `headers` object could carry.",
+      "impact": "The entire purpose of `--print-config` is to safely dump the live config to stdout (and by extension, terminal history, CI logs, bug reports). A custom provider header spelled `x-api-key` (a very common convention) would print its real value in the clear, turning a debug convenience into a credential-leak vector.",
+      "recommendation": "Broaden SECRET_KEY_PATTERN to match with optional separators, e.g. `/api[-_]?key|token|secret|password|credential|authorization/i`, and add a test case for `x-api-key`-style hyphenated keys alongside the existing camelCase/PascalCase cases."
+    }
+  ]
+}

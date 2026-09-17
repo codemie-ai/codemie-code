@@ -1,0 +1,38 @@
+{
+  "decision": "request-changes",
+  "rationale": "Edge-case lens ran cleanly and surfaced 2 blocking UI defects on the new file-location row (no truncation/tooltip for long paths; a 'Not available' message that can contradict a real cost shown in the same modal, since cost-enricher's correlation-file fallback can resolve a log the new field never sees), while 2 other candidates were dismissed as unreachable given the codebase's established non-empty-sessionId convention used unguarded elsewhere in this file. Acceptance was skipped because no spec/story exists for this change, capping confidence at low; the standards audit (commit-format, code-quality pass; security na — no guide at the documented path) came back clean with no coverage gap, and blind/verification-gap are out of scope for the balanced profile. No findings were deferred.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "4 commit subjects match <type>(<scope>): <subject>; type feat and scope analytics are allowed; imperative, under 100 chars." },
+    { "kind": "code-quality", "status": "pass", "notes": "Additive optional-field threading reuses existing helpers (copyButton/esc); new tests cover present/absent cases of agentSessionFile." },
+    { "kind": "security", "status": "na", "notes": "No guide at the documented security-patterns path; manual check found no issue — path is esc()'d before DOM insertion, only clipboard APIs used." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/report/client/app.js",
+      "line": 1170,
+      "title": "File path row has no truncation or tooltip",
+      "problem": "The new file-location row renders s.agentSessionFile as plain, unstyled text with no max-width/ellipsis/title, unlike the branch and title cells elsewhere in this file (app.js:852-853) which already truncate long values with ellipsis plus a title tooltip.",
+      "impact": "A long absolute session-log path (common on deep project/home directory trees) has no whitespace to wrap on and no truncation styling, so it can overflow or be hard-clipped by the modal's overflow:hidden container with no ellipsis or tooltip to recover the full value.",
+      "recommendation": "Apply the same max-width/overflow:hidden/text-overflow:ellipsis/white-space:nowrap styling plus title=s.agentSessionFile used for the branch/title cells (app.js:852-853) to the file-path span."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/report/client/app.js",
+      "line": 1173,
+      "title": "\"File: Not available\" can contradict shown cost",
+      "problem": "The row shows \"File: Not available\" whenever s.agentSessionFile is unset, but cost-enricher.ts's loadAgentSessionFile() falls back to the correlation metadata file (~/.codemie/sessions/{id}.json) when raw.agentSessionFile is absent (cost-enricher.ts:60-70), so hadLog/pricing can succeed through that fallback while SessionAnalytics.agentSessionFile (aggregator.ts:436), sourced only from raw.agentSessionFile, stays undefined.",
+      "impact": "A session can display a real, non-zero cost in the same modal while its file row claims no log is available, reading as an internal contradiction and undermining trust in the new file-location feature.",
+      "recommendation": "Source the displayed path (or its absence) from the same resolution cost-enricher uses, or soften the message (e.g. \"File: not recorded\") when hadLog is true but agentSessionFile is unset."
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "task": "Extended managed MCP handling so a backend entry's `oauth` field can be a structured OAuth client configuration object forwarded verbatim into Claude Desktop's managedMcpServers config, alongside the legacy boolean/enum flag.",
+  "generated": "2026-08-11T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "managed MCP remote fetch/validation (managed-mcp-remote.ts), Claude Desktop config writer with oauth resolution + default/org merge + reconcile (desktop.ts), proxy connect desktop command wiring and logging (index.ts)",
+      "layers": "CLI (command), Service (proxy connectors), External (CodeMie managed-servers API contract + Claude Desktop config surface)"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "Several policy decisions were resolved in-implementation rather than stated up front: precedence between a structured oauth object, the oauth boolean, and the legacy `auth` enum (resolveDesktopOAuth); whether a malformed oauth object invalidates the whole entry (it does); whether the CLI may correct an auth downgrade (it logs, never rewrites); which bundled defaults may be seeded when the catalog fetch fails. Code also records a known, separately-tracked gap: managed endpoint URL comparison is verbatim, with no trailing-slash or host-case normalization."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Payload is OAuth client configuration (clientId, authorizationUrl, tokenUrl, scope, callback host/port) that governs how Claude Desktop authenticates to MCP servers; an open index signature deliberately forwards unknown backend keys unvalidated; the writer rewrites a third-party app's config file and can revoke a tenant's org MCP entries if a failed fetch were mistaken for an empty catalog; marker-state (desktop-managed-mcp-state.json) ordering determines whether entries can be orphaned across a crash",
+      "mitigation": "null-vs-[] contract distinguishes fetch failure from an authoritative empty catalog; a non-empty payload where nothing survives validation returns null; selectDefaultsForFailedFetch seeds nothing that collides with existing config entries; write-ahead union marker plus atomic tmp+rename state write; cloneManagedEntry deep-copies oauth so module-level DEFAULT_MANAGED_MCP_SERVERS cannot be mutated; summarizeManagedOauthShapes surfaces a mass downgrade or validation drop in the daemon log"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 6,
+      "modified_file_list": [
+        "src/cli/commands/proxy/index.ts",
+        "src/cli/commands/proxy/connectors/desktop.ts",
+        "src/cli/commands/proxy/connectors/managed-mcp-remote.ts",
+        "src/cli/commands/proxy/__tests__/index.test.ts",
+        "src/cli/commands/proxy/connectors/__tests__/desktop.test.ts",
+        "src/cli/commands/proxy/connectors/__tests__/managed-mcp-remote.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/cli/commands/proxy/",
+        "src/cli/commands/proxy/__tests__/",
+        "src/cli/commands/proxy/connectors/",
+        "src/cli/commands/proxy/connectors/__tests__/"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["CLI", "Service (proxy connectors)", "External (CodeMie managed-servers API contract + Claude Desktop config file)"],
+      "schema_migration": false,
+      "cross_system": true
+    }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 6,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Base M for a new-but-contained validation/forwarding pattern, bumped to L by the authentication/authorization red flag: the forwarded object is OAuth client configuration for Desktop's flow, and the same writer can revoke a tenant's org MCP servers if a failed fetch is misread. The diff shows the risk was answered structurally (null-vs-[] fetch contract, write-ahead marker + atomic rename, deep clone of module-level defaults, downgrade logging without correction) rather than left open."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Three source components in one subsystem: fetch/validation (isValidOAuthConfig, entry-level rejection of malformed oauth, wholesale oauth copy in pickCanonicalFields), the Desktop writer (resolveDesktopOAuth, mergeManagedMcpServers, selectDefaultsForFailedFetch, cloneManagedEntry, summarizeManagedOauthShapes), and the connect-desktop command that wires and logs oauth shape counts. Coordination across CLI and connector layers, but no shared utility or cross-agent impact."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The stated requirement ('forward verbatim') did not settle precedence between oauth object / oauth boolean / legacy auth enum, malformed-object handling, collision precedence between bundled defaults and the org catalog, or failed-fetch seeding — all of which appear as explicitly reasoned decisions in the implementation comments."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files (3 source, 3 test) across the proxy command and connectors directories; 1111 insertions against only 22 deletions, i.e. overwhelmingly additive with test coverage carrying most of the volume."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): change carries authentication/authorization data — OAuth client configuration (clientId, authorizationUrl, tokenUrl, scope, callback host/port) forwarded into the client that runs the flow."
+  ],
+  "split_recommendation": null
+}
