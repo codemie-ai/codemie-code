@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  VS_CODE_SUPPORTED_MODELS,
-  type VsCodeModelDefinition,
+  VS_CODE_CAPABILITY_TABLE,
+  type VsCodeCapabilityEntry,
   type VsCodeReasoningEffort,
 } from '../../src/cli/commands/proxy/connectors/vscode-models.js';
 import {
@@ -85,12 +85,12 @@ async function readRequestBody(req: IncomingMessage): Promise<Record<string, unk
 }
 
 function buildRequestBody(
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   effort: VsCodeReasoningEffort | undefined
 ): Record<string, unknown> {
   if (definition.apiType === 'responses') {
     return {
-      model: definition.id,
+      model: definition.family,
       store: false,
       stream: false,
       input: [{ role: 'user', content: 'Call get_test_value.' }],
@@ -108,7 +108,7 @@ function buildRequestBody(
 
   if (definition.apiType === 'messages') {
     return {
-      model: definition.id,
+      model: definition.family,
       max_tokens: 1024,
       stream: false,
       messages: [{ role: 'user', content: 'Call get_test_value.' }],
@@ -124,7 +124,7 @@ function buildRequestBody(
   }
 
   return {
-    model: definition.id,
+    model: definition.family,
     stream: false,
     messages: [{ role: 'user', content: 'Call get_test_value.' }],
     tools: [{
@@ -142,7 +142,7 @@ function buildRequestBody(
 }
 
 function buildVsCodeAuthHeaders(
-  definition: VsCodeModelDefinition
+  definition: VsCodeCapabilityEntry
 ): Record<string, string> {
   if (definition.requestHeaders?.Authorization) {
     return {
@@ -203,6 +203,17 @@ describe('VS Code BYOK model matrix', () => {
   it('forwards every selected model and supported effort without using the profile model', async () => {
     const captured: CapturedRequest[] = [];
     const upstream = await listen(createServer((req, res) => {
+      // The connector discovers the tenant catalog before writing the config;
+      // serve it directly from every family in the capability table so each
+      // entry resolves as an exact match — the model matrix below then
+      // exercises the request-forwarding behavior, not the resolver itself.
+      if (req.url?.startsWith('/v1/llm_models')) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          data: VS_CODE_CAPABILITY_TABLE.map(entry => ({ id: entry.family })),
+        }));
+        return;
+      }
       void readRequestBody(req).then((body) => {
         captured.push({
           url: req.url ?? '/',
@@ -219,7 +230,7 @@ describe('VS Code BYOK model matrix', () => {
     proxies.push(startedProxy.proxy);
 
     const configPath = join(testDir, 'User', 'chatLanguageModels.json');
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url);
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url, GATEWAY_KEY);
     const providers = JSON.parse(
       await readFile(configPath, 'utf-8')
     ) as LanguageModelProvider[];
@@ -227,14 +238,14 @@ describe('VS Code BYOK model matrix', () => {
       provider => provider.name === 'CodeMie' && provider.vendor === 'customendpoint'
     );
 
-    expect(codeMieProvider?.models).toHaveLength(VS_CODE_SUPPORTED_MODELS.length);
+    expect(codeMieProvider?.models).toHaveLength(VS_CODE_CAPABILITY_TABLE.length);
     expect(codeMieProvider?.models?.some(model => model.id === PROFILE_MODEL)).toBe(false);
 
-    for (const definition of VS_CODE_SUPPORTED_MODELS) {
-      const configuredModel = codeMieProvider?.models?.find(model => model.id === definition.id);
+    for (const definition of VS_CODE_CAPABILITY_TABLE) {
+      const configuredModel = codeMieProvider?.models?.find(model => model.id === definition.family);
       expect(configuredModel).toMatchObject({
-        id: definition.id,
-        name: definition.id,
+        id: definition.family,
+        name: definition.family,
         apiType: definition.apiType,
       });
       if (definition.apiType === 'responses') {

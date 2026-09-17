@@ -28,8 +28,8 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isProcessAlive, readState } from '../../src/cli/commands/proxy/daemon-manager.js';
 import {
-  VS_CODE_SUPPORTED_MODELS,
-  type VsCodeModelDefinition,
+  VS_CODE_CAPABILITY_TABLE,
+  type VsCodeCapabilityEntry,
   type VsCodeReasoningEffort,
 } from '../../src/cli/commands/proxy/connectors/vscode-models.js';
 
@@ -44,10 +44,10 @@ const ALL_EFFORTS: readonly VsCodeReasoningEffort[] = [
   'max',
 ];
 const STATELESS_RESPONSES_MODEL_IDS = new Set([
-  'gpt-5.5-2026-04-24',
-  'gpt-5.6-luna-2026-07-09',
-  'gpt-5.6-sol-2026-07-09',
-  'gpt-5.6-terra-2026-07-09',
+  'gpt-5.5',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
 ]);
 const DEFAULT_REPORT_PATH = resolve('reports/vscode-model-certification.md');
 
@@ -60,7 +60,7 @@ interface LiveConfiguration {
 
 interface CertificationResult {
   model: string;
-  apiType: VsCodeModelDefinition['apiType'];
+  apiType: VsCodeCapabilityEntry['apiType'];
   effort: VsCodeReasoningEffort | 'default';
   passed: boolean;
   status: number;
@@ -71,7 +71,7 @@ interface CertificationResult {
 }
 
 function buildVsCodeAuthHeaders(
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   apiKey: string
 ): Record<string, string> {
   if (definition.requestHeaders?.Authorization) {
@@ -83,18 +83,18 @@ function buildVsCodeAuthHeaders(
   return { authorization: `Bearer ${apiKey}` };
 }
 
-function getApiPath(definition: VsCodeModelDefinition): string {
+function getApiPath(definition: VsCodeCapabilityEntry): string {
   if (definition.apiType === 'responses') return '/v1/responses';
   if (definition.apiType === 'messages') return '/v1/messages';
   return '/v1/chat/completions';
 }
 
-function selectModels(selector: string): readonly VsCodeModelDefinition[] {
-  if (selector === 'all') return VS_CODE_SUPPORTED_MODELS;
+function selectModels(selector: string): readonly VsCodeCapabilityEntry[] {
+  if (selector === 'all') return VS_CODE_CAPABILITY_TABLE;
 
   const requestedIds = selector.split(',').map(value => value.trim()).filter(Boolean);
-  const selected = VS_CODE_SUPPORTED_MODELS.filter(model => requestedIds.includes(model.id));
-  const selectedIds = new Set(selected.map(model => model.id));
+  const selected = VS_CODE_CAPABILITY_TABLE.filter(model => requestedIds.includes(model.family));
+  const selectedIds = new Set(selected.map(model => model.family));
   const unknownIds = requestedIds.filter(id => !selectedIds.has(id));
   if (unknownIds.length > 0) {
     throw new Error(`Unknown VS Code model IDs: ${unknownIds.join(', ')}`);
@@ -103,11 +103,11 @@ function selectModels(selector: string): readonly VsCodeModelDefinition[] {
 }
 
 function selectEfforts(
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   selector: string | undefined
 ): ReadonlyArray<VsCodeReasoningEffort | undefined> {
   if (!selector) {
-    if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) return [undefined];
+    if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.family)) return [undefined];
 
     const supported = definition.supportsReasoningEffort ?? [];
     const candidates: Array<VsCodeReasoningEffort | undefined> = [
@@ -137,19 +137,19 @@ function selectEfforts(
   const unsupported = efforts.filter(effort => !supported.includes(effort));
   if (unsupported.length > 0) {
     throw new Error(
-      `${definition.id} does not advertise efforts: ${unsupported.join(', ')}`
+      `${definition.family} does not advertise efforts: ${unsupported.join(', ')}`
     );
   }
   return efforts;
 }
 
 function buildRequestBody(
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   effort: VsCodeReasoningEffort | undefined
 ): Record<string, unknown> {
   if (definition.apiType === 'responses') {
     return {
-      model: definition.id,
+      model: definition.family,
       store: false,
       input: [{ role: 'user', content: 'Call get_test_value with value "ready".' }],
       tools: [{
@@ -170,7 +170,7 @@ function buildRequestBody(
 
   if (definition.apiType === 'messages') {
     return {
-      model: definition.id,
+      model: definition.family,
       max_tokens: 1024,
       messages: [{
         role: 'user',
@@ -193,7 +193,7 @@ function buildRequestBody(
   }
 
   return {
-    model: definition.id,
+    model: definition.family,
     messages: [{
       role: 'user',
       content: 'Call get_test_value with value "ready".',
@@ -348,7 +348,7 @@ async function resolveLiveConfiguration(): Promise<LiveConfiguration> {
 
 async function certifyAttempt(
   configuration: LiveConfiguration,
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   effort: VsCodeReasoningEffort | undefined,
   timeoutMs: number,
   attempt: number
@@ -373,7 +373,7 @@ async function certifyAttempt(
     const passed = response.ok && toolCall;
 
     return {
-      model: definition.id,
+      model: definition.family,
       apiType: definition.apiType,
       effort: effort ?? 'default',
       passed,
@@ -385,7 +385,7 @@ async function certifyAttempt(
     };
   } catch (error) {
     return {
-      model: definition.id,
+      model: definition.family,
       apiType: definition.apiType,
       effort: effort ?? 'default',
       passed: false,
@@ -404,7 +404,7 @@ function isRetryable(result: CertificationResult): boolean {
 
 async function certifyCombination(
   configuration: LiveConfiguration,
-  definition: VsCodeModelDefinition,
+  definition: VsCodeCapabilityEntry,
   effort: VsCodeReasoningEffort | undefined,
   timeoutMs: number,
   maxAttempts: number
@@ -427,13 +427,13 @@ async function certifyCombination(
 
 function renderReport(
   configuration: LiveConfiguration,
-  selectedModels: readonly VsCodeModelDefinition[],
+  selectedModels: readonly VsCodeCapabilityEntry[],
   results: readonly CertificationResult[]
 ): string {
   const passed = results.filter(result => result.passed).length;
   const failed = results.length - passed;
   const fullyPassingModels = selectedModels.filter(model => {
-    const modelResults = results.filter(result => result.model === model.id);
+    const modelResults = results.filter(result => result.model === model.family);
     return modelResults.length > 0 && modelResults.every(result => result.passed);
   }).length;
 
@@ -472,7 +472,7 @@ function renderReport(
       const modelOptions = model.modelOptions
         ? `\`${JSON.stringify(model.modelOptions)}\``
         : 'default';
-      return `| \`${model.id}\` | ${model.apiType} | ${efforts} | ${modelOptions} |`;
+      return `| \`${model.family}\` | ${model.apiType} | ${efforts} | ${modelOptions} |`;
     }),
     '',
     '## Interpretation',
@@ -505,7 +505,7 @@ describe.runIf(LIVE_ENABLED)('VS Code live model certification', () => {
     expect(selectedModels.length).toBeGreaterThan(0);
 
     for (const definition of selectedModels) {
-      if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) continue;
+      if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.family)) continue;
       expect(definition.apiType).toBe('responses');
       expect(definition.zeroDataRetentionEnabled).toBe(true);
       expect(definition.thinking).toBe(true);
