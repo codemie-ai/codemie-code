@@ -1,0 +1,678 @@
+/**
+ * Feature Tips ("Did you know?")
+ *
+ * A curated catalog of one-line tips about CodeMie capabilities, shown at
+ * session start and session end (dim hint under the welcome/goodbye message),
+ * browseable on demand via `codemie tips`, and sprinkled onto selected CLI
+ * surfaces (doctor, first-run screens) via renderTip().
+ *
+ * This module is pure data + selection logic: it must stay safe to import from
+ * the agent runtime, so it only depends on the logger and path utilities —
+ * never on commander or the CLI layer.
+ *
+ * Environment Variables:
+ * - CODEMIE_TIPS=true (default): show tips at session start/end
+ * - CODEMIE_TIPS=false|0|no: disable session tips (`codemie tips` still works)
+ *
+ * Maintenance workflow:
+ * - Add a tip: append one `{ id, category, message, command? }` object to
+ *   TIPS. Use a fresh kebab-case id — ids are never reused, because the
+ *   rotation state (~/.codemie/.tips-state.json) remembers them.
+ * - Retire a command: delete its tip in the same PR. If the tip is missed,
+ *   `codemie tips` validates `command` references against the live CLI command
+ *   tree and silently drops (plus debug-logs) tips pointing at retired
+ *   commands — session rendering never validates and never breaks.
+ * - Reword a tip: edit `message` in place and keep `id` stable so the rotation
+ *   history stays meaningful.
+ */
+
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import path from 'path';
+import chalk from 'chalk';
+import { logger } from './logger.js';
+import { getCodemiePath } from './paths.js';
+
+/**
+ * A single feature tip.
+ */
+export interface Tip {
+  /** Stable unique id, kebab-case, e.g. 'cmd-skill'. Never reused. */
+  id: string;
+  /** Short category for grouping in `codemie tips`, e.g. 'Commands'. */
+  category: string;
+  /** Full sentence shown to the user. May embed the command inline. */
+  message: string;
+  /**
+   * Optional top-level command name used for validation and display,
+   * e.g. 'skill' or 'proxy'. When the referenced command is retired,
+   * `codemie tips` drops/flags this tip automatically.
+   */
+  command?: string;
+}
+
+/**
+ * Curated tip catalog. Every `command` value references a top-level command
+ * registered in src/cli/index.ts; `codemie tips` re-validates these at runtime.
+ * Messages teach concrete subcommand and flag invocations, but `command`
+ * always stays the top-level name so validation keeps working.
+ */
+export const TIPS: readonly Tip[] = [
+  // Getting Started
+  {
+    id: 'cmd-setup',
+    category: 'Getting Started',
+    message: 'New here? `codemie setup` walks you through picking a provider (SSO, LiteLLM, Bedrock, Ollama...) — takes about a minute.',
+    command: 'setup'
+  },
+  {
+    id: 'cmd-setup-force',
+    category: 'Getting Started',
+    message: 'Config gone sideways? `codemie setup --force` reruns the wizard from scratch.',
+    command: 'setup'
+  },
+  {
+    id: 'cmd-profile',
+    category: 'Getting Started',
+    message: 'Juggling work and personal projects? `codemie profile` keeps separate setups for each and lets you hop between them.',
+    command: 'profile'
+  },
+  {
+    id: 'cmd-profile-switch',
+    category: 'Getting Started',
+    message: 'Hop between setups with `codemie profile switch work` — run it bare and you get an interactive picker.',
+    command: 'profile'
+  },
+  {
+    id: 'cmd-profile-login',
+    category: 'Getting Started',
+    message: 'On AI/Run CodeMie SSO? `codemie profile login` authenticates you against your CodeMie URL — no API keys to juggle.',
+    command: 'profile'
+  },
+  {
+    id: 'cmd-list',
+    category: 'Getting Started',
+    message: 'Not sure what is installed? `codemie list` lays out every available agent and framework.',
+    command: 'list'
+  },
+  {
+    id: 'cmd-list-installed',
+    category: 'Getting Started',
+    message: 'Only care about this machine? `codemie list --installed` filters the catalog down to what is actually set up.',
+    command: 'list'
+  },
+  {
+    id: 'cmd-install',
+    category: 'Getting Started',
+    message: 'You are not limited to one agent — `codemie install <agent>` adds claude, gemini, codex, kimi and friends.',
+    command: 'install'
+  },
+  {
+    id: 'cmd-install-version',
+    category: 'Getting Started',
+    message: 'Pinpoint control: `codemie install claude 2.0.30` grabs that exact version, while `codemie install claude --supported` picks the one CodeMie tested.',
+    command: 'install'
+  },
+  {
+    id: 'cmd-uninstall',
+    category: 'Getting Started',
+    message: 'Cleaning house? `codemie uninstall <agent>` tidies away agents you no longer use.',
+    command: 'uninstall'
+  },
+  {
+    id: 'cmd-update',
+    category: 'Getting Started',
+    message: 'Worth running `codemie update` once in a while — it brings your installed agents up to their recommended versions.',
+    command: 'update'
+  },
+  {
+    id: 'cmd-update-check',
+    category: 'Getting Started',
+    message: 'Look before you leap: `codemie update --check` lists what is outdated without installing, and `codemie update claude` updates just one agent.',
+    command: 'update'
+  },
+  {
+    id: 'cmd-self-update',
+    category: 'Getting Started',
+    message: 'The CLI itself keeps improving too — `codemie self-update` gets you the latest features and fixes.',
+    command: 'self-update'
+  },
+  {
+    id: 'bin-codemie-code',
+    category: 'Getting Started',
+    message: 'Zero install needed: the built-in agent is already here — try `codemie-code "explore this repo"` or a quick `codemie-code health`.'
+  },
+  {
+    id: 'bin-agent-shortcuts',
+    category: 'Getting Started',
+    message: 'Every installed agent gets its own binary — `codemie-claude`, `codemie-gemini`, `codemie-codex` — same flags as the native tool, CodeMie wiring included.'
+  },
+  {
+    id: 'bin-openwiki',
+    category: 'Getting Started',
+    message: 'OpenWiki writes a living wiki for your repo: `codemie install openwiki` once, then `codemie-openwiki --init`, and keep it fresh with `codemie-openwiki --update`.',
+    command: 'install'
+  },
+  {
+    id: 'cmd-tips',
+    category: 'Getting Started',
+    message: 'These hints rotate at session start and end — run `codemie tips` anytime to browse them all at once.',
+    command: 'tips'
+  },
+  {
+    id: 'cmd-whatsnew',
+    category: 'Getting Started',
+    message: 'Just updated? `codemie whatsnew` shows what changed in your version.',
+    command: 'whatsnew'
+  },
+
+  // Proxy & IDE
+  {
+    id: 'cmd-proxy-connect',
+    category: 'Proxy & IDE',
+    message: 'Claude Desktop, VS Code or Codex Desktop? `codemie proxy connect --claude-desktop` (or `--vscode`, `--codex-desktop`) routes them through your CodeMie profile.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-connect-insiders',
+    category: 'Proxy & IDE',
+    message: 'On VS Code Insiders? `codemie proxy connect --vscode --insiders` targets it instead of the stable build.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-connect-claude-ext',
+    category: 'Proxy & IDE',
+    message: 'The Claude Code extension for VS Code works too — `codemie proxy connect --vscode-claude-code` points it at your CodeMie profile.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-connect-profile',
+    category: 'Proxy & IDE',
+    message: 'Borrow another profile for one run: `codemie proxy connect --claude-desktop --profile work` uses its credentials without switching globally.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-inspect-desktop',
+    category: 'Proxy & IDE',
+    message: 'Claude Desktop acting up? `codemie proxy inspect desktop` shows proxy state, recent sessions and sync readiness.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-status',
+    category: 'Proxy & IDE',
+    message: 'Is the local gateway even alive? `codemie proxy status` tells you — add `--deep` to verify upstream reachability, `--json` for scripts.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-start',
+    category: 'Proxy & IDE',
+    message: 'Need the gateway on a fixed port? `codemie proxy start --port 4001 --profile work` launches the daemon by hand.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-stop',
+    category: 'Proxy & IDE',
+    message: 'Done for the day? `codemie proxy stop` shuts the local gateway daemon down cleanly.',
+    command: 'proxy'
+  },
+  {
+    id: 'cmd-proxy-disconnect',
+    category: 'Proxy & IDE',
+    message: 'Unwiring Codex Desktop? `codemie proxy disconnect --codex-desktop` removes the CodeMie block from its config.',
+    command: 'proxy'
+  },
+
+  // Configuration
+  {
+    id: 'cmd-models',
+    category: 'Configuration',
+    message: 'Curious which models your profile can actually call? `codemie models list` spells them out.',
+    command: 'models'
+  },
+  {
+    id: 'cmd-mcp',
+    category: 'Configuration',
+    message: 'Share an MCP server with your team: `codemie mcp add myserver https://example.com/mcp --scope project` stores it in repo config; `--scope user` keeps it personal.',
+    command: 'mcp'
+  },
+  {
+    id: 'cmd-mcp-add',
+    category: 'Configuration',
+    message: 'Hand your agents new tools: `codemie mcp add myserver https://example.com/mcp` registers an MCP server through the built-in proxy.',
+    command: 'mcp'
+  },
+  {
+    id: 'cmd-mcp-list',
+    category: 'Configuration',
+    message: '`codemie mcp list` shows every registered MCP server, and `codemie mcp remove myserver` cleans one out.',
+    command: 'mcp'
+  },
+  {
+    id: 'cmd-mcp-proxy',
+    category: 'Configuration',
+    message: 'Need to bridge a stdio MCP server to HTTP with OAuth? `codemie mcp-proxy <url>` handles the translation.',
+    command: 'mcp-proxy'
+  },
+  {
+    id: 'cmd-setup-assistants',
+    category: 'Configuration',
+    message: '`codemie setup assistants --project MyProject --agent claude` registers platform assistants straight into your agent config.',
+    command: 'setup'
+  },
+  {
+    id: 'cmd-setup-skills',
+    category: 'Configuration',
+    message: 'Same trick for skills: `codemie setup skills --agent claude,codex` registers platform skills into those agents.',
+    command: 'setup'
+  },
+
+  // Extensions
+  {
+    id: 'cmd-skill',
+    category: 'Extensions',
+    message: 'Skills teach your agent new tricks — `codemie skill list` shows yours, filterable with `--agent codemie-code`.',
+    command: 'skill'
+  },
+  {
+    id: 'cmd-skill-sync',
+    category: 'Extensions',
+    message: '`codemie skill sync --target claude` copies your CodeMie skills into the agent config — `--dry-run` previews, `--clean` prunes stale copies.',
+    command: 'skill'
+  },
+  {
+    id: 'cmd-skill-validate',
+    category: 'Extensions',
+    message: 'Skill misbehaving? `codemie skill validate` checks every skill file and tells you exactly what is wrong.',
+    command: 'skill'
+  },
+  {
+    id: 'cmd-skills',
+    category: 'Extensions',
+    message: 'There is a shared skill registry out there — browse it and grab what you like with `codemie skills add`.',
+    command: 'skills'
+  },
+  {
+    id: 'cmd-skills-find',
+    category: 'Extensions',
+    message: 'Someone probably solved it already: `codemie skills find "pdf"` searches the EPAM and skills.sh catalogs — `--json` for scripts.',
+    command: 'skills'
+  },
+  {
+    id: 'cmd-skills-add',
+    category: 'Extensions',
+    message: '`codemie skills add owner/repo` installs from skills.sh — grab one skill with `-s name`, target agents with `-a claude`, skip prompts with `-y`.',
+    command: 'skills'
+  },
+  {
+    id: 'cmd-plugin',
+    category: 'Extensions',
+    message: 'Agents are extensible: `codemie plugin list` shows what plugins you can bolt on.',
+    command: 'plugin'
+  },
+  {
+    id: 'cmd-plugin-install',
+    category: 'Extensions',
+    message: 'Have an Anthropic-format plugin folder? `codemie plugin install ./my-plugin` adds it; `codemie plugin disable my-plugin` mutes it without uninstalling.',
+    command: 'plugin'
+  },
+  {
+    id: 'cmd-hook-fire',
+    category: 'Extensions',
+    message: 'Agents call `codemie hook` with a JSON event on stdin — try it yourself: `echo \'{"session_id":"demo","hook_event_name":"SessionStart"}\' | codemie hook`.',
+    command: 'hook'
+  },
+
+  // Sessions
+  {
+    id: 'hooks-session-lifecycle',
+    category: 'Sessions',
+    message: 'Every session fires SessionStart and SessionEnd hooks — that is where skill sync and metrics flushing happen automatically.',
+    command: 'hook'
+  },
+  {
+    id: 'cmd-sound',
+    category: 'Sessions',
+    message: 'Want audible cues? Drop a .wav/.mp3 into sounds/<event> under your CodeMie home and try `codemie sound SessionStart`.',
+    command: 'sound'
+  },
+  {
+    id: 'cmd-sound-events',
+    category: 'Sessions',
+    message: 'Sounds go beyond session edges: drop audio into sounds/Stop or sounds/PermissionRequest under your CodeMie home to hear pauses and permission asks.',
+    command: 'sound'
+  },
+  {
+    id: 'cmd-install-sounds',
+    category: 'Sessions',
+    message: 'Want audio cues out of the box? `codemie install claude --sounds` wires hook sounds in during installation.',
+    command: 'install'
+  },
+  {
+    id: 'flag-task',
+    category: 'Sessions',
+    message: 'Need a quick one-shot answer? `codemie --task "summarize this repo"` runs a single task and exits — handy in scripts.'
+  },
+  {
+    id: 'flag-silent',
+    category: 'Sessions',
+    message: 'Scripting around the CLI? Pass -s/--silent to hide the decorative output so stdout stays machine-readable.'
+  },
+
+  // Insights
+  {
+    id: 'cmd-analytics',
+    category: 'Insights',
+    message: 'Wondering where your tokens go? `codemie analytics` breaks down usage, costs and session history across all agents.',
+    command: 'analytics'
+  },
+  {
+    id: 'cmd-analytics-report',
+    category: 'Insights',
+    message: '`codemie analytics --report --open` builds a self-contained HTML dashboard of your usage and opens it in the browser.',
+    command: 'analytics'
+  },
+  {
+    id: 'cmd-analytics-filter',
+    category: 'Insights',
+    message: 'Slice the numbers: `codemie analytics --agent claude --last 7d --branch main`, then `--export csv -o report.csv` to share.',
+    command: 'analytics'
+  },
+  {
+    id: 'cmd-log',
+    category: 'Insights',
+    message: '`codemie log` browses your past sessions and debug logs — and `codemie log follow` tails a live one.',
+    command: 'log'
+  },
+  {
+    id: 'cmd-log-session',
+    category: 'Insights',
+    message: 'Replay a past run: `codemie log list-sessions` finds it, then `codemie log session <id> -v` shows the full conversation.',
+    command: 'log'
+  },
+  {
+    id: 'cmd-log-clean',
+    category: 'Insights',
+    message: 'Logs pile up — `codemie log clean --days 7 --dry-run` previews the purge; drop `--dry-run` when you mean it.',
+    command: 'log'
+  },
+  {
+    id: 'cmd-opencode-metrics',
+    category: 'Insights',
+    message: 'Running OpenCode? `codemie opencode-metrics --discover` sweeps your recent sessions and extracts their metrics.',
+    command: 'opencode-metrics'
+  },
+  {
+    id: 'cmd-codebase-ui',
+    category: 'Insights',
+    message: 'There is a visual side too: `codemie codebase ui` opens your repo as an interactive graph.',
+    command: 'codebase'
+  },
+  {
+    id: 'cmd-docs',
+    category: 'Insights',
+    message: 'Not everything here is an agent — codebase-memory, codegraph and graphify are docs and knowledge tools; `codemie docs list` shows what is available.',
+    command: 'docs'
+  },
+  {
+    id: 'cmd-docs-install',
+    category: 'Insights',
+    message: 'Hidden gem: docs tools install one level down — `codemie docs install codegraph` gets you local code intelligence (codebase-memory and graphify work the same way).',
+    command: 'docs'
+  },
+  {
+    id: 'cmd-docs-init',
+    category: 'Insights',
+    message: 'Installed a docs tool? `codemie docs init codegraph` wires it into the current project, MCP config included.',
+    command: 'docs'
+  },
+  {
+    id: 'cmd-workflow',
+    category: 'Insights',
+    message: 'CI without the YAML grind: `codemie workflow install pr-review` adds automated PR review to your repo — GitHub Actions or GitLab CI.',
+    command: 'workflow'
+  },
+  {
+    id: 'cmd-workflow-list',
+    category: 'Insights',
+    message: '`codemie workflow list` shows the templates (pr-review, inline-fix, code-ci); `codemie workflow install pr-review -i` walks you through the options.',
+    command: 'workflow'
+  },
+  {
+    id: 'cmd-workflow-tuning',
+    category: 'Insights',
+    message: 'Big PRs need room to think: `codemie workflow install pr-review --timeout 30 --max-turns 100` raises the limits.',
+    command: 'workflow'
+  },
+
+  // Platform
+  {
+    id: 'cmd-assistants',
+    category: 'Platform',
+    message: 'Prefer a guided conversation? `codemie assistants chat` connects you to your CodeMie assistants, interactively.',
+    command: 'assistants'
+  },
+  {
+    id: 'cmd-assistants-chat',
+    category: 'Platform',
+    message: 'Script it instead: `codemie assistants chat <assistant-id> "Summarize this sprint"` sends one message and prints the reply.',
+    command: 'assistants'
+  },
+  {
+    id: 'cmd-assistants-chat-file',
+    category: 'Platform',
+    message: 'Attach files to the chat: `codemie assistants chat <id> "Review these" -f ./report.pdf -f ./data.csv`.',
+    command: 'assistants'
+  },
+  {
+    id: 'cmd-sdk',
+    category: 'Platform',
+    message: 'Every platform asset answers to the same pattern — `codemie sdk assistants list`, `codemie sdk datasources list`, `codemie sdk integrations list`.',
+    command: 'sdk'
+  },
+  {
+    id: 'cmd-sdk-assistants',
+    category: 'Platform',
+    message: 'The platform is scriptable: `codemie sdk assistants list --scope marketplace --json` — narrow with `--search` and `--project`.',
+    command: 'sdk'
+  },
+  {
+    id: 'cmd-sdk-llm',
+    category: 'Platform',
+    message: '`codemie sdk llm list` shows the LLM catalog your CodeMie platform exposes.',
+    command: 'sdk'
+  },
+  {
+    id: 'cmd-sdk-skills-import',
+    category: 'Platform',
+    message: 'Have a skill in markdown? `codemie sdk skills import ./my-skill.md` uploads it to the platform (needs YAML frontmatter with name and description).',
+    command: 'sdk'
+  },
+
+  // Diagnostics
+  {
+    id: 'cmd-doctor',
+    category: 'Diagnostics',
+    message: 'Something feels off? `codemie doctor` health-checks your whole setup in seconds.',
+    command: 'doctor'
+  },
+  {
+    id: 'cmd-version',
+    category: 'Diagnostics',
+    message: 'Reporting a bug? Grab your exact build first with `codemie version` — it saves everyone time.',
+    command: 'version'
+  },
+  {
+    id: 'cmd-test-metrics',
+    category: 'Diagnostics',
+    message: 'Metrics not showing up? `codemie test-metrics` pings the CodeMie endpoint to check connectivity.',
+    command: 'test-metrics'
+  },
+  {
+    id: 'cmd-test-metrics-dry-run',
+    category: 'Diagnostics',
+    message: 'Curious what telemetry says about you? `codemie test-metrics --dry-run` shows the exact payload without sending anything.',
+    command: 'test-metrics'
+  },
+  {
+    id: 'env-debug',
+    category: 'Diagnostics',
+    message: 'When things misbehave, set CODEMIE_DEBUG=true to stream the debug log right into your console.'
+  }
+];
+
+/**
+ * Rotation state persisted at ~/.codemie/.tips-state.json so consecutive
+ * sessions cycle through the catalog instead of repeating the same tips.
+ */
+interface TipsRotationState {
+  shownTipIds: string[];
+}
+
+const stateFilePath = (): string => getCodemiePath('.tips-state.json');
+
+/**
+ * Check if session tips are enabled (default: true).
+ * Reads the CODEMIE_TIPS environment variable.
+ *
+ * @returns true unless CODEMIE_TIPS is set to a falsy value ('false', '0', 'no')
+ */
+export function isTipsEnabled(): boolean {
+  const envValue = process.env.CODEMIE_TIPS;
+
+  // If not set, default to true (tips enabled)
+  if (envValue === undefined || envValue === null || envValue === '') {
+    return true;
+  }
+
+  // Parse as boolean
+  const normalized = envValue.toLowerCase().trim();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+/**
+ * Return the full tip catalog (used by `codemie tips`).
+ */
+export function listTips(): readonly Tip[] {
+  return TIPS;
+}
+
+/**
+ * Pick the tip to show at a session lifecycle point.
+ *
+ * Randomly selects a tip that has not been shown yet (per the rotation state
+ * file), records the pick, and resets the shown list once every tip has been
+ * shown. Both contexts share one catalog and one rotation for now; the context
+ * is recorded in the debug log so future per-context catalogs can reuse it.
+ *
+ * Best-effort: unreadable/corrupt state is treated as empty, write failures
+ * are swallowed — a tip must never block or break a session.
+ *
+ * @param context - Where the tip is rendered ('start' or 'end' of session)
+ * @returns A tip, or null when tips are disabled or the catalog is empty
+ */
+export function getSessionTip(context: 'start' | 'end'): Tip | null {
+  if (!isTipsEnabled() || TIPS.length === 0) {
+    return null;
+  }
+
+  const state = loadRotationState();
+
+  // Prune ids of retired tips so the rotation can still complete and reset.
+  const catalogIds = new Set(TIPS.map(tip => tip.id));
+  state.shownTipIds = state.shownTipIds.filter(id => catalogIds.has(id));
+
+  let candidates = TIPS.filter(tip => !state.shownTipIds.includes(tip.id));
+  if (candidates.length === 0) {
+    // Full rotation complete — start a fresh cycle.
+    state.shownTipIds = [];
+    candidates = [...TIPS];
+  }
+
+  const tip = candidates[Math.floor(Math.random() * candidates.length)];
+  state.shownTipIds.push(tip.id);
+  saveRotationState(state);
+
+  logger.debug('[tips] Selected session tip', { context, id: tip.id });
+  return tip;
+}
+
+/**
+ * Format a tip for terminal display with high visibility on BOTH dark and
+ * light terminal themes: a yellow badge with black text, followed by the
+ * message on a blue bar with bright-white bold text. Foreground-only colors
+ * always fail on one theme (white text vanishes on white terminals, dark text
+ * on black ones), so both segments carry explicit background colors.
+ * Shared by session lifecycle rendering (BaseAgentAdapter), renderTip(), and
+ * `codemie tips --random` so tips look identical everywhere.
+ */
+export function formatTipLine(tip: Tip): string {
+  const badge = chalk.bgYellow.black.bold(' 💡 TIP ');
+  const message = chalk.bgBlue.whiteBright.bold(` ${tip.message} `);
+  return `${badge}${message}`;
+}
+
+/**
+ * Print a single random tip to the console for CLI surfaces (doctor,
+ * first-run and post-setup screens, ...). Unlike getSessionTip(), this does
+ * not read or update the rotation state — rotation stays exclusive to session
+ * start/end.
+ *
+ * Best-effort: never throws, and is a no-op when tips are disabled.
+ *
+ * @param options.category - Restrict the pick to one category; falls back to
+ *   the full catalog when the category has no tips
+ */
+export function renderTip(options?: { category?: string }): void {
+  try {
+    if (!isTipsEnabled() || TIPS.length === 0) {
+      return;
+    }
+
+    let pool: readonly Tip[] = TIPS;
+    if (options?.category) {
+      const filtered = TIPS.filter(tip => tip.category === options.category);
+      if (filtered.length > 0) {
+        pool = filtered;
+      }
+    }
+
+    const tip = pool[Math.floor(Math.random() * pool.length)];
+    console.log();
+    console.log(formatTipLine(tip));
+  } catch (error) {
+    logger.debug('[tips] renderTip failed (non-fatal):', error);
+  }
+}
+
+function loadRotationState(): TipsRotationState {
+  const file = stateFilePath();
+  try {
+    const content = readFileSync(file, 'utf-8');
+    const parsed = JSON.parse(content) as unknown;
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      Array.isArray((parsed as { shownTipIds?: unknown }).shownTipIds)
+    ) {
+      const shownTipIds = (parsed as { shownTipIds: unknown[] }).shownTipIds
+        .filter((id): id is string => typeof id === 'string');
+      return { shownTipIds };
+    }
+    return { shownTipIds: [] };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      logger.debug('[tips] Rotation state unreadable — treating as empty', { file });
+    }
+    return { shownTipIds: [] };
+  }
+}
+
+function saveRotationState(state: TipsRotationState): void {
+  const file = stateFilePath();
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (error) {
+    logger.debug('[tips] Failed to persist rotation state (non-fatal):', error);
+  }
+}
