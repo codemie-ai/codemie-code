@@ -18,10 +18,10 @@ const SERVICE_NAME = 'cursor-agent';
 const OTLP_POST_TIMEOUT_MS = 1500;
 const OTLP_SEVERITY_NUMBER = 9;
 const OTLP_SEVERITY_TEXT = 'INFO';
-const SPAN_NAME_TOOL = 'claude_code.tool';
-const SPAN_NAME_INTERACTION = 'claude_code.interaction';
-const SPAN_NAME_SUBAGENT = 'claude_code.subagent';
-const METRIC_NAME_LINES = 'claude_code.lines_of_code.count';
+const SPAN_NAME_TOOL = 'cursor.tool';
+const SPAN_NAME_INTERACTION = 'cursor.interaction';
+const SPAN_NAME_SUBAGENT = 'cursor.subagent';
+const METRIC_NAME_LINES = 'cursor.lines_of_code.count';
 
 const EVENT_TYPE_MAP: Record<string, string> = {
   sessionStart: 'agent.session.start',
