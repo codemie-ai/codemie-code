@@ -29,9 +29,10 @@
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { logger } from './logger.js';
-import { getCodemiePath, getDirname } from './paths.js';
+import { getCodemiePath } from './paths.js';
 import { parseBooleanEnv } from './env.js';
 
 /**
@@ -66,8 +67,13 @@ const isStringArray = (value: unknown): value is string[] =>
  * debug-logged and yields an empty catalog. Tips must never break a session.
  */
 function loadTipsCatalog(): Tip[] {
-  const catalogPath = path.resolve(getDirname(import.meta.url), '../../src/utils/tips.json');
   try {
+    // Resolve via import.meta.url, not paths.js: tests legitimately mock
+    // ./paths.js without declaring every export, and this module is loaded
+    // eagerly through BaseAgentAdapter — a mocked-out helper must never break
+    // module evaluation. Resolves identically from src/utils (dev) and
+    // dist/utils (built/installed package, where tips.json ships in src/utils).
+    const catalogPath = fileURLToPath(new URL('../../src/utils/tips.json', import.meta.url));
     const parsed = JSON.parse(readFileSync(catalogPath, 'utf-8')) as unknown;
     if (!Array.isArray(parsed)) {
       logger.debug('[tips] tips.json is not an array — using empty catalog', { catalogPath });
