@@ -1,0 +1,31 @@
+{
+  "task": "Enable running shared or custom workflows directly from CodeMie CLI (EPMCDME-12353)",
+  "generated": "2026-09-08T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 11,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Technical risk is low as we are utilizing the robust, pre-existing workflow execution API exposed by the CodeMie SDK. Testing was fully Mock-based and deterministic."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Functional changes are contained within the CLI layer, exposing the top-level run command and expanding the workflows subcommand."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Created run.ts, updated index.ts, workflows.ts, workflows services, and workflow.test.ts. Total of 5 files changed across 3 directories."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

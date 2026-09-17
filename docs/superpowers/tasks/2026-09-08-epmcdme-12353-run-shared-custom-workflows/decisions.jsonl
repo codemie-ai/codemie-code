@@ -1,0 +1,3 @@
+{"ts":"2026-09-08T06:55:00Z","gate_id":"spec.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"Spec approved by user","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-09-08T11:49:11Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"Plan approved by user","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-09-08T12:06:12Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"Code review approved by user","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}

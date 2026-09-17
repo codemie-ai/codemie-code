@@ -19,7 +19,7 @@ import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js
  * @returns Authenticated CodeMieClient instance
  * @throws ConfigurationError if authentication fails and user declines re-auth
  */
-export async function getAuthenticatedClient(config: ProviderProfile): Promise<CodeMieClient> {
+export async function getAuthenticatedClient(config: ProviderProfile, quiet = false): Promise<CodeMieClient> {
   if (config.authMethod === AuthMethod.JWT) {
     const token = resolveJwtToken(config);
     if (!token) {
@@ -41,12 +41,12 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
   }
 
   try {
-    return await getCodemieClient();
+    return await getCodemieClient(quiet);
   } catch (error) {
     if (error instanceof ConfigurationError && error.message.includes('SSO authentication required')) {
       const reauthed = await promptReauthentication(config);
       if (reauthed) {
-        return await getCodemieClient();
+        return await getCodemieClient(quiet);
       }
     }
     throw error;

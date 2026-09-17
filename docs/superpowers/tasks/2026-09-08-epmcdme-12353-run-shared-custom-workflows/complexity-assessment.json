@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Enable running shared or custom workflows directly from CodeMie CLI (EPMCDME-12353)",
+  "generated": "2026-09-08T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 11,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The changes are local to the CLI commands, specifically implementing a new run command and extending the workflows subcommand. No modifications to core proxy logic or backend are required."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Technical risk is low as we are utilizing the robust workflow.run method already exposed and thoroughly tested in the CodeMie SDK. The main task is exposing it safely to CLI users."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "We will be creating a single new command file (run.ts) and modifying three existing files: index.ts, workflows.ts, and workflows service wrapper. This is well within the S band."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

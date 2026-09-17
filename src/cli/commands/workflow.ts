@@ -2,6 +2,8 @@
  * Workflow management CLI commands
  */
 
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
@@ -19,6 +21,9 @@ import {
   type VCSProvider,
   type WorkflowInstallOptions,
 } from '../../workflows/index.js';
+import { getSdkClient, outputJson, handleSdkError } from './sdk/utils/cli-utils.js';
+import { listWorkflows, runWorkflow } from './sdk/services/workflows.js';
+import { printSuccess } from './sdk/utils/render.js';
 
 export function createWorkflowCommand(): Command {
   const workflow = new Command('workflow')
@@ -431,6 +436,256 @@ Note: This removes the workflow file but doesn't delete workflow runs or history
       } catch (error) {
         spinner.fail(chalk.red('Uninstall failed'));
         console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}\n`));
+      }
+    });
+
+  // Run command
+  workflow
+    .command('run [workflow-id-or-name]')
+    .description('Execute a custom or shared workflow')
+    .option('-w, --workflow <id-or-name>', 'Workflow ID or name to run (alternative option)')
+    .option('-i, --input <string>', 'User input / variable values for the workflow')
+    .option('-f, --file <name>', 'File name/path parameter for the workflow')
+    .option('--no-wait', 'Do not wait for workflow execution to complete')
+    .option('--json', 'Output execution details in JSON format')
+    .addHelpText('after', `
+
+Examples:
+  $ codemie workflow run wfl_abc123 --input "hello"                     # Run workflow and wait for result
+  $ codemie workflow run wfl_abc123 --input "hello" --no-wait          # Trigger and exit immediately
+  $ codemie workflow run "My Custom Workflow" --input '{"key": "val"}'     # Run workflow by Name
+`)
+    .action(async (argIdOrName: string | undefined, options: {
+      workflow?: string;
+      input?: string;
+      file?: string;
+      wait?: boolean;
+      json?: boolean;
+    }) => {
+      const idOrName = argIdOrName || options.workflow;
+      if (!idOrName) {
+        console.error(chalk.red('❌ Error: Workflow ID or name is required.'));
+        console.log('Use: codemie workflow run <workflow-id-or-name> or codemie workflow run --workflow <workflow-id-or-name>');
+        process.exit(1);
+      }
+
+      const client = await getSdkClient(options.json || !options.wait);
+      const spinner = ora('Running workflow...').start();
+
+      try {
+        // Resolve workflow ID if name is provided
+        let targetId = idOrName;
+        if (!idOrName.startsWith('wfl_')) {
+          const workflows = await listWorkflows(client, { search: idOrName });
+          const match = workflows.find(
+            (w) => w.name.toLowerCase() === idOrName.toLowerCase() || w.id === idOrName
+          );
+          if (match) {
+            targetId = match.id;
+          } else if (workflows.length === 1) {
+            targetId = workflows[0].id;
+          } else {
+            spinner.stop();
+            console.error(chalk.red(`❌ Workflow with ID or name "${idOrName}" not found.`));
+            process.exit(1);
+          }
+        }
+
+        let userInput: any = options.input;
+        if (options.input) {
+          try {
+            userInput = JSON.parse(options.input);
+          } catch {
+            // Keep as string
+          }
+        }
+
+        let uploadedFileName: string | undefined;
+        if (options.file) {
+          spinner.stop();
+          try {
+            const absolutePath = path.resolve(options.file);
+            const fileContent = await fs.readFile(absolutePath);
+            const uploadSpinner = ora(`Uploading ${path.basename(options.file)}...`).start();
+            try {
+              const uploadRes = await client.files.upload({
+                name: path.basename(options.file),
+                content: fileContent,
+                mimeType: 'application/octet-stream',
+              });
+              uploadedFileName = uploadRes.file_url;
+              uploadSpinner.succeed(chalk.green(`✓ File ${path.basename(options.file)} uploaded successfully.`));
+            } catch (uploadErr: any) {
+              uploadSpinner.fail(chalk.red(`Failed to upload file: ${uploadErr.message || uploadErr}`));
+              process.exit(1);
+            }
+          } catch {
+            console.error(chalk.red(`❌ Error: File "${options.file}" not found or could not be read.`));
+            process.exit(1);
+          }
+          spinner.start();
+        }
+
+        const result = await runWorkflow(client, targetId, userInput, uploadedFileName, undefined);
+        spinner.stop();
+        let execution = result as any;
+        const execId = execution.execution_id || execution.id;
+        let status = execution.overall_status;
+
+        if (!options.wait) {
+          if (options.json) {
+            outputJson(execution);
+          } else {
+            printSuccess(`✓ Workflow execution started successfully. (Status: ${status})`);
+          }
+          return;
+        }
+
+        while (status === 'In Progress' || status === 'Pending' || status === 'Interrupted') {
+          if (options.wait && (status === 'In Progress' || status === 'Pending')) {
+            const pollSpinner = ora(`Executing workflow (status: ${status})...`).start();
+            const executionService = client.workflows.executions(targetId);
+
+            try {
+              // Poll every 3 seconds, max 15 minutes (300 attempts)
+              for (let i = 0; i < 300; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                const updated = await executionService.get(execId);
+                execution = updated;
+                status = updated.overall_status;
+                pollSpinner.text = `Executing workflow (status: ${status})...`;
+
+                if (status !== 'In Progress' && status !== 'Pending') {
+                  break;
+                }
+              }
+              pollSpinner.stop();
+            } catch {
+              pollSpinner.stop();
+              break;
+            }
+          }
+
+          if (status === 'Interrupted') {
+            console.log('');
+            console.log(chalk.bold.yellow('⚠ Workflow execution is Interrupted and requires your decision.'));
+
+            let interruptedText = '';
+            try {
+              const statesService = client.workflows.executions(targetId).states(execId);
+              const states = await statesService.list();
+              const interruptedState = states.find((s) => s.status === 'Interrupted');
+              if (interruptedState) {
+                const stateOutput = await statesService.getOutput(interruptedState.id);
+                interruptedText = stateOutput.output || '';
+              }
+            } catch {
+              // Silent fallback
+            }
+
+            if (interruptedText) {
+              console.log(chalk.bold.cyan('Interrupted Message:'));
+              console.log(chalk.white(interruptedText));
+              console.log('');
+            }
+
+            const { action } = await inquirer.prompt([
+              {
+                type: 'list',
+                name: 'action',
+                message: 'How would you like to proceed?',
+                choices: [
+                  { name: 'Approve & Continue', value: 'approve' },
+                  { name: 'Edit current message', value: 'edit' },
+                  { name: 'Abort workflow', value: 'abort' },
+                ]
+              }
+            ]);
+
+            if (action === 'approve') {
+              const resumeSpinner = ora('Resuming workflow...').start();
+              try {
+                await client.workflows.executions(targetId).resume(execId);
+                status = 'In Progress';
+                resumeSpinner.succeed(chalk.green('✓ Workflow resumed.'));
+              } catch (error) {
+                resumeSpinner.fail(chalk.red('Failed to resume workflow.'));
+                handleSdkError(error, 'resume workflow');
+                break;
+              }
+            } else if (action === 'edit') {
+              const { editedMessage } = await inquirer.prompt([
+                {
+                  type: 'input',
+                  name: 'editedMessage',
+                  message: 'Enter your edited message:',
+                  default: interruptedText
+                }
+              ]);
+
+              const resumeSpinner = ora('Resuming workflow with edited message...').start();
+              try {
+                await (client.workflows as any).api.put(
+                  `/v1/workflows/${targetId}/executions/${execId}/resume`,
+                  { user_input: editedMessage }
+                );
+                status = 'In Progress';
+                resumeSpinner.succeed(chalk.green('✓ Workflow resumed with edited message.'));
+              } catch (error) {
+                resumeSpinner.fail(chalk.red('Failed to resume workflow.'));
+                handleSdkError(error, 'resume workflow');
+                break;
+              }
+            } else if (action === 'abort') {
+              const abortSpinner = ora('Aborting workflow...').start();
+              try {
+                await client.workflows.executions(targetId).abort(execId);
+                abortSpinner.succeed(chalk.green('✓ Workflow aborted successfully.'));
+                status = 'Aborted';
+              } catch (error) {
+                abortSpinner.fail(chalk.red('Failed to abort workflow.'));
+                handleSdkError(error, 'abort workflow');
+                break;
+              }
+            }
+          }
+        }
+
+        if (options.json) {
+          outputJson(execution);
+          return;
+        }
+
+        if (status === 'Succeeded') {
+          try {
+            const statesService = client.workflows.executions(targetId).states(execId);
+            const states = await statesService.list();
+            const finalState = states.find((s) => s.name === 'result_finalizer_node') ||
+                               states.filter((s) => s.completed_at).sort((a, b) =>
+                                 new Date(a.completed_at!).getTime() - new Date(b.completed_at!).getTime()
+                               ).pop();
+
+            if (finalState) {
+              const stateOutput = await statesService.getOutput(finalState.id);
+              if (stateOutput && stateOutput.output) {
+                console.log(stateOutput.output);
+                return;
+              }
+            }
+          } catch {
+            // Silent fallback to standard output if state output fetch fails
+          }
+          printSuccess('✓ Workflow completed successfully.');
+        } else if (status === 'Failed') {
+          console.error(chalk.red('❌ Workflow execution failed.'));
+        } else {
+          printSuccess(`✓ Workflow execution ended with status: ${status}`);
+          console.log('');
+          outputJson(execution);
+        }
+      } catch (error) {
+        spinner.stop();
+        handleSdkError(error, 'run workflow');
       }
     });
 
