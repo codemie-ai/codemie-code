@@ -1588,7 +1588,10 @@ export function createHookCommand(): Command {
         }
 
         // Read JSON from stdin
-        const input = await readStdin();
+        const rawInput = await readStdin();
+        // Strip UTF-8 BOM (U+FEFF) that Windows processes may prepend.
+        // JSON.parse rejects BOM; stripping here fixes the issue on Windows.
+        const input = rawInput.charCodeAt(0) === 0xFEFF ? rawInput.slice(1) : rawInput;
 
         // Log raw input at debug level (may contain sensitive data)
         logger.debug(`[hook] Received input (${input.length} bytes)`);

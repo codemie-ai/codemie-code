@@ -1,4 +1,5 @@
 import { appendFile, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -18,6 +19,21 @@ interface OtlpEventPayload {
   raw: string;
 }
 
+type OtlpAttr = { key: string; value: { stringValue: string } };
+
+const EVENT_TYPE_MAP: Record<string, string> = {
+  sessionStart: 'agent.session.start',
+  sessionEnd: 'agent.session.end',
+  stop: 'agent.session.stop',
+  preToolUse: 'agent.tool.start',
+  postToolUse: 'agent.tool.end',
+  postToolUseFailure: 'agent.tool.error',
+  beforeSubmitPrompt: 'agent.prompt.submit',
+  subagentStart: 'agent.subagent.start',
+  subagentStop: 'agent.subagent.stop',
+  preCompact: 'agent.session.compact',
+};
+
 export class OtlpIngestPlugin implements ProxyPlugin {
   id = '@codemie/proxy-otlp-ingest';
   name = 'OTLP Ingestion';
@@ -27,7 +43,7 @@ export class OtlpIngestPlugin implements ProxyPlugin {
   createInterceptor(context: PluginContext): ProxyInterceptor {
     return new OtlpIngestInterceptor(
       context.syncCredentials || context.credentials,
-      context.config.syncApiUrl
+      context.config.syncApiUrl ?? context.config.targetApiUrl
     );
   }
 }
@@ -38,7 +54,7 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
   constructor(
     private readonly credentials?: SSOCredentials | JWTCredentials,
     private readonly baseUrl?: string
-  ) {}
+  ) { }
 
   async handleRequest(
     ctx: ProxyContext,
@@ -156,7 +172,10 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
         })
       );
 
-      void this.pushToBackend(this.transformToEventHookRecord(payload));
+      void this.dispatchOtlpSignals(payload).catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.info('[otlp-ingest] dispatch error', ...sanitizeLogArgs({ err: msg }));
+      });
 
       // Return 202 Accepted
       res.statusCode = 202;
@@ -180,86 +199,378 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
     }
   }
 
-  // Deliberate no-op passthrough pending real Cursor-event -> backend-field mapping.
-  private transformToEventHookRecord(payload: OtlpEventPayload): Record<string, unknown> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload.raw);
-    } catch {
-      parsed = undefined;
-    }
-    // Only spread a genuine plain object - an array or primitive would
-    // either produce numeric-keyed properties or silently drop the parsed
-    // value, corrupting the record with no error signal. Fall back to the
-    // same shape used for a JSON.parse failure in that case.
-    const isPlainObject = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
-    const base = isPlainObject ? (parsed as Record<string, unknown>) : { raw: payload.raw };
-    return { ...base, agent_type: payload.agentName };
+  private nowNs(): string {
+    return (BigInt(Date.now()) * 1_000_000n).toString();
   }
 
-  private async pushToBackend(record: Record<string, unknown>): Promise<void> {
-    const url = `${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
-    try {
-      if (!this.credentials || !this.baseUrl) {
-        logger.info(
-          '[otlp-ingest] pushToBackend: no credentials/baseUrl, skipping',
-          ...sanitizeLogArgs({ hasCredentials: Boolean(this.credentials), baseUrl: this.baseUrl })
-        );
-        return;
-      }
+  private toTraceId(sessionId: string): string {
+    return createHash('sha256').update(String(sessionId || '')).digest('hex').slice(0, 32);
+  }
 
+  private toSpanId(id: string): string {
+    return createHash('sha256').update(String(id || '')).digest('hex').slice(0, 16);
+  }
+
+  private extractCwd(event: Record<string, unknown>): string {
+    const roots = event['workspace_roots'];
+    if (Array.isArray(roots) && roots.length > 0) return String(roots[0]);
+    return String(event['cwd'] || '');
+  }
+
+  private extractPromptBody(event: Record<string, unknown>): string {
+    if (typeof event['prompt'] === 'string') return event['prompt'];
+    if (typeof event['message'] === 'string') return event['message'];
+    const messages = event['messages'];
+    if (Array.isArray(messages) && messages.length > 0) {
+      const lastUser = [...messages].reverse().find((m: unknown) => {
+        return typeof m === 'object' && m !== null &&
+          (m as Record<string, unknown>)['role'] === 'user';
+      });
+      if (lastUser) {
+        const content = (lastUser as Record<string, unknown>)['content'];
+        if (typeof content === 'string') return content;
+      }
+    }
+    return '';
+  }
+
+  private extractFilePath(toolName: string, toolInput: unknown): string {
+    let input = toolInput;
+    if (typeof input === 'string') {
+      try { input = JSON.parse(input) as unknown; } catch { return ''; }
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
+    const inp = input as Record<string, unknown>;
+    return String(inp['file_path'] ?? inp['path'] ?? inp['notebook_path'] ?? '');
+  }
+
+  private skillNameFromPath(filePath: string): string {
+    if (!filePath) return '';
+    const SKILL_RE = /(?:^|[/\\])skills[/\\]|SKILL\.md$/i;
+    if (!SKILL_RE.test(filePath)) return '';
+    const parts = filePath.split(/[/\\]/);
+    const idx = parts.findIndex(p => p.toLowerCase() === 'skills');
+    if (idx >= 0 && parts[idx + 1]) return parts[idx + 1];
+    const last = parts[parts.length - 1];
+    return last ? last.replace(/\.md$/i, '') : '';
+  }
+
+  private resolveUserEmail(event: Record<string, unknown>): string {
+    if (typeof event['user_email'] === 'string' && event['user_email']) {
+      return event['user_email'];
+    }
+    if (this.credentials && isJWTCredentials(this.credentials)) {
+      try {
+        const parts = this.credentials.token.split('.');
+        if (parts.length >= 2) {
+          const claims = JSON.parse(
+            Buffer.from(parts[1], 'base64url').toString('utf-8')
+          ) as Record<string, unknown>;
+          if (typeof claims['email'] === 'string' && claims['email']) {
+            return claims['email'];
+          }
+        }
+      } catch { /* ignore decode failures */ }
+    }
+    return '';
+  }
+
+  private wrapLogs(records: object[]): object {
+    return {
+      resourceLogs: [{
+        resource: { attributes: [{ key: 'service.name', value: { stringValue: 'cursor-agent' } }] },
+        scopeLogs: [{ scope: {}, logRecords: records }],
+      }],
+    };
+  }
+
+  private wrapTraces(spans: object[]): object {
+    return {
+      resourceSpans: [{
+        resource: { attributes: [{ key: 'service.name', value: { stringValue: 'cursor-agent' } }] },
+        scopeSpans: [{ scope: {}, spans }],
+      }],
+    };
+  }
+
+  private wrapMetrics(metrics: object[]): object {
+    return {
+      resourceMetrics: [{
+        resource: { attributes: [{ key: 'service.name', value: { stringValue: 'cursor-agent' } }] },
+        scopeMetrics: [{ scope: {}, metrics }],
+      }],
+    };
+  }
+
+  private buildLogRecord(event: Record<string, unknown>, hookName: string, tsNs: string): object {
+    const eventType = EVENT_TYPE_MAP[hookName] ?? hookName;
+    const toolUseId = String(event['tool_use_id'] ?? '').replace(/\n/g, '_');
+    const userEmail = this.resolveUserEmail(event);
+    const attrs: OtlpAttr[] = [
+      { key: 'event_type', value: { stringValue: eventType } },
+      { key: 'session_id', value: { stringValue: String(event['session_id'] ?? '') } },
+      { key: 'developer_name', value: { stringValue: userEmail } },
+      { key: 'user.email', value: { stringValue: userEmail } },
+      { key: 'cwd', value: { stringValue: this.extractCwd(event) } },
+      { key: 'git_branch', value: { stringValue: '' } },
+      { key: 'repo_remote', value: { stringValue: '' } },
+      { key: 'tool_name', value: { stringValue: String(event['tool_name'] ?? '') } },
+      { key: 'tool_use_id', value: { stringValue: toolUseId } },
+      { key: 'tool_input', value: { stringValue: event['tool_input'] ? JSON.stringify(event['tool_input']) : '' } },
+      { key: 'tool_output', value: { stringValue: typeof event['tool_output'] === 'string' ? event['tool_output'] : event['tool_output'] != null ? JSON.stringify(event['tool_output']) : '' } },
+      { key: 'codemie_project_name', value: { stringValue: '' } },
+      { key: 'prompt_body', value: { stringValue: hookName === 'beforeSubmitPrompt' ? this.extractPromptBody(event) : '' } },
+      { key: 'slash_command', value: { stringValue: '' } },
+      { key: 'agent_type', value: { stringValue: String(event['subagent_type'] ?? '') } },
+    ];
+    return {
+      timeUnixNano: tsNs,
+      observedTimeUnixNano: tsNs,
+      severityNumber: 9,
+      severityText: 'INFO',
+      body: { stringValue: '' },
+      attributes: attrs,
+    };
+  }
+
+  private buildToolSpan(event: Record<string, unknown>, tsNs: string): object {
+    const sessionId = String(event['session_id'] ?? '');
+    const toolUseId = String(event['tool_use_id'] ?? '').replace(/\n/g, '_');
+    const startNs = this.startNsFromDurationMs(tsNs, event['duration']);
+    const filePath = this.extractFilePath(String(event['tool_name'] ?? ''), event['tool_input']);
+    return {
+      traceId: this.toTraceId(sessionId),
+      spanId: this.toSpanId(toolUseId || (sessionId + tsNs)),
+      name: 'claude_code.tool',
+      kind: 1,
+      startTimeUnixNano: startNs,
+      endTimeUnixNano: tsNs,
+      status: { code: 1 },
+      attributes: [
+        { key: 'session.id', value: { stringValue: sessionId } },
+        { key: 'tool_name', value: { stringValue: String(event['tool_name'] ?? '') } },
+        { key: 'tool_use_id', value: { stringValue: toolUseId } },
+        { key: 'file_path', value: { stringValue: filePath } },
+        { key: 'subagent_type', value: { stringValue: String(event['subagent_type'] ?? '') } },
+        { key: 'skill_name', value: { stringValue: this.skillNameFromPath(filePath) } },
+      ],
+    };
+  }
+
+  private buildInteractionSpan(event: Record<string, unknown>, tsNs: string): object {
+    const sessionId = String(event['session_id'] ?? '');
+    const genId = String(event['generation_id'] ?? '');
+    return {
+      traceId: this.toTraceId(sessionId),
+      spanId: this.toSpanId(genId || (sessionId + tsNs)),
+      name: 'claude_code.interaction',
+      kind: 1,
+      startTimeUnixNano: tsNs,
+      endTimeUnixNano: tsNs,
+      status: { code: 1 },
+      attributes: [
+        { key: 'session.id', value: { stringValue: sessionId } },
+      ],
+    };
+  }
+
+  private buildSubagentSpan(event: Record<string, unknown>, tsNs: string): object {
+    const sessionId = String(event['session_id'] ?? '');
+    const subagentId = String(event['subagent_id'] ?? '');
+    const startNs = this.startNsFromDurationMs(tsNs, event['duration_ms']);
+    return {
+      traceId: this.toTraceId(sessionId),
+      spanId: this.toSpanId(subagentId || (sessionId + tsNs)),
+      name: 'claude_code.subagent',
+      kind: 1,
+      startTimeUnixNano: startNs,
+      endTimeUnixNano: tsNs,
+      status: { code: event['status'] === 'error' ? 2 : 1 },
+      attributes: [
+        { key: 'session.id', value: { stringValue: sessionId } },
+        { key: 'subagent_id', value: { stringValue: subagentId } },
+        { key: 'subagent_type', value: { stringValue: String(event['subagent_type'] ?? '') } },
+        { key: 'status', value: { stringValue: String(event['status'] ?? '') } },
+        { key: 'duration_ms', value: { stringValue: String(Number(event['duration_ms'] ?? 0)) } },
+        { key: 'tool_call_count', value: { stringValue: String(Number(event['tool_call_count'] ?? 0)) } },
+        { key: 'message_count', value: { stringValue: String(Number(event['message_count'] ?? 0)) } },
+      ],
+    };
+  }
+
+  private startNsFromDurationMs(tsNs: string, rawDur: unknown): string {
+    const durationNs = BigInt(Math.round(Number.isFinite(Number(rawDur)) ? Math.max(0, Number(rawDur)) : 0) * 1_000_000);
+    const endNs = BigInt(tsNs);
+    return endNs > durationNs ? (endNs - durationNs).toString() : '0';
+  }
+
+  private buildLinesMetric(event: Record<string, unknown>, tsNs: string): object | null {
+    const countLines = (str: unknown): number => {
+      if (!str || typeof str !== 'string') return 0;
+      const lines = str.split('\n');
+      if (lines[lines.length - 1] === '') lines.pop();
+      return lines.length;
+    };
+    const edits = Array.isArray(event['edits'])
+      ? (event['edits'] as Record<string, unknown>[])
+      : [];
+    let linesAdded = 0;
+    let linesRemoved = 0;
+    for (const edit of edits) {
+      if (!edit || typeof edit !== 'object' || Array.isArray(edit)) continue;
+      linesAdded += countLines(edit['new_string']);
+      linesRemoved += countLines(edit['old_string']);
+    }
+    if (linesAdded === 0 && linesRemoved === 0) return null;
+    const sessionId = String(event['session_id'] ?? '');
+    const userEmail = this.resolveUserEmail(event);
+    const commonAttrs = [
+      { key: 'session.id', value: { stringValue: sessionId } },
+      { key: 'user.email', value: { stringValue: userEmail } },
+    ];
+    const dataPoints: object[] = [];
+    if (linesAdded > 0) {
+      dataPoints.push({
+        attributes: [...commonAttrs, { key: 'type', value: { stringValue: 'added' } }],
+        startTimeUnixNano: tsNs,
+        timeUnixNano: tsNs,
+        asInt: String(linesAdded),
+      });
+    }
+    if (linesRemoved > 0) {
+      dataPoints.push({
+        attributes: [...commonAttrs, { key: 'type', value: { stringValue: 'removed' } }],
+        startTimeUnixNano: tsNs,
+        timeUnixNano: tsNs,
+        asInt: String(linesRemoved),
+      });
+    }
+    return {
+      name: 'claude_code.lines_of_code.count',
+      sum: { dataPoints, aggregationTemporality: 1, isMonotonic: true },
+    };
+  }
+
+  private buildApiRequestRecord(event: Record<string, unknown>, tsNs: string): object {
+    const sessionId = String(event['session_id'] ?? '');
+    const userEmail = this.resolveUserEmail(event);
+    const model = String(event['model'] ?? '');
+    const toInt = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    return {
+      timeUnixNano: tsNs,
+      observedTimeUnixNano: tsNs,
+      severityNumber: 9,
+      severityText: 'INFO',
+      body: { stringValue: '' },
+      attributes: [
+        { key: 'event.name', value: { stringValue: 'api_request' } },
+        { key: 'session_id', value: { stringValue: sessionId } },
+        { key: 'user.email', value: { stringValue: userEmail } },
+        { key: 'model', value: { stringValue: model } },
+        { key: 'input_tokens', value: { intValue: toInt(event['input_tokens']) } },
+        { key: 'output_tokens', value: { intValue: toInt(event['output_tokens']) } },
+        { key: 'cache_read_tokens', value: { intValue: toInt(event['cache_read_input_tokens']) } },
+        { key: 'cache_creation_tokens', value: { intValue: toInt(event['cache_creation_input_tokens']) } },
+      ],
+    };
+  }
+
+  private async postOtlp(url: string, payload: unknown): Promise<void> {
+    try {
+      if (!this.credentials || !this.baseUrl) return;
       let headers: Record<string, string>;
       if (isSSOCredentials(this.credentials)) {
         headers = buildAuthHeaders(this.credentials.cookies);
       } else if (isJWTCredentials(this.credentials)) {
         headers = buildAuthHeaders(this.credentials.token);
       } else {
-        logger.info('[otlp-ingest] pushToBackend: unrecognized credentials shape, skipping');
         return;
       }
-      headers['Content-Type'] = 'application/x-ndjson';
-
-      logger.info('[otlp-ingest] pushToBackend: sending', ...sanitizeLogArgs({ url }));
-
+      headers['Content-Type'] = 'application/json';
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 1500);
       try {
         const response = await fetch(url, {
           method: 'POST',
           headers,
-          body: `${JSON.stringify(record)}\n`,
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
         if (!response.ok) {
           const bodyText = await response.text().catch(() => '');
           logger.info(
-            `[otlp-ingest] pushToBackend: received status ${response.status}`,
+            `[otlp-ingest] postOtlp: status ${response.status}`,
             ...sanitizeLogArgs({ url, body: bodyText.slice(0, 500) })
           );
         } else {
-          logger.info(`[otlp-ingest] pushToBackend: success (status ${response.status})`, ...sanitizeLogArgs({ url }));
+          await response.body?.cancel().catch(() => {});
         }
       } finally {
         clearTimeout(timeout);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.info(`[otlp-ingest] pushToBackend: ${msg}`, ...sanitizeLogArgs({ url }));
+      logger.info(`[otlp-ingest] postOtlp: ${msg}`, ...sanitizeLogArgs({ url }));
     }
   }
 
-  // TODO(colleague): implement OTLP metrics forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_METRICS
-  private async pushMetrics(_data: unknown): Promise<void> {
-    return;
+  private async pushMetrics(payload: unknown): Promise<void> {
+    return this.postOtlp(`${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_METRICS}`, payload);
   }
 
-  // TODO(colleague): implement OTLP logs forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS
-  private async pushLogs(_data: unknown): Promise<void> {
-    return;
+  private async pushLogs(payload: unknown): Promise<void> {
+    return this.postOtlp(`${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS}`, payload);
   }
 
-  // TODO(colleague): implement OTLP traces forwarding to CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES
-  private async pushTraces(_data: unknown): Promise<void> {
-    return;
+  private async pushTraces(payload: unknown): Promise<void> {
+    return this.postOtlp(`${this.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES}`, payload);
+  }
+
+  private async dispatchOtlpSignals(payload: OtlpEventPayload): Promise<void> {
+    let event: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(payload.raw) as unknown;
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return;
+      event = parsed as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const hookName = String(event['hook_event_name'] ?? '');
+    const tsNs = this.nowNs();
+
+    if (hookName === 'postToolUse') {
+      await Promise.all([
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushTraces(this.wrapTraces([this.buildToolSpan(event, tsNs)])),
+      ]);
+      return;
+    }
+    if (hookName === 'beforeSubmitPrompt') {
+      await Promise.all([
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushTraces(this.wrapTraces([this.buildInteractionSpan(event, tsNs)])),
+      ]);
+      return;
+    }
+    if (hookName === 'subagentStop') {
+      await Promise.all([
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushTraces(this.wrapTraces([this.buildSubagentSpan(event, tsNs)])),
+      ]);
+      return;
+    }
+    if (hookName === 'afterFileEdit') {
+      const metric = this.buildLinesMetric(event, tsNs);
+      if (metric) await this.pushMetrics(this.wrapMetrics([metric]));
+      return;
+    }
+    if (hookName === 'stop') {
+      await this.pushLogs(this.wrapLogs([
+        this.buildLogRecord(event, hookName, tsNs),
+        this.buildApiRequestRecord(event, tsNs),
+      ]));
+      return;
+    }
+    await this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)]));
   }
 }
