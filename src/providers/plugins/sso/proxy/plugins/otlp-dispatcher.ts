@@ -54,23 +54,38 @@ export class OtlpDispatcher {
     const hookName = String(event['hook_event_name'] ?? '');
     const tsNs = this.nowNs();
 
+    let gitBranch = '';
+    let repoRemote = '';
+    const cwd = this.extractCwd(event);
+    if (cwd) {
+      try {
+        const { detectGitBranch, detectGitRemoteRepo } = await import('../../../../../utils/processes.js');
+        [gitBranch, repoRemote] = await Promise.all([
+          detectGitBranch(cwd).then(v => v ?? ''),
+          detectGitRemoteRepo(cwd).then(v => v ?? ''),
+        ]);
+      } catch {
+        // ignore — git info is best-effort
+      }
+    }
+
     if (hookName === 'postToolUse') {
       await Promise.all([
-        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)])),
         this.pushTraces(this.wrapTraces([this.buildToolSpan(event, tsNs)])),
       ]);
       return;
     }
     if (hookName === 'beforeSubmitPrompt') {
       await Promise.all([
-        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)])),
         this.pushTraces(this.wrapTraces([this.buildInteractionSpan(event, tsNs)])),
       ]);
       return;
     }
     if (hookName === 'subagentStop') {
       await Promise.all([
-        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)])),
+        this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)])),
         this.pushTraces(this.wrapTraces([this.buildSubagentSpan(event, tsNs)])),
       ]);
       return;
@@ -82,12 +97,12 @@ export class OtlpDispatcher {
     }
     if (hookName === 'stop') {
       await this.pushLogs(this.wrapLogs([
-        this.buildLogRecord(event, hookName, tsNs),
+        this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote),
         this.buildApiRequestRecord(event, tsNs),
       ]));
       return;
     }
-    await this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs)]));
+    await this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)]));
   }
 
   private nowNs(): string {
@@ -104,8 +119,9 @@ export class OtlpDispatcher {
 
   private extractCwd(event: Record<string, unknown>): string {
     const roots = event['workspace_roots'];
-    if (Array.isArray(roots) && roots.length > 0) return String(roots[0]);
-    return String(event['cwd'] || '');
+    const raw = Array.isArray(roots) && roots.length > 0 ? String(roots[0]) : String(event['cwd'] || '');
+    // Cursor sends MINGW-style paths on Windows: /C:/foo → C:/foo
+    return raw.replace(/^\/([A-Za-z]):\//, '$1:/');
   }
 
   private extractPromptBody(event: Record<string, unknown>): string {
@@ -194,7 +210,7 @@ export class OtlpDispatcher {
     return this.wrapSignal('resourceMetrics', 'scopeMetrics', 'metrics', metrics);
   }
 
-  private buildLogRecord(event: Record<string, unknown>, hookName: string, tsNs: string): object {
+  private buildLogRecord(event: Record<string, unknown>, hookName: string, tsNs: string, gitBranch = '', repoRemote = ''): object {
     const eventType = EVENT_TYPE_MAP[hookName] ?? hookName;
     const toolUseId = String(event['tool_use_id'] ?? '').replace(/\n/g, '_');
     const userEmail = this.resolveUserEmail(event);
@@ -204,8 +220,8 @@ export class OtlpDispatcher {
       { key: 'developer_name', value: { stringValue: userEmail } },
       { key: 'user.email', value: { stringValue: userEmail } },
       { key: 'cwd', value: { stringValue: this.extractCwd(event) } },
-      { key: 'git_branch', value: { stringValue: '' } },
-      { key: 'repo_remote', value: { stringValue: '' } },
+      { key: 'git_branch', value: { stringValue: gitBranch } },
+      { key: 'repo_remote', value: { stringValue: repoRemote } },
       { key: 'tool_name', value: { stringValue: String(event['tool_name'] ?? '') } },
       { key: 'tool_use_id', value: { stringValue: toolUseId } },
       { key: 'tool_input', value: { stringValue: event['tool_input'] ? JSON.stringify(event['tool_input']) : '' } },
