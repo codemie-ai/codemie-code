@@ -385,6 +385,26 @@ describe('selectPreferredClaudeModels', () => {
       ['claude-sonnet-4-6']
     )).toEqual(['claude-sonnet-4-6-vertex']);
   });
+
+  // Philips-shaped fixture, authored fresh here — never the root sample file.
+  const PHILIPS_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
+
+  it('resolves version-first (Philips) Claude names for every preferred family', () => {
+    const resolved = selectPreferredClaudeModels(PHILIPS_CLAUDE_FIXTURE);
+    expect(resolved).toContain('claude-5-opus');
+    expect(resolved).toContain('claude-4-5-haiku');
+    expect(resolved).toContain('claude-4-6-sonnet');
+  });
+
+  it('omits a preferred family with no match and still resolves the rest', () => {
+    const resolved = selectPreferredClaudeModels(['claude-4-6-sonnet']);
+    expect(resolved).toEqual(['claude-4-6-sonnet']);
+  });
+
+  it('never resolves a github-copilot-claude-* deployment', () => {
+    const resolved = selectPreferredClaudeModels(['github-copilot-claude-sonnet-4-5']);
+    expect(resolved).toEqual([]);
+  });
 });
 
 describe('selectDesktopClaudeModels', () => {

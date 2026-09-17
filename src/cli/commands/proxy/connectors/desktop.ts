@@ -10,6 +10,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { resolveTenantModelId } from './model-name-resolver.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -190,18 +191,9 @@ export function selectPreferredClaudeModels(
   const availableSet = new Set(available);
   const resolved: string[] = [];
   for (const name of preferred) {
-    if (availableSet.has(name)) {
-      resolved.push(name);
-      continue;
-    }
-    const datePrefix = `${name}-`;
-    const dated = available
-      .filter((id) => id.startsWith(datePrefix))
-      .filter((id) => /^\d{6,10}$/.test(id.slice(datePrefix.length)))
-      .sort()
-      .pop();
-    if (dated) {
-      resolved.push(dated);
+    const match = resolveTenantModelId(name, available);
+    if (match) {
+      resolved.push(match);
       continue;
     }
     const vertexId = `${name}-vertex`;
