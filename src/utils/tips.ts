@@ -27,11 +27,12 @@
  * - CODEMIE_TIPS=false|0|no: disable session tips (`codemie tips` still works)
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { logger } from './logger.js';
 import { getCodemiePath, getDirname } from './paths.js';
+import { parseBooleanEnv } from './env.js';
 
 /**
  * A single feature tip.
@@ -123,16 +124,7 @@ const stateFilePath = (): string => getCodemiePath('.tips-state.json');
  * @returns true unless CODEMIE_TIPS is set to a falsy value ('false', '0', 'no')
  */
 export function isTipsEnabled(): boolean {
-  const envValue = process.env.CODEMIE_TIPS;
-
-  // If not set, default to true (tips enabled)
-  if (envValue === undefined || envValue === null || envValue === '') {
-    return true;
-  }
-
-  // Parse as boolean
-  const normalized = envValue.toLowerCase().trim();
-  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  return parseBooleanEnv(process.env.CODEMIE_TIPS, true);
 }
 
 /**
@@ -251,11 +243,20 @@ function loadRotationState(): TipsRotationState {
   }
 }
 
+/**
+ * Persist rotation state. The write goes through a same-directory temp file
+ * plus rename, so a concurrent reader never sees a truncated file (rename is
+ * atomic on POSIX and Windows for same-dir renames). Read-modify-write races
+ * between concurrent sessions remain theoretically possible — accepted as
+ * low-harm (worst case: a tip repeats); deliberately no locking.
+ */
 function saveRotationState(state: TipsRotationState): void {
   const file = stateFilePath();
   try {
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(state, null, 2), 'utf-8');
+    const tmpFile = `${file}.tmp`;
+    writeFileSync(tmpFile, JSON.stringify(state, null, 2), 'utf-8');
+    renameSync(tmpFile, file);
   } catch (error) {
     logger.debug('[tips] Failed to persist rotation state (non-fatal):', error);
   }
