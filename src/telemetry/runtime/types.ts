@@ -1,5 +1,6 @@
 import type { AggregatedResult, ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
+import type { DesktopRepositoryResolver } from '@/telemetry/runtime/DesktopRepositoryResolver.js';
 
 export interface LocalTelemetryDiscoveredSession {
   externalSessionId: string;
@@ -23,6 +24,7 @@ export interface DesktopTelemetryRuntimeConfig {
   syncCodeMieUrl?: string;
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
+  repositoryResolver?: DesktopRepositoryResolver;
 }
 
 export interface LocalTelemetryAdapter {

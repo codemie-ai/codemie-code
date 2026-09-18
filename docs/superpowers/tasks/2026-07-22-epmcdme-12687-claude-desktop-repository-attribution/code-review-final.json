@@ -1,0 +1,86 @@
+{
+  "decision": "approve",
+  "rationale": "Four findings from self-review. Three (concurrent-resolution race, dual-write overwrite, stale comment) confirmed real and fixed. One (numbered 'Fix N' comment references pointing to an external, uncommitted document) confirmed as a documentation hazard and removed. No outstanding findings.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "Repository and branch are resolved per Desktop LLM request, not once per proxy daemon lifetime.",
+      "status": "pass",
+      "notes": "header-injection.plugin.ts resolves per cliSessionId via a three-strategy chain (process CWD lookup, session file scan, process tree descent), cached in config.sessionRepositoryMap."
+    },
+    {
+      "criterion": "Cowork and Code tab sessions are distinguishable in analytics.",
+      "status": "pass",
+      "notes": "isCodeIntegration flag tracked through the resolution chain; Cowork sessions explicitly assert X-CodeMie-Client=claude-desktop and are tracked in sessionCoworkMap for subsequent cache-hit requests; Code tab sessions inherit the config.clientType default (also claude-desktop, verified against live data — see CR-003)."
+    },
+    {
+      "criterion": "A user switching between Cowork, a Cowork project, and the Code tab (potentially a different project) within a single Desktop session sees each segment attributed separately.",
+      "status": "pass",
+      "notes": "Each such switch corresponds to a new cliSessionId; the per-session cache (sessionRepositoryMap) resolves and stores each independently. Verified by code-structure reasoning (local debug logs from the original development period were unavailable — see technical-analysis.md 'Log Investigation')."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "na",
+      "notes": "Changes not yet committed at time of this review (working tree only)."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "npx tsc --noEmit and npx eslint --max-warnings=0 both clean on header-injection.plugin.ts and DesktopTelemetryRuntime.ts after all fixes."
+    },
+    {
+      "standard": "security-patterns",
+      "status": "pass",
+      "notes": "All lsof/ps shell-outs use fixed command templates with only a numeric pid/port interpolated (never raw user/request input) — no injection surface. macOS-only gate prevents unexpected behavior on other platforms."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "minor",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "Concurrent requests for the same brand-new cliSessionId (subprocess + orchestrator, which the code's own lastDesktopRepo comment notes arrive within ~200ms of each other) each independently checked '!config.sessionRepositoryMap.has(cliSessionId)' and, finding it unset, each kicked off its own lsof/ps resolution chain.",
+      "impact": "Redundant lsof/ps process spawns for the same session (minor CPU/latency cost), and a narrow theoretical window where the two independent resolutions could disagree if process state changed between the two lookups.",
+      "recommendation": "Extract the resolution chain into resolveDesktopSessionRepository(), backed by an in-flight-promise cache (Map<cliSessionId, Promise<...>>) so a second concurrent request awaits the first's in-progress resolution instead of starting its own.",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 97
+    },
+    {
+      "id": "CR-002",
+      "severity": "minor",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "DesktopTelemetryRuntime.ensureSession() wrote into the shared config.sessionRepositoryMap unconditionally on first session discovery, with no check for whether header-injection.plugin.ts's per-request resolution (which runs first, in real time, via process-level CWD lookup) had already resolved a value for that session.",
+      "impact": "The telemetry poll (every ~10s) could silently overwrite a more precise per-request resolution with its own, session-file-derived one — no data corruption expected in the common case (both usually resolve the same directory), but no correctness guarantee either, and no coordination between the two independent writers.",
+      "recommendation": "Add the same 'don't overwrite if already set' guard the header-injection side already uses: '!this.config.sessionRepositoryMap?.has(discovered.agentSessionId)' before the .set() call.",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "line": 158
+    },
+    {
+      "id": "CR-003",
+      "severity": "minor",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "In-code comment claimed 'For Code tab (isCodeIntegration=true): client stays as CLI' — but no code path in the file ever sets X-CodeMie-Client to a CLI value for this case; the header simply isn't touched, leaving config.clientType's Desktop-mode default (claude-desktop) in place.",
+      "impact": "Misleading documentation for future maintainers — could lead someone to 'fix' correctly-working code because it doesn't match what the comment claims, or to misdiagnose an unrelated bug.",
+      "recommendation": "Verified against live preview Elasticsearch (client_type=claude-desktop documents with a non-empty branch — the Code tab signature — found: 86 matches, e.g. epm-cdme/codemie-ui | EPMCDME-12687 | claude-desktop). Corrected the comment to describe actual, verified behavior.",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 176
+    },
+    {
+      "id": "CR-004",
+      "severity": "info",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "Multiple comments referenced a 'Fix 3' / 'Fix 4' / 'Fix 4B' numbering scheme from a personal working spec that was never committed to this repository (confirmed: not present anywhere in docs/, moved to the ticket owner's local ~/Downloads/spec.md outside any repo during an earlier cleanup pass).",
+      "impact": "Dangling references — a future reader grepping for 'Fix 4B' or trying to find what 'Fix 3' means would find nothing in the repository.",
+      "recommendation": "Rewrote all such comments to describe the code directly, with no external numbering scheme to maintain. Confirmed via grep that no repo in this ticket's scope (codemie, codemie-ui, codemie-code) has any other instance of this pattern introduced by this branch.",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 89
+    }
+  ]
+}

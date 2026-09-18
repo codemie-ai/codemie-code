@@ -298,8 +298,12 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   /**
    * Extract metrics data from Claude messages.
    * Aggregates tokens, tools, and file operations.
+   *
+   * Public so a caller that normalizes a non-standard transcript after parsing — Claude Desktop's
+   * Cowork audit log, which names the tool result `tool_use_result` — can re-run extraction over
+   * the corrected messages instead of duplicating this logic.
    */
-  private extractMetrics(messages: ClaudeMessage[]) {
+  extractMetrics(messages: ClaudeMessage[]) {
     const toolCounts: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
     const fileOperations: ClaudeFileOperation[] = [];

@@ -81,21 +81,51 @@ function backfillTimestampsFromAuditLog(messages: ClaudeMessage[]): void {
   }
 }
 
+/**
+ * Cowork's audit log names the tool result `tool_use_result`, while Claude Code transcripts use
+ * `toolUseResult`. The payload is identical (filePath, structuredPatch, oldString/newString), but
+ * the metrics and file-operation processors only read the camelCase field — so a Cowork session
+ * reported zero file operations and zero line changes despite real Edit/Write activity, while the
+ * Code tab (a genuine Claude Code transcript) reported them correctly. Alias the field here, next
+ * to the timestamp backfill, because `tool_use_result` is a Cowork audit-log artifact that real
+ * Claude Code sessions never carry, making this a no-op for them.
+ */
+function aliasAuditToolResults(messages: ClaudeMessage[]): number {
+  let aliased = 0;
+
+  for (const message of messages) {
+    if (message.toolUseResult) continue;
+
+    const auditResult = (message as { tool_use_result?: ClaudeMessage['toolUseResult'] })
+      .tool_use_result;
+    if (auditResult) {
+      message.toolUseResult = auditResult;
+      aliased++;
+    }
+  }
+
+  return aliased;
+}
+
 export async function parseClaudeDesktopSession(
   discovered: LocalTelemetryDiscoveredSession,
   codemieSessionId: string
 ): Promise<ParsedSession> {
   if (discovered.transcriptPath.endsWith('.jsonl')) {
-    const parsed = await new ClaudeSessionAdapter(ClaudePluginMetadata).parseSessionFile(
-      discovered.transcriptPath,
-      codemieSessionId
-    );
+    const adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+    const parsed = await adapter.parseSessionFile(discovered.transcriptPath, codemieSessionId);
+    const messages = parsed.messages as ClaudeMessage[];
 
-    backfillTimestampsFromAuditLog(parsed.messages as ClaudeMessage[]);
+    backfillTimestampsFromAuditLog(messages);
+    const aliased = aliasAuditToolResults(messages);
 
     return {
       ...parsed,
-      agentName: 'claude-desktop'
+      agentName: 'claude-desktop',
+      // parseSessionFile extracts metrics before the alias above runs, so a Cowork transcript
+      // would report zero file operations and zero line changes. Re-extract over the corrected
+      // messages; skipped entirely for real Claude Code transcripts, which need no aliasing.
+      metrics: aliased > 0 ? adapter.extractMetrics(messages) : parsed.metrics
     };
   }
 
