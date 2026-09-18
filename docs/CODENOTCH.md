@@ -9,19 +9,18 @@ fed by your existing CodeMie profile. No separate sign-in, no separate binary.
 
 ```bash
 codemie install codenotch                    # the app itself, from the latest release
-codemie install codenotch --budget-plugin    # the app + CodeMie budget providers
-codemie uninstall codenotch                  # removes the app and the providers
+codemie install codenotch --budget-plugin    # the app + the CodeMie usage provider
+codemie uninstall codenotch                  # removes the app and the provider
 ```
 
-`--budget-plugin` registers two providers with Codenotch, which picks them up
-live (no app restart):
+`--budget-plugin` registers a single provider with Codenotch, which picks it
+up live (no app restart):
 
-- **CodeMie Budget** — every budget bucket on your account (CLI / platform /
-  premium), led by a Total headline with spent, remaining and reset date.
-- **CodeMie Claude** — the same buckets shaped like Codenotch's usual Claude
-  provider, plus live session activity on the ring.
+- **CodeMie Usage** — every budget bucket on your account (CLI / platform /
+  premium) shaped like Codenotch's usual Claude provider, led by the CLI
+  bucket, plus live session activity on the ring.
 
-Both appear in Codenotch settings connected by default and can be toggled,
+It appears in Codenotch settings connected by default and can be toggled,
 reordered, or removed like any built-in provider. Budget data comes from the
 authenticated CodeMie profile (`codemie setup` / `codemie profile login`) —
 the same `GET {baseUrl}/v1/analytics/budget_usage` endpoint the statusline
@@ -31,12 +30,11 @@ uses, with a 60-second cache so Codenotch's polling never hammers the backend.
 
 Codenotch's provider plugin protocol
 ([`docs/design/plugin-protocol.md`](https://github.com/vinzdg/codenotch/blob/main/docs/design/plugin-protocol.md))
-is a manifest plus an executable it can poll. Registration writes two
-manifests into `~/Library/Application Support/Codenotch/Plugins/` whose
-executable is the CodeMie CLI itself:
+is a manifest plus an executable it can poll. Registration writes a manifest
+into `~/Library/Application Support/Codenotch/Plugins/` whose executable is
+the CodeMie CLI itself:
 
 ```
-codemie codenotch snapshot --provider codemie-budget
 codemie codenotch snapshot --provider codemie-claude
 ```
 
@@ -54,6 +52,6 @@ toolchain needed anywhere.
 
 - `src/cli/commands/codenotch/index.ts` — the hidden bridge command
 - `src/cli/commands/codenotch/budget.ts` — profile, credentials, budget fetch, cache
-- `src/cli/commands/codenotch/snapshot.ts` — protocol payload builders
+- `src/cli/commands/codenotch/snapshot.ts` — protocol payload builder
 - `src/cli/commands/codenotch/installer.ts` — app install, plugin registration
-- `src/cli/commands/codenotch/assets/` — the two provider glyphs
+- `src/cli/commands/codenotch/assets/` — the provider glyph

@@ -13,8 +13,7 @@ function note(message: string): void {
  * Budget data for the Codenotch plugin bridge, read from the same place as
  * the CodeMie statusline: `{baseUrl}/v1/analytics/budget_usage`, authenticated
  * with the CLI's own SSO credential store. A 60-second on-disk cache spares
- * the backend — Codenotch polls each provider on its own cadence, and two
- * providers share one cache entry.
+ * the backend — Codenotch polls on its own cadence and reuses the cache entry.
  */
 
 export interface BudgetRow {

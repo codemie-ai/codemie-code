@@ -13,7 +13,7 @@ const run = promisify(execFile);
 export const CODENOTCH_NAME = 'codenotch';
 export const CODENOTCH_DISPLAY_NAME = 'Codenotch';
 export const CODENOTCH_DESCRIPTION =
-  'AI usage in the Mac notch — plus CodeMie budget and Claude session spending providers';
+  'AI usage in the Mac notch — plus your CodeMie budget and Claude session spending as a provider';
 
 /** Where Codenotch releases live. */
 const RELEASE_REPO = 'vinzdg/codenotch';
@@ -43,13 +43,19 @@ interface ProviderSpec {
 }
 
 const PROVIDERS: ProviderSpec[] = [
-  { id: 'codemie-budget', displayName: 'CodeMie Budget' },
   {
     id: 'codemie-claude',
-    displayName: 'CodeMie Claude',
+    displayName: 'CodeMie Usage',
     activity: { type: 'claudeSessions', configDir: '~/.claude' },
   },
 ];
+
+/**
+ * Provider ids earlier builds registered and this one no longer does. Cleaned
+ * up on both register and unregister: a leftover directory keeps Codenotch
+ * polling `--provider codemie-budget`, which now exits 1 as an unknown id.
+ */
+const RETIRED_PROVIDER_IDS = ['codemie-budget'];
 
 function manifestFor(spec: ProviderSpec, bin: string): Record<string, unknown> {
   return {
@@ -72,12 +78,31 @@ function manifestFor(spec: ProviderSpec, bin: string): Record<string, unknown> {
 }
 
 /**
- * Write both plugin manifests and glyph assets into Codenotch's plugins
+ * Remove a plugin directory, but only when its manifest carries the expected
+ * id — a directory the user repurposed is never deleted.
+ */
+async function removeProviderDir(id: string): Promise<string | null> {
+  const dir = join(pluginsRoot(), id);
+  const manifestPath = join(dir, 'plugin.json');
+  if (!existsSync(manifestPath)) return null;
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8')) as { id?: string };
+    if (manifest.id !== id) return null;
+  } catch {
+    return null;
+  }
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/**
+ * Write the plugin manifest and glyph asset into Codenotch's plugins
  * directory. Idempotent — re-running rewrites identical files. Codenotch
- * watches the directory and picks the providers up without a restart.
+ * watches the directory and picks the provider up without a restart.
  */
 export async function registerCodenotchPlugins(): Promise<string[]> {
   const written: string[] = [];
+  for (const id of RETIRED_PROVIDER_IDS) await removeProviderDir(id);
   const assetsDir = join(getDirname(import.meta.url), 'assets');
   for (const spec of PROVIDERS) {
     const dir = join(pluginsRoot(), spec.id);
@@ -93,24 +118,13 @@ export async function registerCodenotchPlugins(): Promise<string[]> {
   return written;
 }
 
-/**
- * Remove the plugin directories — but only ones whose manifest carries the
- * expected id, so a directory the user repurposed is never deleted.
- */
+/** Remove the plugin directories this build owns, plus any retired ones. */
 export async function unregisterCodenotchPlugins(): Promise<string[]> {
   const removed: string[] = [];
-  for (const spec of PROVIDERS) {
-    const dir = join(pluginsRoot(), spec.id);
-    const manifestPath = join(dir, 'plugin.json');
-    if (!existsSync(manifestPath)) continue;
-    try {
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf-8')) as { id?: string };
-      if (manifest.id !== spec.id) continue;
-    } catch {
-      continue;
-    }
-    await rm(dir, { recursive: true, force: true });
-    removed.push(dir);
+  const ids = [...PROVIDERS.map((spec) => spec.id), ...RETIRED_PROVIDER_IDS];
+  for (const id of ids) {
+    const dir = await removeProviderDir(id);
+    if (dir) removed.push(dir);
   }
   return removed;
 }

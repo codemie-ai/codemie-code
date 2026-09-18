@@ -33,7 +33,7 @@ export function createInstallCommand(): Command {
     .option('--supported', 'Install the latest supported version tested with CodeMie')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
-    .option('--budget-plugin', 'With `codemie install codenotch`: also register the CodeMie budget providers')
+    .option('--budget-plugin', 'With `codemie install codenotch`: also register the CodeMie usage provider')
     .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean; budgetPlugin?: boolean }) => {
       // Enable debug mode if --verbose flag is set
       if (options?.verbose) {
@@ -106,7 +106,7 @@ export function createInstallCommand(): Command {
           console.log(`    Command: ${chalk.cyan(`codemie install ${CODENOTCH_NAME}`)}`);
           console.log(`    Status: ${codenotchPluginStatus}`);
           console.log(`    ${chalk.white(CODENOTCH_DESCRIPTION)}`);
-          console.log(chalk.gray('    Enable the budget providers with: codemie install codenotch --budget-plugin'));
+          console.log(chalk.gray('    Enable the CodeMie usage provider with: codemie install codenotch --budget-plugin'));
           console.log();
 
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install <name>') + ' to install an agent or framework');
@@ -347,19 +347,19 @@ export function createInstallCommand(): Command {
           }
 
           if (options?.budgetPlugin) {
-            const pluginSpinner = ora('Registering CodeMie budget providers...').start();
+            const pluginSpinner = ora('Registering the CodeMie usage provider...').start();
             try {
               const written = await registerCodenotchPlugins();
-              pluginSpinner.succeed('CodeMie Budget and CodeMie Claude providers registered');
-              console.log(chalk.gray('   Codenotch picks them up automatically — no restart needed'));
+              pluginSpinner.succeed('CodeMie Usage provider registered');
+              console.log(chalk.gray('   Codenotch picks it up automatically — no restart needed'));
               console.log(chalk.gray('   Budget is read from your authenticated CodeMie profile — no setup needed'));
               logger.debug(`Registered: ${written.join(', ')}`);
             } catch (error: unknown) {
-              pluginSpinner.fail('Failed to register the budget providers');
+              pluginSpinner.fail('Failed to register the CodeMie usage provider');
               throw error;
             }
           } else {
-            console.log(chalk.gray('   Tip: re-run with --budget-plugin to add CodeMie budget and Claude spending to the notch'));
+            console.log(chalk.gray('   Tip: re-run with --budget-plugin to add CodeMie budget and session spending to the notch'));
           }
           console.log();
           return;

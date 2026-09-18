@@ -49,7 +49,7 @@ async function runSnapshot(provider: CodenotchProviderId): Promise<number> {
       process.stderr.write(`codemie codenotch: ${outcome.reason}\n`);
       return EXIT.failed;
     case 'ok': {
-      const payload = buildSnapshot(provider, outcome.rows, outcome.profile);
+      const payload = buildSnapshot(outcome.rows, outcome.profile);
       if (!payload) {
         process.stderr.write(
           `codemie codenotch: no budget rows for ${outcome.profile.userEmail}\n`

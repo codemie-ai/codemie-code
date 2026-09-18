@@ -1173,21 +1173,20 @@ Install [Codenotch](https://github.com/vinzdg/codenotch) — the macOS notch app
 **Usage:**
 ```bash
 codemie install codenotch                    # install the app
-codemie install codenotch --budget-plugin    # install the app + CodeMie budget providers
-codemie uninstall codenotch                  # remove the app and the providers
+codemie install codenotch --budget-plugin    # install the app + the CodeMie usage provider
+codemie uninstall codenotch                  # remove the app and the provider
 ```
 
 **Options:**
-- `--budget-plugin` - Also register the CodeMie budget providers with Codenotch
+- `--budget-plugin` - Also register the CodeMie usage provider with Codenotch
 
-**With `--budget-plugin`, two providers are registered and picked up by Codenotch live (no app restart):**
-- `CodeMie Budget` - every budget bucket on your account (CLI / platform / premium) with a Total headline (spent, remaining, reset date)
-- `CodeMie Claude` - the same buckets shaped like Codenotch's Claude provider, plus live session activity
+**With `--budget-plugin`, a single provider is registered and picked up by Codenotch live (no app restart):**
+- `CodeMie Usage` - every budget bucket on your account (CLI / platform / premium) shaped like Codenotch's Claude provider, led by the CLI bucket, plus live session activity
 
 **Notes:**
 - Budget data comes from your authenticated CodeMie profile (`codemie setup` / `codemie profile login`) — no separate sign-in
-- Both providers behave like built-ins: toggle, reorder, or remove them in Codenotch settings
-- `codemie uninstall codenotch` removes the app and unregisters the providers
+- The provider behaves like a built-in: toggle, reorder, or remove it in Codenotch settings
+- `codemie uninstall codenotch` removes the app and unregisters the provider
 - The provider bridge ships inside the CLI (hidden `codemie codenotch` command), so every CLI release carries it. See [Codenotch integration](CODENOTCH.md)
 
 ### `codemie update [agent]`
