@@ -106,4 +106,9 @@ describe('fetchTenantModelCatalog', () => {
     await expect(fetchTenantModelCatalog('http://127.0.0.1:4001', 'gw-key'))
       .rejects.toThrow(/timed out/i);
   });
+
+  it('wraps a malformed proxyUrl in ConfigurationError instead of a raw TypeError', async () => {
+    await expect(fetchTenantModelCatalog('not-a-valid-url', 'gw-key'))
+      .rejects.toThrow(ConfigurationError);
+  });
 });

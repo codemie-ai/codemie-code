@@ -105,7 +105,15 @@ function isAbortError(error: unknown): boolean {
  * curated list.
  */
 export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: string): Promise<string[]> {
-  const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+  let endpoint: string;
+  try {
+    endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+  } catch (error) {
+    throw new ConfigurationError(
+      `Local proxy model discovery could not build a request URL from proxyUrl "${proxyUrl}". ` +
+      `Reason: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   logCatalogFetchStart(endpoint, proxyUrl, gatewayKey);
   try {
     const response = await fetchWithTimeout(
