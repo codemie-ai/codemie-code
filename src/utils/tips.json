@@ -802,5 +802,32 @@
     "commands": [
       "MCP_PROXY_DEBUG=true codemie mcp-proxy <url>"
     ]
+  },
+  {
+    "id": "cmd-install-codenotch",
+    "category": "Getting Started",
+    "message": "Want your usage on screen? `codemie install codenotch` puts Codenotch in the Mac notch — rings for every agent account, right at the screen edge.",
+    "command": "install",
+    "commands": [
+      "codemie install codenotch"
+    ]
+  },
+  {
+    "id": "cmd-install-codenotch-budget",
+    "category": "Getting Started",
+    "message": "`codemie install codenotch --budget-plugin` adds CodeMie Budget and CodeMie Claude to the notch — live budget and per-bucket session spending from your CodeMie profile, no separate sign-in.",
+    "command": "install",
+    "commands": [
+      "codemie install codenotch --budget-plugin"
+    ]
+  },
+  {
+    "id": "cmd-codenotch-budget-manage",
+    "category": "Commands",
+    "message": "The budget providers in Codenotch behave like built-ins: toggle, reorder or remove them in Codenotch settings — and `codemie uninstall codenotch` takes the app and providers away together.",
+    "command": "uninstall",
+    "commands": [
+      "codemie uninstall codenotch"
+    ]
   }
 ]

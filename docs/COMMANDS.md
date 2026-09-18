@@ -1166,6 +1166,30 @@ Uninstall an external AI coding agent.
 codemie uninstall <agent>
 ```
 
+### `codemie install codenotch`
+
+Install [Codenotch](https://github.com/vinzdg/codenotch) — the macOS notch app that shows AI provider usage as rings on the screen edge — from its latest GitHub release. macOS only.
+
+**Usage:**
+```bash
+codemie install codenotch                    # install the app
+codemie install codenotch --budget-plugin    # install the app + CodeMie budget providers
+codemie uninstall codenotch                  # remove the app and the providers
+```
+
+**Options:**
+- `--budget-plugin` - Also register the CodeMie budget providers with Codenotch
+
+**With `--budget-plugin`, two providers are registered and picked up by Codenotch live (no app restart):**
+- `CodeMie Budget` - every budget bucket on your account (CLI / platform / premium) with a Total headline (spent, remaining, reset date)
+- `CodeMie Claude` - the same buckets shaped like Codenotch's Claude provider, plus live session activity
+
+**Notes:**
+- Budget data comes from your authenticated CodeMie profile (`codemie setup` / `codemie profile login`) — no separate sign-in
+- Both providers behave like built-ins: toggle, reorder, or remove them in Codenotch settings
+- `codemie uninstall codenotch` removes the app and unregisters the providers
+- The provider bridge ships inside the CLI (hidden `codemie codenotch` command), so every CLI release carries it. See [Codenotch integration](CODENOTCH.md)
+
 ### `codemie update [agent]`
 
 Update installed AI coding agents to their latest versions.

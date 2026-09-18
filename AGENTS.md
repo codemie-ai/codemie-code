@@ -67,6 +67,21 @@ Do not proactively commit, push, branch, or suggest git operations.
 - Use bash/Linux-compatible shell commands only.
 - Do not rely on PowerShell or `cmd.exe` syntax.
 
+### 6. Command Changes Carry Tips and Docs
+
+Any change that adds, renames, or alters a user-visible command, flag, or
+command behaviour must update all three in the same PR:
+
+1. **Tips** — append or revise entries in `src/utils/tips.json` so new work is
+   discoverable through the session tips and `codemie tips`. Follow the
+   maintenance rules in `src/utils/tips.ts` (fresh kebab-case ids, never
+   reused; retire a command's tip when the command is retired).
+2. **Command reference** — document the change in `docs/COMMANDS.md`.
+3. **Agents catalog** — if the change affects an installable agent or
+   integration, update `docs/AGENTS.md` to match.
+
+A command change without its tips and docs is an incomplete change.
+
 ### Critical Rules (at a glance)
 
 <!-- ai-run-init:critical-rules start -->
@@ -76,6 +91,7 @@ Do not proactively commit, push, branch, or suggest git operations.
 | Tests on explicit request only | "write tests" / "run tests" / "create unit tests" | Otherwise do not write, run, or suggest tests |
 | Git ops on explicit request only | "commit" / "push" / "create branch" / "create PR" | Load `.ai-run/guides/standards/git-workflow.md`; defer to `sdlc-factory:mr-creator` skill for PR work |
 | Shell | ANY shell command | bash/Linux syntax only |
+| Tips and docs with command changes | add/rename/alter a command or flag | Update `src/utils/tips.json` and `docs/COMMANDS.md` (and `docs/AGENTS.md` for agents) in the same PR |
 <!-- ai-run-init:critical-rules end -->
 
 ## Working Sequence
