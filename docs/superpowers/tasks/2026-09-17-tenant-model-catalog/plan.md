@@ -17,7 +17,7 @@ VS Code Claude Code's settings write becomes comment-preserving via `jsonc-parse
 
 **Tech Stack:** TypeScript, Vitest, `jsonc-parser` (new dependency).
 
-**Spec:** `docs/superpowers/tasks/2026-09-17-philips-tenant-model-catalog/spec.md`
+**Spec:** `docs/superpowers/tasks/2026-09-17-tenant-model-catalog/spec.md`
 
 **Commit per task using the repository's existing convention.**
 

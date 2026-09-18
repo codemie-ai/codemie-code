@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "branch": "feature/philips-tenant-model-catalog",
+  "branch": "feature/tenant-model-catalog",
   "head": "35df84b73f4226f5cb13a8393de78a16058c3ac5",
   "runner": "npm",
   "started_at": "2026-09-17T17:16:32Z",
