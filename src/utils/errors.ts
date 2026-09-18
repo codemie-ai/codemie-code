@@ -47,6 +47,21 @@ export class AnalyticsSourceError extends CodeMieError {
   }
 }
 
+export class RegistrationItemNotFoundError extends CodeMieError {
+  constructor(kind: 'assistant' | 'skill', identifier: string) {
+    super(`No ${kind} found matching "${identifier}"`);
+    this.name = 'RegistrationItemNotFoundError';
+  }
+}
+
+export class AmbiguousIdentifierError extends CodeMieError {
+  constructor(kind: 'assistant' | 'skill', identifier: string, candidates: { id: string; name: string }[]) {
+    const list = candidates.map((candidate) => `${candidate.name} (${candidate.id})`).join(', ');
+    super(`Multiple ${kind}s match "${identifier}": ${list}`);
+    this.name = 'AmbiguousIdentifierError';
+  }
+}
+
 /**
  * npm error codes for categorizing failures
  */
