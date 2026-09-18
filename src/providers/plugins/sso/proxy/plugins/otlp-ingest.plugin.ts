@@ -1,10 +1,7 @@
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
-import { getCodemiePath } from '../../../../../utils/paths.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
@@ -47,7 +44,6 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
     try {
       const payload = await this.parseBody(ctx, res);
       if (!payload) return true;
-      await this.persistEvent(payload);
       void this.dispatcher.dispatch(payload).catch(err => {
         const msg = err instanceof Error ? err.message : String(err);
         logger.info('[otlp-ingest] dispatch error', ...sanitizeLogArgs({ err: msg }));
@@ -107,13 +103,4 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
     return payload;
   }
 
-  private async persistEvent(payload: OtlpEventPayload): Promise<void> {
-    const logPath = getCodemiePath('logs', 'hook-events.jsonl');
-    await mkdir(dirname(logPath), { recursive: true, mode: 0o700 });
-    await appendFile(logPath, `${JSON.stringify(payload)}\n`, { encoding: 'utf-8', mode: 0o600 });
-    logger.info('[otlp-ingest] Appended event', ...sanitizeLogArgs({
-      agentName: payload.agentName,
-      path: logPath,
-    }));
-  }
 }
