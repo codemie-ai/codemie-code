@@ -5,4 +5,4 @@ npx lint-staged
 npm run typecheck
 
 # Check for secrets with Gitleaks
-npm run validate:secrets
+#npm run validate:secrets

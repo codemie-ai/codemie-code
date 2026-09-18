@@ -33,6 +33,7 @@ import { extractGeneratedConfig } from './print-config.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
+import { primeProxyEnv, IMPLICIT_NO_PROXY, splitRules } from '../../utils/system-proxy.js';
 
 /**
  * Base class for all agent adapters
@@ -560,6 +561,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
+    // Must precede setupProxy(): CodeMieProxy's forwarding agents are built in
+    // its constructor from HTTP(S)_PROXY, and the spawned agent inherits `env`.
+    await this.primeSystemProxyEnv(env);
+
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
 
@@ -1037,6 +1042,54 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
       syncCodeMieUrl: env.CODEMIE_URL || undefined
     };
+  }
+
+  /**
+   * Resolve the corporate/system proxy and publish it to both this process and
+   * the environment handed to the spawned agent.
+   *
+   * Node's http/https stack never consults system proxy configuration, so on
+   * Windows behind a PAC-based proxy every upstream call from the local LLM
+   * proxy goes direct and times out. `primeProxyEnv` also seeds NO_PROXY with
+   * loopback so the agent still reaches the local proxy directly.
+   */
+  private async primeSystemProxyEnv(env: NodeJS.ProcessEnv): Promise<void> {
+    const targetApiUrl = env.CODEMIE_BASE_URL;
+    if (!targetApiUrl) return;
+
+    try {
+      await primeProxyEnv(targetApiUrl);
+    } catch (error) {
+      logger.debug('[BaseAgentAdapter] System proxy detection failed; continuing direct', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    // `env` was snapshotted from process.env before this ran.
+    for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'] as const) {
+      const value = process.env[key];
+      if (value && !env[key]) {
+        env[key] = value;
+        env[key.toLowerCase()] = value;
+      }
+    }
+
+    // The agent talks to the local proxy over loopback. A pre-existing corporate
+    // NO_PROXY (which suppresses our own seeding) may not list it, and the agent
+    // would then tunnel its model calls through the corporate proxy.
+    if (env.HTTP_PROXY || env.HTTPS_PROXY) {
+      const entries = splitRules(env.NO_PROXY);
+      const missing = IMPLICIT_NO_PROXY.filter(
+        entry => !entries.some(existing => existing.toLowerCase() === entry)
+      );
+
+      if (missing.length > 0) {
+        const merged = [...entries, ...missing].join(',');
+        env.NO_PROXY = merged;
+        env.no_proxy = merged;
+      }
+    }
   }
 
   /**

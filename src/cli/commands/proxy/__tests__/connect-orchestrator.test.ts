@@ -35,12 +35,18 @@ vi.mock('../connectors/desktop.js', () => ({
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
+  fetchClaudeModels: vi.fn().mockResolvedValue(['claude-sonnet-5', 'claude-haiku-4-5']),
 }));
 vi.mock('../connectors/vscode.js', () => ({
   writeVsCodeLanguageModelsConfig: vi.fn(),
 }));
 vi.mock('../connectors/vscode-claude-code.js', () => ({
   writeVsCodeClaudeCodeConfig: vi.fn(),
+  selectVsCodeClaudeCodeModels: vi.fn().mockReturnValue({
+    model: 'claude-sonnet-5',
+    sonnetModel: 'claude-sonnet-5',
+    haikuModel: 'claude-haiku-4-5',
+  }),
 }));
 vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
@@ -447,7 +453,11 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
     await connectTargets({ targets: { vscodeClaudeCode: true } });
 
-    expect(writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
+    expect(writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false, {
+      model: 'claude-sonnet-5',
+      sonnetModel: 'claude-sonnet-5',
+      haikuModel: 'claude-haiku-4-5',
+    });
     expect(writeDesktopConfig).not.toHaveBeenCalled();
     expect(writeVsCodeLanguageModelsConfig).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(0);
