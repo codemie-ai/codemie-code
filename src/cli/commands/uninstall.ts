@@ -8,6 +8,14 @@ import {
   uninstallStatusline,
   isStatuslineInstalled,
 } from '@/agents/plugins/claude/statusline-installer.js';
+import {
+  CODENOTCH_NAME,
+  CODENOTCH_DISPLAY_NAME,
+  uninstallCodenotchApp,
+  unregisterCodenotchPlugins,
+  isCodenotchPluginRegistered,
+} from './codenotch/installer.js';
+import { existsSync } from 'fs';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -138,6 +146,29 @@ export function createUninstallCommand(): Command {
             spinner.succeed(`${STATUSLINE_DISPLAY_NAME} uninstalled`);
           } catch (error: unknown) {
             spinner.fail(`Failed to uninstall ${STATUSLINE_DISPLAY_NAME}`);
+            throw error;
+          }
+          return;
+        }
+
+        if (name === CODENOTCH_NAME) {
+          const appInstalled = existsSync('/Applications/Codenotch.app');
+          if (!appInstalled && !isCodenotchPluginRegistered()) {
+            console.log(chalk.blueBright(`${CODENOTCH_DISPLAY_NAME} is not installed`));
+            return;
+          }
+
+          const spinner = ora(`Uninstalling ${CODENOTCH_DISPLAY_NAME}...`).start();
+          try {
+            const removedPlugins = await unregisterCodenotchPlugins();
+            const removedApp = await uninstallCodenotchApp();
+            const parts = [
+              removedApp ? 'app removed' : null,
+              removedPlugins.length > 0 ? 'budget providers unregistered' : null,
+            ].filter(Boolean);
+            spinner.succeed(`${CODENOTCH_DISPLAY_NAME} uninstalled (${parts.join(', ')})`);
+          } catch (error: unknown) {
+            spinner.fail(`Failed to uninstall ${CODENOTCH_DISPLAY_NAME}`);
             throw error;
           }
           return;
