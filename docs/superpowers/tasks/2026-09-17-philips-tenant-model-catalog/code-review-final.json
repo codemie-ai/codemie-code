@@ -19,7 +19,7 @@
     { "kind": "spec", "item": "Non-goal: no change to codex-model-resolver.ts or Codex connector behavior", "status": "pass", "notes": "file does not appear in the diff or changed_files list" },
     { "kind": "spec", "item": "Non-goal: no fully generic resolver -- Gemini/Qwen/Kimi families use exact match only", "status": "pass", "notes": "resolveTenantModelId falls through to undefined for any non gpt-/claude- family" },
     { "kind": "spec", "item": "Non-goal: vscode.ts's chatLanguageModels.json read stays strict JSON.parse, not made comment-tolerant", "status": "pass", "notes": "diff only touches buildManagedModel/resolveManagedModels and the write signature" },
-    { "kind": "spec", "item": "Non-goal: philips-llm_models.js is never committed, staged, or used as a fixture path", "status": "pass", "notes": "file does not appear in diff or changed_files; fixtures are small inline literals" },
+    { "kind": "spec", "item": "Non-goal: the local sample-data file is never committed, staged, or used as a fixture path", "status": "pass", "notes": "file does not appear in diff or changed_files; fixtures are small inline literals" },
     { "kind": "spec", "item": "Shared resolver strips the release date before reading version tokens (generalizes codex-model-resolver.ts)", "status": "partial", "notes": "RELEASE_DATE_PATTERN only matches separator-delimited dates; concatenated 8-digit Claude dates are never stripped, only masked by numeric-token truncation -- see CR-002" }
   ],
   "standards_review": [
@@ -37,7 +37,7 @@
       "line": 204,
       "title": "False 'missing' log for a reordered Claude match",
       "problem": "selectPreferredClaudeModels's missingPreferredModels check only recognizes a match via resolved.includes(name) (exact) or resolvedName.startsWith(`${name}-`) (suffix-appended, e.g. dated/vertex); resolveTenantModelId can return a token-reordered tenant id (e.g. family 'claude-opus-5' resolving to tenant id 'claude-5-opus') that satisfies neither check.",
-      "impact": "For any tenant catalog using version-first naming -- Philips's own target scenario -- families that resolved correctly and were written to the config are logged as 'missing', so the diagnostic this feature relies on for troubleshooting is wrong exactly when the new tenant-resolution logic is exercised.",
+      "impact": "For any tenant catalog using version-first naming -- this ticket's own target scenario -- families that resolved correctly and were written to the config are logged as 'missing', so the diagnostic this feature relies on for troubleshooting is wrong exactly when the new tenant-resolution logic is exercised.",
       "recommendation": "Compute missingPreferredModels via resolveTenantModelId(name, available) === undefined (or track misses where resolution actually happens) instead of re-deriving membership from string prefixes on the already-resolved list."
     },
     {
@@ -148,5 +148,6 @@
       "impact": "The file fails to compile (no exported member VS_CODE_SUPPORTED_MODELS/VsCodeModelDefinition), breaking the opt-in live model-certification suite even though it never touches the tenant-resolution code path itself.",
       "recommendation": "Update the two imports (and the selectModels/renderReport helpers' type references) to the renamed VS_CODE_CAPABILITY_TABLE/VsCodeCapabilityEntry."
     }
-  ]
+  ],
+  "reconciliation_note": "This file's review-triage dispatch raced with a second, independently-dispatched review-triage round on the same gate: this 10-item verdict was written to disk after the caller had already read and acted on an earlier 7-item verdict from the second dispatch (fixed in commits 2b7c4ac6, 31f0b946, 42132ff6, 184b1cf3, and re-verified approve in code-review-check.json). Eight of these ten findings are the same underlying issues under different numbering (CR-002/CR-003 = the 7-item verdict's date-stripping/recency-ranking pair; CR-004/CR-006/CR-007 = the function-length/timeout/fallback-chain trio; CR-008 = the JSONC formatting gap; CR-009/CR-010 = the two broken integration test files, split here into two entries) and were fixed by those same commits. Two findings were genuinely new and were not part of the 7-item verdict: CR-001 (desktop.ts's missingPreferredModels diagnostic false-flagging a reordered match, plus the now-dead -vertex fallback block CR-003 also flags) and CR-005 (a malformed proxyUrl escaping fetchTenantModelCatalog as a raw TypeError instead of ConfigurationError). Both were verified against current source, fixed, and covered by new regression tests in commits 91828b08 and d39d9292 respectively -- confirmed independently (tests, typecheck, lint all clean) rather than through a second orchestrator check round, since a check round against a stray/duplicate verdict has nothing well-defined to re-verify against. The recorded code-review.check gate decision in decisions.jsonl (approve) still reflects only the 7-item verdict it was actually run against; this note is this file's own record of the two additional findings and their resolution."
 }

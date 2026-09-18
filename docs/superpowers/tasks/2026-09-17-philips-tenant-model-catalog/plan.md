@@ -4,7 +4,7 @@
 
 **Goal:** Make VS Code Copilot BYOK, Claude Desktop, and the VS Code Claude Code extension configure
 themselves from the tenant's live `/v1/llm_models` catalog and a comment-safe settings write, instead
-of EPAM-shaped hardcoded constants and strict JSON parsing, so a Philips-shaped tenant (or any other)
+of EPAM-shaped hardcoded constants and strict JSON parsing, so a non-EPAM-shaped tenant (or any other)
 connects correctly.
 
 **Architecture:** A new shared resolver (`model-name-resolver.ts`) generalizes
@@ -23,9 +23,9 @@ VS Code Claude Code's settings write becomes comment-preserving via `jsonc-parse
 
 ## Global Constraints
 
-- `philips-llm_models.js` (untracked, repo root, real Philips tenant data) must never be committed,
-  staged, or referenced as a fixture path by any test. Every Philips-shaped fixture below is a small
-  inline literal, authored fresh in the test file that needs it.
+- A local, untracked sample-data file (repo root, real customer tenant data) must never be committed,
+  staged, or referenced as a fixture path by any test. Every non-EPAM-tenant-shaped fixture below is
+  a small inline literal, authored fresh in the test file that needs it.
 - No change to `src/providers/plugins/sso/proxy/plugins/codex-model-resolver.ts` or Codex connector
   behavior.
 - No change to `vscode.ts:189`'s strict `JSON.parse` of `chatLanguageModels.json` (machine-written,
@@ -76,11 +76,11 @@ describe('resolveTenantModelId', () => {
   it.each([
     // [description, family, available, expected]
     ['exact match', 'claude-sonnet-4-6', ['claude-sonnet-4-6'], 'claude-sonnet-4-6'],
-    ['GPT vendor-prefixed, undated (Philips)', 'gpt-5.6-luna', ['openai.gpt-5.6-luna'], 'openai.gpt-5.6-luna'],
+    ['GPT vendor-prefixed, undated (non-EPAM tenant)', 'gpt-5.6-luna', ['openai.gpt-5.6-luna'], 'openai.gpt-5.6-luna'],
     ['GPT dated, dashed minor (EPAM)', 'gpt-5.6-luna', ['gpt-5.6-luna-2026-07-09'], 'gpt-5.6-luna-2026-07-09'],
     ['GPT picks most recent dated duplicate', 'gpt-5.6-luna',
       ['gpt-5.6-luna-2025-01-01', 'gpt-5.6-luna-2026-07-09'], 'gpt-5.6-luna-2026-07-09'],
-    ['Claude family-first request, version-first tenant (Philips)', 'claude-opus-5', ['claude-5-opus'], 'claude-5-opus'],
+    ['Claude family-first request, version-first tenant (non-EPAM tenant)', 'claude-opus-5', ['claude-5-opus'], 'claude-5-opus'],
     ['Claude version-first request, family-first tenant', 'claude-haiku-4-5', ['claude-4-5-haiku'], 'claude-4-5-haiku'],
     ['Claude dated family-first tenant (EPAM)', 'claude-opus-4-5', ['claude-opus-4-5-20251101'], 'claude-opus-4-5-20251101'],
     ['no match at all', 'glm-5', ['claude-sonnet-4-6'], undefined],
@@ -288,7 +288,7 @@ Add to `vscode.test.ts`, mocking `globalThis.fetch` the same way. Use small inli
 the root sample file:
 
 ```ts
-const PHILIPS_FIXTURE = [
+const NON_EPAM_TENANT_FIXTURE = [
   'openai.gpt-5.6-luna',
   'claude-4-6-sonnet',
   'github-copilot-gpt-5-mini',
@@ -299,8 +299,8 @@ const PHILIPS_FIXTURE = [
 - AC1: fixture with no match for a given family → written config has no entry for it.
 - AC2: family matched under a different tenant id → written `id`/`name` equals the tenant id
   byte-for-byte, paired with that family's capability metadata.
-- AC3: `PHILIPS_FIXTURE` resolves `gpt-5.6-luna` to `openai.gpt-5.6-luna` verbatim (not the dated
-  canonical form).
+- AC3: `NON_EPAM_TENANT_FIXTURE` resolves `gpt-5.6-luna` to `openai.gpt-5.6-luna` verbatim (not the
+  dated canonical form).
 - AC4: `github-copilot-gpt-5-mini` / `github-copilot-claude-sonnet-4-5` never appear in the written
   config even though same-family non-prefixed entries exist in the same fixture.
 - AC5: catalog fetch resolves to `['totally-unknown-model']` (zero matches against the whole table) →
@@ -332,7 +332,7 @@ const PHILIPS_FIXTURE = [
 
 Run: `npx vitest run src/cli/commands/proxy/connectors/__tests__/tenant-catalog.test.ts src/cli/commands/proxy/connectors/__tests__/vscode.test.ts`
 
-**Test-first: yes — the AC3 test (`openai.gpt-5.6-luna` written verbatim from `PHILIPS_FIXTURE`) fails against the current static-table `buildManagedModels`, which never calls the network.**
+**Test-first: yes — the AC3 test (`openai.gpt-5.6-luna` written verbatim from `NON_EPAM_TENANT_FIXTURE`) fails against the current static-table `buildManagedModels`, which never calls the network.**
 
 ---
 
@@ -391,10 +391,10 @@ Add to the existing `selectPreferredClaudeModels` describe block, using a small 
 the root file):
 
 ```ts
-const PHILIPS_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
+const VERSION_FIRST_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
 
-it('resolves version-first (Philips) Claude names for every preferred family', () => {
-  const resolved = selectPreferredClaudeModels(PHILIPS_CLAUDE_FIXTURE);
+it('resolves version-first (non-EPAM tenant) Claude names for every preferred family', () => {
+  const resolved = selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE);
   expect(resolved).toContain('claude-5-opus');
   expect(resolved).toContain('claude-4-5-haiku');
   expect(resolved).toContain('claude-4-6-sonnet');
@@ -416,7 +416,7 @@ it('never resolves a github-copilot-claude-* deployment', () => {
 Run: `npx vitest run src/cli/commands/proxy/connectors/__tests__/desktop.test.ts`
 
 Expected: FAIL — the current suffix-only strategies never reorder `family`/`version` tokens, so none
-of `PHILIPS_CLAUDE_FIXTURE` resolve.
+of `VERSION_FIRST_CLAUDE_FIXTURE` resolve.
 
 - [ ] **Step 3: Implement**
 
@@ -441,7 +441,7 @@ are unchanged — the third new test above is a regression check on already-corr
 
 Run: `npx vitest run src/cli/commands/proxy/connectors/__tests__/desktop.test.ts`
 
-**Test-first: yes — `selectPreferredClaudeModels(PHILIPS_CLAUDE_FIXTURE)` returning `claude-5-opus` etc. fails against the current suffix-only strategies.**
+**Test-first: yes — `selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE)` returning `claude-5-opus` etc. fails against the current suffix-only strategies.**
 
 ---
 
@@ -577,11 +577,11 @@ Run: `npx vitest run src/cli/commands/proxy/connectors/__tests__/vscode-claude-c
 
 | Constraint (spec Non-goals / task instructions) | Honored by | Check |
 |---|---|---|
-| `philips-llm_models.js` never committed/staged/used as a fixture path | Tasks 3, 5 | All Philips-shaped fixtures (`PHILIPS_FIXTURE`, `PHILIPS_CLAUDE_FIXTURE`) are inline literals in the test files; no task reads or paths into the root file |
+| Local sample-data file never committed/staged/used as a fixture path | Tasks 3, 5 | All non-EPAM-tenant-shaped fixtures (`NON_EPAM_TENANT_FIXTURE`, `VERSION_FIRST_CLAUDE_FIXTURE`) are inline literals in the test files; no task reads or paths into the root file |
 | No change to `codex-model-resolver.ts` / no Codex regression | Task 1 | New resolver is a separate file; Codex connector code and its tests are untouched by every task |
 | No comment-tolerant parsing added to `vscode.ts:189` | Task 6 (scope boundary) | Only `vscode-claude-code.ts` gains `jsonc-parser`; `vscode.ts:189`'s `readProviders` is not in any task's Files list |
 | `github-copilot-*` excluded from VS Code Copilot BYOK and Claude Desktop | Tasks 1, 3, 5 | Resolver's `parseGptIdentity`/`parseClaudeIdentity` require the un-prefixed `gpt-`/`claude-` start, so a `github-copilot-*` id parses to `null` and never matches (Task 1 tests this directly); Task 3's AC4 test and Task 5's third test assert it end-to-end; `desktop.ts:144`'s existing filter is untouched |
 | No surfacing of tenant models absent from the capability table (`glm-5`, `deepseek-v3-2`, `qwen3-coder-next`, `nemotron-3-super-120b`) | Task 3 | `resolveManagedModels` only iterates `VS_CODE_CAPABILITY_TABLE` families; an unmapped tenant id simply never gets looked up |
-| No fix for Philips's duplicate/multi-`default` catalog entries | none needed | No task touches catalog deduplication or `default` handling; `resolveTenantModelId`'s `pickMostRecent` only disambiguates same-identity dated duplicates, a different mechanism |
+| No fix for the reported tenant's duplicate/multi-`default` catalog entries | none needed | No task touches catalog deduplication or `default` handling; `resolveTenantModelId`'s `pickMostRecent` only disambiguates same-identity dated duplicates, a different mechanism |
 | No skipped-model reporting | Tasks 3, 5 | Unmatched families are silently dropped (`.filter`), not logged as a report to the user |
 | No fully generic resolver — scoped to the two evidenced conventions | Task 1 | `parseClaudeIdentity` hardcodes the three known segments (`opus`/`sonnet`/`haiku`); Gemini/Qwen/Kimi get no parser and fall through to exact-match only |

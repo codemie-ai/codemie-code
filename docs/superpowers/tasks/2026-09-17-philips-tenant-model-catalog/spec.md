@@ -8,7 +8,7 @@
 `codemie proxy connect` configures three editor targets — VS Code Copilot BYOK, Claude Desktop,
 and the VS Code Claude Code extension — using constants and parsing assumptions tuned to EPAM's
 tenant. On any tenant with a different model catalog or a real hand-edited `settings.json`
-(observed at Philips), each fails independently:
+(observed on a customer tenant), each fails independently:
 
 - **Bug A** — `buildManagedModels()` (`vscode.ts:107`) writes the entire hardcoded
   `VS_CODE_SUPPORTED_MODELS` table (`vscode-models.ts:43`) into `chatLanguageModels.json` without
@@ -16,9 +16,9 @@ tenant. On any tenant with a different model catalog or a real hand-edited `sett
   offered and 400 on use; models the tenant does serve under a different identifier are never
   offered.
 - **Bug B** — `PREFERRED_CLAUDE_MODELS` (`desktop.ts:63`) and `selectPreferredClaudeModels()`
-  (`desktop.ts:186`) assume EPAM's `claude-<family>-<version>` order. Philips names Claude models
-  `claude-<version>-<family>`; the resolver's three strategies only ever append suffixes, so 7 of
-  8 Philips Claude models never resolve.
+  (`desktop.ts:186`) assume EPAM's `claude-<family>-<version>` order. The reported tenant names
+  Claude models `claude-<version>-<family>`; the resolver's three strategies only ever append
+  suffixes, so 7 of 8 of that tenant's Claude models never resolve.
 - **Bug C** — `readSettings()` (`vscode-claude-code.ts:44`) strict-parses VS Code's JSONC
   `settings.json` with `JSON.parse`. A real settings file with a comment fails to parse; the write
   is silently skipped and the extension keeps its prior routing (e.g. AWS Bedrock).
@@ -105,10 +105,10 @@ for them and none is invented speculatively.
 
 - No change to CodeMie's backend or to how tenants name their deployments — the CLI adapts to the
   tenant, not the reverse.
-- No surfacing of tenant models absent from the capability table (e.g. Philips's `glm-5`,
-  `deepseek-v3-2`, `qwen3-coder-next`, `nemotron-3-super-120b`).
-- No fix for the Philips catalog's duplicate/multi-`default` entries (`claude-4-6-sonnet` /
-  `claude-sonnet-4-6`, five `default: true` models) — a backend data question.
+- No surfacing of tenant models absent from the capability table (e.g. the reported tenant's
+  `glm-5`, `deepseek-v3-2`, `qwen3-coder-next`, `nemotron-3-super-120b`).
+- No fix for the reported tenant's catalog's duplicate/multi-`default` entries (`claude-4-6-sonnet`
+  / `claude-sonnet-4-6`, five `default: true` models) — a backend data question.
 - No changes to `codex-model-resolver.ts` or Codex connector behavior; it must not regress.
 - No comment-tolerant parsing added to `vscode.ts:189`'s `chatLanguageModels.json` read — that
   file is VS Code machine-written, not hand-edited, and doesn't share Bug C's failure mode.
@@ -119,10 +119,10 @@ for them and none is invented speculatively.
 - No connectors other than VS Code Copilot BYOK, the VS Code Claude Code extension, and Claude
   Desktop are touched.
 - No fully generic model-name resolver — scoped to the two evidenced naming conventions
-  (EPAM, Philips).
-- `philips-llm_models.js` (untracked, repo root) is a local reference only; it must never be
-  committed, staged, or used as a fixture path. Any Philips-shaped test fixture is a small inline
-  literal defined fresh for its test.
+  (EPAM-style family-first, and the reported tenant's version-first style).
+- A local, untracked sample-data file (repo root) is a local reference only; it must never be
+  committed, staged, or used as a fixture path. Any non-EPAM-tenant-shaped test fixture is a small
+  inline literal defined fresh for its test.
 
 ## Acceptance criteria
 
@@ -133,8 +133,8 @@ for them and none is invented speculatively.
    CodeMie's canonical form, the written entry's `id`/`name` is byte-identical to the tenant's own
    identifier, paired with that family's capability metadata (apiType, token limits, reasoning
    efforts, etc.).
-3. Given a synthetic Philips-shaped catalog fixture (inline, not the root sample file) containing
-   `openai.gpt-5.6-luna` with no dated suffix, the resolver matches it to the `gpt-5.6-luna`
+3. Given a synthetic non-EPAM-tenant-shaped catalog fixture (inline, not the root sample file)
+   containing `openai.gpt-5.6-luna` with no dated suffix, the resolver matches it to the `gpt-5.6-luna`
    capability family after stripping the `openai.` prefix, and writes `openai.gpt-5.6-luna`
    verbatim — not the CLI's own dated canonical form.
 4. Given a tenant catalog containing `github-copilot-*` deployments, none of them appear in the
@@ -185,10 +185,10 @@ for them and none is invented speculatively.
 ## Open risks
 
 - Whether a tenant's gateway accepts its own advertised identifier verbatim on the relevant
-  endpoint (e.g. Philips's `/v1/responses` with an `openai.`-prefixed id) cannot be verified from
-  this repository; the CLI's contract is to pass it through unchanged, not to guarantee gateway
-  acceptance.
-- Verification against a real non-EPAM tenant before release depends on a Philips-side retest or
+  endpoint (e.g. the reported tenant's `/v1/responses` with an `openai.`-prefixed id) cannot be
+  verified from this repository; the CLI's contract is to pass it through unchanged, not to
+  guarantee gateway acceptance.
+- Verification against a real non-EPAM tenant before release depends on a customer-side retest or
   synthetic-fixture-only coverage — no live non-EPAM tenant is available in this environment.
 - If a third tenant naming convention surfaces later, the two-convention-scoped resolver will need
   a follow-up change rather than already covering it.
