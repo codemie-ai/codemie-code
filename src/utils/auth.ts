@@ -11,6 +11,7 @@ import { AuthMethod } from '@/providers/core/types.js';
 import type { ProviderProfile } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
+import { primeProxyEnv } from '@/utils/system-proxy.js';
 
 /**
  * Get authenticated CodeMie client with automatic re-authentication on failure
@@ -33,6 +34,9 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
         'baseUrl is required for JWT authentication. Set it in your profile configuration.'
       );
     }
+    // The SDK talks over axios, which resolves proxies from the environment per
+    // request; on Windows the corporate proxy lives in Internet Settings only.
+    await primeProxyEnv(config.baseUrl);
     return new CodeMieClient({
       codemie_api_domain: config.baseUrl,
       external_token: token,
