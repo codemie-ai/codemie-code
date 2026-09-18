@@ -168,6 +168,21 @@ describe('spawnDaemon', () => {
     expect(args).not.toContain('--model');
   });
 
+  it('forwards the profile model as a --model argument when set', async () => {
+    arrangeReadyDaemon();
+
+    await spawnDaemon({
+      targetUrl: 'https://upstream.example.com',
+      provider: 'ai-run-sso',
+      profile: 'work',
+      port: 4001,
+      model: 'gpt-5.6-luna-2026-07-09',
+    });
+
+    const args = vi.mocked(spawnDetached).mock.calls[0][1];
+    expect(args).toEqual(expect.arrayContaining(['--model', 'gpt-5.6-luna-2026-07-09']));
+  });
+
   it('omits optional client context when it is not configured', async () => {
     arrangeReadyDaemon();
 

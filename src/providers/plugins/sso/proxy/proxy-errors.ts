@@ -79,9 +79,49 @@ export function normalizeError(error: unknown, context?: Record<string, unknown>
   }
 
   if (error instanceof Error) {
+    const errorCode = (error as any).code as string | undefined;
+    const message = error.message || '';
+
+    // Node may throw synchronously for malformed header values (for example,
+    // corrupted/invalid cookie bytes). Treat this as an auth/session issue so
+    // users get a recovery action instead of a generic 500.
+    if (
+      errorCode === 'ERR_INVALID_CHAR' ||
+      errorCode === 'ERR_HTTP_INVALID_HEADER_VALUE' ||
+      /header content|header value|cookie/i.test(message)
+    ) {
+      return new AuthenticationError(
+        'Invalid authentication session data. Run `codemie profile login` and restart the proxy.',
+        {
+          originalError: message,
+          errorCode,
+          ...context,
+        }
+      );
+    }
+
     // Network errors
     if ('code' in error) {
-      const code = (error as any).code;
+      const code = errorCode;
+
+      if (
+        message.includes('self-signed certificate in certificate chain') ||
+        message.includes('unable to verify the first certificate') ||
+        message.includes('certificate has expired') ||
+        code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+        code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+        code === 'CERT_HAS_EXPIRED'
+      ) {
+        return new UpstreamError(
+          502,
+          'TLS validation failed when connecting to upstream. Check corporate proxy certificate chain or trust settings.',
+          {
+            originalError: message,
+            errorCode: code,
+            ...context,
+          }
+        );
+      }
 
       if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ECONNRESET') {
         return new NetworkError(`Cannot connect to upstream server: ${error.message}`, {

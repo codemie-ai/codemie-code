@@ -21,8 +21,10 @@ codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
+codemie mcp <command>            # Manage MCP servers registered with Claude Code
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie codebase <command>       # Manage Codebase Memory graph UI
+codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
 ```
 
@@ -40,6 +42,25 @@ codemie codebase open                    # Open the graph UI URL only
 ```
 
 `codemie-<agent> init codebase-memory` runs the upstream MCP installer configuration, enables automatic indexing, and indexes the current repository. The graph UI defaults to `http://localhost:9749`.
+
+## Documentation & Knowledge Tools
+
+```bash
+codemie docs                             # List documentation tools and their status
+codemie docs list                        # Same as above
+codemie docs install <name>              # Install a tool globally (codebase-memory, codegraph, graphify)
+codemie docs uninstall <name>            # Uninstall a tool
+codemie docs init <name>                 # Initialize a tool in the current project
+codemie docs init <name> --cwd <path>    # Initialize in a specific directory
+```
+
+Available tools:
+
+- **codebase-memory** — persistent code intelligence graph with MCP tools and a 3D graph UI (`codemie codebase ui`). `init` runs the upstream MCP installer, enables auto-indexing, and indexes the repo.
+- **codegraph** — local-first code intelligence: builds `.codegraph/` (symbol index with `query`/`callers`/`callees`/`impact`). `init` builds the initial index; afterwards run `codegraph install` to wire its MCP server into Claude Code/Codex/OpenCode and `codegraph sync` to refresh.
+- **graphify** — multimodal knowledge graph (code, docs, PDFs, images) as a Claude Code skill. `install` uses pipx/pip (Python 3.10+ required); `init` registers the `/graphify` skill, then run `/graphify .` inside Claude Code to build the graph.
+
+OpenWiki is model-backed and managed as an agent instead of a docs tool: `codemie install openwiki`, then `codemie-openwiki --init` to generate the repo wiki and `codemie-openwiki --update` to refresh it. It uses the active CodeMie profile (SSO proxy, LiteLLM, or Ollama) — no separate API keys.
 
 ## Framework Init Commands
 
@@ -67,6 +88,8 @@ codemie proxy stop               # Stop the local proxy daemon
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
+codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
@@ -163,7 +186,7 @@ reduced hidden-reasoning continuity. Prefer a current VS Code release (1.122 or 
 stateless flag and marker suppression are honored.
 
 Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
-and routing coverage runs as part of `npm run test:all`.
+and routing coverage runs as part of `npm test`.
 
 #### Troubleshooting VS Code BYOK
 
@@ -251,6 +274,46 @@ If Claude Desktop still appears connected to Anthropic subscription or another G
 4. Reopen Claude Desktop.
 
 CodeMie cannot forcibly log you out from Claude Desktop. It can only write the CodeMie proxy configuration and help you inspect the current integration state.
+
+### Codex Desktop
+
+Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app — at CodeMie models through the local proxy:
+
+```bash
+codemie proxy connect --codex-desktop
+codemie proxy connect --codex-desktop --profile work
+codemie proxy connect --codex-desktop --model gpt-5-codex
+```
+
+The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block delimited by sentinel comments: a header region at the top of the file holding `model_provider` and `model`, and a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"`, and a static `Authorization` header carrying the daemon gateway key. Everything outside those two regions — including your comments, key order and formatting — is preserved byte for byte.
+
+`~/.codex/auth.json` is never touched. Writing a provider key there would flip the app into API-key auth mode and disable features that depend on your ChatGPT account.
+
+After connecting, **quit and reopen the ChatGPT desktop app**. Configuration is read at startup.
+
+The connector pins a model — the newest GPT/Codex deployment the proxy exposes — and prints which one it chose. `--model <slug>` overrides that choice and is validated against the models the proxy actually exposes.
+
+The proxy also repairs requests the upstream gateway would reject but that direct OpenAI accepts — currently, tool definitions carrying an empty `description`, which the app's Work mode and some MCP servers emit. The empty description is replaced with the tool's own name; JSON-schema property descriptions are left alone.
+
+**Switching models in the app's picker works.** The app owns the `model` key and writes its picker selection back into `~/.codex/config.toml`, overwriting the pinned value, and the names it writes are undated (`gpt-5.6-luna`) while CodeMie deployments are dated (`gpt-5.6-luna-2026-07-09`). The proxy resolves the difference: it matches the requested name to a deployment CodeMie actually has, and when nothing matches it falls back to the newest available deployment and records the substitution in the proxy log. The picker itself still displays `Custom` rather than the CodeMie model name, which is an upstream limitation — the desktop renderer filters locally configured models out of the list.
+
+`--force` has a second meaning for this target. It bypasses both the app-not-found check — useful when the app is installed somewhere the connector does not look — and the refusal to replace an existing non-CodeMie `model_provider`.
+
+The connector refuses to write, and changes nothing, when the app cannot be found, when `~/.codex/config.toml` is not valid TOML, when the config already selects a different custom provider, or when the proxy exposes no GPT/Codex-compatible model.
+
+#### Disconnecting
+
+```bash
+codemie proxy disconnect --codex-desktop
+```
+
+Disconnect removes the managed regions and restores any top-level keys the connector commented out, so a plain Codex run behaves exactly as it did before the first connect. Edits you made to the rest of the file while connected are kept. A pre-connect snapshot remains at `~/.codex/config.toml.codemie-backup` and is restored automatically only if surgical removal cannot produce a parseable file.
+
+The daemon keeps running — it may still be serving other connected targets. Stop it with `codemie proxy stop`.
+
+#### Codex home: app versus CLI
+
+The `codemie-codex` CLI agent isolates its own state under `~/.codex/codemie/home`, while the desktop app uses the default `~/.codex`. That is deliberate, so running the CLI never disturbs the app. The consequence is that the two surfaces have separate sessions, history and settings; the same conversation will not appear in both. If you set `CODEX_HOME` yourself, the connector honours it and prints the config path it resolved.
 
 ### Global Options
 
@@ -614,7 +677,7 @@ in the bottom-left and persists your choice (defaults to dark).
 
 **Cost estimation** is computed at report time: for each session the native agent log
 (Claude, Claude Desktop, Gemini, …) is re-parsed for token usage and priced against
-`src/cli/commands/analytics/cost/pricing.json`. Claude Desktop (the native Anthropic
+`src/utils/pricing.json`. Claude Desktop (the native Anthropic
 subscription app, local-agent mode) is included — its `audit.jsonl` carries an
 authoritative per-model usage rollup that is matched against the pricing table. The
 Cost view shows a **Coverage by agent** table (sessions priced / native-log found per
@@ -635,7 +698,7 @@ counting each response once — without this the figure inflates ~2–3×. On a 
 don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
 API value of your usage, not dollars billed.
 
-> **Refreshing prices:** `cost/pricing.json` is a vendored table (`{ "<model>":
+> **Refreshing prices:** `src/utils/pricing.json` is a vendored table (`{ "<model>":
 > { input, output, cacheRead, cacheWrite } }`, USD per 1M tokens). When new models ship,
 > add or update entries there — unpriced models are surfaced in the Cost view's banner.
 
@@ -863,6 +926,33 @@ codemie plugin disable <name>
 - Config `plugins.dirs` (lowest)
 
 For full documentation, see [Plugin System](./PLUGINS.md).
+
+## MCP Command
+
+Manage MCP servers registered with Claude Code. Both subcommands are thin wrappers around `claude mcp add`/`claude mcp remove`.
+
+```bash
+codemie mcp add <name> <url> [--scope <scope>]     # Register an MCP server via codemie-mcp-proxy
+codemie mcp remove <name> [--scope <scope>]        # Remove a registered MCP server
+codemie mcp list                                   # List registered MCP servers
+```
+
+**`codemie mcp add`**
+- `<name>` — Name for the MCP server
+- `<url>` — MCP server URL (must be a valid HTTP/HTTPS URL)
+- `--scope <scope>` — Scope for the MCP server (e.g. `project`, `user`)
+
+Registers the server by running `claude mcp add <name> -- codemie-mcp-proxy <url>`, so the server is launched through the [MCP proxy](#mcp-proxy-command) for OAuth support.
+
+**`codemie mcp remove`**
+- `<name>` — Name of the MCP server to remove
+- `--scope <scope>` — Scope for the MCP server (e.g. `project`, `user`)
+
+Removes the server by running `claude mcp remove <name>`.
+
+**`codemie mcp list`**
+
+Lists registered servers by running `claude mcp list`.
 
 ## MCP Proxy Command
 

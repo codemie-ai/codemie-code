@@ -16,9 +16,24 @@ import type { RegistrationMode } from '@/cli/commands/assistants/setup/manualCon
 import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js';
 import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
-import { enableVerboseLogging, handleSetupError } from '@/cli/commands/shared/helpers.js';
+import {
+  enableVerboseLogging,
+  handleSetupError,
+  persistPartialWrites,
+  registerAllOrAbort,
+} from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
 import { resolveAgentSetupTargets, type AgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
+import { RegistrationItemNotFoundError, ConfigurationError } from '@/utils/errors.js';
+import {
+  isHeadlessMode,
+  requireFlag,
+  parseScopeFlag,
+  parseListFlag,
+  partitionRegisteredByRequest,
+  resolveHeadlessAgentTarget,
+} from '@/cli/commands/shared/headless.js';
+import { resolveIdentifiers } from '@/cli/commands/shared/identifier-resolution.js';
 
 export interface SetupCommandOptions {
   profile?: string;
@@ -26,6 +41,10 @@ export interface SetupCommandOptions {
   allProjects?: boolean;
   agent?: string;
   verbose?: boolean;
+  assistant?: string;
+  scope?: string;
+  mode?: string;
+  yes?: boolean;
 }
 
 interface ApplyChangesResult {
@@ -43,6 +62,10 @@ export function createAssistantsSetupCommand(hostAgent?: TargetAgent): Command {
     .option('--project <project>', MESSAGES.SETUP.OPTION_PROJECT)
     .option('--all-projects', MESSAGES.SETUP.OPTION_ALL_PROJECTS)
     .option('--agent <agents>', 'Target agent(s), comma-separated: claude, codex, gemini')
+    .option('--assistant <ids>', MESSAGES.SETUP.OPTION_ASSISTANT)
+    .option('--scope <scope>', MESSAGES.SETUP.OPTION_SCOPE)
+    .option('--mode <mode>', MESSAGES.SETUP.OPTION_MODE)
+    .option('-y, --yes', MESSAGES.SETUP.OPTION_YES)
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
     .action(async (options: SetupCommandOptions) => {
       if (options.verbose) {
@@ -60,6 +83,10 @@ export function createAssistantsSetupCommand(hostAgent?: TargetAgent): Command {
 }
 
 async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetAgent): Promise<void> {
+  if (isHeadlessMode(options, process.stdin.isTTY === true)) {
+    return setupAssistantsHeadless(options, hostAgent);
+  }
+
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
   const workingDir = process.cwd();
   logger.debug('Setting up assistants', { profileName, options });
@@ -135,29 +162,180 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   });
   const target = await resolveAgentSetupTargets(options.agent, hostAgent);
 
-  const { newRegistrations, registered, unregistered } = await applyChanges(
-    selectedIds,
-    selectedAssistants,
-    registeredAssistants,
-    registrationModes,
-    storageScope,
-    workingDir,
-    target
-  );
+  // The wizard drops every assistant the user deselected, so only the selected
+  // ones are carried over alongside whatever the write batch produced.
+  const selectedRegistered = registeredAssistants.filter(a => selectedIds.includes(a.id));
 
-  if (registered.length === 0 && unregistered.length === 0) {
+  const { registered, unregistered, saved } = await applyChangesAndSave({
+    selectedIds,
+    allAssistants: selectedAssistants,
+    registeredInScope: registeredAssistants,
+    carryOver: (written) => withoutWritten(selectedRegistered, written),
+    registrationModes,
+    scope: storageScope,
+    workingDir,
+    target,
+  });
+
+  if (saved === null) {
     displaySummary(registered, unregistered, profileName, registeredAssistants);
     return;
   }
 
-  const keptAssistants = registeredAssistants.filter(
-    a => selectedIds.includes(a.id) && !newRegistrations.some(n => n.id === a.id)
+  displaySummary(registered, unregistered, profileName, saved, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+}
+
+interface HeadlessAssistantFlags {
+  identifiers: string[];
+  storageScope: StorageScope;
+  registrationMode: RegistrationMode;
+  target: AgentSetupTarget;
+}
+
+/**
+ * Validates and parses every headless input before any network call or write, so a
+ * missing or invalid flag aborts with an error naming it. `--agent` may come from
+ * the hosting agent (`codemie-<agent> setup assistants`); nothing else is inferred.
+ */
+function parseHeadlessAssistantFlags(
+  options: SetupCommandOptions,
+  hostAgent?: TargetAgent
+): HeadlessAssistantFlags {
+  if (options.project || options.allProjects) {
+    throw new ConfigurationError(
+      'Non-interactive registration does not support --project/--all-projects. '
+      + 'Name the assistants explicitly with --assistant (id, slug, or exact name).'
+    );
+  }
+
+  return {
+    identifiers: parseListFlag(requireFlag(options.assistant, '--assistant')),
+    storageScope: parseScopeFlag(requireFlag(options.scope, '--scope')),
+    registrationMode: parseRegistrationModeFlag(requireFlag(options.mode, '--mode')),
+    target: resolveHeadlessAgentTarget(options.agent, hostAgent),
+  };
+}
+
+/**
+ * Non-interactive branch of `codemie setup assistants`. Every prompt
+ * (assistant selection, mode selection, manual configuration, storage scope,
+ * agent target detection/selection) is skipped in favour of flags, validated
+ * up front so an invalid or missing flag, or an unresolvable identifier,
+ * aborts before any network call or write happens.
+ */
+export async function setupAssistantsHeadless(options: SetupCommandOptions, hostAgent?: TargetAgent): Promise<void> {
+  const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
+  const workingDir = process.cwd();
+  logger.debug('Setting up assistants (headless)', { profileName, options, hostAgent });
+
+  const { identifiers, storageScope, registrationMode, target } = parseHeadlessAssistantFlags(options, hostAgent);
+
+  const config = await ConfigLoader.load(workingDir, { name: profileName });
+  const client = await getAuthenticatedClient(config, { nonInteractive: true });
+  // Only the scope being written may be read here: the cross-scope merged view
+  // would copy the other scope's registrations into this one on save.
+  const registeredAssistants = await ConfigLoader.loadAssistantsByScope(storageScope, workingDir);
+  config.codemieAssistants = registeredAssistants;
+
+  const fetcher = createDataFetcher({ config, client, options });
+  const catalog = await fetcher.fetchAllVisibleAssistants();
+
+  const resolvedAssistants = resolveIdentifiers('assistant', identifiers, catalog);
+  const selectedIds = Array.from(new Set(resolvedAssistants.map(assistant => assistant.id)));
+  const { inScope } = partitionRegisteredByRequest(registeredAssistants, selectedIds);
+
+  const registrationModes = new Map<string, RegistrationMode>(
+    selectedIds.map(id => [id, registrationMode])
   );
-  const allRegistered = [...keptAssistants, ...newRegistrations];
 
-  await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
+  const { registered, unregistered, saved } = await applyChangesAndSave({
+    selectedIds,
+    allAssistants: catalog,
+    registeredInScope: inScope,
+    // Headless registration is purely additive: every already-registered
+    // assistant the request does not name survives the save untouched.
+    carryOver: (written) => withoutWritten(registeredAssistants, written),
+    registrationModes,
+    scope: storageScope,
+    workingDir,
+    target,
+  });
 
-  displaySummary(registered, unregistered, profileName, allRegistered, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+  if (saved === null) {
+    displaySummary(registered, unregistered, profileName, registeredAssistants);
+    return;
+  }
+
+  displaySummary(registered, unregistered, profileName, saved, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+}
+
+function withoutWritten(assistants: CodemieAssistant[], written: CodemieAssistant[]): CodemieAssistant[] {
+  const writtenIds = new Set(written.map(assistant => assistant.id));
+  return assistants.filter(assistant => !writtenIds.has(assistant.id));
+}
+
+interface ApplyAndSaveParams {
+  selectedIds: string[];
+  allAssistants: (Assistant | AssistantBase)[];
+  registeredInScope: CodemieAssistant[];
+  /** Records that must survive the save, given whatever the batch wrote. */
+  carryOver: (written: CodemieAssistant[]) => CodemieAssistant[];
+  registrationModes: Map<string, RegistrationMode>;
+  scope: StorageScope;
+  workingDir: string;
+  target: AgentSetupTarget;
+}
+
+interface ApplyAndSaveResult extends ApplyChangesResult {
+  /** The saved list, or null when there was nothing to apply and nothing was saved. */
+  saved: CodemieAssistant[] | null;
+}
+
+/**
+ * Applies the registration batch and saves the config, including when the batch
+ * aborts partway: whatever reached disk is recorded before the error propagates,
+ * so the config never claims less than what exists.
+ */
+async function applyChangesAndSave(params: ApplyAndSaveParams): Promise<ApplyAndSaveResult> {
+  const { scope, workingDir } = params;
+  const save = (items: CodemieAssistant[]): Promise<void> =>
+    ConfigLoader.saveAssistantsToProjectConfig(workingDir, scope, items);
+  const written: CodemieAssistant[] = [];
+
+  try {
+    const result = await applyChanges(
+      params.selectedIds,
+      params.allAssistants,
+      params.registeredInScope,
+      params.registrationModes,
+      scope,
+      workingDir,
+      params.target,
+      written
+    );
+
+    if (result.registered.length === 0 && result.unregistered.length === 0) {
+      return { ...result, saved: null };
+    }
+
+    const saved = [...params.carryOver(result.newRegistrations), ...result.newRegistrations];
+    await save(saved);
+
+    return { ...result, saved };
+  } catch (error) {
+    await persistPartialWrites(written, params.carryOver(written), save);
+    throw error;
+  }
+}
+
+function parseRegistrationModeFlag(value: string): RegistrationMode {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === REGISTRATION_MODE.AGENT || normalized === REGISTRATION_MODE.SKILL) {
+    return normalized;
+  }
+
+  throw new ConfigurationError(`Invalid --mode: "${value}". Expected "agent" or "skill".`);
 }
 
 async function applyChanges(
@@ -167,7 +345,9 @@ async function applyChanges(
   registrationModes: Map<string, RegistrationMode>,
   scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
-  target: AgentSetupTarget = ['claude']
+  target: AgentSetupTarget = ['claude'],
+  /** Collects each registration as it reaches disk, so a caller can record a partial batch. */
+  writeSink?: CodemieAssistant[]
 ): Promise<ApplyChangesResult> {
   const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
   const selectedSet = new Set(selectedIds);
@@ -178,29 +358,64 @@ async function applyChanges(
     return { newRegistrations: registeredAssistants, registered: [], unregistered: [] };
   }
 
-  for (const assistant of [...toUnregister, ...toReregister]) {
+  for (const assistant of toUnregister) {
     await unregisterAssistant(assistant, scope, workingDir, target);
   }
 
-  const newRegistrations: CodemieAssistant[] = [];
   const allToRegister = [...toRegister, ...toReregister];
 
-  for (const assistant of allToRegister) {
-    const fullAssistant = getFullAssistant(assistant, allAssistants);
-    if (!fullAssistant) continue;
-
-    const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
-    const registered = await registerAssistant(fullAssistant, mode, scope, workingDir, target);
-    if (registered) {
-      newRegistrations.push(registered);
-    }
-  }
+  const newRegistrations = await registerAllOrAbort(
+    allToRegister,
+    (assistant) => assistant.name,
+    (assistant) => writeOneAssistant(assistant, {
+      allAssistants,
+      registrationModes,
+      scope,
+      workingDir,
+      target,
+      writeSink,
+    })
+  );
 
   return {
     newRegistrations,
     registered: [...toRegister, ...getFullAssistants(toReregister, allAssistants)],
     unregistered: toUnregister,
   };
+}
+
+interface WriteAssistantContext {
+  allAssistants: (Assistant | AssistantBase)[];
+  registrationModes: Map<string, RegistrationMode>;
+  scope: StorageScope;
+  workingDir?: string;
+  target: AgentSetupTarget;
+  writeSink?: CodemieAssistant[];
+}
+
+async function writeOneAssistant(
+  assistant: Assistant | CodemieAssistant,
+  context: WriteAssistantContext
+): Promise<CodemieAssistant> {
+  const { allAssistants, registrationModes, scope, workingDir, target, writeSink } = context;
+  const fullAssistant = getFullAssistant(assistant, allAssistants);
+
+  if (!fullAssistant) {
+    throw new RegistrationItemNotFoundError('assistant', assistant.id);
+  }
+
+  // A re-registration removes its previous artifacts immediately before the
+  // replacement is written, never up front for the whole batch: an earlier
+  // failure would otherwise leave working registrations deleted and unwritten.
+  if ('registeredAt' in assistant) {
+    await unregisterAssistant(assistant, scope, workingDir, target);
+  }
+
+  const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
+  const registration = await registerAssistant(fullAssistant, mode, scope, workingDir, target);
+  writeSink?.push(registration);
+
+  return registration;
 }
 
 function getFullAssistant(

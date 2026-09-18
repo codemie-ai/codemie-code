@@ -15,6 +15,7 @@ import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
 import { KimiRequestNormalizerPlugin } from './kimi-request-normalizer.plugin.js';
+import { CodexRequestNormalizerPlugin } from './codex-request-normalizer.plugin.js';
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
 import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-content-sanitizer.plugin.js';
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
@@ -36,6 +37,7 @@ export function registerCorePlugins(): void {
   registry.register(new JWTAuthPlugin());
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
+  registry.register(new CodexRequestNormalizerPlugin()); // Priority 14 - maps the Codex app's undated model names onto dated CodeMie deployments
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
   registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - forwards Responses reasoning state; strips it only after upstream rejects a replay
   registry.register(new CopilotEncryptedContentSanitizerPlugin()); // Priority 16 - retries Copilot once after encrypted reasoning replay rejection
@@ -59,6 +61,7 @@ export {
   RequestSanitizerPlugin,
   ClaudeRequestNormalizerPlugin,
   KimiRequestNormalizerPlugin,
+  CodexRequestNormalizerPlugin,
   CodexEncryptedContentSanitizerPlugin,
   CopilotEncryptedContentSanitizerPlugin,
   VsCodeRequestNormalizerPlugin,

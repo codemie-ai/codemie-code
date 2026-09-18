@@ -1,0 +1,272 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:2852da00bfbfdfc33575bfb12aa17db6f82e066e98cf5f046970bca7fbd8f2f9",
+  "claims": [
+    {
+      "id": "claim_0612474b3e6742dd968be7e4a43dcd52",
+      "statement": "The `codemie` executable wrapper runs pending migrations before loading the compiled CLI, warns rather than blocking when migration execution throws, skips update checks in test environments, and treats failure to import the actual CLI as fatal.",
+      "evidence": [
+        {
+          "resource": "repo://bin/codemie.js#L8-L40",
+          "version": "repo-lines-v1:sha256:375c05263af73a07f093330cb0e53d9af124185474a57a841e1a0fd432483170:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzMTVjZWU0ZDczZGJmNjA2ODhhNDNhNzdhZmQ1NGIxMTczYzdmYTc5Njg2ZDZhNzZkYmY3ZDk4ZmYzZDJjYmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3Yzc1OTk5NjkwZWIzODAzNGFkNmE3YzIwZTY3M2ZiYzczM2YwOWZjYWZmOWI3NzZjZGQ5MzM1MTU2YWZlMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bc2022184f394295bc63be300d66d318",
+      "statement": "Migration modules self-register through the public migration index, and the registry returns all registered migrations sorted by ID for predictable execution order.",
+      "evidence": [
+        {
+          "resource": "repo://src/migrations/index.ts#L18-L31",
+          "version": "repo-lines-v1:sha256:097529b63ee1353180ecc6df054aa4978117f827397a3c9cd73e60122ff8c01d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhZWJhZGZhYjkzMjQzYzIzNjViMzRhNzhiYWQ5MjFjOWRjZDNmZmIwZDU5MmY1OGZkYTZjMzg3ZTFlZjBiY2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1NGUwMGViMWExYmNjM2IzZGQwYWE2N2UyZDBjYTVjMTY1NGIyMWVmZjAwNzk4MTE4OWNiOTNmODIxMWNlZDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjNThhMWNjNWEyZThlMDliYzAwODZmNWNhY2Y0YzM1ODQ5YjgyNmVjZDM2NjhkMTQ5MmI0ZjRlZWVmZGYzMWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/migrations/registry.ts#L7-L24",
+          "version": "repo-lines-v1:sha256:c4608132e057a2e05ef1cbcc91eda884676a8c35ba61a765178711e260c26d83:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhNmI5YTUzZThmZTUyMGVmZmZmY2NmMGVmODcxYzgwZWFjZTM0ODRhMDcwYWJmMzllNTkwMzk4Zjc0NjQ1NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmNzAwNTRlYTQ0ZjczMjQxMzVkMTcyZjY3NDJlZDM0NTFmMGQ4YmQ1YzI4MWExNGNlYTdlZTYwMzVmMmYxMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmY2U1Y2Y2M2NmZDU2OTIyZDE5OGIyNzEwNGJhZTA4NDdmYzg5NWM5OGM4ZjI5MzljNDFkMzNkODFjNDZjM2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aba785c9974b4131a1f82abb70e3028b",
+      "statement": "Migration history is stored at `getCodemiePath('migrations.json')`; absent or invalid history is treated as empty, and pending selection excludes only IDs with a successful history record.",
+      "evidence": [
+        {
+          "resource": "repo://src/migrations/tracker.ts#L12-L32",
+          "version": "repo-lines-v1:sha256:8e4bd58ea1c763b2256a8c7419bed07c83e6296d7b460ae7158b642d8589d0eb:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjNDhmZGExZTQ1MDhiZDg3ZGNiZmRlMTkxNTI1YTE3NmI0MDUyYzc5ODRhYmNjZjRiNzYyZjM1MWJhZDZiYWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjViMDExZmI2MzY3MjdiYzBlZmY4NDNhZDhkOWFmMTgwZGUwMDEwNjljOTY0ZWYxY2UzY2FhMzYwNjUzMmM3NDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/migrations/tracker.ts#L48-L54",
+          "version": "repo-lines-v1:sha256:d2728112b7b5876387a2ade3ac5959e5bfce07aff1c9213f4e2f35db983307bb:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGYyYTJmOTk2ZjA4ZTY4MGJkMjkyMTM1YTZmYTQ5NzhiZGEyNmU2MDJkODRmMzNjYjFkNTk0Nzc1ZDQzMDRiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmU2MGI3NzJlNzM0MjgzOWI3YTIxYWE3M2JlNzViYmJkOTBhMGRiMjQyZTViZDkzMzJkZTFhZGRjOTc0NDI4MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzdhZmY5NjYzMzQzNTQwYjJkNzZhZWNjYWEwODI5ZTdlMWI0MmY0ZTM5OGJkYTRmNjc3MGJhNmVkOGJlNDcwNyJ9"
+        },
+        {
+          "resource": "repo://src/migrations/tracker.ts#L80-L98",
+          "version": "repo-lines-v1:sha256:edca4a9139fdb837f540f4251d280107f1e1f45f28d2d0db184386f1fc3f232c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkNjJhYThjN2ZjZWYwYmQ2YTVlYTE1MmM5NjY2MDdkODJjZjc4NDRhZDdlMTU3MmYyYzJjMmE1YjU0Y2RlMDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhZjcxZDYxY2JiODhkODdiMDdmNjM3ZDI1NjRiNTc3MGE4MTBlNmZkMWQzZTI4MjM4NWI5YTA2NTNmNmI0MjgifQ"
+        },
+        {
+          "resource": "repo://src/utils/paths.ts#L338-L375",
+          "version": "repo-lines-v1:sha256:395bcae02872c756ae7df3038d9097bf66c0de7f0a7f95a2d259bcf26029044d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5MjQwNWQ4NWY1ODE4MTg2MTgwMWUxNTRmNzYzMjNlNzBlYTllMTlhOGY0NzE5Mjk4MGUyYzlmNjNiNDRlYTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmN2NkYTAwYTUxMDE3YzRjODVmYTIyOTU5NzUyYmY0Yzk3YzE3ZDdhZmQ4NGQ1YzFkOWJkYzg3MWJhZDkwNmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJmNDlkY2M4YzkwMmFmZWJiMjA1NWZhZjIwZTk2MzhmNGI0NjEzN2U3MThjZDllMmJlZGM2YTE0NjZmNmE2NDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0ZDM3Y2I2NTgxNGM1N2E3Yzg2YTVkYTMxMWJmZTU2MTY5NjYyYTdiYzRmMWZhYmZjN2EwYTM3OTllYjU4NDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bce26ca4c97d4a02bbc95f4bcbf57908",
+      "statement": "The migration runner records both applied and successful no-op migrations, does not record failed or thrown migrations so they remain retryable, and continues processing later pending migrations after an individual failure.",
+      "evidence": [
+        {
+          "resource": "repo://src/migrations/__tests__/migration-runner-ordering.test.ts#L188-L267",
+          "version": "repo-lines-v1:sha256:8bd044a2486ff13f08af0e00be32af1f064200866861ad988b01b86e1942c520:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3Y2MxZTViMTZmNTE0MDQ1MjlkMGZlNGU0YmU3NWJjYjkxNmI1ZmQyMGY1OThjYmIyNGNmNTBhYjY3MjM2NTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ4YWJmYTYyM2JkZGFjZGFkZjk2MjllZGQ2YmZhNTA5NGRlNjc0MmZjMGRlMTAxMmU2ZDk0NjY1OWY5NGEwMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ5ZTU2N2EzNWUxYTRiZDczZDA2OTMyMjQ2MjI2NjU5ZWVkNjNlNTU2NzBmMDU4OTg1ZTI1Mzc3Njg3OGRhOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIifQ"
+        },
+        {
+          "resource": "repo://src/migrations/runner.ts#L42-L104",
+          "version": "repo-lines-v1:sha256:afbf647db2d15e1bf36772c648f9fa0fa75d79c2f6356da37d1964e6148eb254:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4MTdhZmNlMTdhMDM1MTlhMTNjYzUyNTMxMmM4OTdkNTlhOTUyNTc2NzY1YTA0OWM4YjNjYTI4MzVlZDhjYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxY2ZhZjVkMmFmNTVlZDQ0ODNkYzA5NTNiZjA3Mzc2MzQ3NWQ1MTRmNjE0NDFkMzZjMmI4MWQ5NjQwYjIxZGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg2NmQ3ZWIxNWI3ODExNjcxMjYwZjUyYjhhZGY5MjMxYzUwMjhjMWE4MzIyOTRjOGFlMmYzNmNlOTQxNzBiMDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExZTA4NWEwZGVlNjVhZTE3YjdjNjVjYjI0ZDdlNzlkZWFjYjc4OTA5MzFhMDUyZjI5ZWQxZGY1MzU4OTJlMmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d1849db1e7d44302a888671104da8896",
+      "statement": "Migration dry runs execute pending migration logic without recording history, leaving migrations pending for a subsequent real run.",
+      "evidence": [
+        {
+          "resource": "repo://src/migrations/__tests__/migration-runner-ordering.test.ts#L204-L213",
+          "version": "repo-lines-v1:sha256:3f0acf22745ac9a30fca83eb380641371c07f80c9503c7c54b6a3b49f20e839e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2YzA2YTBjZWEyODA2ZThjNTBiZmEzZmIyNGJkNDJkZmVjOWEzNDE4ZjJmNWE4MDZiOGI4YjJmYzc3OTkwMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ5ZTU2N2EzNWUxYTRiZDczZDA2OTMyMjQ2MjI2NjU5ZWVkNjNlNTU2NzBmMDU4OTg1ZTI1Mzc3Njg3OGRhOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlmOTZjOTA1NzA2MTBlMGI1ZmFhZGYxYTBlNDRmOWViZWNmMzlkN2M5NWQ5NWNiNTQ2NWI0ZTU0MmQ3ZDIxN2QifQ"
+        },
+        {
+          "resource": "repo://src/migrations/runner.ts#L50-L75",
+          "version": "repo-lines-v1:sha256:ffa2c4095533c636abc004c07fb2e35d8622bfb195888e66b95e992df229f7b5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5YTdlNjUwNDc0YWVmNGU5Zjg1MDI0MGY5MzgzMzkwNzNiMWRjOTQxNTg2OTI0NmM5YWM5NmQ3ODdkZDY0ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MDA1ZDU3MTA2YTM2MmViMDAwZGFmM2RhNDY3NGM4MmI1MThmZjVhMmUyZjY3ZWU4ZTc1N2EzMzNjMmFmNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI0NmUzMWY1YzVhODY1OTZmNGE1ZWZkZTg1ZTIyZDU4ZGExYWM5NGI1OWFlNDRhNDgyMmI1OTA1YjU4NDBmYWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhYzkxN2RjMTNiMWM2ZjU5Mjk0ZDZkZDg3OTJhMmFiOGU4MWY2MmZmNmY4ZDNhZjIyZjMxMzA4M2ZlNTViNDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_af1668958e2447a3ab2fe401ce1ebe9a",
+      "statement": "The proxy daemon entrypoint validates required target URL and state-file arguments, binds the local proxy to `127.0.0.1`, persists its state atomically after startup, and removes state while attempting to stop watcher, telemetry, and proxy on SIGTERM or SIGINT.",
+      "evidence": [
+        {
+          "resource": "repo://src/bin/proxy-daemon.ts#L130-L177",
+          "version": "repo-lines-v1:sha256:5ed6d5c6017b395f07a775c8b5afe528d50c740bbe2059763c526d1b712cfc33:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkMDIzYTI0MGZhMzRkNDk4NGJmOTAxZGMyNGIyZDczMTEyMmQxODIzMzg3YzYzNjRmODkwNGQ4ZDM4MjgyYzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkMGYyZDNhM2FhZGEyNzU4NjQ1NzhkMGE0MzkxNTYzOGQ1NDNmZWNhMmM5NDg1OGRiOTQxMjExZTg2Y2VmMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkyNzU0ODU4YmRlMmU0MjA1NmU4ZDY4ZTExM2FmMzEwZDkyZmUwN2RmZDVjZjQwNjgwNGM0ZDRlN2NlMDBlNzgifQ"
+        },
+        {
+          "resource": "repo://src/bin/proxy-daemon.ts#L30-L90",
+          "version": "repo-lines-v1:sha256:5f7c311e459d13c16a41e32b477f2f658c6d2f5a464b1c732aa1a51e48f8b925:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlZTQ0YzhmZWU1ZTcxNDNmMTU4NjI3MGZmMWFmMDc0NzQ0Y2QxOWFiODJlNDQ0MGE5MGE0YzM1OGUzYWRhZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMWQxYTYzMzkwMjI5Yzc5ODM0N2U4M2EwNDA1NDQxYzk0MDAwMzUyODRhZDE2OGMxYmY2Y2RmMWQ3MGEzNzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZhOWE2ZmQ4ODAxOTAxYzRhYWMxOTJkZjI5YjJkNGJjZTA4YmRiYzA4MWZiY2NlNzNlNmZlNGZlZjE1NTg3MmYifQ"
+        },
+        {
+          "resource": "repo://src/bin/proxy-daemon.ts#L97-L109",
+          "version": "repo-lines-v1:sha256:6a29de0a935bf8102a01539cb39680a77ac000c30a049ffd456926e815c7a816:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhYTlhMGJjZjcwZmJmNGIxZDA1MGQ1Y2EzOTU4ZTNiYWQwMjk4NTlhZDJhYWEyYjRlYTdlNDk2NWM1ZmE5ZDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlYzhiYWRhNjQ0ODA5N2M5ZWVhNmJkMDI3NDNkYmEyNTczMjI5NjJiYjE2MmI4MjNlNGRhYmZhZjM5YjExN2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkN2QwN2VkNmMxZjAwOTJjNDM0MTY1MWY1NGZlMjc1MmI1MTg2NDE4YmUzNDdjZDE2NTdmMGY3NDFmYzRiODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dca6d3ab17eb45988a90079f5f4bd195",
+      "statement": "Daemon-manager state is rooted in CodeMie home, validates liveness by PID rather than state-file presence, removes stale state, starts a detached wrapper and polls up to five seconds for ready state, and throws `ToolExecutionError` if readiness does not arrive.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L32-L81",
+          "version": "repo-lines-v1:sha256:fec19315bedfa03f6bc7e1a56f7c39ff9ea01470a6a0a16c286a63cac1e2a6aa:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4YmRiMTNmOTllNjljYTdhMzVhNWEzNTAyNjA2Nzc5MmQxYTk1YzE3NjkyZGRmMjg5N2Y0NWFmMmRlMWZlNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0OTQyOGQ5MGVkYTBhMGVmODA0ZmE5MjFmYjljYmI1MTYzMmJlMTNhOGQ4OGVjYTQ5OGEyYzg4M2YwMTBlODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhYWIyMWRjZDhjY2JiOTk1ZmViMzQ2N2U5OTdlOWI5ZjNhODRhOWM1YzAxODNhYTdhMTBmMWVhODJmOWVkNTYifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L96-L148",
+          "version": "repo-lines-v1:sha256:7ed7ff61b6bd0e87cceafc4af7ae22aa443832b24bb8e0f54d05941ee25d5d25:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNWQ1YTA4ZTRjOWEyYTEzYmUyNjEwODAzYjIwMDcxNzZkNzM4NWI4YzNiYjBhYWFjYWJhZjRiYzRmMGRlMGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3MWMzODQzMGMzMDk2NTMxZDlmYTg4ZGVkMTgwMzkzMTMwOTNmOTQ5N2NiM2E5ZDU0ZWEwNzI0OGZhOTk2YWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExN2Y0NTU4ZTZmM2JmNjBhMzhiZjhkYmI5MjNkM2YzY2I0NTE0MDNmOTczOTEwZmZmNjMzOWRmOWRjN2NmODQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_21a143d8cd864bf1a5ee050035dc6661",
+      "statement": "Daemon shutdown first sends SIGTERM and waits up to five seconds, escalates to SIGKILL when necessary, and clears the state file even when forced termination prevents daemon-side cleanup.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L151-L188",
+          "version": "repo-lines-v1:sha256:748e783db6ee836a71ce02ba8e1ff9ec9bda4b1d533f6290bd8ac9bd4af4c8b3:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyOGE0OGM0NDY2MDU5YmE5NjQ2ZWMyODJkNjNiMDQ0ZTU5NDNkMjcwY2ExMmM5OGY2YzQyNWY0ODhiYWM2MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b151b0b5395b4b9d900b3bdb54988023",
+      "statement": "Proxy health checks never throw: shallow health probes local `/health` with a 1.5-second deadline, while deep health additionally performs authenticated model discovery with a six-second deadline and classifies failures as dead socket, unauthorized, or upstream error.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/__tests__/health-check.test.ts#L24-L163",
+          "version": "repo-lines-v1:sha256:6f17a9ea49cb7cc01beabd51c5d49f0cc82d6826f959ae1465d87de7abba2ea8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhNWJhODVjMDgyNTdkOGY3YzZjNTIyYjFkN2E3OGY3YjZkZDQ1ZWVkYTBmMTk2ZmU1NWJhZjIzNGFiZDEyZmYxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmNGY1OTRjMDM3NDFhYjEwNzY4MjU0ZWI0NGJmNTUwZWU0MDJjYWEwODBjYmJhNzFmNjYxZTZhNDUyNWQ3OWFhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZTZiOWMyYzJjZmQwZjlhYzE4NTZlYmEwMGM2NzJhM2JiOWM3MWRlMDIwMTg1ZmQ3YzUxNjJjNjMzOGIxODA4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkODE3ZmJiNzNjOTJiMzZkNWU0ODk2ZmY1MWMxYjU4ZWVjMzMwYmJlOTYxYmEwNWZjNjIwNWY4NjdlYTFiY2Y2In0"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/health-check.ts#L1-L123",
+          "version": "repo-lines-v1:sha256:86350c4bd5aa31255b793ee247c7e64e8213d209b53675f3c95f194513849698:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_147c0466fa12458eb89f3a873cd266e3",
+      "statement": "The in-daemon watcher deep-checks every 30 seconds without keeping the event loop alive, restarts recoverable failures in process on the pinned port with bounded exponential backoff, and persists unhealthy state then stops watching immediately for unauthorized sessions or after three failed recovery attempts.",
+      "evidence": [
+        {
+          "resource": "repo://src/bin/proxy-daemon.ts#L111-L128",
+          "version": "repo-lines-v1:sha256:59276f0587afd969e01668c3687f1bf1b34103f4a08daca8cdc35bc396825a21:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyMzRhYjkxYTY3OTU0ZDQ5MTkzYTVlOTFjZWE5MGQ4ZmYwYzVmNzBiZDE2NTkwNzIzOTNlOThjY2JhMGVlYzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVkNmU3YWE0MWRjYTlmYjBkODI4NmQ3YzkyZDNlZTZlOTM0YTNkMzczNzAwNzFlYTgzMjFiZjZhMTdjMzkzNjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzNTFlNWRkMjk2MTQ1YTYzNWRmYzE5OWI0N2MzODhiYzViY2VlMjg0YWIxMGM3OGI2ZGU3MDEyMzNjODVhYmQifQ"
+        },
+        {
+          "resource": "repo://src/bin/proxy-daemon.ts#L179-L200",
+          "version": "repo-lines-v1:sha256:c62cef8ed4c29466e2630da17be2b005abbf6a1007b2fd01bee34132424ae8b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwNDllZTE2MmFiZjk0OWMyYWFmMWI5MmM2YjUxYWZmY2NhY2JjMTI1YWNkZjVlMDVkYjVmMDA1ZjE3YzkzN2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjZDkwODQ5MzY5OWUyZGQxNjQxY2Y3MjM2ODIzODgzNTljN2UzOTQ3YWQwYzQxNzU1M2Q0NTFlMDZlYzYwNmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMxZTJiMDdmOTBjYmU0NDViOTY4ZDU5ZmE4NjhjNzI4NjhlNzMyYTViNjJhOTcwNjhlZmY2MjVlZTEyODA4N2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgwN2VlMThjYTlmYjRiODYyNjQ1OTJmOTU2MmQ5MGQwMzZkNTRjZWRkMGQ1NTY3ZGI2MDVkYmFlMTlkOWYxMWYifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/__tests__/watcher.test.ts#L49-L134",
+          "version": "repo-lines-v1:sha256:f8866c0841356556add30dc681c302c293a61aa877951511015b290c4561dcd9:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMmZhYzg0NzFmYTdjNmM4ZmY2MDhhMWQ0MTBkZTJhMzgyODcxMzY0MWQ3NTc4ZmI5MjFjYTk5MGRlNzk5NzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwZTFkY2Q5MGVmNjI5ODhlYjBmOTAyYTlkODNmZDlhZWYxYjMzZTkyYTU0M2RiMzE5MjZmZmE2ODk2NDU0MzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/watcher.ts#L30-L123",
+          "version": "repo-lines-v1:sha256:98a889760fcd0a44d67d144657a6607e77cedfe4d98cf7b4e70b61aefbb8764f:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwMmIzNTRiYmY0ODhkZTBkYmMxNjM3YTcxYmQ4MWQ3MDZkNDJkMDJmNTZkZWM4MDE4Y2VkNTVhN2I4YjBlYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc4ODI3NzI1YTNmMTViNmRkMGExN2YxN2M2OTk5YWZmZThhMmFjMmQ0ZmNhM2EzOGQ3MjhlZTBkYmIwODg4YjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3b33d06fd9d04e11954c579d2bf0cb31",
+      "statement": "`proxy status` reports process state using shallow health by default or authenticated upstream health with `--deep`, supports JSON output, and can clear a stale watcher issue after a successful deep status check.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/index.ts#L191-L279",
+          "version": "repo-lines-v1:sha256:9c7d54092288f1ec934b2a1f05f628ea4615b9d4dfbcc357eebd0d6dee156590:eyJzZWxlY3RlZExpbmVDb3VudCI6ODksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwNjE4ZTc3OTI3YzlmYjNjMzQ5NzZjNmQ5NmIwYjZmNWFjNGU5Mjc2ZTIxYzBmODEwODM2MzQ2NjI4YjRjZjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNhNGZmYTYyYzgwOWE4MjcwZjQ1Mzc2YTg4ZTZiYTg2MWU4ZjYwMTJkYjlhYTEyMTI3M2ExMWM3NjhlZTk5YTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliMjA3Njc2MmFkNjE1MzUxMWQ0OTM1NzIwYmRkNGQzZTViZjM1MDc1MDc3NDE5ZjE1ZTZkYTZjNDAyZmQ5ODkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_09edc4453c774a3eb43d352b4ed40336",
+      "statement": "Automatic CLI updating is rate-limited by a home-directory timestamp, uses an exclusive lock to prevent concurrent installs, validates semantic versions, defaults to silent auto-update, and handles errors without blocking CLI startup.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/cli-updater.ts#L153-L193",
+          "version": "repo-lines-v1:sha256:8e12d554bb3ac0d02cf5afd0336c8a24f760f56e5db4d1a9a1edc8904f58b103:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MWFiNWQyZDM4OWNjNjgzZTNjODM5Y2RiZjk0ZmMzNTQ0NzJjZDM2NWVlNTAxMzMzMmEzYWU0YjkxZDNjMTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjYTc3MDg5NGViMzE5MDVhNGU3MmJkNDdjODE5N2E0MTM3OWYzYTczMjgyZjNhZDdiYmZiOTFjZTRiNWJlNDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/utils/cli-updater.ts#L23-L32",
+          "version": "repo-lines-v1:sha256:63130a3b83866a69333e5ce1ee54b7d4d9691eb47eab3b4c0e70af1af1d9dd8b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4ZGM0ODAzOTZlMjc1ZTYyNDQ3MmI0N2VkN2M2NTM2MjE1MDcxZGE5MTI3OWVlZDA1OWQ4N2QwNjM0NDUyZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiYjg5NGViMDQ2Yjk1MWUyNzMwNWRiOTM4NmMyMGM3OGFlZjJlMzdkNjkxMjQ3MmRjMTZhZmM2NzM3ZjA3ODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE1MDg4NTZmYTg4YTJkYTc5OThmMzAwYzAzYmQ2ZTZjM2Q4YjRiMWQzOTVkMzhhODdkODQ0YjMwNTBhYjJkMTUifQ"
+        },
+        {
+          "resource": "repo://src/utils/cli-updater.ts#L305-L386",
+          "version": "repo-lines-v1:sha256:fa618297b5ee40df1f8b1d8f1efd49ac280cec371c75f9ab8cb7050b6223839d:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1NDEyODE1NDc2NGRmMDA2MDMzNzY2MTZiMDQ2ZTg5MmQxOGMyMzYyMzlhNzUyMDdjYjExMzg4M2VjYWEwMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgzMzczZTVlNmVmNTUwZTc3ODQ2OGZmMWNiYTBkZTNmYThhZDRiNDY3N2NkNGE0OGIxYTdiOWFkOWU4Mjk0ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/utils/cli-updater.ts#L52-L114",
+          "version": "repo-lines-v1:sha256:9a640162539eea95b2d8e753d024d0336ad07793d64ee17aefc09842b89d71fc:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc3NjI1Mjg4MjQxNGVmYzdmMjgzN2UyYTEzYjQ3YzkxNGIxZDExY2ExMTY3NmY5YmQxMGJiYmNhNzU3YTM2OGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a62af90624cb4f1798c22b3b3dbb7ef2",
+      "statement": "`codemie self-update --check` reports availability without installing, whereas the explicit update command reports check or installation failures and exits with status 1.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/self-update.ts#L11-L67",
+          "version": "repo-lines-v1:sha256:ff7ee09f3a921f0d05d12c9296a73686457a3ee9c3dbddccd5db40501e705e0b:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmOWNmOTExMjQwZjNkY2M0YWE5NzM1NTg5ZTlmMjFmYmY2ODMzYjI5NjkwZGY4NWQ0NmY0ZWJkMzQyYzdiMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxNmNjNzM4YjliMDFkMzM0YzcxNWI1MDZjOTBjYWU3MzI1MzJhNWI1MDIyYTk0OTU4NmRhNzQ1ZDg1YTI1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjNTEwODE0OTA4ZWIwNzc2NmIxMGU2YTJhMmJlNmJiYmE4ZjljMzc4MjgzZmRkM2ZlOGIxYWMxNTU3Zjk4MWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1e951de7bec44d1a9f565d9407fc6dfb",
+      "statement": "`codemie doctor` orchestrates standard environment, configuration, authentication, and integration checks, runs a provider-specific health check after configuration with a 15-second timeout, and `--verbose` enables debug output and shows the debug log location.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/doctor/checks/index.ts#L5-L14",
+          "version": "repo-lines-v1:sha256:d122f130496bae733122ee23c37f7b78f5ddaad8f46ff3a244e778b97b3ce0f9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlZTE2ZDY1MTQ1M2M3MzNlYzJlZjg3YTcyMGRjNGE4MDU0YTljZjVjZjE4OGVkOTMzNWQ0ZTY4NjA1NGI4Y2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlMDlmMjk4MDI1OGJkNTQ0NzhiZWJjNzRjNzgwMTRkYjFmZWI2NTBjY2M1Y2ExYzQ1ZjExNTBiNmFlNThmNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkNTIyNTkzZTg3NDBjYTE4NzhhNDNhNjgzYzc2MzFkNDdhZWY2ZDk5MGM2Nzc0ZTFlOGVhNzBiYTZkYzIwY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/doctor/index.ts#L26-L216",
+          "version": "repo-lines-v1:sha256:15357ed677dc7810f67f24ee757e17bacea309b0982405106d74db82c1257be1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTkxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMzE0YmQ0ZjJmM2M2NTI2OTljNzQzOWFmMTg2NmEyN2ZkYjFhNTZiMjU2NzYxNjEyNDgwMTQyMWIzOGU2NWI4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1ZmU2YjM2M2IwNGNhZGFlMGM0MDEwZjkxNDQxODZiNGRiMjJmMzU4YTE0MDI1ODRlMjc0M2ExODJhNTdhNzMzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhNTYxODNmYzhiNTEwMjUwMjY0NTc5Mzk1MzM5MzIyODFlZjkwZWU4NDc4OWMzMmUzNzdiZjkwNWJmODM1OTk2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_71974dc444ee4c8fb83f945caf4b9a2c",
+      "statement": "The logger gates debug console output on `CODEMIE_DEBUG`, writes sanitized file logs under the CodeMie home log directory with date rotation and five-day cleanup, and `sanitizeLogArgs()` redacts recognized sensitive keys and token-like values.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/logger.ts#L161-L216",
+          "version": "repo-lines-v1:sha256:569c716e0d473903591e4283523422ec03d5bf4d1cc08fe152e977b5fde03f62:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEyZTZiZjRiMzBhNmVlOTY1YzAxOTZjZTMxNDViODg1ZTFkOWY2ZTQxMzUyYmQxN2FjYTZkNzQ0ZTY0ZDViNjIifQ"
+        },
+        {
+          "resource": "repo://src/utils/logger.ts#L260-L297",
+          "version": "repo-lines-v1:sha256:d3d183d160a117a7def9282d641bb289209595b3b166eafda4953ef90dce8478:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwM2I0Y2QwMWM0OGNmYzFjMTIzYjM3ZDFjNzJmZWM2OGM0MTJhZmIyMDYwMGNmNzcxYjI2NDY2OGE3MmIxZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4MGQ1YmVhMjhkOGMyMzUyOTg5YjAyNWZhN2YwNTc4ZTVmODc3OTM2NzFmNjdiNTA5ODMzMjI3OGI5Zjg3MDAifQ"
+        },
+        {
+          "resource": "repo://src/utils/logger.ts#L62-L94",
+          "version": "repo-lines-v1:sha256:fa2a5ee01f421fd2ff0e6a6850060ce4c821a2530bb7238eda245ae0d9a8975b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYzNDYwNTc0MjFmMWE3MDAwM2I4M2Q4YmZmMjdmZWQ4NzcyYzVhODY3MDAyYWI5ZjgyYWQ1NTIxMGMxYjE0YjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/utils/security.ts#L21-L126",
+          "version": "repo-lines-v1:sha256:f24a739476b5c0e239261f654827614c1d5b5b1ccd49c488cbd87233d154dcb9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1ZDEwYTI3NmUyMGRkZjc3ZDc5NDdmYzFmOGU3OThlOWIwZGY4OTlkZWRkZDA0MWE0NzdlNWM0ZDFmNDgwNTY3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4YmIwZWY5YmMwMWU3ZjE5NzI0ODk2NWZhYWQyYTI2YWNiNGQ1NzFkMTAyODc4MWUwODkwYWQ0NTZmNWE1ZWQ0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4In0"
+        },
+        {
+          "resource": "repo://src/utils/security.ts#L231-L250",
+          "version": "repo-lines-v1:sha256:e7e3f6dcae26acff59960bd34aa36909b48f1b7ee945f1eb8476285ebce0c032:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0NTNiMmZiMDZmNTQ2ODdiZjAwN2YyODI4MDA5MjljZWRkYjE3NmU4N2FkYzJjNmZkNjdkMWU5NDViNzFjMDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2M2UyMTk5ZjQxM2UwNmI3YTE3ODg2OTQwN2Y4NTIwNjA5NTg5N2ZmODUyNmJmMGViZDk4OTA5ODE1NWE1M2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_69e58f1f86e54702a1c909683dee0592",
+      "statement": "The project exposes `ConfigurationError` for configuration failures, `ToolExecutionError` for failed tool operations, and `getErrorMessage()` for rendering unknown caught values.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/errors.ts#L1-L40",
+          "version": "repo-lines-v1:sha256:2e3b11ec06288f9f7a0d4593f257ae7f7178f82ceb69550ec5e7e851495ee374:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxZDhjMzdlYTcwN2E0OTc1OWExZGNjNzc2NDFlYmE4MjJiZWY5M2M5MDNjZmYzNzVmYzliYWRlMWQzZmM5ODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0ODIyZDMwMzg5NGJlOGE4NDA3NmI5MjcxZjNlNzdhODVhOTUwZWVmYmUzMmU2ZDQxMTk1NzM4OGM3MjQxZDcifQ"
+        },
+        {
+          "resource": "repo://src/utils/errors.ts#L128-L138",
+          "version": "repo-lines-v1:sha256:b4422caa890bfcddd7b82092e5bf70643b9419325f55a933eddda74ef5a8eafc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNjZTY2ODQ4Yzc1ZDQ4NDczZjAxNWU5ZWI0ZWFkMjk2OWNiNTQwZGI0N2MyNDQxMjU5ODdkM2Y5NjU1NTlhMzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b10e7863c4ba4f8d9154f9bce0c647e7",
+      "statement": "The real proxy daemon lifecycle integration test isolates `CODEMIE_HOME`, starts the detached compiled daemon without real credentials, verifies state, PID status, and shallow health, then verifies stop cleanup.",
+      "evidence": [
+        {
+          "resource": "repo://tests/integration/proxy-daemon-lifecycle.test.ts#L1-L42",
+          "version": "repo-lines-v1:sha256:3605d0b3cd4a6d00096d9287fdb10ba543e73c31013c88f48a430417c89e6190:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzYjllZGNkMWM2MzA0OTc4MmVmMWUwNjFmYTBhMmViNGRiNWJmZjM1OGJlMTA0YTUxYzFhMDM2ZDAxMWYzMjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBiZWQxMDA1OTk1NDU0MzljOGFkOWZhNGM0YmQ4OTY4YzRmYjg5YzhhYzU2ZTE3NDJkODI2NDZhZGY2NzQyNWEifQ"
+        },
+        {
+          "resource": "repo://tests/integration/proxy-daemon-lifecycle.test.ts#L74-L187",
+          "version": "repo-lines-v1:sha256:a4679cdf0a62c051a178a9c60a053378326253314062afe46b05024baab30bdf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3YzRjZDY0ZGQ5MGY4OWU3MDI1ZGRiZGI2OGIxNjExYzgwYmVlOTVmZTgwOTJhMjUxNmE1Y2IwYzdkZTJlMzg2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlNjA2MTkyMWYwNDgwYTdiMDBjM2Y0ZjRhMzVmMTMyNjZlOTkwNDk5NmMzODJiMDJkZWI2ZWJkOTlkNjc4MjdjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

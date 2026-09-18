@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+import { enrichCosts } from '../cost/cost-enricher.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
 // hoisting transform actually lifts it above the static `native-loader.js` import above).
@@ -176,6 +177,83 @@ describe('loadNativeSessions', () => {
       hasOwnershipMarker: () => false,
     };
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
+  });
+
+  it('reuses one growing transcript capture for discovery and cost enrichment', async () => {
+    let parseCalls = 0;
+    const parse = async () => {
+      parseCalls += 1;
+      const inputTokens = parseCalls === 1 ? 1_000_000 : 2_000_000;
+      return ({
+        sessionId: 'growing', agentName: 'claude', metadata: {}, metrics: { tools: {} },
+        messages: [{
+          type: 'assistant', timestamp: '2026-06-08T10:00:00Z', requestId: `r-${parseCalls}`,
+          message: { id: `m-${parseCalls}`, role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: inputTokens, output_tokens: 0 } },
+        }],
+      }) as never;
+    };
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set(),
+      discover: async () => [{ agentName: 'claude', descriptor: { sessionId: 'growing', filePath: '/logs/growing.jsonl', createdAt: 1, agentName: 'claude' } }],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const sessions = await loadNativeSessions(undefined, deps);
+    const { index } = await enrichCosts(sessions, {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/logs/growing.jsonl',
+      parseNative: parse,
+    });
+
+    expect(parseCalls).toBe(1);
+    expect(index.get('growing')?.tokens.input).toBe(1_000_000);
+  });
+});
+
+describe('synthesizeRawSession — descendant activity envelope', () => {
+  it('extends the root end time to descendant activity after the root finishes', () => {
+    const raw = synthesizeRawSession('claude', descriptor, {
+      ...parsed,
+      messages: [
+        { type: 'user', timestamp: '2026-06-08T10:00:00Z', message: { role: 'user', content: 'start' } },
+        { type: 'assistant', timestamp: '2026-06-08T10:02:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } },
+      ],
+      subagents: [{
+        agentId: 'late', filePath: '/logs/subagents/agent-late.jsonl',
+        messages: [{ type: 'assistant', timestamp: '2026-06-08T10:10:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      }],
+    } as never);
+
+    expect(raw.endEvent?.data.endTime).toBe(Date.parse('2026-06-08T10:10:00Z'));
+    expect(raw.endEvent?.data.duration).toBe(10 * 60_000);
+  });
+
+  it('uses one timestamp envelope for parallel descendants instead of summing durations', () => {
+    const raw = synthesizeRawSession('claude', descriptor, {
+      ...parsed,
+      messages: [{ type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      subagents: [
+        { agentId: 'a', filePath: '/logs/a.jsonl', messages: [
+          { timestamp: '2026-06-08T10:01:00Z' }, { timestamp: '2026-06-08T10:06:00Z' },
+        ] },
+        { agentId: 'b', filePath: '/logs/b.jsonl', messages: [
+          { timestamp: '2026-06-08T10:02:00Z' }, { timestamp: '2026-06-08T10:07:00Z' },
+        ] },
+      ],
+    } as never);
+
+    expect(raw.endEvent?.data.duration).toBe(7 * 60_000);
+  });
+
+  it('falls back to descriptor bounds for an empty family capture', () => {
+    const raw = synthesizeRawSession('claude', { ...descriptor, createdAt: 1000, updatedAt: 2500 }, {
+      sessionId: 'empty', agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} }, subagents: [],
+    } as never);
+
+    expect(raw.startEvent?.data.startTime).toBe(1000);
+    expect(raw.endEvent?.data.endTime).toBe(2500);
   });
 });
 
@@ -390,6 +468,79 @@ describe('synthesizeCodexRawSession', () => {
     const raw = synthesizeRawSession('codemie-codex', desc, p);
     expect(raw.startEvent.agentName).toBe('codemie-codex');
     expect(raw.deltas[0].skillInvocations).toEqual({ qa: 1 });
+  });
+});
+
+describe('loadNativeSessions — gemini ownership gate', () => {
+  const geminiParsed = {
+    sessionId: 'gm1',
+    agentName: 'Gemini CLI',
+    metadata: {},
+    messages: [],
+    metrics: { tools: { view: 1 }, toolStatus: {}, fileOperations: [] },
+  } as never;
+
+  function geminiDeps(filePath: string, parsedSession: unknown): NativeLoaderDeps {
+    return {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        {
+          agentName: 'gemini',
+          descriptor: {
+            sessionId: 'gm1',
+            filePath,
+            projectPath: undefined,
+            createdAt: 1000,
+            updatedAt: 2000,
+            agentName: 'gemini',
+          },
+        },
+      ],
+      parse: async () => parsedSession as never,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+    };
+  }
+
+  it('synthesizes a native gemini session into RawSessionData', async () => {
+    const results = await loadNativeSessions(undefined, geminiDeps('/tmp/gm1.json', geminiParsed));
+
+    expect(results).toHaveLength(1);
+    expect(results[0].sessionId).toBe('gm1');
+    expect(results[0].agentSessionFile).toBe('/tmp/gm1.json');
+  });
+
+  it('tags an unowned gemini session native-external (gemini is a managed agent)', async () => {
+    const results = await loadNativeSessions(undefined, geminiDeps('/tmp/gm1.json', geminiParsed));
+
+    // gemini is not analyticsOnly — unmanaged sessions are native-external, not native-unmanaged
+    expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+
+  it('deduplicates a gemini session already tracked by CodeMie', async () => {
+    const trackedPath = '/tmp/gm1.json';
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set([trackedPath]),
+      discover: async () => [
+        {
+          agentName: 'gemini',
+          descriptor: {
+            sessionId: 'gm1',
+            filePath: trackedPath,
+            projectPath: undefined,
+            createdAt: 1000,
+            agentName: 'gemini',
+          },
+        },
+      ],
+      parse: async () => geminiParsed as never,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+    };
+
+    const results = await loadNativeSessions(undefined, deps);
+
+    expect(results).toHaveLength(0);
   });
 });
 

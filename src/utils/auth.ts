@@ -12,14 +12,29 @@ import type { ProviderProfile } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
 
+export interface AuthenticationOptions {
+  /**
+   * When true, an expired session fails fast with the original error instead of
+   * opening the interactive re-authentication prompt. Callers running headlessly
+   * must set this: the prompt's own guard only checks for a TTY, and a
+   * flag-triggered headless run can still have one attached (CI with a pty).
+   */
+  nonInteractive?: boolean;
+}
+
 /**
  * Get authenticated CodeMie client with automatic re-authentication on failure
  *
  * @param config - Provider configuration
+ * @param options - Authentication behaviour; set `nonInteractive` to forbid prompting
  * @returns Authenticated CodeMieClient instance
- * @throws ConfigurationError if authentication fails and user declines re-auth
+ * @throws ConfigurationError if authentication fails and user declines re-auth,
+ *         or immediately when `nonInteractive` is set
  */
-export async function getAuthenticatedClient(config: ProviderProfile): Promise<CodeMieClient> {
+export async function getAuthenticatedClient(
+  config: ProviderProfile,
+  options: AuthenticationOptions = {}
+): Promise<CodeMieClient> {
   if (config.authMethod === AuthMethod.JWT) {
     const token = resolveJwtToken(config);
     if (!token) {
@@ -43,7 +58,11 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
   try {
     return await getCodemieClient();
   } catch (error) {
-    if (error instanceof ConfigurationError && error.message.includes('SSO authentication required')) {
+    if (
+      !options.nonInteractive
+      && error instanceof ConfigurationError
+      && error.message.includes('SSO authentication required')
+    ) {
       const reauthed = await promptReauthentication(config);
       if (reauthed) {
         return await getCodemieClient();

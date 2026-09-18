@@ -20,6 +20,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": false,
     "exactOptionalPropertyTypes": false,
+    "types": ["node"],
     "verbatimModuleSyntax": false,
     "baseUrl": "./src",
     "paths": {

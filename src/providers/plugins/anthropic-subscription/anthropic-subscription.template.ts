@@ -12,19 +12,6 @@ import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
-const ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
-const ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL = 'claude-opus-4-7';
-
-const ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES: Record<string, string> = {
-  'claude-4-5-haiku': ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
-  'claude-opus-4-6': ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
-  'claude-opus-4-6[1m]': `${ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL}[1m]`,
-};
-
-function normalizeAnthropicSubscriptionModel(model: string | undefined): string | undefined {
-  return model ? ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES[model] ?? model : undefined;
-}
-
 export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>({
   name: 'anthropic-subscription',
   displayName: 'Anthropic Subscription',
@@ -34,11 +21,12 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   authType: 'none',
   priority: 16,
   defaultProfileName: 'anthropic-subscription',
-  recommendedModels: [
-    'claude-sonnet-4-6',
-    ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
-    ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
-  ],
+  // Display-only (setup wizard listing) — this provider never forces a model
+  // choice onto the claude CLI; see exportEnvVars below. Family token, not a
+  // pinned version — computeRecommendedModelIds (setup-ui.ts) matches it
+  // against the live catalog and picks the current latest Sonnet. Only Sonnet
+  // is starred as recommended; Opus/Haiku remain fully selectable.
+  recommendedModels: ['sonnet'],
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
   supportsStreaming: true,
@@ -58,6 +46,19 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
         delete updated.ANTHROPIC_AUTH_TOKEN;
         delete updated.ANTHROPIC_API_KEY;
         delete updated.ANTHROPIC_BASE_URL;
+
+        // This provider has no CodeMie model catalog to resolve against (see
+        // exportEnvVars below, which blanks CODEMIE_*_MODEL for the same reason), so
+        // claude.plugin.ts deliberately skips catalog-based tier resolution entirely
+        // for anthropic-subscription. That means nothing else ever clears these vars
+        // for this provider - a stale value left over from a shell export, a previous
+        // profile/run in the same session, or manual testing would otherwise silently
+        // and permanently pin the launched claude CLI to an outdated model. Delete them
+        // so the claude CLI always falls back to its own live-latest built-in defaults.
+        delete updated.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+        delete updated.ANTHROPIC_DEFAULT_SONNET_MODEL;
+        delete updated.ANTHROPIC_DEFAULT_OPUS_MODEL;
+        delete updated.CLAUDE_CODE_SUBAGENT_MODEL;
 
         // Reuse the Claude Code plugin hooks so local metrics/conversation files are
         // produced even though model traffic is not proxied through CodeMie.
@@ -113,20 +114,18 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
     };
 
     // SSO/JWT use CodeMie gateway model names, but this provider talks directly to
-    // Anthropic via Claude Code's native subscription session.
-    const model = normalizeAnthropicSubscriptionModel(config.model);
-    const haikuModel = normalizeAnthropicSubscriptionModel(config.haikuModel);
-    const opusModel = normalizeAnthropicSubscriptionModel(config.opusModel);
-
-    if (model && model !== config.model) {
-      env.CODEMIE_MODEL = model;
-    }
-    if (haikuModel && haikuModel !== config.haikuModel) {
-      env.CODEMIE_HAIKU_MODEL = haikuModel;
-    }
-    if (opusModel && opusModel !== config.opusModel) {
-      env.CODEMIE_OPUS_MODEL = opusModel;
-    }
+    // Anthropic via Claude Code's native subscription session — there is no CodeMie
+    // catalog to resolve a model from here, so defer entirely to the claude CLI's
+    // own built-in defaults instead of forcing a (potentially stale) hardcoded one.
+    //
+    // ConfigLoader.exportProviderEnvVars() sets CODEMIE_MODEL from config.model
+    // *before* layering this provider's exportEnvVars on top, so these must be
+    // explicitly blanked here — omitting them would leave the profile's saved
+    // (possibly stale) model in place.
+    env.CODEMIE_MODEL = '';
+    env.CODEMIE_HAIKU_MODEL = '';
+    env.CODEMIE_SONNET_MODEL = '';
+    env.CODEMIE_OPUS_MODEL = '';
 
     if (config.codeMieUrl) {
       env.CODEMIE_URL = config.codeMieUrl;

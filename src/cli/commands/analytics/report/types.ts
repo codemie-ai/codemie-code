@@ -41,8 +41,26 @@ export interface ReportSessionRecord {
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
   hadLog: boolean; // a native agent log was located for this session (priced<hadLog ⇒ parse/reader gap)
+  // Native log path — same one the cost logic resolved (raw.agentSessionFile, or the
+  // ~/.codemie/sessions/{id}.json correlation-file fallback); absent iff hadLog is false, so
+  // this and hadLog never disagree.
+  agentSessionFile?: string;
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
+  dispatchesComplete?: boolean;
+  /** Captured native activity bounds and the actual capture time, in epoch milliseconds. */
+  capturedAt?: number;
+  observedStart?: number;
+  observedEnd?: number;
+  costSource?: 'native-estimate' | 'authoritative';
+  /** Source-reported amounts are preserved; native usage is priced at standard API token rates. */
+  costBasis?: 'standard-api-tokens' | 'source-reported';
+  /** Disjoint session accounting: root own + top-level inclusive + unlinked. */
+  rootOwnTokens?: TokenUsage;
+  rootOwnCostUSD?: number;
+  unlinkedTokens?: TokenUsage;
+  unlinkedCostUSD?: number;
+  unlinkedAgentIds?: string[];
 
   // === Usage provenance (optional; absent for agents that always record full usage) ===
   /**
@@ -59,6 +77,8 @@ export interface ReportSessionRecord {
 
 export interface ReportMeta {
   generatedAt: string; // ISO
+  /** Latest included native-family capture; individual sessions retain their own capture times. */
+  capturedAt?: number;
   rangeLabel: string; // e.g. "last 30d" or "all"
   agents: string[]; // distinct agents present
   projectFilter: string; // applied --project or "all"

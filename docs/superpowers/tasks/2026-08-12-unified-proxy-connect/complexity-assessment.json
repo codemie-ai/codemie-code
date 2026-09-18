@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "task": "Unify `codemie proxy connect` into a single command with orthogonal target flags (--claude-desktop, --vscode, --vscode-claude-code), deprecate the desktop/vscode subcommands as highlighted aliases, and make bare `connect` print a user-friendly target list.",
+  "generated": "2026-08-12",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Restructures the `connect` Commander group and two ~200-line action bodies in src/cli/commands/proxy/index.ts, introduces a new abstraction that orchestrates three config writers (desktop.ts, vscode.ts, vscode-claude-code.ts) over one daemon lifecycle, reconciles two divergent daemon-match strategies (telemetryMode gate vs full inline match), and adds deprecated desktop/vscode aliases plus a bare-connect target list." },
+    { "dimension": "requirements_clarity", "reason": "Base M (10 well-enumerated acceptance criteria and an explicit out-of-scope list), bumped to L by the TBD clarity red flag: the approved story defers three Open Questions to engineering, notably multi-target telemetryMode/clientType attribution and the standalone daemon posture for --vscode-claude-code, both of which carry rework risk." },
+    { "dimension": "technical_risk", "reason": "Novel composition of several target writes over a single daemon-lifecycle with new per-target success/failure summary and non-zero exit on partial failure (no current analogue), executed with no unit-test safety net on the exact connect action bodies being rewritten and uncovered writers (writeVsCodeClaudeCodeConfig, writeDesktopConfig, spawnDaemon, stopDaemon). A live integration test hard-codes `codemie proxy connect vscode` and clientType 'vscode-byok' that the aliases must preserve. Rollback is cheap (flag unreleased), so not XL." }
+  ],
+  "red_flags_applied": ["Requirements Clarity bumped from M (3) to L (4): story defers three Open Questions to engineering (multi-target telemetry attribution, --insiders with only --claude-desktop, help-text wording) — TBD / we'll-figure-it-out clarity red flag"],
+  "split_recommendation": null
+}

@@ -1,0 +1,21 @@
+{
+  "2026-08-25-profile-provider-decoupling": {
+    "source_run": "docs/superpowers/tasks/2026-08-25-profile-provider-decoupling",
+    "branch": "feature/profile-provider-decoupling",
+    "generated_at": "2026-08-25T14:44:00Z",
+    "proposed": {
+      "size": "L",
+      "total": 23,
+      "dims": {
+        "component_scope": 5,
+        "requirements_clarity": 3,
+        "technical_risk": 4,
+        "file_change_estimate": 6,
+        "dependencies": 1,
+        "affected_layers": 4
+      }
+    },
+    "status": "written",
+    "example_path": ".ai-run/references/complexity-assessment/examples/l/profile-provider-decoupling.json"
+  }
+}

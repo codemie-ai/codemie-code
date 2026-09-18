@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0ff65ff28e5a1ec2cfb0ac7b8ba6d6a5091516554985877a9c521e61e5e19bcd",
+  "claims": [
+    {
+      "id": "claim_7b724290174f4cca8f2e88dbf3372f3b",
+      "statement": "ConfigLoader resolves effective runtime configuration in the order CLI overrides, environment values, project configuration, global configuration, then built-in defaults, and loads a project `.env` before reading environment overrides.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L29-L36",
+          "version": "repo-lines-v1:sha256:a85687d7202edd96582067b6cb4dff3dfc2dd9219e4a103c14a8ac3bff036159:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTcyYTQyOTM4MmIyZTE0NzE4ZTBlMzdiMDU3MGE4YTE3MDI5OTFmY2Q4NDk4Y2Q4NDA2MGE4YmY0ZjA1MDE3YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjA0NGQ3MjViOTRhMmE1ZDIyZjY2YTU4ZTg0Mjk0MDQwZDZlZTE0ZmMyZGY4M2YxZjZhZWE1YzdjYTUwZTJkYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDk2NmI4YmI0MmI3MjZkOWRiMzJmMTNjNGQzYmQ5ZTU0MDUxMjVlOTdmNGM4NjkxOWEyMDQ0YWU0YjlhYzAyNCJ9"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L410-L451",
+          "version": "repo-lines-v1:sha256:bc57ef6ee8681c03fff65263c2ce972b96b277e7952831d291199dbba7290c9b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyYjhhNGEwNTEyNDM2MTczNjg4YmY2MjIzZmY4NjY3MmZjOWY4MTZiOGIzNTFjNDQyODE3YmIwZGM5NzE1YjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkZjk1MjFkZTYxMmUyOWJkZWU3YWJkNTZjNmE1N2IzZjBhNTNmMTVlMTBlYThlZTZhM2NlNTc5MzlkOGVjY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L87-L200",
+          "version": "repo-lines-v1:sha256:6d1807a1f94ff4b374dc88c17d12b647ec3aa82ef4097d67b8d69ed1d4817618:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2ZDlhZjUzNDQwMmY3NDllY2Y3NDFjZjYxMmU4MWU3ZWZmZDY4YmIzNWEzODYzZjE3ZTM1NThjMjk5YjdhMDdiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5N2Q4NjMyZTU0ZTkyOThhYmI5NTg3MjdlMmQ1MTQwOGFiYWYxMzY2MDM1Mzc5MTAxNDBhYmY2NWIzMGFiNjEzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_03d1c447c35c42169e065a2b01afbb62",
+      "statement": "Global configuration is resolved through getCodemiePath('codemie-cli.config.json'), while project configuration is `.codemie/codemie-cli.config.json` under the working directory; CODEMIE_HOME overrides the default CodeMie home directory.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L48-L62",
+          "version": "repo-lines-v1:sha256:b3236b0bc4aae3dc9450f3ad0cbf31d2877640d5c9cbf7bfed08ee6b58e9a803:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjYWQxOGU0MGFlMjEwOGJkOGJiOWY3ZTljMTcxNTM0YjA5YWE0MjA5MGM3ZTk1MzJlODliZmU3ZjA0MzkxOTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkMWZmNmViMTM4NmY1OGI4MTJmY2ZmZTRlNjlhY2I3OGU4NWI4NDNlMDEzMTI0MWQwOTc1NmZjZDNjOTBmZmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQyN2IwZDY1ODk0ZGI5MGQ3OTBmZTYzMWExYzc1NzM3YjFlNjRkYTQwN2FjYmE1MTMyYmJlZDQ2ZTEyYzBmYWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyNGU0NWRmYTIwNjIwNjhjMzVjZmZiYWJhZGI4MjkwZTg0MmVmOGNiOGY2ODI0ZGFmYmUxMmM3OTk3ZmQ0MmYifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L514-L542",
+          "version": "repo-lines-v1:sha256:701d0c9ebe7e708d0fa41754ab0ece9506d3066fc9f3c54a76e199d8c278c978:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0MTAzZWZlOTNjZjlmZGIzNzI2NzQyMjRlNmFjNWZhYzA2MzQzZjc1ZWY3MDNmOGFiOWY3MWEzODIwNGU0ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJlZWVmZGQ1MTEzZDk5MDU2ZjFlMTlkZTFiN2Q1YmVkZTZlMGEzMDFmOWU4ZjdiZTRlYWQzZjhmOGRhODY2YzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwZjE0MDI4NGY1YTdjY2Y3YmFhYjRkNmNhMDJmZjhjOTIzYjM5NTNhYjk0NzRhZTAwMzgzOWI2YzcwYmU4MjMifQ"
+        },
+        {
+          "resource": "repo://src/utils/paths.ts#L327-L375",
+          "version": "repo-lines-v1:sha256:23745b0e5974ef7eff9854f5c0ab9cbc20ae27a5f074e796f70ba112e37077d3:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmN2NkYTAwYTUxMDE3YzRjODVmYTIyOTU5NzUyYmY0Yzk3YzE3ZDdhZmQ4NGQ1YzFkOWJkYzg3MWJhZDkwNmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3NTk2ZjVlMWUyMGIwZDFmNzgyZWQxMDY3ZjcxMTJmOGNlYjg4Y2UwOWEwMWIyMTlmNTkwZjRmYmZkZWYyYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0ZDM3Y2I2NTgxNGM1N2E3Yzg2YTVkYTMxMWJmZTU2MTY5NjYyYTdiYzRmMWZhYmZjN2EwYTM3OTllYjU4NDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bf31686cbeab4dc7a56685cd10b4bdbf",
+      "statement": "Version-2 configuration separates a profiles map and activeProfile from scope-level workspace state, and saveProfile/initProjectConfig split workspace fields out of persisted profiles.",
+      "evidence": [
+        {
+          "resource": "repo://src/env/types.ts#L48-L206",
+          "version": "repo-lines-v1:sha256:d8c2750800ba50f586f83eed82ffb35c7ced76793e3c3519b98901a5a8b71b9d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyYjk4MThjNDk1NGM5NjA3OWU2NDZkYThiNGFjY2Y2OGJmNTcyY2FlNmM3MGQ1OWJhY2JhNmI4MmY4MzZiYjA3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0ODdkYjUwM2U2MmVhYjNkOTc5N2YzNWM2OTUyNGJjNTZjMDliNjI1ODFjODkwN2RiZGI0MWNkZGNkMTM2NDRlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2YTVjMWUxM2JkYWMzOTkyZDA0YWM5NGNhZTgwYWM5NDhjZmUzNTAyN2Q1YjA0OTA5OTg3NGU5NjJhNDdjZDY0In0"
+        },
+        {
+          "resource": "repo://src/utils/__tests__/config-project-override.test.ts#L394-L424",
+          "version": "repo-lines-v1:sha256:01f83079df09e0a67ae979caa1a89511ee7f2a6328f5c2071bd910232f4e290c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YWNhMGVlY2I2MTg0ZWZjNWU5Nzg1MTYxNTA0YmYwOGJhY2IyM2ZkNmM2MjgzN2YxNTc3MjI5NzY5OTlkMzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxNjQ4YmMyYWEyODlkNmM2YzcwZmQ2ZjIxMmY1OGQwMDU5YmYzMjUzMWU0YTQ1M2RlNzc2NjMyOTZmZDE1MzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L557-L618",
+          "version": "repo-lines-v1:sha256:932f8f4713b08e4f196cb5ae7123418db03c1fc435e1e4275294c4c9f436fb6d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyZWQyMmYzMDkyMGM1Y2RjMGMyN2NiNDRhZmI1M2MxM2U1MTMyNWEwZjE2MDgwY2ZjOWM5YzZkYmY4ZDczYTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMDUyMDFkNmJlODQ4OTJlYWM5M2VlZmQ2MjExY2MxYjg2NjE4MzY1YzUwOTk1ODg2NDhhMWYxNjE1ZjMyMGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L873-L917",
+          "version": "repo-lines-v1:sha256:76ef92cc59747d742b5316bef19ea47a76527c76c75861f6c75895eabd96361d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkYjNlN2NkMGMzYTYyMzA0NzY2ODE2MWQxMDRlOTlkODYyMDljYTNlNzc1NGEyNWIxMTlhNDkwNzg3ODA0MjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2ZTk5Mzk4MGU2MGRlMzYwMDZhODJmYjM3NDg1MzdmZDcxNGUxY2YwMTIxNDBmYmQxNWQ5N2FmZDQ0NTdlMDQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8a95e0b8370a41b28edeb0b263b76750",
+      "statement": "The effective workspace is selected as a whole object: non-null local workspace wins, otherwise global workspace is used, so fields are not mixed across scopes and a null local workspace falls back safely.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/__tests__/config-project-override.test.ts#L557-L650",
+          "version": "repo-lines-v1:sha256:2248121a5478ce9e3061b6f885d1f09b5a155bc8aa02be700ac6f1a25574f587:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVmMzdmOGUxMzc5NDg2MTYzYzMxMjUxMGI4ZDY4NGJkMzcwYzg0OGE1NmFjYzBjZGQ2YzU5NDI0YTA1YWMyMDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxN2FmMTEwMWM5N2I3YzJmNTI1NDA3ODJlNjM0Y2M0NDQwZjBlOTcwMzQxZTUyZjk3NTIzMTFkNzhiN2Q3ZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA2YzA3MGMwN2UxMDBlMmE5OWE0YTVlY2U4ZTA2Y2M0NGJjMTYzNDM4YTJmZTFiOGU4MmE4OTUxMTdhNTc3MTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExYTIwOGIwMWM3NzhhZjg4YzYyZTI2ZjI5ZjczMmEwOWJiYWIzYWQyYzgxZmVjY2MwYmZjMDY3ZTlkNjQxMzkifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L203-L221",
+          "version": "repo-lines-v1:sha256:50ea1a4df09fbe4a757c4e56f9bae67768a018c8db80c2cd996c45454732011d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxYzQ5OTU4YzMzOTY4ZTllYmZmNzlhOWM4MGZjNTc1YjU1NTVkNTRkMzc5ZDAwOGE0MGNhZWFmMGU1YmUyOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYTRkMzNiMTdjZTFhNmIyNWE0NWM0MjdjZTFhYmJjMTQ5YjU0NDY0MGFmOTI4ZjJjZmExZWNmMTBjNzk0YWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_27a10b1a8e5b428e912630057d8a0368",
+      "statement": "Profile selection uses an explicit requested name when supplied, otherwise a local activeProfile when available; local overlay selection favors a same-named profile, then local active or sole profile, and avoids applying a different local team profile's provider data to an explicitly selected global profile.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L105-L136",
+          "version": "repo-lines-v1:sha256:fc89d44e8312e22321631c6ca6a4d2c44702297ed4bd00ae61fc082dd94ddda8:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMDNkZDU1ZmZiNzFiYzExZWI0NDY3ZWNhNjcwNThmOTFkMjk3NjNiYjA5OTYxZGIwN2M4NTMxN2RmMGNmYzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4YWVlNzgzMDFjNjk0NjFiZDI1MTFhM2ZmZTdkMDk0ZTI1NDc2MGE1OThmNDg5ZjgzMzRhYWRiODEwMDZkMzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjYzIzNGEzYzJhYzNmMDBiYzRkYWYzOGI5N2ZmZWJiZjcwMzJmZDY0NzFhNjIyODYwODJlYzU3N2FkNzQxOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVjMGUxOWY3YzYwOWYwOTA5MTdiMzMzMjEwMGZkYTM5MjQ4NWZhNGZlMmQwMzRmMjRkZDVlOGE0ZGY3ZTVhNWMifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L250-L325",
+          "version": "repo-lines-v1:sha256:e1bee2b1112e3a2aeb1dea56479d5b28a7d9cefe1d93cce215ba85b3a7aff3ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhZjU4YjZmOWZlMDQ1ODM0YWZmMzRiZjYzNmM5NDU0ZDEwMjM1M2M0YTViMjUyYjcwNDBiMzk0ODEwOWQwMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4YzY1Y2NhOTk0MDMwYmEyMTIzZDAzYTA4ZDdhOTcyYjgwZGExNDgzZDA3OTk4NzRlNjY4YzUyMmM0MGRiMjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkMTRmOTg5ZTUxNjdjZDE4OWUyZDhjOTE4NzE1ZTNhMTY2YTcyOTBkYjg4ZDQyOTViN2NiZGVhY2JlZWVmODUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L328-L395",
+          "version": "repo-lines-v1:sha256:be6c384c40a7f504cacd429e9dca78566b7d55cb1726f43cec16dc1bd2a369b4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1NmNkMjMyN2NhYTg0NjAzYWE3NTQwYjVlNDA4ODUxZTIxODE4NzVhODU2OGU2MDYyZDZmZDc4MTUzNzdjNDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRiYzVkNzMzMGMwMTk2Y2U1NTE5NjQ5YWIzMzdjNTNhOGZlMTI5OGE4YmMxODU1NGFiMDY5ZTUzYjcwODVjYzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f094908e7224f1b9eebddbacb65ae7a",
+      "statement": "When a profile name is explicitly passed in CLI overrides, environment values for provider identity and related CodeMie authentication fields are filtered unless the corresponding CLI field is also supplied.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L146-L193",
+          "version": "repo-lines-v1:sha256:e4d1bf2e86964287b212097a8ebbaa37f9fb595827b9da46f1cc960a61f8032a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmNDkwOTA1NzRhZGE0NWVkYTJiZTcyMzA1MWU2OTJiODdhM2QzY2NiNGZjYWVjZGM2ZDRkMWMwMjkyZDUzNWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjYjljNDU0ZTBjZjYzNjZkNTg0ODQ3OGIxZjVkOWI1OGRmYzZkOTU0Zjg1YWMzOTAyNTZlZWVmZjcxZDZjMzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkMzZlMjIyODFmMjE4NTc1MzY3NGQwZGE5MDNmNWQxOTYzZjI0ZDQwOTVmYzAwZWVlOWE4NjE1ZDVmZjk3NzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9a9aeb136ea141eeb696f2e6a2d75d8c",
+      "statement": "Profile management combines global and local records with local entries taking precedence, chooses local activeProfile over global, and writes switching/deletion changes to local storage when a project config exists.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/profile/index.ts#L323-L461",
+          "version": "repo-lines-v1:sha256:9232d829620045cc30fef7e126984bc2ff306c9289410420cf8ad82e8570cc88:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZDRiOGE4YzAzZTcxMDg2ZjVkMTA5YWEwNDA0MmIwOWM3ZGYwYTRjZGI1MThhZmI3M2Q5Mzg2Yzk0YmFkNzQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMTZjYzczOGI5YjAxZDMzNGM3MTViNTA2YzkwY2FlNzMyNTMyYTViNTAyMmE5NDk1ODZkYTc0NWQ4NWEyNTZjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwOTRmYzBjMTczZDFlYzNmYzUwMWQ3ZGZhOTI4NTUwMWM1MjdjZmI0NzEyNTgzZGEzY2MzNjE4MDU2NmI0YmUzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L621-L714",
+          "version": "repo-lines-v1:sha256:f94f0a6b6c6edc849dfe5877122122ab9c157eaafea52f476de5e872044201d8:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxMDUyMDFkNmJlODQ4OTJlYWM5M2VlZmQ2MjExY2MxYjg2NjE4MzY1YzUwOTk1ODg2NDhhMWYxNjE1ZjMyMGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIyYzNiZTY5MTU1N2I0MzMxY2U3Yjk5NTNlYzFkZDM2ODk5ZjM5ZTU4MDVjNTllZmQwOGUyNmE4OGZhNDMwZWEifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L716-L855",
+          "version": "repo-lines-v1:sha256:f9554516522b4cdf3f031d0c66ddafa55c9c2ccc803f888165534534fff1328c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5N2Q4NjMyZTU0ZTkyOThhYmI5NTg3MjdlMmQ1MTQwOGFiYWYxMzY2MDM1Mzc5MTAxNDBhYmY2NWIzMGFiNjEzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwNDQ1MzAwOTc0YTA4MGVkNWEyMzk2OGI3ZjdhNDNiNGJlZTg3MzQyYWE0NzEzY2Y4YTQ4ZWNmYjdiMjM0YzUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd8f9aadb4ad45b381b10cba46581403",
+      "statement": "Profile status can show per-field source attribution and masks sensitive values; it also delegates supported provider authentication validation/status and reauthentication through provider setup hooks.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/profile/index.ts#L71-L167",
+          "version": "repo-lines-v1:sha256:399c6bd7433c9d4f2304e6e4e2a8c87528577c36564b1d43e76954b614e3f99f:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5NDA1NDI1NmZjMzEzMWM5ZDYwNzIxMmI0OGFjNzM1ODZjYmU1YzE0NTAwMGNlYjJkNmQyZjAyYTA3NGI0ZmQifQ"
+        },
+        {
+          "resource": "repo://src/providers/core/types.ts#L311-L415",
+          "version": "repo-lines-v1:sha256:a5f7496801254a6782abfec12c451726ab1ba3ea66885badcd3dc500609dd2c8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzNjc5NTMzZGY1MTA1NmNkYWE3YjhkODFmMjQzNjQ5NzNjZGZhMjQ2YzIzNGVlN2I4M2RmZWVlNTViODA4ZDJmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiZGE5YWM2NTk3NTEzZjNkZTgwZDgxNzNlMDY1ZTNlMjJkOGM4YTUzMjM4YmRlMTU2ZDcwNzVmZTdlZDUyZjkzIn0"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L1197-L1395",
+          "version": "repo-lines-v1:sha256:06a04e68ed63a00fa149c93297c5815c7aceb4afc8805cca9092183ba69d24ce:eyJzZWxlY3RlZExpbmVDb3VudCI6MTk5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5N2Q4NjMyZTU0ZTkyOThhYmI5NTg3MjdlMmQ1MTQwOGFiYWYxMzY2MDM1Mzc5MTAxNDBhYmY2NWIzMGFiNjEzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyZjg4OWY4OGU4YmNmNjI5N2MyZGUxYzkxZjgwYTc1NGNjMDFhMjFiY2EwNTg5OTU5NDE0MTM3ZjUzZGMyY2ZiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3ea3ae3ef804f22911c4168a296fcd8",
+      "statement": "A runnable configuration validated by loadAndValidate requires baseUrl, apiKey, and model; provider templates can own provider-specific environment exports, while the generic exporter clears stale auth and model-tier values and supplies a placeholder API key only for providers declaring no authentication requirement.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/core/types.ts#L65-L140",
+          "version": "repo-lines-v1:sha256:3469fdad5fc631e290d0b26a60918089f09ec41d70e52a716ee789bb964836b3:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyZmU5MTdmMzU1YTRjYTZiY2U5NWYxNmJmNDZmODZiYTcwMDE3MjkyYWU1ODdkMWZlYjEzNDA1MjVhZmQ5NjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM2ODczNWI0YWNiNWY5MTljMTA3OGVmMmJjNGZjM2I2Mzc2ZDQ1YTBmOWNlZTg0NDAzNTI4MGQzMzNkYWYyZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L1067-L1195",
+          "version": "repo-lines-v1:sha256:f12ac1c5df52bc39dbe7bce8acdab619a28cdb23496efc3c1aabb1b44d1ff827:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZGIzZTdjZDBjM2E2MjMwNDc2NjgxNjFkMTA0ZTk5ZDg2MjA5Y2EzZTc3NTRhMjViMTE5YTQ5MDc4NzgwNDI2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjMTA2NjJlMDNmZThhYWY2MGI5YjU5OTc2NWM3YmI4N2M2MTY1ODFkZDhmM2U1ZThjZjBmZTMwOGFhMmZkYjlhIn0"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L1404-L1449",
+          "version": "repo-lines-v1:sha256:9d2842015cc1bc885439be76aeb281412ceb8264f60f35054c2d7a2cb0847494:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkZjk1MjFkZTYxMmUyOWJkZWU3YWJkNTZjNmE1N2IzZjBhNTNmMTVlMTBlYThlZTZhM2NlNTc5MzlkOGVjY2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmNGFmYmY4NTJkN2IyODgyZGNmMjBmNDQxNmE0OWJmYzk5NDgxZjBhY2JiOTFhMWIzMzA3ODM1NGVhNDYwMWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_de334f377cb64d0fac7091a5db0e7203",
+      "statement": "Credential-safe diagnostic handling requires sanitizing credential-adjacent log arguments: sanitizeLogArgs redacts sensitive strings and objects, logger sanitizes arguments for file output, and logger.debug forwards supplied arguments to console when debug mode is enabled.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/logger.ts#L161-L216",
+          "version": "repo-lines-v1:sha256:569c716e0d473903591e4283523422ec03d5bf4d1cc08fe152e977b5fde03f62:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEyZTZiZjRiMzBhNmVlOTY1YzAxOTZjZTMxNDViODg1ZTFkOWY2ZTQxMzUyYmQxN2FjYTZkNzQ0ZTY0ZDViNjIifQ"
+        },
+        {
+          "resource": "repo://src/utils/logger.ts#L260-L298",
+          "version": "repo-lines-v1:sha256:76a0cf05dabbc14895bbd555d98222984fb64d573434a7b72a282efd74fb8ffb:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMwM2I0Y2QwMWM0OGNmYzFjMTIzYjM3ZDFjNzJmZWM2OGM0MTJhZmIyMDYwMGNmNzcxYjI2NDY2OGE3MmIxZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4NjgzNmMxOWZiODM0YjAyMTU1NGIxYzdlZjBkMjJiODlkNzZiYTk4NzA5NTVlMGE5ZTM4OTVjNGU3ZTZhMWEifQ"
+        },
+        {
+          "resource": "repo://src/utils/security.ts#L231-L250",
+          "version": "repo-lines-v1:sha256:e7e3f6dcae26acff59960bd34aa36909b48f1b7ee945f1eb8476285ebce0c032:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0NTNiMmZiMDZmNTQ2ODdiZjAwN2YyODI4MDA5MjljZWRkYjE3NmU4N2FkYzJjNmZkNjdkMWU5NDViNzFjMDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2M2UyMTk5ZjQxM2UwNmI3YTE3ODg2OTQwN2Y4NTIwNjA5NTg5N2ZmODUyNmJmMGViZDk4OTA5ODE1NWE1M2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dc44ca176bf541ef8049681b463b0839",
+      "statement": "SSO credentials are encrypted, stored in the system keychain when available and in encrypted file storage, with per-base-URL storage names derived from a normalized URL hash.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/security.ts#L256-L335",
+          "version": "repo-lines-v1:sha256:bed3b2f1ea777ac676617da694ddca07ebf502f439fe69a3c9ba2d8cc9599503:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMzI0MmIxZjNlMWY1OGJlNjBhMGViN2ZmMDk1OTc4YmQ5Y2JkYWYzODdkZWFjZTkzNGRiZDA2MmUxZGEzZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI1YjExYmZiMGYwYTA4MTU5NTdkMjgzY2U0MGNmNjNlOWVlOGFjYjBmNTE3YmI4ZDg2YjAyNjY5NThjMTUzNTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2Mjk2YzkyMzM2Nzg3MzkyYTMzZjAzNGEyNGZjOWI0NjgwNTlmMzEwYjRmMzZjMGY3ODZjYTdiMTAyZDA4ZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6134abd2e28c4079aa401cdeb6587697",
+      "statement": "The CodeMie home stores a persistent installation UUID and scoped assistant/skill registrations; loading registrations verifies their corresponding local or home `.claude` artifacts and combined assistant loading gives local records priority by ID.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L1457-L1503",
+          "version": "repo-lines-v1:sha256:5bf6988b50b932eaba23efd3b9bb824d7d8e564e1bcc74b3e32bd0d2da0a2c3c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmODdlZGY2ZDkyMzNjODI4YTc5ZGRhZjM5NWY5YWUyMzI3NTIwOWU0YmZkM2M4YWRlZjFkY2UyNGY2NzlkNDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzNDZhMjQzNThjMjExZDI2ZjBkMzc1OGFhYzk0N2NlYzFhMjlmMGQ5YTdkODFkODM5MjAxNjFhZDJlODIzYjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L919-L992",
+          "version": "repo-lines-v1:sha256:e533a13ae3c4fe57976868a3002935291dc0ea8f5d8f3ef495e39daeed6db43b:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1YzlkMDU4YWVkYmZiZmM1YzkxMzg0MzgxMzZmZDM5NTAyM2FkM2U1ZDM5ZDE0NzlkNjQ1MWJiMTE4ZmQ5NmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkYjNlN2NkMGMzYTYyMzA0NzY2ODE2MWQxMDRlOTlkODYyMDljYTNlNzc1NGEyNWIxMTlhNDkwNzg3ODA0MjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU4YTQwMmNkNDA3ZWFlMzE1NzgzNGIwZDEzZmY3ZjNhOTY5YTMxMzNmOTcxNDYyNmJiMjZkMWVmYmE5ODQyNzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3ac0b1b23183412a9ca0e89f7986a8ff",
+      "statement": "Focused tests exercise project initialization, precedence, source attribution, workspace splitting, profile/workspace migration, and nested secret redaction.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/__tests__/config-redaction.test.ts#L4-L81",
+          "version": "repo-lines-v1:sha256:2b215a325c54229dcabe9927c12303da84c0e345e36cf640b402bcd17ed16ab8:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1NjNiZjI0NTIyMDdiZjk1MjRiNTU0NTQyN2I2ODI3MzdlNjYzY2JkMTU1MTM5MTkwMmIwOWU4ZjZjMjhmNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlYmFjNDE3NmMwOGM5YTFiYTM4NTYwNWM4OGY5ZTUxZTUyYjczZjM1NjYxZDA0MzEyODAzM2ZlMzQ1ZTU2N2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://src/migrations/__tests__/007-decouple-provider-workspace-config.migration.test.ts#L12-L177",
+          "version": "repo-lines-v1:sha256:fdacea57f03e72053ba92d445636d2ebea5d93e9ffce0b2a2b1e482214165bcd:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxMzBhMjk2YWI3NDlmMDA4YzI5NGUzYjdlMTQ4ODdkNDI4ZmNmOGFjZDQwNWViMjUwNzBlMjQzNzFhNzZiNTI4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhMmI0N2UzN2QwMDBkZTc3NjE4NjQ5ZGUxNzVkMDNhNTJjZTYzYjFhOTM4YmVhZDM2YmFmYmQzZjhmZTlmZWQ2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiNmE4OTNjZjcxZWFmOTkxOTgzMjQ1MGQ4YWYyN2IwNDhkMzE5NDJiZTY1ZWM1YmM5ZjA0MDJkYTg3YmZhNzVhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4NTg3MDgyYjIzM2Q4ZmVlOGY3MDk4ZjY1ZjM1YzFlZjMzZjllMmFkYmI3YjFkODg4YTkyMzFkOTBjNmNjNjg1In0"
+        },
+        {
+          "resource": "repo://src/utils/__tests__/config-project-override.test.ts#L53-L285",
+          "version": "repo-lines-v1:sha256:10955e1eb599b2c243cc6528d94d8862c6741343a596306825aecf768a5bd118:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyZWM0NTM1MGNjYjM2NzFlZTA4Mjk4Nzg3OTNiZjhjNTQ3YWZmYTQ2ZTYwNDk1ZTkyZTUxM2Q3YTYyMjcyNTFiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZTZiOWMyYzJjZmQwZjlhYzE4NTZlYmEwMGM2NzJhM2JiOWM3MWRlMDIwMTg1ZmQ3YzUxNjJjNjMzOGIxODA4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3NDA0MDQ2YjQ1ZWIyZWRkNmQzZDE5MzdiN2E0OTM3ZWIxMjViYjNiNTk0NWRkZTc2M2Y2ZDEzMWI5ZDdiMjE4In0"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

@@ -5,6 +5,7 @@ import type {
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
+import { resolveClaudeModel, type ClaudeModelTier } from './claude.models.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -30,22 +31,24 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Supported Claude Code version
- * Latest version tested and verified with CodeMie backend
+ * Recommended Claude Code version — the one CodeMie verifies against.
+ * A different installed version produces one non-blocking notice, never a block.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-export const CLAUDE_SUPPORTED_VERSION = '2.1.218';
+export const CLAUDE_SUPPORTED_VERSION = '2.1.269';
 
 /**
- * Minimum supported Claude Code version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.218 → minimum = 2.1.208
+ * Minimum supported Claude Code version — the only hard gate; below it the
+ * agent refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * CLAUDE_SUPPORTED_VERSION, move its old value down to here — users stay
+ * supported for one full recommendation cycle before they are cut off.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.208';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.218';
 
 /**
  * Claude Code installer URLs
@@ -87,13 +90,21 @@ export const ClaudePluginMetadata: AgentMetadata = {
     apiKey: ['ANTHROPIC_AUTH_TOKEN'],
     model: ['ANTHROPIC_MODEL'],
     haikuModel: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'],
-    sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+    // CLAUDE_CODE_SUBAGENT_MODEL was previously bundled here; upstream Claude Code treats it
+    // as a global subagent override that silences per-subagent `model` params, so it must
+    // NOT be populated on multi-tier tenants. Routed via `subagentDefaultModel` below only
+    // when the upstream default (sonnet) is unavailable (EPMCDME-14355).
+    sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL'],
     opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
+    subagentDefaultModel: ['CLAUDE_CODE_SUBAGENT_MODEL'],
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'ollama'],
   blockedModelPatterns: [],
-  recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1'],
+  // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
+  // matches it against the live catalog and picks the current latest Sonnet.
+  // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
+  recommendedModels: ['sonnet'],
 
   ssoConfig: {
     enabled: true,
@@ -156,9 +167,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {
-      // Disable experimental betas if not already set
+      // Keep experimental betas enabled if not already set
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '0';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
@@ -176,10 +187,22 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.DISABLE_AUTOUPDATER = '1';
       }
 
-      // WORKAROUND: Disable tool search feature introduced in 2.1.69+
-      // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
+      // ...but keep *plugin* auto-updates working. Upstream gates them on the
+      // same predicate as the binary updater:
+      //   Pmt() = autoUpdaterDisabled() && !FORCE_AUTOUPDATE_PLUGINS
+      // which both skips the background plugin update pass and hides the
+      // per-marketplace "Enable auto-update" item from the /plugin Marketplaces
+      // menu entirely. Without this, pinning the binary above silently leaves
+      // every CodeMie user on whatever plugin version they first installed,
+      // with no visible control to change it.
+      // https://code.claude.com/docs/en/discover-plugins#configure-auto-updates
+      if (!env.FORCE_AUTOUPDATE_PLUGINS) {
+        env.FORCE_AUTOUPDATE_PLUGINS = '1';
+      }
+
+      // Enable tool search feature if not already set
       if (!env.ENABLE_TOOL_SEARCH) {
-        env.ENABLE_TOOL_SEARCH = '0';
+        env.ENABLE_TOOL_SEARCH = 'true';
       }
 
       if (!env.ENABLE_PROMPT_CACHING_1H) {
@@ -294,6 +317,92 @@ export const ClaudePluginMetadata: AgentMetadata = {
             error: error instanceof Error ? error.message : String(error),
           })
         );
+      }
+
+      // Auto-update stale model tiers from the live CodeMie catalog (unless the
+      // user has explicitly configured a value that is still available). Each
+      // tier resolves independently so one failure never blocks the others.
+      //
+      // Skipped entirely for anthropic-subscription: that path talks directly to
+      // Anthropic (no CodeMie catalog backs it) and must defer to the claude CLI's
+      // own built-in defaults, not have them re-populated from the CodeMie catalog.
+      if (env.CODEMIE_PROVIDER !== 'anthropic-subscription') {
+        const TIER_TARGET_VARS: Record<ClaudeModelTier, { generic: string; native: string[] }> = {
+          model: { generic: 'CODEMIE_MODEL', native: ['ANTHROPIC_MODEL'] },
+          haiku: { generic: 'CODEMIE_HAIKU_MODEL', native: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'] },
+          // CLAUDE_CODE_SUBAGENT_MODEL removed from the sonnet tier: it is a global override
+          // that suppresses per-subagent `model` params in upstream Claude Code. On multi-
+          // tier tenants ANTHROPIC_DEFAULT_SONNET_MODEL alone is enough — the upstream binary
+          // picks it as the subagent default and honours explicit overrides (EPMCDME-14355).
+          sonnet: { generic: 'CODEMIE_SONNET_MODEL', native: ['ANTHROPIC_DEFAULT_SONNET_MODEL'] },
+          opus: { generic: 'CODEMIE_OPUS_MODEL', native: ['ANTHROPIC_DEFAULT_OPUS_MODEL'] },
+        };
+
+        for (const tier of Object.keys(TIER_TARGET_VARS) as ClaudeModelTier[]) {
+          try {
+            const resolution = await resolveClaudeModel(env, tier);
+            if (!resolution) continue;
+
+            const { generic, native } = TIER_TARGET_VARS[tier];
+            env[generic] = resolution.selectedModel;
+            for (const nativeVar of native) {
+              // Never overwrite a native var the user (or another hook) already
+              // set directly — only the generic CODEMIE_*_MODEL var is treated
+              // as the "configured" signal by resolveClaudeModel itself.
+              if (!env[nativeVar]) {
+                env[nativeVar] = resolution.selectedModel;
+              }
+            }
+          } catch (error) {
+            logger.warn(
+              `[Claude] Failed to auto-resolve model for tier "${tier}"; keeping configured value`,
+              ...sanitizeLogArgs({
+                error: error instanceof Error ? error.message : String(error),
+              })
+            );
+          }
+        }
+
+        // AC-6 (EPMCDME-14355): surface tier availability at startup so the user sees when a
+        // subagent-requestable tier is missing. Per-subagent model resolution happens inside
+        // the upstream binary — the CLI has no dispatch-time hook — so a launch-time notice is
+        // the only place we can flag the mismatch before the sub-agent reports it.
+        const hasHaiku = Boolean(env.ANTHROPIC_DEFAULT_HAIKU_MODEL);
+        const hasSonnet = Boolean(env.ANTHROPIC_DEFAULT_SONNET_MODEL);
+        const hasOpus = Boolean(env.ANTHROPIC_DEFAULT_OPUS_MODEL);
+        const subagentDefault = env.CLAUDE_CODE_SUBAGENT_MODEL
+          ? `pinned to ${env.CLAUDE_CODE_SUBAGENT_MODEL}`
+          : 'per-request';
+        logger.info(
+          `[Claude] Provisioned tiers: haiku=${hasHaiku ? 'yes' : 'no'}, sonnet=${hasSonnet ? 'yes' : 'no'}, opus=${hasOpus ? 'yes' : 'no'}. Subagent default: ${subagentDefault}.`
+        );
+        // The silent-fallback problem is symmetric across tiers, not haiku-specific: a subagent
+        // dispatched with model:"opus" (or "sonnet") on a tenant that lacks that tier lands on
+        // the subagent default just as a model:"haiku" request does. So warn for EVERY absent
+        // subagent-requestable tier, naming the actual fallback model. The fallback is the
+        // single effective subagent default: the pinned CLAUDE_CODE_SUBAGENT_MODEL on single-
+        // tier tenants, otherwise upstream's own default subagent tier (sonnet), then opus,
+        // then haiku. If no tier at all is provisioned there is no fallback to describe, so
+        // stay silent.
+        const subagentFallback =
+          env.CLAUDE_CODE_SUBAGENT_MODEL ||
+          env.ANTHROPIC_DEFAULT_SONNET_MODEL ||
+          env.ANTHROPIC_DEFAULT_OPUS_MODEL ||
+          env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+        if (subagentFallback) {
+          const tiers: Array<{ name: string; provisioned: boolean }> = [
+            { name: 'haiku', provisioned: hasHaiku },
+            { name: 'sonnet', provisioned: hasSonnet },
+            { name: 'opus', provisioned: hasOpus },
+          ];
+          for (const { name, provisioned } of tiers) {
+            if (provisioned) continue;
+            const label = name.charAt(0).toUpperCase() + name.slice(1);
+            logger.warn(
+              `[Claude] ${label} tier not provisioned — subagents dispatched with model: "${name}" will fall back to ${subagentFallback} rather than the requested ${label} model. Provision CODEMIE_${name.toUpperCase()}_MODEL or omit the \`model\` parameter to silence this warning.`
+            );
+          }
+        }
       }
 
       return env;

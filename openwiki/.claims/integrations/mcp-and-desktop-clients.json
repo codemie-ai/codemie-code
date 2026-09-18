@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:69690d6f5837b33fbaf2998251c409804ec91fb055c840adbf0904e8ef1c9cb8",
+  "claims": [
+    {
+      "id": "claim_4a7a81e38e7d458a8aecdb86e9043ea1",
+      "statement": "The package exposes `codemie-mcp-proxy`; its lightweight launcher validates a required URL, imports the compiled bridge, handles termination signals, and avoids normal CLI initialization so stdout remains safe for the JSON-RPC stdio channel.",
+      "evidence": [
+        {
+          "resource": "repo://bin/codemie-mcp-proxy.js#L3-L13",
+          "version": "repo-lines-v1:sha256:ef9c88b8436874fc4ac571a8d7b413185a74dd5839dab963681d6e5d10a408b2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MmE0MjkzODJiMmUxNDcxOGUwZTM3YjA1NzBhOGExNzAyOTkxZmNkODQ5OGNkODQwNjBhOGJmNGYwNTAxN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkN2IxNzBiZjUyZTA4OTUxMDA4YmYzZWNjYmJiODcwYTI2YmUwYTFlNWI4ZTVmMDIwYmFmYmNmMzU5OTk3YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1Y2Y1OTFjZDM1ODBiNjYzMWY3NWEyYThhNDZiM2I5ODMzMzYwY2NiNmJlNTZkOWYxYmRhMzFhMWZmMTRjOWEifQ"
+        },
+        {
+          "resource": "repo://bin/codemie-mcp-proxy.js#L32-L90",
+          "version": "repo-lines-v1:sha256:0f6faac5071a2abf9e2b21afee6acab7698fbde42e9c2558f1b18331a4bf1410:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlMDdjZmJkOThmZDgwNWI1OTIyYjkxNTEwMGIwNjU2MjI2M2RkNjhjZjMyMjdjYzA2YjBiNjFhMjI5MzU4OTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0ZWEwZjRmOWEwNDJhZmE0ZmYyYjkyMGUzZDY3NTVlZTFmYzRmYjA0NzAwNmZmNDNiMGU0OGJjMTI4MGM3NTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4ZmJhZTE3ZWJlNzVmMmEzZDY3YWUyN2UwMTc4NTEwOWQ0YzJkYjVhODExZjQyMTUzNmZiM2QxOTQyODZhODEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://package.json#L8-L21",
+          "version": "repo-lines-v1:sha256:5b410cb48060e62393262fd2ba588db58d71ba5500b5dc0fff73dfacdfe4c31d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2YzE0NzU3YjhlMWU5ZDZhN2RlZTk5MDJlOTA0MDdhZDhjZjY3M2IzZThkNzYzZTI3OTUwZDE5ZDA2NzhkNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwMDA2MjQ0MWQ4MTU0OTI5NmYzMzE4YmExYWZlMjkzOTBhMWQxMDQxYzBhYzkzZTc4OTFlNmFlODc0YzQ4NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc0ZjUyM2MyZGM1MzgxYjQ4ZjYxMDE0ODQwYWJhYWQ1Mzc3MzRkYzRjNDhkMjBmNzgzNjAzMjBmZWEyYWU5MzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmMWI3NTgxNmNlMTMwNTVkYzg4YjY2Y2YwZmYxZjE3OTNiNDc4OWJhMGZjMDliYzQ4YTg1YmFhMDc0NDI2YTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ffd9ac91d1964d4b964b915defce0235",
+      "statement": "`codemie mcp add` validates the server URL and name, verifies the proxy and Claude CLI are installed, then invokes `claude mcp add` with `codemie-mcp-proxy` as the stdio command and forwards an optional scope.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/mcp/index.ts#L7-L105",
+          "version": "repo-lines-v1:sha256:eff728ebafcd7cb621219ae1d5e622d205602f67b9ddbb45b8720cde300adad6:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3MWM5NThmNjZmMjA2MDJkMWY2OTJmMWM3NDJiYTAyMDMyNTA1YjQ3MThmOTUzMDY3MDNiMjg1YjkwY2NiNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNjJmNjBkODU5MGE1NzljZjQ2ZjhkNjczNzhjNGM1NzJiOTYyY2VjY2RiOTBjN2E1ZjdiNDJiOTYwNzgyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkZTE5ZjA1MTE3NGUzY2NjYWRiYWI5ZjhhMDc1NTBlZjk2Y2UyNTBhZDU4OTBiMDk4ZDdmYjc5ZTYyMzljMjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3ZTUyOGU3NWQwNDYyOGY0OTY2ZWUxNjYyZWE0MGE1OTZhOWQxYTE2MjRhOTZkMWFkYTNjMGYyZGY4ODM2NTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3b0c34278da246b0a9ed0839baa933d8",
+      "statement": "`StdioHttpBridge` starts listening on stdio immediately but lazily creates one streamable HTTP transport on the first message, queues messages during connection, forwards outgoing and incoming JSON-RPC in opposite directions, and shuts down when either transport closes.",
+      "evidence": [
+        {
+          "resource": "repo://src/mcp/stdio-http-bridge.ts#L257-L278",
+          "version": "repo-lines-v1:sha256:bd76b37c8710a2c6d0ff410d7072d1120c61bfeb07e0225c1467f9e37d4a1a7e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwYWY4YmQ5YjU2OGYxZjkxNzkxNTgzY2EwMGExNDZiOWFmMWU0YmRjOTU1OGFiYzAyOGViYWRhOTYyZWVhYmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmOThhODM5NDhlNThjNTVjYjAxM2FmOTczZDI3ZjNkNDM3NmQ4ZjAzNGM4ZDk3MzViNDI0N2IwODBhODJlNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY0OTUxN2E3NGQ0MzJhZTUyODQ4MGFmYTdiODYxNTc4MTkyMWY3ZGFlMTEzNzMyOWY3ZWJlZTM1NDE5N2I4MjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/mcp/stdio-http-bridge.ts#L293-L346",
+          "version": "repo-lines-v1:sha256:355f2633325044fd10398dc91f5e604d20677baca7f2479141c7d1861b0d3098:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmMmVkZTczZjM0MDNmYjkwNGJmMjhlNjc5OWE2MTBhYTZhMzEyMjE3OTJhMDI1YjRjMTk5MzQ0ZTYwNjM4M2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/mcp/stdio-http-bridge.ts#L87-L207",
+          "version": "repo-lines-v1:sha256:d6687845907e25ecfa94cae3036baeee45cdbc16a10673f69ab0dde0e4140a91:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxMmJiYzE4ODZlNDg0MjViYjE4M2Q0OGQxOWE5YWRhYWI2ZDdmZTg3MTRhODNmMjA1M2Y1MmI0ODNhM2YyMDllIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMWVjMWYzNmZkZmJmYzNmNjZjMTJiMWQ0NWIzMGMzZTdmODYyMGRjZDk5OTVhMzhlOTk0OGE1ZDBhNGY0YzRjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_72d39ad6bc55476cbd065d6905681d36",
+      "statement": "The bridge uses an in-memory per-origin cookie jar that captures `Set-Cookie` response values and injects a matching `Cookie` header on later HTTP requests; cookies are not persisted across bridge processes.",
+      "evidence": [
+        {
+          "resource": "repo://src/mcp/stdio-http-bridge.ts#L211-L260",
+          "version": "repo-lines-v1:sha256:699a3f6eb5027bb9037105b737fcc52d24a3d4a58a9c84ad0c291d293a70a86c:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhZDFjZDkwMzcyNjkyY2FjNTIxYjQzNzk3MjIxY2NjMDI0OGM4M2NkMzQwYTI5OGM5Mzg5MGQxNzNjNTNhMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI1OGYzMmZkZTAyNWUxNjJiOTc2NWI2OWI3ODg2NzU3NWEwODExYmQyYzkwNjc2OGY5MGMyNGVlNGFhMDk5YjYifQ"
+        },
+        {
+          "resource": "repo://src/mcp/stdio-http-bridge.ts#L44-L80",
+          "version": "repo-lines-v1:sha256:1266cf601e4458f479bae24a61fb4ec52f4b9c62e3438c9d1aa997cd8b2f7850:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwNGQ2NGM5YjUzNjA1ZTAwYmEzYjAxODBjM2MxYzY0OWJmNmY1MDFmMDBkYjg5YThjYzA3ZjVlODViMjQ3ZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4NzdjYTM5MjlmZjVjMjA5OWE1ODgyMzUzNDdjMDdhNWE3YWRlNzU4NjhmYjEyMThlYTBjNzc1OTU4ZGFiOTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9588e799dcd47508b824a44b8da2791",
+      "statement": "The MCP OAuth provider pre-starts an ephemeral localhost callback server before connection so dynamic client metadata has a redirect URI, keeps client information, tokens, and verifier only in memory, and opens authorization in the platform browser.",
+      "evidence": [
+        {
+          "resource": "repo://src/mcp/auth/mcp-oauth-provider.ts#L1-L9",
+          "version": "repo-lines-v1:sha256:dbdbf8c2b3c2b54f20435209c05c2f30df129985c853c43e2b6e29aa495510e2:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTcyYTQyOTM4MmIyZTE0NzE4ZTBlMzdiMDU3MGE4YTE3MDI5OTFmY2Q4NDk4Y2Q4NDA2MGE4YmY0ZjA1MDE3YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWZiMWIzZTQ4YWNhNzBkNjVkOTJiMTRmMTE5YTJhZGZlZWQ5ZDY0NWM5Y2ZiMWUwOTAyYWZkOTVkM2U3ZmIyNyJ9"
+        },
+        {
+          "resource": "repo://src/mcp/auth/mcp-oauth-provider.ts#L120-L179",
+          "version": "repo-lines-v1:sha256:481fbea9bb7e432cba0c76d992c24744189edbe48bf74995ebce5a76a0f2383f:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExYTJkNGM5ZmUwNzE4Yzg1NzQzZjVkNWMyMDNjZDk1ZDhjYTRiYmU0MjNjMWM0NDZiNzllYTNhNjcyY2Y5ZDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/mcp/auth/mcp-oauth-provider.ts#L27-L117",
+          "version": "repo-lines-v1:sha256:11234d381e46603e79adb590a4187645b649a68cd3ad70828bff99a569b90636:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0MzhiYWJhNzI0ZDNhNDE2OWQ1MDQyMDBkMTZmMGNlZjMwNGFhYjk0NmM3NDBmYjdmYTNkYTYwOTM4MmE5YmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkZGU3MzQ0NWI3NjMzYTRlMjhmZjQ5NWVmMTAzMmE5NTEzMTE3YTFhN2NjNmM0MWQ0N2UyYzY4YjIxYTc2NmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhOTFkZGZjMzEwNGU5MjAwZGE4MzI2ZDZhZDIwZjAxYmZiOTlkMzBhMDI4YjE4MTlmMzU0M2E4Y2Y0MGRlNDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2e6569bc26c2470ebd7f83b6584a8711",
+      "statement": "The callback server listens on an OS-assigned localhost port, accepts only one `/callback` authorization result, rejects OAuth errors, missing codes, closure, or timeout, and closes after the wait settles.",
+      "evidence": [
+        {
+          "resource": "repo://src/mcp/__tests__/mcp-auth.test.ts#L44-L121",
+          "version": "repo-lines-v1:sha256:c459257f21f554f9447ab9590ca80d9519b20ad893911920a49715e0d31f4d24:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjZDk4YWZhOWRjYzE5NGFhMTgzNTI0YjI3M2JlY2RjZDdkZGFhODVjMTVjMzdmYTk4NzI0MTNkZDljMjEyMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFhMTI3NzlkMWZiZmNjMmMwNGMwMjdkMmZmMDhmZjRmYzI3YTE4ZWY4MzU0NGI5NDFmNGUwODllYTMwZjI4YzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkMGIwMzZlYWZiNWZiYjk2MjY4NjdhOWQ3NDY0Zjk2YmM0YWU0ZWJjYzlkNzEwNjc2NGQ0ZWQzYzc1ZjU0OWMifQ"
+        },
+        {
+          "resource": "repo://src/mcp/auth/callback-server.ts#L17-L114",
+          "version": "repo-lines-v1:sha256:d5ef9186ab5aa75b566ccca028028c98ef29d3c22232d36cb3353c5ae12a04a1:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwNGE0ODMwMjE1N2MxZDVmNjY0YjJkMjU2NjJjMGI2YmQ3YmQ1Zjg5NGEyOTdjYjU5OTVmZDFhOTZjYjRjY2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwYTJjOWZiZmFmNjk3NGQzZjEwNjFhYjA0ZjdjOTZjNjdjYThhNTE0MDUyYjllMmNlZjU3MzM0MWIzOWIwY2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3a182c2c9714326876f5ea1b03cc737",
+      "statement": "The unified `codemie proxy connect` command configures selected Claude Desktop, VS Code BYOK, VS Code Claude Code, and Codex Desktop targets; bare invocation is side-effect free, while legacy `desktop` and `vscode` aliases remain as deprecated wrappers.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connect-orchestrator.ts#L251-L281",
+          "version": "repo-lines-v1:sha256:b1a0538651c6c1170f8c79f97aa062635cabf6c9e97e7357dedc94ebd4a38a4f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxNDJiMTc2MDAzYzRmMWNkODY1N2NmY2EyYTNlYTk1NTQ5MjI0N2I4ZTIyMmZiZjUzNTkzNmE3Zjc5NmM4MGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1MzhkMmY1M2MwZjYxMjgyNzBjZWNiMWM1ZjhiYzYxNzEyYTNiZTkwZGUwNTE5OGYyZmM1N2Y4OGFmNTBiNTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzNmViMjdlYWYxZTdiMzhlMDBlYmM1NzE0YTgyZjk2OWI4MTQ0YmUwZDY2NzEwYmEwYWY3MDgyN2ExMmQxYTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0ODFlOTQxYTljODk3Y2RkODkxNTdiMzdiZWVmZThlMmZjNmU4NzJmZjdkYmJiYWUwZTEwYTVlZmE0M2YzNDEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connect-orchestrator.ts#L574-L688",
+          "version": "repo-lines-v1:sha256:818d77b42240b5e1e849f190574761338ad604bf9fdfd5b0e4eb50f6af8c39a6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1OTA1NDJhM2Y4ZWY0YzUzY2FjN2E5MmY4ODE1OWU5ZjkxYjdkZGU4NDFhNjExYWE3NWQyZGZhOGEzNDAzZjljIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0MThmY2YwNGMyMzE3NmY4NDBiNDMxNGRiZTZiZDU4ZGM5NjNkYTI4ZTAwY2ZiYmEyYjU3ZGMxYzk3YTQzMGI2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/index.ts#L281-L361",
+          "version": "repo-lines-v1:sha256:390c7758656a93b2b08af5cdfbc223c8412bb4334a64512fbf785e6606d36726:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmYzdmMTY0N2U3M2M4MDZmNzQyMzc4OTUyNjMyN2RhNjAzZjE5ZTJkM2YyNjlhOWFmYWQzNTkwMzk1NDg0ZTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhZjAwNzYzYmU5ZmYwN2U3YzFjNTdkYTNmMTg0ZThjZmIzYTNjMjBkY2JhZmM5YTI3Mjc1NWIxZGM2YWU5NTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU0YTM0YzBiMTYyMGY4ZDc3YTg5YTdhOTRiN2U2ZDE1ODMwYmI5YzYwOTQ0ZDk5NWZiZmVkODNmOTk4NmNlMzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a7ceb9788fe0456db31eaa13ea4b594e",
+      "statement": "Before configuring clients, the connect orchestrator requires an SSO-backed profile and stored credentials, best-effort synchronizes skills, and derives a single daemon identity; a daemon is reused only when its profile, port, project, provider/upstream URL, and effective client type match and it passes deep health, otherwise it is restarted.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connect-orchestrator.ts#L119-L246",
+          "version": "repo-lines-v1:sha256:d2dcf3cb206ffe01d0befa4b0d0131b55f61c1517dfa67e31cee08bd72d13881:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlM2MyNDNmZTlhMjk2ZDQ5MWRkZTU2OGRlYmEwOWE0ZTgxMGY2YTZiMzZhYjk4MDQ2ZmY2MjI2NDFiZWZjYWU2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlNGVhMGY0ZjlhMDQyYWZhNGZmMmI5MjBlM2Q2NzU1ZWUxZmM0ZmIwNDcwMDZmZjQzYjBlNDhiYzEyODBjNzUwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2ZWY1YzI2MWQzZDdkN2QyNjFmOTdlMGZhYmRkNDhkODM2N2VkZWE2M2VlMDc3MTZkZDJlYjQ1ZDg4YTMwNDhhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2NTE0ZmQ2NThlYWY0NTgxMzIyYWM4Y2RkYjZkMmVmYzM1ZmZhODI3NzY2MDM1NDU1M2VmMjEyOGM0NDkzZmVhIn0"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connect-orchestrator.ts#L298-L357",
+          "version": "repo-lines-v1:sha256:702b00882b659780e6590b4eddafbf7d3fc230521b4e6f3e682b3d426293efe5:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwMzk0Yzk4NjgzZTdhNGVkYzBlMDZjYTAyNGJlOTgzNTA1ZTVmOGY2MTYyNTA2Y2Y0ZmUwOThlMGY2OTk2MDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI5MzE0ZjA4Y2Q5MzRkZDM4MTUzMThhMDJlOGIzZDk4ZjNhMmZhM2UwMTU0NDljNWQxZTE2M2NkMDNkMDllODEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connect-orchestrator.ts#L605-L688",
+          "version": "repo-lines-v1:sha256:47a7bd8160bfddb253eb3fdb8ffc31f76b3220b890efd2edbd926d9bd3d78876:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjM2JjMjNiM2RlMzM4MWU2YmJlYzc2MzRmZGM1Mzg1Zjg2YmQ4MWRhNDg3MTZjMjAyN2RlNGIwOTU1M2U2MWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUyMTcxMTE1NDNmOGE3YjFiOGEyZjVjNmRkOTAyNjMzYzEwZDUzMTI5NzAxM2ZjZWM2MTdlNmY2OTAzODE4M2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c66c3f01b6b74ea98848a3094ba2720f",
+      "statement": "Daemon state is persisted atomically; startup polls for a live state for up to five seconds, and stopping escalates from SIGTERM to SIGKILL before clearing state so a wedged daemon cannot prevent a subsequent connection.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L151-L187",
+          "version": "repo-lines-v1:sha256:fdb0bf659da51126d2d9f0957defc0d71812d05ab9a8b685ff9d13973cae6aed:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyOGE0OGM0NDY2MDU5YmE5NjQ2ZWMyODJkNjNiMDQ0ZTU5NDNkMjcwY2ExMmM5OGY2YzQyNWY0ODhiYWM2MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkMTNjNjVmODNlMzdkMzdiNGM3NDVlYWM2ZWZmMzRjOTdkYzVmYWNkNDg2NmU0OWUyY2VjNDc4ZWU1OWVlM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5NGZjMGMxNzNkMWVjM2ZjNTAxZDdkZmE5Mjg1NTAxYzUyN2NmYjQ3MTI1ODNkYTNjYzM2MTgwNTY2YjRiZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L32-L80",
+          "version": "repo-lines-v1:sha256:d60cd6edf44464ff8643c1f36e827c12a6583de438b90326c069428856d24e17:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4YmRiMTNmOTllNjljYTdhMzVhNWEzNTAyNjA2Nzc5MmQxYTk1YzE3NjkyZGRmMjg5N2Y0NWFmMmRlMWZlNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4YmIwNzQzYzEzNWYwMjgwZDAyZjFiMTNiNDg5MjZjOTdkOGRhZWNhMzI2MGVjMDQzMWNkMzI3NzgzNzI3ZTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0OTQyOGQ5MGVkYTBhMGVmODA0ZmE5MjFmYjljYmI1MTYzMmJlMTNhOGQ4OGVjYTQ5OGEyYzg4M2YwMTBlODIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiNDRlNjQzMWQ2MjkzNGU3MTJlNGI5Y2U0YWU0MDI5ZDY1Nzc4YjI0ZjM1ZTlkNjhiMzQ0MDkxMDEwMmZmZDQifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/daemon-manager.ts#L96-L148",
+          "version": "repo-lines-v1:sha256:7ed7ff61b6bd0e87cceafc4af7ae22aa443832b24bb8e0f54d05941ee25d5d25:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNWQ1YTA4ZTRjOWEyYTEzYmUyNjEwODAzYjIwMDcxNzZkNzM4NWI4YzNiYjBhYWFjYWJhZjRiYzRmMGRlMGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1ZWYwMWJjMDhkYmMzYjYzZTRlNzVlYTNkMjZhNWI5NDE4OTE4NzdlMjdhZDg5MTMyOWM4NDExZDdkOGRjNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3MWMzODQzMGMzMDk2NTMxZDlmYTg4ZGVkMTgwMzkzMTMwOTNmOTQ5N2NiM2E5ZDU0ZWEwNzI0OGZhOTk2YWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExN2Y0NTU4ZTZmM2JmNjBhMzhiZjhkYmI5MjNkM2YzY2I0NTE0MDNmOTczOTEwZmZmNjMzOWRmOWRjN2NmODQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_874cb0666bf045a480a9c4e125d7489f",
+      "statement": "Claude Desktop configuration discovers compatible Claude models through the local gateway, writes CodeMie inference settings and a managed MCP list to the active config-library entry while preserving unrelated keys, and warns when a Linux managed-settings file can override the local configuration.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L710-L755",
+          "version": "repo-lines-v1:sha256:61e6d70c5909561c6fe44d684e3f25aea880db11201df39fcdbba49a934b8e65:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNDM2ODY1MWZiZDBmNWQzZjgyZWIyNWNkNjM0YWI5NTk4Y2FiNDg1MGU0NTMwNGViMWUxOTEwZTE1MmUwZDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L74-L170",
+          "version": "repo-lines-v1:sha256:0dc3a3c88d1d3e6172b8cab2de7c3818c1181f3a394c6b15bb45269520b2f246:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImExMGVlMzZlYmFhZjY0MDhkYjUyZjEwMWNkYzczZTZmZmRiMmQzOGZkODA4NGNiNDQzNTY2M2Q2NmMwZDBlYjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L765-L938",
+          "version": "repo-lines-v1:sha256:b503a7d8af81e62ceb17144880a014738e1825bb748c4d552682666f59a6c9be:eyJzZWxlY3RlZExpbmVDb3VudCI6MTc0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1MjBiZTMwNzI5MjdmYjhhZmNjYTJmMjAzMTA4NzM2MGFkMTU2YjY1OWE3YWU1YzYzM2Y2YTgwM2Y0MjM0ZDkxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxM2UwMjAwYTg3ZmQ2MmM5MjhmNjU1YjU4MWNhMDA2MDk2N2ViYTdjYjE2MTk5NDE0NTFkM2Y5MjZhYmE1ODkzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwODRhOTE2YmY1MTQyYzY4ZjIyZWI4MTY2OGE4NDY3ZjIxMzRkZGNjZjQ3ZTU2OTljZDdlOWQwZTYzYzc2MzI3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d2a89afe1c6a4031b65918a21aa079f6",
+      "statement": "Managed MCP catalog fetches distinguish an authoritative empty array from failure: missing credentials, non-2xx, malformed/non-array data, and an all-invalid non-empty payload return `null`, protecting existing organization entries from accidental revocation.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/managed-mcp-remote.test.ts#L81-L150",
+          "version": "repo-lines-v1:sha256:2e5194d4ec0965c48c097f19c8e016cb9759f91ac8cc3aae91e7a12a88c09bb0:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlOTEwODZjNWM5ZjZiZWYyOWY1YTA5YjVlODJhZTIxMTM0MzllNDgwNjg3MDk5YTVlZjExMTE4MTc0NWZmZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZDM5MjQzNjdhMzUxYjU5OGU5NmJiZTZkOGE5NDljYzE2NGZkNmU3NDFiOGI4NDkzZTkzY2EwOWJiZGU5OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4NDUxYjhjODc0MjRmZjA0NDM3MDVjNGMwYzZlMjg5YjE2MjgxYWJkYjc3N2MyZTBiZTE0MTBiMjIzMjE5NDkifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/managed-mcp-remote.ts#L117-L187",
+          "version": "repo-lines-v1:sha256:999ab08b80c2c8dfb8b6888a6fec737465d92a7e3ed6d4c5a410517b44e983d1:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyNzliNjgwNTIwZWQ1MjZkY2M0YzhhYTM3MzUyNzU5MGUyODE5NWU0MGZiZTYxMDdlMWU1YjQ5NWE0NTc3MzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7761e9f031f0436ab57d88eb9447b930",
+      "statement": "Claude Desktop maps only valid HTTP or SSE catalog entries, validates structured OAuth essentials while preserving unknown OAuth fields, supplies a default issuer only for a structured configuration without a usable issuer, and reconciles CodeMie-owned entries without deleting unrelated user entries.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L302-L388",
+          "version": "repo-lines-v1:sha256:da096142b8054386e4765dd72452c4ecff76a565e4ed04bf922a17c9c6c58457:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5ZjQyNmJkMjczMzhlMWQ3NTg5ZDJiNDFlNzg2MmJkN2M0MTg4NDhiMDI5NmE1NzRhYmJmYjk2OGE3NTlhODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhOGM2MDMzYjk1MmI5MGI0ZmFmMDk3MGQzMDk4MWE4MDk2NmM1NzJlYWZhNGE1NTQyYmNiYjEzMGY0NGNjOTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ0NmY0NzIxZDdmNGIzMTMzYzM0NGVhZDc5MzNkOGVhMmIwMmEwZmFlMWE4OWJkZjU4YzE2ZWIwNTk5ZTk3ZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L591-L681",
+          "version": "repo-lines-v1:sha256:80dd4f2fecff23ec133b3200f9b3a2f164feb7168418ff1e56c47c8c9be779a7:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzYTU2MmE2MDI3ZDkyZmUyZjg4YmRlOTU4ZTlkOGU1ZGUyOWY5NjUyNTNjZGIyY2ExYTVhMTQwNWIzMmM0NzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjYzk2OTA1ZWE4N2ViMzMxMGZiNzY5OWQ0Y2E0MGUzOWE0NmUyY2JkOThmZDQxN2NkNzYyNjJkM2E2MjJlYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1NTRjMzU4MTYwYTFlNzY0ZjM3OTkyMzYyYzk3NTcxM2Y2ZmUxNWQ4OTcyNzYxZjBlNDdkYmE2MzYyMjAzMTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMDJlMTE4MWViMjJkZjQyZTNjZjZmNGYzMWFkOTY5ZDMyNWFmZWVlNDQyYWU0MjUyYjlmMTkzYzgyNzg3OTgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/managed-mcp-remote.ts#L11-L18",
+          "version": "repo-lines-v1:sha256:c5b12c302b2cb0c92baf14bfae0f44bf81bd1273a5ce371d401ca8ee1481cada:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTcyYTQyOTM4MmIyZTE0NzE4ZTBlMzdiMDU3MGE4YTE3MDI5OTFmY2Q4NDk4Y2Q4NDA2MGE4YmY0ZjA1MDE3YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzYzNWFmNjJkNGQxMzM3ZWJiMzIyNDg2ZjVmY2NhNTgwNjlhYmEzZTBmMjQwNmRmODQ5ZDkyNGJiZWZmYmE0ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzUyZmNjNDYwZDhkYTcxYjUwMzYzYTgxNWU2M2E5OWY4MjQ3YzkwZjg1MGFmNmQ5OWNkYWE3MmZmMzQ5YmYzZCJ9"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/managed-mcp-remote.ts#L55-L114",
+          "version": "repo-lines-v1:sha256:f0d191da4f98af626feaa07a270b7ed1e9419d79fcf7ca0d2a1312d412aa5619:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyYzc3ZGRjMzcyNGM2OWFjNTZiNzJkMjQ5NjIxMzc3Y2ExZmIyZWQ1OTgxOWY5OGQxNTcwNmU4ODA5NTkzNWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkM2EzMzg4ZDRhNTMyYTQ5M2M1NGY5OGY0MWMwOTJmMjhhZjliMmNmMDFjYjU3YjU4MzIyNjhjMzA2NDZkOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b2baef8f0dbe4d2985b5e14b009528fa",
+      "statement": "The Claude Desktop managed-MCP marker uses atomic write-ahead ownership state: after a successful catalog fetch it records old-plus-new names before writing config and narrows to the durable set afterward; after a failed fetch it preserves prior organization entries and marker state.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L649-L681",
+          "version": "repo-lines-v1:sha256:678fdd984792d885cacdff7082e73c0e22708fb21b93920f238c4b03ca2b818e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2NzFjOGE2YTMzNWRkMTQ3N2NlODlhM2E2ODY2YTI3ZDBjMjFmMzQ3YjkyYzQ1NDM2NTBiZmNjMjc1ODY5MGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjYzk2OTA1ZWE4N2ViMzMxMGZiNzY5OWQ0Y2E0MGUzOWE0NmUyY2JkOThmZDQxN2NkNzYyNjJkM2E2MjJlYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMDJlMTE4MWViMjJkZjQyZTNjZjZmNGYzMWFkOTY5ZDMyNWFmZWVlNDQyYWU0MjUyYjlmMTkzYzgyNzg3OTgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L815-L861",
+          "version": "repo-lines-v1:sha256:381245461f4a6f303d48b4babf1ca0381ef7a3cc65d07e47c6a14b9ad8f67146:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3ZDRhY2JmZTQyOTQ4MzkyZDQyMzNhMGJlYmQyNTBjZmVkODJiMTg2NGUwNGMyYWU1ZGYxMjZlZTMzZjVkZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyYWNlYTYzNmFhNGVkM2I2MDMxZTRjZmM2YTZiNzZkYjkyMTAwODUxNTM2ZGYxZjIxNzZlNmY0MzBjNWJjMDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNTQ2NGIxMzRlYTdmMDYzOWM2Y2ZhMjExZGExMTIyZWY1Njk4ZjdlZWYzNmNmYTE1OTQ2YjkyNmRlZGIzZDIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/desktop.ts#L921-L926",
+          "version": "repo-lines-v1:sha256:87893694fa8b5a393119be27a934c3a5a8f32f778badb6e1ccef4f99658e367d:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGJiNTI4ZjAzNzA1OWI1MmI0MzcyNzYyNjViNjhlMjBjMDdiZjk4YzdlOTg1MWI5MDYxZjM3ODc0ZDlmNjNhYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjhiOTQ1NDAxMGIxNjZhM2IyZDBhN2JlZjQ0MzZhYzg5OTIyOWVkYWVlZTBhNzI1ODEwMjMzMzg3MTIzNjk5NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTU3MjdkNWE5OGQ1MzE3YTc0YmQxOWY3YmQyMzQ2MjM4ODQ2OWFiNDliODZlZGFlYzQ1ZGY2NTdiMDljNGFmNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5cbb712e8ee34e6fba2cca20af657325",
+      "statement": "The VS Code BYOK connector reconciles one CodeMie custom-endpoint provider, preserves other providers, settings, and an existing secret reference, uses atomic writes, and fails rather than overwriting invalid JSON; the Claude Code extension connector similarly preserves unrelated settings while upserting its two managed Anthropic environment variables.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/vscode-claude-code.ts#L79-L173",
+          "version": "repo-lines-v1:sha256:2e027e4a9118f776e262be2bff10d4972fb0ac2e86104687866c1a021460eb75:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1MzBkMDg0ZDhlNGI2ZDYwY2M2MGVmMTRmMzM2OWZmZDExMjkxMmUxMTk2ZjBlMjAwZDgyYmMwYjZhNWRlNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxOThjMWY4MjhjZDlkZjg0NDRmZmYwNmM2MGM1MjdiMzU4YjU5ZDk5ZDExNDM2NmI4NGU5NGRhYjJjY2E2NzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/vscode.ts#L107-L170",
+          "version": "repo-lines-v1:sha256:2a16f2c1d9229ff19457b44608b179619b1b87aa6ec76467a59c47abda1fa9f4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3ZWFlZTU5YjdhYzk2MmRhODIwMjdiZGM1NjNjM2YzNzE4MjA2MTdlODVmMGE2NmI4OGY4OWZjYjFkYTgzOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5MTE2ZmUxNmQzMDk4YjcwNjVkNzAyNWI4Nzk4NDMzNjE5Y2M5ODY5YWQ1ZWZjMGI1Mjk5MTFkYzBlMGNkNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0MDJkNDNlNjU2MTNmOWM0NjgxYzFkYzgyZjAwODk5MGIzNzNiZmMzNThlNjcyYzIzNzJkYjg2NzFlYmVkOWIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/vscode.ts#L173-L267",
+          "version": "repo-lines-v1:sha256:6c5ea0776f63568743160b3df27676ec5500b2f9c7a1b54c90ed1ca83c729192:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMWVjMDNkM2FkYThmNjQ5ZWQ1NDRmZDZiNWQzM2NjNzZkYmY3MWJjMTk0ZmE3OTYwOWE1ODRkOGI1OWMzNDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIxNzk5YzY1OTg4NDEyZGU3MDYzMWQ5MDg1ZjM2NjA1NzYzNjZiN2QzNzhiOWY2M2QxMDRhNzE3YWEyOTAzYWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_edcae8c5987144b79f5f566f77b0f2af",
+      "statement": "The Codex Desktop connector validates and surgically splices sentinel-delimited CodeMie regions into the shared Codex TOML configuration, records ownership before writing, preserves a pre-connect backup, and disconnects by removing only managed regions with backup restoration or an error when safe removal cannot be established.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/codex-config-toml.ts#L1-L13",
+          "version": "repo-lines-v1:sha256:d6e8f23d7905b0f20e94b1cc73c63b2136bd365556d6c64b30b9cacc2694888a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5OWNlYmIzNDI0MTE0NDFlN2JmNjZiZjIwZDY5NDdjYzIyYmM1NmRmNDQ4YzRlMzRmMTk1MmI4YzRkNGI1MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzOTM4OThkOTA4OThiNWI2MDc4Nzg2NTZjODcxYjU0M2I5NDVlMWE5ZDY2MmZjZjM5ODQ3ZDFmMDI1NDZkNGUifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/codex-config-toml.ts#L187-L255",
+          "version": "repo-lines-v1:sha256:fe136fc24f9015b4306c245638fdfc6fa419f9060032a0dd70a7ed02c4fed6c0:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxYTQyNTg0ZDI0NjYxODg0NDJmMWQ1NzNhMjA5Njc0YzgxYWY3YzNkY2Y0OWEzNTA2Y2YwYjVjZGQ2MjgxMTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQzYmVkYjUzOWFhMWY2ZmYxYzViODRkZWQ4ODkyMDZlYmMyNDYwN2ZhZDFhYThlOGMzNDVhZmVmOTFjMzI2Y2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/codex-desktop.ts#L1-L8",
+          "version": "repo-lines-v1:sha256:632cbe75f6dcd5a57023f131167492c555b9ee01815d46541c46321b1f488d6b:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTcyYTQyOTM4MmIyZTE0NzE4ZTBlMzdiMDU3MGE4YTE3MDI5OTFmY2Q4NDk4Y2Q4NDA2MGE4YmY0ZjA1MDE3YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmMzNzA5MzdkMjE3ODIzNGExMjgwNTgwZWYwNGIzYTNiNDQ2NWU4MzE1MjY0YTgwOTU0MjA2OWUyOGZhNTg4YyJ9"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/codex-desktop.ts#L231-L301",
+          "version": "repo-lines-v1:sha256:08179dacfb5b852143f6f5e88f2427fbdaf32a7c4e767d112e03c56e5ae74f14:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhYzEyNzZmMGEwZjE1ZTNkNjY0N2EzNjU4ODhhMWY2Y2EyZmZmNzI5ZWMzNmI3MmViOWM5Njg5ODIyNmI2NGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/codex-desktop.ts#L328-L396",
+          "version": "repo-lines-v1:sha256:979b6cf766104a6f8959acedbc1335b3a009a168d8eba72304f9aa921ee93d14:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlmMjA5NTE5NDA4ZGZjOGMxNDdjYzMzMmVlODYyOWNhMzVmYmIzNGFjNGM2NjdjMzg4ZTk2M2I4NGM2NDJlMzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRkZjgzZDc4ODNmZDA1ZDkwNWI0NjA1ZGJjNTlhMDVmOTI2ZDgxOTBmMjJlZDIxMGM0MzVlOGQ2NGNiNWZlMjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_69f12aea56044c4299d6082f45cda2ac",
+      "statement": "The repository has focused unit coverage for the relay's lazy routing, cookie wrapper, and idempotent shutdown; OAuth callback/provider lifecycle; managed catalog validation; and Codex configuration connect/disconnect round trips.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts#L65-L117",
+          "version": "repo-lines-v1:sha256:ac3b1182d64c37555f15d8e00f88abb53b8653e2e757a97e4c2c5316c59915d7:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwNTJmZGJkMjQ0NWFjYmIwZjRhY2ZiMjI4MGRlZTI4NzVhNTE0NjExMDZlNDVhOWQ3NmY4ZDc4MmY5NjBjZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiNWJhNWI4MzUwNjg5NmNlYTY4M2MwODUzZGQ3NzNhNDY5NTRiN2FkMzhlMzQ2MGYwMzEzZTkwZWE1Yjc5ZDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/managed-mcp-remote.test.ts#L17-L240",
+          "version": "repo-lines-v1:sha256:b353fbb4f164c73690098ea675dbd82cd23059169e1ff1de668ea4aa0808b50f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjI0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZDFlMDk5YTg0MDM4MDU2OGJiMDYyNmJlOTYxYzNjODg1ZjRiOTA0NjZjOGQxNTNiODZhNWUxMTE2OTllMjQ2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzZDBiZjJhYzIxNzQ3MzczNDcxOGQwMjFkNGI0OTRiMWQyODdkYThmNzE0ZTYwZTI0MDU2MTBiNTkxZjY4MGMyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMDhhNDk4NWQ2YmI2ZjBhZGJhZjdiYjkxNDA3NGFkZjk4MGU2N2U0ZTZkYjVjYzRlZmI2ZDFiYjdhMDdjYWUyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjZWUxMDcxYjc2ZGNjZjZkMTMxODY4ODRlNTU4YjUxZjZjMDg5YjBkNjhlMTA2MTM2MDlmMjAyMmMwYzA5MDA3In0"
+        },
+        {
+          "resource": "repo://src/mcp/__tests__/mcp-auth.test.ts#L44-L303",
+          "version": "repo-lines-v1:sha256:5cc1b9b7f237b5dd1999fe551c433b6912ecc6a69c0a4025f95c7f1130597aa7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwY2Q5OGFmYTlkY2MxOTRhYTE4MzUyNGIyNzNiZWNkY2Q3ZGRhYTg1YzE1YzM3ZmE5ODcyNDEzZGQ5YzIxMjBhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhYTEyNzc5ZDFmYmZjYzJjMDRjMDI3ZDJmZjA4ZmY0ZmMyN2ExOGVmODM1NDRiOTQxZjRlMDg5ZWEzMGYyOGM0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        },
+        {
+          "resource": "repo://src/mcp/__tests__/mcp-bridge-logger.test.ts#L230-L458",
+          "version": "repo-lines-v1:sha256:d7561f2eddb67b0e940c2365f18181d1c31962dea869f7fcf92551a6fdf2f198:eyJzZWxlY3RlZExpbmVDb3VudCI6MjI5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiZTg0ZWM3MWEzNzg2YTk3MjdlZjMyODA1MTEwMmJmNWE3M2I0N2VmZmVlZjNiN2RmMmFkMjM2NmU5ZjUyYzA1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlMWMyMDY1ZjEyOWFiOGE0MDZiMzkyMWUyNDdjYzFkMGU4MjU2OWM3NWJjZDgyNDA5NzUzODAzN2EwMTZkZWIwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

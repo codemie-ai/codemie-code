@@ -1,0 +1,154 @@
+{
+  "decision": "approve",
+  "rationale": "Three lenses ran against the full diff. Every confirmed finding was fixed in-branch and re-verified live; the remaining accepted findings fail closed rather than corrupting user data, and are recorded in spec.md section 12.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    "Story acceptance criteria audited: all 7 primary and 4 negative criteria pass or pass-with-recorded-deviation.",
+    "Two story deviations were pre-approved by the user (surgical disconnect, marker-keyed backup); a third revision (proxy-side model resolution) and a fourth (empty tool descriptions) were approved in conversation after live testing and are recorded in spec.md sections 11 and 12."
+  ],
+  "standards_review": [
+    "ESLint clean on every changed file; the single repo-wide failure (statusline.mjs) is pre-existing and identical on main, verified via a temporary worktree.",
+    "Typecheck clean, build clean, 3187 unit tests pass, gitleaks reports no leaks.",
+    "Follows the established *-request-normalizer plugin pattern; reuses writeAtomically rather than the non-atomic Kimi precedent; ConfigurationError, logger and sanitizeLogArgs used per project convention."
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "cutRegionLines deleted to EOF when a close sentinel was missing (data loss on connect or disconnect)"
+    },
+    {
+      "id": "F2",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "Sentinel matching inconsistent between reader (substring) and cutter (exact line), duplicating the managed block on a trailing space or CR"
+    },
+    {
+      "id": "F3",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "Gateway key logged in cleartext: sanitizeLogArgs does not match the key name gatewayKey"
+    },
+    {
+      "id": "F4",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "backupIfUnmanaged could snapshot an already-managed file, enshrining the bearer token as the pre-connect original"
+    },
+    {
+      "id": "F5",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "Connect never validated its own output, so any splice edge case shipped a broken config.toml"
+    },
+    {
+      "id": "F6",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "codex-desktop missing from CodexEncryptedContentSanitizerPlugin allowlist, silently disabling Responses reasoning-state handling the spec relies on"
+    },
+    {
+      "id": "F7",
+      "severity": "high",
+      "status": "fixed",
+      "summary": "Substitution fallback could reroute a Responses request to a Claude or embedding deployment"
+    },
+    {
+      "id": "F8",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Disconnect verified only that the strip parsed, not that CodeMie keys were gone"
+    },
+    {
+      "id": "F9",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Unbounded recursion and no cycle guard on a client-controlled request body"
+    },
+    {
+      "id": "F10",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Failed model listing was never cached, causing a per-request fetch storm against a broken gateway"
+    },
+    {
+      "id": "F11",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Date pattern end-anchored, so a suffix after the release date reintroduced the date-as-version inversion"
+    },
+    {
+      "id": "F12",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Resolver took the gateway's first identity match rather than the newest"
+    },
+    {
+      "id": "F13",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "--model rejected the undated names the app picker displays and the proxy resolves"
+    },
+    {
+      "id": "F14",
+      "severity": "medium",
+      "status": "fixed",
+      "summary": "Combining --codex-desktop with a higher-priority target silently disabled Codex model resolution"
+    },
+    {
+      "id": "F15",
+      "severity": "low",
+      "status": "fixed",
+      "summary": "No timeout on the connect-time model listing"
+    },
+    {
+      "id": "F16",
+      "severity": "low",
+      "status": "fixed",
+      "summary": "Config path printed only under --verbose, contradicting the docs"
+    },
+    {
+      "id": "F17",
+      "severity": "low",
+      "status": "fixed",
+      "summary": "Unsupported platform rendered as 'Looked in: .'; disconnect errors went to stdout"
+    },
+    {
+      "id": "F18",
+      "severity": "low",
+      "status": "fixed",
+      "summary": "Missing or non-binding tests required by spec section 8 (atomic-write failure, write ordering, app-detection writes nothing)"
+    },
+    {
+      "id": "F19",
+      "severity": "low",
+      "status": "accepted",
+      "summary": "isTableHeader is not TOML-aware (multi-line strings and arrays); now fails closed via output validation rather than corrupting"
+    },
+    {
+      "id": "F20",
+      "severity": "low",
+      "status": "accepted",
+      "summary": "Quoted root keys not recognized as displaceable; fails closed via output validation"
+    },
+    {
+      "id": "F21",
+      "severity": "low",
+      "status": "accepted",
+      "summary": "Concurrent connect/disconnect on the same file is unserialized"
+    },
+    {
+      "id": "F22",
+      "severity": "low",
+      "status": "accepted",
+      "summary": "Real per-platform app-candidate paths untested; Windows locations should be checked against a real install, with --force as the escape hatch"
+    }
+  ],
+  "false_positives": [
+    "writeAtomically was claimed not to preserve file mode; it does, defaulting to 0o600 for new files.",
+    "isCodexCompatibleModel was claimed not to filter disabled models; it does.",
+    "The codex-desktop client type was claimed never to reach ProxyConfig, making the plugin dead code; disproved by runtime evidence (daemon state shows clientType codex-desktop and live model resolution works)."
+  ]
+}

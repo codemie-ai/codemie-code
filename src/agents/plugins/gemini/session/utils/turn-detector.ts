@@ -8,7 +8,7 @@
 
 export interface GeminiMessage {
   id: string;
-  type: 'user' | 'gemini' | 'error' | 'info' | 'warning';
+  type: 'user' | 'gemini' | 'assistant' | 'error' | 'info' | 'warning';
   timestamp: string; // ISO format
   content: string;
   toolCalls?: GeminiToolCall[];
@@ -54,6 +54,13 @@ function isSystemMessage(msg: GeminiMessage): boolean {
 }
 
 /**
+ * Checks if a message is an assistant response (gemini or assistant)
+ */
+function isAssistantMessage(msg: GeminiMessage): boolean {
+  return msg.type === 'gemini' || (msg.type as string) === 'assistant';
+}
+
+/**
  * Extracts a single turn from a range of messages
  */
 function extractTurn(messages: GeminiMessage[], startIndex: number, endIndex: number): TurnBoundary {
@@ -63,7 +70,7 @@ function extractTurn(messages: GeminiMessage[], startIndex: number, endIndex: nu
     startIndex,
     endIndex,
     userMessage: turnMessages[0], // Must be user
-    geminiMessages: turnMessages.filter(m => m.type === 'gemini'),
+    geminiMessages: turnMessages.filter(isAssistantMessage),
     systemMessages: turnMessages.filter(m => isSystemMessage(m))
   };
 }

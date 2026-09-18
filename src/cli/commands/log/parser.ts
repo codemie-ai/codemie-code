@@ -65,6 +65,7 @@ function normalizeLogLevel(levelStr: string): LogLevel {
   const normalized = levelStr.toLowerCase();
   if (normalized === 'info') return 'info';
   if (normalized === 'warn' || normalized === 'warning') return 'warn';
+  if (normalized === 'notice') return 'notice';
   if (normalized === 'error') return 'error';
   return 'debug';
 }

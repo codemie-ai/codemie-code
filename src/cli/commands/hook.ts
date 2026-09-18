@@ -133,10 +133,11 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
 function initializeLoggerContext(): string {
   const agentName = process.env.CODEMIE_AGENT;
   if (!agentName) {
-    // Debug: Log all environment variables that start with CODEMIE_
+    // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
+    // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
+    // and stderr is surfaced by agent UIs and transcripts.
     const codemieEnvVars = Object.keys(process.env)
       .filter(key => key.startsWith('CODEMIE_'))
-      .map(key => `${key}=${process.env[key]}`)
       .join(', ');
     console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
     throw new Error('CODEMIE_AGENT environment variable is required');
@@ -205,8 +206,13 @@ async function syncSkillsToClaude(cwd: string): Promise<void> {
  * Handle SessionEnd event
  * Final sync and status update
  * Note: Session ID cleanup happens automatically on next SessionStart via file detection
+ *
+ * Claude Code kills this hook fast during session teardown, so state-critical
+ * local steps run BEFORE any network sync: a kill mid-sync must not leave the
+ * session stuck at status "active". Leftover API sync work is deferred to the
+ * proxy timer's periodic SessionSyncer.
  */
-async function handleSessionEnd(event: SessionEndEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function handleSessionEnd(event: SessionEndEvent, sessionId: string, config?: HookProcessingConfig, abortSignal?: AbortSignal): Promise<void> {
   logger.info(`[hook:SessionEnd] ${JSON.stringify(event)}`);
 
   // 0. Final activity accumulation (handles edge case: session ends without Stop)
@@ -215,17 +221,37 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
   await performIncrementalSync(event, 'SessionEnd', sessionId, config);
 
-  // 2. API SYNC: Sync pending data to API using SessionSyncer
-  await syncPendingDataToAPI(sessionId, event.session_id, config);
+  // 2. Update session status (moved before network sync: marking the session
+  //    completed must not depend on the API sync surviving teardown)
+  await updateSessionStatus(event, sessionId);
 
-  // 3. Send session end metrics (needs to read session file)
+  // 3. Send session end metrics (only reads the session file, which still exists —
+  //    the rename stays last)
   await sendSessionEndMetrics(event, sessionId, event.session_id, config);
 
-  // 4. Update session status
-  await updateSessionStatus(event, sessionId);
+  // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
+  //    abortable; unfinished work stays pending for the proxy timer)
+  await syncPendingDataToAPI(sessionId, event.session_id, config, abortSignal);
 
   // 5. Rename files LAST (after all operations that need to read session)
   await renameSessionFiles(sessionId);
+}
+
+/**
+ * Default budget (ms) for the SessionEnd API sync. Claude Code kills the hook
+ * process quickly at exit, so the sync must stop sending and defer leftovers
+ * instead of blocking teardown.
+ * Override via CODEMIE_SESSION_END_SYNC_BUDGET_MS (invalid or non-positive
+ * values fall back to this default).
+ */
+const DEFAULT_SESSION_END_SYNC_BUDGET_MS = 2000;
+
+function resolveSessionEndSyncBudgetMs(): number {
+  const parsed = Number.parseInt(process.env.CODEMIE_SESSION_END_SYNC_BUDGET_MS ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SESSION_END_SYNC_BUDGET_MS;
+  }
+  return parsed;
 }
 
 /**
@@ -235,8 +261,9 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
  * @param sessionId - CodeMie session ID
  * @param agentSessionId - Agent session ID for context
  * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param abortSignal - Optional abort signal (SIGTERM/SIGINT during teardown) to stop the sync early
  */
-async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig, abortSignal?: AbortSignal): Promise<void> {
   try {
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
@@ -252,6 +279,12 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, c
 
     // Build processing context
     const context = await buildProcessingContext(sessionId, agentSessionId, '', config);
+
+    // Bound the sync: only the SessionEnd path sets a deadline (other callers
+    // stay unlimited). Sync loops check the deadline between items and defer
+    // the rest to the proxy timer.
+    context.syncDeadlineMs = Date.now() + resolveSessionEndSyncBudgetMs();
+    context.abortSignal = abortSignal;
 
     // Use SessionSyncer service (same as plugin)
     const { SessionSyncer } = await import(
@@ -495,9 +528,86 @@ async function accumulateActiveDuration(sessionId: string): Promise<number> {
  * Handle UserPromptSubmit event
  * Starts activity tracking to measure active session time
  */
-async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, _config?: HookProcessingConfig): Promise<void> {
+async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
+  await enforceAnalyticsAuthGate(config);
   await startActivityTracking(sessionId);
+}
+
+/**
+ * Analytics auth gate (generic for all agents using the unified hook handler).
+ *
+ * Blocks the prompt (exit code 2, stderr fed back to the agent) when CodeMie
+ * analytics sync is configured but authentication is known to be broken:
+ * - no valid stored SSO credentials (and no CODEMIE_API_KEY), or
+ * - the metrics endpoint previously rejected the credentials (invalid-auth
+ *   marker written by MetricsApiClient on 401/403 or HTML SSO login page).
+ *
+ * Without this gate, expired analytics credentials fail silently and sessions
+ * disappear from metrics. The marker is cleared by `codemie profile login`
+ * and by any successful metrics send.
+ */
+async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<void> {
+  try {
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+
+    const analyticsConfigured = provider === 'ai-run-sso' || Boolean(ssoUrl && syncApiUrl);
+    if (!analyticsConfigured) {
+      return;
+    }
+
+    let hasValidAuth = Boolean(getConfigValue('CODEMIE_API_KEY', config));
+    if (!hasValidAuth && ssoUrl) {
+      try {
+        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+        const credentials = await new CodeMieSSO().getStoredCredentials(ssoUrl);
+        hasValidAuth = Boolean(credentials?.cookies);
+      } catch (error) {
+        logger.debug('[hook:UserPromptSubmit] Auth gate: failed to load SSO credentials:', error);
+      }
+    }
+
+    const { getAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
+    const authStatus = await getAnalyticsAuthStatus();
+
+    if (hasValidAuth && !authStatus) {
+      return;
+    }
+
+    const reason = !hasValidAuth
+      ? 'no valid CodeMie SSO credentials found'
+      : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
+    const loginCommand = ssoUrl
+      ? `codemie profile login --url ${ssoUrl}`
+      : 'codemie profile login';
+
+    const message = [
+      'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
+      `Reason: ${reason}.`,
+      `Re-authenticate by running: ${loginCommand}`,
+      'Then re-send your prompt.'
+    ].join('\n');
+
+    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${reason}`);
+
+    if (config) {
+      // Programmatic mode (e.g. VSCode extension): let the host decide how to
+      // surface the failure instead of exiting its process
+      throw new Error(message);
+    }
+
+    await logger.close();
+    console.error(message);
+    process.exit(2); // Blocking: stderr is fed back to the agent
+  } catch (error) {
+    if (config) {
+      throw error;
+    }
+    // The gate itself must never break the prompt flow
+    logger.debug('[hook:UserPromptSubmit] Auth gate check failed (non-blocking):', error);
+  }
 }
 
 /**
@@ -583,7 +693,7 @@ function normalizeEventName(eventName: string, agentName: string): string {
  * @param agentName - The agent name for event normalization
  * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string, agentName: string, config?: HookProcessingConfig): Promise<void> {
+async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string, agentName: string, config?: HookProcessingConfig, abortSignal?: AbortSignal): Promise<void> {
   const startTime = Date.now();
 
   try {
@@ -601,7 +711,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         break;
       case 'SessionEnd':
         logger.info(`[hook:router] Calling handleSessionEnd`);
-        await handleSessionEnd(event as SessionEndEvent, sessionId, config);
+        await handleSessionEnd(event as SessionEndEvent, sessionId, config, abortSignal);
         break;
       case 'PermissionRequest':
         logger.info(`[hook:router] Calling handlePermissionRequest`);
@@ -1262,6 +1372,7 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
     }
     logger.error('[hook] Missing required field: transcript_path');
     logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    console.error('codemie hook: missing required field in hook input: transcript_path');
     process.exitCode = 2;
     return;
   }
@@ -1381,6 +1492,22 @@ export function createHookCommand(): Command {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
 
+      // Graceful teardown: Claude Code may SIGTERM/SIGINT this hook while the
+      // SessionEnd sync is still running. The FIRST signal only aborts the sync
+      // loops — they persist progress at the next checkpoint, release the sync
+      // lock, and the process exits normally. A SECOND signal forces exit
+      // (defense against a hung HTTP request).
+      const abortController = new AbortController();
+      const forceExit = () => process.exit(1);
+      const requestAbort = (signal: NodeJS.Signals) => {
+        logger.debug(`[hook] Received ${signal}; aborting in-flight work gracefully (repeat signal to force exit)`);
+        abortController.abort();
+        process.once('SIGTERM', forceExit);
+        process.once('SIGINT', forceExit);
+      };
+      process.once('SIGTERM', requestAbort);
+      process.once('SIGINT', requestAbort);
+
       try {
         // Read JSON from stdin
         const input = await readStdin();
@@ -1395,6 +1522,7 @@ export function createHookCommand(): Command {
           const parseMsg = parseError instanceof Error ? parseError.message : String(parseError);
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);
           logger.debug(`[hook] Invalid JSON: ${input.substring(0, 200)}...`);
+          console.error(`codemie hook: failed to parse hook input JSON: ${parseMsg}`);
           process.exit(2); // Blocking error
         }
 
@@ -1402,12 +1530,14 @@ export function createHookCommand(): Command {
         if (!event.session_id) {
           logger.error('[hook] Missing required field: session_id');
           logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: session_id');
           process.exit(2); // Blocking error
         }
 
         if (!event.hook_event_name) {
           logger.error('[hook] Missing required field: hook_event_name');
           logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: hook_event_name');
           process.exit(2); // Blocking error
         }
 
@@ -1432,7 +1562,7 @@ export function createHookCommand(): Command {
         normalizeAndLogEvent(transformedEvent, sessionId, agentName);
 
         // Route to appropriate handler with transformed event and session ID
-        await routeHookEvent(transformedEvent, input, sessionId, agentName);
+        await routeHookEvent(transformedEvent, input, sessionId, agentName, undefined, abortController.signal);
 
         // Log successful completion
         const totalDuration = Date.now() - hookStartTime;
@@ -1467,9 +1597,19 @@ export function createHookCommand(): Command {
 
         // Flush logger before exit
         await logger.close();
+        // Surface a one-line reason on stderr: agents report a bare "Failed with
+        // non-blocking status code: No stderr output" when the hook exits
+        // non-zero silently, leaving the real cause only in the file log.
+        console.error(`codemie hook: ${eventName} failed: ${message}`);
         // Use process.exitCode instead of process.exit() to allow graceful shutdown
         // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
         process.exitCode = 1;
+      } finally {
+        // Remove signal handlers registered for this invocation
+        process.removeListener('SIGTERM', requestAbort);
+        process.removeListener('SIGINT', requestAbort);
+        process.removeListener('SIGTERM', forceExit);
+        process.removeListener('SIGINT', forceExit);
       }
     });
 }

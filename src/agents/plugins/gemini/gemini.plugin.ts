@@ -5,6 +5,7 @@ import { GeminiSessionAdapter } from './gemini.session-adapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { validateGeminiModel } from './gemini.models.js';
 
 /**
  * Supported Gemini CLI version
@@ -12,17 +13,18 @@ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionI
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
-const GEMINI_SUPPORTED_VERSION = '0.29.5';
+const GEMINI_SUPPORTED_VERSION = '0.59.0';
 
 /**
- * Minimum supported Gemini CLI version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below GEMINI_SUPPORTED_VERSION
- * e.g. supported = 0.29.5 → minimum = 0.29.0 (patch floored at 0 since 5 - 10 < 0)
+ * Minimum supported Gemini CLI version — the only hard gate; below it the agent
+ * refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * GEMINI_SUPPORTED_VERSION, move its old value down to here.
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
-const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.0';
+const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.5';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {
@@ -167,6 +169,12 @@ export const GeminiPluginMetadata: AgentMetadata = {
           }
         }
       );
+
+      // Fail fast with a clear, actionable message when the configured model is
+      // not a valid Gemini deployment — otherwise the upstream rejects it with an
+      // opaque HTTP 400 ("Invalid model name…"). Best-effort: skips silently when
+      // the catalog can't be fetched. Ref EPMCDME-14421.
+      await validateGeminiModel(env);
 
       return env;
     }

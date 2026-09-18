@@ -183,10 +183,10 @@ jobs:
           path: dist/
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: npx vitest run --project unit
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: npx vitest run --project cli
 
   test-windows:
     name: Test (Windows)
@@ -216,7 +216,7 @@ jobs:
           path: dist/
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: npx vitest run --project unit
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: npx vitest run --project cli

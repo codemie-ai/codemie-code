@@ -59,6 +59,15 @@ const OAUTH_CONFIG = {
   tokenUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/token',
 };
 
+// OAUTH_CONFIG mirrors a backend payload that predates `authorizationServer`,
+// so resolveDesktopOAuth fills the gap with its built-in CodeMie issuer. Every
+// expectation built from that fixture has to account for the injected default.
+const DEFAULT_ISSUER = ['https://auth.codemie.lab.epam.com/realms/codemie-prod'];
+
+function withDefaultIssuer<T extends object>(oauth: T): T & { authorizationServer: string[] } {
+  return { ...oauth, authorizationServer: DEFAULT_ISSUER };
+}
+
 describe('buildGatewayConfig', () => {
   it('returns correct gateway config shape', () => {
     expect(buildGatewayConfig('http://localhost:4001', 'codemie-proxy')).toEqual({
@@ -196,10 +205,13 @@ describe('fetchClaudeModels', () => {
       json: async () => [
         { base_name: 'claude-sonnet-4-5-20250929' },
         { base_name: 'claude-4-5-sonnet' },
+        { base_name: 'claude-sonnet-5' },
         { base_name: 'claude-sonnet-4-6' },
         { base_name: 'claude-opus-4-5-20251101' },
         { base_name: 'claude-opus-4-6-20260205' },
         { base_name: 'claude-opus-4-7' },
+        { base_name: 'claude-opus-4-8' },
+        { base_name: 'claude-opus-5' },
         { base_name: 'claude-haiku-4-5-20251001' },
         { base_name: 'claude-opus-4-6-vertex' },
         { base_name: 'gpt-5.5-2026-04-24' },
@@ -210,10 +222,13 @@ describe('fetchClaudeModels', () => {
     expect(models).toEqual([
       'claude-sonnet-4-5-20250929',
       'claude-4-5-sonnet',
+      'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-opus-4-5-20251101',
       'claude-opus-4-6-20260205',
       'claude-opus-4-7',
+      'claude-opus-4-8',
+      'claude-opus-5',
       'claude-haiku-4-5-20251001',
     ]);
   });
@@ -231,6 +246,27 @@ describe('fetchClaudeModels', () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down')) as any;
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
       .rejects.toThrow('Local proxy model discovery could not reach');
+  });
+
+  it('falls back to preferred Claude ids when the proxy upstream returns 5xx', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: mkHeaders('application/json'),
+      json: async () => ({ data: [] }),
+    }) as unknown as typeof globalThis.fetch;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toEqual([
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+        ]);
   });
 
   it('throws when response is not ok', async () => {
@@ -276,7 +312,7 @@ describe('fetchClaudeModels', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       headers: mkHeaders('text/html; charset=utf-8'),
-      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+      json: async () => { throw new SyntaxError('Unexpected token '<''); },
     }) as unknown as typeof globalThis.fetch;
 
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
@@ -319,11 +355,11 @@ describe('selectPreferredClaudeModels', () => {
 
   it('returns exact matches when present and dated fallbacks otherwise', () => {
     expect(selectPreferredClaudeModels(available)).toEqual([
-      'claude-sonnet-4-6',        // exact
-      'claude-opus-4-7',          // exact
+      'claude-opus-4-7', // exact
       'claude-opus-4-6-20260205', // dated fallback
-      'claude-haiku-4-5-20251001',// dated fallback
-    ]);
+      'claude-sonnet-4-6', // exact
+      'claude-haiku-4-5-20251001', // dated fallback
+        ]);
   });
 
   it('preserves the order of the preferred list', () => {
@@ -361,10 +397,10 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-8',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-    ]);
+        ]);
   });
 
   it('falls back to the highest available opus when 4.8 is absent', () => {
@@ -375,10 +411,10 @@ describe('selectDesktopClaudeModels', () => {
       'claude-haiku-4-5-20251001',
     ]);
     expect(result).toEqual([
-      'claude-sonnet-4-6',
       'claude-opus-4-7',
+      'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-    ]);
+        ]);
   });
 
   it('uses the next opus down when only 4.6 is available', () => {
@@ -478,10 +514,10 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
-    ]);
+        ]);
   });
 
   it('replaces existing inferenceModels entries — does not merge user-added ones', async () => {
@@ -495,10 +531,10 @@ describe('writeDesktopConfig', () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
-    ]);
+        ]);
   });
 
   it('fails fast when discovery returns nothing', async () => {
@@ -638,7 +674,7 @@ describe('writeDesktopConfig', () => {
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     const onehub = servers.find((s: any) => s.name === 'onehub_core');
-    expect(onehub.oauth).toEqual({ ...OAUTH_CONFIG, audience: 'onehub' });
+    expect(onehub.oauth).toEqual(withDefaultIssuer({ ...OAUTH_CONFIG, audience: 'onehub' }));
   });
 
   it('writes oauth: true for a legacy auth enum entry', async () => {
@@ -1086,7 +1122,7 @@ describe('mapCanonicalToDesktop', () => {
         name: 'onehub_core',
         url: 'https://mcp.example.com/mcp/onehub_core',
         transport: 'http',
-        oauth: OAUTH_CONFIG,
+        oauth: withDefaultIssuer(OAUTH_CONFIG),
       },
     ]);
   });
@@ -1103,13 +1139,15 @@ describe('resolveDesktopOAuth', () => {
   it('forwards a valid oauth object as a copy', () => {
     const entry = { name: 'onehub_core', transport: 'http' as const, url: 'https://x', oauth: OAUTH_CONFIG };
     const resolved = resolveDesktopOAuth(entry);
-    expect(resolved).toEqual(OAUTH_CONFIG);
+    expect(resolved).toEqual(withDefaultIssuer(OAUTH_CONFIG));
     expect(resolved).not.toBe(OAUTH_CONFIG);
   });
 
   it('preserves unknown keys inside the oauth object', () => {
     const oauth = { ...OAUTH_CONFIG, audience: 'onehub', pkce: true };
-    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth })).toEqual(oauth);
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth })).toEqual(
+      withDefaultIssuer(oauth),
+    );
   });
 
   it('passes the boolean shapes through unchanged', () => {
@@ -1129,7 +1167,7 @@ describe('resolveDesktopOAuth', () => {
   it('prefers the oauth object over the legacy enum when both are present', () => {
     expect(resolveDesktopOAuth({
       name: 'a', transport: 'http', url: 'https://x', auth: 'none', oauth: OAUTH_CONFIG,
-    })).toEqual(OAUTH_CONFIG);
+    })).toEqual(withDefaultIssuer(OAUTH_CONFIG));
   });
 
   it('returns false when the entry carries neither field (unchanged behavior)', () => {

@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { stripNodeModulesBin } from './test-env.js';
+import { stripNodeModulesBin, getCodemieTestUrl, getCodemieTestModel } from './test-env.js';
 
 // Slug used for the test assistant agent file
 const CI_ASSISTANT_SLUG = 'ci-assistant';
@@ -95,14 +95,14 @@ export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverri
   const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
   if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local or env variables');
   const authBase = authUrlRaw.replace(/\/$/, '');
-  const codeMieUrl = (overrides.codeMieUrl ?? process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
+  const codeMieUrl = (overrides.codeMieUrl ?? getCodemieTestUrl()).replace(/\/$/, '');
   const profile: Record<string, string> = {
     name: profileName,
     provider: 'bearer-auth',
     authMethod: 'jwt',
-    codeMieUrl: overrides.codeMieUrl ?? process.env.CI_CODEMIE_URL ?? '',
+    codeMieUrl,
     baseUrl: `${codeMieUrl}/code-assistant-api`,
-    model: overrides.model ?? process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
+    model: overrides.model ?? getCodemieTestModel(),
     authServerUrl: overrides.authServerUrl ?? authBase,
     authRealm: overrides.authRealm ?? 'codemie-prod',
   };

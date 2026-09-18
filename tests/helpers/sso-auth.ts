@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { stripNodeModulesBin } from './test-env.js';
+import { stripNodeModulesBin, getCodemieTestUrl, getCodemieTestModel } from './test-env.js';
 
 const SSO_PROFILE_NAME = 'sso-autotest';
 
@@ -10,15 +10,15 @@ function getCodemieConfigDir(): string {
 }
 
 function buildSsoProfile(): Record<string, unknown> {
-  const ciCodemieUrl = (process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
+  const ciCodemieUrl = getCodemieTestUrl();
   return {
     name: SSO_PROFILE_NAME,
     provider: 'ai-run-sso',
     authMethod: 'sso',
-    codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
+    codeMieUrl: ciCodemieUrl,
     baseUrl: `${ciCodemieUrl}/code-assistant-api`,
     apiKey: 'sso-authenticated',
-    model: process.env.CODEMIE_MODEL ?? 'claude-sonnet-4-6',
+    model: getCodemieTestModel(),
     timeout: 300,
     debug: false,
   };

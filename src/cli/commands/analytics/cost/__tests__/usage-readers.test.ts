@@ -227,6 +227,22 @@ describe('extractClaudeUsageRecords — sub-agent transcripts', () => {
     return { sessionId: 's', agentName: 'claude', metadata: {}, messages, ...(subagents && { subagents }), metrics: {} } as never;
   }
 
+  it('retains the canonical transcript owner when a replay supplies more complete usage', () => {
+    const records = extractClaudeUsageRecords(parsed(
+      [msg('shared', 'claude-sonnet-4-6', 10, '2026-06-08T10:00:00Z')],
+      [{ agentId: 'child', filePath: '/fake/child.jsonl', messages: [
+        msg('shared', 'claude-sonnet-4-6', 20, '2026-06-08T10:00:01Z'),
+        { message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 3 } } },
+        { message: { model: 'claude-sonnet-4-6', usage: { input_tokens: 4 } } },
+      ] }],
+    ));
+
+    expect(records).toHaveLength(3);
+    expect(records[0]).toMatchObject({ ownerAgentId: 's', usage: { input: 20 } });
+    expect(records.slice(1).map((record) => [record.key, record.ownerAgentId, record.usage.input]))
+      .toEqual([[null, 'child', 3], [null, 'child', 4]]);
+  });
+
   it('merges records from the main transcript and every sub-agent transcript', () => {
     const p = parsed(
       [msg('m1', 'claude-sonnet-4-6', 100)],
@@ -401,12 +417,13 @@ describe('extractCodexUsageRecords', () => {
     expect(u?.total).toBeGreaterThan(1036);
   });
 
+  // Dynamic import of cost-enricher.js is slow on WSL2/NTFS under concurrent load; 120 s prevents timeout.
   it('buildCostSeries works from codex per-turn records', async () => {
     const { buildCostSeries } = await import('../cost-enricher.js');
     const recs = extractCodexUsageRecords(loadCodex('turn-2.jsonl'));
     const series = buildCostSeries(recs);
     expect(series.length).toBeGreaterThanOrEqual(2);
-  });
+  }, 120_000);
 });
 
 /**

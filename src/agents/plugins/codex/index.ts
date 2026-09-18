@@ -8,7 +8,12 @@ export {
   getCodexHomePath,
   getCodexSessionsPath,
   getCodexSessionDayPath,
+  getCodexDiscoverySessionRoots,
 } from './codex.paths.js';
+export type { CodexDiscoveryRoot } from './codex.paths.js';
+
+// Session-prompt helpers (public boundary for CLI-layer consumers)
+export { isCodexInjectedUserText } from './session/codex-user-prompt.js';
 
 // Types
 export type {
@@ -17,6 +22,8 @@ export type {
   CodexTurnContext,
   CodexResponseItem,
   CodexEventMsg,
+  CodexResponseItemMessage,
+  CodexContentBlock,
   CodexSessionMetadata,
 } from './codex-message-types.js';
 

@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "branch": "feat/codemie-assistant-skill-registration",
+  "head": "12d4b575b8ad96856279243bf3adb32a967b2877",
+  "runner": "npm",
+  "started_at": "2026-09-18T08:53:30Z",
+  "completed_at": "2026-09-18T08:55:44Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1394,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Produced a full dependency license report (456 MIT, 111 Apache-2.0, ...) — real work, not a no-op exit."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2132,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1952,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 242,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Validates HEAD~1..HEAD only. CI's validate-commits job runs commitlint over the full PR range (base.sha..HEAD); the other 4 branch commits are not covered by this local gate."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 298,
+      "command": "git diff origin/main...HEAD | docker run --rm -i -v .gitleaks.toml:/gitleaks.toml:ro ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "'npm run validate:secrets' exited 0 while printing 'No staged changes to scan' — a self-skip, since the branch work is already committed and nothing is staged. Re-ran the same gitleaks version and .gitleaks.toml config over the origin/main...HEAD diff instead: 'scanned ~125485 bytes (125.49 KB)', 'no leaks found'. This matches what CI's gitleaks-action job scans."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3758,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "tsc + tsc-alias + copy-plugins all succeeded; dist/ assets and plugin sources copied."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 2331,
+      "command": "npx vitest run --passWithNoTests <42 adjacent __tests__ files derived from changed .ts files>",
+      "exit_code": 0,
+      "notes": "Stands in for the 'npx lint-staged' leg of .husky/pre-commit, whose .lintstagedrc.mjs maps each staged .ts to its sibling __tests__/*.test.ts. Nothing is staged now, so lint-staged itself would have been a no-op; test file set was derived from git diff origin/main...HEAD. 42 files / 670 tests passed. lint-staged's eslint leg is covered more broadly by the lint gate."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7667,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "283 files / 4125 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13051,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 files passed, 1 file and 10 tests skipped by in-suite guards (pre-existing conditional skips, not a gate-level self-skip); 279 tests passed."
+    },
+    {
+      "id": "agent-tests",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npx vitest run --project agent",
+      "notes": "Part of 'npm test' but excluded from both 'npm run ci' and every CI job (.github/workflows/ci.yml runs only --project unit and --project cli). Needs installed agent binaries plus live PTY sessions and provider credentials, which are not reachable here. Not a merge gate."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gh pr view <n> --json title -q .title | npx commitlint --verbose",
+      "notes": "CI's validate-commits job validates the PR title as Conventional Commits. No PR exists for this branch yet, so the check cannot run locally. Still owed: whoever opens the PR must give it a conventional title or this job fails."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (on windows-latest)",
+      "notes": "CI runs the same unit/cli suites on a Windows runner where core.autocrlf=true; .gitattributes (* text=auto eol=lf) is what keeps shebang .mjs/.js files from breaking Vite's transform. No Windows runner available here, and this diff adds no .mjs/.js shebang files, so CRLF exposure is low. Only CI can settle it."
+    }
+  ],
+  "failures": {}
+}

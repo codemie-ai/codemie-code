@@ -10,22 +10,34 @@ const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
 function formatTable(models: ModelInfo[]): void {
   const ID_WIDTH = 40;
   const NAME_WIDTH = 35;
+  const ORIGIN_WIDTH = 10;
   const DESC_WIDTH = 60;
+
+  // Only providers that tag model origin (e.g. ollama local/cloud) get the column
+  const showOrigin = models.some(m => typeof m.metadata?.origin === 'string');
 
   const header =
     chalk.bold(padEnd('ID', ID_WIDTH)) +
     chalk.bold(padEnd('NAME', NAME_WIDTH)) +
+    (showOrigin ? chalk.bold(padEnd('ORIGIN', ORIGIN_WIDTH)) : '') +
     chalk.bold('DESCRIPTION');
 
   console.log(header);
-  console.log(chalk.dim('─'.repeat(ID_WIDTH + NAME_WIDTH + DESC_WIDTH)));
+  console.log(chalk.dim('─'.repeat(ID_WIDTH + NAME_WIDTH + (showOrigin ? ORIGIN_WIDTH : 0) + DESC_WIDTH)));
 
   for (const model of models) {
     const id = padEnd(model.id, ID_WIDTH);
     const name = padEnd(model.name || model.id, NAME_WIDTH);
     const desc = truncate(model.description ?? '', DESC_WIDTH);
-    console.log(chalk.cyan(id) + chalk.white(name) + chalk.dim(desc));
+    const origin = showOrigin ? formatOrigin(model.metadata?.origin, ORIGIN_WIDTH) : '';
+    console.log(chalk.cyan(id) + chalk.white(name) + origin + chalk.dim(desc));
   }
+}
+
+function formatOrigin(origin: unknown, width: number): string {
+  const value = typeof origin === 'string' ? origin : '';
+  const padded = padEnd(value, width);
+  return value === 'cloud' ? chalk.yellow(padded) : chalk.green(padded);
 }
 
 function padEnd(str: string, width: number): string {

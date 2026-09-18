@@ -29,6 +29,7 @@ export interface ModelMetadata {
   description?: string;              // Model description
   popular?: boolean;                 // Mark as popular/recommended
   contextWindow?: number;            // Token context window
+  minMemoryGb?: number;              // Minimum memory (RAM/VRAM) to run locally - omit for cloud-hosted models
   pricing?: {                        // Pricing information (optional)
     input: number;
     output: number;
@@ -272,35 +273,6 @@ export interface ProviderCredentials {
 }
 
 /**
- * CodeMie session already established by the setup wizard before provider
- * setup steps run (during the mandatory-integration gate).
- *
- * Provider setup steps that would otherwise prompt for the portal URL,
- * open a browser for SSO, and ask for a project must reuse this instead,
- * so the user authenticates exactly once per `codemie setup` run.
- */
-export interface CodeMieSetupSession {
-  codeMieUrl: string;
-  authResult: SSOAuthResult;
-  project: string;
-  userEmail: string;
-}
-
-/**
- * Context passed from the setup wizard into provider setup steps.
- * When enforcedIntegration is set, the provider must enforce API key entry.
- */
-export interface SetupContext {
-  enforcedIntegration?: {
-    id: string;
-    alias: string;
-    codeMieUrl: string;
-  };
-  /** Reusable CodeMie session; present only when the wizard already authenticated. */
-  codeMieSession?: CodeMieSetupSession;
-}
-
-/**
  * Validation result
  */
 export interface ValidationResult {
@@ -325,7 +297,7 @@ export interface ProviderSetupSteps {
    *
    * Interactive prompts for API keys, URLs, etc.
    */
-  getCredentials(isUpdate?: boolean, context?: SetupContext): Promise<ProviderCredentials>;
+  getCredentials(isUpdate?: boolean): Promise<ProviderCredentials>;
 
   /**
    * Step 2: Fetch available models
@@ -342,6 +314,23 @@ export interface ProviderSetupSteps {
     models: string[],
     template?: ProviderTemplate
   ): Promise<string | null | undefined>;
+
+  /**
+   * Optional: interactive live search against an external model catalog
+   * (e.g. Ollama's model library). Runs its own prompts and returns the
+   * chosen model id, or null if the user cancelled/backed out - the caller
+   * falls back to the normal model list in that case.
+   */
+  searchModel?(credentials: ProviderCredentials): Promise<string | null>;
+
+  /**
+   * Optional: compute which of the given models should be marked/starred
+   * as recommended, using live signals (fits the current machine, has the
+   * capabilities a coding agent needs, real-world popularity) instead of a
+   * static hardcoded list. Returning fewer/no ids is fine - callers treat
+   * this as "no recommendation" rather than an error.
+   */
+  getRecommendedModels?(models: string[], credentials: ProviderCredentials): Promise<string[]>;
 
   /**
    * Step 3: Build final configuration

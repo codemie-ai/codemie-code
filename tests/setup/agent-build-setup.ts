@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { config as loadEnv } from 'dotenv';
 import { setupSsoAutotestProfile, teardownSsoAutotestProfile } from '../helpers/sso-auth.js';
+import { getCodemieTestUrl } from '../helpers/test-env.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '../..');
@@ -44,7 +45,7 @@ export async function setup(): Promise<void> {
   loadEnv({ path: resolve(root, '.env.test.local'), override: true });
 
   // Default to the public prod instance when no .env.test.local is present.
-  process.env.CI_CODEMIE_URL ??= 'https://codemie.lab.epam.com';
+  process.env.CI_CODEMIE_URL = getCodemieTestUrl();
 
   console.log('\n[agent-integration] Building dist/ (runs once per session)...');
   execSync('npm run build', { cwd: root, stdio: 'inherit' });
@@ -117,7 +118,7 @@ export async function setup(): Promise<void> {
         `[agent-integration] Active profile provider is "${activeProvider ?? 'none'}" — not CodeMie SSO.`,
       );
       console.log('[agent-integration] Agent SSO tests will be skipped.');
-      console.log('[agent-integration] Use npm run test:run for unit + CLI tests without credentials.\n');
+      console.log('[agent-integration] Use `npx vitest run --project unit --project cli` for unit + CLI tests without credentials.\n');
       process.env.SSO_AVAILABLE = 'false';
       return;
     }
@@ -133,7 +134,7 @@ export async function setup(): Promise<void> {
       // Credentials missing or expired — launch browser SSO login directly.
       // Using stdio: 'inherit' so the user sees and can complete the flow.
       console.log('[agent-integration] SSO credentials missing or expired — launching login...\n');
-      const codemieUrl = process.env.CI_CODEMIE_URL ?? '';
+      const codemieUrl = getCodemieTestUrl();
       try {
         execSync(
           `node ${resolve(root, 'bin/codemie.js')} profile login --url ${codemieUrl}`,

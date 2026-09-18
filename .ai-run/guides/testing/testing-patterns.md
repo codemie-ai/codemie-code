@@ -192,7 +192,7 @@ Reference: `tests/integration/*.test.ts`
 
 ## Test Commands
 
-See `.ai-run/guides/quality-gates.md` for full command definitions (`npm test`, `test:unit`, `test:integration`, `test:coverage`, `test:watch`).
+See `.ai-run/guides/quality-gates.md` for full command definitions (`npm test` runs the full local suite; `npx vitest run --project unit|cli|agent` for a scoped run; `test:coverage`, `test:watch`).
 
 Run a specific file:
 ```bash

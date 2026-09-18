@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "task": "Add a headless (non-interactive) CLI mode for registering CodeMie assistants and skills alongside the existing interactive wizard, aborting the whole operation with a clear error when a requested assistant is not available to the user.",
+  "generated": "2026-09-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two parallel command trees must both gain a headless branch (assistants/setup/{index,data,helpers,constants}.ts and skills/setup/{index,data,helpers}.ts), plus the shared layer they both funnel through (shared/helpers.ts executeWithSpinner + handleSetupError, shared/agent-targets.ts resolveAgentSetupTargets, shared/prompts/storage-scope.ts), plus two duplicated wiring sites that must stay in sync (cli/commands/setup.ts:27-28 and agents/core/AgentCLI.ts:115-116). Base L for 3-4 components across 2-3 layers; red flag 'touches core shared utilities' bumped to XL. Matches the project L anchor profile-provider-decoupling, which also scored component_scope 5 for a comparable 6-area spread."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Core intent is clear (two modes, fail-fast on unavailable assistant) but several decisions are explicitly undetermined by anything in the code: the identifier form users supply (id vs slug vs name), whether partial filesystem writes must be rolled back when the abort fires mid-run, whether the new surface emits metrics (SkillCommand enumerates only add|update|remove|list|find), and the entry-point naming, which risks colliding with the existing and semantically different `codemie skills add` wrapper. Flag convention is also unsettled — variadic (-s --skill <skills...>) and comma-split (--agent <agents>) both exist in-repo. Higher than the project L anchor's clarity score of 3, which had a single open schema question."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for the combination, and the fail-fast contract cuts against three independently partial-tolerant helpers: fetchAssistantsByIds logs and omits unfetchable ids, applyChanges getFullAssistant returns null and continues, and executeWithSpinner converts any throw into a null return. There is also no non-TTY seam — showDisclaimer, promptStorageScope, promptAgentTargetSelection and both selection UIs call setRawMode unconditionally. Registration is incremental with no rollback today, so all-or-nothing needs a pre-flight availability check before the first write. Scored L rather than XL: the headless half has direct in-repo precedent (skills/add.ts:52 interactivity gate, require-auth.ts pre-side-effect gate, sdk/assistants.ts headless CRUD), nothing is irreversible, and no new architectural pattern is required. The defensive-test-template auto-bump was checked and did not fire — rejects.toThrow with class+code assertions is a documented repo pattern and agent-detection.test.ts already covers a non-interactive fallthrough."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Roughly 12 modified — both setup index/data/helpers pairs, assistants constants for new messages, the three shared helpers, and the two wiring sites — plus 3-4 new files for the headless resolver and its tests, spanning src/cli/commands/assistants/, src/cli/commands/skills/, src/cli/commands/shared/ and src/agents/core/. That is the 11-15 modified / 4-6 new XL band. The project L anchor reached 6 on this dimension only via a data-migration red flag on the same base of 5; no such red flag applies here."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Commander CLI surface, TTY interaction layer, service orchestration, codemie-sdk/auth external layer and ConfigLoader persistence are all touched — nominally five, which reads as XL by raw count. Scored L deliberately for consistency with the primary project anchor profile-provider-decoupling, which scored 4 while carrying a real schema migration rewriting persisted user config. This change only appends to the existing codemieAssistants/codemieSkills arrays: no schema change, no migration, no infrastructure work, no new external system. Recording the disagreement: a pure count-based reading would give 5 and a total of 24, still band L, so routing is unaffected."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities consumed by both setup trees — shared/helpers.ts (executeWithSpinner, handleSetupError), shared/agent-targets.ts (resolveAgentSetupTargets), shared/prompts/storage-scope.ts.",
+    "Component Scope: 'affects multiple workflows' also applies (assistants setup and skills setup are two independent workflows, wired at two sites) — already reflected in the same bump, not double-counted.",
+    "Considered and not applied — 'affects authentication or authorization': headless mode must move auth ahead of side effects (setup skills currently runs showDisclaimer plus two prompts before authenticating), but this reuses the existing requireAuthenticatedSession/getAuthenticatedClient helpers and changes no authn/authz logic.",
+    "Considered and not applied — defensive-test-template auto-bump on Technical Risk: an error-path template exists in-repo (documented rejects.toThrow with class and error-code assertions; agent-detection.test.ts covers the non-interactive branch). The gap here is coverage of setupAssistants/setupSkills, not a missing test pattern."
+  ],
+  "split_recommendation": null
+}

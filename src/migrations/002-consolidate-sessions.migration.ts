@@ -16,7 +16,6 @@ import { getCodemieHome } from '../utils/paths.js';
 class ConsolidateSessionsMigration implements Migration {
   id = '002-consolidate-sessions';
   description = 'Consolidate session storage under ~/.codemie/sessions/';
-  minVersion = '0.0.28';
 
   private readonly CODEMIE_HOME = getCodemieHome();
   private readonly OLD_METRICS_DIR = path.join(this.CODEMIE_HOME, 'metrics', 'sessions');

@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "task": "Decouple provider-level config from project/tooling config in the profile system (ConfigLoader/ProviderProfile) and add a migration so users can switch providers while preserving shared project/assistant/skills config.",
+  "generated": "2026-08-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 5, "label": "XL" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the config schema (src/env/types.ts), ConfigLoader (src/utils/config.ts), the migration framework (src/migrations/*), the CLI layer (profile/*, assistants/setup/*, skills/setup/*), and potentially all 7 provider plugins that consume ProviderProfile via exportEnvVars/agentHooks — a core shared contract used across nearly every subsystem." },
+    { "dimension": "requirements_clarity", "reason": "Per technical-analysis.md risk indicators, the exact target schema shape and which currently profile-scoped fields (codeMieProject, codeMieIntegration, hooks, plugins, assistants.maxHistoryMessages, skillsSearchUrl, claudeAutocompactPct, metrics) count as 'project-level' vs. legitimately provider-scoped is not yet decided — an architectural design decision, not just an implementation detail." },
+    { "dimension": "technical_risk", "reason": "The direction of split requested (decoupling provider identity/credentials from project/tooling context within ProviderProfile, likely via a new linked/shared structure) is a different shape of change than the existing migration-004 precedent (flat move-to-top-level). ConfigLoader.load()'s merge/priority logic is intricate, branchy, and only partially covered by tests, raising regression risk on a widely-used code path." },
+    { "dimension": "file_change_estimate", "reason": "Technical-analysis.md's own summary estimates 6+ files as a floor (schema, ConfigLoader, new migration file, its test, one or more CLI touch points) before confirming whether any of the 7 provider plugins' exportEnvVars/agentHooks call sites also need updates — realistic estimate spans multiple subsystems, likely 11-15 files." },
+    { "dimension": "affected_layers", "reason": "Configuration/data layer, migration-framework layer, CLI layer (profile + assistants/setup + skills/setup), and provider-plugin layer are all implicated — a significant config-schema restructuring analogous to a database schema change, with cross-cutting impact across layers." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL to XXL: task is explicitly framed as a migration/decoupling ('migration', 'decouple') of a core shared subsystem (ProviderProfile/ConfigLoader) consumed by the CLI, migration framework, and every provider plugin.",
+    "Technical Risk bumped from M to L: the ProviderProfile/MultiProviderConfig schema is being significantly restructured, equivalent to a database schema change.",
+    "Technical Risk bumped from L to XL: task explicitly requires a data migration to preserve existing users' shared project/assistant/skills config while decoupling provider identity.",
+    "File Change Estimate bumped from L to XL: data migration requirement adds a new numbered migration file, its dedicated test, and updates across every consuming call site (schema, loader, CLI, provider plugins).",
+    "Affected Layers bumped from L to XL: the config-schema change is treated as a significant schema/persistence change (per guide: 'DB schema changes always bump Affected Layers to at least L'), and it spans config, migration, CLI, and provider-plugin layers simultaneously.",
+    "Requirements Clarity bumped from L to XL: vague acceptance criteria — exact target schema shape and field classification (project-level vs. provider-scoped) are undecided per technical-analysis.md risk indicators."
+  ],
+  "split_recommendation": "Recommend splitting by phase, mirroring the tested migration-004/005 pattern: (1) Spec/design the new decoupled schema — decide exactly which fields move to a shared project/workspace structure vs. remain provider-scoped, and how multiple provider profiles link to one shared context; (2) Implement the new schema types + ConfigLoader read/merge logic for the decoupled shape, additive/parallel to the existing flat schema; (3) Implement the numbered migration (e.g. 006-...) with dedicated unit tests, following the tested pattern of migrations 004/005 rather than the untested pattern of 001-003; (4) Update the CLI layer (profile switch/display, assistants/setup, skills/setup) to read/write the new shape; (5) Update provider-plugin call sites (exportEnvVars/agentHooks) across all 7 provider plugins to consume the decoupled config, verifying the blast radius flagged as unconfirmed in technical-analysis.md."
+}

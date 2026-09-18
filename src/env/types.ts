@@ -69,10 +69,6 @@ export interface ProviderProfile {
 
   // SSO-specific fields
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
-  codeMieUrl?: string;
-  codeMieProject?: string;  // Selected project/application name
-  userEmail?: string;       // Authenticated user's email
-  codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
     cookiesEncrypted?: string;
@@ -97,16 +93,19 @@ export interface ProviderProfile {
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
 
-  // Metrics configuration
-  metrics?: {
-    enabled?: boolean;  // Enable metrics collection (default: true)
-    sync?: {
-      enabled?: boolean;  // Enable metrics sync (default: true for SSO)
-      interval?: number;  // Sync interval in ms (default: 300000 = 5 min)
-      maxRetries?: number; // Max retry attempts (default: 3)
-      dryRun?: boolean;   // Dry-run mode: log metrics without sending (default: false)
-    };
-  };
+  // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
+  codemieAssistants?: CodemieAssistant[];
+}
+
+/**
+ * Workspace-level configuration: repo/tooling-context fields that are shared
+ * across all profiles in a scope (global or local), so switching the active
+ * profile does not drop workspace context. See MultiProviderConfig.workspace.
+ */
+export interface WorkspaceConfig {
+  codeMieUrl?: string;
+  codeMieProject?: string;  // Selected project/application name
+  codeMieIntegration?: CodeMieIntegrationInfo;
 
   // Hooks configuration
   hooks?: HooksConfiguration;
@@ -123,9 +122,6 @@ export interface ProviderProfile {
     maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
   };
 
-  // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
-  codemieAssistants?: CodemieAssistant[];
-
   // Skills search — internal catalog endpoint used by `codemie skills find`.
   // Overridden by the CODEMIE_SKILLS_SEARCH_URL env var. When unset, the
   // `find` command shows a friendly placeholder for the internal section
@@ -134,6 +130,17 @@ export interface ProviderProfile {
 
   // Claude Code-specific settings
   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 85)
+
+  // Metrics configuration
+  metrics?: {
+    enabled?: boolean;  // Enable metrics collection (default: true)
+    sync?: {
+      enabled?: boolean;  // Enable metrics sync (default: true for SSO)
+      interval?: number;  // Sync interval in ms (default: 300000 = 5 min)
+      maxRetries?: number; // Max retry attempts (default: 3)
+      dryRun?: boolean;   // Dry-run mode: log metrics without sending (default: false)
+    };
+  };
 }
 
 /**
@@ -172,6 +179,7 @@ export interface MultiProviderConfig {
   codemieSkills?: CodemieSkill[];
   codemieAssistants?: CodemieAssistant[];
   userEmail?: string;
+  workspace?: WorkspaceConfig;
   profiles: Record<string, ProviderProfile>;
 }
 
@@ -195,7 +203,7 @@ export interface ConfigWithSources {
 /**
  * Unified configuration options (for runtime use)
  */
-export type CodeMieConfigOptions = ProviderProfile;
+export type CodeMieConfigOptions = ProviderProfile & WorkspaceConfig;
 
 /**
  * Type guard to check if config is multi-provider format

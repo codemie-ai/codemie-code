@@ -54,15 +54,19 @@ interface CodeMieLlmModel {
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
  *
- * The opus entries are listed in descending preference (`4-8 → 4-7 → 4-6`):
- * {@link selectDesktopClaudeModels} collapses them to the single highest-priority
- * opus the gateway actually serves, so Desktop never shows more than one Opus.
+ * Opus and Sonnet entries are listed in descending preference
+ * (`opus: 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5 → 4-6`):
+ * {@link selectDesktopClaudeModels} collapses each family to the single
+ * highest-priority ID the gateway actually serves, so Desktop never shows more
+ * than one Opus or one Sonnet (matching the latest cloud Desktop lineup).
  */
 export const PREFERRED_CLAUDE_MODELS = [
-  'claude-sonnet-4-6',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-sonnet-5',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5',
 ] as const;
 
@@ -93,6 +97,7 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
       headers: { Authorization: `Bearer ${gatewayKey}` },
     });
     if (!response.ok) {
+      const isUpstreamFailure = response.status >= 500 && response.status < 600;
       logger.warn(
         '[proxy] Gateway model discovery failed',
         ...sanitizeLogArgs({
@@ -100,8 +105,19 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
           status: response.status,
           statusText: response.statusText,
           inferenceGatewayBaseUrl: proxyUrl,
+          fallbackToPreferredModels: isUpstreamFailure,
         })
       );
+      if (isUpstreamFailure) {
+        logger.warn(
+          '[proxy] Falling back to the curated Claude Desktop model list because the upstream model catalog failed',
+          ...sanitizeLogArgs({
+            endpoint,
+            preferredModels: [...PREFERRED_CLAUDE_MODELS],
+          })
+        );
+        return [...PREFERRED_CLAUDE_MODELS];
+      }
       throw new ConfigurationError(
         response.status === 401
           ? `Local proxy model discovery was rejected with 401 Unauthorized at ${endpoint}. ` +
@@ -213,11 +229,13 @@ export function selectPreferredClaudeModels(
  * Build the exact model set Claude Desktop should be offered.
  *
  * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus family to a single entry: the first (highest-priority)
- * opus that resolved. With opus ids ordered `4-8 → 4-7 → 4-6` in
- * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 4.8 when the gateway serves
- * it and otherwise falls back to the next-best available opus. Non-opus models
- * are passed through untouched and order is preserved.
+ * then collapses the opus and sonnet families to a single entry each: the first
+ * (highest-priority) ID that resolved. With preferred order
+ * `opus: 5 → 4-8 → 4-7 → 4-6 → 3` and `sonnet: 5 → 4-6` in
+ * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 5 / Sonnet 5 when the
+ * gateway serves them and otherwise falls back to the next-best available ID
+ * in each family. Haiku and any other non-opus/non-sonnet models are passed
+ * through untouched; order is preserved.
  */
 export function selectDesktopClaudeModels(
   available: string[],
@@ -225,10 +243,18 @@ export function selectDesktopClaudeModels(
 ): string[] {
   const resolved = selectPreferredClaudeModels(available, preferred);
   let opusKept = false;
+  let sonnetKept = false;
   return resolved.filter((id) => {
-    if (!/^claude-opus-/i.test(id)) return true;
-    if (opusKept) return false;
-    opusKept = true;
+    if (/^claude-opus-/i.test(id)) {
+      if (opusKept) return false;
+      opusKept = true;
+      return true;
+    }
+    if (/^claude-sonnet-/i.test(id)) {
+      if (sonnetKept) return false;
+      sonnetKept = true;
+      return true;
+    }
     return true;
   });
 }
@@ -290,14 +316,65 @@ function isValidMcpServerName(name: string): boolean {
 const DESKTOP_SUPPORTED_TRANSPORTS = new Set(['http', 'sse']);
 
 /**
+ * Issuer written into a structured oauth config that arrives without one.
+ *
+ * This is a deliberate, narrow exception to the courier rule stated throughout
+ * this module (the CLI forwards backend oauth values verbatim). Without an
+ * issuer, Desktop treats the config as "explicit" mode and fabricates one from
+ * the *origin* of `tokenUrl`, which can never equal a Keycloak realm issuer —
+ * so every flow dies with `Issuer mismatch in authorization response
+ * (RFC 9207)`. Forwarding a config we know Desktop cannot complete is worse
+ * than supplying the CodeMie default, and it mirrors DEFAULT_CODEMIE_BASE_URL:
+ * the CLI already ships a CodeMie endpoint as its built-in default.
+ *
+ * A backend that publishes `authorizationServer` always wins — this only fills
+ * the gap, and becomes dead weight once every deployment serves the field.
+ */
+const DEFAULT_AUTHORIZATION_SERVER: readonly string[] = [
+  'https://auth.codemie.lab.epam.com/realms/codemie-prod',
+];
+
+/**
+ * True when the value is an issuer list Desktop can actually use.
+ *
+ * Anything else — absent, null, a bare string, an empty array, or an array with
+ * a blank entry — counts as "not provided" and takes the default. Desktop reads
+ * this field as an array; a malformed value keeps it in explicit mode just as a
+ * missing one does, so treating the two alike is what makes the fallback
+ * effective rather than merely present.
+ */
+function hasUsableAuthorizationServer(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((issuer) => typeof issuer === 'string' && issuer.trim().length > 0)
+  );
+}
+
+/**
  * Normalize the three accepted auth shapes into what Claude Desktop consumes.
  *
  * Precedence: a valid oauth object wins, then the oauth boolean, then the
  * legacy `auth` enum, then `false`. The final fallback preserves the behavior
  * of entries carrying neither field.
+ *
+ * A structured oauth config additionally gains {@link DEFAULT_AUTHORIZATION_SERVER}
+ * when it carries no usable issuer. The boolean and legacy `auth` shapes are
+ * left alone: they tell Desktop to discover the server's own protected-resource
+ * metadata, so an injected issuer would override a working discovery path.
  */
 export function resolveDesktopOAuth(entry: CanonicalMcpEntry): McpOAuthConfig | boolean {
-  if (isValidOAuthConfig(entry.oauth)) return { ...entry.oauth };
+  if (isValidOAuthConfig(entry.oauth)) {
+    const oauth: McpOAuthConfig = { ...entry.oauth };
+    if (!hasUsableAuthorizationServer(oauth.authorizationServer)) {
+      // Fresh array per entry. Assigning the module constant itself would share
+      // one mutable array across every managed entry, and cloneManagedEntry's
+      // shallow oauth copy would not detach it — the same aliasing hazard that
+      // function exists to prevent.
+      oauth.authorizationServer = [...DEFAULT_AUTHORIZATION_SERVER];
+    }
+    return oauth;
+  }
   if (entry.oauth === true) return true;
   if (entry.oauth === false) return false;
   if (entry.auth === 'oauth') return true;

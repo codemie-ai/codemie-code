@@ -143,9 +143,15 @@ The repository ships a template at `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ### Code Review Checklist
 
+> ⚠ **CRITICAL — project & user attribution headers**
+>
+> If the diff adds, removes, renames, or rewrites any `X-CodeMie-*` attribution header (Repository / Branch / Project / Session / Client / Integration / …), the Responses API `user` body field, JWT `sub` / `email` overrides, or the derivation source of any of them — mark the PR as a **CRITICAL change** and require security-review sign-off before merge. This applies even to "harmless" hashes, truncations, or normalizations. Use the reviewer checklist in `.ai-run/guides/security/security-practices.md` → "CRITICAL: Project & User Attribution Headers".
+
+- [ ] **CRITICAL check first**: does the diff touch project/user attribution headers, the Responses `user` field, JWT claim overrides, or their derivation source? If yes, apply the security-practices reviewer checklist and require sign-off.
 - [ ] Logic is correct and matches the linked ticket / story.
 - [ ] Architecture boundaries respected (`CLI → Registry → Plugin → Core → Utils`). See `.ai-run/guides/architecture/architecture.md`.
 - [ ] No secrets, no `console.log`, no generic `Error` (see `.ai-run/guides/security/security-practices.md` and `.ai-run/guides/development/development-practices.md`).
+- [ ] No competing header-injection path added — canonical injector is `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts`.
 - [ ] Tests adequate (`.ai-run/guides/testing/testing-patterns.md`).
 - [ ] Lint clean (`npm run lint`) and types check (`npm run typecheck`).
 - [ ] Public docs / READMEs updated when behavior changes.

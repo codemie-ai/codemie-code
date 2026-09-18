@@ -47,6 +47,33 @@ export class AnalyticsSourceError extends CodeMieError {
   }
 }
 
+export class RegistrationItemNotFoundError extends CodeMieError {
+  constructor(kind: 'assistant' | 'skill', identifier: string) {
+    super(`No ${kind} found matching "${identifier}"`);
+    this.name = 'RegistrationItemNotFoundError';
+  }
+}
+
+export class AmbiguousIdentifierError extends CodeMieError {
+  constructor(kind: 'assistant' | 'skill', identifier: string, candidates: { id: string; name: string }[]) {
+    const list = candidates.map((candidate) => `${candidate.name} (${candidate.id})`).join(', ');
+    super(`Multiple ${kind}s match "${identifier}": ${list}`);
+    this.name = 'AmbiguousIdentifierError';
+  }
+}
+
+export class PartialRegistrationError extends CodeMieError {
+  constructor(
+    public readonly written: string[],
+    public readonly cause: unknown
+  ) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    const writtenSummary = written.length > 0 ? written.join(', ') : 'none';
+    super(`Registration stopped after a failure. Already registered: ${writtenSummary}. Cause: ${causeMessage}`);
+    this.name = 'PartialRegistrationError';
+  }
+}
+
 /**
  * npm error codes for categorizing failures
  */

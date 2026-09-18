@@ -9,6 +9,20 @@ import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
+import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
+import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
+
+/**
+ * Private hand-off between native discovery and report-time enrichment.
+ * Symbol keys are intentionally omitted by JSON serialization, so raw transcript messages
+ * cannot leak into analytics payloads or report exports.
+ */
+export const INTERNAL_PARSED_FAMILY: unique symbol = Symbol('analytics.parsedFamily');
+
+export interface InternalParsedFamilyCapture {
+  parsed: ParsedSession;
+  capturedAt: number;
+}
 
 /**
  * Session start event (special record type)
@@ -117,6 +131,8 @@ export interface RawSessionData {
    * `completed_`-prefixed metadata).
    */
   agentSessionFile?: string;
+  /** Internal native-log snapshot; never serialized into report data. */
+  [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }
 
 /**
@@ -194,6 +210,15 @@ export class MetricsDataLoader {
     try {
       // Read session metadata
       const sessionMetadata = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+
+      // A confirmed external-resume session must never surface in analytics. Its own
+      // metrics upload is already skipped (hook.ts / SessionSyncer), but cost-enrichment
+      // independently re-derives token usage from the correlated transcript for reports —
+      // without this check that would resurrect the session via the aggregator's
+      // zero-delta/real-cost keepSessionIds exception. See EPMCDME-12992.
+      if (sessionMetadata.origin === SESSION_ORIGIN.EXTERNAL_RESUME) {
+        return null;
+      }
 
       // Create synthetic start event from session metadata
       // Note: gitBranch is stored per-delta, not per-session

@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:b3c91d597e538b8df08b1d95a65fcfd1a5e1bfb1edcfd4351f078f1d4d96568b",
+  "claims": [
+    {
+      "id": "claim_fa85ad958ca4488cb30f96294b39de5c",
+      "statement": "CodeMie models an agent integration as an AgentAdapter with required management and run operations plus optional capabilities for resume ownership, extension installation, hook transformation, session parsing, configuration summaries, and version management; AgentMetadata declaratively carries installation, compatibility, environment, lifecycle, analytics, and integration configuration.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/types.ts#L208-L373",
+          "version": "repo-lines-v1:sha256:cb3afc261b38870a8a83efe73d44da62583858990399b5c93e5895aac7bd9073:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhNzQ3YzY5YTU3OWZhNTkwMWVkYzQ4ODIyZWU1NDRmYzFiNjdkNzlkYTI0NmQ0ZjBiNTBmY2M5MjU2OTE1YjRjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0OTAzYmU0NjJiOWQzNGViOGU0MjUxZGNkZTY3MTY2MWZmMGNhMDA4ODc3YjYxYzk4ZDA5ZDlmMzFjNGQ4MDlkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4In0"
+        },
+        {
+          "resource": "repo://src/agents/core/types.ts#L729-L847",
+          "version": "repo-lines-v1:sha256:d08e6df2512d9b409a4731a84d1089798ba623eef2d5b294eda16bba26d7d24f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjZWY1MDMzMTAxMGNjYjdhMTlhMjFlZWMyNDEyNTI5MmQxZDMxNjk2NDBlNGUyMzZiMWUzMGU3MzhhYzFhNmZlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxYjc1OGJlN2MxYzlkMTE3NGUzNzkxYzcwMDE5MWI3ODQ2MTkyMzgyOGMwZWM4NDNhZTc4YjBmODQwNjdlN2I4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7a4394bbfa624c028e4cbca727457b25",
+      "statement": "AgentRegistry lazily registers the built-in agent plugins, keeps adapter and analytics-adapter maps, auto-registers an analytics adapter declared in metadata, and makes all registered agents available for analytics lookup.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/registry.ts#L116-L130",
+          "version": "repo-lines-v1:sha256:b0090a8d624a95de3af1dcc47387f0ac11fcca1de8c665a9183f468a7ddca097:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyMGY4ZGJjZmE0MDU3MDA4MWE2MGFlMDJlNTMzYTU4MzVhN2UyYzQ0ZmRjMjgzM2QxZDk0Y2QxZmUyODYyZDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/agents/registry.ts#L17-L74",
+          "version": "repo-lines-v1:sha256:b1887c08a65f139fa26df9dd7cb899dd935548daaf70b776c445bcc9b4c30943:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmNTYyODM2YWIxZTgyYWQ1MmFiNzZiNGUwNTIyNTIyZWJlZGU3OTUyYmEyMDE2ZDhkNDkzZWU2OGQ4MzdiZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkwNGNjY2NhYjEzMTI4NGEyZWRkNmFhZTA0NjAxYzEzMWRiZmJjZGM3ZWE1MTFmZWU1MmY2MDEzMDNiMjE3YWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b8384dda8dd4494184007f68227db5c4",
+      "statement": "Management surfaces must use AgentRegistry.getManageableAgents(), which filters out analyticsOnly adapters, while analytics can use all adapters; getInstalledAgents() checks only manageable adapters.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/registry.ts#L76-L114",
+          "version": "repo-lines-v1:sha256:4a3cfcad600cd9da18ab7cf7019d6f91dac729ffb7b02d627901b7b36abc73ce:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2MzE0ODFhZTIwMDUxNDgwMzk2NjgxZGE3ZWM4ZmRjYTRmOWU1YTBkNjI5YzdlYTVjYjljM2MwNGU1MWZkNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzM2FjNDQ1NDg0NzJhMTJjYTEzZWFmMjBkYmM2ZjY2NzAyOTMxMDNkOWZkZTZlOTJjYTk2OTEyYTA0ZTZkZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_276839e229d64be89f8b1b15dacba70a",
+      "statement": "Copilot CLI is currently a managed adapter rather than an analytics-only adapter, while still exposing a session adapter through the registry for analytics discovery.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/plugins/copilot-cli/__tests__/copilot-cli.registry.test.ts#L12-L29",
+          "version": "repo-lines-v1:sha256:ba51967540aae776737364bda3ec346921f5cfbf7ee35a44acd7946fe8a0187c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhOTUwMWFhMTI5NzZhYjdmMGJmNWFlZDc0MmIyOTQ3YzBhOWU3MWFkNWQ4MjIxZDI5MjFkODJiMjZiMDRkNjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIzMmZmZDIyNzBhZjQzOTY4ZjI5ZTU3MjFkZjI5MWM5YmUxNjFkMGQ2Nzc4NDY0YWEyOTViMGJjZDQ5NDcwZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4MDI5OGFkMDIxODkyZDkwNzE5NTQ4MmMxNGVmMjI0Yzc3ZmIzOWUzMDM1NTc1MjEwMDBiMDQ3YjgxYWU1YWEifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/copilot-cli/__tests__/copilot-cli.registry.test.ts#L76-L96",
+          "version": "repo-lines-v1:sha256:faf30a94ddc5ba35ca3d05fe18e96129d884de1f0c191bed2d6b6dc125aede43:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/copilot-cli/copilot-cli.plugin.ts#L90-L149",
+          "version": "repo-lines-v1:sha256:aaaf93cf565453ff8281a63eadc5b1bac7ae41cdc5625bd04b1cf947f47f9d52:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzNTcyNjgwYTY1N2M5YzE1ZGI2YTNmYzcxZDFjZWE0ZDc3Njk3M2M0NGI0ZjdmNmU5ZmY0Y2ZiZDcyYjQ0OWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2OWViODc4NDVmYTZjZTgxZGU5ZTJlMTczYmM0ODUzZTYzZDAxZTI0MTM5YmFiZmE1NTczYTYyNTk2M2FiNGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9a6a3eff701240e6b8e64552a043492e",
+      "statement": "Per-agent package executables are thin ES-module shortcuts that resolve a canonical adapter from AgentRegistry, fail if it is absent, and run it through AgentCLI; the package publishes shortcuts for the registered launch targets.",
+      "evidence": [
+        {
+          "resource": "repo://bin/agent-executor.js#L11-L24",
+          "version": "repo-lines-v1:sha256:7776d98e2133ee733c12ea0a4eb4dd5dd8ab51b58ccbaf37511299ffebce825e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzMTYzNGJhZWVhODM3ODE1MjMzZmExNzRkMTZlY2MxODk5N2FlNGFmNGYxNmU3N2E5NzcwMjRjNGQxMGFlYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNmE5YTQ5OGI4ODFjYjcwMDBjZmQxZjJiN2YwNjI3NzFmNmUwODM1YWZhOTE3ZDIxNTM4ZmE3MGMyZmUxMGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQwNTdjOWNiYzg2NGJlZjE1MTQ1YzgxNTc4YjdmMGM1ODY1ZTgzYjEzYWMyNGE0YjAzNDQ0MWUwY2FkODllNmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://bin/codemie-codex.js#L8-L18",
+          "version": "repo-lines-v1:sha256:84ca8e281c33d8b9175f6b2e7eedd05980fb80d33e540275035c2e8cf62f2f8a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzMTYzNGJhZWVhODM3ODE1MjMzZmExNzRkMTZlY2MxODk5N2FlNGFmNGYxNmU3N2E5NzcwMjRjNGQxMGFlYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNmE5YTQ5OGI4ODFjYjcwMDBjZmQxZjJiN2YwNjI3NzFmNmUwODM1YWZhOTE3ZDIxNTM4ZmE3MGMyZmUxMGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjZDBhZDZkYmM5Yzk1ZmY2ZmY0NWE2MDQwMTFjOGViZjgzMTY4YzZlZDBkZWNiZTExMDNmNTk2NWZjYzE3NGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://package.json#L5-L22",
+          "version": "repo-lines-v1:sha256:3c5f384add81688e198c9bdf36ac53eaa531ff9a89d0e17db6e173b30ca2a102:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1NmQ4MzA5MGM2ZmI5MzQ2M2FkNGYyZjg1ZjhjYTU1NzZmN2U4NWUxMjFkOTU4YTUzNzE4ZTIxZDlmNzZlNmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyZjlmMTE4M2M0ZDhmMTM3YTcwMmM2OTU3NjM4Nzg2MzE3YjBjYWEwMzgxMmU4OTNkNjJjNTYzZGI5OTk3MWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzNGNiYzVkZWI4OGY3NjE4NjdiZDJiOTQ2YTdlMTY4OGYwNGI4YjQzZDU0NzJlZjU1ZGVhNzcxOWJiZWE1MmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_671a501ff7914728acf015fc7a56d9df",
+      "statement": "Agent aliases preserve canonical registry identities while offering ergonomic management and launcher names: copilot resolves to copilot-cli and launches as codemie-copilot; the normal launcher convention is codemie-<agent>, except names already beginning with codemie-.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/agent-aliases.ts#L1-L46",
+          "version": "repo-lines-v1:sha256:f03f20c54130c196612f7805d1d82c68485b8f04aee6d08e020f582a6d0f6dfb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0MjZmNzMxNWUxOTQzZmJjNzdjYjkwNGI4ZGQzYzA1YWZmOTZiNjVlYzg1NDFkNjllNDBmOTY0NmZlYTVkZjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6a0b623d040c472394549ab1d28accc8",
+      "statement": "The install command lists manageable agents, resolves aliases through the registry, selects supported or requested versions, runs additional installation even when an existing matching install is retained, restores the CodeMie bin link after installation, and emits plugin-provided or default next-step hints.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/install.ts#L36-L54",
+          "version": "repo-lines-v1:sha256:f1f799beac43833e405201de0b995ee8e0fceb0646ff303788219c0dacaa9daa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5NjQyYzc2NDYwM2UyMmNkYzQyZGNmZTIzMjllZDRjNjQxNzZhYWY2YjhkM2Y1NDJhNDYxNTkwYWU4N2RhMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MDA1ZDU3MTA2YTM2MmViMDAwZGFmM2RhNDY3NGM4MmI1MThmZjVhMmUyZjY3ZWU4ZTc1N2EzMzNjMmFmNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NWM5MjVlNjYyNGQ0ZGRhNDliMjQ1NmJlZDYyNzAyOTNkNzdlNWQzZmFjZWM0YzdhNDgyYTc4MGU1MzMyN2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4NjVkODAwNTg3ZDA4OWZjNzNkZjljZmFkYzE3ZjM4NWE4MWI2ZGVjOTdiOTc1NGU1N2E4ZGM3OGU4NmE3OGYifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/install.ts#L93-L248",
+          "version": "repo-lines-v1:sha256:4565bbfb6ebb9f3a54101be5e5f205f6bddbad12f57416bccd9d2b614efb9f6c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyYjc2ZjA0MmNiNWVmYWQ4NzQ2ODMxOGI2M2JkOTM0NTQ1NWM1ZGE4YWI4ZjEwYWY5ZmVhNDA4NWFhNjk0NTcxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1NTIyYzQyY2QxOWM2ZDAzZDgwOGM0NTI3MjA1NTI4MjViN2VhMWM1YjQ5MWIyMTg1MTFjYWM3NDE1Y2Y5ZDliIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxODk3ZWJlMWZkMGI2N2I3YmUxZmE5MWJhZDk0OGZiNmE2ZGY2ZWZmZGJhYjMzYTU0MjU0MmIyNzY3ZDhiY2FjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiOWMxZTc0OWVjYTc2MzRkZTJjMWM1NmVjNDc5Nzg5NjFmODZmZWQxZjBjN2RmMWI4Yzc5MjhhZDQ0ODc0NTExIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_30f973901f994407a71d182259de0201",
+      "statement": "The update command operates over manageable agents; it updates Claude through its supported-version installer, updates the built-in agent by updating the CodeMie CLI package, and force-installs ordinary agent npm packages.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/update.ts#L207-L234",
+          "version": "repo-lines-v1:sha256:c090c3b9f126f354a5c9f7f7a88f9d1b7f8a1e2c0023e80ea378580f421e79c2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1OWIyNjI5Mzg3NzVlYjY0ODY0ZDdlZWVjNzIxMDkyODljMzVmYWY2MDUyNTFkYWMzMWQwNzcwMjRjOWFlYTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1YWM5ZjllMWRiMTMwMDZiZTI2NTA4Y2U2MjJlNWVlZjkwODhkYTcyNDRjM2QyMzlkY2MwYTdkMWNlYjdhMDAifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/update.ts#L255-L318",
+          "version": "repo-lines-v1:sha256:e618200c195e4e4912a8df21135389ec2eae2d7c6280a812ce953cccddad5527:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwN2ZmZjU4YmNlYmMzNmRmNzVjZTA1MDY2YWMxMmI3N2FlZmFmMTU1ZGNjNTA1NWJkYzczZTI2ZGQ5MTU3MTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiN2QwMGNkODQ2ZGIyMWY2MmE0ZGU2OTlkNjBjZDliN2M3OWI4MTg0MTIwMTE0OTU2YTdlOTE2NmVjZTAxMjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2YWJiODdhYTM1ZmFiMjQ5NDQ4NDhmMTc0MGQ3ZWQ1OThiYTdiNWUxY2U3NjdiMjA4OGU5ZmIwYTFhNGM0NTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRlY2RkMDM3OWFkYTU1M2I2ZjI2YWEwNzA3MGZhMGM0NzY4NmQzOTJlMWQ3ZDNiYjc5ZTIyYjBjYjAxYmYwNGIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/update.ts#L43-L140",
+          "version": "repo-lines-v1:sha256:d4f37dff3825b42fc5c6d41e80e7faf5765e909ad2578d3405f31fd90abb8558:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2MmMzYjYyYzRiYzc5ZDk1YTEzZTM1NWQwMDZkYzRiNmYxZmEwN2VjMWQ1NDA2NjIyMjA0MzZmMDA5MTQ0YmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b2fe2fdfded64f70bcb9365dd37c09c4",
+      "statement": "BaseAgentAdapter implements normal npm installation/uninstallation, command-based installation and version detection, and shared compatibility evaluation; a below-minimum version blocks launch, whereas newer or older supported-compatible versions prompt interactive choices outside silent mode.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L151-L270",
+          "version": "repo-lines-v1:sha256:d772402ba8db4e10ac1383763d7cb8f9e1b9bf77820aa8233362d1fc78aa1b79:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyNTliMTQwNzJmMDEzNjQwMDg2MGY0N2RlYzc5MjYzZmJkNGYwMThmOWIwOTQ0NjUzZGI2ZDRiMGY5OWEwMGVhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L273-L382",
+          "version": "repo-lines-v1:sha256:1593857c675e11fc687b037441b79b16e49f4bd6babf19b06297472b7caf1bde:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5N2Q4NjMyZTU0ZTkyOThhYmI5NTg3MjdlMmQ1MTQwOGFiYWYxMzY2MDM1Mzc5MTAxNDBhYmY2NWIzMGFiNjEzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI5YTYwY2NkYzc5Mjk5MjU1NzZkYmJhYmRlNjJhNGNjY2Q0YzY2ZjE3MTRmNTNlYWQwNTUzMjM0ODA0NDk3YjdjIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L387-L516",
+          "version": "repo-lines-v1:sha256:a31f832e85815e2827e0b8719d7926180cc15cddb443c348aa20f6b6aa33eece:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzNjVmYTliYjMzOTFiMDE4ZTM3MGJlNWI1MzE5MDEwNWUyYmYwZmYwZDhlNTY4YzZlNzg4ZmYyODRkNWJjNTBmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZjc0ZTM3ZWMzNDgxMTdiN2Y1Y2ZjZGRhNDA0ZTEyZjJiNjdiMzMwZjg4ZThmZjhiOGU0YzM0NWExNzk4YWM3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0OGMzN2JlYjk2ZWY1MTRhNWUxOTU4N2YzZDhiZWNkMjkzZGMzZWUwZDI4YTU1NTJlOWYzYzBjY2IxN2Y5MDA1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_668bc7b7231a45008c7fab578c8025bd",
+      "statement": "AgentCLI checks installation, loads and validates profile/auth/provider/model configuration, validates reasoning effort, handles native or framework resume ownership before launch, and invokes adapter.run with pass-through arguments and exported provider environment.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L158-L460",
+          "version": "repo-lines-v1:sha256:d720e37dcda2cd1687f3ea2edb35bb9ac0c9cea3be47393a0086d69873b0e90d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMDViYzhlYzAyNDkwNGY4ZTk1MTJlMDA1MGM3YzcxODk3OGEyY2QyNzhkMWVjYWJjMzIyMWM0NjM0OGYwNjFmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3ZTVkNjIyZGNmOWFkZDk5ZGNlYTBjODg3YzRiMzhkYzZjZGQzYzQwMTNiYzg0MGQzOGExZDA0NjZjMGVjNjExIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyOTZjNmFiNzAxNzUxYTlmNDcxOGMyYmZlYzU5ZjE4MjE1YWQzNTUzZjBjYjEyYzk1MDBmNTFhOTFiNzM3MDJiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlYTRiMjZiMGNkMjMxYjBmNDYwY2YyMWE1NDYwNDU3OGY0NDM1YjhiZGUzNmZkYTdlMzUwMjllYjgxYmE4ZThkIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L588-L616",
+          "version": "repo-lines-v1:sha256:b5c5504fc9951743690734642cbd0b25c2d5b0edee46474bf0577019f79fa77e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0MTliNmM1ZGM3N2ZiNjI3MjhiNTFiMDI5ZmY0NmE3NDc0Y2U1ZDZmNTdjNzI2OWY4OTk0Y2EzMzhkYTA5OTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhOWI2MzE0ZDYyYWIzOGM2NzZlODVhODU5ZTI4MzQwYzQxZmJjOTQ3NTAwNmFjNThlYWFkMjA1M2VjYmRjODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L643-L694",
+          "version": "repo-lines-v1:sha256:fac695b34385946ccaad8fa4734f57092e1b42deff77040dea2c06c27c1060ac:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzMGZiM2Y1ODRhZDExOTBlYzQ4NzM1ZjkxNDBlYjk4ZWNlMzE5MDZjOWQ5MDkzYjNkNWJkNjgyZGFkYjkzMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmYWM0ZTQzNjMwYWJmNjhjM2E0YTc1NzNmZDRjNDMwMDhiYTc5OGRkNzZjMzc1OWVlZWY1M2U2Y2ZmOGQyZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4NDhkNzU3YmY1ZDFiNWYyODdmYTdmZTgwZTIyMzM2NDgzNDFmMGJlZjMwMGNlZTU1YzVkODIwMTYxOGI4YWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_972d8df7971d479da34f9a79d5927818",
+      "statement": "BaseAgentAdapter creates shared session and repository context, conditionally starts the local proxy only for SSO or JWT with agent proxy support, maps CodeMie environment variables to clean native variables, executes lifecycle hooks around the child process, and ensures session-end cleanup despite hook failures or signals.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L1059-L1175",
+          "version": "repo-lines-v1:sha256:4b8ce52dea64fd4cef40cd210d0b806c40b7d2b865c40d7d4bc587a173eaa14c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiZWVlZmRkNTExM2Q5OTA1NmYxZTE5ZGUxYjdkNWJlZGU2ZTBhMzAxZjllOGY3YmU0ZWFkM2Y4ZjhkYTg2NmM4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmODRhYTA3ZGEyYmMyY2MxYTQ0NDU0YzBkNzIyZTA0MDQ3ZTM1OWMyZDcxMThmOWEzMmQ4ZGYzNWIyNTc2NTkzIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L518-L645",
+          "version": "repo-lines-v1:sha256:76aba7afcb100ebc671d5eb23ae6dd8aca5566ea0c568d957e7fa434780a29fb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiNGRjMTQ4MzVlMDM4YjcwNzFlODFhZDhkYzkxMDNhZWY1ZmJmNzU5ZjYzYTZiYWE1MWJhMzQzNjJjZTEwNTE4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwNGI5YTBiMTZiOTkxMGJhYTVkMGE0ZGNhZmY4YTYwYzQyOTYzM2JmMmFlM2NiYWNjODIwMjkwNzU4MGQxMGNhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNWQ4YmEwMzIzOTViMGVhM2ZhZDdhY2ZiZmZlN2Y2ZGFmYzYxZmM3NzgyOGQ1ZGMyYWJjZGJlNTE0ZDQ3Y2Y3In0"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L699-L935",
+          "version": "repo-lines-v1:sha256:f4b5d5f76ab09e7d556745187f86f54fea60a452ae91fed326c505141f22361b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjM3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwOTk1MWE3ZjBmZTFkNzIyZGQ5ODMxMGIwMGVjZWVmMGE1ZWJjZTlkYjhkNDE1YTYzYzZiMGI5ZTlhNDg4ZDJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0ODkzZjQwZTM3ODFlYjg5NmM4MmQwNDZhMDgwNjdhMTFlMzVjZGYyZjFkZmFmMjZmZWE5MGI4ZGI2Njc2NDEzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMmVmMGVmMDgwNGY3OTdkZWYwZjUyMzU0MzIzZWNjZmE2OWFiNjcwYjc5NGViMDgzZTE0MzA4NTlmMTU4MWI0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L939-L1041",
+          "version": "repo-lines-v1:sha256:5d289681ab58e5f06e9f5e9fbacc7d8f4cb184ca37c5be95a732ee187db755be:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxNWVkOGI1ODAzMjkyNTI0OTBhNTA2MjRlOWMwYTk0ZjhlMzZiZjFhMjRiYmMyNDE1NjY5ZTMwZGIwYTBlMTYwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1MDkyNDJjN2ZmZjkzMGY4Y2MwNTdkZjA2YmZiYWU1MjUzZDUxMjVlYmQzNTIwNjU3ODhjZTU0MDQ5MjA1MmZmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_cbd5048ad4344ab4937ab3f0267fd7d9",
+      "statement": "Provider lifecycle dispatch keeps agents provider-agnostic: a provider wildcard hook runs before its agent-specific hook, a wildcard can chain into an agent default, and absent provider hooks fall back to the agent lifecycle hook.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L141-L279",
+          "version": "repo-lines-v1:sha256:a4ec4fe611e0551b8b26225491878f28c93da3c330b91805909a92c9602a2773:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzN2Y1MGYxNzE3ODU4YWRmNmNiMDE1MjZkZTFmNDM4M2IxZTZlZTE5YmFiNWRmNjNmZWZmYzgwYzZlZjQ0YzhlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwZWY3NGY0YjE2MjJiMzI3OTMyMmM3NDk2NDZmODc5YTNjMzMxZTkxZDFkYzQ2ZWY5MDdjMTgzYTM2NDliNzc3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L45-L127",
+          "version": "repo-lines-v1:sha256:adefa9eedc17bc8fd7ce5783e7a10df2059b597b2fd717b848b6f726169e6339:eyJzZWxlY3RlZExpbmVDb3VudCI6ODMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlYzdlMDlmNzdjY2FjYjZiYzEyNGU3NDhkMTE2MmJmMGM5YjA2ZWU3YmFiMGEwYjY5M2M2YmM3NGFjNDQ3ZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjNThhMWNjNWEyZThlMDliYzAwODZmNWNhY2Y0YzM1ODQ5YjgyNmVjZDM2NjhkMTQ5MmI0ZjRlZWVmZGYzMWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljNjNjNzUxNjYxZTczZTNlZmU1ZTUyYjc3YjIwMTBlYmY5MTBhMGU3MDVlOWU2YmQxYzdkYTU1ZmJjZDA4ZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2314f83f82b347d485d270fb001d5bb5",
+      "statement": "CodeMie Code is a built-in adapter around the whitelabel OpenCode binary: its beforeRun lifecycle builds and transports runtime configuration, redirects storage, merges default/profile/CodeMie-plugin hooks, translates task arguments, and injects shell-hooks and reasoning-sanitizer runtime plugins; session end routes processing then cleans up those injected plugins.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/plugins/codemie-code.plugin.ts#L167-L224",
+          "version": "repo-lines-v1:sha256:3b8f2819e81dbffddad0c6589ab486ff38025e1b8ddb4d6fe8f37538ec705251:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzZTRlOGY5MzYyODI5MmJmYzljMGYyNjRkYTA2YTA2MWUyMTg1NzgwM2ZkYzQ0YjgwMjFjZmMyMzg0Y2IzZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyNmRlMGFlMjFlNzFlYmFkZDczZmJlZDk2ZThmYWNlNjEyNDE1M2ExYmQ0ODFkMjU3MmU3ZTg0ZmJiZjhjMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhYWI1OTlmMDZiN2RhN2JiODBkNzY0ZWViODU4ZmFmYWU3ZDU3NWQ5ZjgxYzgwNzJmM2I5N2NlOTgzYjcyMWMifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/codemie-code.plugin.ts#L246-L384",
+          "version": "repo-lines-v1:sha256:3c6305495a00513611a9f172b354758fcb7d0919c915792e22270fe7616def87:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmOGEwMDVlMGIwZmFhNmEwM2MyMGU1YzhmYTMwM2VkMGE1YWUyMjVlMTE1ZGVkMzUyNzY2ZTk2NGYyNTFjMDJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhZDAwZGYxMWM3MzEzZmMwZTE4NWJhN2YxNDcwZjQ5ZjIzOTNmM2JhNDg4ZTQ3NmE1OGFiM2M2YTI0MTk1MjJhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5NzFmYTkyYzUyZmMwOGNlMGQzMjNlYTZiODg5OGM3MjFiYTc4ODg0OWViYmM4NjI5Y2ExNzNlYmJlNDE2YjczIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NjkzODY3MGUyNTRhMzhiNjhiMDI0NzcxYWFjOGIxM2NiMmFmYmVjNjA5ZGNjNTg1OGMxNzcwOGI1MDZlMGQzIn0"
+        },
+        {
+          "resource": "repo://src/agents/plugins/codemie-code.plugin.ts#L387-L465",
+          "version": "repo-lines-v1:sha256:dbc080073838e6b31eb2af4b2e73a792cf002afc81ef4df44878bb30995b309f:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhZDVmZjUzMzM3MWNmNDEyZGU0YTc5ZjFjNzFlNmNhZmNkODk2Yzk5NGZkYzZmZjc5MGNhOTIwYTY1MTU1OGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdkZGNiYTRlNjkwZmQwYTMzNjk2ZjliNGEyNjY1OWY3MTA5ZjUzOGQ0OTE2ZmQyNmRmYWM2YTUzN2Q2ZGUyNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcyMTI5YzI3MzUyYjQ5NTU0OGIwNzFhZTM0YWI5MDgxMTcyODczNDI4ZjZmODdmNTRiNTgwZTUxNTNjOWFhMDIifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/codemie-code.plugin.ts#L469-L539",
+          "version": "repo-lines-v1:sha256:b49479d00df738bc3b73e558fb3f29c3164a2f3551f595590e638c5c6751bbeb:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyMTI5YzI3MzUyYjQ5NTU0OGIwNzFhZTM0YWI5MDgxMTcyODczNDI4ZjZmODdmNTRiNTgwZTUxNTNjOWFhMDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a3196fe772e741048ac7da904fc532b9",
+      "statement": "The runtime plugin injector writes embedded plugin source to a temporary codemie-hooks file on first use, returns a file URL, registers best-effort exit cleanup, and makes repeated URL retrieval and cleanup safe.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/plugin-injector.ts#L1-L63",
+          "version": "repo-lines-v1:sha256:4f000c1caddc8330637da204e88cf05ac7afc2f9a0af3c4758d0370b5245a22d:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5MWFjOTkzNzE5OGQwZDc5OTkyZjJhM2QzYTg3MTUxYzhhMDk4MDEzOTFkMmRkNDk4YWNkYzA1OTFjZmU1YzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/reasoning-sanitizer/__tests__/inject-sanitizer.test.ts#L61-L131",
+          "version": "repo-lines-v1:sha256:375907f036f43ae674b00faf7117e69f1ad5ad7e6cd2d79b312a82a4fd3abe52:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiOGFhNDEyOTAxZjYwNDQyZGJiNTExZmU2ZTAwMzVmODQ4YjczNzJiNTk5NjcyNTcwZGQyMzIyMDg5NDE4OTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1MzZlZGFhYjUwMzgxNTAwZWM4ZTA1M2M5NWZhNmIyZGU4OWJiNThjYjY0N2IzOWNhMmZhNDlhOTgxYWYwNDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4MTdmYmI3M2M5MmIzNmQ1ZTQ4OTZmZjUxYzFiNThlZWMzMzBiYmU5NjFiYTA1ZmM2MjA1Zjg2N2VhMWJjZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe17c91faf514e7b8c4973ac52c2c08e",
+      "statement": "Focused tests cover built-in adapter installation behavior, runtime-plugin injection cleanup, Codex session lifecycle ordering, registry session-adapter wiring, shortcut behavior, and SSO-gated real-agent smoke paths for Codex and OpenCode.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/plugins/__tests__/codemie-code-plugin.test.ts#L134-L260",
+          "version": "repo-lines-v1:sha256:f79867459598557775cde7a13a831c5f32305875ea82e307f21392aaab3dad03:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwODI0ZmQ2MjU0ODI1YTBkMDMyZWM1YjQyMDM1Y2U3MDFiYjM5MTU5YjRhZjdkYjU1ZTVlZmVjODNmNGExZGEzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3ZTUyZjlmMjE1NDIwZmZhOWUzMTdkZDY5M2EyMWEzNGU2M2VkY2NlMWE4YjgxNDgxODI3YzM3YjMzNGYyNzk1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmMzkyYmRiYWYyMmRhOTA2ZTI0Nzk2MzVhZTI5Y2ZiZWZiODhiNTk1ZTBiYzk3OTM1NTIyZTIxYjFiODM2NWQ3In0"
+        },
+        {
+          "resource": "repo://src/agents/plugins/codex/__tests__/codex.plugin.lifecycle.test.ts#L14-L94",
+          "version": "repo-lines-v1:sha256:0a9093b472af8beb15ffae3c081d12f325021c613db4d5a3306a39f283e7e68a:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2MDhjOWUyZmI0Zjk5NTk4N2EwZmM1OGMxNDM4OWEzZTFiYWIxNTkxMTY5MDU3YThmNWM5YzRjYWM5NTFiZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQwMTNlMGQxNDM0MGRhYjNiN2I3YWI2MjVhNmVjMmQ1NTJhNzI1MzBhODE3MDI3MDMzNWIxODIyNjk5MGYwN2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://src/agents/plugins/reasoning-sanitizer/__tests__/inject-sanitizer.test.ts#L61-L131",
+          "version": "repo-lines-v1:sha256:375907f036f43ae674b00faf7117e69f1ad5ad7e6cd2d79b312a82a4fd3abe52:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiOGFhNDEyOTAxZjYwNDQyZGJiNTExZmU2ZTAwMzVmODQ4YjczNzJiNTk5NjcyNTcwZGQyMzIyMDg5NDE4OTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1MzZlZGFhYjUwMzgxNTAwZWM4ZTA1M2M5NWZhNmIyZGU4OWJiNThjYjY0N2IzOWNhMmZhNDlhOTgxYWYwNDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4MTdmYmI3M2M5MmIzNmQ1ZTQ4OTZmZjUxYzFiNThlZWMzMzBiYmU5NjFiYTA1ZmM2MjA1Zjg2N2VhMWJjZjYifQ"
+        },
+        {
+          "resource": "repo://tests/integration/agent-codex.test.ts#L1-L36",
+          "version": "repo-lines-v1:sha256:80b8f1f7329fb95c437ff7d35ada27d0acbaef9b1aed56be06e5bf6cd8a979a7:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiYzQxYWVhNmUyY2ZkYzMzODZlZThjM2Y3YjBhNWM2NzRhNjQzOGY4M2MyZWZlNDRjYTZlMWU2NTJkNTFlNzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyYTA2ZTZiN2U0NTZmYzMzNDM1ZjhkYTQyNzhiYTVlZmEwM2E2ZTY5ZjQyOWJiMjBkMThmMmY4NmE0M2NmODYifQ"
+        },
+        {
+          "resource": "repo://tests/integration/agent-opencode.test.ts#L1-L51",
+          "version": "repo-lines-v1:sha256:8f7bd0964a69e2bf2e5f54138af22818fcb4193d3cb04d9d3b7a64bb881c0eb2:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        },
+        {
+          "resource": "repo://tests/integration/agent-shortcuts.test.ts#L36-L113",
+          "version": "repo-lines-v1:sha256:f6904e4a35d8d116b0429c4837e018bc750e28db999a7a5a71435b77464304f8:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyYThjNjBkNzYzMTlmNWMyZDM1NWQwYzIyNWIwZmQ4MzA3ZjdiYzhmMjQ5M2M1ZTBlN2JmNzBiY2ViYTRmMmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUxZTM3MjVkYTAwMmI0NmVkOGI0ZGU4ODAwM2FkOTcxMGRjYWYxOGQ1N2M0NzAxZGMzYmVmZjBiMmM1Y2IxM2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7bf73240a7554c08997297a13b1d8298",
+      "statement": "Repository integration code follows ES-module conventions of .js import extensions and no require() or __dirname, favors @ aliases over deep relative imports, uses the CLI-to-registry-to-plugin boundary, uses logger.debug for diagnostics, sanitizes sensitive log arguments with sanitizeLogArgs(), and favors project error classes.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L163-L177",
+          "version": "repo-lines-v1:sha256:75aa8c6d04e49722129f0cf7442a01b496a50c57f6ca11bf46a648c553ab468e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwZjgxMzc0NWM0MmI2YjNiNzQ2YjhlYmEyZjczYmRhZTk0NDJkZGZiYTliYjI0OTk5MWZkMjAzYjI2ZTYwOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5MWNiNWM4MWZkYWNlNGM4ZWI3NjMzMDYxYjU0YjhlNGFlOTM3Zjg2NTU1NDI0MzFkMjk4YzAzMmNiZTM3NzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg5NTcwZjNlYzI3NmUwZjg2NTczMWJjYjE3Mzg3ZmQyMWE2ZDNmZGUzZDNkY2Q4MTBlYzQ4ZTAyNTkxM2E0N2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYxZTYwM2MxNDE5ZjE4MzJlMTFlNzI2NjU4Y2FlMzAzZmMyYTBmZWY3MDhkMzQzMTY2YTM2ODdhMDU0MmI4MTYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

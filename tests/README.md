@@ -68,19 +68,15 @@ it('should identify multi-provider config', () => {
 ## Running Tests
 
 ```bash
-# Run all tests
+# Run the full local suite once (unit + CLI + agent)
 npm test
 
-# Run all tests once (no watch mode)
-npm run test:run
+# Run only one vitest project while iterating
+npx vitest run --project unit
+npx vitest run --project cli
+npx vitest run --project agent
 
-# Run only unit tests
-npm run test:unit
-
-# Run only integration tests
-npm run test:integration
-
-# Run tests with coverage
+# Run tests with coverage (unit project)
 npm run test:coverage
 
 # Run tests in watch mode
@@ -262,7 +258,7 @@ When adding new features:
 
 1. Write integration test first (if it's a CLI command)
 2. Add unit tests for complex logic
-3. Ensure tests pass: `npm run test:run`
+3. Ensure tests pass: `npm test`
 4. Check coverage: `npm run test:coverage`
 5. Update this README if needed
 

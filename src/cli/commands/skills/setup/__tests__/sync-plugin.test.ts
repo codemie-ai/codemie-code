@@ -28,6 +28,8 @@ describe('syncPluginSkills', () => {
     vi.restoreAllMocks();
   });
 
+  // vi.resetModules() + dynamic imports is slow on WSL2/NTFS — 120 s prevents a timed-out
+  // test from leaving still-running async ops that contaminate the next test's mock state.
   it('installs plugin and copies SKILL.md files with resolved CLAUDE_PLUGIN_ROOT', async () => {
     const { ClaudePluginInstaller } = await import('../../../../../agents/plugins/claude/claude.plugin-installer.js');
     const fs = (await import('fs/promises')).default;
@@ -57,7 +59,7 @@ describe('syncPluginSkills', () => {
     const [, writtenContent] = vi.mocked(fs.writeFile).mock.calls[0];
     expect(writtenContent).toContain(`${mockTargetPath}/skills/msgraph/scripts/msgraph.js status`);
     expect(writtenContent).not.toContain('${CLAUDE_PLUGIN_ROOT}');
-  });
+  }, 120_000);
 
   it('silently returns when plugin install fails', async () => {
     const { ClaudePluginInstaller } = await import('../../../../../agents/plugins/claude/claude.plugin-installer.js');

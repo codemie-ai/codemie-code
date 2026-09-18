@@ -111,6 +111,21 @@ describe('turn-detector', () => {
       expect(turns[0].systemMessages[0].type).toBe('info');
       expect(turns[1].systemMessages[0].type).toBe('warning');
     });
+
+    it('should detect turns when assistant messages have type assistant', () => {
+      const messages: GeminiMessage[] = [
+        { id: 'msg-1', type: 'user', timestamp: '2024-01-16T10:00:00Z', content: 'Hello' },
+        { id: 'msg-2', type: 'assistant', timestamp: '2024-01-16T10:00:01Z', content: 'Assistant response' }
+      ];
+
+      const turns = detectTurns(messages);
+
+      expect(turns).toHaveLength(1);
+      expect(turns[0].userMessage.id).toBe('msg-1');
+      expect(turns[0].geminiMessages).toHaveLength(1);
+      expect(turns[0].geminiMessages[0].id).toBe('msg-2');
+      expect(turns[0].geminiMessages[0].type).toBe('assistant');
+    });
   });
 
   describe('filterNewMessages', () => {

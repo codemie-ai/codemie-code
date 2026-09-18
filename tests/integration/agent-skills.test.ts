@@ -1,7 +1,7 @@
 /**
  * Skill tests — TC-025
  *
- * Run with: npm run test:integration:agent
+ * Run with: npx vitest run --project agent
  *
  * Auth mode (CI_IS_LOCAL_RUN in .env.test.local):
  *   true  (default) — SSO mode; uses developer's sso-autotest profile in ~/.codemie
@@ -31,11 +31,13 @@ import {
   copySsoCredentials,
   getTempDir,
   spawnPty,
+  waitForClaudeReady,
   jwtCleanEnv,
   ssoCleanEnv,
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
   getTestEnvFlagOrDefault,
+  getCodemieTestUrl,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -63,7 +65,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
   let originalActiveProfile: string | undefined;
 
   beforeAll(async () => {
-    const ciCodemieUrl = (process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
+    const ciCodemieUrl = getCodemieTestUrl();
 
     if (!CI_IS_LOCAL_RUN) {
       jwtToken = await fetchJwtToken();
@@ -76,6 +78,13 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
       });
     } else {
       originalActiveProfile = setupSsoAutotestProfile();
+      // CREDENTIALS_DIR in src/utils/security.ts is a module-level constant
+      // resolved from CODEMIE_HOME at import time, and the agent vitest project
+      // points CODEMIE_HOME at a throwaway temp home. The real credentials must
+      // therefore be copied into that same temp home before the in-process SDK
+      // client looks them up, or the lookup fails with "SSO authentication
+      // required" despite the global setup having validated them.
+      if (process.env.CODEMIE_HOME) copySsoCredentials(process.env.CODEMIE_HOME);
       sdkClient = await getCodemieClient(true);
     }
 
@@ -193,14 +202,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
 
       try {
         await proc.waitFor(/Model\s*[│|]/i, 60_000);
-        // On macOS, Claude Code shows a workspace-trust prompt for new temp directories
-        // before rendering the startup box.  Start a background handler that accepts the
-        // prompt ('1' = Yes, I trust this folder) if it appears, so the startup box can
-        // render.  The handler is a no-op on platforms where the prompt does not appear.
-        void proc.waitFor(/trust.*folder|trustthisfolder/i, 15_000)
-          .then(() => proc.writeLine('1'))
-          .catch(() => { /* no trust prompt on this platform */ });
-        await proc.waitFor(/╰─/, 60_000);
+        await waitForClaudeReady(proc, 60_000);
         await new Promise((r) => setTimeout(r, 1_000));
         proc.writeLine(`/${SKILL_NAME} hi`);
         await proc.waitFor(/\b([1-9]|10)\b/, 90_000);

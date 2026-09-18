@@ -35,6 +35,24 @@ export interface ProcessingContext {
   agentSessionFile?: string;
   /** Git branch recorded for the CodeMie session */
   gitBranch?: string;
+
+  // Sync control fields (optional, set by callers that must bound sync duration)
+  /** Epoch milliseconds after which sync loops must stop sending and defer remaining work */
+  syncDeadlineMs?: number;
+  /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * Check whether a sync loop should stop sending new items and defer the rest.
+ * True when the caller's abort signal fired or the sync deadline has passed.
+ * Deferred items stay pending and are picked up by the next sync run.
+ */
+export function shouldStopSync(context: ProcessingContext): boolean {
+  if (context.abortSignal?.aborted) {
+    return true;
+  }
+  return context.syncDeadlineMs !== undefined && Date.now() >= context.syncDeadlineMs;
 }
 
 /**

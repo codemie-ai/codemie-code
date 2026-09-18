@@ -1,0 +1,43 @@
+{
+  "decision": "request-changes",
+  "rationale": "All ticket acceptance criteria and approved spec requirements pass (acceptance lens: 17/17 pass). Implementation mirrors the approved design exactly, including the reason/lastRecordedIssue fallback logic already present in the untouched human-readable branch. One actionable, non-security gap survived triage: the test asserting the non-JSON path stays byte-identical only checks 4 lines via toContain with no ordering/completeness guarantee, so it doesn't actually enforce the byte-identical claim in its own name/the spec's core non-regression requirement (CR-001, major). Several other lens observations were reviewed and dropped as non-blocking: gatewayKey exposure in both output modes is the explicit, spec-approved deliverable (dismissed — not a new secret-handling regression); undefined-field handling for gatewayKey/startedAt and the reason/lastRecordedIssue data-source conflation all mirror pre-existing, unchanged code patterns in the same file rather than being introduced by this diff (deferred, 4 items); the loosely-typed Record<string, unknown> payload and the tautological uptimeSec test assertion are minor and non-blocking (dismissed/deferred, 2 items). No standards or security guide violations found.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "codemie proxy status output includes API Key information", "status": "pass", "notes": "src/cli/commands/proxy/index.ts:250 adds `  API Key: ${state.gatewayKey}` between Port and Profile lines"},
+    {"kind": "story-ac", "item": "API Key information uses the static value codemie-proxy (existing gatewayKey field)", "status": "pass", "notes": "Both human-readable (line 250) and JSON (line 223) branches read state.gatewayKey; daemon-manager.ts default untouched"},
+    {"kind": "story-ac", "item": "A new --json flag/option is available for codemie proxy status", "status": "pass", "notes": "index.ts:195 adds `.option('--json', ...)`"},
+    {"kind": "story-ac", "item": "When --json is passed, the command returns all status information as valid JSON", "status": "pass", "notes": "index.ts:199-204 (stopped) and 220-237 (running) build and print a JSON payload; covered by 6 new tests parsing the output"},
+    {"kind": "story-ac", "item": "JSON output includes API Key information with the value codemie-proxy", "status": "pass", "notes": "index.ts:223 `apiKey: state.gatewayKey`"},
+    {"kind": "story-ac", "item": "When --json is not passed, the existing human-readable output is preserved", "status": "pass", "notes": "Only addition to the non-JSON branch is the new API Key line; see CR-001 for a test-strength caveat on this claim"},
+    {"kind": "story-ac", "item": "Existing behavior of codemie proxy status does not regress except for the added API Key information", "status": "pass", "notes": "--deep handling, daemon-manager.ts, and other proxy subcommands untouched in diff"},
+    {"kind": "spec", "item": "API Key line placed after Port and before Profile", "status": "pass", "notes": "index.ts:248-251 order is URL, Port, API Key, Profile"},
+    {"kind": "spec", "item": "Stopped JSON payload is exactly { \"status\": \"stopped\" }", "status": "pass", "notes": "index.ts:200"},
+    {"kind": "spec", "item": "Running JSON includes status/apiKey/url/port/profile/uptimeSec/level plus conditional clientType/project/reason/lastRecordedIssue", "status": "pass", "notes": "index.ts:221-235"},
+    {"kind": "spec", "item": "clientType and project included only when set", "status": "pass", "notes": "index.ts:230-231 mirrors the human-readable conditional lines"},
+    {"kind": "spec", "item": "level mirrors health.level", "status": "pass", "notes": "index.ts:228"},
+    {"kind": "spec", "item": "reason present only when unhealthy, mirrors the Reason: line", "status": "pass", "notes": "index.ts:232, byte-identical fallback logic to index.ts:245"},
+    {"kind": "spec", "item": "lastRecordedIssue present only on the recovered-health edge case", "status": "pass", "notes": "index.ts:233-235 matches the human branch's Note: condition at 261"},
+    {"kind": "spec", "item": "uptimeSec is the raw integer seconds", "status": "pass", "notes": "index.ts:227 reuses the raw uptimeSec variable"},
+    {"kind": "spec", "item": "No change to daemon-manager.ts gateway key generation/storage/default", "status": "pass", "notes": "daemon-manager.ts not in diff"},
+    {"kind": "spec", "item": "No change to --deep behavior or other proxy subcommands", "status": "pass", "notes": "Diff scoped to the status action handler and its option list"}
+  ],
+  "standards_review": [
+    {"kind": "git-workflow", "status": "pass", "notes": "Implementation commits follow Conventional Commits and passed the commit-msg hook."},
+    {"kind": "code-quality", "status": "pass", "notes": "No blocking standard violated. The Record<string, unknown> payload is a local action-handler variable, not an exported function, so the explicit-return-type rule does not apply; noted as a minor style item, dismissed as non-blocking."},
+    {"kind": "security", "status": "pass", "notes": "No project/user attribution header touched. gatewayKey exposure in both output modes is the explicit, spec-approved ticket deliverable, not a new secret-handling regression; the sanitizeLogArgs/secret-redaction guidance in security-practices.md targets internal logger.* calls, not this intentional CLI status output."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/__tests__/index.test.ts",
+      "line": 687,
+      "title": "Byte-identical test doesn't verify byte-identical output",
+      "problem": "The test 'leaves the default (non-JSON) output byte-identical aside from the new API Key line' only asserts `expect(lines).toContain(...)` for 4 specific lines, with no check on line count, order, or completeness.",
+      "impact": "The test would still pass if extra lines were added, existing lines were reordered, or other lines were altered, so it does not actually back up its own name or enforce the spec's core non-regression requirement ('preserve the existing human-readable output byte-for-byte when --json is not passed').",
+      "recommendation": "Replace the toContain checks with a full-array assertion (e.g. `expect(lines).toEqual([...])` listing every expected line in order, or join and compare against the fixed expected human-readable string) so the test genuinely fails if any other line changes."
+    }
+  ]
+}

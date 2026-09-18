@@ -212,7 +212,11 @@ export async function resolveBudget({
   }
 
   const profile = config.profiles?.[config.activeProfile];
-  const { codeMieUrl, baseUrl, userEmail } = profile ?? {};
+  const { baseUrl } = profile ?? {};
+  // codeMieUrl now lives on the scope-level workspace object (migration 006), and
+  // userEmail is a top-level MultiProviderConfig field — neither is per-profile anymore.
+  const codeMieUrl = config.workspace?.codeMieUrl;
+  const userEmail = config.userEmail;
   if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }

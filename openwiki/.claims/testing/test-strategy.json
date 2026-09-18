@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:643002ac4019c66ed8769c065428818357afd3f35e87b42741afb1865167d891",
+  "claims": [
+    {
+      "id": "claim_78d1f8677d1b4983aafc5fb27d49b4ae",
+      "statement": "Vitest defines three isolated Node projects: `unit` for source tests, `cli` for non-agent integration tests, and `agent` for `agent-*.test.ts`; all receive a PID-scoped temporary `CODEMIE_HOME`, while the agent project has global setup, longer timeouts, group order 2, and a configurable worker limit.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L31-L61",
+          "version": "repo-lines-v1:sha256:b83146f3662339b238c51ba70a157aab9c28790ec4772732af3b6a1e92ba86f1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0ODMzZDU5NDljMDNhNDBjYTk1MjQ5MTYxMGE2NjU5NjQ0YjNhYTQ2NjM2MmY3OTkwMjBkYmYxOTgxNTQ3ZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmYzc5YzAwN2QxMjA3NWI0ZmQ3MGIzNDg2M2U2MDkyN2U0YzBlOWIwMjRkNjQ4ZmRlOTI0ZDY5YjQ5ZjhkYTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjMTg5NDZlOTUwNzAzNjY5Yzg3ZWQ3OTRmNjcxMzI1MDc5ZGI3ODk5MDg3NGU0ZGI1ZTAzY2M4ZmM1OWI4YTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwNDFlN2YwOWZiNGJmNmVlYTJiY2ExODZhMDU4MjY1MTQwYzMyODBjNzZjOWE3NDU5ZTUzZTNmZWUyYTcxMWYifQ"
+        },
+        {
+          "resource": "repo://vitest.config.ts#L5-L97",
+          "version": "repo-lines-v1:sha256:39789be3bddb842644b6509787fcf5c21b8ad6561131f90aa616a43480f2a88a:eyJzZWxlY3RlZExpbmVDb3VudCI6OTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwN2ZkMjQ5OGY1ZTEzMDIxOWY5NmJhMTA0NzExOWJlMDg0YjBlZmIyMjhhZGZlOWM1YzU5OTdlMDNlN2ExN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2NzdkMmYwMzFlOThiNWU5MTFjNWFkNGZiOWIyMTg2YTkzMjUyMmU4ZjQ2ZWU0MGJhYmZhZTNkYTAwZmMxMjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkxZjRhODEzZTY0ZmRiNmNhMDI3ODAxMWFiZDI3ZWU4M2MyOTc2ZjhlMzQzYmMzMTA4MzkwYzVhYzBhMmQyZjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmZmFhNjQ1NzcwZTJkN2UyODgzOTNhZGQwMjJjMTI1NzJjYjYzZjAwZDI3MTM0YWMwYjZlYzAxYjBmYThmOTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_652bac13c8bc4f37ab9a52a34e1001f0",
+      "statement": "Tests that create CodeMie state must isolate and clean it: the isolation helper temporarily sets and restores `CODEMIE_HOME` and removes its temporary directory, while workspace and agent helpers create separate temporary working/home directories and clean inherited CodeMie environment variables for child processes.",
+      "evidence": [
+        {
+          "resource": "repo://tests/helpers/agent-smoke.ts#L48-L97",
+          "version": "repo-lines-v1:sha256:a48edfc811bff2280846290408c0df695a420f1b712d817b6063d970000d3a9d:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmNjY0NWI1N2QwOTEyM2ZlNDQ5NDAzMDFmM2Y3ZTViNDAxYjdmYjNlMTMyZWQ4OWE4MmMzZTBhOTc4OTExNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzZDNjYzVhZTI0NjQ5ZmFmODE1MDg0YjBlMWNjNDkyYWQ5YjNhY2NkYjJkOWFhYjUzNzgyNjEyNmUxNmY4ZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI1MzRhZGI2M2IxNzNiYjFmY2ViM2E2OTQzMjQ0M2VjZDUzNDIxZGQ0YzIyNDllMGE1OWM4ZDgxODI4MWNiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://tests/helpers/jwt-auth.ts#L51-L69",
+          "version": "repo-lines-v1:sha256:facc9d70b65c56763ee318f8b0a1e1baa68da27f59fac3620a01f68037544a20:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4ZGQ5NmFlMzdhNGRkYmYwYmZjM2NjOWUzNmVhNzRjODg3NWY0MDBlYjhiNzRhMGZiYzExZGQ1YmYxZTMyMjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkYzE4MTM5OGI1OTk1YWUwZTZkMWU4ZmFiMDYyMjAwMjQ0NzUwYjA3ZjdiM2JkY2NjZDkwYmRlZDI3OGE0NjYifQ"
+        },
+        {
+          "resource": "repo://tests/helpers/sso-auth.ts#L42-L57",
+          "version": "repo-lines-v1:sha256:71124eb9dceeea35700d86915cab70d2de1c37fb7c847448a24fc21e876ed025:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmZjk5OWY0YTEyN2FhZWUzY2I0NmJkYWU5ZTg2YmI0MzM0NDUxN2EwZDk5YzVkYWZkOGY3OTdiNWQwODJlNjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEzOGMxZTM5ZTdkMjdjOGM5YzlmOThlMzIzNmU3YzMzYjJlZGE0ZjRmMDAzOWRhZjE0ZWY3MWIyOTNlNGY0M2QifQ"
+        },
+        {
+          "resource": "repo://tests/helpers/temp-workspace.ts#L11-L117",
+          "version": "repo-lines-v1:sha256:33f52de960472c8b5960ce5f791ddb0359e9b76886deb2cb125b32e2f4ab8e26:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyZGVjYmRmYTYyNDYyNzFmZjBhMmMxY2RiZTI0OTE3ZGFhYTBjYzQxYWIzNDk5MDc0MTZhMWZhZWMyMDkxMzBmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhMTliNGM5N2Y2MzEyMDgwNTQzODg4NDYzZmM4NGI3MTY0Yzk0MjNkODdlMmE4Zjc0M2U2NDVkNDZhMzJmODhiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiMjExY2ZjMDkxMjQzYjdhNDNkZDkxYzQyNzQ1MzdmYjliNjJkZDRlYjg3ZWNkMDYzMzM0NGEwMjVjZjRlOGQ3In0"
+        },
+        {
+          "resource": "repo://tests/helpers/test-isolation.ts#L33-L87",
+          "version": "repo-lines-v1:sha256:263c48c994e16c24729c700089193febb57c9bd063b113013a4f5b111324fdc1:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhMDM0MGMzZjI4OGEzNThlMDMxMjY1MmEwMDdiM2JmZGQ5NjM1NzgzOGU0NDkwNjM0MGRjNzQ0OWIxNWYxMTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxODViYTJmYWZkMjc4ZGQ4ODk5YzNkMzFmZmI0ZjkxZTc5NDk5MjMzOGZhZjgxODgzYTA5YWMzNThmYjcwYzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1NTk3MGE1ZmJhOTZjODgxMDc5NzQyMThlMDFlMzRiZGUzODM0OTFhZGE1NjBmNTNkNjI0YTE4MWVhOWIyOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_124881f215e24a3f9abe249fcf2aa443",
+      "statement": "When environment-derived defaults or singleton registries are evaluated at module load, tests must establish environment/mocks first and use reset plus dynamic import as needed; the daemon lifecycle test sets its temporary `CODEMIE_HOME` before importing `daemon-manager` because its default state path is module-derived, and desktop connector tests reset modules around `CODEX_HOME` changes.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/codex-desktop.test.ts#L9-L29",
+          "version": "repo-lines-v1:sha256:1be7c748208c15db399ab18d844c058624a80e3aab6e33ba3e916d48ee20cf2c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxNzllMjllZWY5YTk4MmJhNWY1NWI3Y2EwMDJhZDc5NDMxYjRhNGY4N2FiYmE1ZDMzODMxYzBlNjFjYTkyNWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmYTRjZDNkMGFkNWQ0ZjI4NGNhNzdkMjIyZGEyZDIzOTUwYjc5ODdkZWE3NWE0MTBkNWE4MmNkZTgwNzA2ZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4MTIzY2ZmNjZmZDA3MGI1ZDEwMzQ4MTZiMjQ0ZDk2N2YzN2I1YTI1MzkwYmYxMDdjOTk3NzRiODA3NjcyNTMifQ"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/registry.ts#L139-L151",
+          "version": "repo-lines-v1:sha256:65287e9efa5a1b5916d0ea356929180b8d19e27cd5a6e569cf9169bf930f6a81:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjOTkxZDhmZGVkY2JmYWRmOThlMDIxNmIzOWY3MWQ1OWY4NTQ5MmRjMDhlMDVjN2RjYjZlNTQwZWQwYWY0NDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/integration/proxy-daemon-lifecycle.test.ts#L74-L88",
+          "version": "repo-lines-v1:sha256:aa4d3cb3f08e3b76417e273615ab87260c1352304abfa5413223f92af7994989:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjNGNkNjRkZDkwZjg5ZTcwMjVkZGJkYjY4YjE2MTFjODBiZWU5NWZlODA5MmEyNTE2YTVjYjBjN2RlMmUzODYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxNmI4YTMxNmUzMmI3Njc2ZjZjNzNiNjcyMGU5YjZhNWYwMjEzMzFlOWRiZmUwNDRlNWYzNDZhMWI1ZWM4N2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU2MDYxOTIxZjA0ODBhN2IwMGMzZjRmNGEzNWYxMzI2NmU5OTA0OTk2YzM4MmIwMmRlYjZlYmQ5OWQ2NzgyN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1ZmU4YWE5NTUxNmIyMDk1Y2IwMTY5ZmJiNmEzYmZjNzEzOWY5ZmFiNjI2MDNmMzg4ZDUxMjNlNjRjZmQyYjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d921a324592e40c79cff23db121a54d0",
+      "statement": "Focused unit tests protect extension and launch boundaries: the agent registry asserts expected built-in/plugin membership and adapter interface behavior, while BaseAgentAdapter tests prevent stale JWT environment state from proxying no-auth providers and cover SSO/JWT proxy selection, auth-method mapping, dry-run proxy cleanup, reasoning effort, and Windows command quoting.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/__tests__/registry.test.ts#L10-L177",
+          "version": "repo-lines-v1:sha256:da4aaa848d40d8af6748110d10b51affd39bc1b200a798ca1965b436736a9930:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjM2Q1MzYzMzY2NWQyZWZkYTI0ZmM4YTVjN2ZmMzVkYzk5N2ZmZGQzOWVjODk1ZjVjZGZhZTMyZGM2MGI0OGU0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZjNmYTVkNjM0MmQwNzJhZDkwNTQzMWU4MWQ1NjRmMmM3ZTg5Y2Y0MzVmZDdmMWFhODJhM2NmMGFkOWQ5ODIzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkODE3ZmJiNzNjOTJiMzZkNWU0ODk2ZmY1MWMxYjU4ZWVjMzMwYmJlOTYxYmEwNWZjNjIwNWY4NjdlYTFiY2Y2In0"
+        },
+        {
+          "resource": "repo://src/agents/core/__tests__/BaseAgentAdapter.test.ts#L241-L370",
+          "version": "repo-lines-v1:sha256:d1847da3cfafc269383f450f9d4d9cf46f0f4158739c0d4ac417ac5ff7ce9dbb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0MDA4YmE4ZTc2NTczZDIzN2ZkOGEyNmZhNjEwMzkzNGJjOTgyOGU1ZTQ5NzdjMWRiMjlkZGQxOWExY2I1ODRhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiMTY0OGJjMmFhMjg5ZDZjNmM3MGZkNmYyMTJmNThkMDA1OWJmMzI1MzFlNGE0NTNkZTc3NjYzMjk2ZmQxNTMwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzY2RmMGYzYzExMTk1MDdhM2EwY2ZkNTY1ZGU3ZDJjM2NjNWMzYTYxNjk3ZjMwMGE3MWI1OTBmNGY1MTZkNWE0In0"
+        },
+        {
+          "resource": "repo://src/agents/core/__tests__/BaseAgentAdapter.test.ts#L576-L687",
+          "version": "repo-lines-v1:sha256:51db6fecbb6550dd5b558c5af6c510631a95cb1fa2ba670102568554a9815786:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZDU1NGVlNjYyODllOGIyOTZiOGZmNzQ5MzgzOTkwOTU3ODM1NjA3YzIyNDgwYmI1MzliMjk5YzNmY2U1MjQ0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiMTY0OGJjMmFhMjg5ZDZjNmM3MGZkNmYyMTJmNThkMDA1OWJmMzI1MzFlNGE0NTNkZTc3NjYzMjk2ZmQxNTMwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkODE3ZmJiNzNjOTJiMzZkNWU0ODk2ZmY1MWMxYjU4ZWVjMzMwYmJlOTYxYmEwNWZjNjIwNWY4NjdlYTFiY2Y2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7962203c54d247318bc468400cd1d8ab",
+      "statement": "The proxy's security and ordering contract is priority-driven: core plugins include early endpoint blocking and gateway-key validation, authentication and request transforms, header injection, and late session synchronization; an end-to-end header test verifies that a valid local gateway credential is stripped and replaced before forwarding, while a wrong key returns 401 without contacting upstream.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/__tests__/gateway-key.plugin.test.ts#L76-L116",
+          "version": "repo-lines-v1:sha256:0af0b225490ce4c48428bca27241cb7ecebc9ada8aa0a7f852525fbd4a7bbc99:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmZjc4ZTgxYzlkNjc1ZDcwNGU4NDhhMDQ5ZTViYjQ2NzRkYjc4YmFlMjg4NWUzZDM5N2JmNWI5YTYxYTA3OTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIxNjQ4YmMyYWEyODlkNmM2YzcwZmQ2ZjIxMmY1OGQwMDU5YmYzMjUzMWU0YTQ1M2RlNzc2NjMyOTZmZDE1MzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4MTdmYmI3M2M5MmIzNmQ1ZTQ4OTZmZjUxYzFiNThlZWMzMzBiYmU5NjFiYTA1ZmM2MjA1Zjg2N2VhMWJjZjYifQ"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/index.ts#L29-L51",
+          "version": "repo-lines-v1:sha256:a2b50f1f6cbed44bc3071f349ef44da9c3610a7f479d4e4e68032569c6d6199d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjNGI0NDBlNTUyZDgyMWFiYjBhNTEwNDkwZDE3ZmYwZjFiMmNhZjI2OWJhYzdkZWE4Mjk0NGQ1ZTg1M2NlMmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2YTQ1ZjhkMTk2NjJkNjQ3NTZkYTk5OGZlNmI5NmQ5ODA0MDdkMDg3MGU1NWM4OWUzNTY2YjY2MjMyYTUxOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI0MDMxYTY2YWQxZWFhM2Q3NTUwMmFkZDM4ZGYwMjc2ZjIxMjE4NTMzZjc1MDc5NjI2OWE3NWIzNzQyMmJjNzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjMTM0MWJjNjE1NDc0OTU5NzhmYTI2ZmUwMDQ4YjM2NzA2NDc4MzViNzRjNzUxYjQ4MzBiZWRhNWExY2M0YjQifQ"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/registry.ts#L35-L81",
+          "version": "repo-lines-v1:sha256:6dff2e6b1ce0a8bbb44409b845a90b09d10292d0e5d11d0491e7ec1d3640af29:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyNmVkNzE2YzA3MjZmMmE4MzA0ODc5ODNhY2ZmZDgzNTk5MmQ2MWM5YWZiMmRmNTRjYzg1Y2Q4NDQzNjcxNmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRjZTE3N2E1MjY0NDRkZmEzY2I3MjEwMTM0MWZiMTUzNWI3NjQzZjljMzBiYzU2NDA1YWQyNzI3MDQyMWRiMjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://tests/integration/proxy-header-contract.test.ts#L85-L133",
+          "version": "repo-lines-v1:sha256:0a9ce0173fb9fa5336f3218267cae95dcddaa3b001c87109fe23786f8fb4f7b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiODRlOTBlNmZkY2Y1MDgzZWEzMjZhZjNhNzk5MmIzYjNhOTZjZDg3YjZlYmIxMGQ3NjkyNDJmZTI4NzJkOTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkMGYyZDNhM2FhZGEyNzU4NjQ1NzhkMGE0MzkxNTYzOGQ1NDNmZWNhMmM5NDg1OGRiOTQxMjExZTg2Y2VmMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8296647ab8a840b59c1db5e2cc2baa1f",
+      "statement": "The credential-free daemon lifecycle integration test exercises a real detached proxy daemon through state persistence/readiness, shallow local health, status, SIGTERM shutdown, state removal, process reaping, and unavailable health after stop, using a temporary `CODEMIE_HOME` and dummy JWT because the health endpoint does not call upstream.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/sso.proxy.ts#L244-L255",
+          "version": "repo-lines-v1:sha256:8f367075ce61d66a89c08ad6417e7b6d0143dd85973b9323f968fb89ed06c038:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzZTBhNmJmZDhlNmIwODgyY2ZlZTRlNjVmMDA0NDg5ZjUyYjhkZDRmNzY4ZjZlMTI4OWM5MTg1NDY0MmI3NGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3OTJmODQ3YmIyMWNiMjkyZGQwOWY3ZmE2ZTdjYWM0YThjMTRkOTdkMzg5NjMzYjNkMTUyMGVhMTRiNWIxZGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3NjdmMDg5ZTI2ZjI5MWI0NGFkOGQ4MzViOTkyMzZlNzdiNmNlZmI5ZjFlYmQzZjcwMzZiYjk5ZTA2YjI1NjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEyMjZhZTE5Zjk1YjFkYTg3ZjA2NTFlMzVkOGQ1OTE2YTU3MTUwZmRmZWU2ZTYyOGZjZmQ5OGJjZjAxNzZmNzMifQ"
+        },
+        {
+          "resource": "repo://tests/integration/proxy-daemon-lifecycle.test.ts#L4-L40",
+          "version": "repo-lines-v1:sha256:6386572f6764a3bcb4b423f03cd251e8852fae18efe263144cd2902929f0708d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiNmVhYWZkZTE4YjhiNTFjNDk4MzhlNzdjNTUyMDk3YWM0NzA5NjA1OTRlMjBkMGYwYzUyMGNkMDY1MWE4NGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4YzQyYjI1YTZkYjhiZWVhZGFjZjM2MzVjZGNlOWIwYmMyNjEyYzU3NWFkODk2OWFkYjZiN2MxNWIxY2YyMTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0ZTM4NTY4N2IyY2U3Nzk2YzYzNmIxYTM1NTIyMDQzZTM4YjBjNDE1YjVkZTM1ZjMzYTNiYjdkYzIxNmEzZmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwMjY1MTkyNGFkZjU5MmRiZGI3Y2Q1YjE1ZDFkZDk2OTkxNGMzYWYzNmEwZWMxN2FjY2YxMDAwYzkzZjQzZDcifQ"
+        },
+        {
+          "resource": "repo://tests/integration/proxy-daemon-lifecycle.test.ts#L74-L187",
+          "version": "repo-lines-v1:sha256:a4679cdf0a62c051a178a9c60a053378326253314062afe46b05024baab30bdf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3YzRjZDY0ZGQ5MGY4OWU3MDI1ZGRiZGI2OGIxNjExYzgwYmVlOTVmZTgwOTJhMjUxNmE1Y2IwYzdkZTJlMzg2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlNjA2MTkyMWYwNDgwYTdiMDBjM2Y0ZjRhMzVmMTMyNjZlOTkwNDk5NmMzODJiMDJkZWI2ZWJkOTlkNjc4MjdjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_020a83e2bebf480b8a9dc1fc7939e579",
+      "statement": "The networked agent task/session test verifies a real local `codemie-claude` distribution run, generated work, and eventually durable completed session, conversation, and metrics artifacts correlated by UUID; it uses JWT temporary-home or restored SSO-profile modes and requires additional sync evidence for SSO.",
+      "evidence": [
+        {
+          "resource": "repo://tests/integration/agent-task-session.test.ts#L56-L97",
+          "version": "repo-lines-v1:sha256:ec48327ece5b7ecf12b3df6e7df1d87ddef50506da7434f9cb2be29869fee64a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMTdlNDNkYjI5NTJmZDhmMzZlM2E2OTI2OWI3MDg3ZmFkZTMyYjc1MzQ2MjIwZmYyYWY1NGUwNDJkM2I3MzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZWM3ODQ4YWRjMGQ4MGZjY2VkZDY3YjNkZjRmOGE4MWNmMjJjNTkzNDY1ZTJjMDA5ZmNlYTIzMzI1NzE0ZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwYTJmNDQ3ZWI2N2MxZGVkMTQyMTg4NDZjOGZkYmU0YzljYzk4MDQ3NDAyYTBjNWZjZmFiOTVkYTkwMTVkNDcifQ"
+        },
+        {
+          "resource": "repo://tests/integration/agent-task-session.test.ts#L99-L253",
+          "version": "repo-lines-v1:sha256:b7cda7ca2e41b7287c6566c2ed29c79d95b4ff182e6264e837d9ee2cfe593ddf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTU1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3ZjVjODQyOGQ3MTlhOTlhMzBkNTg4YTFiOWVkYmU4NjE5YWNhNzg0MzU3MjI1MWQyOTA2OTVlYWFkYjMwMjhjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1NTUwZjFmYzY5MDYxZTg2ZTljOTBlZjQ3ZDlhYzhiZjIxM2Y4YTdlOTFjOWI4NmFmNDM2NzkyMWExYmNmZDMzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MjBmYzllNjdkYjA3ZWQyMzliYjNhZDIzMTJlYWFiOWE3MGUxZjZmYmEwMTI4OGIwYmE2ZTYxZDdmOGVlNzg4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        },
+        {
+          "resource": "repo://tests/setup/agent-build-setup.ts#L151-L179",
+          "version": "repo-lines-v1:sha256:c9e50968ce7496ddb51886de31e13b520a8ff983e713f3026eba145dd1c8f7dc:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1MWY0YzJiNzg2OGI1OGZhYzFiM2IyZWQ1NzFkNWQ0YzkzNWEyNjBiODlhMzAzOGY4ZGI2NWVjNzA3YzkwZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://tests/setup/agent-build-setup.ts#L29-L50",
+          "version": "repo-lines-v1:sha256:bcdba62a69abb7f354d403b71cda06ace8dcd94bf561545878037db7dee3945e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE2MTI4ZmFkMjlkZjc4OGIzNTI0NzAyOWViZDc3MzgwOGVjNjdiNTBhYTA5YWQzNGRjYjM0NWU1NjliMWVkZjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJkM2M4NzgzMmUxMTcwMDk3MGJjYjExZGRjNDViOWMyZjNkZDI0ZjY5OWJkOWZhODc1MmYwNjFhZWUxZmYyMzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4YTgyNDc4ZmUwYjBmYTQzNTgzYmQ0Yjk2YmFkNDlkODc1ZmQ1NjczZmJmNDRlZmEwZDk4MmM5N2YxNzIwNjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxY2QzNDkyNzRlMDgyMGEwNmRlYmI3MmQxYTQ1MjNjNTFiNWE1ZTM2MDM4OTBiODE4MzI2YzY0NTcwNjQxYWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bd83ae5c9623485d80d19fd412eb1503",
+      "statement": "SessionSyncer integration tests use a mocked sender to establish that pending metric JSONL data is aggregated and sent, success marks records synced with metadata, already-synced data is not resent, and a processor failure leaves pending work for later attempts without necessarily failing the overall sync.",
+      "evidence": [
+        {
+          "resource": "repo://tests/integration/session-syncer.test.ts#L140-L218",
+          "version": "repo-lines-v1:sha256:4d3a3dedd6963c2c11ca193a6f9244ae06f0edde059e62dddcd6769d09424ead:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjY2U3YTdkZTFmOTc0Nzk1NWFkMDE3YTIxODgwNmUxMjI5ZTY4NDgzNjQwNDQ3OTYzODRlZDhiODRiNTZhZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyMGZjOWU2N2RiMDdlZDIzOWJiM2FkMjMxMmVhYWI5YTcwZTFmNmZiYTAxMjg4YjBiYTZlNjFkN2Y4ZWU3ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlN2MyMjg3MTVjMDFlZGEzOWM3Njc0MDYzYThiNzUxOWMyYzMwN2VjNGVhYjg4NmRlMzBhMWEyOTIzMzllZTAifQ"
+        },
+        {
+          "resource": "repo://tests/integration/session-syncer.test.ts#L220-L266",
+          "version": "repo-lines-v1:sha256:3404b88679dd28a3b017fd319ce61cf566c82682fcba7a95d9afe63acc7094d7:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlYjdiODgxMWI3ZjUyMDBjODgxOTNmZDkyODM0MDM5NGZiOWFmOGE3MmQyZTUzNzRkZjE0MzAwYzdmMmZhNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzNTNjMzcxYmY4M2UwMTQ5N2M2MzRmODRiMGRiMTY5Mzc1ODNmMWMzYWU5YzhkYmY4YzU5ZGNjYmVmMjcwODkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZlNzQyNTM3YWU3MTBjZmYxMThiYWZkNTU5YmNhNjI4OGY1MjJkY2M4MzBhNzRiZDM4ZDJjZDMyMWJjYTIwZmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzNDU0ZjA4NTZkZWI2NGRiMjg3YTUyZmNlOTM5YjdhY2IyYmE2ZDJhNzg5Y2IzM2QzY2QxMGU4M2QxYzk2YjgifQ"
+        },
+        {
+          "resource": "repo://tests/integration/session-syncer.test.ts#L27-L46",
+          "version": "repo-lines-v1:sha256:031dcc03e98523df83f4f3a2a2a76494f80e67049a189bdb3efa5c233005244f:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhYTQyYjU3OWIwNTA5NWE2MjMyNmNkZWFjYzE3YzgwM2MzMjk4YjcwMDhmZGE0NzgyNDkyOGQ0YTdkZGI4NTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViNzQxZDJjMDhlNmY1MTBiN2U5YTI2NGYzNzhmOWNlMDA0OWE1MDRlMGU3ZWY1ZDY3Y2QzZWE4MTNmODU0NzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5ZjM2ODk1NTgxYWYzYTk2Njk4MzU1Nzc3ZGJmZGI5NjU3MGVjMDJiYmNiZTY1MzZhNzM2ODk5Nzk2MTkzNjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI1ZDhkMGRhNTg2MDg4NjQzOGMxZGY4M2MwZDVmMGE1NzhhOGNhYmQ5Yjk1YWY1ODVhYWM3NjU2YjE5ODJkYTAifQ"
+        },
+        {
+          "resource": "repo://tests/integration/session-syncer.test.ts#L319-L358",
+          "version": "repo-lines-v1:sha256:b2b09069fa555a03ad25c6f9cc255209324eeb0e7aff209445eb6f9a6687a8f4:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVmMmI5ZDkzMjdjNDlmNmJjYTA1ZjJkY2VkZGU3YjBlYjVkZDlmMjFiNDkxZDFjZWVjMjA2MmY4ZGIxZDM1OTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIyNzkwNTFkZDA5MDhkYzQxNmVlNWQwMDIzNDkwMGFjYTkxZmJiZDM0OWZiZWZiMzMxY2U1ODhiMjBiMjgyMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUzZmIzMGFiMzM4ZDhhZGEyNDA5YWY1NzdhYTA3ODkwNDZlMTA1NmYwY2Y0OTE3ZGQ0ZjhjNzdiMTg5Zjk5ZmMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7282164aadc94cb4a80c4d92828bad81",
+      "statement": "Desktop compatibility tests protect both configuration ownership and client traffic: Codex tests cover environment path resolution, backups, TOML preservation, discovery and marker-write ordering; VS Code BYOK tests exercise its supported-model matrix through an in-process proxy and assert credential stripping, normalized requests, and encrypted-reasoning recovery after replay rejection.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/codex-desktop.test.ts#L140-L180",
+          "version": "repo-lines-v1:sha256:0c7dd594f4431fac8c2dd02145ffe8d58407de3e972374b5ac17216320b4bd1f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxNzIwM2QyYjM2MjBmN2U4MGIyMTI2OTFiNTNhY2I0NDcwMzQyZGQ1MDc0ZWZjNjAxNGZkYTA0ODJhYTQzZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIzOGIzMjJjNTI2N2NhZjU5MmUxN2EzMTRkNGY1ZDg1ZGFlOWE1YTA4N2M3OTQxMzNhODY4YTdiMGY3NDczNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3NzlkMTE4ZDZlM2NiZjQ1MDUzOTc0OGRlZTdhNDMwN2FjYmU2NDQ2Y2JhMjk3ZjI3NjBmYTVkMGJiYTFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBjMTA1NDU5NjJhYjUyMGFkY2M3YWRiODMzNTk5YzFiYjAyODcwNWU2OTYyM2IwOGY0NTM5ZWVjYjhkMjZhYzQifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/proxy/connectors/__tests__/codex-desktop.test.ts#L9-L137",
+          "version": "repo-lines-v1:sha256:fc387de5b70686af675f0148bdeaf3d289547f3b96bba6e8ac861ee1033d56d5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkMTc5ZTI5ZWVmOWE5ODJiYTVmNTViN2NhMDAyYWQ3OTQzMWI0YTRmODdhYmJhNWQzMzgzMWMwZTYxY2E5MjVhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwZmE0Y2QzZDBhZDVkNGYyODRjYTc3ZDIyMmRhMmQyMzk1MGI3OTg3ZGVhNzVhNDEwZDVhODJjZGU4MDcwNmQ1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0N2YzMDYyNmNiZGZlNjc1MjM5ZjcxMWQ3ZTcxNTZhZGE5MTYxYTdjZDc2MjVjZmViZWJhMmVjNTVlYzM3OWZhIn0"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/__tests__/vscode-request-normalizer.plugin.test.ts#L72-L200",
+          "version": "repo-lines-v1:sha256:2571b379bf54b1b15da2e7b6e18dbc9c0bc1a3a68cde95165f9118dbcfb06f59:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhN2JlZWQ5ZWZhMzRkMDlhYTMwYTg1NmNlMTI1NGI4Y2ZlNmVkYjVlMTE2MGU5ODc4ZDM3YTdiYmE1ZmQ3ZDgwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZTZiOWMyYzJjZmQwZjlhYzE4NTZlYmEwMGM2NzJhM2JiOWM3MWRlMDIwMTg1ZmQ3YzUxNjJjNjMzOGIxODA4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkODE3ZmJiNzNjOTJiMzZkNWU0ODk2ZmY1MWMxYjU4ZWVjMzMwYmJlOTYxYmEwNWZjNjIwNWY4NjdlYTFiY2Y2In0"
+        },
+        {
+          "resource": "repo://tests/integration/vscode-byok.test.ts#L159-L201",
+          "version": "repo-lines-v1:sha256:23fe44f14c6d9eae4f8dae40b9337962c35bb64fdf488e8f16045e12ef4a56a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzZjQ2Mjc5OTdhNTRjZWRkN2Y0MThmMmI1Nzc5MzdjYmQxN2MxNzZmMjIzZDE5ZWNhNDMzZDBmOWZkYzFmMTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNlNzc5ZmNmZjE5ZWZiNzllMjExMzg3OGE1Yjg5NDgwMmQzZTNkY2I0NWQ5ZDRiMGVlYTlmOGVhNGJmMjQ3NWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZhNDEyMzM3N2U5YjU5ODZhY2M1MDlkNmVkYmY3MjI3YWZjZmY5ODhkODg0ZWZiNWY4ZTY4ZWNjOTg3MTZhZGEifQ"
+        },
+        {
+          "resource": "repo://tests/integration/vscode-byok.test.ts#L203-L278",
+          "version": "repo-lines-v1:sha256:052cbfbf4b9de9f3163608129877ae31fe5f1599f2343c41bb3b7edfa16cd652:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5ZmNhZTM5Mzk2MWE2MGVhYTg5NzBhZTFmZjZkNzI0MWMyYWRhZTA4NmI3NDAyYjIwNjg3YTkyYTk3NjI1NjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU5ZjI4NTY0ZTM3ZTliZTY2YzI3ZWMyYWEwMjg3ZTg1NTExMWI3NTFhNGU4MjRkYzljYWExYWJjMDk3Mjk2YTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3NTNjNzhhMDk3MWM2YWU3YWZhMzNlMDg5NzkwMGQxNzJjMmM4YTMzYjc0YWIwMGJkZDAyNmE3MDBkNjM3OTIifQ"
+        },
+        {
+          "resource": "repo://tests/integration/vscode-byok.test.ts#L355-L428",
+          "version": "repo-lines-v1:sha256:714c2b76efc467d11cb74f6a60562718dc771bc5d43365f0f2323a911eebba32:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4NDZlMWNlZWUzNzNmNjkxZjEyYWQ5OThmOTAwZmI0NTJhOTQ3ZDU5YTZlZjkwMWE1NGU1OTVjNWRlN2M5NzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZDM5MjQzNjdhMzUxYjU5OGU5NmJiZTZkOGE5NDljYzE2NGZkNmU3NDFiOGI4NDkzZTkzY2EwOWJiZGU5OGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

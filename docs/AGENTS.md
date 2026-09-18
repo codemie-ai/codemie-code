@@ -273,3 +273,39 @@ codemie setup
 # View metrics
 codemie analytics --agent opencode
 ```
+
+## OpenWiki
+
+OpenWiki (https://github.com/langchain-ai/openwiki) — an agent that writes and maintains a linked Markdown wiki for the current repository, kept current as the code changes. CodeMie runs it through the active profile, so it works without separate API keys.
+
+**Installation:** `codemie install openwiki`
+
+**Requirements:**
+- Node.js 22.0.0 or higher (OpenWiki upstream requirement)
+- An authenticated CodeMie profile (`codemie setup`)
+- Supported providers: **AI/Run SSO**, **Bearer Auth (JWT)**, **LiteLLM**, **Ollama**, **Moonshot subscription**
+
+**How CodeMie runs it:**
+OpenWiki reads its model access from `OPENWIKI_PROVIDER=openai-compatible` plus `OPENAI_COMPATIBLE_BASE_URL`/`OPENAI_COMPATIBLE_API_KEY`/`OPENWIKI_MODEL_ID`. The CodeMie adapter maps the active profile onto those variables: SSO/JWT profiles go through the local CodeMie proxy (authentication and `X-CodeMie-*` attribution headers are injected there), other providers forward their configured base URL and key. The profile model becomes `OPENWIKI_MODEL_ID`.
+
+**Features:**
+- Generates a repo wiki under `openwiki/` (architecture, concepts, integrations, operations) with validated Mermaid diagrams
+- Grounded Claims: factual pages carry versioned source evidence; `--update` re-verifies them against code changes
+- Updates `AGENTS.md`/`CLAUDE.md` with a managed `OPENWIKI:START/END` block pointing agents at the wiki
+- Respects `openwiki/INSTRUCTIONS.md` (user-authored brief, preserved across runs) and `.openwikiignore` (read boundary)
+- Interactive graph visualizer (`visualize`), including static export for GitHub Pages/MkDocs
+- Self-updating via scheduled CI (GitHub Actions, GitLab CI, Bitbucket)
+
+**Usage:**
+```bash
+codemie-openwiki --init                 # Generate the repo wiki (first run)
+codemie-openwiki --update               # Refresh the wiki for changes since the last run
+codemie-openwiki visualize              # Explore the wiki as an interactive graph
+codemie-openwiki --task "Summarize the plugin system"   # One-shot question via the profile model
+codemie-openwiki --profile work --update                # Profile override
+```
+
+**Notes:**
+- `--task` maps to OpenWiki's one-shot print mode (`-p`).
+- OpenWiki prints a heuristic warning when the profile model ID (e.g. `claude-sonnet-5`) is not one of its known OpenAI-compatible presets; the request still works through the CodeMie gateway.
+- For scheduled refresh, see the `openwiki-update.yml` workflow template in the upstream repo (`examples/`).

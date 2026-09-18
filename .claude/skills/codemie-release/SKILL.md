@@ -106,7 +106,7 @@ Confirm release version 0.0.36?
 **After user confirms the version, run the full test suite before any commits.**
 
 ```bash
-npm run test:all
+npm test
 ```
 
 This runs unit tests, CLI integration tests, and agent tests (`unit` + `cli` + `agent` projects).

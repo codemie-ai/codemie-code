@@ -11,6 +11,7 @@ import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
@@ -29,7 +30,9 @@ import {
 } from './lifecycle-helpers.js';
 import { redactSecrets } from './config-redaction.js';
 import { extractGeneratedConfig } from './print-config.js';
-import inquirer from 'inquirer';
+import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
+import { VersionWarningStore } from '../../utils/version-warnings.js';
+import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 
 /**
  * Base class for all agent adapters
@@ -382,6 +385,134 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Emit a one-time notice when the installed version differs from the
+   * recommended `metadata.supportedVersion`, then record the marker so later
+   * launches stay silent until the recommendation itself moves.
+   *
+   * Never prompts, never blocks, never throws — a failure to read or write the
+   * marker store must not stop the agent from launching.
+   */
+  async warnOnceIfUntested(): Promise<void> {
+    try {
+      if (!this.metadata.supportedVersion) {
+        return;
+      }
+
+      const compat = await this.checkVersionCompatibility();
+      const { installedVersion, supportedVersion } = compat;
+      if (!installedVersion || installedVersion === supportedVersion) {
+        return;
+      }
+
+      let alreadyWarned = false;
+      try {
+        alreadyWarned = await VersionWarningStore.hasWarned(
+          this.metadata.name,
+          installedVersion,
+          supportedVersion
+        );
+      } catch (error) {
+        logger.warn('[warnOnceIfUntested] hasWarned failed, re-emitting notice', {
+          agent: this.metadata.name,
+          error: String(error),
+        });
+      }
+      if (alreadyWarned) {
+        return;
+      }
+
+      const codemieVersion = (await getCurrentCliVersion()) ?? 'unknown';
+      const notice =
+        `CodeMie recommends ${this.displayName} v${supportedVersion}; ` +
+        `you are running v${installedVersion} (CodeMie v${codemieVersion}).`;
+
+      logger.warn(notice, {
+        agent: this.metadata.name,
+        installedVersion,
+        supportedVersion,
+        codemieVersion,
+      });
+
+      // stdout is a JSON-RPC stream in silent/ACP mode — the log line above is
+      // the only channel there.
+      if (!this.metadata.silentMode && !isNonInteractiveEnvironment()) {
+        console.error();
+        console.error(chalk.yellow(`⚠  ${notice}`));
+        console.error(chalk.white('   Continuing. To switch to the recommended version, run:'));
+        console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
+        console.error();
+      }
+
+      try {
+        await VersionWarningStore.recordWarning(
+          this.metadata.name,
+          installedVersion,
+          supportedVersion,
+          codemieVersion
+        );
+      } catch (error) {
+        logger.warn('[warnOnceIfUntested] recordWarning failed, notice will repeat', {
+          agent: this.metadata.name,
+          error: String(error),
+        });
+      }
+    } catch (error) {
+      logger.warn('[warnOnceIfUntested] non-fatal error, proceeding', { error: String(error) });
+    }
+  }
+
+  /**
+   * Refuse to launch on a version CodeMie knows is broken against its backend.
+   *
+   * This is the only remaining hard gate: `minimumSupportedVersion` marks
+   * versions with known protocol breaks, where launching produces corrupted
+   * output rather than a degraded experience. Everything above the minimum is
+   * a recommendation handled by {@link warnOnceIfUntested}.
+   */
+  private async blockIfBelowMinimum(): Promise<void> {
+    if (!this.metadata.supportedVersion || !this.metadata.minimumSupportedVersion) {
+      return;
+    }
+
+    const compat = await this.checkVersionCompatibility();
+    if (!compat.isBelowMinimum) {
+      return;
+    }
+
+    const installedDisplay = compat.installedVersion ?? 'unknown';
+    const minimumDisplay = compat.minimumSupportedVersion ?? 'unknown';
+    const message =
+      `${this.displayName} v${installedDisplay} is below the minimum supported version ` +
+      `v${minimumDisplay}. Run: codemie install ${this.name} --supported`;
+
+    if (this.metadata.silentMode) {
+      // In silent/ACP mode stdout is a JSON-RPC stream — never write prose to it.
+      // Throw so the caller gets a structured error and the logger captures it.
+      throw new Error(message);
+    }
+
+    logger.error(message, {
+      agent: this.metadata.name,
+      installedVersion: compat.installedVersion,
+      minimumSupportedVersion: compat.minimumSupportedVersion,
+    });
+
+    console.error();
+    console.error(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
+    console.error(chalk.red(`  Minimum required version: v${minimumDisplay}`));
+    console.error(
+      chalk.white(`  Recommended version:      v${compat.supportedVersion} `) +
+      chalk.green('(recommended)')
+    );
+    console.error();
+    console.error(chalk.white('  This version is known to be incompatible with CodeMie.'));
+    console.error(chalk.white('  Upgrade with:'));
+    console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
+    console.error();
+    process.exit(1);
+  }
+
+  /**
    * Run the agent
    */
   async run(
@@ -389,131 +520,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
-    // Check version compatibility before running (only for agents with a supportedVersion configured)
-    if (this.metadata.supportedVersion) {
-      const compat = await this.checkVersionCompatibility();
-
-      // Scenario 0: Version is below minimum supported — hard block, no override
-      if (compat.isBelowMinimum) {
-        const installedDisplay = compat.installedVersion ?? 'unknown';
-        const minimumDisplay = compat.minimumSupportedVersion ?? 'unknown';
-
-        if (this.metadata.silentMode) {
-          // In silent/ACP mode stdout is a JSON-RPC stream — never write prose to it.
-          // Throw so the caller gets a structured error and the logger captures it.
-          throw new Error(
-            `${this.displayName} v${installedDisplay} is below the minimum supported version ` +
-            `v${minimumDisplay}. Run: codemie install ${this.name}`
-          );
-        }
-
-        console.log();
-        console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
-        console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
-        console.log(chalk.white(`  Recommended version:      v${compat.supportedVersion} `) + chalk.green('(recommended)'));
-        console.log();
-        console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
-        console.log();
-
-        const { belowMinChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'belowMinChoice',
-            message: 'What would you like to do?',
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (belowMinChoice === 'install') {
-          console.log(chalk.blue(`\n  Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-          console.log(); // Add spacing before agent starts
-        } else {
-          console.log(chalk.white('\n  If you want to update manually, run:'));
-          console.log(chalk.blueBright(`     codemie update ${this.name}`));
-          process.exit(0);
-        }
-      } else if (compat.isNewer && !this.metadata.silentMode) {
-        // User is running a newer (untested) version
-        console.log();
-        console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
-        console.log(chalk.yellow(`   CodeMie has only tested and verified ${this.displayName} v${compat.supportedVersion}`));
-        console.log();
-        console.log(chalk.white('   Running a newer version may cause compatibility issues with the CodeMie backend proxy.'));
-        console.log();
-        console.log(chalk.white('   To install the supported version, run:'));
-        console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
-        console.log();
-        console.log(chalk.white('   Or install a specific version:'));
-        console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
-        console.log();
-
-        const { newerChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'newerChoice',
-            message: 'What would you like to do?',
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Continue with current version', value: 'continue' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (newerChoice === 'install') {
-          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-        } else if (newerChoice === 'exit') {
-          console.log(chalk.white('\n   To install the supported version, run:'));
-          console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
-          console.log();
-          console.log(chalk.white('   Or install a specific version:'));
-          console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
-          process.exit(0);
-        }
-
-        console.log(); // Add spacing before agent starts
-      }
-      // Scenario 2: Update available (newer supported version exists, non-blocking info)
-      else if (compat.hasUpdate && compat.compatible && !this.metadata.silentMode) {
-        console.log();
-        console.log(chalk.blue('ℹ️  A new supported version of ' + this.displayName + ' is available!'));
-        console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
-        console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
-        console.log();
-
-        const { updateChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'updateChoice',
-            message: `What would you like to do?`,
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Continue with current version', value: 'continue' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (updateChoice === 'install') {
-          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-        } else if (updateChoice === 'exit') {
-          console.log(chalk.white('\n  If you want to update manually, run:'));
-          console.log(chalk.blueBright(`     codemie update ${this.name}`));
-          process.exit(0);
-        }
-
-        console.log(); // Add spacing before agent starts
-      }
-    }
+    // Version handling (EPMCDME-13734): known-broken versions are refused,
+    // everything else is a one-time recommendation — no prompts, no re-nagging.
+    await this.blockIfBelowMinimum();
+    await this.warnOnceIfUntested();
 
     // Generate session ID at the very start - this is the source of truth
     // All components (logger, metrics, proxy) will use this same session ID
@@ -579,6 +589,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Show random welcome message
       console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+
+      const startTip = getSessionTip('start');
+      if (startTip) {
+        console.log('');
+        console.log(formatTipLine(startTip));
+      }
       console.log(''); // Empty line for spacing
 
       // Silently sync registered skills in background (fire-and-forget)
@@ -739,12 +755,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         await endSessionAndCleanup(0);
         await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 0, env);
 
-        if (!this.metadata.silentMode) {
-          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
-          console.log(''); // Spacing before powered by
-          console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
-          console.log(''); // Empty line for spacing
-        }
+        this.renderSessionEnd();
         return;
       } catch (error) {
         await endSessionAndCleanup(1);
@@ -908,13 +919,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           // Write the per-session analytics report (gated, non-fatal).
           await this.maybeWriteSessionReport(env);
 
-          // Show goodbye message with random easter egg (skip in silent mode for ACP)
-          if (!this.metadata.silentMode) {
-            console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
-            console.log(''); // Spacing before powered by
-            console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
-            console.log(''); // Empty line for spacing
-          }
+          this.renderSessionEnd();
 
           if (code === 0) {
             resolve();
@@ -933,6 +938,27 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       throw error;
     }
+  }
+
+  /**
+   * Render the session-end goodbye block: random goodbye message, one
+   * rotation-tracked tip, and the Powered-by line. Single source of truth for
+   * both exit paths (built-in handler and spawned binary). No-op in silent
+   * mode, where stdout may be a JSON-RPC stream.
+   */
+  private renderSessionEnd(): void {
+    if (this.metadata.silentMode) {
+      return;
+    }
+    console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+    const endTip = getSessionTip('end');
+    if (endTip) {
+      console.log('');
+      console.log(formatTipLine(endTip));
+    }
+    console.log(''); // Spacing before powered by
+    console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
+    console.log(''); // Empty line for spacing
   }
 
   /**
@@ -1105,6 +1131,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         delete env[envVar];
       }
     }
+    if (envMapping.subagentDefaultModel) {
+      for (const envVar of envMapping.subagentDefaultModel) {
+        delete env[envVar];
+      }
+    }
 
     // Step 2: Set new values from CODEMIE_* vars
     // Transform base URL
@@ -1136,20 +1167,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
     if (env.CODEMIE_SONNET_MODEL && env.CODEMIE_SONNET_MODEL !== env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel) {
-      // Distinct sonnet tier — map to all target vars normally
+      // Distinct sonnet tier — map to all target vars normally.
+      // envMapping.subagentDefaultModel is intentionally NOT touched here: when sonnet is
+      // provisioned the upstream binary already picks ANTHROPIC_DEFAULT_SONNET_MODEL as the
+      // subagent default, and setting CLAUDE_CODE_SUBAGENT_MODEL would override the per-
+      // subagent `model` parameter from the Agent tool (EPMCDME-14355).
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
       }
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
-      // No distinct sonnet tier, opus provisioned: route subagent to opus.
-      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
-      // duplicate-ID display in /model (EPMCDME-12779).
-      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_OPUS_MODEL;
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
-      // Haiku-only tenant: route subagent to haiku.
-      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
-      // duplicate-ID display in /model (EPMCDME-12779).
-      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_HAIKU_MODEL;
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.subagentDefaultModel?.length) {
+      // No distinct sonnet tier, opus provisioned: route subagent default to opus so the
+      // upstream binary does not try an unavailable sonnet-tier model for subagent tasks.
+      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent duplicate-ID
+      // display in /model (EPMCDME-12779).
+      for (const envVar of envMapping.subagentDefaultModel) {
+        env[envVar] = env.CODEMIE_OPUS_MODEL;
+      }
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.subagentDefaultModel?.length) {
+      // Haiku-only tenant: route subagent default to haiku so the upstream binary does not
+      // try an unavailable sonnet-tier model. ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally
+      // left unset to prevent duplicate-ID display in /model (EPMCDME-12779).
+      for (const envVar of envMapping.subagentDefaultModel) {
+        env[envVar] = env.CODEMIE_HAIKU_MODEL;
+      }
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
       for (const envVar of envMapping.opusModel) {

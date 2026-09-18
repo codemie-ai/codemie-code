@@ -37,6 +37,9 @@ import { createMcpCommand } from './commands/mcp/index.js';
 import { createMcpProxyCommand } from './commands/mcp-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
 import { createCodebaseCommand } from './commands/codebase/index.js';
+import { createDocsCommand } from './commands/docs.js';
+import { createTipsCommand } from './commands/tips.js';
+import { createWhatsnewCommand } from './commands/whatsnew.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -61,18 +64,18 @@ program
 
 program.addHelpText('after', `
 Claude Desktop 3P:
-  codemie proxy connect desktop           Connect Claude Desktop through CodeMie proxy
-  codemie proxy inspect desktop           Inspect Desktop proxy state, sessions, and sync
-  codemie proxy stop                      Stop the local proxy daemon
-  codemie codebase ui                     Start and open Codebase Memory graph UI
+  codemie proxy connect --claude-desktop      Connect Claude Desktop through CodeMie proxy
+  codemie proxy inspect desktop               Inspect Desktop proxy state, sessions, and sync
+  codemie proxy stop                          Stop the local proxy daemon
+  codemie codebase ui                         Start and open Codebase Memory graph UI
 
 VS Code BYOK:
-  codemie proxy connect vscode            Configure stable VS Code through CodeMie proxy
-  codemie proxy connect vscode --insiders Configure VS Code Insiders through CodeMie proxy
+  codemie proxy connect --vscode              Configure stable VS Code through CodeMie proxy
+  codemie proxy connect --vscode --insiders   Configure VS Code Insiders through CodeMie proxy
 
 Profile selection:
   Uses the active CodeMie profile by default.
-  Override for one run with: codemie proxy connect <desktop|vscode> --profile <name>
+  Override for one run with: codemie proxy connect <--claude-desktop|--vscode> --profile <name>
 `);
 
 // Add commands
@@ -102,6 +105,9 @@ program.addCommand(createMcpCommand());
 program.addCommand(createMcpProxyCommand());
 program.addCommand(createProxyCommand());
 program.addCommand(createCodebaseCommand());
+program.addCommand(createDocsCommand());
+program.addCommand(createTipsCommand());
+program.addCommand(createWhatsnewCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

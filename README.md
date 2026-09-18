@@ -213,9 +213,32 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
+| OpenWiki | `codemie install openwiki` | `codemie-openwiki` | `openwiki` |
 | GitHub Copilot CLI | `codemie install copilot` | `codemie-copilot` | `@github/copilot` |
 
 ACP agents are launched by your IDE, not directly — see [ACP Agent usage](#acp-agent-usage-in-ides-and-editors) below.
+
+### Documentation & Knowledge Tools
+
+CodeMie also manages documentation tooling for your agents — install globally and initialize per project with `codemie docs`. These fall into two capability groups:
+
+- **Authored documentation** — prose a human or agent reads. *OpenWiki* generates a linked Markdown wiki (`openwiki/`) with validated Mermaid diagrams and grounded, source-cited claims; it maintains the wiki on every change (`--update`), can refresh it from a scheduled GitHub Action, and points your coding agents at it via a managed block in `AGENTS.md`/`CLAUDE.md`. It runs on your CodeMie profile (SSO/LiteLLM/Ollama), so no separate API keys.
+- **Queryable knowledge graphs** — indexes an agent queries at runtime instead of re-reading files. *Codebase Memory MCP* (persistent code intelligence graph, auto-indexing, 3D graph UI via `codemie codebase ui`), *CodeGraph* (local-first symbol index: `query`, `callers`/`callees`, `impact`, MCP server for Claude/Codex/OpenCode via `codegraph install`), and *Graphify* (multimodal knowledge graph over code + docs + PDFs + images, with an interactive `graph.html`, agent-crawlable wiki output, and a `/graphify` skill for Claude Code).
+
+| Tool | Install | Init in project | What it does |
+|---|---|---|---|
+| Codebase Memory MCP | `codemie docs install codebase-memory` | `codemie docs init codebase-memory` | Persistent code intelligence graph + 3D UI |
+| CodeGraph | `codemie docs install codegraph` | `codemie docs init codegraph` | Local-first code intelligence graph + MCP server |
+| Graphify | `codemie docs install graphify` | `codemie docs init graphify` | Queryable knowledge graph (Claude Code skill) |
+| OpenWiki | `codemie install openwiki` | `codemie-openwiki --init` | Agent-written, self-updating repo wiki (uses your CodeMie profile) |
+
+```bash
+codemie docs list                            # status of all docs tools
+codemie docs install codegraph               # install a tool globally
+codemie docs init codegraph                  # initialize it in the current project
+```
+
+The tools complement each other: OpenWiki keeps human/agent-readable docs current, while the graph tools give agents fast structural lookups at runtime. See [docs/COMMANDS.md](docs/COMMANDS.md#documentation--knowledge-tools) for the full command reference.
 
 ```bash
 codemie install claude --supported             # install
@@ -515,12 +538,50 @@ codemie codebase ui
 
 Use `codemie codebase start|stop|status` to manage the UI process, or `codemie codebase open` to open the URL only.
 
+## Connect clients via CodeMie Proxy
+
+`codemie proxy connect` configures one or more clients to use the local CodeMie proxy over a single daemon. Pass one or more **target flags**:
+
+```bash
+codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
+codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
+codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
+codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
+codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
+```
+
+Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
+
+Remove a target's configuration with `codemie proxy disconnect`:
+
+```bash
+codemie proxy disconnect --codex-desktop
+```
+
+> **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
+
+## Connect the Codex desktop app via CodeMie Proxy
+
+Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app — at your CodeMie models:
+
+```bash
+codemie proxy connect --codex-desktop
+```
+
+Then **quit and reopen the app**; it reads its configuration at startup. macOS and Windows are supported.
+
+The connector writes your user-level `~/.codex/config.toml`, preserving everything it does not own, and never touches `~/.codex/auth.json`. Switching models in the app's picker works — the proxy maps the app's model names onto CodeMie deployments. Undo it with `codemie proxy disconnect --codex-desktop`.
+
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the managed-block format, `--model`, `--force`, and the backup and restore behaviour.
+
+> The Codex desktop app and the `codemie-codex` CLI use different Codex homes by design, so settings and history differ between the two surfaces.
+
 ## Connect VS Code BYOK via CodeMie Proxy
 
 Configure VS Code's chat language model provider from the active SSO-backed CodeMie profile:
 
 ```bash
-codemie proxy connect vscode
+codemie proxy connect --vscode
 ```
 
 Use `--profile <name>` for a one-run profile override or `--insiders` for VS Code Insiders. The command writes that profile's model ID into `chatLanguageModels.json` and starts or reuses a transparent CodeMie proxy. The profile's project context is passed separately as `X-CodeMie-Project`.
@@ -540,7 +601,7 @@ Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` 
 ### 1. Connect Claude Desktop
 
 ```bash
-codemie proxy connect desktop
+codemie proxy connect --claude-desktop
 ```
 
 ### 2. Restart Claude Desktop
@@ -560,7 +621,7 @@ codemie proxy stop
 Claude Desktop's Linux app is in beta: Ubuntu 22.04+ or Debian 12+, on x86_64 or arm64. Install it from Anthropic's apt repository first — that means registering their signing key and repo, not just `apt install`, so follow [Anthropic's Linux install guide](https://code.claude.com/docs/en/desktop-linux). Then connect exactly as on macOS and Windows:
 
 ```bash
-codemie proxy connect desktop --verbose
+codemie proxy connect --claude-desktop --verbose
 ```
 
 `--verbose` prints the config path that was written, which is the fastest way to confirm where it landed.
@@ -587,15 +648,15 @@ Claude Desktop reads its configuration **once at launch**, so fully quit and reo
 
 **If the app is launched from a desktop launcher**, it may not inherit the `XDG_CONFIG_HOME` you have exported in your shell. When that happens the CLI writes to one path and the app reads another, and the connect silently appears to do nothing. Compare the path from `--verbose` against `~/.config/Claude-3p/`.
 
-**Managed (MDM) settings.** If `/etc/claude-desktop/managed-settings.json` exists, `codemie proxy connect desktop` warns you: Claude Desktop applies a managed source in preference to local configuration. This is not automatically fatal — a policy that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves everything else local, so the write still applies. If routing really is ignored, ask your administrator to carry the gateway settings in the managed source rather than deleting the file, which is root-owned and typically redeployed by MDM.
+**Managed (MDM) settings.** If `/etc/claude-desktop/managed-settings.json` exists, `codemie proxy connect --claude-desktop` warns you: Claude Desktop applies a managed source in preference to local configuration. This is not automatically fatal — a policy that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves everything else local, so the write still applies. If routing really is ignored, ask your administrator to carry the gateway settings in the managed source rather than deleting the file, which is root-owned and typically redeployed by MDM.
 
-**WSL is not supported.** WSL reports its platform as Linux, so the config is written on the WSL side where a Windows Claude Desktop will not look for it. Run `codemie proxy connect desktop` from Windows instead.
+**WSL is not supported.** WSL reports its platform as Linux, so the config is written on the WSL side where a Windows Claude Desktop will not look for it. Run `codemie proxy connect --claude-desktop` from Windows instead.
 
 ### If Claude Desktop was already using Anthropic subscription or another Gateway
 
 1. Quit Claude Desktop.
 2. Sign out or disconnect the previous Anthropic or Gateway provider setup in Claude Desktop.
-3. Run `codemie proxy connect desktop`.
+3. Run `codemie proxy connect --claude-desktop`.
 4. Reopen Claude Desktop.
 
 CodeMie cannot safely log you out from Claude Desktop automatically. If the old provider still appears active, clear it in Claude Desktop first and then reconnect through CodeMie.

@@ -16,7 +16,6 @@ import { logger } from '../utils/logger.js';
 class RemoveHooksNodeMigration implements Migration {
   id = '003-remove-hooks-node';
   description = 'Remove legacy hooks configuration from ~/.gemini/settings.json';
-  minVersion = '0.1.0';
 
   private readonly SETTINGS_PATH = path.join(homedir(), '.gemini', 'settings.json');
 

@@ -3,9 +3,7 @@
   "activeProfile": "epm-cdme",
   "profiles": {
     "epm-cdme": {
-      "codeMieProject": "epm-cdme",
       "provider": "ai-run-sso",
-      "codeMieUrl": "https://codemie.lab.epam.com",
       "apiKey": "sso-provided",
       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
       "model": "claude-sonnet-5",
@@ -53,5 +51,9 @@
       ]
     }
   ],
-  "codemieSkills": []
+  "codemieSkills": [],
+  "workspace": {
+    "codeMieUrl": "https://codemie.lab.epam.com",
+    "codeMieProject": "epm-cdme"
+  }
 }

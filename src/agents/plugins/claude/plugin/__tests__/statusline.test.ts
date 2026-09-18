@@ -197,12 +197,28 @@ describe('resolveBudget', () => {
     expect(result).toEqual({ budget: null, budgetError: null });
   });
 
+  it('skips silently when codeMieUrl/userEmail only exist on the profile — migration 006 moved them to workspace/top-level', async () => {
+    const readFile = vi.fn()
+      .mockRejectedValueOnce(new Error('no cache'))
+      .mockResolvedValueOnce(JSON.stringify({
+        activeProfile: 'default',
+        // Pre-fix (stale) shape: codeMieUrl/userEmail stranded on the profile with no
+        // top-level `workspace`/`userEmail`. Must not be read from the profile object —
+        // regression test for the statusline reading raw profile fields post-migration.
+        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+      }));
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+  });
+
   it('returns a "reauthenticate" error when no auth headers are available', async () => {
     const readFile = vi.fn()
       .mockRejectedValueOnce(new Error('no cache'))
       .mockResolvedValueOnce(JSON.stringify({
         activeProfile: 'default',
-        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
       }));
     const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
@@ -214,7 +230,9 @@ describe('resolveBudget', () => {
       .mockRejectedValueOnce(new Error('no cache'))
       .mockResolvedValueOnce(JSON.stringify({
         activeProfile: 'default',
-        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
       }));
     const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
@@ -227,7 +245,9 @@ describe('resolveBudget', () => {
       .mockRejectedValueOnce(new Error('no cache'))
       .mockResolvedValueOnce(JSON.stringify({
         activeProfile: 'default',
-        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
       }));
     const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
     const fetchImpl = vi.fn().mockResolvedValue({
@@ -265,7 +285,9 @@ describe('resolveBudget', () => {
       .mockRejectedValueOnce(new Error('no cache'))
       .mockResolvedValueOnce(JSON.stringify({
         activeProfile: 'default',
-        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
       }));
     const getAuthHeadersImpl = vi.fn().mockRejectedValue(new Error('keychain locked'));
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });

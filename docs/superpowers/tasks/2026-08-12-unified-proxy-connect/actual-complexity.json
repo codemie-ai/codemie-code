@@ -1,0 +1,63 @@
+{
+  "task": "Unify `codemie proxy connect` into a single command with orthogonal target flags (--claude-desktop / --vscode / --vscode-claude-code) driven by a new connect-orchestrator module that runs every requested target over one daemon lifecycle, with strict daemon matching, per-target dispatch/summary, partial-failure exit codes and startup rollback, plus two thin deprecated desktop/vscode aliases.",
+  "generated": "2026-08-12",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "proxy connect Commander tree (index.ts), new connect-orchestrator module (ConnectTargets/DaemonIdentity types, deriveDaemonIdentity, ensureDaemon, connectTargets, per-target runners, summary/rollback), three config writers composed unchanged (desktop.ts, vscode.ts, vscode-claude-code.ts), daemon-lifecycle helpers (daemon-manager.ts, health-check.ts), provider/SSO resolution (ProviderRegistry, resolveSsoProxyConfig, verifySsoCredentials)",
+      "layers": "CLI, Service (orchestration / daemon-lifecycle coordination)"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "The story's three deferred open questions were resolved during implementation via spec §3.2–3.4 and pinned by tests: multi-target daemon identity collapses onto the two existing telemetry values by priority (claude-desktop > vscode-claude-code > vscode-byok); --insiders with only --claude-desktop warns and continues; --vscode-claude-code gets the claude-desktop daemon posture. No TBD markers remain in the delivered code."
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Reconciled two divergent daemon-match strategies into one strict matcher (the pre-unification loose `telemetryMode !== 'claude-desktop'` gate becomes a full strict match on profile/port/project/provider/targetUrl/effective-clientType) — a behavior change to daemon reuse; new single-daemon multi-target orchestration with per-target summary, non-zero exit on partial failure, and startup rollback, none of which had a prior analogue",
+      "mitigation": "Reused established primitives (spawnDaemon/stopDaemon/checkStatus/checkProxyHealth, the startedInThisRun rollback idiom, atomic idempotent writers) and kept spawn options byte-identical to the pre-unification per-command calls; 24 new unit tests cover identity mapping (7 cases), daemon lifecycle (reuse/restart/force/unhealthy), per-target dispatch, summary, and partial-failure/rollback semantics; rollback is cheap because the --vscode-claude-code flag is unreleased on this branch"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 1,
+      "modified_file_list": ["src/cli/commands/proxy/index.ts"],
+      "new_files": 3,
+      "new_file_list": [
+        "src/cli/commands/proxy/connect-orchestrator.ts",
+        "src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts",
+        "src/cli/commands/proxy/__tests__/connect-wiring.test.ts"
+      ],
+      "affected_dirs": ["src/cli/commands/proxy/", "src/cli/commands/proxy/__tests__/"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["CLI", "Service (proxy orchestration / daemon lifecycle)"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 4,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "The diff introduces a 572-line orchestration module (5+ new types, ~10 new functions) and rewrites the proxy connect Commander group in index.ts (two ~200-line action bodies removed, replaced by one unified action plus two thin deprecated aliases). It composes three unchanged config writers and the daemon/health/provider helpers over a single daemon lifecycle and reconciles two previously divergent daemon-match strategies — a significant restructuring within the proxy subsystem, but bounded to one directory, so L not XL." },
+    { "dimension": "technical_risk", "reason": "Down from the initial L(4) to M(3): the initial risk multiplier was 'no unit-test safety net on the rewritten orchestration' — the implementation adds 24 unit tests covering exactly that path. The genuinely novel pieces (strict-match reconciliation, per-target dispatch/summary, partial-failure exit, rollback) are built on established primitives and are now test-pinned; rollback is trivial (unreleased flag); no auth/security/performance sensitivity was introduced." },
+    { "dimension": "file_change_estimate", "reason": "Up from the initial S(2) to M(3): 4 files changed (1 modified, 3 new) with ~1134 insertions / 497 deletions. Logic was extracted into a new module plus two dedicated test files rather than edited in place, so the surface landed at 4 files (mapping: 4–6 files = M) with heavy line churn confined to one directory and its __tests__." },
+    { "dimension": "requirements_clarity", "reason": "Down from the initial L(4) to M(3): the story's three open questions that drove the initial TBD clarity red flag were all resolved during implementation via an explicit spec (code cites §3.2–3.4) and pinned by tests, so no TBD ambiguity remains — the clarity red flag no longer applies." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

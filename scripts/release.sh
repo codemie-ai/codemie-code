@@ -6,7 +6,7 @@
 # Designed to be resumable - can continue from failed steps
 #
 # Release flow: version bump → commit → agent tests gate → tag → push → GitHub release
-# Agent tests gate: runs `npm run test:integration:agent` before tagging.
+# Agent tests gate: runs `npx vitest run --project agent` before tagging.
 #   - Tests pass → continue automatically
 #   - Tests fail → release blocked (fix tests first)
 #   - Tests cannot run (missing SSO/JWT credentials) → manual confirmation required
@@ -132,6 +132,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     fi
 fi
 
+# Remind about release notes in CHANGELOG.md (non-blocking; `codemie whatsnew`
+# and the once-per-upgrade notice read them)
+if [[ ! -f CHANGELOG.md ]] || ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+    printf "\033[33m⚠️  CHANGELOG.md has no '## [%s]' section — add release notes before publishing.\033[0m\n" "$VERSION"
+fi
+
 # Show what will be done
 echo ""
 echo "📋 Actions that will be performed:"
@@ -207,7 +213,7 @@ echo ""
 echo "🧪 Running agent tests..."
 AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo "ERROR: mktemp failed, cannot capture agent test results"; exit 1; }
 trap 'rm -f "$AGENT_TEST_JSON"' EXIT INT TERM
-npm run test:integration:agent -- --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
+npx vitest run --project agent --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
 AGENT_EXIT_CODE=$?
 
 AGENT_PASSED=0
@@ -237,7 +243,7 @@ else
     echo "     (check: cat ~/.codemie/codemie-cli.config.json)"
     echo "   • CI:    set CI_IS_LOCAL_RUN=false and provide tests/.env.test.local"
     echo ""
-    echo "   To run manually: npm run test:integration:agent"
+    echo "   To run manually: npx vitest run --project agent"
     echo ""
     read -p "❓ Have you manually run agent tests and confirmed they pass? (y/N): " -n 1 -r
     echo

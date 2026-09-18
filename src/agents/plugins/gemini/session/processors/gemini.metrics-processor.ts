@@ -17,6 +17,37 @@ import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
 
 /**
+ * Strip <session_context>...</session_context> blocks and trim the result.
+ */
+function filterSessionContext(text: string): string | null {
+  const cleaned = text.replace(/<session_context>[\s\S]*?<\/session_context>/gi, '').trim();
+  return cleaned || null;
+}
+
+/**
+ * Extract user prompt text from varied content formats.
+ */
+function extractPromptText(content: unknown): string | null {
+  if (typeof content === 'string') {
+    return filterSessionContext(content);
+  }
+  if (Array.isArray(content)) {
+    const textParts = content
+      .map((part) => {
+        if (part && typeof part === 'object' && typeof part.text === 'string') {
+          return part.text;
+        }
+        return '';
+      })
+      .filter(Boolean);
+    if (textParts.length > 0) {
+      return filterSessionContext(textParts.join('\n'));
+    }
+  }
+  return null;
+}
+
+/**
  * Gemini message structure (from gemini.session-adapter.ts)
  */
 interface GeminiMessage {
@@ -74,7 +105,7 @@ export class GeminiMetricsProcessor implements SessionProcessor {
     try {
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
-      const deltas = this.transformMessagesToDeltas(session);
+      const deltas = this.transformMessagesToDeltas(session, _context);
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -108,28 +139,32 @@ export class GeminiMetricsProcessor implements SessionProcessor {
   /**
    * Transform Gemini messages to deltas
    */
-  private transformMessagesToDeltas(session: ParsedSession): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
+  private transformMessagesToDeltas(
+    session: ParsedSession,
+    context?: ProcessingContext
+  ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
     const messages = session.messages as GeminiMessage[];
 
     // Track user prompts for attaching to assistant responses
     let lastUserPrompt: string | null = null;
+    const gitBranch = context?.gitBranch ?? (session.metadata as any)?.gitBranch;
 
     for (const msg of messages) {
       // Track user prompts
       if (msg.type === 'user') {
-        lastUserPrompt = msg.content;
+        lastUserPrompt = extractPromptText(msg.content);
         continue; // User messages don't generate deltas
       }
 
-      // Process assistant (gemini) messages
-      if (msg.type === 'gemini') {
+      // Process assistant (gemini or assistant) messages
+      if (msg.type === 'gemini' || (msg.type as string) === 'assistant') {
         const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
           recordId: msg.id,  // Use message ID as recordId
           sessionId: session.sessionId,
           agentSessionId: (session as any).agentSessionId || session.sessionId,  // Fall back to CodeMie sessionId if no agent session
           timestamp: new Date(msg.timestamp).getTime(),
-          gitBranch: undefined,  // Gemini doesn't track git branch per message
+          ...(gitBranch && { gitBranch }),
 
           // Required field - initialize as empty, populate if tools exist
           tools: {}
@@ -215,22 +250,26 @@ export class GeminiMetricsProcessor implements SessionProcessor {
     args: Record<string, unknown>,
     result?: any[]
   ): { type: string; path?: string; format?: string; language?: string; linesAdded?: number; linesRemoved?: number } | undefined {
-    const typeMap: Record<string, string> = {
-      'write_file': 'write',
-      'Write': 'write',
-      'replace': 'edit',
-      'edit_file': 'edit',
-      'Edit': 'edit',
-      'read_file': 'read',
-      'Read': 'read',
-      'delete_file': 'delete'
-    };
+    const writeTools = new Set(['create_text_file', 'mcp_serena_create_text_file', 'mcp_serena_write_file', 'write_file', 'Write', 'write_to_file']);
+    const editTools = new Set([
+      'replace_content', 'mcp_serena_replace_content', 'replace_in_files', 'mcp_serena_replace_in_files',
+      'replace_symbol_body', 'mcp_serena_replace_symbol_body', 'insert_after_symbol', 'mcp_serena_insert_after_symbol',
+      'insert_before_symbol', 'mcp_serena_insert_before_symbol', 'safe_delete_symbol', 'mcp_serena_safe_delete_symbol',
+      'replace_file_content', 'replace', 'edit_file', 'Edit'
+    ]);
+    const readTools = new Set(['read_file', 'Read', 'mcp_serena_read_file', 'view_file']);
+    const deleteTools = new Set(['delete_file']);
 
-    const type = typeMap[toolName];
+    let type: string | undefined;
+    if (writeTools.has(toolName)) type = 'write';
+    else if (editTools.has(toolName)) type = 'edit';
+    else if (readTools.has(toolName)) type = 'read';
+    else if (deleteTools.has(toolName)) type = 'delete';
+
     if (!type) return undefined;
 
     const fileOp: any = { type };
-    const filePath = args.file_path as string | undefined;
+    const filePath = (args.file_path ?? args.path ?? args.relative_path ?? args.filePath ?? args.TargetFile ?? args.target_file) as string | undefined;
 
     if (filePath) {
       fileOp.path = filePath;
@@ -238,25 +277,34 @@ export class GeminiMetricsProcessor implements SessionProcessor {
       fileOp.language = detectLanguage(filePath);
     }
 
-    // Calculate line counts from tool arguments
-    if (toolName === 'write_file' || toolName === 'Write') {
-      const content = args.content as string | undefined;
+    // Calculate line counts from tool arguments defensively
+    if (type === 'write') {
+      const content = (args.content ?? args.CodeContent ?? args.body) as string | undefined;
       if (content) {
         const lines = content.split('\n');
         fileOp.linesAdded = lines.length;
       }
-    }
+    } else if (type === 'edit') {
+      const content = (args.content ?? args.CodeContent ?? args.body ?? args.old_string ?? args.needle) as string | undefined;
+      const replacement = (args.replacement ?? args.ReplacementContent ?? args.repl ?? args.new_string ?? args.body) as string | undefined;
+      
+      if (replacement) {
+        fileOp.linesAdded = replacement.split('\n').length;
+      }
+      if (content) {
+        fileOp.linesRemoved = content.split('\n').length;
+      }
 
-    // For edit operations, try to extract line counts from result
-    // Note: Gemini result structure may vary, add defensive checks
-    if ((toolName === 'replace' || toolName === 'edit_file' || toolName === 'Edit') && result) {
-      const output = result[0]?.functionResponse?.response?.output;
-      if (typeof output === 'object' && output !== null) {
-        if (output.linesAdded !== undefined) {
-          fileOp.linesAdded = output.linesAdded;
-        }
-        if (output.linesRemoved !== undefined) {
-          fileOp.linesRemoved = output.linesRemoved;
+      // Also try to read from result if available (as in existing code)
+      if (result) {
+        const output = result[0]?.functionResponse?.response?.output;
+        if (typeof output === 'object' && output !== null) {
+          if (output.linesAdded !== undefined) {
+            fileOp.linesAdded = output.linesAdded;
+          }
+          if (output.linesRemoved !== undefined) {
+            fileOp.linesRemoved = output.linesRemoved;
+          }
         }
       }
     }

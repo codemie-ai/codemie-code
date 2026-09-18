@@ -12,6 +12,7 @@ export interface ClaudeMessage {
   type: 'user' | 'assistant' | 'system' | string;
   subtype?: 'api_error' | string;  // For system messages
   uuid: string;
+  promptId?: string;  // Groups all messages belonging to one user prompt turn
   parentUuid?: string;
   sessionId: string;
   timestamp: string;

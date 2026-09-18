@@ -1,0 +1,126 @@
+/**
+ * Pricing lookup unit tests
+ */
+
+import { describe, it, expect } from 'vitest';
+import { lookupPrice } from '../pricing.js';
+
+describe('lookupPrice', () => {
+  it('returns a price for a known Claude model (per-1M USD)', () => {
+    const p = lookupPrice('claude-sonnet-4-5-20250929');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBeGreaterThan(0);
+    expect(p!.output).toBeGreaterThan(0);
+  });
+
+  it('matches Bedrock-style names via normalization', () => {
+    const p = lookupPrice('converse/global.anthropic.claude-haiku-4-5-20251001-v1:0');
+    expect(p).not.toBeNull();
+  });
+
+  it('prefers the longest matching key (sonnet-4-5 over sonnet-4)', () => {
+    const sonnet45 = lookupPrice('claude-sonnet-4-5');
+    const sonnet4 = lookupPrice('claude-sonnet-4-0');
+    expect(sonnet45).not.toBeNull();
+    expect(sonnet4).not.toBeNull();
+  });
+
+  it('returns a price for Kimi models', () => {
+    const forCoding = lookupPrice('kimi-for-coding');
+    expect(forCoding).not.toBeNull();
+    expect(forCoding!.input).toBeGreaterThan(0);
+
+    const k2Dash = lookupPrice('kimi-k2-5');
+    expect(k2Dash).not.toBeNull();
+    expect(k2Dash!.input).toBe(forCoding!.input);
+    expect(k2Dash!.output).toBe(forCoding!.output);
+  });
+
+  it('returns a price for Gemini models', () => {
+    const flash37 = lookupPrice('gemini-3.7-flash');
+    expect(flash37).not.toBeNull();
+    expect(flash37!.input).toBe(0.5);
+    expect(flash37!.output).toBe(3.0);
+
+    const flash35 = lookupPrice('gemini-3-5-flash');
+    expect(flash35).not.toBeNull();
+    expect(flash35!.input).toBe(0.5);
+    expect(flash35!.output).toBe(3.0);
+
+    const gemini = lookupPrice('gemini');
+    expect(gemini).toBeNull();
+
+    const unknownFutureModel = lookupPrice('gemini-4-ultra');
+    expect(unknownFutureModel).toBeNull();
+  });
+
+  it('matches Kimi Code wire-log model names via normalization', () => {
+    const p = lookupPrice('kimi-code/kimi-for-coding');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBeGreaterThan(0);
+  });
+
+  it('returns null for an unknown model', () => {
+    expect(lookupPrice('totally-made-up-model')).toBeNull();
+  });
+
+  it('claude-opus-4-8 has cacheWrite1h of 10.0', () => {
+    const p = lookupPrice('claude-opus-4-8');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeCloseTo(10.0, 6);
+  });
+
+  it('claude-haiku-4-5 has cacheWrite1h of 2.0', () => {
+    const p = lookupPrice('claude-haiku-4-5');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeCloseTo(2.0, 6);
+  });
+
+  it('non-Anthropic model (gpt-5) has no cacheWrite1h', () => {
+    const p = lookupPrice('gpt-5');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeUndefined();
+  });
+
+  it.each([
+    'claude-sonnet-5',
+    'claude-sonnet-5-20260901',
+    'converse/global.anthropic.claude-sonnet-5-v1:0',
+  ])('uses the verified five Sonnet 5 token rates for %s', (model) => {
+    expect(lookupPrice(model)).toEqual({
+      input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, cacheWrite1h: 4,
+    });
+  });
+
+  it.each([
+    'claude-opus-5',
+    'claude-opus-5-20260901',
+    'converse/global.anthropic.claude-opus-5-v1:0',
+  ])('uses the verified five Opus 5 token rates for %s', (model) => {
+    expect(lookupPrice(model)).toEqual({
+      input: 5, output: 25, cacheRead: 0.5, cacheCreation: 6.25, cacheWrite1h: 10,
+    });
+  });
+
+  it('falls back to the latest known price in the same Claude tier for a model newer than any table entry', () => {
+    // No claude-opus-9 entry exists (or ever will, by construction) — this proves the tier
+    // fallback is family-prefix based, not a one-off pinned key for sonnet-5.
+    const p = lookupPrice('claude-opus-9');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBe(5);
+    expect(p!.output).toBe(25);
+  });
+
+  it('tier fallback ignores dated/pinned snapshot keys when picking the "latest" version', () => {
+    // claude-haiku-4-5-20251001 (a dated snapshot) must not be mistaken for a newer version
+    // than claude-haiku-4-6 just because "20251001" numerically exceeds "6".
+    const p = lookupPrice('claude-haiku-9');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBe(1);
+    expect(p!.output).toBe(5);
+  });
+
+  it('still returns null for a non-Claude unknown model (no tier fallback applies)', () => {
+    expect(lookupPrice('totally-made-up-model')).toBeNull();
+  });
+});

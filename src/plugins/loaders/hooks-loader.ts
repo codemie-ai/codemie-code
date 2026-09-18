@@ -44,7 +44,7 @@ export async function loadPluginHooks(
       // Expand ${CLAUDE_PLUGIN_ROOT} in command strings
       return expandHooksCommands(parsed, pluginDir);
     } catch (error) {
-      logger.debug(
+      logger.notice(
         `[plugin] Failed to parse hooks from ${hooksPath}: ${error instanceof Error ? error.message : String(error)}`
       );
     }

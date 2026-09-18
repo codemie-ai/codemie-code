@@ -87,6 +87,25 @@ describe('Auth Utilities', () => {
       );
     });
 
+    it('should never prompt for re-authentication in non-interactive mode', async () => {
+      const authError = new ConfigurationError('SSO authentication required. Please run "codemie setup" with SSO provider first.');
+      getCodemieClient.mockRejectedValue(authError);
+
+      const mockSetupSteps = {
+        validateAuth: vi.fn().mockResolvedValue({ valid: false, error: 'Token expired' })
+      };
+      ProviderRegistry.getSetupSteps.mockReturnValue(mockSetupSteps);
+
+      const { getAuthenticatedClient } = await import('../auth.js');
+
+      await expect(
+        getAuthenticatedClient(mockConfig, { nonInteractive: true })
+      ).rejects.toBe(authError);
+      expect(handleAuthValidationFailure).not.toHaveBeenCalled();
+      expect(mockSetupSteps.validateAuth).not.toHaveBeenCalled();
+      expect(getCodemieClient).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw error if re-authentication fails', async () => {
       const authError = new ConfigurationError('SSO authentication required. Please run "codemie setup" with SSO provider first.');
 

@@ -82,23 +82,38 @@ export class KimiHookConfigInjector {
       }
 
       // If CodeMie-managed hooks are already present, update their timeouts
-      // when they differ instead of appending duplicates.
+      // when they differ instead of appending duplicates. Duplicated managed
+      // entries (from past runs that appended without checking) are collapsed
+      // to one per event — duplicates make every lifecycle event fire the hook
+      // several times concurrently, racing on the same session files.
       const managedEventTimeouts = new Map(MANAGED_EVENTS.map(e => [e.event, e.timeout]));
+      const seenManagedEvents = new Set<string>();
       let updatedExisting = false;
+      const dedupedHooks: Array<Record<string, unknown>> = [];
       for (const hook of parsedConfig.hooks!) {
-        if (
+        const isManaged =
           typeof hook === 'object' &&
           hook !== null &&
           hook.command === COMMAND &&
           typeof hook.event === 'string' &&
-          managedEventTimeouts.has(hook.event)
-        ) {
-          const expectedTimeout = managedEventTimeouts.get(hook.event)!;
+          managedEventTimeouts.has(hook.event);
+        if (isManaged) {
+          const eventName = hook.event as string;
+          if (seenManagedEvents.has(eventName)) {
+            updatedExisting = true;
+            continue;
+          }
+          seenManagedEvents.add(eventName);
+          const expectedTimeout = managedEventTimeouts.get(eventName)!;
           if (hook.timeout !== expectedTimeout) {
             hook.timeout = expectedTimeout;
             updatedExisting = true;
           }
         }
+        dedupedHooks.push(hook);
+      }
+      if (updatedExisting) {
+        parsedConfig.hooks = dedupedHooks;
       }
 
       if (updatedExisting) {
@@ -106,7 +121,7 @@ export class KimiHookConfigInjector {
         const serialized = toml.stringify(parsedConfig as unknown as TomlMap);
         const contentWithMarker = `${MANAGED_MARKER}\n${serialized}`;
         await writeFile(configPath, contentWithMarker, 'utf-8');
-        logger.info('Updated CodeMie-managed hook timeouts in Kimi config.', { configPath });
+        logger.info('Updated CodeMie-managed hooks in Kimi config (timeout/dedupe).', { configPath });
         return { success: true, created: false, configPath };
       }
 
@@ -118,7 +133,11 @@ export class KimiHookConfigInjector {
         return { success: true, created: false, configPath };
       }
 
+      // Append only events that are not already managed — blindly appending all
+      // of them is what created duplicate hook blocks when the marker was lost
+      // (e.g. after a config restore).
       for (const { event, timeout } of MANAGED_EVENTS) {
+        if (seenManagedEvents.has(event)) continue;
         parsedConfig.hooks!.push({
           event,
           command: COMMAND,

@@ -107,14 +107,14 @@ describe('Model Tier E2E', () => {
     const plugin = new ClaudePlugin();
     const metadata = (plugin as any).metadata;
 
-    // Verify envMapping is configured
+    // Verify envMapping is configured. CLAUDE_CODE_SUBAGENT_MODEL is now separated into
+    // its own `subagentDefaultModel` slot (EPMCDME-14355) so it is only populated on
+    // tenants that lack the upstream default subagent tier.
     expect(metadata.envMapping).toBeDefined();
     expect(metadata.envMapping.haikuModel).toEqual(['ANTHROPIC_DEFAULT_HAIKU_MODEL']);
-    expect(metadata.envMapping.sonnetModel).toEqual([
-      'ANTHROPIC_DEFAULT_SONNET_MODEL',
-      'CLAUDE_CODE_SUBAGENT_MODEL',
-    ]);
+    expect(metadata.envMapping.sonnetModel).toEqual(['ANTHROPIC_DEFAULT_SONNET_MODEL']);
     expect(metadata.envMapping.opusModel).toEqual(['ANTHROPIC_DEFAULT_OPUS_MODEL']);
+    expect(metadata.envMapping.subagentDefaultModel).toEqual(['CLAUDE_CODE_SUBAGENT_MODEL']);
 
     // Simulate env vars from config
     const env: NodeJS.ProcessEnv = {
@@ -133,7 +133,9 @@ describe('Model Tier E2E', () => {
     expect(result.ANTHROPIC_MODEL).toBe('claude-4-5-sonnet');
     expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-4-5-sonnet');
-    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-4-5-sonnet');
+    // Multi-tier tenant: CLAUDE_CODE_SUBAGENT_MODEL is left unset so per-subagent `model`
+    // overrides from the Agent tool are honoured (EPMCDME-14355).
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-6-20260205');
     expect(result.ANTHROPIC_BASE_URL).toBe('https://codemie.lab.epam.com/code-assistant-api');
     expect(result.ANTHROPIC_AUTH_TOKEN).toBe('sso-provided');
@@ -186,7 +188,9 @@ describe('Model Tier E2E', () => {
 
     expect(anthropicEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(anthropicEnv.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-4-5-sonnet');
-    expect(anthropicEnv.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-4-5-sonnet');
+    // Multi-tier tenant: CLAUDE_CODE_SUBAGENT_MODEL stays unset so per-subagent `model`
+    // overrides from the Agent tool are honoured (EPMCDME-14355).
+    expect(anthropicEnv.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     expect(anthropicEnv.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-6-20260205');
   });
 });
@@ -198,11 +202,11 @@ describe('Model Tier Validation', () => {
 
     expect(metadata.envMapping).toBeDefined();
     expect(metadata.envMapping.haikuModel).toEqual(['ANTHROPIC_DEFAULT_HAIKU_MODEL']);
-    expect(metadata.envMapping.sonnetModel).toEqual([
-      'ANTHROPIC_DEFAULT_SONNET_MODEL',
-      'CLAUDE_CODE_SUBAGENT_MODEL',
-    ]);
+    expect(metadata.envMapping.sonnetModel).toEqual(['ANTHROPIC_DEFAULT_SONNET_MODEL']);
     expect(metadata.envMapping.opusModel).toEqual(['ANTHROPIC_DEFAULT_OPUS_MODEL']);
+    // CLAUDE_CODE_SUBAGENT_MODEL is now managed via its own slot so it can be populated
+    // ONLY on tenants that lack the upstream default subagent tier (EPMCDME-14355).
+    expect(metadata.envMapping.subagentDefaultModel).toEqual(['CLAUDE_CODE_SUBAGENT_MODEL']);
   });
 
   it('should verify setup command prompts for model tiers', async () => {

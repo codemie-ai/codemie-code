@@ -1,75 +1,62 @@
 /**
- * Claude Request Normalizer Plugin
- * Priority: 14 (runs before RequestSanitizer at 15)
- *
- * Normalizes Claude API requests to match model-specific requirements.
- * Handles thinking parameter variations across Claude model versions:
- *
- * 1. Models that DO NOT support thinking (e.g. claude-haiku-4-5, 4-6):
- *    → strips the thinking field entirely to prevent API errors
- *
- * 2. Models that require adaptive thinking API (e.g. claude-opus-4-7+, claude-sonnet-5):
- *    → "enabled"  → thinking: { type: "adaptive" } + output_config.effort
- *    → "disabled" → either preserve or delete the field depending on model support
- *
- * 3. Models that deprecate sampling parameters (e.g. claude-sonnet-5):
- *    → strips temperature / top_p / top_k entirely to prevent API errors
- *
- * Problem: Claude Code sends `thinking: { type: "enabled", budget_tokens: N }`.
- * - Haiku models reject thinking field with HTTP 400
- * - Opus 4-7+ requires adaptive thinking format with output_config.effort
- * - Sonnet 5 rejects manual extended thinking and sampling parameters
- *
- * Scope: Enabled for codemie-claude (Claude Code via SSO proxy), codemie-copilot
- * (GitHub Copilot CLI via BYOK Anthropic shape), and claude-desktop (Desktop 3P mode).
- *
- * To add model support: update NO_THINKING_MODEL_PATTERNS or ADAPTIVE_THINKING_MODEL_PATTERNS.
+ * Normalizes Claude API requests per model. Every model-specific decision reads
+ * from MODEL_CAPABILITY_TABLE; add/edit a row to change support. Priority 14
+ * (before RequestSanitizer at 15). See EPMCDME-14035.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
-/**
- * Model name patterns that DO NOT support thinking at all.
- * Matches claude-haiku-3-5, 4-5, and date-tagged variants (e.g. claude-haiku-4-5-20251001).
- */
-const NO_THINKING_MODEL_PATTERNS: RegExp[] = [
-  /claude-haiku-(3-5|4-5)(?:[^0-9]|$)/i,  // claude-haiku-3-5, 4-5 and date-tagged variants
+// standard = leave thinking untouched; none = strip it; adaptive = requires the
+// adaptive thinking API + output_config.effort.
+type ThinkingMode = 'standard' | 'none' | 'adaptive';
+
+interface ModelCapabilities {
+  thinking: ThinkingMode;
+  effort: boolean;
+  sampling: boolean;
+  /** Adaptive models only: keep `thinking.type: "disabled"` instead of deleting it. */
+  preserveDisabledThinking: boolean;
+}
+
+// Applied when no MODEL_CAPABILITY_TABLE row matches.
+const DEFAULT_CAPABILITIES: ModelCapabilities = {
+  thinking: 'standard',
+  effort: false,
+  sampling: true,
+  preserveDisabledThinking: false,
+};
+
+// Pattern → capabilities, first match wins. The `(?:[^0-9]|$)` after each version
+// stops `4-7` from matching `4-70`. See EPMCDME-11821 / EPMCDME-14035.
+const MODEL_CAPABILITY_TABLE: ReadonlyArray<{ pattern: RegExp; capabilities: ModelCapabilities }> = [
+  {
+    // claude-haiku-3-5 / 4-5 (+ date-tagged): no extended thinking at all.
+    pattern: /claude-haiku-(3-5|4-5)(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'none', effort: false, sampling: true, preserveDisabledThinking: false },
+  },
+  {
+    // claude-opus-4-7/8/9 (+ date-tagged; excludes 4-70+): adaptive thinking + effort.
+    pattern: /claude-opus-4-[7-9](?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: true, preserveDisabledThinking: false },
+  },
+  {
+    // claude-sonnet-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // sampling params; keeps thinking.type="disabled".
+    pattern: /claude-sonnet-5(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
+  },
 ];
 
-/**
- * Model name patterns that require the adaptive thinking API.
- * Matches claude-opus-4-7, claude-opus-4-7-20250514, and future date-tagged variants.
- * Extend this list as Anthropic migrates additional models — see EPMCDME-11821.
- */
-const ADAPTIVE_THINKING_MODEL_PATTERNS: RegExp[] = [
-  /claude-opus-4-[7-9](?:[^0-9]|$)/i,  // claude-opus-4-7/8/9 and date-tagged variants (e.g. claude-opus-4-7-20250514); excludes claude-opus-4-70+
-  /claude-sonnet-5(?:[^0-9]|$)/i,      // claude-sonnet-5 and date-tagged variants
-];
-
-function modelDisablesThinking(modelName: string): boolean {
-  return NO_THINKING_MODEL_PATTERNS.some(p => p.test(modelName));
+function capabilitiesFor(model: string): ModelCapabilities {
+  for (const entry of MODEL_CAPABILITY_TABLE) {
+    if (entry.pattern.test(model)) return entry.capabilities;
+  }
+  return DEFAULT_CAPABILITIES;
 }
 
-function modelRequiresAdaptiveThinking(modelName: string): boolean {
-  return ADAPTIVE_THINKING_MODEL_PATTERNS.some(p => p.test(modelName));
-}
-
-function modelPreservesDisabledThinking(modelName: string): boolean {
-  return /claude-sonnet-5(?:[^0-9]|$)/i.test(modelName);
-}
-
-function modelDisablesSamplingParameters(modelName: string): boolean {
-  return /claude-sonnet-5(?:[^0-9]|$)/i.test(modelName);
-}
-
-/**
- * Map legacy budget_tokens to the closest output_config.effort level.
- *
- * budget_tokens was the maximum token budget for thinking in the old API.
- * effort is a coarser control in the new API: low / medium / high.
- */
+// Map legacy budget_tokens to the coarser new-API effort level.
 function budgetTokensToEffort(budgetTokens: unknown): 'low' | 'medium' | 'high' {
   const tokens = typeof budgetTokens === 'number' ? budgetTokens : 0;
   if (tokens <= 2048) return 'low';
@@ -77,64 +64,81 @@ function budgetTokensToEffort(budgetTokens: unknown): 'low' | 'medium' | 'high' 
   return 'high';
 }
 
-/**
- * Handler: strips thinking field for models that don't support it.
- * Returns true if thinking was stripped (early exit), false to continue chain.
- */
-function handleNoThinkingModels(body: any, model: string): boolean {
-  if (!modelDisablesThinking(model)) {
-    return false;
+// Normalize the thinking field per caps.thinking. Called only when body.thinking is set.
+function handleThinkingField(body: any, caps: ModelCapabilities, model: string): boolean {
+  if (caps.thinking === 'none') {
+    delete body.thinking;
+    logger.debug(`[claude-request-normalizer] Stripped thinking field for unsupported model: ${model}`);
+    return true;
   }
 
-  delete body.thinking;
-  logger.debug(`[claude-request-normalizer] Stripped thinking field for unsupported model: ${model}`);
-  return true;
-}
-
-/**
- * Handler: transforms thinking.type "enabled"/"disabled" to adaptive API format.
- * Returns true if transformation applied, false if nothing changed.
- */
-function handleAdaptiveThinkingTransform(body: any, model: string): boolean {
-  const thinkingType = body.thinking?.type;
-  if (thinkingType !== 'enabled' && thinkingType !== 'disabled') {
-    return false;
-  }
-
-  if (!modelRequiresAdaptiveThinking(model)) {
-    return false;
-  }
-
-  if (thinkingType === 'enabled') {
-    const effort = budgetTokensToEffort(body.thinking.budget_tokens);
-    body.thinking = { type: 'adaptive' };
-
-    if (!body.output_config?.effort) {
-      body.output_config = { ...(body.output_config ?? {}), effort };
+  if (caps.thinking === 'adaptive') {
+    const thinkingType = body.thinking?.type;
+    if (thinkingType !== 'enabled' && thinkingType !== 'disabled') {
+      return false;
     }
 
-    logger.debug(
-      `[claude-request-normalizer] Transformed thinking: "enabled" → "adaptive", effort="${effort}" for model: ${model}`
-    );
-  } else {
-    if (modelPreservesDisabledThinking(model)) {
+    if (thinkingType === 'enabled') {
+      const effort = budgetTokensToEffort(body.thinking.budget_tokens);
+      body.thinking = { type: 'adaptive' };
+
+      if (!body.output_config?.effort) {
+        body.output_config = { ...(body.output_config ?? {}), effort };
+      }
+
       logger.debug(
-        `[claude-request-normalizer] Preserved thinking.type="disabled" for model: ${model}`
+        `[claude-request-normalizer] Transformed thinking: "enabled" → "adaptive", effort="${effort}" for model: ${model}`
       );
+      return true;
+    }
+
+    // thinkingType === 'disabled'
+    if (caps.preserveDisabledThinking) {
+      logger.debug(`[claude-request-normalizer] Preserved thinking.type="disabled" for model: ${model}`);
       return false;
     }
 
     delete body.thinking;
-    logger.debug(
-      `[claude-request-normalizer] Removed unsupported thinking.type="disabled" for model: ${model}`
-    );
+    logger.debug(`[claude-request-normalizer] Removed unsupported thinking.type="disabled" for model: ${model}`);
+    return true;
   }
 
-  return true;
+  // 'standard' — leave the thinking field untouched.
+  return false;
 }
 
-function handleDeprecatedSamplingParams(body: any, model: string): boolean {
-  if (!modelDisablesSamplingParameters(model)) {
+// Strip effort for models that reject it: Claude Code's --effort flag becomes
+// output_config.effort (or top-level effort) and 400s on e.g. claude-4-5-sonnet.
+function handleUnsupportedEffort(body: any, caps: ModelCapabilities, model: string): boolean {
+  if (caps.effort) {
+    return false;
+  }
+
+  let stripped = false;
+
+  const outputConfig = body.output_config;
+  if (outputConfig && typeof outputConfig === 'object' && 'effort' in outputConfig) {
+    delete outputConfig.effort;
+    stripped = true;
+    if (Object.keys(outputConfig).length === 0) {
+      delete body.output_config;
+    }
+  }
+
+  if ('effort' in body) {
+    delete body.effort;
+    stripped = true;
+  }
+
+  if (stripped) {
+    logger.debug(`[claude-request-normalizer] Stripped unsupported effort parameter for model: ${model}`);
+  }
+  return stripped;
+}
+
+// Strip sampling params (temperature/top_p/top_k) for models that reject them.
+function handleDeprecatedSamplingParams(body: any, caps: ModelCapabilities, model: string): boolean {
+  if (caps.sampling) {
     return false;
   }
 
@@ -156,7 +160,6 @@ function handleDeprecatedSamplingParams(body: any, model: string): boolean {
   return true;
 }
 
-/** Agents whose Claude API requests need thinking normalization */
 const ALLOWED_AGENTS = ['codemie-claude', 'codemie-copilot', 'claude-desktop'];
 
 export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
@@ -170,7 +173,6 @@ export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
     if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
       throw new Error(`Plugin disabled for agent: ${clientType}`);
     }
-    // Pass the configured model as a fallback for requests that omit body.model
     const configModel = context.config.model;
     return new ClaudeRequestNormalizerInterceptor(configModel);
   }
@@ -195,17 +197,19 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
         return;
       }
 
-      const modifiedBySampling = handleDeprecatedSamplingParams(body, model);
+      const caps = capabilitiesFor(model);
+
+      const modifiedBySampling = handleDeprecatedSamplingParams(body, caps, model);
+
+      // Not behind the thinking guard: Claude Code can send effort without thinking.
+      const modifiedByEffort = handleUnsupportedEffort(body, caps, model);
 
       let modifiedByThinking = false;
       if (body.thinking) {
-        // Chain handlers: first match wins and modifies body
-        modifiedByThinking =
-          handleNoThinkingModels(body, model) ||
-          handleAdaptiveThinkingTransform(body, model);
+        modifiedByThinking = handleThinkingField(body, caps, model);
       }
 
-      if (modifiedBySampling || modifiedByThinking) {
+      if (modifiedBySampling || modifiedByEffort || modifiedByThinking) {
         const newBodyStr = JSON.stringify(body);
         context.requestBody = Buffer.from(newBodyStr, 'utf-8');
         context.headers['content-length'] = String(context.requestBody.length);

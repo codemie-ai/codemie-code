@@ -38,7 +38,7 @@ export class LogFilterEngine {
    * Filter by log level (includes specified level and above)
    */
   byLevel(level: LogLevel): this {
-    const levels: Record<string, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+    const levels: Record<string, number> = { debug: 0, info: 1, warn: 2, notice: 2, error: 3 };
     const filterLevel = levels[level] || 0;
 
     this.filters.push(entry => {

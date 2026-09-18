@@ -3,7 +3,7 @@
  */
 
 import type { TokenUsage } from './types.js';
-import type { ModelPrice } from './pricing.js';
+import type { ModelPrice } from '@/utils/pricing.js';
 
 export function emptyUsage(): TokenUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 0 };

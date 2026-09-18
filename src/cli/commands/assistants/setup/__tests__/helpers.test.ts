@@ -329,12 +329,10 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			expect(result?.registrationMode).toBe('agent');
 		});
 
-		it('should return null on registration error', async () => {
+		it('should throw on registration error', async () => {
 			vi.mocked(registerClaudeSubagent).mockRejectedValue(new Error('Registration failed'));
 
-			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.AGENT);
-
-			expect(result).toBeNull();
+			await expect(registerAssistant(mockAssistant, REGISTRATION_MODE.AGENT)).rejects.toThrow('Registration failed');
 			expect(logger.error).toHaveBeenCalledWith(
 				'Assistant generation failed',
 				expect.objectContaining({
@@ -348,9 +346,7 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 		it('should handle skill registration error', async () => {
 			vi.mocked(registerClaudeSkill).mockRejectedValue(new Error('Skill registration failed'));
 
-			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.SKILL);
-
-			expect(result).toBeNull();
+			await expect(registerAssistant(mockAssistant, REGISTRATION_MODE.SKILL)).rejects.toThrow('Skill registration failed');
 			expect(logger.error).toHaveBeenCalledWith(
 				'Assistant generation failed',
 				expect.objectContaining({

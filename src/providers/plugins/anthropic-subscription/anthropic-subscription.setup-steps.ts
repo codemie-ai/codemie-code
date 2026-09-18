@@ -94,7 +94,9 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
   },
 
   async fetchModels(_credentials: ProviderCredentials): Promise<string[]> {
-    return [...AnthropicSubscriptionTemplate.recommendedModels];
+    // No live catalog exists for this provider — return empty so setup prompts
+    // the user to enter a model manually instead of showing a static list.
+    return [];
   },
 
   async selectModel(
@@ -102,7 +104,12 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
     models: string[]
   ): Promise<string | null> {
     if (credentials.additionalConfig?.codeMieUrl) {
-      return models[0] || AnthropicSubscriptionTemplate.recommendedModels[0] || 'claude-sonnet-4-6';
+      // Unattended/auto-config path (analytics sync already linked) — no user
+      // is present to prompt. The stored value is never actually forced onto
+      // the claude CLI (exportEnvVars always blanks the model tiers for this
+      // provider), so a family token here is a harmless placeholder, not a
+      // pinned version that could go stale.
+      return models[0] || AnthropicSubscriptionTemplate.recommendedModels[0] || null;
     }
 
     return null;

@@ -16,9 +16,7 @@ import type {
   ProviderSetupSteps,
   ProviderCredentials,
   AuthValidationResult,
-  AuthStatus,
-  SetupContext,
-  SSOAuthResult
+  AuthStatus
 } from '../../core/types.js';
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
@@ -42,58 +40,40 @@ export const SSOSetupSteps: ProviderSetupSteps = {
   /**
    * Step 1: Gather credentials/configuration
    *
-   * Prompts for CodeMie URL and performs browser-based authentication.
-   *
-   * When the setup wizard already completed a CodeMie handshake (its
-   * mandatory-integration gate authenticates before provider selection), that
-   * session is reused so the user is not prompted for the portal URL and sent
-   * through the browser a second time in one `codemie setup` run.
+   * Prompts for CodeMie URL and performs browser-based authentication
    */
-  async getCredentials(_isUpdate = false, context?: SetupContext): Promise<ProviderCredentials> {
-    const session = context?.codeMieSession;
+  async getCredentials(): Promise<ProviderCredentials> {
+    const codeMieUrl = await promptForCodeMieUrl(DEFAULT_CODEMIE_BASE_URL);
 
-    let codeMieUrl: string;
-    let authResult: SSOAuthResult;
+    // Authenticate via browser
+    console.log(chalk.cyan('\n🔐 Authenticating via browser...\n'));
+    const authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
+
+    if (!authResult.success) {
+      throw new Error(`SSO authentication failed: ${authResult.error || 'Unknown error'}`);
+    }
+
+    console.log(chalk.green('✓ Authentication successful!\n'));
+
+    // === NEW STEP: Fetch applications and select project ===
     let selectedProject: string | undefined;
     let selectedUserEmail: string | undefined;
 
-    if (session) {
-      codeMieUrl = session.codeMieUrl;
-      authResult = session.authResult;
-      selectedProject = session.project;
-      selectedUserEmail = session.userEmail;
+    try {
+      console.log(chalk.cyan('📂 Fetching available projects...\n'));
 
-      console.log(chalk.green(`✓ Using existing authenticated session for ${codeMieUrl}`));
-      console.log(chalk.dim(`  Project: ${selectedProject}\n`));
-    } else {
-      codeMieUrl = await promptForCodeMieUrl(DEFAULT_CODEMIE_BASE_URL);
-
-      // Authenticate via browser
-      console.log(chalk.cyan('\n🔐 Authenticating via browser...\n'));
-      authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
-
-      if (!authResult.success) {
-        throw new Error(`SSO authentication failed: ${authResult.error || 'Unknown error'}`);
+      // Ensure API URL and cookies are available
+      if (!authResult.apiUrl || !authResult.cookies) {
+        throw new Error('API URL or cookies not found in authentication result');
       }
 
-      console.log(chalk.green('✓ Authentication successful!\n'));
+      ({ project: selectedProject, userEmail: selectedUserEmail } = await selectCodeMieProject(authResult));
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
 
-      // === NEW STEP: Fetch applications and select project ===
-      try {
-        console.log(chalk.cyan('📂 Fetching available projects...\n'));
-
-        ({ project: selectedProject, userEmail: selectedUserEmail } = await selectCodeMieProject(authResult));
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
-
-        // Fail fast - project selection is required
-        throw new Error(`Project selection required: ${errorMsg}`);
-      }
-    }
-
-    if (!authResult.apiUrl || !authResult.cookies) {
-      throw new Error('API URL or cookies not found in authentication result');
+      // Fail fast - project selection is required
+      throw new Error(`Project selection required: ${errorMsg}`);
     }
 
     // Check for LiteLLM integrations

@@ -59,6 +59,25 @@ export interface CodexResponseItem {
   output?: string;          // function_call_output: tool output
 }
 
+/**
+ * The `message` sub-type of a response_item record — carries user/assistant
+ * content including text, images, and documents. Not modelled in CodexResponseItem
+ * because that interface focuses on function-call shapes.
+ */
+export interface CodexResponseItemMessage {
+  type: 'message';
+  role: 'user' | 'assistant';
+  content: CodexContentBlock[];
+}
+
+/** A single content block within CodexResponseItemMessage.content. */
+export interface CodexContentBlock {
+  type: 'input_text' | 'input_image' | 'input_file' | string;
+  text?: string;
+  /** Data URI: `"data:<mime>;base64,<b64>"` — present on input_image blocks. */
+  image_url?: string;
+}
+
 /** event_msg record — user messages, token metering, task lifecycle, collaboration */
 export interface CodexEventMsg {
   type:
@@ -82,6 +101,14 @@ export interface CodexEventMsg {
     model_context_window?: number;
   } | null;
   agent_statuses?: Array<{ thread_id?: string; agent_role?: string }>;
+  /** Populated on user_message — base64 data URIs; typically empty (data lives in response_item). */
+  images?: string[];
+  /** Populated on user_message — temp file paths on disk for attached images. */
+  local_images?: string[];
+  text_elements?: Array<{
+    byte_range?: { start: number; end: number };
+    placeholder?: string;
+  }>;
 }
 
 export interface CodexTokenUsageBlock {

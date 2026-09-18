@@ -20,6 +20,10 @@ Two distribution models are supported:
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a GUI installer.
 
+3. **Chrome extension** — a packaged `.zip` build of the CodeMie browser side panel, for manual
+   install while the Chrome Web Store listing is pending review: see
+   [`install/chrome/README.md`](chrome/README.md).
+
 Set `CODEMIE_INSTALL_URL` only when you want to override the public GitHub raw location, for example with an enterprise Artifactory mirror. If it is unset, `install/windows/install.cmd` downloads the PowerShell installer from this public repository. `CODEMIE_INSTALL_URL` points at the **directory** containing `install.ps1`, not the file itself.
 
 Channel selection is not implemented in the bootstrap scripts yet. Install the default npm package version, or pass an explicit version with PowerShell `-Version` or shell `CODEMIE_PACKAGE_VERSION`.

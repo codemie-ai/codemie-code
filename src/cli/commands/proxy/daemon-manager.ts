@@ -16,6 +16,7 @@ export interface DaemonState {
   targetUrl?: string;
   provider?: string;
   project?: string;
+  model?: string;
   clientType?: string;
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
@@ -86,6 +87,7 @@ export interface SpawnOptions {
   profile: string;
   port?: number;
   gatewayKey?: string;
+  model?: string;
   project?: string;
   clientType?: string;
   telemetryMode?: 'none' | 'claude-desktop';
@@ -107,6 +109,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
     '--provider', opts.provider,
     '--profile', opts.profile,
     '--gateway-key', gatewayKey,
+    ...(opts.model ? ['--model', opts.model] : []),
     ...(opts.project ? ['--project', opts.project] : []),
     ...(opts.clientType ? ['--client-type', opts.clientType] : []),
     '--state-file', stateFile,
@@ -125,6 +128,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
       profile: opts.profile,
       port: opts.port,
       gatewayKey,
+      model: opts.model,
       project: opts.project,
       clientType: opts.clientType,
       telemetryMode: opts.telemetryMode,

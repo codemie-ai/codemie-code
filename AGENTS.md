@@ -22,6 +22,12 @@ Why this is mandatory:
 - Guides contain curated patterns, conventions, and architectural decisions.
 - Guide-first work reduces duplicated investigation and avoids anti-patterns.
 
+Knowledge sources and precedence:
+
+- `.ai-run/guides/` owns workflow and policy: git workflow, quality gates, testing rules, security policies, coding standards.
+- `openwiki/` (generated, see the OpenWiki section below) owns codebase facts: architecture, CLI surface, plugins, configuration behavior.
+- On disagreement: guides win for process; source code wins for facts. Report stale guides instead of working around them.
+
 ### 2. Tests Only On Explicit Request
 
 Only write or run tests when the user explicitly asks for it.
@@ -215,6 +221,7 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | `opencode` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics` |
 | `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger |
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
+| `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |
 | `copilot-cli` | `copilot-cli/` | none | Analytics ingestion only — never installed or launched by CodeMie |
 
 Not agent adapters, but injected runtime plugins under the same tree: `codemie-code-hooks/` (injected into `codemie-code` and `opencode`) and `reasoning-sanitizer/` (injected into `codemie-code`).
@@ -224,6 +231,10 @@ Not agent adapters, but injected runtime plugins under the same tree: `codemie-c
 `sso` (CodeMie SSO — default, owns the local proxy), `jwt` (Bearer Authorization), `litellm`, `bedrock`, `ollama`, `anthropic-subscription`, `moonshot-subscription`.
 
 Proxy plugins live under `src/providers/plugins/sso/proxy/plugins/` — see `.ai-run/guides/` and `docs/ARCHITECTURE-PROXY.md`.
+
+### Documentation & Knowledge Tools (`src/frameworks/plugins/`, `group: 'documentation'`)
+
+Deterministic docs/knowledge tooling (not agent harnesses): `codebase-memory` (MCP + graph UI), `codegraph` (local code intelligence graph + MCP), `graphify` (knowledge-graph skill for Claude Code). Managed via `codemie docs list|install|init <name>`; also visible in the grouped `codemie install` listing. OpenWiki is the exception — it is model-backed, so it stays an agent plugin (`codemie install openwiki`, `codemie-openwiki`) and is listed by `codemie docs` as a pointer.
 
 > Neither `.ai-run/guides/integration/external-integrations.md` nor `docs/AGENTS.md` covers Pi yet. For Pi work, read `src/agents/plugins/pi/` directly plus the design docs under `docs/superpowers/specs/`.
 
@@ -269,3 +280,16 @@ Run `codemie doctor` and `codemie-code health`. If the correct pattern is unclea
 - Keep confidence and policy gates explicit.
 - Follow the project architecture rather than inventing local shortcuts.
 - Deliver complete, secure, production-ready changes without placeholders.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
+
+- Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
+- Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->

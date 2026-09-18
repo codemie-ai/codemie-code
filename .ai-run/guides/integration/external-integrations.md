@@ -228,6 +228,19 @@ Codex uses two pipelines (same model as Claude). Cost computed server-side; CLI 
 
 ---
 
+## Codex Model Resolution
+
+Codex-desktop picks its model by a fixed precedence: **explicit `--model` flag > active profile `config.model` > recency-ranked default deployment**. The profile/undated picker name (e.g. `gpt-5.6-luna`) is resolved to its dated deployment via `resolveCodexDeployment`, never matched literally.
+
+- **Connect-time** — `selectCodexModel(discovered, requested?, profileModel?)` writes the pinned model into `~/.codex/config.toml`. An explicit `--model` resolves-or-throws; otherwise the profile model is resolved and used, dropping to `discovered[0]` when it has no Codex equivalent. `file:src/cli/commands/proxy/connectors/codex-desktop.ts:182`
+- **Request-time fallback** — the proxy normalizer's `resolveFallbackModel` substitutes the resolved profile model for an unmatched in-flight request, else the recency default. `file:src/providers/plugins/sso/proxy/plugins/codex-request-normalizer.plugin.ts:217`
+- **Non-Codex profile models are ignored, never pinned.** An Anthropic/Sonnet profile model (e.g. `claude-sonnet-5`) is filtered by `isCodexServableDeployment` and resolves to `unresolved`, so it falls back to a Codex deployment rather than being written into a Codex request — and connect-time does **not** throw for it (only an explicit `--model` throws). `file:src/providers/plugins/sso/proxy/plugins/codex-model-resolver.ts:89`, `file:src/providers/plugins/sso/proxy/plugins/codex-model-resolver.ts:134`
+- **Daemon lifecycle keys on the model.** `normalizeDaemonModel` feeds `daemonMatchesRequest`, so a changed profile model against an otherwise-matching live daemon **forces a restart** rather than reusing the stale one. `file:src/cli/commands/proxy/connect-orchestrator.ts:126`, `file:src/cli/commands/proxy/connect-orchestrator.ts:144`
+
+The pure resolver in `codex-model-resolver.ts` is intentionally self-contained: the proxy must not depend on the Codex agent plugin.
+
+---
+
 ## Claude Session Processing
 
 `ConversationsProcessor` transforms raw JSONL transcript messages from a Claude Code session into conversation-log turns and syncs them to a per-session JSONL file. The processor is invoked on every `Stop` and `SessionEnd` hook event.
