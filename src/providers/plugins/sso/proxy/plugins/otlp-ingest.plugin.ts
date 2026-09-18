@@ -17,7 +17,8 @@ export class OtlpIngestPlugin implements ProxyPlugin {
   createInterceptor(context: PluginContext): ProxyInterceptor {
     return new OtlpIngestInterceptor(
       context.syncCredentials || context.credentials,
-      context.config.syncApiUrl ?? context.config.targetApiUrl
+      context.config.syncApiUrl ?? context.config.targetApiUrl,
+      context.config.project
     );
   }
 }
@@ -26,8 +27,8 @@ class OtlpIngestInterceptor implements ProxyInterceptor {
   name = 'otlp-ingest';
   private readonly dispatcher: OtlpDispatcher;
 
-  constructor(credentials?: SSOCredentials | JWTCredentials, baseUrl?: string) {
-    this.dispatcher = new OtlpDispatcher(credentials, baseUrl);
+  constructor(credentials?: SSOCredentials | JWTCredentials, baseUrl?: string, projectName?: string) {
+    this.dispatcher = new OtlpDispatcher(credentials, baseUrl, projectName);
   }
 
   async handleRequest(

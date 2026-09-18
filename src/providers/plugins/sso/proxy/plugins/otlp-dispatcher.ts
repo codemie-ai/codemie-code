@@ -39,7 +39,8 @@ const EVENT_TYPE_MAP: Record<string, string> = {
 export class OtlpDispatcher {
   constructor(
     private readonly credentials?: SSOCredentials | JWTCredentials,
-    private readonly baseUrl?: string
+    private readonly baseUrl?: string,
+    private readonly projectName?: string
   ) { }
 
   async dispatch(payload: OtlpEventPayload): Promise<void> {
@@ -236,7 +237,7 @@ export class OtlpDispatcher {
       { key: 'tool_use_id', value: { stringValue: toolUseId } },
       { key: 'tool_input', value: { stringValue: event['tool_input'] ? JSON.stringify(event['tool_input']) : '' } },
       { key: 'tool_output', value: { stringValue: this.toStringField(event['tool_output']) } },
-      { key: 'codemie_project_name', value: { stringValue: '' } },
+      { key: 'codemie_project_name', value: { stringValue: this.projectName ?? '' } },
       { key: 'prompt_body', value: { stringValue: hookName === 'beforeSubmitPrompt' ? this.extractPromptBody(event) : '' } },
       { key: 'slash_command', value: { stringValue: '' } },
       { key: 'agent_type', value: { stringValue: String(event['subagent_type'] ?? '') } },
