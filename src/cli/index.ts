@@ -40,6 +40,7 @@ import { createCodebaseCommand } from './commands/codebase/index.js';
 import { createDocsCommand } from './commands/docs.js';
 import { createTipsCommand } from './commands/tips.js';
 import { createWhatsnewCommand } from './commands/whatsnew.js';
+import { createCodenotchCommand } from './commands/codenotch/index.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -108,6 +109,7 @@ program.addCommand(createCodebaseCommand());
 program.addCommand(createDocsCommand());
 program.addCommand(createTipsCommand());
 program.addCommand(createWhatsnewCommand());
+program.addCommand(createCodenotchCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

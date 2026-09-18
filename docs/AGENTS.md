@@ -274,6 +274,25 @@ codemie setup
 codemie analytics --agent opencode
 ```
 
+## Codenotch
+
+Codenotch (https://github.com/vinzdg/codenotch) — a macOS notch app that shows AI provider usage as rings on the screen edge. CodeMie installs the app and can register CodeMie budget and Claude session spending as a native provider in it, fed by your existing CodeMie profile.
+
+**Installation:** `codemie install codenotch`
+
+**Usage provider:** `codemie install codenotch --budget-plugin`
+
+Registers **CodeMie Usage** (every budget bucket on your account, led by the CLI bucket, plus live session activity) with Codenotch, which picks it up without a restart. Budget data is read from your authenticated CodeMie profile — the same endpoint the statusline uses — so there is no separate sign-in.
+
+**Usage:**
+```bash
+codemie install codenotch                    # install the app
+codemie install codenotch --budget-plugin    # install the app + the CodeMie usage provider
+codemie uninstall codenotch                  # remove the app and the provider
+```
+
+**Note:** macOS only. The provider bridge ships inside the CLI (hidden `codemie codenotch` command), so every CLI release carries it — nothing else to install. See [Codenotch integration](CODENOTCH.md).
+
 ## OpenWiki
 
 OpenWiki (https://github.com/langchain-ai/openwiki) — an agent that writes and maintains a linked Markdown wiki for the current repository, kept current as the code changes. CodeMie runs it through the active profile, so it works without separate API keys.

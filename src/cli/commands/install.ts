@@ -12,6 +12,14 @@ import {
   installStatusline,
   isStatuslineInstalled,
 } from '@/agents/plugins/claude/statusline-installer.js';
+import {
+  CODENOTCH_NAME,
+  CODENOTCH_DISPLAY_NAME,
+  CODENOTCH_DESCRIPTION,
+  installCodenotchApp,
+  registerCodenotchPlugins,
+  isCodenotchPluginRegistered,
+} from './codenotch/installer.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -25,7 +33,8 @@ export function createInstallCommand(): Command {
     .option('--supported', 'Install the latest supported version tested with CodeMie')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
-    .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {
+    .option('--budget-plugin', 'With `codemie install codenotch`: also register the CodeMie usage provider')
+    .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean; budgetPlugin?: boolean }) => {
       // Enable debug mode if --verbose flag is set
       if (options?.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -90,6 +99,14 @@ export function createInstallCommand(): Command {
           console.log(`    Command: ${chalk.cyan(`codemie install ${STATUSLINE_NAME}`)}`);
           console.log(`    Status: ${statuslineStatus}`);
           console.log(`    ${chalk.white(STATUSLINE_DESCRIPTION)}`);
+          console.log();
+
+          const codenotchPluginStatus = isCodenotchPluginRegistered() ? chalk.green('✓ budget plugin registered') : chalk.yellow('○ budget plugin not registered');
+          console.log(chalk.bold(`  ${CODENOTCH_DISPLAY_NAME}`));
+          console.log(`    Command: ${chalk.cyan(`codemie install ${CODENOTCH_NAME}`)}`);
+          console.log(`    Status: ${codenotchPluginStatus}`);
+          console.log(`    ${chalk.white(CODENOTCH_DESCRIPTION)}`);
+          console.log(chalk.gray('    Enable the CodeMie usage provider with: codemie install codenotch --budget-plugin'));
           console.log();
 
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install <name>') + ' to install an agent or framework');
@@ -314,6 +331,37 @@ export function createInstallCommand(): Command {
             spinner.fail(`Failed to install ${STATUSLINE_DISPLAY_NAME}`);
             throw error;
           }
+          return;
+        }
+
+        if (name === CODENOTCH_NAME) {
+          const spinner = ora(`Installing ${CODENOTCH_DISPLAY_NAME}...`).start();
+          try {
+            const { appPath, version: appVersion } = await installCodenotchApp();
+            spinner.succeed(`${CODENOTCH_DISPLAY_NAME} ${appVersion} installed`);
+            console.log(chalk.gray(`   App: ${appPath}`));
+            console.log(chalk.gray('   Start it once from /Applications — it lives in the Mac notch'));
+          } catch (error: unknown) {
+            spinner.fail(`Failed to install ${CODENOTCH_DISPLAY_NAME}`);
+            throw error;
+          }
+
+          if (options?.budgetPlugin) {
+            const pluginSpinner = ora('Registering the CodeMie usage provider...').start();
+            try {
+              const written = await registerCodenotchPlugins();
+              pluginSpinner.succeed('CodeMie Usage provider registered');
+              console.log(chalk.gray('   Codenotch picks it up automatically — no restart needed'));
+              console.log(chalk.gray('   Budget is read from your authenticated CodeMie profile — no setup needed'));
+              logger.debug(`Registered: ${written.join(', ')}`);
+            } catch (error: unknown) {
+              pluginSpinner.fail('Failed to register the CodeMie usage provider');
+              throw error;
+            }
+          } else {
+            console.log(chalk.gray('   Tip: re-run with --budget-plugin to add CodeMie budget and session spending to the notch'));
+          }
+          console.log();
           return;
         }
 
