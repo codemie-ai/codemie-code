@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { logger } from '@/utils/logger.js';
-import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import { createErrorContext, formatErrorForUser, PartialRegistrationError } from '@/utils/errors.js';
 
 export async function executeWithSpinner<T>(
   spinnerMessage: string,
@@ -34,6 +34,65 @@ export async function executeWithSpinner<T>(
     }
     return null;
   }
+}
+
+export async function executeWithSpinnerStrict<T>(
+  spinnerMessage: string,
+  operation: () => Promise<T>,
+  successMessage: string,
+  errorMessage: string,
+  onError?: (error: unknown) => void
+): Promise<T> {
+  const isVerbose = process.env.CODEMIE_DEBUG === 'true';
+  const spinner = ora(spinnerMessage).start();
+
+  try {
+    const result = await operation();
+    if (isVerbose) {
+      spinner.succeed(chalk.green(successMessage));
+    } else {
+      spinner.clear();
+      spinner.stop();
+    }
+    return result;
+  } catch (error) {
+    if (isVerbose) {
+      spinner.fail(chalk.red(errorMessage));
+    } else {
+      spinner.clear();
+      spinner.stop();
+    }
+    if (onError) {
+      onError(error);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Writes items sequentially and stops at the first failure, so a caller never
+ * reports success for items that were never written. There is no rollback:
+ * items already written before the failure stay written on disk.
+ */
+export async function registerAllOrAbort<TItem, TResult>(
+  items: TItem[],
+  nameOf: (item: TItem) => string,
+  writeOne: (item: TItem) => Promise<TResult>
+): Promise<TResult[]> {
+  const results: TResult[] = [];
+  const written: string[] = [];
+
+  for (const item of items) {
+    try {
+      const result = await writeOne(item);
+      results.push(result);
+      written.push(nameOf(item));
+    } catch (error) {
+      throw new PartialRegistrationError(written, error);
+    }
+  }
+
+  return results;
 }
 
 export function determineChanges<

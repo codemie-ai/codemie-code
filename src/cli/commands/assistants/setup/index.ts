@@ -16,9 +16,10 @@ import type { RegistrationMode } from '@/cli/commands/assistants/setup/manualCon
 import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js';
 import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
-import { enableVerboseLogging, handleSetupError } from '@/cli/commands/shared/helpers.js';
+import { enableVerboseLogging, handleSetupError, registerAllOrAbort } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
 import { resolveAgentSetupTargets, type AgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 
 export interface SetupCommandOptions {
   profile?: string;
@@ -182,19 +183,21 @@ async function applyChanges(
     await unregisterAssistant(assistant, scope, workingDir, target);
   }
 
-  const newRegistrations: CodemieAssistant[] = [];
   const allToRegister = [...toRegister, ...toReregister];
 
-  for (const assistant of allToRegister) {
-    const fullAssistant = getFullAssistant(assistant, allAssistants);
-    if (!fullAssistant) continue;
+  const newRegistrations = await registerAllOrAbort(
+    allToRegister,
+    (assistant) => assistant.name,
+    async (assistant) => {
+      const fullAssistant = getFullAssistant(assistant, allAssistants);
+      if (!fullAssistant) {
+        throw new RegistrationItemNotFoundError('assistant', assistant.id);
+      }
 
-    const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
-    const registered = await registerAssistant(fullAssistant, mode, scope, workingDir, target);
-    if (registered) {
-      newRegistrations.push(registered);
+      const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
+      return registerAssistant(fullAssistant, mode, scope, workingDir, target);
     }
-  }
+  );
 
   return {
     newRegistrations,

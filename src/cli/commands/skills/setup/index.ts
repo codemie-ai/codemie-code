@@ -6,7 +6,7 @@ import { createSkillDataFetcher } from './data.js';
 import { promptSkillSelection } from './selection/index.js';
 import { determineChanges, registerSkill, unregisterSkill } from './helpers.js';
 import { ACTION_TYPE } from './constants.js';
-import { enableVerboseLogging, handleSetupError } from '@/cli/commands/shared/helpers.js';
+import { enableVerboseLogging, handleSetupError, registerAllOrAbort } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
 import { resolveAgentSetupTargets, formatAgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
 import type { CodemieSkill } from '@/env/types.js';
@@ -128,14 +128,14 @@ async function setupSkills(options: { profile?: string; agent?: string }, hostAg
     await unregisterSkill(skill, storageScope, workingDir, target);
   }
 
-  const newlyRegistered: CodemieSkill[] = [];
-  for (const skill of toRegister) {
-    const detail = await fetcher.fetchSkillById(skill.id);
-    const registered = await registerSkill(detail, storageScope, workingDir, target);
-    if (registered) {
-      newlyRegistered.push(registered);
+  const newlyRegistered = await registerAllOrAbort(
+    toRegister,
+    (skill) => skill.name,
+    async (skill) => {
+      const detail = await fetcher.fetchSkillById(skill.id);
+      return registerSkill(detail, storageScope, workingDir, target);
     }
-  }
+  );
 
   const updatedSkills: CodemieSkill[] = [
     ...registeredSkills.filter(s => selectedIds.includes(s.id)),

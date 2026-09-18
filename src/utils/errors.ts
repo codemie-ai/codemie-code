@@ -62,6 +62,18 @@ export class AmbiguousIdentifierError extends CodeMieError {
   }
 }
 
+export class PartialRegistrationError extends CodeMieError {
+  constructor(
+    public readonly written: string[],
+    public readonly cause: unknown
+  ) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    const writtenSummary = written.length > 0 ? written.join(', ') : 'none';
+    super(`Registration stopped after a failure. Already registered: ${writtenSummary}. Cause: ${causeMessage}`);
+    this.name = 'PartialRegistrationError';
+  }
+}
+
 /**
  * npm error codes for categorizing failures
  */
