@@ -38,7 +38,7 @@ const PROXY_PROBE_TIMEOUT_MS = 3000;
  * Never proxied. The CLI's own LLM proxy listens on loopback, so routing these
  * through a corporate proxy would break every agent session.
  */
-const IMPLICIT_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
+export const IMPLICIT_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
 
 // ---------------------------------------------------------------------------
 // NO_PROXY rules
