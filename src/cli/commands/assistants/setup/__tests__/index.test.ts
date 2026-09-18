@@ -24,7 +24,7 @@ describe('Assistants Setup Command - index.ts', () => {
 		});
 
 		it('should have all required options', () => {
-			expect(command.options).toHaveLength(5);
+			expect(command.options).toHaveLength(9);
 
 			const profileOption = command.options.find(opt => opt.long === '--profile');
 			expect(profileOption).toBeDefined();
@@ -99,7 +99,7 @@ describe('Assistants Setup Command - index.ts', () => {
 		});
 
 		it('should have exactly 4 options', () => {
-			expect(command.options).toHaveLength(5);
+			expect(command.options).toHaveLength(9);
 		});
 
 		it('should have all options as optional', () => {

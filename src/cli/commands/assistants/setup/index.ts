@@ -18,8 +18,10 @@ import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js
 import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
 import { enableVerboseLogging, handleSetupError, registerAllOrAbort } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
-import { resolveAgentSetupTargets, type AgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
-import { RegistrationItemNotFoundError } from '@/utils/errors.js';
+import { resolveAgentSetupTargets, parseAgentSetupTarget, type AgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
+import { RegistrationItemNotFoundError, ConfigurationError } from '@/utils/errors.js';
+import { isHeadlessMode, requireFlag, parseScopeFlag, parseListFlag } from '@/cli/commands/shared/headless.js';
+import { resolveIdentifiers } from '@/cli/commands/shared/identifier-resolution.js';
 
 export interface SetupCommandOptions {
   profile?: string;
@@ -27,6 +29,10 @@ export interface SetupCommandOptions {
   allProjects?: boolean;
   agent?: string;
   verbose?: boolean;
+  assistant?: string;
+  scope?: string;
+  mode?: string;
+  yes?: boolean;
 }
 
 interface ApplyChangesResult {
@@ -44,6 +50,10 @@ export function createAssistantsSetupCommand(hostAgent?: TargetAgent): Command {
     .option('--project <project>', MESSAGES.SETUP.OPTION_PROJECT)
     .option('--all-projects', MESSAGES.SETUP.OPTION_ALL_PROJECTS)
     .option('--agent <agents>', 'Target agent(s), comma-separated: claude, codex, gemini')
+    .option('--assistant <ids>', MESSAGES.SETUP.OPTION_ASSISTANT)
+    .option('--scope <scope>', MESSAGES.SETUP.OPTION_SCOPE)
+    .option('--mode <mode>', MESSAGES.SETUP.OPTION_MODE)
+    .option('-y, --yes', MESSAGES.SETUP.OPTION_YES)
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
     .action(async (options: SetupCommandOptions) => {
       if (options.verbose) {
@@ -61,6 +71,10 @@ export function createAssistantsSetupCommand(hostAgent?: TargetAgent): Command {
 }
 
 async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetAgent): Promise<void> {
+  if (isHeadlessMode(options, process.stdin.isTTY === true)) {
+    return setupAssistantsHeadless(options, hostAgent);
+  }
+
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
   const workingDir = process.cwd();
   logger.debug('Setting up assistants', { profileName, options });
@@ -159,6 +173,74 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
 
   displaySummary(registered, unregistered, profileName, allRegistered, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+}
+
+/**
+ * Non-interactive branch of `codemie setup assistants`. Every prompt
+ * (assistant selection, mode selection, manual configuration, storage scope,
+ * agent target detection/selection) is skipped in favour of flags, validated
+ * up front so an invalid or missing flag, or an unresolvable identifier,
+ * aborts before any network call or write happens.
+ */
+export async function setupAssistantsHeadless(options: SetupCommandOptions, hostAgent?: TargetAgent): Promise<void> {
+  const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
+  const workingDir = process.cwd();
+  logger.debug('Setting up assistants (headless)', { profileName, options, hostAgent });
+
+  const assistantIdentifiers = parseListFlag(requireFlag(options.assistant, '--assistant'));
+  const storageScope = parseScopeFlag(requireFlag(options.scope, '--scope'));
+  const registrationMode = parseRegistrationModeFlag(requireFlag(options.mode, '--mode'));
+  requireFlag(options.agent, '--agent');
+
+  const config = await ConfigLoader.load(workingDir, { name: profileName });
+  const client = await getAuthenticatedClient(config);
+  const registeredAssistants = await loadRegisteredAssistants();
+  config.codemieAssistants = registeredAssistants;
+
+  const fetcher = createDataFetcher({ config, client, options });
+  const catalog = await fetcher.fetchAllVisibleAssistants();
+
+  const resolvedAssistants = resolveIdentifiers('assistant', assistantIdentifiers, catalog);
+  const target = parseAgentSetupTarget(options.agent as string);
+
+  const selectedIds = resolvedAssistants.map(assistant => assistant.id);
+  const registrationModes = new Map<string, RegistrationMode>(
+    selectedIds.map(id => [id, registrationMode])
+  );
+
+  const { newRegistrations, registered, unregistered } = await applyChanges(
+    selectedIds,
+    catalog,
+    registeredAssistants,
+    registrationModes,
+    storageScope,
+    workingDir,
+    target
+  );
+
+  if (registered.length === 0 && unregistered.length === 0) {
+    displaySummary(registered, unregistered, profileName, registeredAssistants);
+    return;
+  }
+
+  const keptAssistants = registeredAssistants.filter(
+    a => selectedIds.includes(a.id) && !newRegistrations.some(n => n.id === a.id)
+  );
+  const allRegistered = [...keptAssistants, ...newRegistrations];
+
+  await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
+
+  displaySummary(registered, unregistered, profileName, allRegistered, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+}
+
+function parseRegistrationModeFlag(value: string): RegistrationMode {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === REGISTRATION_MODE.AGENT || normalized === REGISTRATION_MODE.SKILL) {
+    return normalized;
+  }
+
+  throw new ConfigurationError(`Invalid --mode: "${value}". Expected "agent" or "skill".`);
 }
 
 async function applyChanges(
