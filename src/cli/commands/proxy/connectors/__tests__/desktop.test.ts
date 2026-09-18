@@ -406,6 +406,21 @@ describe('selectPreferredClaudeModels', () => {
     const resolved = selectPreferredClaudeModels(['github-copilot-claude-sonnet-4-5']);
     expect(resolved).toEqual([]);
   });
+
+  it('does not log a reordered match as missing', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      const resolved = selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE);
+      expect(resolved).toContain('claude-5-opus');
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preferred Claude model selection completed'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.missingPreferredModels).not.toContain('claude-opus-5');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
 
 describe('selectDesktopClaudeModels', () => {

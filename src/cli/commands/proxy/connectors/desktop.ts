@@ -177,9 +177,8 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
 
 /**
  * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
- * model discovery response. For each preferred name, prefer the exact ID; fall
- * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple); then
- * fall back to `<preferred>-vertex` when only Vertex registrations exist.
+ * model discovery response via {@link resolveTenantModelId} — exact match, a
+ * dated variant (latest if multiple), or a `-vertex` variant, in that order.
  * Entries with no available match are dropped silently.
  *
  * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
@@ -188,23 +187,16 @@ export function selectPreferredClaudeModels(
   available: string[],
   preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
 ): string[] {
-  const availableSet = new Set(available);
   const resolved: string[] = [];
+  const missingPreferredModels: string[] = [];
   for (const name of preferred) {
     const match = resolveTenantModelId(name, available);
     if (match) {
       resolved.push(match);
-      continue;
-    }
-    const vertexId = `${name}-vertex`;
-    if (availableSet.has(vertexId)) {
-      resolved.push(vertexId);
+    } else {
+      missingPreferredModels.push(name);
     }
   }
-  const missingPreferredModels = preferred.filter((name) => {
-    if (resolved.includes(name)) return false;
-    return !resolved.some((resolvedName) => resolvedName.startsWith(`${name}-`));
-  });
   logger.info(
     '[proxy] Preferred Claude model selection completed',
     ...sanitizeLogArgs({
