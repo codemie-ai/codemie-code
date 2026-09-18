@@ -1,0 +1,6 @@
+{"task_id":"1","status":"done","commit":"fa66da5455","test_command":"npx vitest run --project unit src/cli/commands/shared/__tests__/headless.test.ts"}
+{"task_id":"2","status":"done","commit":"1fe7aa8262","test_command":"npx vitest run --project unit src/cli/commands/shared/__tests__/identifier-resolution.test.ts"}
+{"task_id":"3","status":"done","commit":"19df4a25af","test_command":"npx vitest run --project unit src/cli/commands/assistants/setup/__tests__/data.test.ts src/cli/commands/skills/setup/__tests__/data.test.ts"}
+{"task_id":"4","status":"done","commit":"6c8f219bb1","test_command":"npx vitest run --project unit src/cli/commands/shared src/cli/commands/skills/setup/__tests__ src/cli/commands/assistants/setup/__tests__"}
+{"task_id":"5","status":"done","commit":"1076fabe80","test_command":"npx vitest run --project unit src/cli/commands/shared src/cli/commands/assistants src/cli/commands/skills"}
+{"task_id":"6","status":"done","commit":"de2370b6d6","test_command":"npx vitest run --project unit"}

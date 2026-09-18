@@ -1,0 +1,22 @@
+{
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "7 subjects in 086875eb..HEAD all match git-workflow.md <type>(<scope>): <subject>; types feat/fix and scope cli are both in the documented type-enum/scope-enum lists, subjects are imperative and well under the 100-char subject-max-length; branch feat/codemie-assistant-skill-registration matches the documented feat/<kebab-description> pattern"},
+    {"kind": "code-quality", "status": "partial", "notes": "code-quality.md is met on imports (.js extensions, import type, no require), explicit return types on every new export, kebab-case filenames, interface-over-type, const/async-await, no debug console.log, files well under 500 lines; two documented rules are unmet: JSDoc is omitted from the new public API executeWithSpinnerStrict in src/cli/commands/shared/helpers.ts:39, and the guide's 'Functions: under 50 lines' is exceeded by the two new headless entry points (59- and 62-line spans)"},
+    {"kind": "security", "status": "pass", "notes": "resolved the repo-documented security guide at .ai-run/guides/security/security-practices.md (AGENTS.md Guide Map path; no security-patterns.md exists). No attribution-header surface touched (no X-CodeMie-* header, Responses user field, or JWT sub/email override in the diff, no competing injection path). No hardcoded secrets; the new logger.debug calls in the headless branches carry only CLI flag values (profile, agent, assistant/skill, scope, mode, yes) and no credential-bearing fields; --scope is parsed strictly to global|local via parseScopeFlag rather than interpolated, identifiers are resolved against the server catalog and never used to build paths, and filename derivation stays in the unchanged generators behind sanitizeToSlug, so the change adds no path-traversal or PII-in-filename surface"}
+  ],
+  "blocking_findings": [
+    {
+      "location": "src/cli/commands/shared/helpers.ts:39",
+      "violation": "code-quality.md 'Comments & Documentation' requires JSDoc on all public APIs and lists 'Omit docs from public API' as a Don't; the newly exported executeWithSpinnerStrict<T> has no JSDoc, even though its sibling registerAllOrAbort (same hunk, line 72) does, and its only behavioural difference from the adjacent executeWithSpinner is that it rethrows instead of returning null",
+      "why_blocking": "the guide names JSDoc on public APIs as a coding standard and the pre-commit checklist repeats it; an undocumented export whose contract differs from its near-identical neighbour only in failure behaviour is the case the rule exists for, and callers picking the wrong one silently change whether a failed registration is reported as success",
+      "remedy": "add a JSDoc block on executeWithSpinnerStrict stating that it rethrows after invoking onError, in contrast to executeWithSpinner which swallows and returns null"
+    },
+    {
+      "location": "src/cli/commands/skills/setup/index.ts:210-271 and src/cli/commands/assistants/setup/index.ts:185-243",
+      "violation": "code-quality.md 'Code Structure Guidelines' requires functions under 50 lines; setupSkillsHeadless spans 62 lines and setupAssistantsHeadless spans 59 lines. Each mixes flag parsing/validation, config and client loading, catalog fetch, identifier resolution, the additive-scoping computation, the apply call, the config save, and result printing in one body (counting only non-blank, non-comment statement lines they are ~42 and ~38, so the overage is in total span rather than statement count)",
+      "why_blocking": "the 50-line limit and 'one responsibility' are written into the project's code-quality standard, and these are new functions rather than pre-existing spans; the flag-validation prologue and the additive-scoping reconciliation are each independently testable units currently reachable only through the whole command path",
+      "remedy": "extract the flag parse/validate prologue (parseListFlag/requireFlag/parseScopeFlag/mode) and the additive-scoping split into named helpers alongside the existing shared/headless.ts and shared/identifier-resolution.ts modules, leaving each entry point as the orchestration sequence"
+    }
+  ],
+  "coverage_gap": false
+}

@@ -1,0 +1,114 @@
+[
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:74",
+    "trigger_condition": "Existing interactive usage `codemie assistants setup --agent claude` at a TTY",
+    "guard_snippet": "isHeadlessMode: trigger only on yes/assistant/skill, not on agent/scope/mode alone",
+    "potential_consequence": "Previously working interactive run now aborts: 'Missing required flag: --assistant'"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/index.ts:113",
+    "trigger_condition": "`codemie skills setup --agent claude` (or --scope only) at a TTY",
+    "guard_snippet": "require an explicit --yes/--skill before switching to the headless branch",
+    "potential_consequence": "Interactive skill selection becomes unreachable; command fails demanding --skill"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:190-193",
+    "trigger_condition": "Headless run via host-agent wiring, e.g. codemie-claude, without --agent",
+    "guard_snippet": "const target = parseAgentSetupTarget(options.agent ?? hostAgent ?? requireFlag(undefined,'--agent'));",
+    "potential_consequence": "hostAgent ignored; per-agent shortcut invocations fail despite an unambiguous target"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/index.ts:210-217",
+    "trigger_condition": "Headless skills run under a host agent without an explicit --agent flag",
+    "guard_snippet": "requireFlag(options.agent ?? hostAgent, '--agent') before parseAgentSetupTarget",
+    "potential_consequence": "hostAgent parameter accepted but unused; run aborts with a misleading flag error"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:200-204",
+    "trigger_condition": "Headless run passing --project or --all-projects alongside --assistant",
+    "guard_snippet": "throw new ConfigurationError('--project/--all-projects are not supported with --assistant')",
+    "potential_consequence": "Project filter silently ignored; name resolution spans projects the user excluded"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/data.ts:191-216",
+    "trigger_condition": "Requested assistant is marketplace-only, not VISIBLE_TO_USER scope",
+    "guard_snippet": "also page API_SCOPE.MARKETPLACE and merge before resolveIdentifiers",
+    "potential_consequence": "Valid marketplace assistant reported as 'No assistant found matching', unregisterable headlessly"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/data.ts:197-203",
+    "trigger_condition": "Large visible catalog; per_page is CONFIG.ITEMS_PER_PAGE (5), no page cap",
+    "guard_snippet": "use per_page: 100 and cap iterations (e.g. if (page > MAX_PAGES) break;)",
+    "potential_consequence": "Hundreds of sequential API calls per run; inflated `pages` loops unbounded"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/data.ts:124-140",
+    "trigger_condition": "listPaginated called with no filters/scope, unlike interactive project/marketplace fetch",
+    "guard_snippet": "pass filters: { search:'', scope:'project' } and also page marketplace scope",
+    "potential_consequence": "Headless catalog omits skills the interactive picker shows; identifiers wrongly not found"
+  },
+  {
+    "location": "src/cli/commands/shared/identifier-resolution.ts:34-37",
+    "trigger_condition": "Two catalog entries share a slug (or id) across projects",
+    "guard_snippet": "collect slug/id buckets and throw AmbiguousIdentifierError when length > 1",
+    "potential_consequence": "Silently registers whichever duplicate came last; wrong assistant installed"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:197,216-240",
+    "trigger_condition": "loadRegisteredAssistants merges GLOBAL+LOCAL; --scope names only one",
+    "guard_snippet": "const registeredAssistants = await ConfigLoader.loadAssistantsByScope(storageScope, workingDir);",
+    "potential_consequence": "Other-scope registrations copied into the chosen config file; duplicated, unresolvable records"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/index.ts:223,240,256",
+    "trigger_condition": "Registered skill has no .claude/skills/<slug>/SKILL.md (codex- or gemini-only target)",
+    "guard_snippet": "load raw config skills for the reconcile list instead of file-verified loadSkillsByScope",
+    "potential_consequence": "Those entries silently dropped from the saved config; codex/gemini artifacts orphaned"
+  },
+  {
+    "location": "src/cli/commands/shared/helpers.ts:77-96",
+    "trigger_condition": "Second of three items fails; PartialRegistrationError aborts before any save",
+    "guard_snippet": "persist results written so far (partial save) before rethrowing PartialRegistrationError",
+    "potential_consequence": "Files written on disk have no config record; later unregister cannot remove them"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:273-275",
+    "trigger_condition": "unregisterAssistant still uses non-strict executeWithSpinner and swallows failures",
+    "guard_snippet": "await executeWithSpinnerStrict(...) in unregisterAssistant, or check its result before saving",
+    "potential_consequence": "Failed removal reported as unregistered; stale subagent/skill files keep resolving"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/index.ts:296-298",
+    "trigger_condition": "unregisterSkill swallows errors, yet re-register path assumes removal succeeded",
+    "guard_snippet": "make unregisterSkill strict and abort the run when removal fails",
+    "potential_consequence": "Stale skill directory survives; config claims the new slug/targets only"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:204,273-275",
+    "trigger_condition": "Re-registering with --agent narrower than the record's stored agentTargets",
+    "guard_snippet": "unregisterAssistant(assistant, scope, workingDir, union(assistant.agentTargets, target))",
+    "potential_consequence": "Artifacts for dropped targets remain on disk, permanently orphaned from config"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:240",
+    "trigger_condition": "Two headless runs write the same scope config concurrently (scripted, xargs -P)",
+    "guard_snippet": "serialize config writes with a lockfile around load-modify-save",
+    "potential_consequence": "Last writer wins; the other run's registrations vanish from config"
+  },
+  {
+    "location": "src/cli/commands/skills/setup/helpers.ts:85-88 (removed `if (!result) return null`)",
+    "trigger_condition": "Guard rejected a falsy slug returned by the skill generators",
+    "guard_snippet": "if (!result) throw new Error(`Skill ${skill.name} produced no slug`); before building the record",
+    "potential_consequence": "Record persisted with undefined/empty slug; unregister later targets a wrong path",
+    "kind": "deletion",
+    "confidence": "medium"
+  },
+  {
+    "location": "src/cli/commands/assistants/setup/index.ts:283-286 (removed `if (!fullAssistant) continue;`)",
+    "trigger_condition": "Skipped a selected assistant missing from the fetched set, keeping the run alive",
+    "guard_snippet": "skip-and-warn in the interactive path; throw only in the headless branch",
+    "potential_consequence": "Interactive multi-select now aborts mid-run after unregistering, leaving nothing saved",
+    "kind": "deletion",
+    "confidence": "medium"
+  }
+]

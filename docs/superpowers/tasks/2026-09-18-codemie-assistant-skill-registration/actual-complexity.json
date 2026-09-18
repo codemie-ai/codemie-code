@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "generated": "2026-09-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 26,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 23,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two sibling CLI command subsystems gained a non-interactive branch (src/cli/commands/assistants/setup/index.ts setupAssistantsHeadless, src/cli/commands/skills/setup/index.ts setupSkillsHeadless), backed by two genuinely new shared abstractions: src/cli/commands/shared/headless.ts (isHeadlessMode / requireFlag / parseScopeFlag / parseListFlag / resolveHeadlessAgentTarget / partitionRegisteredByRequest) and src/cli/commands/shared/identifier-resolution.ts (resolveIdentifiers). It additionally reaches repo-wide shared utilities — src/utils/errors.ts (three new error classes: RegistrationItemNotFoundError, AmbiguousIdentifierError, PartialRegistrationError), src/utils/auth.ts, src/cli/commands/shared/helpers.ts (registerAllOrAbort, persistPartialWrites, executeWithSpinnerStrict, generified determineChanges) — and both data fetchers gained catalog crawls (fetchAllVisibleAssistants, fetchAllVisibleSkills). 6+ distinct areas with new abstractions, matching the 5 scored by the project L anchor profile-provider-decoupling for comparable breadth."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Semantics were decided during implementation, not before: the branch history shows four corrective commits on this same feature (fail fast on partial assistant/skill registration; make headless assistant registration purely additive; add headless branch to setup assistants; address code review findings), each changing behaviour rather than fixing a typo. The delivered code carries long justifying comments for decisions that were open — which flags may select headless mode (--agent/--scope/--mode deliberately excluded), whether registration is additive or destructive, whether only the written scope may be read, and whether the skills disclaimer is a consent gate or informational. Divergence recorded: the project L anchor profile-provider-decoupling scored this dimension 3 and filed its post-implementation bug under technical_risk instead; I score 4 here because the rework changed feature semantics repeatedly, which is the L definition (several gaps, design decisions open, rework risk realised)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No prior headless/non-interactive pattern existed in this repo, so the flag-validation, identifier-resolution and all-or-abort write contracts are new. The risk is data-destructive rather than performance-related: the interactive wizard derives unregistration from deselection, so reusing it headlessly would delete artifacts the caller never named — the exact defect the 'purely additive' commit fixed via partitionRegisteredByRequest. Writes have no rollback (registerAllOrAbort stops at first failure, artifacts already on disk stay), so a recovery path was required and built (persistPartialWrites records what reached disk so the config never claims less than exists). Pre-flight read checks (prefetchSkillDetails) were added so a 403 on the last item cannot abort after earlier artifacts were written. Base L (4); bumped to XL (5) by the authentication red flag below."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "23 files changed, 2585 insertions(+), 114 deletions(-) — mechanically XXL (16+) per the actual-mode diffstat mapping. 11 source files (two of them new shared modules) and 12 test files across src/cli/commands/assistants/, src/cli/commands/skills/, src/cli/commands/shared/ and src/utils/. Worth noting for calibration that more than half the file count and the bulk of the insertions are accompanying tests rather than new change surface; this dimension is the single largest contributor to the total."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 distinct layers: UI/CLI (new --assistant/--skill/--scope/--mode/-y flag surface on two commands, plus printSkillsNotice replacing the ANSI/raw-stdin disclaimer), Service (headless orchestration, applyChangesAndSave, applySkillChanges, identifier resolution), DB-Persistence (saveAssistantsToProjectConfig / saveSkillsToProjectConfig, scope-narrowed reads via loadAssistantsByScope / loadSkillsByScope, plus on-disk agent artifacts), and External (paged CodeMie SDK catalog crawls over project and marketplace scopes, and the SSO/JWT auth path). Unlike the project L anchor there is no schema migration, but 4 layers including persistence and an external API places this at L rather than M."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects the authentication path — src/utils/auth.ts getAuthenticatedClient gained an AuthenticationOptions.nonInteractive flag that suppresses the interactive SSO re-authentication prompt, because the prompt's own guard only checks for a TTY and a flag-triggered headless run can still have one attached.",
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities consumed repo-wide — src/utils/errors.ts (three new error classes), src/utils/auth.ts, and src/cli/commands/shared/helpers.ts (determineChanges generified, registerAllOrAbort and persistPartialWrites added).",
+    "Not applied — edge-case test-template bump: the extensive new error-path and edge-case suites follow the repo's established Vitest __tests__ convention, so no new defensive-test pattern had to be invented; bumping here would double-count the risk already scored above."
+  ],
+  "split_recommendation": null,
+  "borderline_resolution": "Total 26 sits exactly on the 26->27 L/XL boundary with both Technical Risk and Component Scope at XL (5), so the rubric's borderline heuristic would lean this up to 27 (XL, split-required). Resolved as L instead, and recorded rather than resolved silently: the lean-higher heuristic is a planning-time guard against under-scoping unknown work, whereas this is an actual-mode re-score of work whose unknowns are resolved and which shipped as one coherent, reviewed unit; and the only dimension pushing the total to the boundary is the mechanical file count, over half of which is accompanying tests. The retrospectively defensible split, had one been wanted, was by-dependency: shared headless + identifier-resolution foundation with the assistants branch first, then the skills branch on top."
+}
