@@ -207,6 +207,37 @@ describe('setupAssistantsHeadless', () => {
     expect(displaySummary).not.toHaveBeenCalled();
   });
 
+  it('is purely additive: an already-registered assistant not named in --assistant is never unregistered and survives the save', async () => {
+    const untouched = {
+      id: 'id-3',
+      name: 'Assistant Three',
+      slug: 'assistant-three',
+      description: 'Assistant Three description',
+      project: 'proj',
+      registeredAt: '2025-01-01T00:00:00.000Z',
+      registrationMode: 'skill',
+      agentTargets: ['claude'],
+    };
+    vi.mocked(loadRegisteredAssistants).mockResolvedValue([untouched] as any);
+    vi.mocked(ConfigLoader.load).mockResolvedValue({ codemieAssistants: [untouched] } as any);
+
+    const { setupAssistantsHeadless } = await import('../index.js');
+
+    await setupAssistantsHeadless({ ...fullOptions, assistant: 'id-1' });
+
+    expect(unregisterAssistant).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id-3' }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+    expect(ConfigLoader.saveAssistantsToProjectConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      StorageScope.GLOBAL,
+      expect.arrayContaining([expect.objectContaining({ id: 'id-3' })])
+    );
+  });
+
   it('exposes an identical option-name set for both wiring sites', async () => {
     const { createAssistantsSetupCommand } = await import('../index.js');
 

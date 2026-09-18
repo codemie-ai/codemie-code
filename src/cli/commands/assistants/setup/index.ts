@@ -203,7 +203,19 @@ export async function setupAssistantsHeadless(options: SetupCommandOptions, host
   const resolvedAssistants = resolveIdentifiers('assistant', assistantIdentifiers, catalog);
   const target = parseAgentSetupTarget(options.agent as string);
 
-  const selectedIds = resolvedAssistants.map(assistant => assistant.id);
+  // Headless registration is purely additive: it must never unregister an
+  // assistant that isn't named in `--assistant`. `applyChanges`/`determineChanges`
+  // derive removals from whichever "currently registered" set they're handed, so
+  // the selection given to `applyChanges` is the union of the requested ids with
+  // the already-registered ids that overlap them (which is exactly the requested
+  // ids, de-duplicated, in requested order) — every already-registered assistant
+  // outside that scope is withheld from `applyChanges` entirely and reconciled
+  // back into the saved list afterwards, untouched.
+  const selectedIds = Array.from(new Set(resolvedAssistants.map(assistant => assistant.id)));
+  const selectedIdSet = new Set(selectedIds);
+  const registeredInScope = registeredAssistants.filter(a => selectedIdSet.has(a.id));
+  const untouchedRegistered = registeredAssistants.filter(a => !selectedIdSet.has(a.id));
+
   const registrationModes = new Map<string, RegistrationMode>(
     selectedIds.map(id => [id, registrationMode])
   );
@@ -211,7 +223,7 @@ export async function setupAssistantsHeadless(options: SetupCommandOptions, host
   const { newRegistrations, registered, unregistered } = await applyChanges(
     selectedIds,
     catalog,
-    registeredAssistants,
+    registeredInScope,
     registrationModes,
     storageScope,
     workingDir,
@@ -223,10 +235,7 @@ export async function setupAssistantsHeadless(options: SetupCommandOptions, host
     return;
   }
 
-  const keptAssistants = registeredAssistants.filter(
-    a => selectedIds.includes(a.id) && !newRegistrations.some(n => n.id === a.id)
-  );
-  const allRegistered = [...keptAssistants, ...newRegistrations];
+  const allRegistered = [...untouchedRegistered, ...newRegistrations];
 
   await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
 
