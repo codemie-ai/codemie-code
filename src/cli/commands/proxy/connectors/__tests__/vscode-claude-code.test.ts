@@ -180,6 +180,68 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
     expect(rawAfter).toBe(invalidContent);
   });
 
+  const SETTINGS_WITH_COMMENTS = `{
+  // keep this comment
+  "editor.fontSize": 14,
+  "claudeCode.environmentVariables": [
+    { "name": "OTHER", "value": "1" },
+  ],
+}
+`;
+
+  it('writes managed keys into a settings.json with comments and trailing commas', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await writeFile(configPath, SETTINGS_WITH_COMMENTS);
+
+    const result = await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+    expect(result).toEqual({ written: true, path: configPath });
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toContain('// keep this comment');
+    expect(rawAfter).toContain('"editor.fontSize": 14');
+    expect(rawAfter).toContain('"OTHER"');
+    expect(rawAfter).toContain('ANTHROPIC_BASE_URL');
+    expect(rawAfter).toContain('ANTHROPIC_AUTH_TOKEN');
+  });
+
+  const SETTINGS_WITH_TAB_INDENTATION = '{\n\t"editor.fontSize": 14\n}\n';
+
+  it('inserts new managed keys using the file\'s own indentation, not jsonc-parser\'s unformatted default (CR-006)', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await writeFile(configPath, SETTINGS_WITH_TAB_INDENTATION);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toContain('\n\t"claudeCode.disableLoginPrompt": true');
+    expect(rawAfter).not.toMatch(/,"claudeCode\.disableLoginPrompt"/);
+  });
+
+  const SETTINGS_WITH_TWO_SPACE_INDENTATION = '{\n  "editor.fontSize": 14\n}\n';
+
+  it('inserts new managed keys on their own indented line for a 2-space-indented file (CR-006)', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    await writeFile(configPath, SETTINGS_WITH_TWO_SPACE_INDENTATION);
+
+    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toContain('\n  "claudeCode.disableLoginPrompt": true');
+  });
+
+  it('rejects a genuinely unparseable settings.json with a specific reason and leaves it untouched', async () => {
+    await mkdir(join(productDir, 'User'), { recursive: true });
+    const unbalanced = '{ "claudeCode.disableLoginPrompt": true';
+    await writeFile(configPath, unbalanced);
+
+    await expect(
+      writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key')
+    ).rejects.toThrow(ConfigurationError);
+
+    const rawAfter = await readFile(configPath, 'utf-8');
+    expect(rawAfter).toBe(unbalanced);
+  });
+
   it('never logs the raw gateway key value', async () => {
     const gatewayKey = 'super-secret-gateway-key-value-0123456789';
     await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', gatewayKey);

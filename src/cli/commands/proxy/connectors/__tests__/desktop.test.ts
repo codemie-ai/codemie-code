@@ -385,6 +385,42 @@ describe('selectPreferredClaudeModels', () => {
       ['claude-sonnet-4-6']
     )).toEqual(['claude-sonnet-4-6-vertex']);
   });
+
+  // A tenant whose catalog names Claude models version-first (version before
+  // family), authored fresh here — never the root sample file.
+  const VERSION_FIRST_CLAUDE_FIXTURE = ['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet'];
+
+  it('resolves version-first Claude names for every preferred family', () => {
+    const resolved = selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE);
+    expect(resolved).toContain('claude-5-opus');
+    expect(resolved).toContain('claude-4-5-haiku');
+    expect(resolved).toContain('claude-4-6-sonnet');
+  });
+
+  it('omits a preferred family with no match and still resolves the rest', () => {
+    const resolved = selectPreferredClaudeModels(['claude-4-6-sonnet']);
+    expect(resolved).toEqual(['claude-4-6-sonnet']);
+  });
+
+  it('never resolves a github-copilot-claude-* deployment', () => {
+    const resolved = selectPreferredClaudeModels(['github-copilot-claude-sonnet-4-5']);
+    expect(resolved).toEqual([]);
+  });
+
+  it('does not log a reordered match as missing', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      const resolved = selectPreferredClaudeModels(VERSION_FIRST_CLAUDE_FIXTURE);
+      expect(resolved).toContain('claude-5-opus');
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preferred Claude model selection completed'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.missingPreferredModels).not.toContain('claude-opus-5');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
 
 describe('selectDesktopClaudeModels', () => {

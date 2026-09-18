@@ -1,0 +1,153 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and standards ran cleanly with no failures, truncation, or coverage gaps, and every acceptance criterion passed except one partial item folded into CR-002; eight lens-reported concerns were verified against the code and dismissed as noise, already-mitigated, or below the emission floor, and one pre-existing test-design issue (vscode.test.ts's positional array pairing) is deferred to code-review-deferred.md as out of this change's scope. Ten findings survive triage: two critical (CR-009, CR-010 — the vscode-models.ts export rename and the widened writeVsCodeLanguageModelsConfigAtPath signature left both VS Code integration test files uncompilable) and eight major spanning the shared model-name resolver's date-handling and recency-picking (CR-001..CR-003), the new tenant-catalog fetch (CR-004..CR-007, with CR-007's reachability against the gateway's real response shape unconfirmed), and the VS Code Claude Code settings writer's formatting (CR-008).",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    { "kind": "spec", "item": "AC1: no capability-table family match -> written config has no entry for that family", "status": "pass", "notes": "resolveManagedModels skips entries where resolveTenantModelId returns undefined" },
+    { "kind": "spec", "item": "AC2: family matched under a different tenant identifier is written with tenant id verbatim + family metadata", "status": "pass", "notes": "buildManagedModel uses tenantId for id/name; vscode.test.ts AC2 confirms" },
+    { "kind": "spec", "item": "AC3: openai.gpt-5.6-luna (undated, vendor-prefixed) resolves to gpt-5.6-luna family, written verbatim", "status": "pass", "notes": "parseGptIdentity strips 'openai.' prefix before matching" },
+    { "kind": "spec", "item": "AC4: github-copilot-* deployments never appear in the VS Code Copilot BYOK picker", "status": "pass", "notes": "parseGptIdentity/parseClaudeIdentity require the literal prefix at string start" },
+    { "kind": "spec", "item": "AC5: zero-match live catalog fetch fails the VS Code target rather than writing an empty/partial config", "status": "pass", "notes": "resolveManagedModels throws ConfigurationError before writeAtomically is reached" },
+    { "kind": "spec", "item": "AC6: version-first Claude tenant catalog resolves highest Opus/Sonnet/Haiku under the tenant's own id", "status": "pass", "notes": "parseClaudeIdentity matches both token orders via shared segment/major/minor" },
+    { "kind": "spec", "item": "AC7: a preferred family with no tenant match is omitted; connect completes for resolved families", "status": "pass", "notes": "selectPreferredClaudeModels loops per-family and silently skips misses" },
+    { "kind": "spec", "item": "AC8: github-copilot-claude-* deployments are never offered by Claude Desktop", "status": "pass", "notes": "same prefix-anchored parse guard as AC4" },
+    { "kind": "spec", "item": "AC9: settings.json with comments/trailing commas -> managed keys written, target reported configured", "status": "pass", "notes": "readSettings uses jsonc-parser's parse() with allowTrailingComma" },
+    { "kind": "spec", "item": "AC10: after a successful write, pre-existing comments/unrelated keys/formatting are unchanged except the two managed keys", "status": "pass", "notes": "write path uses modify()+applyEdits() against the original raw text for only the two managed keys" },
+    { "kind": "spec", "item": "AC11: an unparseable settings.json is left byte-for-byte unchanged; error names the file and reason", "status": "pass", "notes": "readSettings throws ConfigurationError with the parse error code and offset before any write" },
+    { "kind": "spec", "item": "AC12: extension previously routed to AWS Bedrock ends up pointed at the local gateway with disableLoginPrompt true", "status": "pass", "notes": "upsertManagedEnvVars and the two modify() calls are exercised by pre-existing unmodified tests" },
+    { "kind": "spec", "item": "Non-goal: no change to codex-model-resolver.ts or Codex connector behavior", "status": "pass", "notes": "file does not appear in the diff or changed_files list" },
+    { "kind": "spec", "item": "Non-goal: no fully generic resolver -- Gemini/Qwen/Kimi families use exact match only", "status": "pass", "notes": "resolveTenantModelId falls through to undefined for any non gpt-/claude- family" },
+    { "kind": "spec", "item": "Non-goal: vscode.ts's chatLanguageModels.json read stays strict JSON.parse, not made comment-tolerant", "status": "pass", "notes": "diff only touches buildManagedModel/resolveManagedModels and the write signature" },
+    { "kind": "spec", "item": "Non-goal: the local sample-data file is never committed, staged, or used as a fixture path", "status": "pass", "notes": "file does not appear in diff or changed_files; fixtures are small inline literals" },
+    { "kind": "spec", "item": "Shared resolver strips the release date before reading version tokens (generalizes codex-model-resolver.ts)", "status": "partial", "notes": "RELEASE_DATE_PATTERN only matches separator-delimited dates; concatenated 8-digit Claude dates are never stripped, only masked by numeric-token truncation -- see CR-002" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "4 feat(proxy) commit subjects match <type>(<scope>): <subject>, allowed type/scope, under 100 chars, imperative mood" },
+    { "kind": "code-quality", "status": "partial", "notes": "Naming/imports/return-types/no-any hold across 7 files, but new fetchTenantModelCatalog (tenant-catalog.ts:24-96) is ~73 lines mixing fetch, validation, parsing and logging -- see CR-004" },
+    { "kind": "security", "status": "na", "notes": "No security guide path found in repo for this check; manual sweep found no secrets, unsanitized paths, or credential-logging issues in the changed connectors" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 204,
+      "title": "False 'missing' log for a reordered Claude match",
+      "problem": "selectPreferredClaudeModels's missingPreferredModels check only recognizes a match via resolved.includes(name) (exact) or resolvedName.startsWith(`${name}-`) (suffix-appended, e.g. dated/vertex); resolveTenantModelId can return a token-reordered tenant id (e.g. family 'claude-opus-5' resolving to tenant id 'claude-5-opus') that satisfies neither check.",
+      "impact": "For any tenant catalog using version-first naming -- this ticket's own target scenario -- families that resolved correctly and were written to the config are logged as 'missing', so the diagnostic this feature relies on for troubleshooting is wrong exactly when the new tenant-resolution logic is exercised.",
+      "recommendation": "Compute missingPreferredModels via resolveTenantModelId(name, available) === undefined (or track misses where resolution actually happens) instead of re-deriving membership from string prefixes on the already-resolved list."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/model-name-resolver.ts",
+      "line": 12,
+      "title": "Release-date regex misses concatenated dates",
+      "problem": "RELEASE_DATE_PATTERN (/[-._](20\\d{2})[-._](\\d{2})[-._](\\d{2})/) only matches a date whose year/month/day are separated by -, . or _. Claude dated ids already used throughout this codebase (e.g. 'claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929') embed the date as one concatenated 8-digit block with no internal separators, so stripReleaseDate never fires for them, contrary to the module's own comment that 'embedded dates are fixed-width YYYY-MM-DD.'",
+      "impact": "For two-number families the un-stripped digits become a harmless third numeric token that parseClaudeIdentity silently discards, so matching only 'works' by coincidence. For single-number families (e.g. 'claude-opus-5', 'claude-sonnet-5' -- the exact version-first shape this ticket targets), the un-stripped date is read as the minor version instead of defaulting to 0, so a dated deployment of that family (e.g. 'claude-5-opus-20260315') no longer identity-matches the undated preferred name and the family is silently dropped even though a serving deployment exists. No test in model-name-resolver.test.ts or desktop.test.ts exercises a dated id for a single-number family.",
+      "recommendation": "Widen the pattern to also strip a trailing concatenated 8-digit date (e.g. an additional [-._]?20\\d{6}$ alternative) so date digits are removed before major/minor extraction for every id shape already in use."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/model-name-resolver.ts",
+      "line": 59,
+      "title": "pickMostRecent can select the wrong deployment",
+      "problem": "pickMostRecent sorts same-identity candidates by raw localeCompare descending, on the stated assumption that embedded dates are fixed-width. sameIdentity only requires equal vendor/segment/major/minor, so ids of structurally different shapes can share an identity and get pooled together: a vendor-prefixed undated GPT id vs. a hyphen-dated GPT id for the same family ('openai.gpt-5.6-luna' vs 'gpt-5.6-luna-2026-07-09', both vendor=gpt/segment=luna/major=5/minor=6), or a Claude '-vertex' id vs. a dated canonical id for the same family ('claude-sonnet-4-6-vertex' vs 'claude-sonnet-4-6-20260205'). The leading character, not actual recency, decides the winner in both cases.",
+      "impact": "The wrong deployment can be silently selected for VS Code Copilot BYOK (vscode.ts's resolveManagedModels calls resolveTenantModelId directly on the unfiltered live catalog) and for Claude Desktop whenever a vertex id and a non-vertex id for the same family coexist. It also means the explicit `${name}-vertex` fallback block in desktop.ts's selectPreferredClaudeModels (lines 199-202) never actually executes: any vertex id it would find is already returned earlier by resolveTenantModelId's own identity match, sometimes ahead of a better dated candidate, leaving that fallback both dead and its comment misleading.",
+      "recommendation": "Compare same-identity candidates using an actual parsed recency signal (or an explicit type precedence: non-vertex over vertex) instead of raw string order; once fixed, remove the now-redundant vertexId fallback in desktop.ts."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/tenant-catalog.ts",
+      "line": 24,
+      "title": "fetchTenantModelCatalog exceeds the function-length standard",
+      "problem": "The new exported fetchTenantModelCatalog (tenant-catalog.ts:24-96) runs ~73 lines combining the fetch call, HTTP status handling, content-type validation, response-shape parsing, and three separate logger.info/logger.warn call sites.",
+      "impact": "code-quality.md's pre-commit checklist requires functions under 50 lines with a single responsibility; this is a brand-new function introduced by this change, not pre-existing debt the diff merely touched, so it blocks the standard rather than inheriting an exemption.",
+      "recommendation": "Extract the response-to-ids parsing and the logging calls into small named helpers, leaving fetchTenantModelCatalog as the top-level fetch/orchestration function."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/tenant-catalog.ts",
+      "line": 25,
+      "title": "Malformed proxyUrl escapes as a raw TypeError",
+      "problem": "`const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();` runs before the function's try block. A malformed/non-absolute proxyUrl throws a TypeError here, outside the try/catch that converts every other failure mode in this function into a ConfigurationError.",
+      "impact": "Instead of the clear, actionable ConfigurationError this function otherwise guarantees for every failure path, a malformed proxyUrl surfaces as a raw, unformatted TypeError to the CLI user.",
+      "recommendation": "Move the new URL(...) construction inside the try block (as its sibling in desktop.ts's fetchClaudeModels already does on its second, in-try construction) so it is also wrapped into ConfigurationError."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/tenant-catalog.ts",
+      "line": 35,
+      "title": "Tenant catalog fetch has no timeout",
+      "problem": "fetchTenantModelCatalog's fetch(new URL(...), { headers... }) call carries no AbortController/timeout.",
+      "impact": "A hung or slow gateway leaves `codemie proxy connect` (VS Code Copilot BYOK target) waiting indefinitely with no bound, and no way for the CLI to report a clear timeout error instead.",
+      "recommendation": "Pass an AbortSignal.timeout(...) (or an equivalent bounded AbortController) to the fetch call, mirroring the timeout tests/integration/vscode-models.live.test.ts already applies to its own outbound requests."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/tenant-catalog.ts",
+      "line": 69,
+      "title": "data-wrapped catalog response drops base_name/deployment_name ids",
+      "problem": "The array-shaped branch resolves each id via `model.id || model.base_name || model.deployment_name`, but the `{ data: [...] }` branch reads only `m.id` -- the same base_name/deployment_name fallbacks the module's own CodeMieLlmModel interface anticipates are never consulted there.",
+      "impact": "If the gateway ever returns a data-wrapped catalog whose entries use base_name/deployment_name instead of id -- a shape the module's own types anticipate and the array branch already handles -- every deployment id from that response is dropped and resolveManagedModels's zero-match throw fails the entire VS Code Copilot BYOK target. Whether the live gateway actually returns this shape could not be confirmed from the code alone, so this is graded as a plausible-but-unconfirmed reachability gap rather than a proven live failure.",
+      "recommendation": "Apply the same `m.id || m.base_name || m.deployment_name` fallback chain in the data-wrapped branch."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/vscode-claude-code.ts",
+      "line": 178,
+      "title": "Managed settings keys written with no format matching",
+      "problem": "Both modify(...) calls in writeVsCodeClaudeCodeConfigAtPath pass an empty {} as formattingOptions. jsonc-parser's withFormatting (node_modules/jsonc-parser/lib/esm/impl/edit.js) short-circuits to an unformatted raw edit whenever options.formattingOptions is falsy, so the two CodeMie-managed keys are inserted/replaced with no indentation or EOL matching, regardless of the file's existing style.",
+      "impact": "The two managed keys land compact/unformatted in an otherwise hand-formatted settings.json, undermining this change's own comment/format-preservation intent for the content it does write, even though no acceptance criterion currently checks the new keys' own formatting.",
+      "recommendation": "Derive real formattingOptions (tabSize/insertSpaces/eol) from the existing file -- or VS Code's own defaults when the file is fresh -- and pass them to both modify() calls instead of {}."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "tests/integration/vscode-byok.test.ts",
+      "line": 13,
+      "title": "Integration test no longer compiles against the new API",
+      "problem": "This file imports VS_CODE_SUPPORTED_MODELS and VsCodeModelDefinition from vscode-models.js, but this diff renamed those exports to VS_CODE_CAPABILITY_TABLE/VsCodeCapabilityEntry. It also calls writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url) with only two arguments, but the function's signature now requires a third, mandatory gatewayKey argument.",
+      "impact": "The file fails to compile (no exported member VS_CODE_SUPPORTED_MODELS/VsCodeModelDefinition, missing required argument). Even patched to compile, the test's mock upstream server has no /v1/llm_models?include_all=true handler, so resolveManagedModels would receive an empty catalog and the write would throw ConfigurationError instead of succeeding as the test expects -- the whole VS Code BYOK integration suite is broken by this change.",
+      "recommendation": "Update the imports to VS_CODE_CAPABILITY_TABLE/VsCodeCapabilityEntry, pass a gatewayKey to writeVsCodeLanguageModelsConfigAtPath, and extend the test's upstream mock server to serve the tenant catalog endpoint the new code path requires."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "tests/integration/vscode-models.live.test.ts",
+      "line": 31,
+      "title": "Live-certification test no longer compiles against the new API",
+      "problem": "This file imports VS_CODE_SUPPORTED_MODELS and VsCodeModelDefinition from vscode-models.js, both renamed by this diff to VS_CODE_CAPABILITY_TABLE/VsCodeCapabilityEntry.",
+      "impact": "The file fails to compile (no exported member VS_CODE_SUPPORTED_MODELS/VsCodeModelDefinition), breaking the opt-in live model-certification suite even though it never touches the tenant-resolution code path itself.",
+      "recommendation": "Update the two imports (and the selectModels/renderReport helpers' type references) to the renamed VS_CODE_CAPABILITY_TABLE/VsCodeCapabilityEntry."
+    }
+  ],
+  "reconciliation_note": "This file's review-triage dispatch raced with a second, independently-dispatched review-triage round on the same gate: this 10-item verdict was written to disk after the caller had already read and acted on an earlier 7-item verdict from the second dispatch (fixed in commits 2b7c4ac6, 31f0b946, 42132ff6, 184b1cf3, and re-verified approve in code-review-check.json). Eight of these ten findings are the same underlying issues under different numbering (CR-002/CR-003 = the 7-item verdict's date-stripping/recency-ranking pair; CR-004/CR-006/CR-007 = the function-length/timeout/fallback-chain trio; CR-008 = the JSONC formatting gap; CR-009/CR-010 = the two broken integration test files, split here into two entries) and were fixed by those same commits. Two findings were genuinely new and were not part of the 7-item verdict: CR-001 (desktop.ts's missingPreferredModels diagnostic false-flagging a reordered match, plus the now-dead -vertex fallback block CR-003 also flags) and CR-005 (a malformed proxyUrl escaping fetchTenantModelCatalog as a raw TypeError instead of ConfigurationError). Both were verified against current source, fixed, and covered by new regression tests in commits 91828b08 and d39d9292 respectively -- confirmed independently (tests, typecheck, lint all clean) rather than through a second orchestrator check round, since a check round against a stray/duplicate verdict has nothing well-defined to re-verify against. The recorded code-review.check gate decision in decisions.jsonl (approve) still reflects only the 7-item verdict it was actually run against; this note is this file's own record of the two additional findings and their resolution."
+}

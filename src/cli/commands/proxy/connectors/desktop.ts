@@ -10,6 +10,7 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { resolveTenantModelId } from './model-name-resolver.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -176,9 +177,8 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
 
 /**
  * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
- * model discovery response. For each preferred name, prefer the exact ID; fall
- * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple); then
- * fall back to `<preferred>-vertex` when only Vertex registrations exist.
+ * model discovery response via {@link resolveTenantModelId} — exact match, a
+ * dated variant (latest if multiple), or a `-vertex` variant, in that order.
  * Entries with no available match are dropped silently.
  *
  * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
@@ -187,32 +187,16 @@ export function selectPreferredClaudeModels(
   available: string[],
   preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
 ): string[] {
-  const availableSet = new Set(available);
   const resolved: string[] = [];
+  const missingPreferredModels: string[] = [];
   for (const name of preferred) {
-    if (availableSet.has(name)) {
-      resolved.push(name);
-      continue;
-    }
-    const datePrefix = `${name}-`;
-    const dated = available
-      .filter((id) => id.startsWith(datePrefix))
-      .filter((id) => /^\d{6,10}$/.test(id.slice(datePrefix.length)))
-      .sort()
-      .pop();
-    if (dated) {
-      resolved.push(dated);
-      continue;
-    }
-    const vertexId = `${name}-vertex`;
-    if (availableSet.has(vertexId)) {
-      resolved.push(vertexId);
+    const match = resolveTenantModelId(name, available);
+    if (match) {
+      resolved.push(match);
+    } else {
+      missingPreferredModels.push(name);
     }
   }
-  const missingPreferredModels = preferred.filter((name) => {
-    if (resolved.includes(name)) return false;
-    return !resolved.some((resolvedName) => resolvedName.startsWith(`${name}-`));
-  });
   logger.info(
     '[proxy] Preferred Claude model selection completed',
     ...sanitizeLogArgs({
