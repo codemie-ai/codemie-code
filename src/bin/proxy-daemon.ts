@@ -15,6 +15,7 @@ import { ClaudeDesktopTelemetryAdapter } from '../telemetry/clients/claude-deskt
 import { DesktopTelemetryRuntime } from '../telemetry/runtime/DesktopTelemetryRuntime.js';
 import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
+import { primeProxyEnv } from '../utils/system-proxy.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 
 function readCliVersion(): string {
@@ -91,6 +92,11 @@ const config: ProxyConfig = {
   syncApiUrl,
   syncCodeMieUrl,
 };
+
+// Seed HTTP(S)_PROXY from Windows Internet Settings before anything builds an
+// agent: ProxyHTTPClient reads these at construction, and spawned agent CLIs
+// inherit them. Resolved against the real upstream so a PAC picks the right hop.
+await primeProxyEnv(targetUrl);
 
 let proxy = new CodeMieProxy(config);
 let telemetryRuntime: DesktopTelemetryRuntime | undefined;
