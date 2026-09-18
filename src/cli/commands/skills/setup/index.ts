@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import type { SkillListItem } from 'codemie-sdk';
+import type { SkillDetail, SkillListItem } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
@@ -8,17 +8,29 @@ import { createSkillDataFetcher } from './data.js';
 import { promptSkillSelection } from './selection/index.js';
 import { determineChanges, registerSkill, unregisterSkill } from './helpers.js';
 import { ACTION_TYPE } from './constants.js';
-import { enableVerboseLogging, handleSetupError, registerAllOrAbort } from '@/cli/commands/shared/helpers.js';
+import {
+  enableVerboseLogging,
+  handleSetupError,
+  persistPartialWrites,
+  registerAllOrAbort,
+} from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
 import {
   resolveAgentSetupTargets,
   formatAgentSetupTarget,
-  parseAgentSetupTarget,
   type AgentSetupTarget,
   type TargetAgent,
 } from '@/cli/commands/shared/agent-targets.js';
-import { isHeadlessMode, requireFlag, parseScopeFlag, parseListFlag } from '@/cli/commands/shared/headless.js';
+import {
+  isHeadlessMode,
+  requireFlag,
+  parseScopeFlag,
+  parseListFlag,
+  partitionRegisteredByRequest,
+  resolveHeadlessAgentTarget,
+} from '@/cli/commands/shared/headless.js';
 import { resolveIdentifiers } from '@/cli/commands/shared/identifier-resolution.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { StorageScope, type CodemieSkill } from '@/env/types.js';
 
 export type { CodemieSkill };
@@ -41,7 +53,7 @@ export function createSkillsSetupCommand(hostAgent?: TargetAgent): Command {
     .option('--agent <agents>', 'Target agent(s), comma-separated: claude, codex, gemini')
     .option('--skill <ids>', 'Skill identifier(s) to register, comma-separated (id or exact name); enables non-interactive mode')
     .option('--scope <scope>', 'Storage scope for non-interactive registration: global or local')
-    .option('-y, --yes', 'Run non-interactively, skipping all prompts')
+    .option('-y, --yes', 'Run non-interactively; requires --skill, --scope and --agent')
     .option('-v, --verbose', 'Enable verbose debug output')
     .action(async (options: SetupCommandOptions) => {
       if (options.verbose) {
@@ -150,34 +162,114 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
     return;
   }
 
+  // Pre-flight: every selected skill must be readable before the first write.
+  const details = await prefetchSkillDetails(toRegister, fetcher);
+
   for (const skill of toUnregister) {
     await unregisterSkill(skill, storageScope, workingDir, target);
   }
 
-  const newlyRegistered = await registerAllOrAbort(
+  await registerAndSaveSkills({
     toRegister,
-    (skill) => skill.name,
-    async (skill) => {
-      const detail = await fetcher.fetchSkillById(skill.id);
-      return registerSkill(detail, storageScope, workingDir, target);
-    }
-  );
+    details,
+    carriedOver: registeredSkills.filter(s => selectedIds.includes(s.id)),
+    unregisteredCount: toUnregister.length,
+    scope: storageScope,
+    workingDir,
+    target,
+  });
+}
 
-  const updatedSkills: CodemieSkill[] = [
-    ...registeredSkills.filter(s => selectedIds.includes(s.id)),
-    ...newlyRegistered,
-  ];
+interface RegisterAndSaveParams {
+  toRegister: SkillListItem[];
+  details: Map<string, SkillDetail>;
+  /** Registrations that must survive the save regardless of this batch. */
+  carriedOver: CodemieSkill[];
+  unregisteredCount: number;
+  scope: StorageScope;
+  workingDir: string;
+  target: AgentSetupTarget;
+}
 
-  await ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, updatedSkills);
+/**
+ * Writes the selected skills from their pre-fetched details and saves the config,
+ * including when the batch aborts partway: whatever reached disk is recorded before
+ * the error propagates, so the config never claims less than what exists.
+ */
+async function registerAndSaveSkills(params: RegisterAndSaveParams): Promise<void> {
+  const { toRegister, details, carriedOver, scope, workingDir, target } = params;
+  const written: CodemieSkill[] = [];
+  const save = (items: CodemieSkill[]): Promise<void> =>
+    ConfigLoader.saveSkillsToProjectConfig(workingDir, scope, items);
 
-  const configLocation = ConfigLoader.getConfigLocationLabel(storageScope, workingDir);
+  try {
+    const newlyRegistered = await registerAllOrAbort(
+      toRegister,
+      (skill) => skill.name,
+      async (skill) => {
+        const registration = await registerSkill(
+          requireSkillDetail(details, skill.id),
+          scope,
+          workingDir,
+          target
+        );
+        written.push(registration);
+        return registration;
+      }
+    );
+
+    await save([...carriedOver, ...newlyRegistered]);
+    printSkillsSummary(newlyRegistered.length, params.unregisteredCount, scope, workingDir, target);
+  } catch (error) {
+    await persistPartialWrites(written, carriedOver, save);
+    throw error;
+  }
+}
+
+/**
+ * Fetches the detail payload of every skill that is about to be written. This is the
+ * call that proves the caller can actually read the skill, so it runs for the whole
+ * batch up front: inside the write loop, a 403 on the last skill would abort only
+ * after earlier artifacts had already been written.
+ */
+async function prefetchSkillDetails(
+  skills: SkillListItem[],
+  fetcher: ReturnType<typeof createSkillDataFetcher>
+): Promise<Map<string, SkillDetail>> {
+  const details = new Map<string, SkillDetail>();
+
+  for (const skill of skills) {
+    details.set(skill.id, await fetcher.fetchSkillById(skill.id));
+  }
+
+  return details;
+}
+
+function requireSkillDetail(details: Map<string, SkillDetail>, id: string): SkillDetail {
+  const detail = details.get(id);
+
+  if (!detail) {
+    throw new RegistrationItemNotFoundError('skill', id);
+  }
+
+  return detail;
+}
+
+function printSkillsSummary(
+  registeredCount: number,
+  unregisteredCount: number,
+  scope: StorageScope,
+  workingDir: string,
+  target: AgentSetupTarget
+): void {
+  const configLocation = ConfigLoader.getConfigLocationLabel(scope, workingDir);
 
   console.log('');
-  if (newlyRegistered.length > 0) {
-    console.log(chalk.green(`✓ Registered ${newlyRegistered.length} skill(s)`));
+  if (registeredCount > 0) {
+    console.log(chalk.green(`✓ Registered ${registeredCount} skill(s)`));
   }
-  if (toUnregister.length > 0) {
-    console.log(chalk.yellow(`○ Unregistered ${toUnregister.length} skill(s)`));
+  if (unregisteredCount > 0) {
+    console.log(chalk.yellow(`○ Unregistered ${unregisteredCount} skill(s)`));
   }
   console.log(chalk.dim(`\nSkills saved to: ${configLocation}`));
   console.log(chalk.dim(`Skills are available for ${formatAgentSetupTarget(target)}.\n`));
@@ -212,62 +304,69 @@ export async function setupSkillsHeadless(options: SetupCommandOptions, hostAgen
   const workingDir = process.cwd();
   logger.debug('Setting up skills (headless)', { profileName, options, hostAgent });
 
-  const skillIdentifiers = parseListFlag(requireFlag(options.skill, '--skill'));
-  const storageScope = parseScopeFlag(requireFlag(options.scope, '--scope'));
-  requireFlag(options.agent, '--agent');
+  const { identifiers, storageScope, target } = parseHeadlessSkillFlags(options, hostAgent);
 
   printSkillsNotice();
 
   const config = await ConfigLoader.load(workingDir, { name: profileName });
-  const client = await getAuthenticatedClient(config);
+  const client = await getAuthenticatedClient(config, { nonInteractive: true });
   const registeredSkills = await ConfigLoader.loadSkillsByScope(storageScope, workingDir, profileName);
 
   const fetcher = createSkillDataFetcher({ client, registeredSkills });
   const catalog = await fetcher.fetchAllVisibleSkills();
 
-  const resolvedSkills = resolveIdentifiers('skill', skillIdentifiers, catalog);
-  const target = parseAgentSetupTarget(options.agent as string);
-
-  // Headless registration is purely additive: it must never unregister a skill
-  // that isn't named in `--skill`. `determineChanges` derives removals from
-  // whichever "currently registered" set it's handed, so the set passed in is
-  // scoped down to the overlap with the request (every already-registered skill
-  // outside that scope is withheld entirely and reconciled back into the saved
-  // list afterwards, untouched).
+  const resolvedSkills = resolveIdentifiers('skill', identifiers, catalog);
   const selectedIds = Array.from(new Set(resolvedSkills.map(skill => skill.id)));
-  const selectedIdSet = new Set(selectedIds);
-  const registeredInScope = registeredSkills.filter(s => selectedIdSet.has(s.id));
-  const untouchedRegistered = registeredSkills.filter(s => !selectedIdSet.has(s.id));
+  const { inScope } = partitionRegisteredByRequest(registeredSkills, selectedIds);
 
-  const { newlyRegistered, unregistered } = await applySkillChanges(
-    selectedIds,
-    catalog,
-    registeredInScope,
-    storageScope,
-    workingDir,
-    target,
-    fetcher
-  );
+  // Headless registration is purely additive: every already-registered skill the
+  // request does not name survives the save untouched.
+  const carryOver = (written: CodemieSkill[]): CodemieSkill[] => {
+    const writtenIds = new Set(written.map(skill => skill.id));
+    return registeredSkills.filter(skill => !writtenIds.has(skill.id));
+  };
+  const written: CodemieSkill[] = [];
+  const save = (items: CodemieSkill[]): Promise<void> =>
+    ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, items);
 
-  if (newlyRegistered.length === 0 && unregistered.length === 0) {
-    return;
+  try {
+    const { newlyRegistered, unregistered } = await applySkillChanges(
+      { selectedIds, catalog, registeredSkills: inScope, scope: storageScope, workingDir, target, fetcher },
+      written
+    );
+
+    if (newlyRegistered.length === 0 && unregistered.length === 0) {
+      return;
+    }
+
+    await save([...carryOver(newlyRegistered), ...newlyRegistered]);
+    printSkillsSummary(newlyRegistered.length, unregistered.length, storageScope, workingDir, target);
+  } catch (error) {
+    await persistPartialWrites(written, carryOver(written), save);
+    throw error;
   }
+}
 
-  const updatedSkills: CodemieSkill[] = [...untouchedRegistered, ...newlyRegistered];
+interface HeadlessSkillFlags {
+  identifiers: string[];
+  storageScope: StorageScope;
+  target: AgentSetupTarget;
+}
 
-  await ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, updatedSkills);
-
-  const configLocation = ConfigLoader.getConfigLocationLabel(storageScope, workingDir);
-
-  console.log('');
-  if (newlyRegistered.length > 0) {
-    console.log(chalk.green(`✓ Registered ${newlyRegistered.length} skill(s)`));
-  }
-  if (unregistered.length > 0) {
-    console.log(chalk.yellow(`○ Unregistered ${unregistered.length} skill(s)`));
-  }
-  console.log(chalk.dim(`\nSkills saved to: ${configLocation}`));
-  console.log(chalk.dim(`Skills are available for ${formatAgentSetupTarget(target)}.\n`));
+/**
+ * Validates and parses every headless input before any network call or write, so a
+ * missing or invalid flag aborts with an error naming it. `--agent` may come from
+ * the hosting agent (`codemie-<agent> setup skills`); nothing else is inferred.
+ */
+function parseHeadlessSkillFlags(
+  options: SetupCommandOptions,
+  hostAgent?: TargetAgent
+): HeadlessSkillFlags {
+  return {
+    identifiers: parseListFlag(requireFlag(options.skill, '--skill')),
+    storageScope: parseScopeFlag(requireFlag(options.scope, '--scope')),
+    target: resolveHeadlessAgentTarget(options.agent, hostAgent),
+  };
 }
 
 interface ApplySkillChangesResult {
@@ -275,15 +374,22 @@ interface ApplySkillChangesResult {
   unregistered: CodemieSkill[];
 }
 
+interface ApplySkillChangesParams {
+  selectedIds: string[];
+  catalog: SkillListItem[];
+  registeredSkills: CodemieSkill[];
+  scope: StorageScope;
+  workingDir: string;
+  target: AgentSetupTarget;
+  fetcher: ReturnType<typeof createSkillDataFetcher>;
+}
+
 async function applySkillChanges(
-  selectedIds: string[],
-  catalog: SkillListItem[],
-  registeredSkills: CodemieSkill[],
-  scope: StorageScope,
-  workingDir: string,
-  target: AgentSetupTarget,
-  fetcher: ReturnType<typeof createSkillDataFetcher>
+  params: ApplySkillChangesParams,
+  /** Collects each registration as it reaches disk, so a caller can record a partial batch. */
+  writeSink?: CodemieSkill[]
 ): Promise<ApplySkillChangesResult> {
+  const { selectedIds, catalog, registeredSkills, scope, workingDir, target, fetcher } = params;
   const { toRegister, toUnregister } = determineChanges(selectedIds, catalog, registeredSkills);
   const selectedSet = new Set(selectedIds);
   const toReregister = registeredSkills.filter(s => selectedSet.has(s.id));
@@ -293,22 +399,58 @@ async function applySkillChanges(
     return { newlyRegistered: [], unregistered: [] };
   }
 
-  for (const skill of [...toUnregister, ...toReregister]) {
+  const allToRegister = [...toRegister, ...getFullSkills(toReregister, catalog)];
+
+  // Pre-flight: prove every skill is readable before the first artifact is written,
+  // and before any existing registration is removed.
+  const details = await prefetchSkillDetails(allToRegister, fetcher);
+
+  for (const skill of toUnregister) {
     await unregisterSkill(skill, scope, workingDir, target);
   }
 
-  const allToRegister = [...toRegister, ...getFullSkills(toReregister, catalog)];
+  const previousById = new Map(toReregister.map(skill => [skill.id, skill]));
 
   const newlyRegistered = await registerAllOrAbort(
     allToRegister,
     (skill) => skill.name,
-    async (skill) => {
-      const detail = await fetcher.fetchSkillById(skill.id);
-      return registerSkill(detail, scope, workingDir, target);
-    }
+    (skill) => writeOneSkill(skill, {
+      details,
+      previous: previousById.get(skill.id),
+      scope,
+      workingDir,
+      target,
+      writeSink,
+    })
   );
 
   return { newlyRegistered, unregistered: toUnregister };
+}
+
+interface WriteSkillContext {
+  details: Map<string, SkillDetail>;
+  /** The existing registration this write replaces, when the skill is being re-registered. */
+  previous?: CodemieSkill;
+  scope: StorageScope;
+  workingDir: string;
+  target: AgentSetupTarget;
+  writeSink?: CodemieSkill[];
+}
+
+async function writeOneSkill(skill: SkillListItem, context: WriteSkillContext): Promise<CodemieSkill> {
+  const { details, previous, scope, workingDir, target, writeSink } = context;
+
+  // A re-registration removes its previous artifacts immediately before the
+  // replacement is written, never up front for the whole batch: an earlier
+  // failure would otherwise leave a working skill deleted and unwritten.
+  if (previous) {
+    await unregisterSkill(previous, scope, workingDir, target);
+  }
+
+  const registration = await registerSkill(requireSkillDetail(details, skill.id), scope, workingDir, target);
+  writeSink?.push(registration);
+
+  return registration;
 }
 
 function getFullSkills(skills: CodemieSkill[], catalog: SkillListItem[]): SkillListItem[] {

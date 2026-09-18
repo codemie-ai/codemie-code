@@ -11,8 +11,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SkillListItem } from 'codemie-sdk';
-import { ConfigurationError, RegistrationItemNotFoundError } from '@/utils/errors.js';
+import {
+  ConfigurationError,
+  PartialRegistrationError,
+  RegistrationItemNotFoundError,
+} from '@/utils/errors.js';
 import { StorageScope } from '@/env/types.js';
+import { ACTION_TYPE } from '../constants.js';
 import type { SetupCommandOptions } from '../index.js';
 
 vi.mock('@/utils/logger.js', () => ({
@@ -36,6 +41,19 @@ vi.mock('@/utils/config.js', () => ({
 vi.mock('@/utils/auth.js', () => ({
   getAuthenticatedClient: vi.fn(),
 }));
+
+vi.mock('@/cli/commands/shared/helpers.js', async () => {
+  const actual = await vi.importActual<typeof import('@/cli/commands/shared/helpers.js')>(
+    '@/cli/commands/shared/helpers.js'
+  );
+  return {
+    ...actual,
+    // Rethrow instead of process.exit(1) so the command action is testable.
+    handleSetupError: vi.fn((error: unknown) => {
+      throw error;
+    }),
+  };
+});
 
 vi.mock('../data.js', () => ({
   createSkillDataFetcher: vi.fn(),
@@ -84,6 +102,7 @@ describe('setupSkillsHeadless', () => {
   const catalog = [
     makeSkill('id-1', 'Skill One'),
     makeSkill('id-2', 'Skill Two'),
+    makeSkill('id-3', 'Skill Three'),
   ];
 
   let setRawModeSpy: ReturnType<typeof vi.fn>;
@@ -109,15 +128,17 @@ describe('setupSkillsHeadless', () => {
       fetchSkillsByIds: vi.fn(),
       fetchAllVisibleSkills: vi.fn().mockResolvedValue(catalog),
     });
-    vi.mocked(registerSkill).mockImplementation(async (skill: any) => ({
-      id: skill.id,
-      name: skill.name,
-      slug: skill.name.toLowerCase().replace(/\s+/g, '-'),
-      description: skill.description,
-      project: skill.project,
-      registeredAt: '2026-01-01T00:00:00.000Z',
-      agentTargets: ['claude'],
-    }));
+    vi.mocked(registerSkill).mockImplementation(
+      async (skill: any, _scope?: any, _workingDir?: any, target: any = ['claude']) => ({
+        id: skill.id,
+        name: skill.name,
+        slug: skill.name.toLowerCase().replace(/\s+/g, '-'),
+        description: skill.description,
+        project: skill.project,
+        registeredAt: '2026-01-01T00:00:00.000Z',
+        agentTargets: target,
+      })
+    );
     vi.mocked(unregisterSkill).mockResolvedValue(undefined);
   });
 
@@ -233,6 +254,130 @@ describe('setupSkillsHeadless', () => {
       StorageScope.GLOBAL,
       expect.arrayContaining([expect.objectContaining({ id: 'id-3' })])
     );
+  });
+
+  it('accepts the hosting agent in place of --agent and registers for it', async () => {
+    const { agent: _agent, ...options } = fullOptions;
+    const { setupSkillsHeadless } = await import('../index.js');
+
+    await setupSkillsHeadless({ ...options, skill: 'id-1' }, 'claude');
+
+    expect(registerSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id-1' }),
+      StorageScope.GLOBAL,
+      expect.any(String),
+      ['claude']
+    );
+  });
+
+  it('passes every --agent target through to the writers and persists them', async () => {
+    const { setupSkillsHeadless } = await import('../index.js');
+
+    await setupSkillsHeadless({ ...fullOptions, skill: 'id-1', agent: 'codex,gemini' });
+
+    expect(registerSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id-1' }),
+      StorageScope.GLOBAL,
+      expect.any(String),
+      ['codex', 'gemini']
+    );
+    expect(ConfigLoader.saveSkillsToProjectConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      StorageScope.GLOBAL,
+      [expect.objectContaining({ id: 'id-1', agentTargets: ['codex', 'gemini'] })]
+    );
+  });
+
+  it('proves every skill is readable before the first artifact is written', async () => {
+    // Arrange: the detail fetch is what proves access. When the last skill of the
+    // batch is unreadable, nothing at all may have been written.
+    const fetcher = {
+      fetchSkills: vi.fn(),
+      fetchSkillById: vi.fn().mockImplementation(async (id: string) => {
+        if (id === 'id-3') {
+          throw new Error('403 forbidden');
+        }
+        const skill = catalog.find((s) => s.id === id)!;
+        return { ...skill, content: 'skill body', toolkits: [], mcp_servers: [] };
+      }),
+      fetchSkillsByIds: vi.fn(),
+      fetchAllVisibleSkills: vi.fn().mockResolvedValue(catalog),
+    };
+    vi.mocked(createSkillDataFetcher).mockReturnValue(fetcher);
+
+    const { setupSkillsHeadless } = await import('../index.js');
+
+    await expect(
+      setupSkillsHeadless({ ...fullOptions, skill: 'id-1,id-2,id-3' })
+    ).rejects.toThrow(/403 forbidden/);
+
+    expect(registerSkill).not.toHaveBeenCalled();
+    expect(unregisterSkill).not.toHaveBeenCalled();
+    expect(ConfigLoader.saveSkillsToProjectConfig).not.toHaveBeenCalled();
+  });
+
+  it('records the skills already written when a later write in the batch fails', async () => {
+    vi.mocked(registerSkill).mockImplementation(async (skill: any) => {
+      if (skill.id === 'id-2') {
+        throw new Error('generator exploded');
+      }
+      return {
+        id: skill.id,
+        name: skill.name,
+        slug: skill.name.toLowerCase().replace(/\s+/g, '-'),
+        description: skill.description,
+        project: skill.project,
+        registeredAt: '2026-01-01T00:00:00.000Z',
+        agentTargets: ['claude'],
+      } as any;
+    });
+
+    const { setupSkillsHeadless } = await import('../index.js');
+
+    await expect(
+      setupSkillsHeadless({ ...fullOptions, skill: 'id-1,id-2,id-3' })
+    ).rejects.toBeInstanceOf(PartialRegistrationError);
+
+    expect(ConfigLoader.saveSkillsToProjectConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      StorageScope.GLOBAL,
+      [expect.objectContaining({ id: 'id-1' })]
+    );
+  });
+
+  it('forbids the interactive re-auth prompt by authenticating non-interactively', async () => {
+    const { setupSkillsHeadless } = await import('../index.js');
+
+    await setupSkillsHeadless(fullOptions);
+
+    expect(getAuthenticatedClient).toHaveBeenCalledWith(expect.anything(), { nonInteractive: true });
+  });
+
+  it('still runs the wizard at a TTY when only the pre-existing --agent flag is given', async () => {
+    // Regression: --agent shipped as a wizard preselector, so it must not divert a
+    // TTY invocation into the headless branch and fail on a missing --skill.
+    const originalIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    vi.mocked(promptStorageScope).mockResolvedValue(StorageScope.GLOBAL);
+    vi.mocked(promptSkillSelection).mockResolvedValue({ selectedIds: [], action: ACTION_TYPE.CANCEL } as any);
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+
+    try {
+      const { createSkillsSetupCommand } = await import('../index.js');
+
+      const run = createSkillsSetupCommand().parseAsync(['--agent', 'claude'], { from: 'user' });
+      // The interactive disclaimer gate is reached, which is the proof the wizard ran.
+      await vi.waitFor(() => expect(setRawModeSpy).toHaveBeenCalledWith(true));
+      process.stdin.emit('data', '\r');
+      await run;
+
+      expect(promptSkillSelection).toHaveBeenCalled();
+      expect(resolveAgentSetupTargets).toHaveBeenCalledWith('claude', undefined);
+      expect(registerSkill).not.toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTty, configurable: true });
+    }
   });
 
   it('exposes an identical option-name set for both wiring sites', async () => {

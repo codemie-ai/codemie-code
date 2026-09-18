@@ -777,7 +777,7 @@ describe('Data Fetcher', () => {
 
   describe('fetchAllVisibleAssistants', () => {
     it('should page through listPaginated until pages are exhausted and concatenate results', async () => {
-      // Arrange
+      // Arrange: two pages of project-scope results, then one marketplace page
       const page0Response = {
         data: [{ id: 'visible-1', name: 'Visible 1' } as Assistant],
         pagination: { total: 2, pages: 2, page: 0 }
@@ -786,10 +786,15 @@ describe('Data Fetcher', () => {
         data: [{ id: 'visible-2', name: 'Visible 2' } as Assistant],
         pagination: { total: 2, pages: 2, page: 1 }
       };
+      const marketplaceResponse = {
+        data: [],
+        pagination: { total: 0, pages: 1, page: 0 }
+      };
 
       vi.mocked(mockClient.assistants.listPaginated)
         .mockResolvedValueOnce(page0Response)
-        .mockResolvedValueOnce(page1Response);
+        .mockResolvedValueOnce(page1Response)
+        .mockResolvedValueOnce(marketplaceResponse);
 
       const fetcher = createDataFetcher({
         config: mockConfig,
@@ -800,11 +805,10 @@ describe('Data Fetcher', () => {
       // Act
       const result = await fetcher.fetchAllVisibleAssistants();
 
-      // Assert: both pages concatenated, listPaginated called twice
+      // Assert: both pages concatenated
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('visible-1');
       expect(result[1].id).toBe('visible-2');
-      expect(mockClient.assistants.listPaginated).toHaveBeenCalledTimes(2);
       expect(mockClient.assistants.listPaginated).toHaveBeenNthCalledWith(1,
         expect.objectContaining({ page: 0, scope: API_SCOPE.VISIBLE_TO_USER })
       );
@@ -813,7 +817,65 @@ describe('Data Fetcher', () => {
       );
     });
 
-    it('should stop after a single page when pages is 1', async () => {
+    it('should request bulk pages rather than the wizard page size', async () => {
+      // Arrange: resolving a couple of identifiers must not cost ceil(N/5) round-trips
+      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue({
+        data: [],
+        pagination: { total: 0, pages: 1, page: 0 }
+      });
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      await fetcher.fetchAllVisibleAssistants();
+
+      // Assert
+      expect(mockClient.assistants.listPaginated).toHaveBeenCalledWith(
+        expect.objectContaining({ per_page: 100, minimal_response: false })
+      );
+    });
+
+    it('should include marketplace assistants, merged and de-duplicated by id', async () => {
+      // Arrange: the wizard shows a project panel and a marketplace panel, so the
+      // headless catalog has to be the union of both — a marketplace assistant is
+      // installable and must never resolve as "not found".
+      const projectResponse = {
+        data: [{ id: 'visible-1', name: 'Visible 1' } as Assistant],
+        pagination: { total: 1, pages: 1, page: 0 }
+      };
+      const marketplaceResponse = {
+        data: [
+          { id: 'visible-1', name: 'Visible 1' } as Assistant,
+          { id: 'market-1', name: 'Marketplace One' } as Assistant,
+        ],
+        pagination: { total: 2, pages: 1, page: 0 }
+      };
+
+      vi.mocked(mockClient.assistants.listPaginated)
+        .mockResolvedValueOnce(projectResponse)
+        .mockResolvedValueOnce(marketplaceResponse);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      const result = await fetcher.fetchAllVisibleAssistants();
+
+      // Assert
+      expect(result.map(assistant => assistant.id)).toEqual(['visible-1', 'market-1']);
+      expect(mockClient.assistants.listPaginated).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({ page: 0, scope: API_SCOPE.MARKETPLACE })
+      );
+    });
+
+    it('should stop after a single page per scope when pages is 1', async () => {
       // Arrange
       const singlePageResponse = {
         data: [{ id: 'visible-1', name: 'Visible 1' } as Assistant],
@@ -831,9 +893,9 @@ describe('Data Fetcher', () => {
       // Act
       const result = await fetcher.fetchAllVisibleAssistants();
 
-      // Assert
+      // Assert: one page for each of the two scopes, de-duplicated to one entry
       expect(result).toHaveLength(1);
-      expect(mockClient.assistants.listPaginated).toHaveBeenCalledTimes(1);
+      expect(mockClient.assistants.listPaginated).toHaveBeenCalledTimes(2);
     });
 
     it('should surface a clear re-auth error when a stale SSO session redirects to Keycloak HTML', async () => {

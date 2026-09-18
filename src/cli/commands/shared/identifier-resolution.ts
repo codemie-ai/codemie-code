@@ -13,38 +13,43 @@ export interface ResolvableItem {
   slug?: string;
 }
 
+function bucket<T>(map: Map<string, T[]>, key: string, item: T): void {
+  const existing = map.get(key);
+
+  if (existing) {
+    existing.push(item);
+  } else {
+    map.set(key, [item]);
+  }
+}
+
 /**
  * Resolves each requested identifier against the catalog, matching case-insensitively
  * by id, then slug, then exact name. Results are ordered like `identifiers`.
  *
  * Throws `RegistrationItemNotFoundError` when an identifier matches nothing, and
- * `AmbiguousIdentifierError` when a name identifier matches multiple catalog entries
- * (listing every candidate rather than picking one).
+ * `AmbiguousIdentifierError` — listing every candidate rather than picking one —
+ * whenever an identifier matches multiple catalog entries, whether they collide on
+ * id, slug or name. Since matching is case-insensitive throughout, entries whose
+ * keys differ only in case collide too.
  */
 export function resolveIdentifiers<T extends ResolvableItem>(
   kind: 'assistant' | 'skill',
   identifiers: string[],
   catalog: T[]
 ): T[] {
-  const byId = new Map<string, T>();
-  const bySlug = new Map<string, T>();
+  const byId = new Map<string, T[]>();
+  const bySlug = new Map<string, T[]>();
   const byName = new Map<string, T[]>();
 
   for (const item of catalog) {
-    byId.set(item.id.toLowerCase(), item);
+    bucket(byId, item.id.toLowerCase(), item);
 
     if (item.slug) {
-      bySlug.set(item.slug.toLowerCase(), item);
+      bucket(bySlug, item.slug.toLowerCase(), item);
     }
 
-    const nameKey = item.name.toLowerCase();
-    const bucket = byName.get(nameKey);
-
-    if (bucket) {
-      bucket.push(item);
-    } else {
-      byName.set(nameKey, [item]);
-    }
+    bucket(byName, item.name.toLowerCase(), item);
   }
 
   return identifiers.map((identifier) => {
@@ -54,23 +59,16 @@ export function resolveIdentifiers<T extends ResolvableItem>(
       throw new RegistrationItemNotFoundError(kind, identifier);
     }
 
-    const idMatch = byId.get(key);
-    if (idMatch) {
-      return idMatch;
-    }
+    for (const candidates of [byId.get(key), bySlug.get(key), byName.get(key)]) {
+      if (!candidates) {
+        continue;
+      }
 
-    const slugMatch = bySlug.get(key);
-    if (slugMatch) {
-      return slugMatch;
-    }
+      if (candidates.length > 1) {
+        throw new AmbiguousIdentifierError(kind, identifier, candidates);
+      }
 
-    const nameMatches = byName.get(key);
-    if (nameMatches && nameMatches.length === 1) {
-      return nameMatches[0];
-    }
-
-    if (nameMatches && nameMatches.length > 1) {
-      throw new AmbiguousIdentifierError(kind, identifier, nameMatches);
+      return candidates[0];
     }
 
     throw new RegistrationItemNotFoundError(kind, identifier);

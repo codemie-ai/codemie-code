@@ -36,6 +36,13 @@ export async function executeWithSpinner<T>(
   }
 }
 
+/**
+ * Runs `operation` behind a spinner and **rethrows** the original error after
+ * invoking `onError`, in deliberate contrast to `executeWithSpinner`, which
+ * swallows the failure and returns `null` (a `null` a caller easily reads as
+ * "skip this one" and reports as success). Use this variant wherever a failed
+ * write must abort the run.
+ */
 export async function executeWithSpinnerStrict<T>(
   spinnerMessage: string,
   operation: () => Promise<T>,
@@ -93,6 +100,28 @@ export async function registerAllOrAbort<TItem, TResult>(
   }
 
   return results;
+}
+
+/**
+ * Records the items a batch already wrote before it aborted, so the saved config
+ * never claims less than what exists on disk (an artifact with no config entry can
+ * neither be listed nor unregistered). A failure to save is logged and swallowed:
+ * it must never mask the registration error the caller is about to rethrow.
+ */
+export async function persistPartialWrites<T>(
+  written: T[],
+  untouched: T[],
+  save: (items: T[]) => Promise<void>
+): Promise<void> {
+  if (written.length === 0) {
+    return;
+  }
+
+  try {
+    await save([...untouched, ...written]);
+  } catch (error) {
+    logger.error('Failed to record partially written registrations', { error });
+  }
 }
 
 export function determineChanges<

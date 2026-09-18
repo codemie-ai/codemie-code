@@ -56,6 +56,28 @@ describe('resolveIdentifiers', () => {
     expect(resolveIdentifiers('skill', ['Duplicate'], items)).toEqual([items[0]]);
   });
 
+  it('throws AmbiguousIdentifierError instead of last-wins when two entries share a slug', () => {
+    const items: Fixture[] = [
+      { id: 'id-1', name: 'Project A copy', slug: 'shared-slug' },
+      { id: 'id-2', name: 'Project B copy', slug: 'shared-slug' }
+    ];
+
+    expect(() => resolveIdentifiers('assistant', ['shared-slug'], items)).toThrow(AmbiguousIdentifierError);
+    expect(() => resolveIdentifiers('assistant', ['shared-slug'], items)).toThrow(/id-1/);
+    expect(() => resolveIdentifiers('assistant', ['shared-slug'], items)).toThrow(/id-2/);
+  });
+
+  it('throws AmbiguousIdentifierError instead of last-wins when two entries share an id', () => {
+    const items: Fixture[] = [
+      { id: 'same-id', name: 'First', slug: 'first' },
+      { id: 'SAME-ID', name: 'Second', slug: 'second' }
+    ];
+
+    expect(() => resolveIdentifiers('skill', ['same-id'], items)).toThrow(AmbiguousIdentifierError);
+    expect(() => resolveIdentifiers('skill', ['same-id'], items)).toThrow(/First/);
+    expect(() => resolveIdentifiers('skill', ['same-id'], items)).toThrow(/Second/);
+  });
+
   it('does not crash on items with no slug and does not match an empty identifier against them', () => {
     const items: Fixture[] = [{ id: 'id-1', name: 'NoSlug' }];
 

@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PartialRegistrationError } from '@/utils/errors.js';
 
+vi.mock('@/utils/logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    getLogFilePath: vi.fn(),
+  },
+}));
+
 vi.mock('ora', () => ({
   default: vi.fn(() => ({
     start: vi.fn().mockReturnThis(),
@@ -115,5 +124,34 @@ describe('registerAllOrAbort', () => {
     await registerAllOrAbort(items, (item) => item, writeOne);
 
     expect(Math.max(...maxConcurrent)).toBe(1);
+  });
+});
+
+describe('persistPartialWrites', () => {
+  it('saves the already-written items alongside the untouched ones', async () => {
+    const { persistPartialWrites } = await import('../helpers.js');
+    const save = vi.fn(async () => {});
+
+    await persistPartialWrites([{ id: 'written' }], [{ id: 'untouched' }], save);
+
+    expect(save).toHaveBeenCalledWith([{ id: 'untouched' }, { id: 'written' }]);
+  });
+
+  it('does not save at all when nothing was written', async () => {
+    const { persistPartialWrites } = await import('../helpers.js');
+    const save = vi.fn(async () => {});
+
+    await persistPartialWrites([], [{ id: 'untouched' }], save);
+
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('swallows a save failure so it cannot mask the original registration error', async () => {
+    const { persistPartialWrites } = await import('../helpers.js');
+    const save = vi.fn(async () => {
+      throw new Error('config write failed');
+    });
+
+    await expect(persistPartialWrites([{ id: 'written' }], [], save)).resolves.toBeUndefined();
   });
 });
