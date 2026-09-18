@@ -124,6 +124,33 @@ describe('Skill Data Fetcher', () => {
       expect(result[0].id).toBe('skill-2');
     });
 
+    it('finds an id that lives on page two, instead of reporting it not found', async () => {
+      // Arrange: the requested skill is not on page one, so a single-page,
+      // client-side filter would incorrectly treat it as "not found".
+      const page0Response = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 2,
+        pages: 2
+      };
+      const page1Response = {
+        skills: [{ id: 'skill-2', name: 'Skill 2' } as SkillListItem],
+        page: 1,
+        total: 2,
+        pages: 2
+      };
+      vi.mocked(mockClient.skills.listPaginated)
+        .mockResolvedValueOnce(page0Response as any)
+        .mockResolvedValueOnce(page1Response as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchSkillsByIds(['skill-2'], []);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('skill-2');
+      expect(mockClient.skills.listPaginated).toHaveBeenCalledTimes(2);
+    });
+
     it('surfaces a clear re-auth error on a stale session when fetching by IDs', async () => {
       const keycloakLoginHtml = '<!DOCTYPE html><html>keycloak</html>';
       vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
@@ -132,6 +159,67 @@ describe('Skill Data Fetcher', () => {
 
       await expect(
         fetcher.fetchSkillsByIds(['skill-1'], [])
+      ).rejects.toThrow(/session has expired.*codemie profile login/i);
+    });
+  });
+
+  describe('fetchAllVisibleSkills', () => {
+    it('pages through listPaginated until pages are exhausted and concatenates results', async () => {
+      const page0Response = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 2,
+        pages: 2
+      };
+      const page1Response = {
+        skills: [{ id: 'skill-2', name: 'Skill 2' } as SkillListItem],
+        page: 1,
+        total: 2,
+        pages: 2
+      };
+      vi.mocked(mockClient.skills.listPaginated)
+        .mockResolvedValueOnce(page0Response as any)
+        .mockResolvedValueOnce(page1Response as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchAllVisibleSkills();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('skill-1');
+      expect(result[1].id).toBe('skill-2');
+      expect(mockClient.skills.listPaginated).toHaveBeenCalledTimes(2);
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({ page: 0 })
+      );
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({ page: 1 })
+      );
+    });
+
+    it('stops after a single page when pages is 1', async () => {
+      const singlePageResponse = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 1,
+        pages: 1
+      };
+      vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(singlePageResponse as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchAllVisibleSkills();
+
+      expect(result).toHaveLength(1);
+      expect(mockClient.skills.listPaginated).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces a clear re-auth error when a stale SSO session redirects to Keycloak HTML', async () => {
+      const keycloakLoginHtml = '<!DOCTYPE html><html>keycloak</html>';
+      vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      await expect(
+        fetcher.fetchAllVisibleSkills()
       ).rejects.toThrow(/session has expired.*codemie profile login/i);
     });
   });

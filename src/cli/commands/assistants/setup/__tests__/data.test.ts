@@ -76,6 +76,7 @@ describe('Data Fetcher', () => {
       expect(fetcher).toBeDefined();
       expect(fetcher.fetchAssistants).toBeTypeOf('function');
       expect(fetcher.fetchAssistantsByIds).toBeTypeOf('function');
+      expect(fetcher.fetchAllVisibleAssistants).toBeTypeOf('function');
     });
   });
 
@@ -684,14 +685,16 @@ describe('Data Fetcher', () => {
       expect(mockClient.assistants.get).toHaveBeenCalledTimes(2);
     });
 
-    it('should continue on API error for individual assistant', async () => {
-      // Arrange
+    it('should reject when an individual assistant fetch fails, instead of silently dropping it', async () => {
+      // Arrange: a caller that cannot access asst-2 must see the run fail, not
+      // silently succeed with only asst-1 and asst-3 registered.
       const existingAssistants: Assistant[] = [
         { id: 'asst-1', name: 'Assistant 1' } as Assistant,
       ];
 
+      const notFoundError = new Error('Assistant not found');
       vi.mocked(mockClient.assistants.get)
-        .mockRejectedValueOnce(new Error('Assistant not found'))
+        .mockRejectedValueOnce(notFoundError)
         .mockResolvedValueOnce({ id: 'asst-3', name: 'Assistant 3' } as Assistant);
 
       const fetcher = createDataFetcher({
@@ -700,17 +703,10 @@ describe('Data Fetcher', () => {
         options: mockOptions
       });
 
-      // Act
-      const result = await fetcher.fetchAssistantsByIds(
-        ['asst-1', 'asst-2', 'asst-3'],
-        existingAssistants
-      );
-
-      // Assert: Should have asst-1 and asst-3, but not asst-2 (failed)
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('asst-1');
-      expect(result[1].id).toBe('asst-3');
-      expect(mockClient.assistants.get).toHaveBeenCalledTimes(2);
+      // Act & Assert
+      await expect(
+        fetcher.fetchAssistantsByIds(['asst-1', 'asst-2', 'asst-3'], existingAssistants)
+      ).rejects.toThrow('Assistant not found');
     });
 
     it('should handle empty selected IDs', async () => {
@@ -776,6 +772,85 @@ describe('Data Fetcher', () => {
       expect(result[0].id).toBe('asst-1');
       expect(result[1].id).toBe('asst-2');
       expect(result[2].id).toBe('asst-3');
+    });
+  });
+
+  describe('fetchAllVisibleAssistants', () => {
+    it('should page through listPaginated until pages are exhausted and concatenate results', async () => {
+      // Arrange
+      const page0Response = {
+        data: [{ id: 'visible-1', name: 'Visible 1' } as Assistant],
+        pagination: { total: 2, pages: 2, page: 0 }
+      };
+      const page1Response = {
+        data: [{ id: 'visible-2', name: 'Visible 2' } as Assistant],
+        pagination: { total: 2, pages: 2, page: 1 }
+      };
+
+      vi.mocked(mockClient.assistants.listPaginated)
+        .mockResolvedValueOnce(page0Response)
+        .mockResolvedValueOnce(page1Response);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      const result = await fetcher.fetchAllVisibleAssistants();
+
+      // Assert: both pages concatenated, listPaginated called twice
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('visible-1');
+      expect(result[1].id).toBe('visible-2');
+      expect(mockClient.assistants.listPaginated).toHaveBeenCalledTimes(2);
+      expect(mockClient.assistants.listPaginated).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({ page: 0, scope: API_SCOPE.VISIBLE_TO_USER })
+      );
+      expect(mockClient.assistants.listPaginated).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({ page: 1, scope: API_SCOPE.VISIBLE_TO_USER })
+      );
+    });
+
+    it('should stop after a single page when pages is 1', async () => {
+      // Arrange
+      const singlePageResponse = {
+        data: [{ id: 'visible-1', name: 'Visible 1' } as Assistant],
+        pagination: { total: 1, pages: 1, page: 0 }
+      };
+
+      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue(singlePageResponse);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      const result = await fetcher.fetchAllVisibleAssistants();
+
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(mockClient.assistants.listPaginated).toHaveBeenCalledTimes(1);
+    });
+
+    it('should surface a clear re-auth error when a stale SSO session redirects to Keycloak HTML', async () => {
+      // Arrange
+      const keycloakLoginHtml = '<!DOCTYPE html><html><head><title>Sign in</title></head><body>keycloak</body></html>';
+      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act & Assert
+      await expect(
+        fetcher.fetchAllVisibleAssistants()
+      ).rejects.toThrow(/session has expired.*codemie profile login/i);
     });
   });
 

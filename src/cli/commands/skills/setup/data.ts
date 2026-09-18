@@ -37,6 +37,7 @@ export interface SkillDataFetcher {
   fetchSkills: (params: FetchSkillsParams) => Promise<FetchSkillsResult>;
   fetchSkillById: (id: string) => Promise<SkillDetail>;
   fetchSkillsByIds: (ids: string[], registeredSkills: CodemieSkill[]) => Promise<SkillListItem[]>;
+  fetchAllVisibleSkills: () => Promise<SkillListItem[]>;
 }
 
 export interface SkillDataFetcherConfig {
@@ -47,6 +48,7 @@ export interface SkillDataFetcherConfig {
 export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDataFetcher {
   const { client, registeredSkills } = config;
   const PER_PAGE = 5;
+  const ALL_VISIBLE_PER_PAGE = 100;
 
   async function fetchSkills(params: FetchSkillsParams): Promise<FetchSkillsResult> {
     const { scope, searchQuery = '', page = 0 } = params;
@@ -119,6 +121,26 @@ export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDat
     return client.skills.get(id);
   }
 
+  async function fetchAllVisibleSkills(): Promise<SkillListItem[]> {
+    logger.debug('[SkillSetup] Fetching all visible skills');
+
+    const skills: SkillListItem[] = [];
+    let page = 0;
+    let pages = 1;
+
+    do {
+      const response = await client.skills.listPaginated({ page, per_page: ALL_VISIBLE_PER_PAGE });
+      assertApiListResponse(response, isSkillListResponse, 'skills');
+
+      skills.push(...response.skills);
+      pages = response.pages;
+      page += 1;
+    } while (page < pages);
+
+    logger.debug('[SkillSetup] Fetched all visible skills', { count: skills.length, pages });
+    return skills;
+  }
+
   async function fetchSkillsByIds(ids: string[], _registeredSkills: CodemieSkill[]): Promise<SkillListItem[]> {
     if (ids.length === 0) {
       return [];
@@ -126,14 +148,13 @@ export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDat
 
     logger.debug('[SkillSetup] Fetching skills by IDs', { ids });
 
-    // Fetch all skills (no efficient bulk endpoint, so fetch all and filter)
-    const response = await client.skills.listPaginated({ per_page: 100 });
-    assertApiListResponse(response, isSkillListResponse, 'skills');
-    const skills = response.skills.filter(skill => ids.includes(skill.id));
+    // No efficient bulk-by-id endpoint, so fetch every visible skill (paged) and filter.
+    const allSkills = await fetchAllVisibleSkills();
+    const skills = allSkills.filter(skill => ids.includes(skill.id));
 
     logger.debug('[SkillSetup] Fetched skills by IDs', { count: skills.length });
     return skills;
   }
 
-  return { fetchSkills, fetchSkillById, fetchSkillsByIds };
+  return { fetchSkills, fetchSkillById, fetchSkillsByIds, fetchAllVisibleSkills };
 }

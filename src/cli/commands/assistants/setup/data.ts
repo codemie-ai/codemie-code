@@ -46,6 +46,7 @@ export interface DataFetcher {
     selectedIds: string[],
     existingAssistants: (Assistant | AssistantBase)[]
   ) => Promise<(Assistant | AssistantBase)[]>;
+  fetchAllVisibleAssistants: () => Promise<AssistantBase[]>;
 }
 
 export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
@@ -158,7 +159,10 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       }
     }
 
-    // Fetch missing assistants
+    // Fetch missing assistants. A rejection here (e.g. the caller cannot
+    // access this assistant) must propagate rather than being swallowed,
+    // otherwise a run that can only reach some requested items reports
+    // success for all of them.
     if (idsToFetch.length > 0) {
       logger.debug('[AssistantSetup] Fetching missing assistant details', {
         count: idsToFetch.length,
@@ -166,13 +170,9 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       });
 
       for (const id of idsToFetch) {
-        try {
-          const assistant = await deps.client.assistants.get(id);
-          existingMap.set(id, assistant);
-          logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
-        } catch (error) {
-          logger.error('[AssistantSetup] Failed to fetch assistant', { id, error });
-        }
+        const assistant = await deps.client.assistants.get(id);
+        existingMap.set(id, assistant);
+        logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
       }
     }
 
@@ -188,8 +188,36 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
     return result;
   }
 
+  async function fetchAllVisibleAssistants(): Promise<AssistantBase[]> {
+    logger.debug('[AssistantSetup] Fetching all visible assistants');
+
+    const all: (Assistant | AssistantBase)[] = [];
+    let page = 0;
+    let pages = 1;
+
+    do {
+      const response = await deps.client.assistants.listPaginated({
+        page,
+        per_page: CONFIG.ITEMS_PER_PAGE,
+        minimal_response: false,
+        scope: API_SCOPE.VISIBLE_TO_USER,
+        filters: { search: '' }
+      });
+
+      assertApiListResponse(response, isAssistantListResponse, 'visible assistants');
+
+      all.push(...response.data);
+      pages = response.pagination.pages;
+      page += 1;
+    } while (page < pages);
+
+    logger.debug('[AssistantSetup] Fetched all visible assistants', { count: all.length, pages });
+    return all;
+  }
+
   return {
     fetchAssistants,
-    fetchAssistantsByIds
+    fetchAssistantsByIds,
+    fetchAllVisibleAssistants
   };
 }
