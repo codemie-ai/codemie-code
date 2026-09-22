@@ -33,6 +33,7 @@ import { extractGeneratedConfig } from './print-config.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
+import { resolveSupportedVersion } from './version-resolution.js';
 
 /**
  * Base class for all agent adapters
@@ -185,10 +186,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Resolve 'supported' to actual version from metadata
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!this.metadata.supportedVersion) {
+      const resolved = await resolveSupportedVersion({
+        agentName: this.metadata.name,
+        npmPackage: this.metadata.npmPackage,
+        fallbackSupportedVersion: this.metadata.supportedVersion,
+      });
+      if (!resolved) {
         throw new Error(`${this.displayName}: No supported version defined in metadata`);
       }
-      resolvedVersion = this.metadata.supportedVersion;
+      resolvedVersion = resolved;
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,
@@ -282,7 +288,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * @returns Version compatibility result with status and version info
    */
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
-    const supportedVersion = this.metadata.supportedVersion || 'latest';
+    const resolved = await resolveSupportedVersion({
+      agentName: this.metadata.name,
+      npmPackage: this.metadata.npmPackage,
+      fallbackSupportedVersion: this.metadata.supportedVersion,
+    });
+    const supportedVersion = resolved || 'latest';
     const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
 
     const installedVersion = await this.getVersion();
@@ -306,7 +317,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       };
     }
 
-    if (!this.metadata.supportedVersion) {
+    if (!resolved) {
       return {
         compatible: true,
         installedVersion,
