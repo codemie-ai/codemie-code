@@ -780,7 +780,7 @@ async function checkAndInstallClaude(): Promise<void> {
             // Installed version is newer than supported
             console.log();
             console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
-            console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
+            console.log(chalk.yellow(`   A newer version is available: v${compat.supportedVersion}`));
             console.log();
             console.log(chalk.white('   To install the supported version:'));
             console.log(chalk.blueBright('   codemie install claude --supported'));
