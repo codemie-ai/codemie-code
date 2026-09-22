@@ -12,6 +12,10 @@ All notable changes to this project are documented in this file, following [Keep
 - Once-per-upgrade "What's new" notice on CLI start after an update
 - Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
 
+### Fixed
+
+- CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
+
 ## [0.15.1] - 2026-09-08
 
 ### Fixed

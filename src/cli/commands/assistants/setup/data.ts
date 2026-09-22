@@ -46,7 +46,13 @@ export interface DataFetcher {
     selectedIds: string[],
     existingAssistants: (Assistant | AssistantBase)[]
   ) => Promise<(Assistant | AssistantBase)[]>;
+  fetchAllVisibleAssistants: () => Promise<AssistantBase[]>;
 }
+
+type ApiScope = typeof API_SCOPE[keyof typeof API_SCOPE];
+
+/** Page size for the resolution-only catalog crawl, mirroring the skills fetcher. */
+const ALL_VISIBLE_PER_PAGE = 100;
 
 export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
   async function fetchAssistants(params: FetchAssistantsParams): Promise<FetchAssistantsResult> {
@@ -158,7 +164,10 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       }
     }
 
-    // Fetch missing assistants
+    // Fetch missing assistants. A rejection here (e.g. the caller cannot
+    // access this assistant) must propagate rather than being swallowed,
+    // otherwise a run that can only reach some requested items reports
+    // success for all of them.
     if (idsToFetch.length > 0) {
       logger.debug('[AssistantSetup] Fetching missing assistant details', {
         count: idsToFetch.length,
@@ -166,13 +175,9 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       });
 
       for (const id of idsToFetch) {
-        try {
-          const assistant = await deps.client.assistants.get(id);
-          existingMap.set(id, assistant);
-          logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
-        } catch (error) {
-          logger.error('[AssistantSetup] Failed to fetch assistant', { id, error });
-        }
+        const assistant = await deps.client.assistants.get(id);
+        existingMap.set(id, assistant);
+        logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
       }
     }
 
@@ -188,8 +193,62 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
     return result;
   }
 
+  async function fetchAllPagesForScope(scope: ApiScope): Promise<(Assistant | AssistantBase)[]> {
+    const all: (Assistant | AssistantBase)[] = [];
+    let page = 0;
+    let pages = 1;
+
+    do {
+      const response = await deps.client.assistants.listPaginated({
+        page,
+        // Bulk page size: this crawl exists to resolve a handful of identifiers,
+        // and the wizard's page size would cost ceil(N/5) sequential requests.
+        // `minimal_response` stays false because the rows this returns are also
+        // the registration payload — a minimal row lacks the fields the
+        // generators need.
+        per_page: ALL_VISIBLE_PER_PAGE,
+        minimal_response: false,
+        scope,
+        filters: scope === API_SCOPE.MARKETPLACE
+          ? { search: '', marketplace: null }
+          : { search: '' }
+      });
+
+      assertApiListResponse(response, isAssistantListResponse, `${scope} assistants`);
+
+      all.push(...response.data);
+      pages = response.pagination.pages;
+      page += 1;
+    } while (page < pages);
+
+    return all;
+  }
+
+  async function fetchAllVisibleAssistants(): Promise<AssistantBase[]> {
+    logger.debug('[AssistantSetup] Fetching all visible assistants');
+
+    // The wizard offers two panels — project (`visible_to_user`) and marketplace —
+    // so the catalog identifiers resolve against must be the union of both.
+    // Paging only `visible_to_user` reports an installable marketplace assistant
+    // as unavailable.
+    const byId = new Map<string, Assistant | AssistantBase>();
+
+    for (const scope of [API_SCOPE.VISIBLE_TO_USER, API_SCOPE.MARKETPLACE] as const) {
+      for (const assistant of await fetchAllPagesForScope(scope)) {
+        if (!byId.has(assistant.id)) {
+          byId.set(assistant.id, assistant);
+        }
+      }
+    }
+
+    const all = Array.from(byId.values());
+    logger.debug('[AssistantSetup] Fetched all visible assistants', { count: all.length });
+    return all;
+  }
+
   return {
     fetchAssistants,
-    fetchAssistantsByIds
+    fetchAssistantsByIds,
+    fetchAllVisibleAssistants
   };
 }

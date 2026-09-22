@@ -10,7 +10,7 @@ import { registerCodexAssistantSkill, unregisterCodexAssistantSkill } from '@/cl
 import { registerGeminiAssistantSkill, unregisterGeminiAssistantSkill } from '@/cli/commands/assistants/setup/generators/gemini-skill-generator.js';
 import type { RegistrationMode } from '@/cli/commands/assistants/setup/manualConfiguration/types.js';
 import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
-import { executeWithSpinner, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
+import { executeWithSpinner, executeWithSpinnerStrict, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
 import {
   formatAgentInvocation,
   formatAgentSetupTarget,
@@ -69,12 +69,12 @@ export async function registerAssistant(
   scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
-): Promise<CodemieAssistant | null> {
+): Promise<CodemieAssistant> {
   const modeLabel = mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';
   const targetLabel = formatAgentSetupTarget(target);
   const invocationLabel = formatInvocationSummary(assistant.slug!, target);
 
-  const result = await executeWithSpinner(
+  await executeWithSpinnerStrict(
     MESSAGES.SETUP.SPINNER_REGISTERING(chalk.bold(assistant.name)),
     async () => {
       switch (mode) {
@@ -109,10 +109,6 @@ export async function registerAssistant(
     MESSAGES.SETUP.ERROR_REGISTER_FAILED(assistant.name),
     (error) => logger.error('Assistant generation failed', { error, assistantId: assistant.id, mode, target })
   );
-
-  if (!result) {
-    return null;
-  }
 
   return {
     id: assistant.id,

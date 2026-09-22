@@ -387,4 +387,78 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       expect(existsSync(configPath)).toBe(false);
     });
   });
+
+  describe('profileModel pinning', () => {
+    it('narrows to the single tenant model a profile-pinned canonical name resolves to', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'gpt-5.6-luna'
+      );
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(result.modelCount).toBe(1);
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('openai.gpt-5.6-luna');
+    });
+
+    it('narrows correctly when the profile is already pinned to the tenant\'s exact id', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'gpt-4.1-mini'
+      );
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('gpt-4.1-mini');
+    });
+
+    it('falls back to the full tenant-resolved list when the pinned model matches no capability family', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'not-a-real-model'
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
+
+    it('falls back to the full tenant-resolved list when no model is pinned', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        undefined
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
+
+    it('treats a blank pinned model the same as unset', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        '   '
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
+  });
 });

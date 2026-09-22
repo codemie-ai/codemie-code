@@ -8,6 +8,7 @@ export { fetchJwtToken, writeJwtProfile, jwtCleanEnv, type JwtProfileOverrides }
 export { writeSsoProfile, ssoCleanEnv, copySsoCredentials, setupSsoAutotestProfile, teardownSsoAutotestProfile } from './sso-auth.js';
 export { waitForOutput, cleanKill } from './interactive-helpers.js';
 export { spawnPty, type PtySession } from './pty-session.js';
+export { waitForClaudeReady } from './claude-tui.js';
 export { getLatestMetricsRecord } from './metrics.js';
 export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin, getTestEnvValue, getCodemieTestUrl, getCodemieTestModel, DEFAULT_CODEMIE_TEST_URL, DEFAULT_CODEMIE_TEST_MODEL } from './test-env.js';
 export { pollForSession, type SessionPollOptions, type SessionPollResult } from './session-poll.js';

@@ -148,8 +148,20 @@ function buildManagedModel(
  * no tenant match is silently dropped — the VS Code Copilot BYOK picker must
  * never offer a model the tenant does not actually serve. Throws when the
  * intersection is empty, mirroring `desktop.ts`'s zero-match throw.
+ *
+ * When `profileModel` names a model the active profile is pinned to (e.g. a
+ * provider-qualified id like `openai.gpt-5.6-sol`), and it resolves against
+ * the same tenant catalog, narrow the result to just that one entry instead
+ * of offering every family the tenant serves — the picker should show
+ * exactly what the profile is configured to use, under its real tenant id,
+ * rather than every reachable model. An unrecognized or unset `profileModel`
+ * falls back to the full intersected list.
  */
-async function resolveManagedModels(proxyUrl: string, gatewayKey: string): Promise<VsCodeManagedModel[]> {
+async function resolveManagedModels(
+  proxyUrl: string,
+  gatewayKey: string,
+  profileModel: string | undefined
+): Promise<VsCodeManagedModel[]> {
   const catalog = await fetchTenantModelCatalog(proxyUrl, gatewayKey);
   const models: VsCodeManagedModel[] = [];
   for (const entry of VS_CODE_CAPABILITY_TABLE) {
@@ -162,6 +174,16 @@ async function resolveManagedModels(proxyUrl: string, gatewayKey: string): Promi
       'Local proxy discovered tenant models, but none matched the CodeMie VS Code Copilot capability table.'
     );
   }
+
+  const pinnedModel = profileModel?.trim();
+  if (pinnedModel) {
+    const pinnedTenantId = resolveTenantModelId(pinnedModel, catalog);
+    const pinnedManagedModel = pinnedTenantId
+      ? models.find(model => model.id === pinnedTenantId)
+      : undefined;
+    if (pinnedManagedModel) return [pinnedManagedModel];
+  }
+
   return models;
 }
 
@@ -255,22 +277,25 @@ export async function writeAtomically(configPath: string, content: string): Prom
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
   gatewayKey: string,
-  insiders = false
+  insiders = false,
+  profileModel?: string
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
     proxyUrl,
-    gatewayKey
+    gatewayKey,
+    profileModel
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  profileModel?: string
 ): Promise<WriteVsCodeConfigResult> {
   const providers = await readProviders(configPath);
-  const models = await resolveManagedModels(proxyUrl, gatewayKey);
+  const models = await resolveManagedModels(proxyUrl, gatewayKey, profileModel);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
     .filter(index => index >= 0);
