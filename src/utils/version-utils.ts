@@ -14,6 +14,24 @@ export interface SemanticVersion {
 }
 
 /**
+ * Extract semver version from a string that may contain extra text
+ * e.g., "2.0.76 (Claude Code)" -> "2.0.76"
+ *       "v1.2.3-beta" -> "1.2.3"
+ *
+ * @param versionString - Version string with potential extra text
+ * @returns Semantic version string or null if no valid version found
+ *
+ * @example
+ * extractVersion('2.0.76 (Claude Code)') // Returns '2.0.76'
+ * extractVersion('v1.2.3-beta') // Returns '1.2.3'
+ * extractVersion('invalid') // Returns null
+ */
+export function extractVersion(versionString: string): string | null {
+	const match = versionString.match(/v?(\d+\.\d+\.\d+)/);
+	return match ? match[1] : null;
+}
+
+/**
  * Parse semantic version string into comparable components
  *
  * @param version - Version string (e.g., '2.0.30')
