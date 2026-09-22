@@ -7,6 +7,8 @@ import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import { compareVersions, isValidSemanticVersion, extractVersion } from '../../utils/version-utils.js';
+import { isLiveTrackedAgent, resolveSupportedVersion } from '../../agents/core/version-resolution.js';
+import { clearVersionCache } from '../../utils/version-cache.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -45,29 +47,6 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Special handling for Claude (uses native installer, not npm)
-  if (agent.name === 'claude' && agent.checkVersionCompatibility) {
-    const compat = await agent.checkVersionCompatibility();
-    const supportedVersion = compat.supportedVersion;
-    const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
-
-    // Validate versions before comparing
-    const cleanSupported = extractVersion(supportedVersion);
-    if (!cleanSupported) return null;
-
-    // Check if update available (current < supported)
-    const hasUpdate = compareVersions(cleanCurrentVersion, cleanSupported) < 0;
-
-    return {
-      name: agent.name,
-      displayName: agent.displayName,
-      currentVersion: cleanCurrentVersion,
-      latestVersion: cleanSupported,
-      hasUpdate,
-      npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
-    };
-  }
-
   // Special handling for built-in agent (codemie-code) — uses CLI package version
   if (agent.metadata.isBuiltIn) {
     const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
@@ -101,8 +80,16 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Get latest version from npm
-  const latestVersion = await npm.getLatestVersion(npmPackage);
+  // Get latest version — allowlisted agents resolve through the live-tracking
+  // accessor (24h-cached npm lookup with fail-safe fallback); everyone else
+  // (opencode, pi, and any other manageable npm agent) keeps the direct lookup.
+  const latestVersion = isLiveTrackedAgent(agent.name)
+    ? await resolveSupportedVersion({
+        agentName: agent.name,
+        npmPackage,
+        fallbackSupportedVersion: agent.metadata.supportedVersion,
+      })
+    : await npm.getLatestVersion(npmPackage);
   if (!latestVersion) {
     return null;
   }
@@ -230,13 +217,18 @@ export function createUpdateCommand(): Command {
     .argument('[name]', 'Agent name to update (run without argument for interactive selection)')
     .option('-c, --check', 'Check for available updates without installing')
     .option('--verbose', 'Show detailed update logs for troubleshooting')
-    .action(async (name?: string, options?: { check?: boolean; verbose?: boolean }) => {
+    .option('-f, --force-refresh', 'Bypass the 24h version cache and re-check npm')
+    .action(async (name?: string, options?: { check?: boolean; verbose?: boolean; forceRefresh?: boolean }) => {
       try {
         // Enable debug mode if --verbose flag is set
         if (options?.verbose) {
           process.env.CODEMIE_DEBUG = 'true';
           logger.debug('Verbose mode enabled');
           console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
+        }
+
+        if (options?.forceRefresh) {
+          await clearVersionCache();
         }
 
         const checkOnly = options?.check ?? false;
@@ -274,12 +266,7 @@ export function createUpdateCommand(): Command {
           }
 
           if (!result.hasUpdate) {
-            // For Claude, clarify it's the latest supported version (not absolute latest)
-            if (agent.name === 'claude') {
-              spinner.succeed(`${agent.displayName} is already up to date with latest verified version by CodeMie (${result.currentVersion})`);
-            } else {
-              spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
-            }
+            spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
             return;
           }
 
