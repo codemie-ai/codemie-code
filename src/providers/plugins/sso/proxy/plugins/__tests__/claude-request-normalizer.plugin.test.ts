@@ -613,4 +613,78 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       expect(context.headers['content-length']).toBe(originalLength);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  describe('Tenant model-name resolution (request time)', () => {
+    it('rewrites a family-first request to the tenant\'s version-first deployment', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      (interceptor as unknown as { setAvailableModelsForTest(models: string[]): void })
+        .setAvailableModelsForTest(['claude-5-opus', 'claude-4-5-haiku', 'claude-4-6-sonnet']);
+
+      const context = createProxyContext({
+        model: 'claude-opus-5',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.model).toBe('claude-5-opus');
+      expect(context.headers['content-length']).toBe(String(context.requestBody!.length));
+    });
+
+    it('still applies capability normalization using the client\'s original (canonical) model name', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      (interceptor as unknown as { setAvailableModelsForTest(models: string[]): void })
+        .setAvailableModelsForTest(['claude-4-7-opus']);
+
+      // claude-opus-4-7 (canonical) matches the adaptive-thinking capability row;
+      // the tenant's own version-first id for it wouldn't match MODEL_CAPABILITY_TABLE's patterns.
+      const context = createProxyContext({
+        model: 'claude-opus-4-7',
+        thinking: { type: 'enabled', budget_tokens: 10000 },
+      });
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.model).toBe('claude-4-7-opus');
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config.effort).toBeDefined();
+    });
+
+    it('leaves the model untouched when it already matches a tenant deployment', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      (interceptor as unknown as { setAvailableModelsForTest(models: string[]): void })
+        .setAvailableModelsForTest(['claude-sonnet-4-6']);
+
+      const context = createProxyContext({ model: 'claude-sonnet-4-6', messages: [] });
+      const originalBodyStr = context.requestBody!.toString('utf-8');
+      await interceptor.onRequest!(context);
+
+      expect(context.requestBody!.toString('utf-8')).toBe(originalBodyStr);
+    });
+
+    it('leaves the model untouched when nothing in the tenant catalog matches', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      (interceptor as unknown as { setAvailableModelsForTest(models: string[]): void })
+        .setAvailableModelsForTest(['claude-4-5-haiku']);
+
+      const context = createProxyContext({ model: 'claude-opus-5', messages: [] });
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.model).toBe('claude-opus-5');
+    });
+
+    it('leaves the model untouched when the tenant catalog could not be loaded', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      // No setAvailableModelsForTest call and no credentials on the context —
+      // loadModels() no-ops, availableModels stays empty.
+
+      const context = createProxyContext({ model: 'claude-opus-5', messages: [] });
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.model).toBe('claude-opus-5');
+    });
+  });
 });
