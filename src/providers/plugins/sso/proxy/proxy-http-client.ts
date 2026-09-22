@@ -9,14 +9,17 @@
 import { pipeline } from 'stream/promises';
 import https from 'https';
 import http from 'http';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { isIP } from 'node:net';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { NetworkError } from './proxy-errors.js';
 import { logger } from '../../../../utils/logger.js';
+import {
+  getEnvNoProxyEntries,
+  getEnvProxyUrl,
+  parseNoProxyRules,
+  shouldBypassProxy,
+  type NoProxyRule,
+} from '../../../../utils/system-proxy.js';
 
 export interface HTTPClientOptions {
   timeout?: number;
@@ -27,168 +30,6 @@ export interface ForwardRequestOptions {
   method: string;
   headers: Record<string, string>;
   body?: Buffer | string; // Accept Buffer or string
-}
-
-type NoProxyRule =
-  | { kind: 'all' }
-  | { kind: 'host'; value: string; port?: number }
-  | { kind: 'domain'; value: string; port?: number }
-  | { kind: 'cidr'; base: number; maskBits: number };
-
-/**
- * Parse proxy URL from environment variables
- */
-function getProxyUrl(protocol: 'http:' | 'https:'): string | undefined {
-  // Check protocol-specific proxy first, then fall back to generic HTTP_PROXY
-  if (protocol === 'https:') {
-    return process.env.HTTPS_PROXY || process.env.https_proxy ||
-           process.env.HTTP_PROXY || process.env.http_proxy;
-  }
-  return process.env.HTTP_PROXY || process.env.http_proxy;
-}
-
-function splitRules(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map(entry => entry.trim())
-    .filter(Boolean);
-}
-
-function parseIpv4(ip: string): number | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  const nums = parts.map(p => Number.parseInt(p, 10));
-  if (nums.some(n => !Number.isFinite(n) || n < 0 || n > 255)) return null;
-  return (((nums[0] << 24) >>> 0) | ((nums[1] << 16) >>> 0) | ((nums[2] << 8) >>> 0) | nums[3]) >>> 0;
-}
-
-function parseCidr(raw: string): { base: number; maskBits: number } | null {
-  const [ip, maskRaw] = raw.split('/');
-  if (!ip || !maskRaw) return null;
-  const maskBits = Number.parseInt(maskRaw, 10);
-  if (!Number.isFinite(maskBits) || maskBits < 0 || maskBits > 32) return null;
-  const base = parseIpv4(ip);
-  if (base === null) return null;
-  return { base, maskBits };
-}
-
-function ipInCidr(ip: string, base: number, maskBits: number): boolean {
-  const value = parseIpv4(ip);
-  if (value === null) return false;
-  const mask = maskBits === 0 ? 0 : ((0xffffffff << (32 - maskBits)) >>> 0);
-  return (value & mask) === (base & mask);
-}
-
-function parseHostPort(raw: string): { host: string; port?: number } {
-  if (raw.startsWith('[')) {
-    const closingBracket = raw.indexOf(']');
-    if (closingBracket > 0 && raw[closingBracket + 1] === ':') {
-      const portRaw = raw.slice(closingBracket + 2);
-      const port = Number.parseInt(portRaw, 10);
-      if (/^\d+$/.test(portRaw) && port >= 1 && port <= 65535) {
-        return { host: raw.slice(1, closingBracket), port };
-      }
-    }
-    return { host: raw };
-  }
-
-  const separator = raw.lastIndexOf(':');
-  if (separator > 0 && raw.indexOf(':') === separator) {
-    const host = raw.slice(0, separator);
-    const portRaw = raw.slice(separator + 1);
-    const port = Number.parseInt(portRaw, 10);
-    if (/^\d+$/.test(portRaw) && port >= 1 && port <= 65535) {
-      return { host, port };
-    }
-  }
-
-  return { host: raw };
-}
-
-function parseNoProxyRules(values: string[]): NoProxyRule[] {
-  const rules: NoProxyRule[] = [];
-
-  for (const raw of values) {
-    const value = raw.toLowerCase();
-    if (!value) continue;
-
-    if (value === '*') {
-      rules.push({ kind: 'all' });
-      continue;
-    }
-
-    const cidr = parseCidr(value);
-    if (cidr) {
-      rules.push({ kind: 'cidr', ...cidr });
-      continue;
-    }
-
-    const { host, port } = parseHostPort(value);
-    if (host.startsWith('.')) {
-      rules.push({ kind: 'domain', value: host.slice(1), port });
-      continue;
-    }
-
-    rules.push({ kind: 'host', value: host, port });
-  }
-
-  return rules;
-}
-
-function readNpmNoProxyEntries(): string[] {
-  try {
-    const npmrcPath = join(homedir(), '.npmrc');
-    const raw = readFileSync(npmrcPath, 'utf-8');
-    const lines = raw.split(/\r?\n/);
-
-    for (const lineRaw of lines) {
-      const line = lineRaw.trim();
-      if (!line || line.startsWith('#') || line.startsWith(';')) continue;
-      const eq = line.indexOf('=');
-      if (eq <= 0) continue;
-      const key = line.slice(0, eq).trim().toLowerCase();
-      const value = line.slice(eq + 1).trim();
-      if (key === 'noproxy' || key === 'no-proxy') {
-        return splitRules(value);
-      }
-    }
-  } catch {
-    // No user npmrc or unreadable file — ignore.
-  }
-
-  return [];
-}
-
-function matchesPort(rule: { port?: number }, port: number): boolean {
-  return rule.port === undefined || rule.port === port;
-}
-
-function shouldBypassProxy(hostname: string, port: number, rules: NoProxyRule[]): boolean {
-  const host = hostname.toLowerCase();
-
-  for (const rule of rules) {
-    if (rule.kind === 'all') {
-      return true;
-    }
-
-    if (rule.kind === 'host') {
-      if (host === rule.value && matchesPort(rule, port)) return true;
-      continue;
-    }
-
-    if (rule.kind === 'domain') {
-      const matchesDomain = host === rule.value || host.endsWith(`.${rule.value}`);
-      if (matchesDomain && matchesPort(rule, port)) return true;
-      continue;
-    }
-
-    if (rule.kind === 'cidr' && isIP(host) === 4) {
-      if (ipInCidr(host, rule.base, rule.maskBits)) return true;
-    }
-  }
-
-  return false;
 }
 
 /**
@@ -208,12 +49,12 @@ export class ProxyHTTPClient {
     this.timeout = options.timeout || 0;
     this.rejectUnauthorized = options.rejectUnauthorized ?? false;
 
-    // Check for proxy configuration from environment variables
-    const httpsProxyUrl = getProxyUrl('https:');
-    const httpProxyUrl = getProxyUrl('http:');
-    const envNoProxyEntries = splitRules(process.env.NO_PROXY || process.env.no_proxy);
-    const npmNoProxyEntries = readNpmNoProxyEntries();
-    this.noProxyRules = parseNoProxyRules([...envNoProxyEntries, ...npmNoProxyEntries]);
+    // Proxy configuration comes from the environment. On Windows these are
+    // seeded from Internet Settings by primeProxyEnv() during CLI bootstrap.
+    const httpsProxyUrl = getEnvProxyUrl('https:');
+    const httpProxyUrl = getEnvProxyUrl('http:');
+    const noProxyEntries = getEnvNoProxyEntries();
+    this.noProxyRules = parseNoProxyRules(noProxyEntries);
 
     // Connection pooling with keep-alive
     // NO timeout on agent - we handle it at request level
@@ -244,8 +85,7 @@ export class ProxyHTTPClient {
     });
 
     logger.debug('[proxy-http-client] NO_PROXY rules loaded', {
-      envRules: envNoProxyEntries,
-      npmRules: npmNoProxyEntries,
+      entries: noProxyEntries,
       totalRules: this.noProxyRules.length,
     });
   }

@@ -32,9 +32,14 @@ import {
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
+  fetchClaudeModels,
 } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
-import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import {
+  selectVsCodeClaudeCodeModels,
+  writeVsCodeClaudeCodeConfig,
+  type VsCodeClaudeCodeModels,
+} from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
 import {
@@ -505,10 +510,62 @@ async function runVscodeByok(
   }
 }
 
-async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promise<TargetResult> {
+/**
+ * Resolve the gateway-registered model IDs to pin into the Claude Code extension.
+ * Returns `undefined` when discovery fails so the writer leaves any existing pins
+ * alone rather than stripping a working configuration.
+ */
+async function resolveVsCodeClaudeCodeModels(
+  state: DaemonState,
+  profileModel: string | undefined
+): Promise<VsCodeClaudeCodeModels | undefined> {
   try {
-    const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
+    const available = await fetchClaudeModels(state.url, state.gatewayKey);
+    const models = selectVsCodeClaudeCodeModels(available, profileModel);
+    if (!models.model && !models.haikuModel && !models.sonnetModel && !models.opusModel) {
+      logger.warn(
+        '[proxy] Gateway exposed no Claude models to pin for the VS Code Claude Code extension',
+        ...sanitizeLogArgs({ availableCount: available.length })
+      );
+      return undefined;
+    }
+    return models;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      '[proxy] Could not discover Claude models for the VS Code Claude Code extension',
+      ...sanitizeLogArgs({ error: message })
+    );
+    console.log(
+      chalk.yellow(
+        '  Could not discover gateway models; leaving the extension model settings unchanged. ' +
+        'If requests fail with "Invalid model name", re-run this command once the gateway is reachable.'
+      )
+    );
+    return undefined;
+  }
+}
+
+async function runVscodeClaudeCode(
+  state: DaemonState,
+  insiders: boolean,
+  profileModel: string | undefined,
+  verbose: boolean
+): Promise<TargetResult> {
+  try {
+    const models = await resolveVsCodeClaudeCodeModels(state, profileModel);
+    const vsCodeResult = await writeVsCodeClaudeCodeConfig(
+      state.url,
+      state.gatewayKey,
+      insiders,
+      models
+    );
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
+    if (verbose && models) {
+      console.log(`  Models:  ${[models.model, models.sonnetModel, models.haikuModel, models.opusModel]
+        .filter(Boolean)
+        .join(', ')}`);
+    }
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
@@ -680,7 +737,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const results: TargetResult[] = [];
   if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
   if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
-  if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
+  if (targets.vscodeClaudeCode) {
+    results.push(await runVscodeClaudeCode(state, insiders, config.model, verbose));
+  }
   if (targets.codexDesktop) {
     results.push(await runCodexDesktop(state, {
       force: Boolean(opts.force),
