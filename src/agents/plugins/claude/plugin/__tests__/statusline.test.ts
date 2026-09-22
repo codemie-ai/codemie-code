@@ -1,17 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolve } from 'path';
+import { resolve, dirname, basename, join } from 'path';
 import { pathToFileURL } from 'url';
 import {
   matchBudgetRow,
   formatBudgetSegment,
   extractBasicInfo,
   formatDuration,
-  fmt,
   buildStatusLine,
   resolveBudget,
   isMainModule,
   ctxBar,
-} from '../statusline.mjs';
+  lookupRate,
+  computeSessionCost,
+} from '../statusline.js';
 
 const YELLOW = '\x1b[0;33m';
 const GREEN = '\x1b[0;32m';
@@ -109,14 +110,6 @@ describe('formatDuration', () => {
   });
 });
 
-describe('fmt', () => {
-  it('formats large numbers with k/M suffixes', () => {
-    expect(fmt(500)).toBe('500');
-    expect(fmt(1500)).toBe('1.5k');
-    expect(fmt(2_500_000)).toBe('2.5M');
-  });
-});
-
 describe('ctxBar', () => {
   it('renders a 10-segment filled/empty bar plus the percentage', () => {
     const bar = ctxBar(50);
@@ -141,11 +134,11 @@ describe('ctxBar', () => {
 describe('buildStatusLine', () => {
   const basic = {
     projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
-    ctxPct: 42, tokIn: 1000, tokOut: 200, cost: 1.5, durationMs: 65000,
+    ctxPct: 42, cost: 1.5, costExact: true, durationMs: 65000,
   };
 
-  it('always renders basic info (including session cost and duration) with no budget/profile', () => {
-    const line = buildStatusLine({ ...basic, budget: null, budgetError: null });
+  it('always renders basic info (including session cost and duration)', () => {
+    const line = buildStatusLine({ ...basic });
     expect(line).not.toContain('⚠');
     expect(line).toContain('$1.5000');
     expect(line).toContain('1m 5s');
@@ -155,34 +148,46 @@ describe('buildStatusLine', () => {
   });
 
   it('renders the context-% as a colored bar, and the cost in its own distinct (yellow) color', () => {
-    const line = buildStatusLine({ ...basic, budget: null, budgetError: null });
+    const line = buildStatusLine({ ...basic });
     expect(line).toContain('42%');
     expect(line).toContain('████░░░░░░'); // 42% -> 4 filled segments
     expect(line).toContain(`${YELLOW}$1.5000${'\x1b[0m'}`);
   });
 
-  it('shows a minimal warning indicator (not blocking basic info) when the budget fetch fails', () => {
-    const line = buildStatusLine({ ...basic, budget: null, budgetError: 'reauthenticate' });
-    expect(line).toContain('⚠ reauthenticate');
-    expect(line).toContain('$1.5000');
-    expect(line).toContain('[my-project]');
+  it('marks the cost an estimate only when it was not priced from the transcript', () => {
+    expect(buildStatusLine({ ...basic, costExact: true })).toContain(`${YELLOW}$1.5000`);
+    expect(buildStatusLine({ ...basic, costExact: false })).toContain(`${YELLOW}~$1.5000`);
   });
 
-  it('shows the budget segment (and no warning) when budget resolves successfully', () => {
-    const line = buildStatusLine({ ...basic, budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 }, budgetError: null });
-    expect(line).toContain('$12.34 (41%)');
+  it('never renders a budget segment, even when budget fields are passed', () => {
+    const line = buildStatusLine({
+      ...basic,
+      budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 },
+      budgetError: 'reauthenticate',
+    } as never);
+    expect(line).not.toContain('$12.34');
     expect(line).not.toContain('⚠');
   });
 
   it('does not throw and omits the cost segment when cost is non-numeric', () => {
-    expect(() => buildStatusLine({ ...basic, cost: 'not-a-number', budget: null, budgetError: null })).not.toThrow();
-    const line = buildStatusLine({ ...basic, cost: 'not-a-number', budget: null, budgetError: null });
+    expect(() => buildStatusLine({ ...basic, cost: 'not-a-number' })).not.toThrow();
+    const line = buildStatusLine({ ...basic, cost: 'not-a-number' });
     expect(line).not.toContain('NaN');
     expect(line).toContain('[my-project]'); // basic info still renders
   });
 });
 
 describe('resolveBudget', () => {
+  // Path-aware rather than call-ordered: resolveBudget reads both the CodeMie config and the
+  // budget cache, and ordering the mocks by call index silently mis-feeds them the moment that
+  // read order changes. Dispatch on the filename instead.
+  const readFileFor = (config: unknown, cache?: unknown) =>
+    vi.fn(async (filePath: string) => {
+      if (String(filePath).endsWith('codemie-cli.config.json')) return JSON.stringify(config);
+      if (cache !== undefined) return JSON.stringify(cache);
+      throw new Error('no cache');
+    });
+
   it('skips silently (no error) when there is no CodeMie config at all', async () => {
     const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
@@ -190,50 +195,42 @@ describe('resolveBudget', () => {
   });
 
   it('skips silently when the profile is missing codeMieUrl/baseUrl/userEmail', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({ activeProfile: 'default', profiles: { default: {} } }));
+    const readFile = readFileFor({ activeProfile: 'default', profiles: { default: {} } });
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: null, budgetError: null });
   });
 
   it('skips silently when codeMieUrl/userEmail only exist on the profile — migration 006 moved them to workspace/top-level', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
-        activeProfile: 'default',
-        // Pre-fix (stale) shape: codeMieUrl/userEmail stranded on the profile with no
-        // top-level `workspace`/`userEmail`. Must not be read from the profile object —
-        // regression test for the statusline reading raw profile fields post-migration.
-        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
-      }));
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      // Pre-fix (stale) shape: codeMieUrl/userEmail stranded on the profile with no
+      // top-level `workspace`/`userEmail`. Must not be read from the profile object —
+      // regression test for the statusline reading raw profile fields post-migration.
+      profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+    });
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: null, budgetError: null });
   });
 
   it('returns a "reauthenticate" error when no auth headers are available', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
+    const readFile = readFileFor({
         activeProfile: 'default',
         userEmail: 'me@x.com',
         workspace: { codeMieUrl: 'https://x' },
         profiles: { default: { baseUrl: 'https://x/api' } },
-      }));
+      });
     const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
   });
 
   it('returns the HTTP error message when the fetch fails', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
+    const readFile = readFileFor({
         activeProfile: 'default',
         userEmail: 'me@x.com',
         workspace: { codeMieUrl: 'https://x' },
         profiles: { default: { baseUrl: 'https://x/api' } },
-      }));
+      });
     const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
@@ -241,17 +238,16 @@ describe('resolveBudget', () => {
   });
 
   it('resolves and caches the matched budget row on success', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
+    const readFile = readFileFor({
         activeProfile: 'default',
         userEmail: 'me@x.com',
         workspace: { codeMieUrl: 'https://x' },
         profiles: { default: { baseUrl: 'https://x/api' } },
-      }));
+      });
     const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: () => 'application/json' },
       json: async () => ({ data: { rows: [{ project_name: 'me@x.com (cli)', current_spending: 5, total: 10, budget_reset_at: '2026-07-15T00:00:00.000Z' }] } }),
     });
     const writeFile = vi.fn().mockResolvedValue(undefined);
@@ -261,34 +257,47 @@ describe('resolveBudget', () => {
     expect(writeFile).toHaveBeenCalledWith(expect.stringContaining('budget-cache.json'), expect.any(String), 'utf8');
   });
 
-  it('returns the fresh cached value without touching config/network when cache is fresh', async () => {
-    const readFile = vi.fn().mockResolvedValueOnce(JSON.stringify({ schema: 2, ts: Date.now(), value: { text: 'cached', pct: 5 } }));
+  const CONFIG = {
+    activeProfile: 'default',
+    userEmail: 'me@x.com',
+    workspace: { codeMieUrl: 'https://x' },
+    profiles: { default: { baseUrl: 'https://x/api' } },
+  };
+
+  it('returns the fresh cached value without touching the network when cache is fresh', async () => {
+    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'default', ts: Date.now(), value: { text: 'cached', pct: 5 } });
     const fetchImpl = vi.fn();
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: { text: 'cached', pct: 5 }, budgetError: null });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('ignores a cache entry written for a different profile', async () => {
+    // Budgets are per-profile and every session shares one cache file, so an entry from another
+    // profile must not be shown here — it would report someone else's budget for up to the TTL.
+    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'other-profile', ts: Date.now(), value: { text: 'cached', pct: 5 } });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
+    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' }); // fell through to a live lookup
+  });
+
   it('treats a pre-upgrade string-shaped cache entry as a cache miss instead of using it', async () => {
     // Old cache format: value was a plain string, not { text, pct }.
-    const readFile = vi.fn()
-      .mockResolvedValueOnce(JSON.stringify({ ts: Date.now(), value: '$5.00/$10 (50%)', pct: 50 }))
-      .mockRejectedValueOnce(new Error('no config'));
+    const readFile = readFileFor(CONFIG, { ts: Date.now(), value: '$5.00/$10 (50%)', pct: 50 });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const fetchImpl = vi.fn();
-    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
-    expect(result).toEqual({ budget: null, budgetError: null });
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' }); // cache rejected, live lookup attempted
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('returns a graceful budgetError instead of an uncaught rejection when getAuthHeadersImpl throws', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
+    const readFile = readFileFor({
         activeProfile: 'default',
         userEmail: 'me@x.com',
         workspace: { codeMieUrl: 'https://x' },
         profiles: { default: { baseUrl: 'https://x/api' } },
-      }));
+      });
     const getAuthHeadersImpl = vi.fn().mockRejectedValue(new Error('keychain locked'));
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'keychain locked' });
@@ -319,5 +328,241 @@ describe('isMainModule', () => {
     const url = pathToFileURL(resolve('Users', 'me', 'script.mjs')).href;
     expect(isMainModule('', url)).toBe(false);
     expect(isMainModule(undefined, url)).toBe(false);
+  });
+});
+
+// statusline.ts is now a normal, type-checked, linted TS source file — but these tests remain the
+// sole *behavioral* gate on the pricing path (an engine that overrides Claude Code's own reported
+// spend, which typechecking and linting alone can't catch a logic error in).
+describe('lookupRate', () => {
+  const TABLE = {
+    'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
+    'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+    'claude-smart-router': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+    'gemini-3.7-flash': { input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
+    _meta: { note: 'must never be matched as a model id' },
+  };
+
+  it('matches an exact id', () => {
+    expect(lookupRate(TABLE, 'claude-sonnet-5')?.input).toBe(3);
+  });
+
+  it('prices a dotted table key, whose dots the id-side folding would otherwise never match', () => {
+    // The id is folded to dashes before lookup; folding only one side made all 14 dotted keys in the
+    // shipped rate card unreachable, so those turns silently priced at $0.
+    expect(lookupRate(TABLE, 'gemini-3.7-flash')?.input).toBe(2);
+  });
+
+  it('prices the router alias that motivated transcript-based costing', () => {
+    expect(lookupRate(TABLE, 'claude-smart-router')?.output).toBe(5);
+  });
+
+  it('resolves a Bedrock ARN back to its bare model id', () => {
+    expect(lookupRate(TABLE, 'converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0')?.input).toBe(1);
+  });
+
+  it('is case-insensitive about the incoming id', () => {
+    expect(lookupRate(TABLE, 'Claude-Sonnet-5')?.input).toBe(3);
+  });
+
+  it('matches only on a segment boundary, never mid-token', () => {
+    expect(lookupRate(TABLE, 'claude-haiku-4-5-20251001')?.input).toBe(1); // suffixed -> family match
+    expect(lookupRate(TABLE, 'notclaude-sonnet-5x')).toBeNull();
+  });
+
+  it('never matches a metadata key, and returns null for an unknown model', () => {
+    expect(lookupRate(TABLE, '_meta')).toBeNull();
+    expect(lookupRate(TABLE, 'some-other-vendor-model')).toBeNull();
+    expect(lookupRate(null, 'claude-sonnet-5')).toBeNull();
+  });
+});
+
+describe('computeSessionCost', () => {
+  const TRANSCRIPT = '/p/sess.jsonl';
+  // Derived with the same path.dirname/basename/join computeSessionCost itself uses (not a
+  // hardcoded '/'-joined literal) so this matches on Windows too, where path.join joins with
+  // '\' regardless of the input's own separator style — a literal here silently never matched
+  // and made every subagent-transcript lookup miss.
+  const SUBAGENT_DIR = join(dirname(TRANSCRIPT), basename(TRANSCRIPT, '.jsonl'), 'subagents');
+  const PRICES = {
+    'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
+    'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+  };
+
+  const row = (id: string, model: string, usage: Record<string, unknown>) =>
+    JSON.stringify({ message: { id, model, usage } });
+
+  /** Wires the injectable seam: files by path, an optional subagent listing, and a always-miss cache. */
+  const deps = (files: Record<string, string>, subagents: string[] = []) => ({
+    readPrices: async () => PRICES,
+    readDir: async (dir: string) => {
+      if (dir === SUBAGENT_DIR && subagents.length) return subagents;
+      throw new Error('ENOENT');
+    },
+    readFile: async (p: string) => {
+      if (p in files) return files[p];
+      throw new Error('ENOENT'); // covers the cost cache too, so every case recomputes
+    },
+    writeFile: async () => undefined,
+    stat: async (p: string) => {
+      if (p in files) return { size: files[p].length, mtimeMs: 1 };
+      throw new Error('ENOENT');
+    },
+  });
+
+  it('reports an exact zero when the transcript does not exist yet', async () => {
+    // Claude Code writes the transcript lazily; a session that has not billed anything has no file.
+    // Treating that as unpriceable marked every fresh session `~$0.0000` — an estimate of nothing.
+    expect(await computeSessionCost(TRANSCRIPT, deps({}))).toEqual({ cost: 0, exact: true });
+  });
+
+  it('reports an exact zero for a transcript with no usage rows', async () => {
+    const files = { [TRANSCRIPT]: JSON.stringify({ message: { role: 'user', content: 'hi' } }) };
+    expect(await computeSessionCost(TRANSCRIPT, deps(files))).toEqual({ cost: 0, exact: true });
+  });
+
+  it('counts a message once even though Claude Code repeats it per streaming update', async () => {
+    // One assistant message is appended several times carrying identical usage; summing the lines
+    // multi-counts it. 16 rows for 7 messages was observed on a real session.
+    const usage = { input_tokens: 1_000_000, output_tokens: 0 };
+    const files = {
+      [TRANSCRIPT]: [row('msg_1', 'claude-sonnet-5', usage), row('msg_1', 'claude-sonnet-5', usage), row('msg_1', 'claude-sonnet-5', usage)].join('\n'),
+    };
+    expect((await computeSessionCost(TRANSCRIPT, deps(files)))!.cost).toBeCloseTo(3, 10);
+  });
+
+  it('adds subagent transcripts, which live outside the main file entirely', async () => {
+    // Subagents bill against the session but are written to <sessionId>/subagents/*.jsonl with no
+    // isSidechain row in the main transcript. Omitting them lost 79% of one session's real spend.
+    const files = {
+      [TRANSCRIPT]: row('msg_main', 'claude-sonnet-5', { input_tokens: 1_000_000, output_tokens: 0 }),
+      // path.join, not a '/'-joined template literal — see SUBAGENT_DIR's own comment above.
+      [join(SUBAGENT_DIR, 'agent-a.jsonl')]: row('msg_a', 'claude-haiku-4-5', { input_tokens: 1_000_000, output_tokens: 0 }),
+      [join(SUBAGENT_DIR, 'agent-b.jsonl')]: row('msg_b', 'claude-haiku-4-5', { output_tokens: 1_000_000 }),
+    };
+    const result = await computeSessionCost(TRANSCRIPT, deps(files, ['agent-a.jsonl', 'agent-b.jsonl', 'notes.txt']));
+    expect(result!.cost).toBeCloseTo(3 + 1 + 5, 10);
+    expect(result!.exact).toBe(true);
+  });
+
+  it('bills 1-hour cache writes at the 1h rate, not the 5-minute one', async () => {
+    // CodeMie sets ENABLE_PROMPT_CACHING_1H=1, so this is the common path, and the two rates differ
+    // ($6/M vs $3.75/M on sonnet). Pricing the flat field instead undercounts real spend.
+    const files = {
+      [TRANSCRIPT]: row('msg_1', 'claude-sonnet-5', {
+        cache_creation_input_tokens: 1_000_000,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000_000 },
+      }),
+    };
+    expect((await computeSessionCost(TRANSCRIPT, deps(files)))!.cost).toBeCloseTo(6, 10);
+  });
+
+  it('falls back to the flat cache-creation field when the split is absent or zeroed', async () => {
+    const files = {
+      [TRANSCRIPT]: row('msg_1', 'claude-sonnet-5', {
+        cache_creation_input_tokens: 1_000_000,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+      }),
+    };
+    expect((await computeSessionCost(TRANSCRIPT, deps(files)))!.cost).toBeCloseTo(3.75, 10);
+  });
+
+  it('prefers the routed model over the requested one', async () => {
+    const files = {
+      [TRANSCRIPT]: JSON.stringify({
+        message: {
+          id: 'msg_1',
+          model: 'claude-smart-router',
+          'x-codemie-routed-model': 'claude-haiku-4-5',
+          usage: { output_tokens: 1_000_000 },
+        },
+      }),
+    };
+    expect((await computeSessionCost(TRANSCRIPT, deps(files)))!.cost).toBeCloseTo(5, 10);
+  });
+
+  it('marks the total an estimate when a model has no rate, rather than silently undercounting', async () => {
+    const files = {
+      [TRANSCRIPT]: [
+        row('msg_1', 'claude-sonnet-5', { input_tokens: 1_000_000 }),
+        row('msg_2', 'some-unpriced-model', { input_tokens: 1_000_000 }),
+      ].join('\n'),
+    };
+    const result = await computeSessionCost(TRANSCRIPT, deps(files));
+    expect(result!.exact).toBe(false);
+    expect(result!.cost).toBeCloseTo(3, 10); // the priced row still counts
+  });
+
+  it('survives a torn final line while Claude Code is mid-write', async () => {
+    const files = {
+      [TRANSCRIPT]: `${row('msg_1', 'claude-sonnet-5', { input_tokens: 1_000_000 })}\n{"message":{"id":"msg_2","usa`,
+    };
+    expect((await computeSessionCost(TRANSCRIPT, deps(files)))!.cost).toBeCloseTo(3, 10);
+  });
+
+  it('falls back to Claude Code’s own figure only when the rate card is unavailable', async () => {
+    const base = deps({ [TRANSCRIPT]: row('msg_1', 'claude-sonnet-5', { input_tokens: 1 }) });
+    const result = await computeSessionCost(TRANSCRIPT, {
+      ...base,
+      readPrices: async () => { throw new Error('no rate card'); },
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null without touching the disk when there is no transcript path', async () => {
+    const readFile = vi.fn();
+    expect(await computeSessionCost('', { readFile } as never)).toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('reuses a cached total when every source is byte-for-byte unchanged', async () => {
+    // Without this the whole transcript plus every subagent file is re-read and re-parsed on every
+    // render, growing without bound with session length.
+    const content = row('msg_1', 'claude-sonnet-5', { input_tokens: 1_000_000 });
+    const files = { [TRANSCRIPT]: content };
+    const base = deps(files);
+    const cache: Record<string, string> = {};
+    const readFile = vi.fn(async (p: string) => {
+      if (p in cache) return cache[p];
+      return base.readFile(p);
+    });
+    const io = {
+      ...base,
+      readFile,
+      writeFile: async (p: string, body: string) => { cache[p] = body; },
+    };
+
+    const first = await computeSessionCost(TRANSCRIPT, io as never);
+    const transcriptReads = readFile.mock.calls.filter(([p]) => p === TRANSCRIPT).length;
+    const second = await computeSessionCost(TRANSCRIPT, io as never);
+
+    expect(second).toEqual(first);
+    expect(readFile.mock.calls.filter(([p]) => p === TRANSCRIPT).length).toBe(transcriptReads);
+  });
+
+  it('recomputes when a source changes size, so an appended turn is never missed', async () => {
+    const files = { [TRANSCRIPT]: row('msg_1', 'claude-sonnet-5', { input_tokens: 1_000_000 }) };
+    const cache: Record<string, string> = {};
+    const io = {
+      readPrices: async () => PRICES,
+      readDir: async () => { throw new Error('ENOENT'); },
+      readFile: async (p: string) => {
+        if (p in cache) return cache[p];
+        if (p in files) return files[p];
+        throw new Error('ENOENT');
+      },
+      writeFile: async (p: string, body: string) => { cache[p] = body; },
+      stat: async (p: string) => {
+        if (p in files) return { size: files[p].length, mtimeMs: 1 };
+        throw new Error('ENOENT');
+      },
+    };
+
+    const first = await computeSessionCost(TRANSCRIPT, io as never);
+    files[TRANSCRIPT] += `\n${row('msg_2', 'claude-sonnet-5', { input_tokens: 1_000_000 })}`;
+    const second = await computeSessionCost(TRANSCRIPT, io as never);
+
+    expect(first!.cost).toBeCloseTo(3, 10);
+    expect(second!.cost).toBeCloseTo(6, 10);
   });
 });

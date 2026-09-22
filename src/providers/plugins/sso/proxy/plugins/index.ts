@@ -14,12 +14,14 @@ import { JWTAuthPlugin } from './jwt-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
+import { BackgroundRequestNormalizerPlugin } from './background-request-normalizer.plugin.js';
 import { KimiRequestNormalizerPlugin } from './kimi-request-normalizer.plugin.js';
 import { CodexRequestNormalizerPlugin } from './codex-request-normalizer.plugin.js';
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
 import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-content-sanitizer.plugin.js';
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
+import { RoutingHeaderInjectorPlugin } from './routing-header-injector.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
 /**
@@ -36,6 +38,7 @@ export function registerCorePlugins(): void {
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
+  registry.register(new BackgroundRequestNormalizerPlugin()); // Priority 14 - forces cheap background calls (e.g. title-gen) onto haiku
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
   registry.register(new CodexRequestNormalizerPlugin()); // Priority 14 - maps the Codex app's undated model names onto dated CodeMie deployments
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
@@ -44,6 +47,7 @@ export function registerCorePlugins(): void {
   registry.register(new VsCodeRequestNormalizerPlugin()); // Priority 17 - constrains VS Code user identifiers
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
+  registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
 }
 
@@ -60,12 +64,14 @@ export {
   HeaderInjectionPlugin,
   RequestSanitizerPlugin,
   ClaudeRequestNormalizerPlugin,
+  BackgroundRequestNormalizerPlugin,
   KimiRequestNormalizerPlugin,
   CodexRequestNormalizerPlugin,
   CodexEncryptedContentSanitizerPlugin,
   CopilotEncryptedContentSanitizerPlugin,
   VsCodeRequestNormalizerPlugin,
   LoggingPlugin,
+  RoutingHeaderInjectorPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';

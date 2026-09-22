@@ -76,6 +76,16 @@ export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
         enriched = ['--model', model, ...enriched];
       }
 
+      // Points the /model picker at the CodeMie catalog for this process only (see
+      // claude.plugin.ts's beforeRun, which writes the temp file). Deliberately NOT written into
+      // ~/.claude/settings.json: that file is shared by every concurrent Claude Code process on
+      // the machine, and --settings layers on top of it without affecting any other session.
+      const modelPickerSettings = process.env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS;
+      const hasSettingsFlag = enriched.some(arg => arg === '--settings' || arg.startsWith('--settings='));
+      if (modelPickerSettings && !hasSettingsFlag) {
+        enriched = ['--settings', modelPickerSettings, ...enriched];
+      }
+
       return enriched;
     }
   }

@@ -914,3 +914,85 @@ describe('gatherUsageDeduped / gatherDedupedUsageRecords — pi fork replay', ()
     expect([...viaDedup.entries()]).toEqual([...viaReader.entries()]);
   });
 });
+
+/**
+ * Routing classifier cost extraction, for both header families.
+ * Fixtures mirror the shapes observed in real transcripts: the proxy copies routing response
+ * headers onto the message object verbatim, hyphens intact for both families — see
+ * proxy/plugins/routing-header-injector.plugin.ts.
+ */
+describe('extractClaudeUsageRecords — routing classifier cost', () => {
+  const usage = { input_tokens: 10, output_tokens: 5 };
+  const session = (message: Record<string, unknown>) =>
+    ({
+      sessionId: 'r1',
+      agentName: 'Claude Code',
+      metadata: {},
+      messages: [{ message: { model: 'claude-sonnet-4-5', usage, ...message } }],
+    }) as never;
+
+  // The proxy emits one canonical x-codemie-routing-* header set regardless of which backend
+  // mechanism decided — routingFamily is opaque, informational data, not a discriminant here.
+  const ROUTED_WITH_CLASSIFIER = {
+    'x-codemie-routing-tier': 'capable',
+    'x-codemie-routing-decision-source': 'llm-classifier',
+    'x-codemie-routing-source': 'judge',
+    'x-codemie-routing-router-type': 'composite',
+    'x-codemie-routing-family': 'switchyard',
+    'x-codemie-routing-classifier-model': 'claude-4-5-haiku',
+    'x-codemie-routing-classifier-cost-usd': '0.0072204',
+  };
+
+  it('extracts cost and decision metadata from the canonical routing headers', () => {
+    const [r] = extractClaudeUsageRecords(session(ROUTED_WITH_CLASSIFIER));
+    expect(r.routingFamily).toBe('switchyard');
+    expect(r.decisionSource).toBe('llm-classifier');
+    expect(r.routingSource).toBe('judge');
+    expect(r.routerType).toBe('composite');
+    expect(r.classifierCostUSD).toBeCloseTo(0.0072204, 8);
+    expect(r.classifierModel).toBe('claude-4-5-haiku');
+  });
+
+  it('carries routingFamily through verbatim without branching on its value', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({ ...ROUTED_WITH_CLASSIFIER, 'x-codemie-routing-family': 'litellm' })
+    );
+    expect(r.routingFamily).toBe('litellm');
+    expect(r.classifierCostUSD).toBeCloseTo(0.0072204, 8);
+  });
+
+  it('marks routing cost known when the classifier cost header is present, even if zero', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({ 'x-codemie-routing-tier': 'simple', 'x-codemie-routing-classifier-cost-usd': '0' })
+    );
+    expect(r.routingCostKnown).toBe(true);
+    expect(r.classifierCostUSD).toBe(0);
+  });
+
+  it('marks routing cost unknown on a routed turn that reports no classifier cost', () => {
+    const [r] = extractClaudeUsageRecords(session({ 'x-codemie-routing-tier': 'efficient' }));
+    expect(r.routingCostKnown).toBe(false);
+    expect(r.classifierCostUSD).toBeUndefined();
+  });
+
+  it('treats a malformed classifier cost as unmeasured rather than NaN', () => {
+    const [r] = extractClaudeUsageRecords(
+      session({ ...ROUTED_WITH_CLASSIFIER, 'x-codemie-routing-classifier-cost-usd': 'n/a' })
+    );
+    expect(r.classifierCostUSD).toBeUndefined();
+    expect(r.routingCostKnown).toBe(false);
+  });
+
+  it('classifies a turn carrying only the classifier cost header as routed', () => {
+    const [r] = extractClaudeUsageRecords(session({ 'x-codemie-routing-classifier-cost-usd': '0.0064691' }));
+    expect(r.routingCostKnown).toBe(true);
+    expect(r.classifierCostUSD).toBeCloseTo(0.0064691, 8);
+  });
+
+  it('leaves non-routed turns free of routing metadata', () => {
+    const [r] = extractClaudeUsageRecords(session({}));
+    expect(r.routingFamily).toBeUndefined();
+    expect(r.routingCostKnown).toBeUndefined();
+    expect(r.classifierCostUSD).toBeUndefined();
+  });
+});

@@ -30,6 +30,48 @@ export interface CostSeriesPoint {
   tokens: number; // cumulative total tokens up to and including this turn
 }
 
+/** One point in the per-turn model/tier/decision timeline shown in the session modal. */
+export interface ModelTimelinePoint {
+  t: number; // epoch ms when all records are timed, else the 1-based turn ordinal
+  model: string; // normalized model name that was actually used
+  costUSD: number; // per-turn cost attributed to this model
+  tokens: number; // per-turn total tokens for this turn
+  requestedModel?: string; // capable model that was originally requested
+  /**
+   * The literal alias/id the `model` param actually held for this turn — from Claude Code's own
+   * `type: 'attachment'` model-identity markers (see usage-readers.ts's
+   * `extractModelIdentityTimeline`), resolved to whichever marker was most recent at this turn's
+   * timestamp. Unlike `requestedModel` (the header's capable-tier ceiling for Switchyard), this
+   * is exact even for a custom Switchyard variant name — and stays correct turn-by-turn across
+   * an in-session `/model` switch. Absent when this agent's log has no such marker.
+   */
+  requestedAlias?: string;
+  routingFamily?: string; // opaque, backend-internal id of which mechanism decided — informational only
+  routingTier?: 'simple' | 'middle' | 'complex' | 'reasoning' | string;
+  routingTierRaw?: string; // tier as emitted, before folded to the common vocabulary
+  routedModel?: string; // model the router actually dispatched to
+  classifierModel?: string; // LLM that made the routing decision
+  routerType?: string; // router strategy, e.g. 'stage', 'composite'
+  routingSource?: 'stage_router' | 'judge' | string;
+  decisionSource?: string; // why the router chose this tier, e.g. llm-classifier, ambiguous
+
+  // === Cost savings (from the backend's counterfactual-model header — see
+  // routing-headers.mjs's header comment) ===
+  /** Backend-reported model to reprice this turn's usage at for the savings estimate below
+   * (`x-codemie-routing-counterfactual-model`). Unlike `requestedModel`, which on some routing
+   * families is a router/tier alias (e.g. `claude-smart-router`), this is always a priceable
+   * model. Absent when the backend reported no counterfactual for this turn. */
+  counterfactualModel?: string;
+  /**
+   * What this turn would have cost had `counterfactualModel` answered it instead, repricing
+   * this turn's actual token usage at that model's rate — see cost-enricher.ts's
+   * `buildModelTimeline`. Absent when `counterfactualModel` is absent, or has no pricing entry.
+   */
+  estimatedMaxCostUSD?: number;
+  /** max(0, estimatedMaxCostUSD - costUSD). Absent under the same condition as estimatedMaxCostUSD. */
+  potentialSavingsUSD?: number;
+}
+
 /** Max points kept per session series — downsample guard so the embedded payload stays small. */
 export const MAX_SERIES_POINTS = 40;
 
@@ -82,6 +124,7 @@ export interface SessionCost {
   costUSD: number; // summed across models
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
   /** True only when dispatch extraction retained the full invocation list. Legacy lists may be capped. */
   dispatchesComplete?: boolean;
@@ -110,6 +153,23 @@ export interface SessionCost {
    * to show" — those two must always agree.
    */
   agentSessionFile?: string;
+
+  // === Routing classifier cost (additive to costUSD; see routingCostKnown) ===
+  classifierCostUSD?: number; // USD spent on the routing classifier LLM
+  /**
+   * True when every routed turn in this session reported its classifier cost. False when any
+   * routed turn reported none, making `classifierCostUSD` an understatement rather than a
+   * measurement. Absent when the session had no routed turns at all.
+   */
+  routingCostKnown?: boolean;
+  /**
+   * Percentage (0-100, rounded) of this session's turns where routing measurably changed the
+   * outcome — the turn's actual model (`routedModel`, falling back to `model`) differs from its
+   * backend-reported `counterfactualModel` (see `ModelTimelinePoint`). A turn with no
+   * `counterfactualModel` reported does not count as routed under this definition. Absent when
+   * the session has no modelTimeline data at all.
+   */
+  routedTurnsPct?: number;
 
   // === Usage provenance (from ParsedSession.usageMeta) ===
   /**

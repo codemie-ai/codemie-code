@@ -54,6 +54,22 @@ export interface LlmModel {
     top_p?: boolean;
   };
   forbidden_for_web?: boolean;
+  /**
+   * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
+   * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself
+   * dispatches to a capable/efficient pair rather than naming a concrete deployment.
+   */
+  is_router?: boolean;
+  /**
+   * Present on a regular `LLMModel` entry that is declared as a LiteLLM auto-router
+   * (`LiteLLMRouterConfig` on the backend) — LiteLLM exposes no reliable API signal for this,
+   * so the backend declares it explicitly. `is_router` is nested here rather than top-level
+   * because this object exists purely to carry it (see the backend's own comment on
+   * `LiteLLMRouterConfig`), unlike the Switchyard case above where it lives on the model itself.
+   */
+  litellm_router?: {
+    is_router?: boolean;
+  };
 }
 
 /**

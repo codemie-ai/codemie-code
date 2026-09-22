@@ -11,12 +11,12 @@
 import { readFile } from 'node:fs/promises';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
-import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
+import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
-import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
+import { emptyUsage, addUsage, costBreakdown, costForUsage } from './cost-calculator.js';
 import { lookupPrice } from '@/utils/pricing.js';
-import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
+import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, extractModelIdentityTimeline, type UsageRecord, type ModelIdentityEvent } from './usage-readers.js';
 import { extractDispatchResult } from './dispatch-extractor.js';
 import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
 import { enrichSkillDispatchCost } from './dispatch-allocation.js';
@@ -132,7 +132,10 @@ function priceUsage(
 
   for (const [rawModel, usage] of usageByModel) {
     const model = normalizeModelName(rawModel);
-    const price = lookupPrice(model);
+    // lookupPrice() takes the raw (region-qualified) id, not the display `model` above — it
+    // does its own normalizing internally, but also needs the raw form to detect Amazon
+    // Bedrock's regional-endpoint pricing premium before that qualifier is stripped.
+    const price = lookupPrice(rawModel);
     const breakdown = price ? costBreakdown(usage, price) : null;
     const costUSD = breakdown ? breakdown.total : 0;
     if (!price) {
@@ -182,12 +185,97 @@ export function buildCostSeries(records: UsageRecord[]): CostSeriesPoint[] {
   let cumCost = 0;
   let cumTokens = 0;
   records.forEach((r, i) => {
-    const price = lookupPrice(normalizeModelName(r.model));
+    // r.model is the raw (region-qualified, when Bedrock) id — lookupPrice() normalizes it
+    // internally, but also needs the raw form to detect a Bedrock regional-endpoint premium.
+    const price = lookupPrice(r.model);
     cumCost += price ? costBreakdown(r.usage, price).total : 0;
     cumTokens += r.usage.total;
     points.push({ t: useTs ? (r.ts as number) : i + 1, cost: cumCost, tokens: cumTokens });
   });
   return downsample(points);
+}
+
+/**
+ * The literal model/router alias active at `ts`, per `timeline`'s own chronological entries —
+ * the last entry with `ts <= target`, since a later `/model` switch always wins from the
+ * moment it's recorded. `null`/no match (target before the first entry, or ts unavailable)
+ * yields `undefined` rather than guessing.
+ */
+function resolveAliasAt(timeline: ModelIdentityEvent[] | null, target: number | null): string | undefined {
+  if (!timeline || target == null) return undefined;
+  let result: string | undefined;
+  for (const entry of timeline) {
+    if (entry.ts > target) break;
+    result = entry.modelId;
+  }
+  return result;
+}
+
+/**
+ * Build a per-turn model-usage timeline from ordered usage records.
+ * Each point captures the actual model, per-turn cost, and token count.
+ * Returns [] when there are no records.
+ */
+export function buildModelTimeline(records: UsageRecord[], identityTimeline: ModelIdentityEvent[] | null = null): ModelTimelinePoint[] {
+  if (!records.length) return [];
+  const useTs = records.every((r) => r.ts != null);
+  return records.map((r, i) => {
+    const model = normalizeModelName(r.model);
+    // lookupPrice() takes the raw id (r.model) — see buildCostSeries()'s own comment above.
+    const price = lookupPrice(r.model);
+    const costUSD = price ? costBreakdown(r.usage, price).total : 0;
+    const point: ModelTimelinePoint = {
+      t: useTs ? (r.ts as number) : i + 1,
+      model,
+      costUSD: Math.round(costUSD * 1e8) / 1e8,
+      tokens: r.usage.total,
+    };
+    if (r.requestedModel != null) point.requestedModel = r.requestedModel;
+    if (r.routingFamily != null) {
+      point.routingFamily = r.routingFamily;
+      const alias = resolveAliasAt(identityTimeline, r.ts);
+      if (alias != null) point.requestedAlias = alias;
+    }
+    if (r.routingTier != null) point.routingTier = r.routingTier;
+    if (r.routingTierRaw != null) point.routingTierRaw = r.routingTierRaw;
+    if (r.routedModel != null) point.routedModel = r.routedModel;
+    if (r.classifierModel != null) point.classifierModel = r.classifierModel;
+    if (r.routerType != null) point.routerType = r.routerType;
+    if (r.routingSource != null) point.routingSource = r.routingSource;
+    if (r.decisionSource != null) point.decisionSource = r.decisionSource;
+    // Counterfactual cost: reprice this turn's actual usage at the backend-reported
+    // counterfactual model's rate (x-codemie-routing-counterfactual-model — see
+    // routing-headers.mjs) to estimate what this turn would have cost unrouted. Backend-computed
+    // and family-agnostic, unlike the old `requestedModel`-based estimate: on non-switchyard
+    // families `requestedModel` can be a router/tier ALIAS ('claude-smart-router') rather than a
+    // priceable model, so the backend now names the concrete model itself.
+    if (r.counterfactualModel != null) {
+      point.counterfactualModel = r.counterfactualModel;
+      const counterfactualPrice = lookupPrice(r.counterfactualModel);
+      if (counterfactualPrice) {
+        const estimatedMaxCostUSD = costForUsage(r.usage, counterfactualPrice);
+        point.estimatedMaxCostUSD = Math.round(estimatedMaxCostUSD * 1e8) / 1e8;
+        point.potentialSavingsUSD = Math.round(Math.max(0, estimatedMaxCostUSD - costUSD) * 1e8) / 1e8;
+      }
+    }
+    return point;
+  });
+}
+
+/**
+ * A turn counts as "routed" for the Routed % metric when the model that actually answered it
+ * differs from the backend's counterfactual — i.e. routing measurably changed which model was
+ * used, not merely that a routing decision was recorded. `routedModel` (the router's own
+ * decision) is preferred over `model` (the billed model) when both are present, since some
+ * routing families report `model` as a router/tier alias rather than the concrete model.
+ * Normalizes both sides before comparing so formatting differences (e.g. Bedrock region
+ * qualifiers) don't produce a false positive. A turn with no `counterfactualModel` reported
+ * cannot be classified as routed under this definition.
+ */
+export function isRoutedTurn(point: ModelTimelinePoint): boolean {
+  if (point.counterfactualModel == null) return false;
+  const actual = normalizeModelName(point.routedModel ?? point.model);
+  return actual !== normalizeModelName(point.counterfactualModel);
 }
 
 /** Run async tasks with bounded concurrency (cap open file descriptors). */
@@ -248,8 +336,7 @@ function enrichDispatchCosts(
       let totalTokens = emptyUsage();
       let priced = false;
       for (const [rawModel, usage] of usageByModel) {
-        const model = normalizeModelName(rawModel);
-        const price = lookupPrice(model);
+        const price = lookupPrice(rawModel);
         if (price) { totalCost += costBreakdown(usage, price).total; priced = true; }
         totalTokens = addUsage(totalTokens, usage);
       }
@@ -352,6 +439,36 @@ export async function enrichCosts(
     }
     if (series.length) {
       cost.costSeries = series;
+    }
+    if (records.length) {
+      const identityTimeline = entry.parsed ? extractModelIdentityTimeline(entry.parsed) : null;
+      const timeline = buildModelTimeline(records, identityTimeline);
+      if (timeline.length) {
+        cost.modelTimeline = timeline;
+        const routedCount = timeline.filter(isRoutedTurn).length;
+        cost.routedTurnsPct = Math.round((routedCount / timeline.length) * 100);
+      }
+      // Accumulate classifier (routing LLM) cost from per-turn metadata.
+      let classifierCostUSD = 0;
+      // A session is only "cost known" if every routed turn reported its classifier cost.
+      // One unreported turn makes the session total an understatement, not a measurement.
+      let routedTurns = 0;
+      let costKnownTurns = 0;
+      for (const r of records) {
+        classifierCostUSD += r.classifierCostUSD ?? 0;
+        if (r.routingFamily != null) {
+          routedTurns++;
+          if (r.routingCostKnown) costKnownTurns++;
+        }
+      }
+      if (routedTurns > 0) {
+        cost.routingCostKnown = costKnownTurns === routedTurns;
+      }
+      if (classifierCostUSD > 0) {
+        cost.classifierCostUSD = Math.round(classifierCostUSD * 1e8) / 1e8;
+        // Include routing cost in the session total.
+        cost.costUSD = Math.round((cost.costUSD + classifierCostUSD) * 1e8) / 1e8;
+      }
     }
     if (entry.parsed) {
       // Usage provenance from the adapter: lets the report distinguish "cost is genuinely
