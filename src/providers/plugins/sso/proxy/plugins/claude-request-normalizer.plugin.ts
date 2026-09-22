@@ -7,6 +7,8 @@
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
+import { isClaudeServableDeployment, resolveClaudeDeployment } from './claude-model-resolver.js';
 
 // standard = leave thinking untouched; none = strip it; adaptive = requires the
 // adaptive thinking API + output_config.effort.
@@ -173,15 +175,31 @@ export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
     if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
       throw new Error(`Plugin disabled for agent: ${clientType}`);
     }
-    const configModel = context.config.model;
-    return new ClaudeRequestNormalizerInterceptor(configModel);
+    return new ClaudeRequestNormalizerInterceptor(context);
   }
 }
+
+/** Re-list deployments occasionally so a long-lived daemon picks up new models. */
+const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** How long to wait before retrying after a failed or empty listing. */
+const MODEL_RETRY_BACKOFF_MS = 60 * 1000;
 
 class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
   name = 'claude-request-normalizer';
 
-  constructor(private readonly configModel?: string) {}
+  private availableModels: string[] = [];
+  private loadedAt = 0;
+  private lastAttemptAt = 0;
+  private inFlight: Promise<void> | null = null;
+
+  constructor(private readonly context: PluginContext) {}
+
+  /** Test seam — lets the suite supply a deployment list without a network call. */
+  setAvailableModelsForTest(models: string[]): void {
+    this.availableModels = models;
+    this.loadedAt = Date.now();
+  }
 
   async onRequest(context: ProxyContext): Promise<void> {
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
@@ -192,7 +210,8 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
       const bodyStr = context.requestBody.toString('utf-8');
       const body = JSON.parse(bodyStr);
 
-      const model = (typeof body.model === 'string' && body.model) || this.configModel || '';
+      const requestedModel = typeof body.model === 'string' ? body.model : '';
+      const model = requestedModel || this.context.config.model || '';
       if (!model) {
         return;
       }
@@ -209,13 +228,102 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
         modifiedByThinking = handleThinkingField(body, caps, model);
       }
 
-      if (modifiedBySampling || modifiedByEffort || modifiedByThinking) {
+      // Capabilities above are read from the client's requested (canonical) name
+      // on purpose — MODEL_CAPABILITY_TABLE's patterns assume family-first order,
+      // so this must run before any tenant-id rewrite below.
+      let modifiedByModel = false;
+      if (requestedModel) {
+        const resolved = await this.resolveModel(requestedModel);
+        if (resolved && resolved !== requestedModel) {
+          body.model = resolved;
+          modifiedByModel = true;
+        }
+      }
+
+      if (modifiedBySampling || modifiedByEffort || modifiedByThinking || modifiedByModel) {
         const newBodyStr = JSON.stringify(body);
         context.requestBody = Buffer.from(newBodyStr, 'utf-8');
         context.headers['content-length'] = String(context.requestBody.length);
       }
     } catch {
       // Not valid JSON or unexpected structure — pass through unchanged
+    }
+  }
+
+  /**
+   * Resolve the client's requested model name to a deployment the tenant's
+   * gateway actually has. Returns `undefined` (pass through unchanged) when
+   * the catalog is unavailable or nothing matches — never substitutes a
+   * different capability tier.
+   */
+  private async resolveModel(requestedModel: string): Promise<string | undefined> {
+    await this.ensureModelsLoaded();
+    if (this.availableModels.length === 0) {
+      return undefined;
+    }
+
+    const resolution = resolveClaudeDeployment(requestedModel, this.availableModels);
+    if (resolution.kind === 'unresolved') {
+      return undefined;
+    }
+    if (resolution.kind === 'resolved') {
+      logger.debug(`[${this.name}] Resolved "${requestedModel}" to deployment "${resolution.model}"`);
+    }
+    return resolution.model;
+  }
+
+  /**
+   * Load the deployment list once, then refresh it on a TTL. Concurrent requests
+   * share a single in-flight fetch so a burst of turns does not fan out into a
+   * burst of list calls.
+   */
+  private async ensureModelsLoaded(): Promise<void> {
+    const now = Date.now();
+    const fresh = this.availableModels.length > 0 && now - this.loadedAt < MODEL_CACHE_TTL_MS;
+    if (fresh) return;
+
+    // Negative cache: without this, expired credentials or a 5xx gateway turn
+    // every single request into a fresh listing call, because a failed load
+    // leaves availableModels empty and so never looks "fresh".
+    const backingOff = this.lastAttemptAt !== 0
+      && now - this.lastAttemptAt < MODEL_RETRY_BACKOFF_MS;
+    if (backingOff) return;
+
+    if (this.inFlight) return this.inFlight;
+
+    this.inFlight = this.loadModels().finally(() => { this.inFlight = null; });
+    return this.inFlight;
+  }
+
+  private async loadModels(): Promise<void> {
+    this.lastAttemptAt = Date.now();
+
+    const credentials = this.context.credentials;
+    if (!credentials) {
+      logger.debug(`[${this.name}] No credentials available; model names pass through unchanged`);
+      return;
+    }
+
+    try {
+      const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
+      const models = 'cookies' in credentials
+        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies)
+        : await fetchCodeMieLlmModels(apiUrl, credentials.token);
+
+      this.availableModels = models
+        .filter((model) => model.enabled !== false)
+        .map((model) => model.deployment_name || model.base_name)
+        .filter((name): name is string => Boolean(name))
+        .filter(isClaudeServableDeployment);
+      this.loadedAt = Date.now();
+
+      logger.debug(`[${this.name}] Loaded ${this.availableModels.length} Claude deployments for model resolution`);
+    } catch (error) {
+      // A failed list must not fail the request.
+      logger.debug(
+        `[${this.name}] Could not list deployments; passing model names through: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 }

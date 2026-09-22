@@ -7,7 +7,7 @@ import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/skill
 import { sanitizeToSlug } from '@/utils/slug.js';
 import { registerCodexSkill, unregisterCodexSkill } from '@/cli/commands/skills/setup/generators/codex-skill-generator.js';
 import { registerGeminiSkill, unregisterGeminiSkill } from '@/cli/commands/skills/setup/generators/gemini-skill-generator.js';
-import { executeWithSpinner, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
+import { executeWithSpinner, executeWithSpinnerStrict, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
 import {
   targetsClaude,
   targetsCodex,
@@ -60,9 +60,9 @@ export async function registerSkill(
   scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
-): Promise<CodemieSkill | null> {
+): Promise<CodemieSkill> {
 
-  const result = await executeWithSpinner(
+  const result = await executeWithSpinnerStrict(
     `Registering ${chalk.bold(skill.name)}...`,
     async () => {
       let slug: string | undefined;
@@ -82,14 +82,10 @@ export async function registerSkill(
     (error) => logger.error('Skill registration failed', { error, skillId: skill.id, target })
   );
 
-  if (!result) {
-    return null;
-  }
-
   return {
     id: skill.id,
     name: skill.name,
-    slug: result,
+    slug: result!,
     description: skill.description,
     project: skill.project,
     registeredAt: new Date().toISOString(),

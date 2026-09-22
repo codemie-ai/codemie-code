@@ -1,0 +1,390 @@
+{
+  "decision": "request-changes",
+  "rationale": "Source inspection verified 12 behavior defects and 3 documented standards violations in ownership, attribution, lifecycle, timing, reporting and code structure. All four lenses and the standards audit completed, with 0 deferred and 1 verification-only concern filtered below the emission floor. Numeric reconciliation and browser evidence remain pending Stage 7.",
+  "confidence": "high",
+  "risk_flags": [
+    "breaking-change",
+    "public-api"
+  ],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Design: retain a flat, additive session/dispatch representation with stable identities, ancestry, lifecycle and own/inclusive usage.",
+      "status": "pass",
+      "notes": "cost/types.ts:42-65 and report/types.ts:50-63 add optional fields; projectDispatch preserves the flat dispatch list."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: exact metadata and tool ownership link descendants regardless of storage order; invalid links remain unresolved.",
+      "status": "fail",
+      "notes": "claude-trace.ts:77-83 selects the first transcript containing a tool ID; :111-114 resolves the first duplicate metadata link while only later links become conflicts."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: reuse one captured transcript family for session facts, bounds, dispatches and deduplicated usage.",
+      "status": "pass",
+      "notes": "native-loader.ts:425 attaches INTERNAL_PARSED_FAMILY; cost-enricher.ts:109-116 reuses it; native-loader.test.ts adds a one-parse growing-file fixture."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: own usage belongs to its transcript and inclusive usage adds only reachable descendants without adding overlaps to session totals.",
+      "status": "fail",
+      "notes": "usage-readers.ts:159-163 scans children in discovery order and :118 permanently keeps the first encountered owner, so inherited child history can become a grandchild own allocation."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: skill/command attribution stays within its owner and evidenced scope, with estimated or unavailable values identified.",
+      "status": "pass",
+      "notes": "cost-enricher.ts:308-315 restricts windows to byOwner records and labels owner-window attribution; zero-duration command estimates remain unavailable."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: distinguish dispatch, acknowledgement, observation and authoritative completion, correlate protocol notifications by tool/task identity, and exclude quo",
+      "status": "fail",
+      "notes": "claude-trace.ts:148-158 excludes quoted message text, but :192 requires a linked transcript for task-only matching; dispatch-extractor.ts:101 labels every non-async tool_result completed."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: async acknowledgements and end_turn alone do not establish subtree completion; unknown completion remains visible.",
+      "status": "pass",
+      "notes": "dispatch-extractor.ts:95-101 separates async acknowledgement; claude-trace.ts:193-209 uses authoritative completion or observed descendant bounds and never reads end_turn."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: session elapsed time covers observed root/descendant activity independently of parallel work durations.",
+      "status": "pass",
+      "notes": "native-loader.ts:341-350 computes the timestamp envelope; payload-builder.ts:94-97 projects the captured bounds."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: extend Sessions with complete inspectable ancestry, stable selection, lifecycle and own/inclusive timing/cost details; retain legacy usability.",
+      "status": "pending-stage-7",
+      "notes": "client/app.js:1033-1236 constructs all entries and identity-based selection with legacy fallbacks; browser interaction evidence belongs to Stage 7."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: identify native costs as API-equivalent estimates, preserve authoritative-source distinctions, and correct Sonnet 5/Opus 5 using existing normalization/",
+      "status": "pass",
+      "notes": "pricing.json:25-38 contains the required rates; cost-enricher.ts and otel-loader.ts add source provenance; pricing and calculator fixtures cover normalized names and cache TTL."
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: historical cutoff contains 37 unique agent calls at depths 24/12/1, 9 skill calls and 3 commands; child isSidechain rows are owned messages.",
+      "status": "pending-stage-7",
+      "notes": "dispatch-extractor.ts:63-112 scans all owners without sidechain exclusion or truncation; exact historical counts and depth reconciliation require Stage 7 execution."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: flat storage, malformed/missing/conflicting parents, cycles and duplicate/replayed records preserve valid usage and expose uncertainty without invented rel",
+      "status": "fail",
+      "notes": "claude-trace.ts:77-83 and :111-126 use discovery-order first wins for tool owners and duplicate tool-to-agent metadata, allowing an arbitrary child to remain resolved/exact."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: historical owned usage reconciles to 528 responses and 61,193,817 tokens with the specified category totals and no double-counted 1h subset.",
+      "status": "pending-stage-7",
+      "notes": "usage-readers.ts:173-188 retains TTL subset semantics; numeric historical reconciliation is exclusively Stage 7 evidence."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: each owned response belongs to its correct own allocation; inclusive descendants and root allocations reconcile; replay exclusion is consistent and unknown",
+      "status": "fail",
+      "notes": "usage-readers.ts:159-163 and :118 can claim a parent response for a grandchild encountered first; cost-enricher.ts:324-328 exposes the resulting wrong own allocation as exact."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: skill/command details cannot absorb unrelated concurrent descendants; owner/scope and estimated/unavailable attribution are explicit and overlaps do not af",
+      "status": "pass",
+      "notes": "cost-enricher.ts:308-315 uses only accepted records for the dispatch owner and labels attribution; nested cost fixtures cover overlapping root/child skills."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: acknowledgement does not complete async work; requirements-reader uses its 412,438 ms notification; notification copies and valid task-ID-only records are ",
+      "status": "fail",
+      "notes": "claude-trace.ts:192 ignores a task-ID-only notification when the acknowledgement has agentId but its transcript is absent; the 412,438 ms linked-transcript fixture otherwise implements the historical "
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: explicit completion/failure, incomplete observation and unknown evidence remain distinguishable; fourth slice-runner stays incomplete at cutoff.",
+      "status": "fail",
+      "notes": "dispatch-extractor.ts:90-102 ignores tool_result.is_error and failure statuses, then forces non-async results to completed; end_turn-only incompleteness is implemented and fixture-covered."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: historical activity spans 7,271,252 ms through 10:32:10.546Z, including children, and timeline/detail bounds agree without summing parallel durations.",
+      "status": "pending-stage-7",
+      "notes": "native-loader.ts:341-350 computes family bounds and client/app.js:1151-1236 consumes them; exact historical span and browser agreement need Stage 7."
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: each report reuses one family capture; historical validation aligns cutoff while live validation exposes its own snapshot.",
+      "status": "pending-stage-7",
+      "notes": "INTERNAL_PARSED_FAMILY reuse and capturedAt projection are implemented and fixture-covered; historical/live CLI evidence remains Stage 7 work."
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: Sonnet 5 rates are 2/10/0.2/2.5/4 and Opus 5 rates 5/25/0.5/6.25/10; historical total/root/top-level values reconcile to the specified amounts.",
+      "status": "pending-stage-7",
+      "notes": "pricing.json adds the exact five-rate entries; pricing.test.ts and cost-calculator.test.ts add normalization/TTL fixtures; real $35.73558280 reconciliation awaits Stage 7."
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: aggregates, models, session and cumulative endpoint reconcile before rounding; per-step values use the same correctly owned records/rates and own/inclusiv",
+      "status": "fail",
+      "notes": "Rounding is deferred and model/series pricing is shared, but first-discovered replay ownership in usage-readers.ts:159-187 causes per-step own values to belong to the wrong transcript."
+    },
+    {
+      "kind": "spec",
+      "item": "AC12: Sessions exposes all counts and inspectable ancestry beyond 60 dispatches; parent/descendant selection shows stable, consistent details without omissions.",
+      "status": "pending-stage-7",
+      "notes": "No Claude dispatch slice remains; payload and export fixtures include 80 steps; client/app.js builds and selects every entry, pending browser verification."
+    },
+    {
+      "kind": "spec",
+      "item": "AC13: HTML/JSON agree on identities, hierarchy, totals, attribution and timing; public changes are additive and legacy/non-Claude consumers remain functional.",
+      "status": "pending-stage-7",
+      "notes": "projectDispatch/projectSnapshot allowlist optional fields, and report-generator.test.ts compares identical exports; legacy fallback/browser execution is owned by Stage 7."
+    },
+    {
+      "kind": "spec",
+      "item": "AC14: focused executable validation covers nesting, async notifications, incomplete work, malformed ancestry, replay, large sets and TTL; real reconciliation an",
+      "status": "pending-stage-7",
+      "notes": "Changed fixture suites cover each listed category; tests, historical run, live CLI regeneration and browser/console evidence were intentionally not executed by this lens."
+    },
+    {
+      "kind": "spec",
+      "item": "AC15: original logs/report remain unchanged; private bodies/credentials/generated reports stay outside committed artifacts; corrected reports are delivered in t",
+      "status": "pending-stage-7",
+      "notes": "Frozen diff changes only source and sanitized fixture code; symbol-backed captures and allowlisted dispatch exports exclude new private bodies; report delivery/preservation evidence belongs to Stage 7"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not fetch provider bills, allocate subscription charges or add external billing services.",
+      "status": "pass",
+      "notes": "Rates remain local pricing.json data; cost computation uses native token records or existing source-reported telemetry only."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not rewrite source transcripts or edit the saved historical report.",
+      "status": "pass",
+      "notes": "Frozen diff introduces read-only native parsing/capture changes and report projection; no transcript or historical-report write path is added."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not change provider execution, orchestration, remote metrics ingestion or unrelated report navigation.",
+      "status": "pass",
+      "notes": "Changes are confined to session metadata, analytics extraction/cost/reporting, pricing and fixtures; otel-loader only adds provenance to existing cost data."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not infer missing ancestry, completion or exact skill costs from temporal coincidence.",
+      "status": "pass",
+      "notes": "Ancestry uses tool IDs/metadata, lifecycle uses typed protocol evidence, and time-window skill estimates are expressly labeled estimated rather than exact."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not introduce a breaking schema, dependencies or broad analytics refactoring.",
+      "status": "pass",
+      "notes": "No package manifests change; existing durationMs/costUSD/tokens fields remain and new report/dispatch fields are optional."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All seven subjects in 6ef1fcd7ff61de502255df4e4ef1fad7320f3d0e..HEAD use an allowed fix/feat type and analytics scope, imperative wording, and subjects below the documented 100-character limit."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Exported functions retain explicit return types and ES-module extensions, but the new trace module uses a prohibited deep relative import, its ownership-index function exceeds the documented function size, and the modified cost-enricher crosses the documented file-size limit. Evidence is limited to the 25 Git-tracked changed paths; the untracked run directory was excluded."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "The default .ai-run/guides/development/security-patterns.md is absent; AGENTS.md identifies the existing canonical .ai-run/guides/security/security-practices.md, which was read instead. No concrete new security issue was found: raw transcript captures use an internal symbol, dispatch exports allowlist fields, and new timeline labels use escaping or text nodes. No outbound attribution-header changes or hardcoded credentials were identified."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 1,
+      "title": "Use the required alias for deep imports",
+      "problem": "The new trace module imports ParsedSession through four parent directories. AGENTS.md directs deep relative imports to the @/ alias, and the current ESLint configuration does not enforce that convention.",
+      "impact": "The introduced module violates the repository canonical import rule outside the automated gate coverage.",
+      "recommendation": "Import ParsedSession from @/agents/core/session/BaseSessionAdapter.js."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 70,
+      "title": "Separate ownership indexing responsibilities",
+      "problem": "buildClaudeTraceIndex spans lines 70-130 and combines owner indexing, cycle detection and relationship resolution. The code-quality guide prescribes functions under 50 lines with one responsibility; the current lint configuration does not enforce this limit.",
+      "impact": "The new indexing function exceeds the documented structural limit in the central logic that both dispatch extraction and cost attribution depend on.",
+      "recommendation": "Extract cycle detection and relationship-index construction into named helpers with clear inputs and outputs, keeping each function within the documented size limit."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 77,
+      "title": "Resolve replay ownership before indexing tools",
+      "problem": "The toolOwners map accepts the first transcript containing each tool ID. The adapter preserves directory discovery order, so a grandchild encountered before its parent can claim an inherited parent tool call. Explicit parentAgentId metadata is then compared against this arbitrary owner and a valid relationship becomes a conflict.",
+      "impact": "Exact ancestry and invocation ownership depend on filenames/discovery order, violating the required order-independent linking and replay handling. Dispatch extraction uses this map to choose the emitted owner, and cost enrichment exposes wrong or unavailable descendant allocations.",
+      "recommendation": "Determine canonical tool ownership from corroborated ancestry and response/message identity before emitting dispatches. Resolve inherited copies consistently across the entire family; when evidence cannot identify an owner, retain explicit uncertainty instead of choosing the first entry."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 111,
+      "title": "Invalidate every conflicting tool-to-agent claimant",
+      "problem": "linkedAgentByTool detects a duplicate only after the first transcript was added as resolved to agents and childAgentsByOwner. The first claimant is never invalidated. normalizeClaudeTrace selects that first claimant and enrichClaudeDispatchCosts accepts its allocation as exact.",
+      "impact": "Two child transcripts claiming the same invocation produce an arbitrary resolved child and exact spend; reversing their order changes the accepted allocation. The required conflict behavior in AC2 is not implemented.",
+      "recommendation": "Collect all claimants for each tool-use ID before resolving relationships. Unless independent exact evidence uniquely resolves the conflict, mark every claimant conflicting, exclude those links from the resolved child index, and expose the dispatch allocation as ambiguous."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 187,
+      "title": "Collect lifecycle notifications from every owner",
+      "problem": "normalizeClaudeTrace gathers lifecycle events only from parsed.messages even though extractDispatchEvents extracts nested invocations from every owner. The adapter preserves terminal notifications inside subagent transcripts, but those records never reach lifecycle matching.",
+      "impact": "An Agent/Task launched by a subagent remains incomplete or unknown when its authoritative completion/failure appears only in that owning transcript. Its completedAt, elapsedMs and exported success/failure counts are wrong despite available protocol evidence.",
+      "recommendation": "Collect and deduplicate authoritative lifecycle events across canonical owner transcripts. Match each event by exact invocation/task identity while preserving the existing rejection of ordinary quoted notification text."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 190,
+      "title": "Reconcile tool and acknowledgement identities together",
+      "problem": "The agent lookup uses an order-dependent OR between toolUseId and acknowledged agentId. If tool-a acknowledges agent-b, while agent-b metadata claims tool-b and is encountered first, it is selected via agentId. The later conflict check compares that same agentId and leaves the contradictory tool identity resolved.",
+      "impact": "Both tool-a and tool-b can receive agent-b own and inclusive usage as exact instead of exposing contradictory linking evidence, violating the required no-invented-relationships behavior.",
+      "recommendation": "Resolve tool-use and acknowledged agent/task identities as separate evidence, require their claims to agree before marking a relationship resolved, and mark contradictory mappings ambiguous without assigning the same transcript to multiple exact dispatches."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/claude-trace.ts",
+      "line": 192,
+      "title": "Use acknowledgement identity without a child transcript",
+      "problem": "Task-ID-only lifecycle matching requires a parsed index agent. An async acknowledgement can already provide the exact agentId, but when that child file is missing or unreadable, a matching taskId notification is discarded. The extractor also drops an explicit acknowledgement taskId.",
+      "impact": "Known terminal completion/failure becomes unknown, and its authoritative duration is lost whenever the child transcript is unavailable. This fails the required task-ID-only correlation in AC6.",
+      "recommendation": "Retain exact task/agent IDs from launch acknowledgements and use those mappings for lifecycle correlation independently of transcript availability. Require consistency when more than one identity is present and do not infer lifecycle from time proximity."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/cost-enricher.ts",
+      "line": 283,
+      "title": "Extract Claude-specific allocation helpers",
+      "problem": "The modified cost-enricher grows from 408 to 525 lines after adding Claude ownership/allocation helpers. The code-quality guide prescribes files under 500 lines, and the current lint configuration does not enforce this limit.",
+      "impact": "The change introduces a documented file-structure violation by combining Claude-specific allocation logic with the shared enrichment pipeline.",
+      "recommendation": "Move the cohesive Claude-specific dispatch allocation helpers into a sibling module and keep the general enrichment entry point within the documented file-size limit."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/cost-enricher.ts",
+      "line": 501,
+      "title": "Do not declare omitted invocations complete",
+      "problem": "The enricher sets dispatchesComplete true for every successful Claude extraction. The extractor silently skips recognized calls and commands with missing or invalid timestamps, while the existing named-invocation extractor can retain their counts without timestamps.",
+      "impact": "buildPayload replaces available agent/skill/command summaries with the incomplete dispatch list, potentially turning known calls into zero and presenting the omissions as a complete timeline.",
+      "recommendation": "Track recognized invocations that could not be represented and set dispatchesComplete only when none were omitted, or represent their unavailable timing explicitly. Preserve the existing aggregate fallback whenever extraction is incomplete."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/dispatch-extractor.ts",
+      "line": 55,
+      "title": "Deduplicate inherited command invocations across owners",
+      "problem": "scanCommands emits a new owner-prefixed command event for every matching user row. All owner transcripts are scanned, but the adapter deduplicates UUIDs only within each individual transcript and the extractor has no cross-owner command identity guard.",
+      "impact": "A slash-command row replayed into a child produces additional nested timeline steps and inflates complete command summaries, although the user invoked the command only once.",
+      "recommendation": "Preserve stable native command/message identity and choose its canonical owner before emission. Deduplicate inherited copies across the family while retaining separate genuine invocations with the same command name."
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/dispatch-extractor.ts",
+      "line": 101,
+      "title": "Preserve synchronous tool result failures",
+      "problem": "Every non-async result is emitted with completed status. The result branch never examines tool_result.is_error/isError or an explicit failed result status.",
+      "impact": "Failed Agent, Task and Skill invocations are presented as completed and increment successCount instead of failureCount in payload-builder invocationStats. Explicit failure evidence required by AC7 is discarded.",
+      "recommendation": "Read supported explicit error/failure fields before classifying results, retain failed status with terminal timing, and keep async acknowledgements incomplete unless authoritative terminal evidence is present. Ensure normalization retains completion timing for failed synchronous results as well."
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/cost/usage-readers.ts",
+      "line": 159,
+      "title": "Allocate replayed responses to their original owner",
+      "problem": "extractClaudeUsageRecords visits subagents in discovery order, and appendDedupedRecord permanently preserves the first owner even when a later copy updates the usage. When a descendant containing replayed parent responses is read first, those parent responses become descendant-owned.",
+      "impact": "Session totals can reconcile while the own and inclusive per-agent costs/tokens are wrong and labeled exact. This violates the required ownership and per-step reconciliation behavior in AC4 and AC11.",
+      "recommendation": "Resolve each keyed response to its evidenced original transcript independently of discovery order, then choose the most complete usage row separately from ownership. Share the canonical ownership rules with tool extraction and leave unsupported allocations explicitly unresolved."
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/native-loader.ts",
+      "line": 349,
+      "title": "Reduce family bounds without argument spreading",
+      "problem": "claudeFamilyBounds flattens all root and descendant timestamps, then passes the entire family as arguments to Math.min and Math.max. There is no family-size bound before this call.",
+      "impact": "A sufficiently large family throws RangeError even when each transcript individually is manageable. loadNativeSessions calls synthesizeRawSession without a surrounding recovery boundary, so this breaks native report loading.",
+      "recommendation": "Accumulate the minimum and maximum timestamps while iterating root and descendant messages. Avoid both argument spreading over unbounded records and the extra flattened family array."
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/native-loader.ts",
+      "line": 584,
+      "title": "Preserve post-clear timing boundaries",
+      "problem": "synthesizeRawSession strips the last /clear sentinel and earlier metadata for session facts, but the new claudeFamilyBounds call receives the original parsed.messages. Its bounds override the filtered timestamp bounds immediately below.",
+      "impact": "A post-clear session can regain an earlier sentinel/history timestamp, inflating elapsed duration and moving report period/timeline bounds before the first post-clear activity.",
+      "recommendation": "Compute root timing from the same stripClear-filtered message view used for session facts, then merge valid descendant activity bounds without mutating the captured source transcript."
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/report/client/app.js",
+      "line": 1456,
+      "title": "Include unlinked-agent disclosure in focus traversal",
+      "problem": "The modal now includes a native details/summary disclosure for unlinked agent IDs, but its focus-trap selector omits summary. When no dispatch buttons follow the disclosure, the last selected focusable is an earlier header/copy button.",
+      "impact": "Tab from that earlier button wraps to the first control before reaching the disclosure, so keyboard users cannot inspect the unresolved agent IDs in sessions with no timeline entries.",
+      "recommendation": "Include the native summary disclosure in the modal focusable set or give it the explicit focusability expected by the existing selector. Preserve normal forward and reverse traversal through the disclosure."
+    }
+  ]
+}

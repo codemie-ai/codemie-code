@@ -45,9 +45,6 @@ vi.mock('../connectors/vscode-claude-code.js', () => ({
 vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
-vi.mock('../connectors/vscode-models.js', () => ({
-  VS_CODE_SUPPORTED_MODELS: ['model-a', 'model-b', 'model-c'],
-}));
 vi.mock('../../../../providers/integration/setup-ui.js', () => ({
   displaySetupInstructions: vi.fn(),
 }));
@@ -377,7 +374,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true, vscode: true } });
@@ -394,7 +391,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(writeDesktopConfig).mockRejectedValue(new Error('disk full'));
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true, vscode: true } });
@@ -456,13 +453,14 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
   it('single successful target still prints the per-target summary (spec §3.4)', async () => {
     await withFreshDaemon();
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { vscode: true } });
 
     expect(process.exitCode).toBe(0);
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false, undefined);
   });
 });
 

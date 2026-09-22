@@ -9,22 +9,24 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import type { RawSessionData } from '../data-loader.js';
-import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
+import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from '@/utils/pricing.js';
 import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
-import { extractDispatchEvents } from './dispatch-extractor.js';
+import { extractDispatchResult } from './dispatch-extractor.js';
+import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
+import { enrichSkillDispatchCost } from './dispatch-allocation.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
-import { getCodemiePath } from '../../../../utils/paths.js';
-import { AgentRegistry } from '../../../../agents/registry.js';
-import { ClaudeSessionAdapter } from '../../../../agents/plugins/claude/claude.session.js';
-import { ClaudePluginMetadata } from '../../../../agents/plugins/claude/claude.plugin.js';
+import { getCodemiePath } from '@/utils/paths.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
+import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
-import { logger } from '../../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
@@ -95,6 +97,9 @@ interface ParsedEntry {
   filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
+  capturedAt?: number;
+  observedStart?: number;
+  observedEnd?: number;
 }
 
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
@@ -102,8 +107,15 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
-  const parsed = filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null;
-  return { sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
+  const capture = raw[INTERNAL_PARSED_FAMILY];
+  const parsed = capture?.parsed
+    ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
+  return {
+    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
+    ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
+    ...(capture && Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
+  };
 }
 
 /** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
@@ -173,9 +185,7 @@ export function buildCostSeries(records: UsageRecord[]): CostSeriesPoint[] {
     const price = lookupPrice(normalizeModelName(r.model));
     cumCost += price ? costBreakdown(r.usage, price).total : 0;
     cumTokens += r.usage.total;
-    // Round cumulative cost to 8 decimals to shrink the embedded series (well within the
-    // endpoint test's 6-decimal tolerance); tokens are exact integer sums.
-    points.push({ t: useTs ? (r.ts as number) : i + 1, cost: Math.round(cumCost * 1e8) / 1e8, tokens: cumTokens });
+    points.push({ t: useTs ? (r.ts as number) : i + 1, cost: cumCost, tokens: cumTokens });
   });
   return downsample(points);
 }
@@ -192,38 +202,6 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
   });
   await Promise.all(workers);
   return out;
-}
-
-/**
- * Attribute cost to a `skill` dispatch from the session's OWN already-priced usage records
- * whose timestamp falls inside the skill's [start, start + durationMs] window. Skills run
- * inline in the parent transcript (no separate subagent log to pull tokens from), so this is a
- * re-attribution of tokens already counted in the session total — same "ALLOCATION, don't add
- * to `seen`" semantics as the agent-dispatch path below. A dispatch with durationMs === 0 (no
- * matching tool_result found — see dispatch-extractor.ts) has no window to attribute from and is
- * left as "unknown" (absent costUSD/tokens), not zero.
- */
-function enrichSkillDispatchCost(dispatch: DispatchEventRaw, sessionRecords: UsageRecord[]): void {
-  if (!dispatch.durationMs) return;
-  const windowEnd = dispatch.start + dispatch.durationMs;
-  const matched = sessionRecords.filter((r) => r.ts != null && r.ts >= dispatch.start && r.ts <= windowEnd);
-  if (!matched.length) return;
-
-  const usageByModel = sumUsageRecords(matched);
-  let totalCost = 0;
-  let totalTokens = emptyUsage();
-  let priced = false;
-  for (const [rawModel, usage] of usageByModel) {
-    const model = normalizeModelName(rawModel);
-    const price = lookupPrice(model);
-    if (price) {
-      totalCost += costBreakdown(usage, price).total;
-      priced = true;
-    }
-    totalTokens = addUsage(totalTokens, usage);
-  }
-  if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
-  dispatch.tokens = totalTokens;
 }
 
 /**
@@ -275,7 +253,7 @@ function enrichDispatchCosts(
         if (price) { totalCost += costBreakdown(usage, price).total; priced = true; }
         totalTokens = addUsage(totalTokens, usage);
       }
-      if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
+      if (priced) dispatch.costUSD = totalCost;
       dispatch.tokens = totalTokens;
     }
 
@@ -360,6 +338,13 @@ export async function enrichCosts(
       records = [];
     }
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
+    if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
+    if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;
+    if (cost.priced) {
+      cost.costSource = 'native-estimate';
+      cost.costBasis = 'standard-api-tokens';
+    }
     if (entry.filePath) {
       // Same path that made hadLog/pricing true — so a consumer never sees "priced" and
       // "no file to show" disagree (see CR-002 in the file-location UI review).
@@ -383,11 +368,16 @@ export async function enrichCosts(
       }
 
       try {
-        const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
-        if (dispatches.length) {
+        const { events: dispatches, complete } = extractDispatchResult(entry.parsed, entry.agentName);
+        if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
+          enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
+          cost.dispatchesComplete = complete;
+        } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
+        }
+        if (dispatches.length) {
           // Strip internal _toolUseId before storing in the public cost index
-          cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
+          cost.dispatches = dispatches.map(({ _toolUseId: _id, _taskId: _task, ...d }) => d);
         }
       } catch (e) {
         logger.debug(`[cost] dispatch extraction failed for ${entry.sessionId}:`, e);

@@ -39,8 +39,30 @@ export interface DispatchEvent {
   name: string;
   start: number;       // epoch ms of the tool_use / command
   durationMs: number;  // tool_result − tool_use; 0 for skills/commands/unmatched
-  tokens?: TokenUsage; // from subagent transcript; absent when no meta match or unpriced model
-  costUSD?: number;    // priced from tokens; absent when unpriced or no meta match
+  /** Stable invocation identity. Native Claude dispatches use the tool-use ID. */
+  id?: string;
+  /** Stable identity of the agent invocation that owns this step. */
+  ownerAgentId?: string;
+  /** Agent ID assigned by Claude to an Agent/Task invocation. */
+  agentId?: string;
+  /** Parent agent invocation's dispatch ID. Absent for root-owned steps. */
+  parentId?: string;
+  depth?: number;
+  relationshipStatus?: 'resolved' | 'root' | 'missing' | 'conflict' | 'cycle';
+  acknowledgedAt?: number;
+  observedEnd?: number;
+  completedAt?: number;
+  /** Authoritative completion span, or observed subtree activity for incomplete work. */
+  elapsedMs?: number;
+  status?: 'completed' | 'failed' | 'incomplete' | 'unknown';
+  tokens?: TokenUsage; // own accepted usage; excludes descendants and cross-session replay
+  costUSD?: number;    // priced own usage; absent when unpriced or attribution is unavailable
+  /** Own accepted usage plus descendants with resolved ancestry. Overlaps ancestor totals. */
+  inclusiveTokens?: TokenUsage;
+  inclusiveCostUSD?: number;
+  attributionStatus?: 'exact' | 'estimated' | 'unavailable' | 'ambiguous';
+  /** Skill/command windows are overlapping estimates within their canonical owner only. */
+  attributionScope?: 'own' | 'owner-window';
   tools?: Array<{ name: string; calls: number }>; // top tool call counts from subagent; max 8
 }
 
@@ -48,7 +70,7 @@ export interface DispatchEvent {
  * Internal dispatch event used during cost enrichment — carries _toolUseId to join
  * against parsed.subagents. Stripped before the event is stored in SessionCost.dispatches.
  */
-export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string };
+export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string; _taskId?: string };
 
 /** Max dispatch events kept per session — payload guard for very long runs. */
 export const MAX_DISPATCHES = 60;
@@ -61,7 +83,23 @@ export interface SessionCost {
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
+  /** True only when dispatch extraction retained the full invocation list. Legacy lists may be capped. */
+  dispatchesComplete?: boolean;
+  /** Actual native-family capture time and observed activity bounds, in epoch milliseconds. */
+  capturedAt?: number;
+  observedStart?: number;
+  observedEnd?: number;
+  /** Native token estimates are distinct from amounts reported by the source itself. */
+  costSource?: 'native-estimate' | 'authoritative';
+  costBasis?: 'standard-api-tokens' | 'source-reported';
   perModel: ModelCost[];
+  /** Disjoint Claude root allocation. Session = root own + top-level inclusive + unlinked. */
+  rootOwnTokens?: TokenUsage;
+  rootOwnCostUSD?: number;
+  /** Accepted usage whose owner cannot be reached from the root through resolved ancestry. */
+  unlinkedTokens?: TokenUsage;
+  unlinkedCostUSD?: number;
+  unlinkedAgentIds?: string[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)
   /**

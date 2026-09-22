@@ -31,6 +31,7 @@ import {
   copySsoCredentials,
   getTempDir,
   spawnPty,
+  waitForClaudeReady,
   jwtCleanEnv,
   ssoCleanEnv,
   setupSsoAutotestProfile,
@@ -201,14 +202,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
 
       try {
         await proc.waitFor(/Model\s*[│|]/i, 60_000);
-        // On macOS, Claude Code shows a workspace-trust prompt for new temp directories
-        // before rendering the startup box.  Start a background handler that accepts the
-        // prompt ('1' = Yes, I trust this folder) if it appears, so the startup box can
-        // render.  The handler is a no-op on platforms where the prompt does not appear.
-        void proc.waitFor(/trust.*folder|trustthisfolder/i, 15_000)
-          .then(() => proc.writeLine('1'))
-          .catch(() => { /* no trust prompt on this platform */ });
-        await proc.waitFor(/╰─/, 60_000);
+        await waitForClaudeReady(proc, 60_000);
         await new Promise((r) => setTimeout(r, 1_000));
         proc.writeLine(`/${SKILL_NAME} hi`);
         await proc.waitFor(/\b([1-9]|10)\b/, 90_000);

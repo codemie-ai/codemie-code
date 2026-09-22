@@ -3,10 +3,38 @@
  * bare `codemie hook` no longer fails with `command not found` when the hook
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
+import { realpathSync } from 'fs';
 import { getCommandPath } from './processes.js';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
 const NEEDS_QUOTING = /[ \t,;=()&|<>^%[\]{}]/;
+
+// The bundled agent package (@codemieai/codemie-opencode) registers `codemie` as
+// its own bin name, so in dev checkouts node_modules/.bin/codemie symlinks to the
+// agent binary, not to this CLI. Hooks pointed at that shim silently run the
+// wrong program: `codemie hook` is parsed as a project path, and
+// `codemie sound X` prints the agent's CLI help to stdout and exits 1 with empty
+// stderr (surfacing in agents as "Failed with non-blocking status code: No
+// stderr output").
+const SHADOWING_PACKAGE_SEGMENT = '/@codemieai/codemie-opencode/';
+
+/**
+ * Detect whether a `codemie` command path actually resolves to the bundled agent
+ * binary instead of this CLI. Checks both the raw path and its symlink target;
+ * never throws (unresolvable paths are treated as not shadowed).
+ */
+export function isShadowedCodemieShim(commandPath: string): boolean {
+  const unquoted = commandPath.replace(/^"|"$/g, '');
+  const candidates = [unquoted];
+  try {
+    candidates.push(realpathSync(unquoted));
+  } catch {
+    // Unresolvable path — judge by the raw path alone.
+  }
+  return candidates.some((candidate) =>
+    candidate.replace(/\\/g, '/').includes(SHADOWING_PACKAGE_SEGMENT),
+  );
+}
 
 function quoteIfNeeded(p: string): string {
   return NEEDS_QUOTING.test(p) && !p.startsWith('"') ? `"${p}"` : p;
@@ -25,10 +53,13 @@ function toForwardSlash(p: string): string {
 
 // Prefer the PATH-resolved shim, then the running entry (argv[1]), then bare `codemie`.
 // Never throws — it runs in launch-critical hook paths, so errors degrade to the next fallback.
+// A PATH shim that resolves to the bundled agent binary (dev checkouts where
+// node_modules/.bin precedes the global bin dir) is rejected: hooks would run the
+// agent, not this CLI.
 export async function resolveCodemieBinary(): Promise<string> {
   try {
     const resolved = await getCommandPath('codemie');
-    if (resolved) return quoteIfNeeded(toForwardSlash(resolved));
+    if (resolved && !isShadowedCodemieShim(resolved)) return quoteIfNeeded(toForwardSlash(resolved));
   } catch {
     // fall through
   }
@@ -48,9 +79,21 @@ export async function resolveCodemieBinary(): Promise<string> {
 }
 
 // Rewrite a leading `codemie` token to `binary`; other commands pass through.
+// Also rewrites absolute paths baked in by older resolvers that point at the
+// bundled agent shim, so already-installed hooks get repaired on rewrite.
 export function resolveHookCommand(command: string, binary: string): string {
   if (command === 'codemie') return binary;
   if (command.startsWith('codemie ')) return binary + command.slice('codemie'.length);
+
+  const firstTokenEnd = command.startsWith('"')
+    ? command.indexOf('"', 1) + 1
+    : command.indexOf(' ');
+  if (firstTokenEnd > 0) {
+    const firstToken = command.slice(0, firstTokenEnd);
+    if (isShadowedCodemieShim(firstToken)) {
+      return binary + command.slice(firstTokenEnd);
+    }
+  }
   return command;
 }
 

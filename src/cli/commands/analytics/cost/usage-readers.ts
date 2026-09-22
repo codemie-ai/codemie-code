@@ -7,7 +7,8 @@
  * enricher treats as "unpriced".
  */
 
-import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
+import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
@@ -72,6 +73,8 @@ export interface UsageRecord {
   ts: number | null;
   model: string;
   usage: TokenUsage;
+  /** Canonical Claude transcript owner; preserved when replay supplies fuller usage. */
+  ownerAgentId?: string;
 }
 
 function usageWeight(usage: TokenUsage): number {
@@ -111,11 +114,14 @@ function appendDedupedRecord(records: UsageRecord[], keyed: Map<string, UsageRec
     return;
   }
   if (isMoreCompleteUsageRecord(record, current)) {
+    // A more complete streaming row may live in inherited child history. It updates
+    // usage, never the original response's owner (the same rule as cross-session dedup).
+    const replacement = current.ownerAgentId === undefined ? record : { ...record, ownerAgentId: current.ownerAgentId };
     const index = records.indexOf(current);
     if (index !== -1) {
-      records[index] = record;
+      records[index] = replacement;
     }
-    keyed.set(record.key, record);
+    keyed.set(record.key, replacement);
   }
 }
 
@@ -151,7 +157,12 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
 export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
   const keyedRecords = new Map<string, UsageRecord>();
-  for (const messages of allMessageArrays(parsed)) {
+  const ownership = buildClaudeOwnership(parsed);
+  const owners = [{ ownerAgentId: parsed.sessionId, messages: messagesOf(parsed) }];
+  for (const sub of parsed.subagents ?? []) {
+    if (Array.isArray(sub.messages)) owners.push({ ownerAgentId: sub.agentId, messages: sub.messages });
+  }
+  for (const { ownerAgentId, messages } of owners) {
     for (const raw of messages as ClaudeRawMessage[]) {
       const usage = raw.message?.usage;
       if (!usage) {
@@ -175,6 +186,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         key,
         ts,
         model,
+        ownerAgentId: key === null ? ownerAgentId : ownership.responseOwners.get(key),
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
       });
     }

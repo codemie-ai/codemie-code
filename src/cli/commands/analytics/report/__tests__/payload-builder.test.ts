@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildPayload } from '../payload-builder.js';
 import type { RootAnalytics } from '../../types.js';
-import type { SessionCostIndex, CostSummary } from '../../cost/types.js';
+import type { SessionCostIndex, CostSummary, SessionCost, DispatchEvent } from '../../cost/types.js';
 
 function session(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -415,6 +415,87 @@ function emptyTokens() {
   return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
 }
 const ctxAll = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' };
+
+describe('buildPayload — complete native snapshot projection', () => {
+  const tokens = (total: number) => ({ input: total, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total });
+  const snapshot = (): SessionCost => ({
+    sessionId: 's1', tokens: tokens(82), costUSD: 8.2, perModel: [{ model: 'fixture-model', tokens: tokens(82), costUSD: 8.2, unpriced: false }],
+    priced: true, hadLog: true, capturedAt: T0 + 6_000, observedStart: T0, observedEnd: T0 + 5_000,
+    costSource: 'native-estimate', costBasis: 'standard-api-tokens', dispatchesComplete: true,
+    rootOwnTokens: tokens(10), rootOwnCostUSD: 1, unlinkedTokens: tokens(2), unlinkedCostUSD: 0.2, unlinkedAgentIds: ['unlinked'],
+    costSeries: [{ t: T0, cost: 1, tokens: 10 }, { t: T0 + 5_000, cost: 8.2, tokens: 82 }],
+    dispatches: Array.from({ length: 80 }, (_, i): DispatchEvent => ({
+      kind: i < 70 ? 'agent' : i < 77 ? 'skill' : 'command', name: i < 70 ? 'worker' : i < 77 ? 'review' : 'run',
+      id: `step-${i}`, agentId: i < 70 ? `agent-${i}` : undefined,
+      ownerAgentId: i < 50 || i >= 70 ? 's1' : i === 69 ? 'agent-50' : 'agent-0',
+      parentId: i < 50 || i >= 70 ? undefined : i === 69 ? 'step-50' : 'step-0',
+      depth: i < 50 || i >= 70 ? 1 : i === 69 ? 3 : 2,
+      relationshipStatus: 'resolved', start: T0 + i * 10, durationMs: 1,
+      acknowledgedAt: T0 + i * 10 + 1, observedEnd: T0 + 4_000, completedAt: T0 + 5_000,
+      elapsedMs: 5_000 - i * 10, status: 'completed',
+      ...(i < 70 ? { tokens: tokens(1), costUSD: 0.1, inclusiveTokens: tokens(i === 0 ? 21 : i === 50 ? 2 : 1), inclusiveCostUSD: i === 0 ? 2.1 : i === 50 ? 0.2 : 0.1, attributionStatus: 'exact', attributionScope: 'own' } : {}),
+    })),
+  });
+  const payloadFor = (cost = snapshot()) => buildPayload(singleBranchRoot([session({
+    agentInvocations: [{ name: 'stale-parent-only', totalCalls: 2, successCount: 2, failureCount: 0 }],
+  })]), new Map([['s1', cost]]), summary, ctxAll);
+
+  it('counts all 80 invocations by kind and name without losing hierarchy or double-counting inclusive spend', () => {
+    const payload = payloadFor();
+    const record = payload.sessions[0];
+    expect(record.agentInvocations).toEqual([{ name: 'worker', totalCalls: 70, successCount: 70, failureCount: 0 }]);
+    expect(record.skillInvocations[0].totalCalls).toBe(7);
+    expect(record.commandInvocations[0].totalCalls).toBe(3);
+    expect(record.dispatches).toHaveLength(80);
+    expect(record.dispatches![69]).toMatchObject({ id: 'step-69', parentId: 'step-50', ownerAgentId: 'agent-50', depth: 3, relationshipStatus: 'resolved', elapsedMs: 4_310, status: 'completed' });
+    expect(record.rootOwnTokens?.total).toBe(10);
+    expect(record.unlinkedTokens?.total).toBe(2);
+    expect(record.unlinkedAgentIds).toEqual(['unlinked']);
+    expect(record.tokens.total).toBe(82);
+    expect(record.costUSD).toBe(8.2);
+    expect(payload.meta.totals.totalCostUSD).toBe(8.2);
+    const topLevel = record.dispatches!.filter((dispatch) => dispatch.kind === 'agent' && !dispatch.parentId);
+    expect(record.rootOwnTokens!.total + topLevel.reduce((sum, dispatch) => sum + dispatch.inclusiveTokens!.total, 0) + record.unlinkedTokens!.total).toBe(82);
+    expect(record.rootOwnCostUSD! + topLevel.reduce((sum, dispatch) => sum + dispatch.inclusiveCostUSD!, 0) + record.unlinkedCostUSD!).toBeCloseTo(8.2, 12);
+    expect(record.perModelCost[0].tokens.total).toBe(record.costSeries!.at(-1)!.tokens);
+    expect(record.perModelCost[0].costUSD).toBe(record.costSeries!.at(-1)!.cost);
+  });
+
+  it('uses captured activity bounds for the single-session duration and report period', () => {
+    const payload = payloadFor();
+    expect(payload.sessions[0]).toMatchObject({ capturedAt: T0 + 6_000, observedStart: T0, observedEnd: T0 + 5_000, startTime: T0, durationMs: 5_000, dispatchesComplete: true });
+    expect(payload.meta.capturedAt).toBe(T0 + 6_000);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T0 + 5_000).toISOString());
+    expect(payload.meta.totals.durationMs).toBe(5_000);
+  });
+
+  it('projects cost provenance without relabeling source-reported amounts or inventing legacy provenance', () => {
+    expect(payloadFor().sessions[0]).toMatchObject({ costSource: 'native-estimate', costBasis: 'standard-api-tokens' });
+    const authoritative = { ...snapshot(), costUSD: 12.34, costSource: 'authoritative' as const, costBasis: 'source-reported' as const };
+    expect(payloadFor(authoritative).sessions[0]).toMatchObject({ costUSD: 12.34, costSource: 'authoritative', costBasis: 'source-reported' });
+    const legacy = buildPayload(root, costIndex, summary, ctxAll).sessions[0];
+    expect(legacy.costSource).toBeUndefined();
+    expect(legacy.capturedAt).toBeUndefined();
+    expect(legacy.rootOwnTokens).toBeUndefined();
+  });
+
+  it('keeps aggregate invocation fallbacks for older potentially truncated dispatch lists', () => {
+    const legacy = snapshot();
+    delete legacy.dispatchesComplete;
+    expect(payloadFor(legacy).sessions[0].agentInvocations).toEqual([{ name: 'stale-parent-only', totalCalls: 2, successCount: 2, failureCount: 0 }]);
+  });
+
+  it('projects dispatch data without internal transcript or tool bodies', () => {
+    const cost = snapshot();
+    Object.assign(cost.dispatches![0], { _toolUseId: 'internal-id', messages: [{ body: 'PRIVATE_TRANSCRIPT_BODY' }], input: { prompt: 'PRIVATE_TOOL_BODY' } });
+    Object.assign(cost, { parsed: { messages: ['PRIVATE_CAPTURE_BODY'] } });
+    const json = JSON.stringify(payloadFor(cost));
+    expect(json).not.toContain('PRIVATE_');
+    expect(json).not.toContain('_toolUseId');
+    expect(JSON.parse(json).sessions[0].dispatches[0].inclusiveTokens.total).toBe(21);
+  });
+});
 
 /**
  * Copilot CLI reports GitHub's real billing unit (premium requests) alongside tokens, and

@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
+import { INTERNAL_PARSED_FAMILY } from '../../data-loader.js';
 
 const raw = [{ sessionId: 's1', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
 
@@ -23,6 +24,48 @@ const baseDeps: EnricherDeps = {
 };
 
 describe('enrichCosts', () => {
+  it('transports actual captured bounds and native estimate provenance without exposing the parsed family', async () => {
+    const start = 1_700_000_000_000;
+    const captured = { sessionId: 'captured', agentName: 'claude', metadata: {}, messages: [{
+      message: { model: 'claude-sonnet-5', usage: { input_tokens: 1_000_000 }, content: 'PRIVATE_CAPTURE_BODY' },
+    }] };
+    const { index } = await enrichCosts([{
+      sessionId: 'captured', agentSessionFile: '/fake/captured.jsonl', deltas: [],
+      startEvent: { agentName: 'claude', data: { startTime: start } },
+      endEvent: { data: { endTime: start + 9_000, duration: 9_000 } },
+      [INTERNAL_PARSED_FAMILY]: { parsed: captured, capturedAt: start + 10_000 },
+    }] as never[], { ...baseDeps, parseNative: async () => { throw new Error('must reuse captured family'); } });
+    expect(index.get('captured')).toMatchObject({ capturedAt: start + 10_000, observedStart: start, observedEnd: start + 9_000,
+      costSource: 'native-estimate', costBasis: 'standard-api-tokens', dispatchesComplete: true, costUSD: 2 });
+    expect(JSON.stringify(index.get('captured'))).not.toContain('PRIVATE_CAPTURE_BODY');
+  });
+
+  it('labels repriced SDK usage as an estimate without manufacturing a capture time', async () => {
+    const { index } = await enrichCosts(raw, { ...baseDeps, parseNative: async () => ({
+      sessionId: 's1', agentName: 'claude-desktop', metadata: {}, messages: [{ type: 'result', modelUsage: { 'claude-sonnet-5': { inputTokens: 1_000_000 } } }],
+    }) as never });
+    expect(index.get('s1')).toMatchObject({ costUSD: 2, costSource: 'native-estimate', costBasis: 'standard-api-tokens' });
+    expect(index.get('s1')!.capturedAt).toBeUndefined();
+  });
+
+  it('prices an internal captured family without reparsing its native log', async () => {
+    const captured = ({
+      sessionId: 'captured', agentName: 'claude', metadata: {},
+      messages: [{ message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }],
+    }) as never;
+    const capturedRaw = [{
+      sessionId: 'captured', agentSessionFile: '/fake/captured.jsonl', startEvent: { agentName: 'claude' }, deltas: [],
+      [INTERNAL_PARSED_FAMILY]: { parsed: captured, capturedAt: 1234 },
+    }] as never[];
+
+    const { index } = await enrichCosts(capturedRaw, {
+      ...baseDeps,
+      parseNative: async () => { throw new Error('captured transcript was parsed again'); },
+    });
+
+    expect(index.get('captured')?.tokens.input).toBe(1_000_000);
+  });
+
   it('prices a session from its native log', async () => {
     const { index, summary } = await enrichCosts(raw, baseDeps);
     const c = index.get('s1')!;
@@ -509,6 +552,140 @@ describe('enrichCosts — dispatch cost attribution', () => {
     expect(dispatch).toBeDefined();
     expect(dispatch!.costUSD).toBeUndefined();
     expect(dispatch!.tokens).toBeUndefined();
+  });
+});
+
+describe('enrichCosts — nested Claude ownership', () => {
+  it('preserves sub-cent precision until display formatting', () => {
+    const records: UsageRecord[] = [1, 2].map((ts) => ({
+      key: null, ts, model: 'gpt-5-nano',
+      usage: { input: 0, output: 0, cacheRead: 1, cacheCreation: 0, cacheCreation1h: 0, total: 1 },
+    }));
+    expect(buildCostSeries(records).map((point) => point.cost)).toEqual([0.000000005, 0.00000001]);
+  });
+
+  const timestamp = (seconds: number) => new Date(Date.UTC(2026, 5, 8, 10, 0, seconds)).toISOString();
+  const response = (id: string | null, seconds: number, input: number, extra = {}, model = 'claude-sonnet-4-5') => ({
+    timestamp: timestamp(seconds), ...(id && { requestId: `req-${id}` }),
+    message: { ...(id && { id }), role: 'assistant', model, usage: { input_tokens: input, ...extra } },
+  });
+  const invoke = (id: string, seconds: number, kind: 'Agent' | 'Skill' = 'Agent') => ({
+    timestamp: timestamp(seconds), message: { role: 'assistant', content: [
+      { type: 'tool_use', id, name: kind, input: kind === 'Skill' ? { skill: id } : { subagent_type: id } },
+    ] },
+  });
+  const result = (id: string, seconds: number) => ({
+    timestamp: timestamp(seconds), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'done' }] },
+  });
+  const family = () => ({
+    sessionId: 'nested', agentName: 'claude', metadata: {}, messages: [
+      invoke('a', 0), invoke('b', 1), invoke('root-skill', 0, 'Skill'), invoke('overlap', 1, 'Skill'),
+      response('root', 5, 10, { output_tokens: 2, cache_read_input_tokens: 20, cache_creation_input_tokens: 4, cache_creation: { ephemeral_1h_input_tokens: 1 } }),
+      result('root-skill', 20), result('overlap', 22), response('root-late', 30, 5),
+    ], subagents: [
+      { agentId: 'child', toolUseId: 'a', parentAgentId: 'root', filePath: '/fake/child.jsonl', messages: [
+        invoke('g', 3), invoke('child-skill', 4, 'Skill'),
+        response('child', 6, 40, { output_tokens: 3, cache_read_input_tokens: 50, cache_creation_input_tokens: 6, cache_creation: { ephemeral_1h_input_tokens: 2 } }, 'claude-haiku-4-5'),
+        response('root', 7, 10, { output_tokens: 4, cache_read_input_tokens: 20, cache_creation_input_tokens: 4, cache_creation: { ephemeral_1h_input_tokens: 1 } }),
+        result('child-skill', 15),
+      ] },
+      { agentId: 'grandchild', toolUseId: 'g', parentAgentId: 'child', filePath: '/fake/grandchild.jsonl', messages: [response('grandchild', 8, 7, { output_tokens: 1 })] },
+      { agentId: 'sibling', toolUseId: 'b', parentAgentId: 'root', filePath: '/fake/sibling.jsonl', messages: [response(null, 9, 11)] },
+      { agentId: 'unlinked', filePath: '/fake/unlinked.jsonl', messages: [response('unlinked', 10, 13)] },
+    ],
+  });
+  const enrichFamily = async (parsed = family()) => {
+    const { index } = await enrichCosts([{ sessionId: parsed.sessionId, startEvent: { agentName: 'claude' }, deltas: [] }] as never[], {
+      ...baseDeps, parseNative: async () => parsed as never,
+    });
+    return index.get(parsed.sessionId)!;
+  };
+
+  it('reconciles disjoint own allocations, inclusive ancestry, model totals and the series endpoint', async () => {
+    const cost = await enrichFamily();
+    const child = cost.dispatches!.find((dispatch) => dispatch.id === 'a')!;
+    const grandchild = cost.dispatches!.find((dispatch) => dispatch.id === 'g')!;
+    const sibling = cost.dispatches!.find((dispatch) => dispatch.id === 'b')!;
+
+    expect(child.tokens?.total).toBe(99);
+    expect(child.inclusiveTokens?.total).toBe(107);
+    expect(child.costUSD).toBeCloseTo(0.000069, 12);
+    expect(child.inclusiveCostUSD).toBeCloseTo(0.000105, 12);
+    expect(grandchild.tokens?.total).toBe(8);
+    expect(grandchild.inclusiveTokens?.total).toBe(8);
+    expect(cost.rootOwnTokens?.total).toBe(43);
+    expect(cost.rootOwnCostUSD).toBeCloseTo(0.00012825, 12);
+    expect(cost.unlinkedTokens?.total).toBe(13);
+    expect(cost.unlinkedCostUSD).toBeCloseTo(0.000039, 12);
+    expect(cost.unlinkedAgentIds).toEqual(['unlinked']);
+    expect(cost.tokens.total).toBe(174);
+    expect(cost.costUSD).toBeCloseTo(0.00030525, 12);
+    expect(cost.tokens.total).toBe(cost.rootOwnTokens!.total + child.inclusiveTokens!.total + sibling.inclusiveTokens!.total + cost.unlinkedTokens!.total);
+    expect(cost.costUSD).toBeCloseTo(cost.rootOwnCostUSD! + child.inclusiveCostUSD! + sibling.inclusiveCostUSD! + cost.unlinkedCostUSD!, 12);
+    expect(cost.perModel.map((model) => [model.model, model.tokens.total])).toEqual([
+      ['claude-haiku-4-5', 99], ['claude-sonnet-4-5', 75],
+    ]);
+    expect(cost.costSeries!.at(-1)!.cost).toBeCloseTo(cost.costUSD, 12);
+    expect(cost.costSeries!.at(-1)!.tokens).toBe(174);
+    expect(child).toMatchObject({ attributionStatus: 'exact', attributionScope: 'own' });
+  });
+
+  it('limits overlapping skill estimates to their owner without absorbing concurrent descendants', async () => {
+    const cost = await enrichFamily();
+    const skills = cost.dispatches!.filter((dispatch) => dispatch.kind === 'skill');
+    expect(skills.map((skill) => [skill.name, skill.tokens?.total])).toEqual([
+      ['root-skill', 38], ['overlap', 38], ['child-skill', 99],
+    ]);
+    for (const skill of skills) expect(skill).toMatchObject({ attributionStatus: 'estimated', attributionScope: 'owner-window' });
+    expect(cost.tokens.total).toBe(174);
+    expect(cost.costUSD).toBeCloseTo(0.00030525, 12);
+  });
+
+  it('never reintroduces another session’s accepted responses into agent allocations', async () => {
+    const replay = response('shared', 1, 100);
+    const sessions = ['first', 'second', 'third'].map((sessionId, index) => ({ sessionId, startEvent: { agentName: 'claude', data: { startTime: index } }, deltas: [] }));
+    const { index } = await enrichCosts(sessions as never[], { ...baseDeps, parseNative: async (_agent, _file, sessionId) => ({
+      sessionId, agentName: 'claude', metadata: {},
+      messages: sessionId === 'first' ? [replay] : [invoke('a', 0)],
+      subagents: sessionId === 'first' ? [] : [{ agentId: 'child', toolUseId: 'a', parentAgentId: 'root', filePath: '/fake/child.jsonl', messages: [replay, ...(sessionId === 'second' ? [response('fresh', 2, 7)] : [])] }],
+    }) as never });
+
+    expect(index.get('first')!.tokens.total).toBe(100);
+    expect(index.get('second')!.tokens.total).toBe(7);
+    expect(index.get('second')!.dispatches![0]).toMatchObject({ tokens: { total: 7 }, inclusiveTokens: { total: 7 }, attributionStatus: 'exact' });
+    expect(index.get('third')!.tokens.total).toBe(0);
+    expect(index.get('third')!.dispatches![0]).toMatchObject({ tokens: { total: 0 }, inclusiveTokens: { total: 0 }, costUSD: 0 });
+  });
+
+  it('exposes conflicting ownership as unlinked spend instead of inventing an allocation', async () => {
+    const parsed = family();
+    parsed.subagents[0].parentAgentId = 'wrong-owner';
+    const cost = await enrichFamily(parsed);
+    expect(cost.dispatches!.find((dispatch) => dispatch.id === 'a')).toMatchObject({ relationshipStatus: 'conflict', attributionStatus: 'ambiguous' });
+    expect(cost.dispatches!.find((dispatch) => dispatch.id === 'a')!.tokens).toBeUndefined();
+    expect(cost.unlinkedTokens?.total).toBe(120);
+    expect(cost.unlinkedAgentIds).toEqual(['child', 'grandchild', 'unlinked']);
+    expect(cost.tokens.total).toBe(174);
+  });
+
+  it('keeps cyclic transcript ownership out of inclusive root allocations', async () => {
+    const parsed = family();
+    parsed.subagents[0].parentAgentId = 'grandchild';
+    parsed.subagents[1].messages.push(invoke('a', 12) as never);
+    parsed.messages = parsed.messages.filter((row) => !(row.message.content?.some((block) => 'id' in block && block.id === 'a')));
+    const cost = await enrichFamily(parsed);
+    expect(cost.dispatches!.filter((dispatch) => ['a', 'g'].includes(dispatch.id!)).map((dispatch) => dispatch.attributionStatus)).toEqual(['ambiguous', 'ambiguous']);
+    expect(cost.unlinkedTokens?.total).toBe(120);
+    expect(cost.tokens.total).toBe(174);
+  });
+
+  it('counts each tool only for its canonical transcript owner despite progressive replay', async () => {
+    const parsed = family();
+    const tool = (id: string) => ({ timestamp: timestamp(11), message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: {} }] } });
+    parsed.messages.push(tool('shared-tool') as never);
+    parsed.subagents[0].messages.push(tool('shared-tool') as never, tool('child-tool') as never, tool('child-tool') as never);
+    const cost = await enrichFamily(parsed);
+    expect(cost.dispatches!.find((dispatch) => dispatch.id === 'a')!.tools!.find((entry) => entry.name === 'Read')?.calls).toBe(1);
   });
 });
 

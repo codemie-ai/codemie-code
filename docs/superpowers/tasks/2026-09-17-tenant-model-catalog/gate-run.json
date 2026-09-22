@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "branch": "feature/tenant-model-catalog",
+  "head": "35df84b73f4226f5cb13a8393de78a16058c3ac5",
+  "runner": "npm",
+  "started_at": "2026-09-17T17:16:32Z",
+  "completed_at": "2026-09-17T17:19:33Z",
+  "status": "PASSED",
+  "drift_detected": true,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1166,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1685,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1901,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3783,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8833,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "281 test files / 4080 tests passed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11658,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 test files passed, 1 skipped (opt-in live cert file, gated by CODEMIE_VSCODE_LIVE env var); 279 tests passed, 10 skipped"
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 734,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script scans `git diff --staged` only, and printed exact line \"No staged changes to scan\" — this branch's changes are already committed (nothing staged), so no content was actually scanned. To run it meaningfully locally: stage the branch diff (e.g. `git add` the changed tracked files, or `git reset --soft <merge-base>` to make the branch diff appear staged) and re-run. CI's `secrets-detection` job (gitleaks-action, same .gitleaks.toml config) scans the PR diff unconditionally regardless of local staging state, so this check is still owed to CI."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 316,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 334,
+      "command": "npx commitlint --from f7171d66f15397ac30b563a88eab42e5b350068a --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Guide/CI mismatch: guide's commitlint gate only verifies HEAD~1..HEAD (last commit); CI's validate-commits job verifies the full PR range (base sha to HEAD). Ran the union per the 9 commits on this branch — all pass Conventional Commits."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view <PR_NUMBER> --json title -q '.title' | npx commitlint --verbose",
+      "exit_code": null,
+      "notes": "CI's validate-commits job also lints the PR title via the GitHub API, requiring an open PR number. No PR exists yet for this branch — not runnable locally at this stage; must be checked once a PR is opened."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (on windows-latest runner)",
+      "exit_code": null,
+      "notes": "CI's test-windows job re-runs the same unit+cli suites on a windows-latest GitHub Actions runner (CRLF checkout behavior differs from macOS/Linux). No Windows runner reachable from this machine; the unit/integration gates above already passed on this platform. Guide documents a local CRLF repro (convert a file to CRLF and re-run its vitest spec) as a targeted diagnostic, not a substitute for the full Windows run."
+    }
+  ],
+  "failures": {}
+}

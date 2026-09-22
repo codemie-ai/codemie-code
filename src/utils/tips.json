@@ -1,0 +1,806 @@
+[
+  {
+    "id": "cmd-setup",
+    "category": "Getting Started",
+    "message": "New here? `codemie setup` walks you through picking a provider (SSO, LiteLLM, Bedrock, Ollama...) — takes about a minute.",
+    "command": "setup",
+    "commands": [
+      "codemie setup"
+    ]
+  },
+  {
+    "id": "cmd-setup-force",
+    "category": "Getting Started",
+    "message": "Config gone sideways? `codemie setup --force` reruns the wizard from scratch.",
+    "command": "setup",
+    "commands": [
+      "codemie setup --force"
+    ]
+  },
+  {
+    "id": "cmd-profile",
+    "category": "Getting Started",
+    "message": "Juggling work and personal projects? `codemie profile` keeps separate setups for each and lets you hop between them.",
+    "command": "profile",
+    "commands": [
+      "codemie profile"
+    ]
+  },
+  {
+    "id": "cmd-profile-switch",
+    "category": "Getting Started",
+    "message": "Hop between setups with `codemie profile switch work` — run it bare and you get an interactive picker.",
+    "command": "profile",
+    "commands": [
+      "codemie profile switch work"
+    ]
+  },
+  {
+    "id": "cmd-profile-login",
+    "category": "Getting Started",
+    "message": "On AI/Run CodeMie SSO? `codemie profile login` authenticates you against your CodeMie URL — no API keys to juggle.",
+    "command": "profile",
+    "commands": [
+      "codemie profile login"
+    ]
+  },
+  {
+    "id": "cmd-list",
+    "category": "Getting Started",
+    "message": "Not sure what is installed? `codemie list` lays out every available agent and framework.",
+    "command": "list",
+    "commands": [
+      "codemie list"
+    ]
+  },
+  {
+    "id": "cmd-list-installed",
+    "category": "Getting Started",
+    "message": "Only care about this machine? `codemie list --installed` filters the catalog down to what is actually set up.",
+    "command": "list",
+    "commands": [
+      "codemie list --installed"
+    ]
+  },
+  {
+    "id": "cmd-install",
+    "category": "Getting Started",
+    "message": "You are not limited to one agent — `codemie install <agent>` adds claude, gemini, codex, kimi and friends.",
+    "command": "install",
+    "commands": [
+      "codemie install <agent>"
+    ]
+  },
+  {
+    "id": "cmd-install-version",
+    "category": "Getting Started",
+    "message": "Pinpoint control: `codemie install claude 2.0.30` grabs that exact version, while `codemie install claude --supported` picks the one CodeMie tested.",
+    "command": "install",
+    "commands": [
+      "codemie install claude 2.0.30",
+      "codemie install claude --supported"
+    ]
+  },
+  {
+    "id": "cmd-uninstall",
+    "category": "Getting Started",
+    "message": "Cleaning house? `codemie uninstall <agent>` tidies away agents you no longer use.",
+    "command": "uninstall",
+    "commands": [
+      "codemie uninstall <agent>"
+    ]
+  },
+  {
+    "id": "cmd-update",
+    "category": "Getting Started",
+    "message": "Worth running `codemie update` once in a while — it brings your installed agents up to their recommended versions.",
+    "command": "update",
+    "commands": [
+      "codemie update"
+    ]
+  },
+  {
+    "id": "cmd-update-check",
+    "category": "Getting Started",
+    "message": "Look before you leap: `codemie update --check` lists what is outdated without installing, and `codemie update claude` updates just one agent.",
+    "command": "update",
+    "commands": [
+      "codemie update --check",
+      "codemie update claude"
+    ]
+  },
+  {
+    "id": "cmd-self-update",
+    "category": "Getting Started",
+    "message": "The CLI itself keeps improving too — `codemie self-update` gets you the latest features and fixes.",
+    "command": "self-update",
+    "commands": [
+      "codemie self-update"
+    ]
+  },
+  {
+    "id": "bin-codemie-code",
+    "category": "Getting Started",
+    "message": "Zero install needed: the built-in agent is already here — try `codemie-code \"explore this repo\"` or a quick `codemie-code health`.",
+    "commands": [
+      "codemie-code \"explore this repo\"",
+      "codemie-code health"
+    ]
+  },
+  {
+    "id": "bin-agent-shortcuts",
+    "category": "Getting Started",
+    "message": "Every installed agent gets its own binary — `codemie-claude`, `codemie-gemini`, `codemie-codex` — same flags as the native tool, CodeMie wiring included.",
+    "commands": [
+      "codemie-claude",
+      "codemie-gemini",
+      "codemie-codex"
+    ]
+  },
+  {
+    "id": "bin-openwiki",
+    "category": "Getting Started",
+    "message": "OpenWiki writes a living wiki for your repo: `codemie install openwiki` once, then `codemie-openwiki --init`, and keep it fresh with `codemie-openwiki --update`.",
+    "command": "install",
+    "commands": [
+      "codemie install openwiki",
+      "codemie-openwiki --init",
+      "codemie-openwiki --update"
+    ]
+  },
+  {
+    "id": "cmd-tips",
+    "category": "Getting Started",
+    "message": "These hints rotate at session start and end — run `codemie tips` anytime to browse them all at once.",
+    "command": "tips",
+    "commands": [
+      "codemie tips"
+    ]
+  },
+  {
+    "id": "cmd-whatsnew",
+    "category": "Getting Started",
+    "message": "Just updated? `codemie whatsnew` shows what changed in your version.",
+    "command": "whatsnew",
+    "commands": [
+      "codemie whatsnew"
+    ]
+  },
+  {
+    "id": "cmd-profile-rename",
+    "category": "Getting Started",
+    "message": "Typo in a profile name? `codemie profile rename old new` fixes it in place, and `codemie profile delete old` removes it entirely.",
+    "command": "profile",
+    "commands": [
+      "codemie profile rename old new",
+      "codemie profile delete old"
+    ]
+  },
+  {
+    "id": "cmd-agent-overrides",
+    "category": "Getting Started",
+    "message": "One-off override? `codemie-claude --profile work \"review this PR\"` or `codemie-gemini -m gemini-2.5-flash \"explain this\"` — no config surgery needed.",
+    "commands": [
+      "codemie-claude --profile work \"review this PR\"",
+      "codemie-gemini -m gemini-2.5-flash \"explain this\""
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect",
+    "category": "Proxy & IDE",
+    "message": "Claude Desktop, VS Code or Codex Desktop? `codemie proxy connect --claude-desktop` (or `--vscode`, `--codex-desktop`) routes them through your CodeMie profile.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --claude-desktop",
+      "codemie proxy connect --vscode",
+      "codemie proxy connect --codex-desktop"
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect-insiders",
+    "category": "Proxy & IDE",
+    "message": "On VS Code Insiders? `codemie proxy connect --vscode --insiders` targets it instead of the stable build.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --vscode --insiders"
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect-claude-ext",
+    "category": "Proxy & IDE",
+    "message": "The Claude Code extension for VS Code works too — `codemie proxy connect --vscode-claude-code` points it at your CodeMie profile.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --vscode-claude-code"
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect-profile",
+    "category": "Proxy & IDE",
+    "message": "Borrow another profile for one run: `codemie proxy connect --claude-desktop --profile work` uses its credentials without switching globally.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --claude-desktop --profile work"
+    ]
+  },
+  {
+    "id": "cmd-proxy-inspect-desktop",
+    "category": "Proxy & IDE",
+    "message": "Claude Desktop acting up? `codemie proxy inspect desktop` shows proxy state, recent sessions and sync readiness.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy inspect desktop"
+    ]
+  },
+  {
+    "id": "cmd-proxy-status",
+    "category": "Proxy & IDE",
+    "message": "Is the local gateway even alive? `codemie proxy status` tells you — add `--deep` to verify upstream reachability, `--json` for scripts.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy status",
+      "codemie proxy status --deep",
+      "codemie proxy status --json"
+    ]
+  },
+  {
+    "id": "cmd-proxy-start",
+    "category": "Proxy & IDE",
+    "message": "Need the gateway on a fixed port? `codemie proxy start --port 4001 --profile work` launches the daemon by hand.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy start --port 4001 --profile work"
+    ]
+  },
+  {
+    "id": "cmd-proxy-stop",
+    "category": "Proxy & IDE",
+    "message": "Done for the day? `codemie proxy stop` shuts the local gateway daemon down cleanly.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy stop"
+    ]
+  },
+  {
+    "id": "cmd-proxy-disconnect",
+    "category": "Proxy & IDE",
+    "message": "Unwiring Codex Desktop? `codemie proxy disconnect --codex-desktop` removes the CodeMie block from its config.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy disconnect --codex-desktop"
+    ]
+  },
+  {
+    "id": "cmd-proxy-connect-codex-model",
+    "category": "Proxy & IDE",
+    "message": "Codex Desktop gets the newest available model by default — pin your own with `codemie proxy connect --codex-desktop --model gpt-5-codex`.",
+    "command": "proxy",
+    "commands": [
+      "codemie proxy connect --codex-desktop --model gpt-5-codex"
+    ]
+  },
+  {
+    "id": "cmd-models",
+    "category": "Configuration",
+    "message": "Curious which models your profile can actually call? `codemie models list` spells them out.",
+    "command": "models",
+    "commands": [
+      "codemie models list"
+    ]
+  },
+  {
+    "id": "cmd-mcp",
+    "category": "Configuration",
+    "message": "Share an MCP server with your team: `codemie mcp add myserver https://example.com/mcp --scope project` stores it in repo config; `--scope user` keeps it personal.",
+    "command": "mcp",
+    "commands": [
+      "codemie mcp add myserver https://example.com/mcp --scope project",
+      "codemie mcp add myserver https://example.com/mcp --scope user"
+    ]
+  },
+  {
+    "id": "cmd-mcp-add",
+    "category": "Configuration",
+    "message": "Hand your agents new tools: `codemie mcp add myserver https://example.com/mcp` registers an MCP server through the built-in proxy.",
+    "command": "mcp",
+    "commands": [
+      "codemie mcp add myserver https://example.com/mcp"
+    ]
+  },
+  {
+    "id": "cmd-mcp-list",
+    "category": "Configuration",
+    "message": "`codemie mcp list` shows every registered MCP server, and `codemie mcp remove myserver` cleans one out.",
+    "command": "mcp",
+    "commands": [
+      "codemie mcp list",
+      "codemie mcp remove myserver"
+    ]
+  },
+  {
+    "id": "cmd-mcp-proxy",
+    "category": "Configuration",
+    "message": "Need to bridge a stdio MCP server to HTTP with OAuth? `codemie mcp-proxy <url>` handles the translation.",
+    "command": "mcp-proxy",
+    "commands": [
+      "codemie mcp-proxy <url>"
+    ]
+  },
+  {
+    "id": "cmd-setup-assistants",
+    "category": "Configuration",
+    "message": "`codemie setup assistants --project MyProject --agent claude` registers platform assistants straight into your agent config.",
+    "command": "setup",
+    "commands": [
+      "codemie setup assistants --project MyProject --agent claude"
+    ]
+  },
+  {
+    "id": "cmd-setup-skills",
+    "category": "Configuration",
+    "message": "Same trick for skills: `codemie setup skills --agent claude,codex` registers platform skills into those agents.",
+    "command": "setup",
+    "commands": [
+      "codemie setup skills --agent claude,codex"
+    ]
+  },
+  {
+    "id": "cmd-skill",
+    "category": "Extensions",
+    "message": "Skills teach your agent new tricks — `codemie skill list` shows yours, filterable with `--agent codemie-code`.",
+    "command": "skill",
+    "commands": [
+      "codemie skill list",
+      "codemie skill list --agent codemie-code"
+    ]
+  },
+  {
+    "id": "cmd-skill-sync",
+    "category": "Extensions",
+    "message": "`codemie skill sync --target claude` copies your CodeMie skills into the agent config — `--dry-run` previews, `--clean` prunes stale copies.",
+    "command": "skill",
+    "commands": [
+      "codemie skill sync --target claude",
+      "codemie skill sync --target claude --dry-run",
+      "codemie skill sync --target claude --clean"
+    ]
+  },
+  {
+    "id": "cmd-skill-validate",
+    "category": "Extensions",
+    "message": "Skill misbehaving? `codemie skill validate` checks every skill file and tells you exactly what is wrong.",
+    "command": "skill",
+    "commands": [
+      "codemie skill validate"
+    ]
+  },
+  {
+    "id": "cmd-skills",
+    "category": "Extensions",
+    "message": "There is a shared skill registry out there — browse it and grab what you like with `codemie skills add`.",
+    "command": "skills",
+    "commands": [
+      "codemie skills add"
+    ]
+  },
+  {
+    "id": "cmd-skills-find",
+    "category": "Extensions",
+    "message": "Someone probably solved it already: `codemie skills find \"pdf\"` searches the EPAM and skills.sh catalogs — `--json` for scripts.",
+    "command": "skills",
+    "commands": [
+      "codemie skills find \"pdf\"",
+      "codemie skills find \"pdf\" --json"
+    ]
+  },
+  {
+    "id": "cmd-skills-add",
+    "category": "Extensions",
+    "message": "`codemie skills add owner/repo` installs from skills.sh — grab one skill with `-s name`, target agents with `-a claude`, skip prompts with `-y`.",
+    "command": "skills",
+    "commands": [
+      "codemie skills add owner/repo",
+      "codemie skills add owner/repo -s name -a claude -y"
+    ]
+  },
+  {
+    "id": "cmd-plugin",
+    "category": "Extensions",
+    "message": "Agents are extensible: `codemie plugin list` shows what plugins you can bolt on.",
+    "command": "plugin",
+    "commands": [
+      "codemie plugin list"
+    ]
+  },
+  {
+    "id": "cmd-plugin-install",
+    "category": "Extensions",
+    "message": "Have an Anthropic-format plugin folder? `codemie plugin install ./my-plugin` adds it; `codemie plugin disable my-plugin` mutes it without uninstalling.",
+    "command": "plugin",
+    "commands": [
+      "codemie plugin install ./my-plugin",
+      "codemie plugin disable my-plugin"
+    ]
+  },
+  {
+    "id": "cmd-hook-fire",
+    "category": "Extensions",
+    "message": "Agents call `codemie hook` with a JSON event on stdin — try it yourself: `echo '{\"session_id\":\"demo\",\"hook_event_name\":\"SessionStart\"}' | codemie hook`.",
+    "command": "hook",
+    "commands": [
+      "echo '{\"session_id\":\"demo\",\"hook_event_name\":\"SessionStart\"}' | codemie hook"
+    ]
+  },
+  {
+    "id": "cmd-agent-init",
+    "category": "Extensions",
+    "message": "Frameworks in one shot: `codemie-claude init bmad` installs a full SDLC setup — `codemie-claude init --list` shows what else your agent supports (speckit, codebase-memory...).",
+    "commands": [
+      "codemie-claude init bmad",
+      "codemie-claude init --list"
+    ]
+  },
+  {
+    "id": "hooks-session-lifecycle",
+    "category": "Sessions",
+    "message": "Every session fires SessionStart and SessionEnd hooks — that is where skill sync and metrics flushing happen automatically.",
+    "command": "hook"
+  },
+  {
+    "id": "cmd-sound",
+    "category": "Sessions",
+    "message": "Want audible cues? Drop a .wav/.mp3 into sounds/<event> under your CodeMie home and try `codemie sound SessionStart`.",
+    "command": "sound",
+    "commands": [
+      "codemie sound SessionStart"
+    ]
+  },
+  {
+    "id": "cmd-sound-events",
+    "category": "Sessions",
+    "message": "Sounds go beyond session edges: drop audio into sounds/Stop or sounds/PermissionRequest under your CodeMie home to hear pauses and permission asks.",
+    "command": "sound"
+  },
+  {
+    "id": "cmd-install-sounds",
+    "category": "Sessions",
+    "message": "Want audio cues out of the box? `codemie install claude --sounds` wires hook sounds in during installation.",
+    "command": "install",
+    "commands": [
+      "codemie install claude --sounds"
+    ]
+  },
+  {
+    "id": "flag-task",
+    "category": "Sessions",
+    "message": "Need a quick one-shot answer? `codemie --task \"summarize this repo\"` runs a single task and exits — handy in scripts.",
+    "commands": [
+      "codemie --task \"<task>\""
+    ]
+  },
+  {
+    "id": "flag-silent",
+    "category": "Sessions",
+    "message": "Scripting around the CLI? Pass -s/--silent to hide the decorative output so stdout stays machine-readable."
+  },
+  {
+    "id": "flag-reasoning-effort",
+    "category": "Sessions",
+    "message": "Hard problem? Crank the thinking budget: `codemie-claude --reasoning-effort high --task \"diagnose the race condition\"` — one vocabulary (minimal to max) across agents.",
+    "commands": [
+      "codemie-claude --reasoning-effort high --task \"<task>\""
+    ]
+  },
+  {
+    "id": "flag-resume",
+    "category": "Sessions",
+    "message": "Pick up where you left off: `codemie-claude --resume <session-id> --task \"now add tests\"` continues the earlier conversation.",
+    "commands": [
+      "codemie-claude --resume <session-id> --task \"<task>\""
+    ]
+  },
+  {
+    "id": "flag-status-bar",
+    "category": "Sessions",
+    "message": "Want model, context usage and cost visible live? `codemie-claude --status` adds a status bar to the session.",
+    "commands": [
+      "codemie-claude --status"
+    ]
+  },
+  {
+    "id": "flag-jwt-ci",
+    "category": "Sessions",
+    "message": "No SSO browser in CI? `codemie-claude --jwt-token \"$TOKEN\" --task \"review this PR\"` runs with zero prior setup.",
+    "commands": [
+      "codemie-claude --jwt-token \"$TOKEN\" --task \"<task>\""
+    ]
+  },
+  {
+    "id": "cmd-analytics",
+    "category": "Insights",
+    "message": "Wondering where your tokens go? `codemie analytics` breaks down usage, costs and session history across all agents.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics"
+    ]
+  },
+  {
+    "id": "cmd-analytics-report",
+    "category": "Insights",
+    "message": "`codemie analytics --report --open` builds a self-contained HTML dashboard of your usage and opens it in the browser.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics --report --open"
+    ]
+  },
+  {
+    "id": "cmd-analytics-filter",
+    "category": "Insights",
+    "message": "Slice the numbers: `codemie analytics --agent claude --last 7d --branch main`, then `--export csv -o report.csv` to share.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics --agent claude --last 7d --branch main",
+      "codemie analytics --agent claude --last 7d --branch main --export csv -o report.csv"
+    ]
+  },
+  {
+    "id": "cmd-log",
+    "category": "Insights",
+    "message": "`codemie log` browses your past sessions and debug logs — and `codemie log follow` tails a live one.",
+    "command": "log",
+    "commands": [
+      "codemie log",
+      "codemie log follow"
+    ]
+  },
+  {
+    "id": "cmd-log-session",
+    "category": "Insights",
+    "message": "Replay a past run: `codemie log list-sessions` finds it, then `codemie log session <id> -v` shows the full conversation.",
+    "command": "log",
+    "commands": [
+      "codemie log list-sessions",
+      "codemie log session <id> -v"
+    ]
+  },
+  {
+    "id": "cmd-log-clean",
+    "category": "Insights",
+    "message": "Logs pile up — `codemie log clean --days 7 --dry-run` previews the purge; drop `--dry-run` when you mean it.",
+    "command": "log",
+    "commands": [
+      "codemie log clean --days 7 --dry-run"
+    ]
+  },
+  {
+    "id": "cmd-opencode-metrics",
+    "category": "Insights",
+    "message": "Running OpenCode? `codemie opencode-metrics --discover` sweeps your recent sessions and extracts their metrics.",
+    "command": "opencode-metrics",
+    "commands": [
+      "codemie opencode-metrics --discover"
+    ]
+  },
+  {
+    "id": "cmd-codebase-ui",
+    "category": "Insights",
+    "message": "There is a visual side too: `codemie codebase ui` opens your repo as an interactive graph.",
+    "command": "codebase",
+    "commands": [
+      "codemie codebase ui"
+    ]
+  },
+  {
+    "id": "cmd-docs",
+    "category": "Insights",
+    "message": "Not everything here is an agent — codebase-memory, codegraph and graphify are docs and knowledge tools; `codemie docs list` shows what is available.",
+    "command": "docs",
+    "commands": [
+      "codemie docs list"
+    ]
+  },
+  {
+    "id": "cmd-docs-install",
+    "category": "Insights",
+    "message": "Hidden gem: docs tools install one level down — `codemie docs install codegraph` gets you local code intelligence (codebase-memory and graphify work the same way).",
+    "command": "docs",
+    "commands": [
+      "codemie docs install codegraph",
+      "codemie docs install codebase-memory",
+      "codemie docs install graphify"
+    ]
+  },
+  {
+    "id": "cmd-docs-init",
+    "category": "Insights",
+    "message": "Installed a docs tool? `codemie docs init codegraph` wires it into the current project — or a different one with `--cwd <path>`.",
+    "command": "docs",
+    "commands": [
+      "codemie docs init codegraph",
+      "codemie docs init codegraph --cwd ./other-project"
+    ]
+  },
+  {
+    "id": "cmd-workflow",
+    "category": "Insights",
+    "message": "CI without the YAML grind: `codemie workflow install pr-review` adds automated PR review to your repo — GitHub Actions or GitLab CI.",
+    "command": "workflow",
+    "commands": [
+      "codemie workflow install pr-review"
+    ]
+  },
+  {
+    "id": "cmd-workflow-list",
+    "category": "Insights",
+    "message": "`codemie workflow list` shows the templates (pr-review, inline-fix, code-ci); `codemie workflow install pr-review -i` walks you through the options.",
+    "command": "workflow",
+    "commands": [
+      "codemie workflow list",
+      "codemie workflow install pr-review -i"
+    ]
+  },
+  {
+    "id": "cmd-workflow-tuning",
+    "category": "Insights",
+    "message": "Big PRs need room to think: `codemie workflow install pr-review --timeout 30 --max-turns 100` raises the limits.",
+    "command": "workflow",
+    "commands": [
+      "codemie workflow install pr-review --timeout 30 --max-turns 100"
+    ]
+  },
+  {
+    "id": "cmd-codebase-lifecycle",
+    "category": "Insights",
+    "message": "The graph UI runs as a little daemon: `codemie codebase start` boots it in the background, `codemie codebase status` checks in, `codemie codebase stop` shuts it down.",
+    "command": "codebase",
+    "commands": [
+      "codemie codebase start",
+      "codemie codebase status",
+      "codemie codebase stop"
+    ]
+  },
+  {
+    "id": "cmd-analytics-report-format",
+    "category": "Insights",
+    "message": "Feed the numbers to your own tools: `codemie analytics --report --report-format json` writes the exact priced dataset behind the HTML dashboard.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics --report --report-format json"
+    ]
+  },
+  {
+    "id": "cmd-analytics-native",
+    "category": "Insights",
+    "message": "Even plain `claude` sessions show up: analytics scans native agent logs by default, and `codemie analytics --no-scan-native` restricts to CodeMie-tracked runs.",
+    "command": "analytics",
+    "commands": [
+      "codemie analytics",
+      "codemie analytics --no-scan-native"
+    ]
+  },
+  {
+    "id": "cmd-log-grep",
+    "category": "Insights",
+    "message": "Hunting a specific failure? `codemie log --grep \"timeout\" --last 24h` searches recent logs, and `codemie log --last 7d --format json -o week.json` exports them for later.",
+    "command": "log",
+    "commands": [
+      "codemie log --grep \"timeout\" --last 24h",
+      "codemie log --last 7d --format json -o week.json"
+    ]
+  },
+  {
+    "id": "cmd-assistants",
+    "category": "Platform",
+    "message": "Prefer a guided conversation? `codemie assistants chat` connects you to your CodeMie assistants, interactively.",
+    "command": "assistants",
+    "commands": [
+      "codemie assistants chat"
+    ]
+  },
+  {
+    "id": "cmd-assistants-chat",
+    "category": "Platform",
+    "message": "Script it instead: `codemie assistants chat <assistant-id> \"Summarize this sprint\"` sends one message and prints the reply.",
+    "command": "assistants",
+    "commands": [
+      "codemie assistants chat <assistant-id> \"Summarize this sprint\""
+    ]
+  },
+  {
+    "id": "cmd-assistants-chat-file",
+    "category": "Platform",
+    "message": "Attach files to the chat: `codemie assistants chat <id> \"Review these\" -f ./report.pdf -f ./data.csv`.",
+    "command": "assistants",
+    "commands": [
+      "codemie assistants chat <id> \"Review these\" -f ./report.pdf -f ./data.csv"
+    ]
+  },
+  {
+    "id": "cmd-sdk",
+    "category": "Platform",
+    "message": "Every platform asset answers to the same pattern — `codemie sdk assistants list`, `codemie sdk datasources list`, `codemie sdk integrations list`.",
+    "command": "sdk",
+    "commands": [
+      "codemie sdk assistants list",
+      "codemie sdk datasources list",
+      "codemie sdk integrations list"
+    ]
+  },
+  {
+    "id": "cmd-sdk-assistants",
+    "category": "Platform",
+    "message": "The platform is scriptable: `codemie sdk assistants list --scope marketplace --json` — narrow with `--search` and `--project`.",
+    "command": "sdk",
+    "commands": [
+      "codemie sdk assistants list --scope marketplace --json"
+    ]
+  },
+  {
+    "id": "cmd-sdk-llm",
+    "category": "Platform",
+    "message": "`codemie sdk llm list` shows the LLM catalog your CodeMie platform exposes.",
+    "command": "sdk",
+    "commands": [
+      "codemie sdk llm list"
+    ]
+  },
+  {
+    "id": "cmd-sdk-skills-import",
+    "category": "Platform",
+    "message": "Have a skill in markdown? `codemie sdk skills import ./my-skill.md` uploads it to the platform (needs YAML frontmatter with name and description).",
+    "command": "sdk",
+    "commands": [
+      "codemie sdk skills import ./my-skill.md"
+    ]
+  },
+  {
+    "id": "cmd-doctor",
+    "category": "Diagnostics",
+    "message": "Something feels off? `codemie doctor` health-checks your whole setup in seconds.",
+    "command": "doctor",
+    "commands": [
+      "codemie doctor"
+    ]
+  },
+  {
+    "id": "cmd-version",
+    "category": "Diagnostics",
+    "message": "Reporting a bug? Grab your exact build first with `codemie version` — it saves everyone time.",
+    "command": "version",
+    "commands": [
+      "codemie version"
+    ]
+  },
+  {
+    "id": "cmd-test-metrics",
+    "category": "Diagnostics",
+    "message": "Metrics not showing up? `codemie test-metrics` pings the CodeMie endpoint to check connectivity.",
+    "command": "test-metrics",
+    "commands": [
+      "codemie test-metrics"
+    ]
+  },
+  {
+    "id": "cmd-test-metrics-dry-run",
+    "category": "Diagnostics",
+    "message": "Curious what telemetry says about you? `codemie test-metrics --dry-run` shows the exact payload without sending anything.",
+    "command": "test-metrics",
+    "commands": [
+      "codemie test-metrics --dry-run"
+    ]
+  },
+  {
+    "id": "env-debug",
+    "category": "Diagnostics",
+    "message": "When things misbehave, set CODEMIE_DEBUG=true to stream the debug log right into your console."
+  },
+  {
+    "id": "env-mcp-proxy-debug",
+    "category": "Diagnostics",
+    "message": "MCP OAuth misbehaving? `MCP_PROXY_DEBUG=true codemie mcp-proxy <url>` logs the whole handshake to ~/.codemie/logs/mcp-proxy.log.",
+    "command": "mcp-proxy",
+    "commands": [
+      "MCP_PROXY_DEBUG=true codemie mcp-proxy <url>"
+    ]
+  }
+]

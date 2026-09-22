@@ -19,6 +19,7 @@ import { logger } from './logger.js';
 import { getLatestVersion, installGlobal } from './processes.js';
 import { compareVersions, isValidSemanticVersion } from './version-utils.js';
 import { getCodemiePath } from './paths.js';
+import { parseBooleanEnv } from './env.js';
 
 const CLI_PACKAGE_NAME = '@codemieai/code';
 
@@ -120,16 +121,7 @@ async function releaseUpdateLock(): Promise<void> {
  * @returns true if auto-update should happen silently, false if prompt required
  */
 export function isAutoUpdateEnabled(): boolean {
-  const envValue = process.env.CODEMIE_AUTO_UPDATE;
-
-  // If not set, default to true (silent auto-update)
-  if (envValue === undefined || envValue === null || envValue === '') {
-    return true;
-  }
-
-  // Parse as boolean
-  const normalized = envValue.toLowerCase().trim();
-  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  return parseBooleanEnv(process.env.CODEMIE_AUTO_UPDATE, true);
 }
 
 /**

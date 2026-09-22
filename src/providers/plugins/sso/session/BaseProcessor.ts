@@ -33,6 +33,12 @@ export interface ProcessingContext {
   agentSessionId?: string;
   /** Path to agent session file */
   agentSessionFile?: string;
+
+  // Sync control fields (optional, set by callers that must bound sync duration)
+  /** Epoch milliseconds after which sync loops must stop sending and defer remaining work */
+  syncDeadlineMs?: number;
+  /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
+  abortSignal?: AbortSignal;
 }
 
 /**

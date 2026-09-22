@@ -170,6 +170,14 @@ export async function resolveClaudeModel(
 ): Promise<ClaudeModelResolution | null> {
   const currentModel = env[TIER_ENV_VAR[tier]] || undefined;
 
+  // An explicit --model CLI flag is an unconditional override for the `model`
+  // tier: never replace it via the live-catalog auto-heal below, even if this
+  // identity's catalog doesn't list it (e.g. missing entitlement rather than a
+  // globally retired model). Other tiers have no equivalent CLI flag.
+  if (tier === 'model' && currentModel && env.CODEMIE_MODEL_SOURCE === 'cli') {
+    return null;
+  }
+
   let catalog: LlmModel[];
   try {
     catalog = await fetchCatalog(env);
@@ -203,16 +211,10 @@ export async function resolveClaudeModel(
   const availableModels = ranked.map((entry) => entry.id);
 
   if (currentModel && availableModels.includes(currentModel)) {
-    // Deliberate tradeoff: there is no generic "was this explicitly chosen by
-    // the user" signal available for Claude (unlike Copilot's CODEMIE_MODEL_SOURCE,
-    // which only bin/codemie-copilot.js populates and adding equivalent tracking
-    // here would mean touching shared CLI/config code, out of scope for this
-    // Claude-plugin-local change). So any currently configured value still
-    // present in the catalog is left untouched, even if a newer/better-ranked
-    // model now exists — a still-enabled-but-superseded model only gets
-    // re-resolved once it is fully retired from the catalog. This favors never
-    // silently swapping a model a user may have deliberately pinned over always
-    // resolving to the single best-ranked entry.
+    // Beyond the explicit CLI-flag override above, there's no signal that an
+    // implicit (profile-sourced) value was deliberately chosen. So it's left
+    // untouched as long as it's still in the catalog, even if a better-ranked
+    // model now exists — it only gets re-resolved once fully retired.
     return null;
   }
 
@@ -225,7 +227,7 @@ export async function resolveClaudeModel(
   }
 
   if (currentModel) {
-    logger.info(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${ranked[0].id}`);
+    logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${ranked[0].id}`);
   }
 
   return { selectedModel: ranked[0].id, availableModels };

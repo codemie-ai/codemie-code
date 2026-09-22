@@ -82,11 +82,24 @@ describe('lookupPrice', () => {
     expect(p!.cacheWrite1h).toBeUndefined();
   });
 
-  it('returns the pinned sonnet-tier price for claude-sonnet-5 (a version bump ahead of the -4-* entries)', () => {
-    const p = lookupPrice('claude-sonnet-5');
-    expect(p).not.toBeNull();
-    expect(p!.input).toBe(3);
-    expect(p!.output).toBe(15);
+  it.each([
+    'claude-sonnet-5',
+    'claude-sonnet-5-20260901',
+    'converse/global.anthropic.claude-sonnet-5-v1:0',
+  ])('uses the verified five Sonnet 5 token rates for %s', (model) => {
+    expect(lookupPrice(model)).toEqual({
+      input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, cacheWrite1h: 4,
+    });
+  });
+
+  it.each([
+    'claude-opus-5',
+    'claude-opus-5-20260901',
+    'converse/global.anthropic.claude-opus-5-v1:0',
+  ])('uses the verified five Opus 5 token rates for %s', (model) => {
+    expect(lookupPrice(model)).toEqual({
+      input: 5, output: 25, cacheRead: 0.5, cacheCreation: 6.25, cacheWrite1h: 10,
+    });
   });
 
   it('falls back to the latest known price in the same Claude tier for a model newer than any table entry', () => {

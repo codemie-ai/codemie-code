@@ -38,6 +38,8 @@ import { createMcpProxyCommand } from './commands/mcp-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
 import { createCodebaseCommand } from './commands/codebase/index.js';
 import { createDocsCommand } from './commands/docs.js';
+import { createTipsCommand } from './commands/tips.js';
+import { createWhatsnewCommand } from './commands/whatsnew.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -104,6 +106,8 @@ program.addCommand(createMcpProxyCommand());
 program.addCommand(createProxyCommand());
 program.addCommand(createCodebaseCommand());
 program.addCommand(createDocsCommand());
+program.addCommand(createTipsCommand());
+program.addCommand(createWhatsnewCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

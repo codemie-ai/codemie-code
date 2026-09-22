@@ -400,6 +400,7 @@ describe('proxy connect vscode', () => {
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({
       configPath: '/mock/chatLanguageModels.json',
       requiresSecretConfiguration: false,
+      modelCount: 5,
     });
   });
 
@@ -450,7 +451,9 @@ describe('proxy connect vscode', () => {
     expect(daemonOptions).not.toHaveProperty('model');
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
-      false
+      'local-key',
+      false,
+      undefined
     );
   });
 
@@ -492,7 +495,9 @@ describe('proxy connect vscode', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
-      false
+      'local-key',
+      false,
+      'shared-profile-model'
     );
   });
 

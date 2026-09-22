@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CodeMieClient, SkillListItem } from 'codemie-sdk';
 import type { CodemieSkill } from '@/env/types.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { createSkillDataFetcher } from '../data.js';
 
 vi.mock('@/utils/logger.js', () => ({
@@ -124,6 +125,55 @@ describe('Skill Data Fetcher', () => {
       expect(result[0].id).toBe('skill-2');
     });
 
+    it('finds an id that lives on page two, instead of reporting it not found', async () => {
+      // Arrange: the requested skill is not on page one, so a single-page,
+      // client-side filter would incorrectly treat it as "not found".
+      const page0Response = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 2,
+        pages: 2
+      };
+      const page1Response = {
+        skills: [{ id: 'skill-2', name: 'Skill 2' } as SkillListItem],
+        page: 1,
+        total: 2,
+        pages: 2
+      };
+      const emptyMarketplaceResponse = { skills: [], page: 0, total: 0, pages: 1 };
+      vi.mocked(mockClient.skills.listPaginated)
+        .mockResolvedValueOnce(page0Response as any)
+        .mockResolvedValueOnce(page1Response as any)
+        .mockResolvedValueOnce(emptyMarketplaceResponse as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchSkillsByIds(['skill-2'], []);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('skill-2');
+    });
+
+    it('throws RegistrationItemNotFoundError for a requested id the catalog does not contain', async () => {
+      // Arrange: silently filtering an unavailable id out is reported as success,
+      // which is exactly the partial-success behaviour the contract forbids.
+      const response = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 1,
+        pages: 1
+      };
+      vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(response as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      await expect(
+        fetcher.fetchSkillsByIds(['skill-1', 'skill-missing'], [])
+      ).rejects.toThrow(RegistrationItemNotFoundError);
+      await expect(
+        fetcher.fetchSkillsByIds(['skill-missing'], [])
+      ).rejects.toThrow(/skill-missing/);
+    });
+
     it('surfaces a clear re-auth error on a stale session when fetching by IDs', async () => {
       const keycloakLoginHtml = '<!DOCTYPE html><html>keycloak</html>';
       vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
@@ -132,6 +182,107 @@ describe('Skill Data Fetcher', () => {
 
       await expect(
         fetcher.fetchSkillsByIds(['skill-1'], [])
+      ).rejects.toThrow(/session has expired.*codemie profile login/i);
+    });
+  });
+
+  describe('fetchAllVisibleSkills', () => {
+    it('pages through listPaginated until pages are exhausted and concatenates results', async () => {
+      const page0Response = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 2,
+        pages: 2
+      };
+      const page1Response = {
+        skills: [{ id: 'skill-2', name: 'Skill 2' } as SkillListItem],
+        page: 1,
+        total: 2,
+        pages: 2
+      };
+      const emptyMarketplaceResponse = { skills: [], page: 0, total: 0, pages: 1 };
+      vi.mocked(mockClient.skills.listPaginated)
+        .mockResolvedValueOnce(page0Response as any)
+        .mockResolvedValueOnce(page1Response as any)
+        .mockResolvedValueOnce(emptyMarketplaceResponse as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchAllVisibleSkills();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('skill-1');
+      expect(result[1].id).toBe('skill-2');
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({ page: 0 })
+      );
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({ page: 1 })
+      );
+    });
+
+    it('pages the same project and marketplace scopes the wizard shows, merged by id', async () => {
+      // Arrange: an unfiltered listing is not provably the wizard's set, so the
+      // headless crawl has to ask for exactly the two panels the wizard fetches.
+      const projectResponse = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 1,
+        pages: 1
+      };
+      const marketplaceResponse = {
+        skills: [
+          { id: 'skill-1', name: 'Skill 1' } as SkillListItem,
+          { id: 'market-1', name: 'Marketplace Skill' } as SkillListItem,
+        ],
+        page: 0,
+        total: 2,
+        pages: 1
+      };
+      vi.mocked(mockClient.skills.listPaginated)
+        .mockResolvedValueOnce(projectResponse as any)
+        .mockResolvedValueOnce(marketplaceResponse as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchAllVisibleSkills();
+
+      expect(result.map(skill => skill.id)).toEqual(['skill-1', 'market-1']);
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(1,
+        expect.objectContaining({
+          per_page: 100,
+          filters: expect.objectContaining({ scope: 'project', visibility: null }),
+        })
+      );
+      expect(mockClient.skills.listPaginated).toHaveBeenNthCalledWith(2,
+        expect.objectContaining({
+          filters: expect.objectContaining({ scope: 'marketplace', visibility: 'public' }),
+        })
+      );
+    });
+
+    it('stops after a single page per scope when pages is 1', async () => {
+      const singlePageResponse = {
+        skills: [{ id: 'skill-1', name: 'Skill 1' } as SkillListItem],
+        page: 0,
+        total: 1,
+        pages: 1
+      };
+      vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(singlePageResponse as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+      const result = await fetcher.fetchAllVisibleSkills();
+
+      expect(result).toHaveLength(1);
+      expect(mockClient.skills.listPaginated).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a clear re-auth error when a stale SSO session redirects to Keycloak HTML', async () => {
+      const keycloakLoginHtml = '<!DOCTYPE html><html>keycloak</html>';
+      vi.mocked(mockClient.skills.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      await expect(
+        fetcher.fetchAllVisibleSkills()
       ).rejects.toThrow(/session has expired.*codemie profile login/i);
     });
   });

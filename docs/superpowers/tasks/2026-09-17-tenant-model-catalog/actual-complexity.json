@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "generated": "2026-09-17T14:30:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 19,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 4 interdependent components in the proxy connectors subsystem — the connect orchestrator (connect-orchestrator.ts) and three target connectors (Claude Desktop, VS Code Copilot BYOK, VS Code Claude Code) — plus introduces two new shared utility modules (model-name-resolver.ts, tenant-catalog.ts) that multiple connectors now depend on, spanning the CLI-orchestration, service/utility, and external-integration layers."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The new modules' own doc comments repeatedly frame scope relative to existing code — tenant-catalog.ts is 'modeled on desktop.ts's fetchClaudeModels, minus its Claude-family filter and vertex/curated-list fallback', and model-name-resolver.ts 'generalizes codex-model-resolver.ts's date-stripping identity-parse shape... kept separate from codex-model-resolver.ts on purpose'. That 'similar to X but different' shape, plus the specific divergences worked out in the diff (dashed vs. concatenated release-date matching, vendor-prefix stripping, vertex-suffix recency ranking), reads as edge-case detail resolved during implementation rather than fully pre-specified."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "19 files changed (941 insertions / 204 deletions): 2 new core modules (model-name-resolver.ts, tenant-catalog.ts) plus their unit tests, a live VS Code models integration test, and modified connect-orchestrator/desktop/vscode/vscode-claude-code/vscode-models sources with their unit and integration tests, across src/cli/commands/proxy/, src/cli/commands/proxy/connectors/, tests/integration/, and the root package manifests. The 16+ file count maps directly to XXL under the actual-mode file-count rubric (16+ = XXL)."
+    }
+  ],
+  "red_flags_applied": [
+    "Requirements Clarity bumped from M (3) to L (4): 'similar to X but different' phrasing embedded in the new modules' own doc comments (tenant-catalog.ts modeled on desktop.ts minus specific behaviors; model-name-resolver.ts generalizes but is deliberately kept separate from codex-model-resolver.ts) indicates scope was defined relative to existing patterns with edge-case divergences worked out during implementation."
+  ],
+  "split_recommendation": null
+}

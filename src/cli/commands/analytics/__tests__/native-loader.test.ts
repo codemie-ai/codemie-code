@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+import { enrichCosts } from '../cost/cost-enricher.js';
 
 // Module-level mock (must live at file top level, not inside a describe block, so Vitest's
 // hoisting transform actually lifts it above the static `native-loader.js` import above).
@@ -176,6 +177,83 @@ describe('loadNativeSessions', () => {
       hasOwnershipMarker: () => false,
     };
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
+  });
+
+  it('reuses one growing transcript capture for discovery and cost enrichment', async () => {
+    let parseCalls = 0;
+    const parse = async () => {
+      parseCalls += 1;
+      const inputTokens = parseCalls === 1 ? 1_000_000 : 2_000_000;
+      return ({
+        sessionId: 'growing', agentName: 'claude', metadata: {}, metrics: { tools: {} },
+        messages: [{
+          type: 'assistant', timestamp: '2026-06-08T10:00:00Z', requestId: `r-${parseCalls}`,
+          message: { id: `m-${parseCalls}`, role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: inputTokens, output_tokens: 0 } },
+        }],
+      }) as never;
+    };
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set(),
+      discover: async () => [{ agentName: 'claude', descriptor: { sessionId: 'growing', filePath: '/logs/growing.jsonl', createdAt: 1, agentName: 'claude' } }],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const sessions = await loadNativeSessions(undefined, deps);
+    const { index } = await enrichCosts(sessions, {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/logs/growing.jsonl',
+      parseNative: parse,
+    });
+
+    expect(parseCalls).toBe(1);
+    expect(index.get('growing')?.tokens.input).toBe(1_000_000);
+  });
+});
+
+describe('synthesizeRawSession — descendant activity envelope', () => {
+  it('extends the root end time to descendant activity after the root finishes', () => {
+    const raw = synthesizeRawSession('claude', descriptor, {
+      ...parsed,
+      messages: [
+        { type: 'user', timestamp: '2026-06-08T10:00:00Z', message: { role: 'user', content: 'start' } },
+        { type: 'assistant', timestamp: '2026-06-08T10:02:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } },
+      ],
+      subagents: [{
+        agentId: 'late', filePath: '/logs/subagents/agent-late.jsonl',
+        messages: [{ type: 'assistant', timestamp: '2026-06-08T10:10:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      }],
+    } as never);
+
+    expect(raw.endEvent?.data.endTime).toBe(Date.parse('2026-06-08T10:10:00Z'));
+    expect(raw.endEvent?.data.duration).toBe(10 * 60_000);
+  });
+
+  it('uses one timestamp envelope for parallel descendants instead of summing durations', () => {
+    const raw = synthesizeRawSession('claude', descriptor, {
+      ...parsed,
+      messages: [{ type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } }],
+      subagents: [
+        { agentId: 'a', filePath: '/logs/a.jsonl', messages: [
+          { timestamp: '2026-06-08T10:01:00Z' }, { timestamp: '2026-06-08T10:06:00Z' },
+        ] },
+        { agentId: 'b', filePath: '/logs/b.jsonl', messages: [
+          { timestamp: '2026-06-08T10:02:00Z' }, { timestamp: '2026-06-08T10:07:00Z' },
+        ] },
+      ],
+    } as never);
+
+    expect(raw.endEvent?.data.duration).toBe(7 * 60_000);
+  });
+
+  it('falls back to descriptor bounds for an empty family capture', () => {
+    const raw = synthesizeRawSession('claude', { ...descriptor, createdAt: 1000, updatedAt: 2500 }, {
+      sessionId: 'empty', agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} }, subagents: [],
+    } as never);
+
+    expect(raw.startEvent?.data.startTime).toBe(1000);
+    expect(raw.endEvent?.data.endTime).toBe(2500);
   });
 });
 

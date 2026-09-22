@@ -3,12 +3,14 @@
  * @group unit
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { VS_CODE_SUPPORTED_MODELS, type VsCodeApiType } from '../vscode-models.js';
+import { VS_CODE_CAPABILITY_TABLE, type VsCodeApiType } from '../vscode-models.js';
 import { writeVsCodeLanguageModelsConfigAtPath } from '../vscode.js';
+import { ConfigurationError } from '@/utils/errors.js';
 
 const EXPECTED_MODEL_IDS = [
   'claude-sonnet-4-5-20250929',
@@ -40,23 +42,47 @@ const EXPECTED_MODEL_IDS = [
   'moonshotai.kimi-k2.5',
 ] as const;
 
+// A sparse, non-EPAM-shaped tenant catalog — vendor-prefixed undated GPT id,
+// version-first Claude naming, and github-copilot-* noise — authored fresh
+// here, never the root sample file.
+const NON_EPAM_TENANT_FIXTURE = [
+  'openai.gpt-5.6-luna',
+  'claude-4-6-sonnet',
+  'github-copilot-gpt-5-mini',
+  'github-copilot-claude-sonnet-4-5',
+];
+
 function getApiPath(apiType: VsCodeApiType): string {
   if (apiType === 'responses') return '/v1/responses';
   if (apiType === 'messages') return '/v1/messages';
   return '/v1/chat/completions';
 }
 
+const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
+
+function mockCatalog(ids: readonly string[]): void {
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    headers: mkHeaders('application/json'),
+    json: async () => ids.map((id) => ({ base_name: id })),
+  }) as unknown as typeof globalThis.fetch;
+}
+
 describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   let testDir: string;
   let configPath: string;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'codemie-vscode-models-'));
     configPath = join(testDir, 'User', 'chatLanguageModels.json');
     await mkdir(join(testDir, 'User'));
+    originalFetch = globalThis.fetch;
+    mockCatalog(EXPECTED_MODEL_IDS);
   });
 
   afterEach(async () => {
+    globalThis.fetch = originalFetch;
     await rm(testDir, { recursive: true, force: true });
   });
 
@@ -67,14 +93,15 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   it('writes the exact supported model allowlist under the CodeMie provider', async () => {
     const result = await writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4001'
+      'http://127.0.0.1:4001',
+      'gw-key'
     );
 
     const providers = await readProviders();
     const provider = providers[0];
     const models = provider.models as Array<Record<string, unknown>>;
 
-    expect(result).toEqual({ configPath, requiresSecretConfiguration: true });
+    expect(result).toEqual({ configPath, requiresSecretConfiguration: true, modelCount: EXPECTED_MODEL_IDS.length });
     expect(provider).toMatchObject({
       name: 'CodeMie',
       vendor: 'customendpoint',
@@ -85,44 +112,45 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   });
 
   it('renders every catalog capability and endpoint without internal metadata', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
 
-    for (const definition of VS_CODE_SUPPORTED_MODELS) {
-      const model = models.find(candidate => candidate.id === definition.id);
+    VS_CODE_CAPABILITY_TABLE.forEach((entry, index) => {
+      const tenantId = EXPECTED_MODEL_IDS[index];
+      const model = models.find(candidate => candidate.id === tenantId);
       const expected: Record<string, unknown> = {
-        id: definition.id,
-        name: definition.id,
-        url: `http://127.0.0.1:4001${getApiPath(definition.apiType)}`,
-        apiType: definition.apiType,
+        id: tenantId,
+        name: tenantId,
+        url: `http://127.0.0.1:4001${getApiPath(entry.apiType)}`,
+        apiType: entry.apiType,
         toolCalling: true,
-        vision: definition.vision,
-      streaming: true,
-      thinking: definition.thinking,
-      maxInputTokens: definition.maxInputTokens,
-      maxOutputTokens: definition.maxOutputTokens,
-    };
-      if (definition.zeroDataRetentionEnabled !== undefined) {
-        expected.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
+        vision: entry.vision,
+        streaming: true,
+        thinking: entry.thinking,
+        maxInputTokens: entry.maxInputTokens,
+        maxOutputTokens: entry.maxOutputTokens,
+      };
+      if (entry.zeroDataRetentionEnabled !== undefined) {
+        expected.zeroDataRetentionEnabled = entry.zeroDataRetentionEnabled;
       }
-      if (definition.adaptiveThinking) expected.adaptiveThinking = true;
-      if (definition.modelOptions) expected.modelOptions = definition.modelOptions;
-      if (definition.requestHeaders) expected.requestHeaders = definition.requestHeaders;
-      if (definition.supportsReasoningEffort) {
-        expected.supportsReasoningEffort = definition.supportsReasoningEffort;
+      if (entry.adaptiveThinking) expected.adaptiveThinking = true;
+      if (entry.modelOptions) expected.modelOptions = entry.modelOptions;
+      if (entry.requestHeaders) expected.requestHeaders = entry.requestHeaders;
+      if (entry.supportsReasoningEffort) {
+        expected.supportsReasoningEffort = entry.supportsReasoningEffort;
       }
-      if (definition.reasoningEffortFormat) {
-        expected.reasoningEffortFormat = definition.reasoningEffortFormat;
+      if (entry.reasoningEffortFormat) {
+        expected.reasoningEffortFormat = entry.reasoningEffortFormat;
       }
 
       expect(model).toEqual(expected);
-    }
+    });
   });
 
   it('omits top_p for Claude 4.5 models that reject dual sampling parameters', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
@@ -140,7 +168,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   });
 
   it('renders stateless Responses reasoning capabilities for GPT-5.5 and GPT-5.6', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
@@ -165,44 +193,45 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   });
 
   it('requires every Responses catalog entry to enable stateless mode', () => {
-    const responsesModels = VS_CODE_SUPPORTED_MODELS.filter(
-      definition => definition.apiType === 'responses'
+    const responsesModels = VS_CODE_CAPABILITY_TABLE.filter(
+      entry => entry.apiType === 'responses'
     );
 
     expect(responsesModels.length).toBeGreaterThan(0);
-    for (const definition of responsesModels) {
-      expect(definition.zeroDataRetentionEnabled).toBe(true);
+    for (const entry of responsesModels) {
+      expect(entry.zeroDataRetentionEnabled).toBe(true);
     }
   });
 
   it('requires effort metadata for every thinking-enabled Responses entry', () => {
-    const responsesModels = VS_CODE_SUPPORTED_MODELS.filter(
-      definition => definition.apiType === 'responses' && definition.thinking
+    const responsesModels = VS_CODE_CAPABILITY_TABLE.filter(
+      entry => entry.apiType === 'responses' && entry.thinking
     );
 
     expect(responsesModels.length).toBeGreaterThan(0);
-    for (const definition of responsesModels) {
-      expect(definition.supportsReasoningEffort?.length).toBeGreaterThan(0);
-      expect(definition.reasoningEffortFormat).toBe('responses');
+    for (const entry of responsesModels) {
+      expect(entry.supportsReasoningEffort?.length).toBeGreaterThan(0);
+      expect(entry.reasoningEffortFormat).toBe('responses');
     }
   });
 
   it('forces bearer authentication for Messages models only', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
 
-    for (const definition of VS_CODE_SUPPORTED_MODELS) {
-      const model = models.find(candidate => candidate.id === definition.id);
-      if (definition.apiType === 'messages') {
+    VS_CODE_CAPABILITY_TABLE.forEach((entry, index) => {
+      const tenantId = EXPECTED_MODEL_IDS[index];
+      const model = models.find(candidate => candidate.id === tenantId);
+      if (entry.apiType === 'messages') {
         expect(model?.requestHeaders).toEqual({
           Authorization: 'Bearer ${apiKey}',
         });
       } else {
         expect(model).not.toHaveProperty('requestHeaders');
       }
-    }
+    });
   });
 
   it('overrides the CodeMie model catalog while preserving the secret and saved settings', async () => {
@@ -232,7 +261,8 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
     const result = await writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4010'
+      'http://127.0.0.1:4010',
+      'gw-key'
     );
 
     const providers = await readProviders();
@@ -261,14 +291,14 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   });
 
   it('updates every managed endpoint without changing saved model settings', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
     const firstProviders = await readProviders();
     firstProviders[0].settings = {
       'claude-opus-4-8': { reasoningEffort: 'xhigh' },
     };
     await writeFile(configPath, JSON.stringify(firstProviders, null, 2), 'utf-8');
 
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4010');
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4010', 'gw-key');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
@@ -286,9 +316,149 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
     await expect(writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4001'
+      'http://127.0.0.1:4001',
+      'gw-key'
     )).rejects.toThrow();
 
     expect(await readFile(configPath, 'utf-8')).toBe(original);
+  });
+
+  describe('tenant-aware resolution against a non-EPAM-shaped catalog', () => {
+    it('AC1: omits a capability-table family with no match in a sparse tenant catalog', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models.some(model => model.id === 'gpt-4.1')).toBe(false);
+    });
+
+    it('AC2: writes the tenant id verbatim for a family matched under a different token order', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      const entry = VS_CODE_CAPABILITY_TABLE.find(candidate => candidate.family === 'claude-sonnet-4-6');
+      const model = models.find(candidate => candidate.id === 'claude-4-6-sonnet');
+
+      expect(model).toMatchObject({
+        id: 'claude-4-6-sonnet',
+        name: 'claude-4-6-sonnet',
+        apiType: entry?.apiType,
+        vision: entry?.vision,
+        thinking: entry?.thinking,
+      });
+    });
+
+    it('AC3: resolves gpt-5.6-luna to the vendor-prefixed tenant id verbatim, not a canonical form', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models.some(model => model.id === 'openai.gpt-5.6-luna')).toBe(true);
+      expect(models.some(model => model.id === 'gpt-5.6-luna')).toBe(false);
+    });
+
+    it('AC4: never surfaces a github-copilot-* deployment even alongside a matching same-family entry', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models.some(model => model.id === 'github-copilot-gpt-5-mini')).toBe(false);
+      expect(models.some(model => model.id === 'github-copilot-claude-sonnet-4-5')).toBe(false);
+    });
+
+    it('AC5: rejects and writes no file when the tenant catalog matches nothing in the capability table', async () => {
+      mockCatalog(['totally-unknown-model']);
+
+      await expect(writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key'
+      )).rejects.toThrow(ConfigurationError);
+
+      expect(existsSync(configPath)).toBe(false);
+    });
+  });
+
+  describe('profileModel pinning', () => {
+    it('narrows to the single tenant model a profile-pinned canonical name resolves to', async () => {
+      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'gpt-5.6-luna'
+      );
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(result.modelCount).toBe(1);
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('openai.gpt-5.6-luna');
+    });
+
+    it('narrows correctly when the profile is already pinned to the tenant\'s exact id', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'gpt-4.1-mini'
+      );
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('gpt-4.1-mini');
+    });
+
+    it('falls back to the full tenant-resolved list when the pinned model matches no capability family', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        'not-a-real-model'
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
+
+    it('falls back to the full tenant-resolved list when no model is pinned', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        undefined
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
+
+    it('treats a blank pinned model the same as unset', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(
+        configPath,
+        'http://127.0.0.1:4001',
+        'gw-key',
+        '   '
+      );
+
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+    });
   });
 });

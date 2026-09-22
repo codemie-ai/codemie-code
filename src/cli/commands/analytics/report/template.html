@@ -166,7 +166,7 @@
     .tl-label-strong { font-weight: 700; }
     .tl-track { position: relative; flex: 1; height: 22px; background: var(--color-bg-tertiary); border-radius: 5px; overflow: hidden; }
     .tl-bar { position: absolute; top: 0; height: 100%; min-width: 28px; border-radius: 5px; display: flex; align-items: center; padding: 0; box-sizing: border-box; }
-    .tl-bar-has-text { padding: 0 8px; }
+    .tl-bar-has-text { padding: 0 4px; }
     .tl-bar-text { font-size: 10.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
     .tl-dur { width: 72px; flex-shrink: 0; text-align: right; font-size: 10.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* timeline split layout: gantt left + side panel right */
@@ -220,7 +220,7 @@
     .tl-label-strong { font-weight: 700; }
     .tl-track { position: relative; flex: 1; height: 22px; background: var(--color-bg-tertiary); border-radius: 5px; overflow: hidden; }
     .tl-bar { position: absolute; top: 0; height: 100%; min-width: 28px; border-radius: 5px; display: flex; align-items: center; padding: 0; box-sizing: border-box; }
-    .tl-bar-has-text { padding: 0 8px; }
+    .tl-bar-has-text { padding: 0 4px; }
     .tl-bar-text { font-size: 10.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
     .tl-dur { width: 72px; flex-shrink: 0; text-align: right; font-size: 10.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* timeline split layout: gantt left + side panel right */
@@ -234,6 +234,54 @@
     .tl-side-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 4px; }
     .tl-tok-bar { display: flex; gap: 2px; height: 5px; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
     .tl-tok-seg { border-radius: 2px; }
+
+    /* Complete ancestry timeline: every row remains reachable by scrolling or keyboard. */
+    .timeline-modal { max-width: 1120px; }
+    .tl-container { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 18px; }
+    .tl-gantt { max-height: 560px; overflow: auto; padding: 4px; }
+    .tl-side { width: auto; max-height: 560px; overflow-y: auto; padding: 4px 4px 4px 16px; }
+    .tl-row { display: grid; grid-template-columns: minmax(150px, 38%) minmax(60px, 1fr) 86px; gap: 9px; width: 100%; padding: 5px 4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; text-align: left; font-family: inherit; }
+    .tl-row[hidden] { display: none; }
+    button.tl-row { cursor: pointer; }
+    button.tl-row:hover { background: var(--color-bg-tertiary); }
+    button.tl-row:focus-visible, button.tl-row.tl-selected { border-color: var(--color-primary, #7C5CFC); outline: 2px solid color-mix(in srgb, var(--color-primary, #7C5CFC) 35%, transparent); outline-offset: 1px; }
+    .tl-label { width: auto; min-width: 0; box-sizing: border-box; }
+    .tl-track { min-width: 0; height: 24px; }
+    .tl-bar { min-width: 4px; }
+    .tl-dur { width: auto; font-size: 10px; }
+    .tl-group-label { margin: 10px 4px 4px; font-size: 11px; font-weight: 600; color: var(--color-warning, #F5A534); }
+    .tl-unresolved .tl-label, .tl-warning { color: var(--color-warning, #F5A534); }
+    .tl-note { margin: 7px 0; font-size: 11px; line-height: 1.5; color: var(--color-text-muted); overflow-wrap: anywhere; }
+    .tl-note.tl-warning { color: var(--color-warning, #F5A534); }
+    .tl-summary { color: var(--color-text-primary); font-weight: 600; }
+    .tl-status { margin-bottom: 8px; font-size: 11px; color: var(--color-text-muted); }
+    .tl-side-name { white-space: normal; overflow: visible; overflow-wrap: anywhere; align-items: flex-start; line-height: 1.5; }
+    .tl-side-dot { margin-top: 4px; }
+    .tl-side .modal-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
+    .tl-side .mval { font-size: 14px; white-space: normal; overflow-wrap: anywhere; }
+    .tl-side .mlabel { font-size: 9px; white-space: normal; }
+    .tl-side-section { margin-top: 16px; }
+    .tl-identity { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 10px; }
+    .tl-identity .modal-mono { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .tl-link { display: block; max-width: 100%; margin: 5px 0; padding: 3px 0; border: 0; background: transparent; color: var(--color-primary, #7C5CFC); text-align: left; font: inherit; font-size: 11px; cursor: pointer; overflow-wrap: anywhere; }
+    .tl-link:hover { text-decoration: underline; }
+    .tl-link:focus-visible { outline: 2px solid var(--color-primary, #7C5CFC); outline-offset: 3px; }
+    .tl-evidence { display: grid; gap: 2px; margin: 8px 0; font-size: 10px; color: var(--color-text-muted); }
+    .tl-evidence time { color: var(--color-text-primary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .tl-allocation { overflow-x: auto; }
+    .tl-unlinked-agents { font-size: 12px; color: var(--color-text-muted); }
+    .tl-unlinked-agents summary { cursor: pointer; }
+    .tl-unlinked-agents li { overflow-wrap: anywhere; margin: 5px 0; }
+    @media (max-width: 850px) {
+      .tl-container { grid-template-columns: 1fr; }
+      .tl-side { border-left: 0; border-top: 1px solid var(--color-border-structural); padding: 12px 4px 4px; }
+      .tl-gantt { max-height: 420px; }
+    }
+    @media (max-width: 520px) {
+      .modal-overlay { padding: 8px; }
+      .modal-body { padding: 12px; }
+      .tl-row { grid-template-columns: minmax(100px, 42%) minmax(28px, 1fr) 70px; gap: 5px; }
+    }
 
     /* table alignment — the design-system `.table thead tr th` (text-align:left, higher
        specificity) was overriding `.td-number` on numeric <th>, so numeric headers stayed

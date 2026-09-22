@@ -15,16 +15,24 @@
     "notes": {
       "keys": "All keys use dashes instead of dots (e.g. gpt-5-4 not gpt-5.4) so normalizeModelName dots→dashes works",
       "cacheRead": "cache hit price (Anthropic: 0.1x input, OpenAI: varies, Google: ~0.1x input)",
-      "cacheWrite": "cache write price (Anthropic: 1.25x input, OpenAI: ~same as input)"
+      "cacheWrite": "cache write price (Anthropic: 1.25x input, OpenAI: ~same as input)",
+      "claude5": "Sonnet 5 and Opus 5 standard API-equivalent token rates verified 2026-09-15 at https://platform.claude.com/docs/en/about-claude/pricing; excludes additional tool charges. Sonnet 5's planned September 1 price increase was cancelled."
     },
     "note": "codemie: added claude 4-7/4-8 tier estimates 2026-06-08; added kimi-for-coding alias and normalized kimi-k2-5 key 2026-06-15; added claude-sonnet-5 pinned entry 2026-07-01 (pricing table lookup also has a generic same-tier fallback now, see pricing.ts)"
   },
   "claude-sonnet-5": {
-    "input": 3,
-    "output": 15,
-    "cacheRead": 0.3,
-    "cacheWrite": 3.75,
-    "cacheWrite1h": 6.0
+    "input": 2,
+    "output": 10,
+    "cacheRead": 0.2,
+    "cacheWrite": 2.5,
+    "cacheWrite1h": 4.0
+  },
+  "claude-opus-5": {
+    "input": 5,
+    "output": 25,
+    "cacheRead": 0.5,
+    "cacheWrite": 6.25,
+    "cacheWrite1h": 10.0
   },
   "claude-opus-4-6": {
     "input": 5,

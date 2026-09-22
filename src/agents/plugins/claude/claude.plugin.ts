@@ -31,22 +31,24 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Supported Claude Code version
- * Latest version tested and verified with CodeMie backend
+ * Recommended Claude Code version — the one CodeMie verifies against.
+ * A different installed version produces one non-blocking notice, never a block.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-export const CLAUDE_SUPPORTED_VERSION = '2.1.218';
+export const CLAUDE_SUPPORTED_VERSION = '2.1.269';
 
 /**
- * Minimum supported Claude Code version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.218 → minimum = 2.1.208
+ * Minimum supported Claude Code version — the only hard gate; below it the
+ * agent refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * CLAUDE_SUPPORTED_VERSION, move its old value down to here — users stay
+ * supported for one full recommendation cycle before they are cut off.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.208';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.218';
 
 /**
  * Claude Code installer URLs
@@ -165,9 +167,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {
-      // Disable experimental betas if not already set
+      // Keep experimental betas enabled if not already set
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '0';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
@@ -198,10 +200,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.FORCE_AUTOUPDATE_PLUGINS = '1';
       }
 
-      // WORKAROUND: Disable tool search feature introduced in 2.1.69+
-      // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
+      // Enable tool search feature if not already set
       if (!env.ENABLE_TOOL_SEARCH) {
-        env.ENABLE_TOOL_SEARCH = '0';
+        env.ENABLE_TOOL_SEARCH = 'true';
       }
 
       if (!env.ENABLE_PROMPT_CACHING_1H) {

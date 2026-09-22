@@ -70,17 +70,18 @@ import { mkdir, realpath as fsRealpath } from 'fs/promises';
  *
  * **UPDATE THIS WHEN BUMPING CODEX VERSION**
  */
-const CODEX_SUPPORTED_VERSION = '0.143.0';
+const CODEX_SUPPORTED_VERSION = '0.154.0';
 
 /**
- * Minimum supported Codex CLI version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 minor versions below CODEX_SUPPORTED_VERSION for 0.x Codex releases
- * e.g. supported = 0.143.0 → minimum = 0.133.0
+ * Minimum supported Codex CLI version — the only hard gate; below it the agent
+ * refuses to launch.
+ *
+ * Rule: the previously recommended version. When bumping
+ * CODEX_SUPPORTED_VERSION, move its old value down to here.
  *
  * **UPDATE THIS WHEN BUMPING CODEX VERSION**
  */
-const CODEX_MINIMUM_SUPPORTED_VERSION = '0.133.0';
+const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
 
 /**
  * Build a hook config object from environment variables.

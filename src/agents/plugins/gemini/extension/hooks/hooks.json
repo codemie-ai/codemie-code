@@ -8,7 +8,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie Session Start",
-            "timeout": 10000
+            "timeout": 60000
           }
         ]
       }
@@ -19,8 +19,8 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "name": "CodeMie Session End",
-            "timeout": 30000
+            "name": "CodeMie Session End (flushes pending metrics; needs headroom for the API sync)",
+            "timeout": 60000
           }
         ]
       }
@@ -32,7 +32,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie Stop Hook",
-            "timeout": 10000
+            "timeout": 60000
           }
         ]
       }
@@ -44,7 +44,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie User Prompt Submit",
-            "timeout": 10000
+            "timeout": 60000
           }
         ]
       }
@@ -56,7 +56,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie PreCompact Hook",
-            "timeout": 10000
+            "timeout": 60000
           }
         ]
       }
@@ -68,7 +68,7 @@
             "type": "command",
             "command": "codemie hook",
             "name": "CodeMie Permission Request",
-            "timeout": 10000
+            "timeout": 60000
           }
         ]
       }

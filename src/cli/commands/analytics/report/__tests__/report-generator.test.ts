@@ -3,13 +3,53 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderReportHtml, getDefaultReportPath, getDefaultReportJsonPath } from '../report-generator.js';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { renderReportHtml, getDefaultReportPath, getDefaultReportJsonPath, generateReportJson } from '../report-generator.js';
+import { buildPayload } from '../payload-builder.js';
 
 const template = `<style>/* __CODEMIE_CSS__ */</style>
 <script>window.__ANALYTICS__ = /*__ANALYTICS_DATA__*/ null;</script>
 <script>/* __CLIENT_APP__ */</script>`;
 
 describe('renderReportHtml', () => {
+  it('exports the same complete single-session snapshot to HTML and JSON without private captures', () => {
+    const start = 1_700_000_000_000;
+    const tokens = { input: 80, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 80 };
+    const session = { sessionId: 'snapshot', agentName: 'claude', provider: 'native', startTime: start, duration: 1, models: [], languages: [], tools: [] };
+    const cost = { sessionId: 'snapshot', tokens, costUSD: 2, perModel: [], priced: true, hadLog: true,
+      capturedAt: start + 10_000, observedStart: start, observedEnd: start + 9_000, costSource: 'native-estimate', costBasis: 'standard-api-tokens', dispatchesComplete: true,
+      rootOwnTokens: tokens, rootOwnCostUSD: 2, unlinkedTokens: { ...tokens, input: 0, total: 0 }, unlinkedCostUSD: 0,
+      costSeries: [{ t: start, cost: 1, tokens: 40 }, { t: start + 9_000, cost: 2, tokens: 80 }],
+      dispatches: Array.from({ length: 80 }, (_, i) => ({ kind: 'agent', name: 'repeated', id: `dispatch-${i}`, parentId: i ? 'dispatch-0' : undefined,
+        start: start + i, durationMs: 1, depth: i ? 2 : 1, status: 'completed', completedAt: start + 9_000,
+        elapsedMs: 9_000 - i, inclusiveTokens: tokens, inclusiveCostUSD: 2, attributionStatus: 'exact', messages: ['PRIVATE_BODY'],
+      })),
+    };
+    const payload = buildPayload({ projects: [{ projectPath: '/repo', branches: [{ branchName: 'main', sessions: [session] }] }] } as never,
+      new Map([['snapshot', cost]]) as never, { totalCostUSD: 2, pricedSessions: 1, totalSessions: 1, unpricedModels: [] },
+      { rangeLabel: 'all', projectFilter: 'all', generatedAt: new Date(start + 20_000).toISOString() });
+    const html = renderReportHtml({ template, css: '', clientJs: '', payload });
+    const fromHtml = JSON.parse(html.match(/window\.__ANALYTICS__ = (.*?);<\/script>/s)![1]);
+    const directory = mkdtempSync(join(tmpdir(), 'analytics-projection-'));
+    try {
+      const output = join(directory, 'session.json');
+      generateReportJson(payload, output);
+      const json = readFileSync(output, 'utf8');
+      expect(JSON.parse(json)).toEqual(fromHtml);
+      expect(json).not.toContain('PRIVATE_BODY');
+      expect(html).not.toContain('PRIVATE_BODY');
+      expect(fromHtml.sessions[0].dispatches).toHaveLength(80);
+      expect(fromHtml.sessions[0].agentInvocations[0].totalCalls).toBe(80);
+      expect(fromHtml.sessions[0]).toMatchObject({ capturedAt: start + 10_000, durationMs: 9_000, rootOwnCostUSD: 2, costSource: 'native-estimate' });
+      expect(fromHtml.sessions[0].dispatches[79]).toMatchObject({ parentId: 'dispatch-0', depth: 2, status: 'completed', inclusiveCostUSD: 2 });
+      expect(fromHtml.meta.periodEnd).toBe(new Date(start + 9_000).toISOString());
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('injects css/app and produces a VALID, parseable data assignment', () => {
     const payload = { meta: { agents: ['claude'] }, sessions: [{ sessionId: 's1' }] } as never;
     const html = renderReportHtml({ template, css: '.x{color:red}', clientJs: 'console.log(1)', payload });

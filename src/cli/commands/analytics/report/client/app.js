@@ -40,6 +40,12 @@
     if (n < 100) return '$' + n.toFixed(2);
     return '$' + Math.round(n).toLocaleString('en-US');
   }
+  function fmtExactUSD(n) {
+    return Number.isFinite(n) ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 }) : '—';
+  }
+  function costSourceLabel(s) {
+    return s.costSource === 'authoritative' ? 'reported by source' : s.costSource === 'native-estimate' ? 'API-equivalent estimate' : 'source not recorded';
+  }
   function fmtDuration(ms) {
     var h = ms / 3600000;
     if (h >= 48) return Math.round(h / 24) + 'd';
@@ -798,7 +804,12 @@
 
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
-    host.appendChild(el('p', 'view-sub', 'Estimated cost (API-equivalent) — token usage × model pricing. On a subscription you don’t pay per token; this is the equivalent metered API value.'));
+    var allEstimated = fs.length && fs.every(function (s) { return s.costSource === 'native-estimate'; });
+    var allReported = fs.length && fs.every(function (s) { return s.costSource === 'authoritative'; });
+    var costDescription = allEstimated ? 'API-equivalent estimates from token usage and standard model rates.'
+      : allReported ? 'Cost amounts reported by the telemetry source.'
+      : 'Available session costs, including API-equivalent estimates and source-reported amounts. Each session identifies its cost source when recorded.';
+    host.appendChild(el('p', 'view-sub', esc(costDescription)));
 
     var total = sum(fs, function (s) { return s.costUSD; });
     var priced = DATA.meta.totals.pricedSessions, totalSessions = DATA.meta.totals.sessions;
@@ -920,6 +931,7 @@
   // ---- session-detail modal ----------------------------------------------
   var modalCharts = []; // owned by the modal; NOT in the global charts[] (decoupled from destroyCharts()).
   var modalEsc = null;
+  var modalReturnFocus = null;
   function makeModalChart(canvas, config) {
     if (!window.Chart) return null;
     var c = new Chart(canvas, config);
@@ -931,6 +943,8 @@
     modalCharts = [];
     if (modalEsc) { document.removeEventListener('keydown', modalEsc); modalEsc = null; }
     var ov = document.getElementById('session-modal'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    if (modalReturnFocus && modalReturnFocus.isConnected && typeof modalReturnFocus.focus === 'function') modalReturnFocus.focus();
+    modalReturnFocus = null;
   }
   var MODAL_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function fmtWhen(ms) { var d = new Date(ms); return MODAL_MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
@@ -952,17 +966,16 @@
   // source) so counts/chips stay consistent with it; falls back to the tracked named-invocation
   // counts when this session has no dispatch data (e.g. older/tracked-only sessions).
   function dispatchCounts(s, kind) {
+    var fallback = kind === 'agent' ? (s.agentInvocations || []) : kind === 'skill' ? (s.skillInvocations || []) : (s.commandInvocations || []);
+    if (!s.dispatchesComplete && fallback.length) return fallback;
     var disp = (s.dispatches || []).filter(function (d) { return d.kind === kind; });
-    if (disp.length) {
-      var m = {};
-      disp.forEach(function (d) { m[d.name] = (m[d.name] || 0) + 1; });
-      return Object.keys(m).map(function (n) { return { name: n, totalCalls: m[n] }; });
-    }
-    return kind === 'agent' ? (s.agentInvocations || []) : kind === 'skill' ? (s.skillInvocations || []) : (s.commandInvocations || []);
+    var counts = new Map();
+    disp.forEach(function (d) { counts.set(d.name, (counts.get(d.name) || 0) + 1); });
+    return Array.from(counts, function (entry) { return { name: entry[0], totalCalls: entry[1] }; });
   }
   function chipsEl(title, list) { // list: NamedInvocationStats[]
     var sec = el('div', 'dispatch-col');
-    sec.appendChild(el('h4', null, esc(title) + ' (' + (list ? list.length : 0) + ')'));
+    sec.appendChild(el('h4', null, esc(title) + ' (' + fmtNum(sumCalls(list)) + ')'));
     if (!list || !list.length) { sec.appendChild(el('div', 'text-muted', '<span style="font-size:12px">none</span>')); return sec; }
     var wrap = el('div', 'modal-chips');
     list.slice().sort(function (a, b) { return b.totalCalls - a.totalCalls; }).forEach(function (n) {
@@ -972,18 +985,21 @@
   }
   // One timeline row: label + track with a positioned bar + a right-aligned duration. All text esc()'d.
   function tlRow(label, color, leftPct, wPct, durText, barText, strong) {
-    var row = el('div', 'tl-row');
-    row.appendChild(el('div', 'tl-label' + (strong ? ' tl-label-strong' : ''), esc(label)));
-    var track = el('div', 'tl-track');
-    var bar = el('div', 'tl-bar');
-    bar.style.left = 'calc(min(' + leftPct + '%, 100% - 28px))'; bar.style.width = wPct + '%'; bar.style.background = color;
+    var row = el(strong ? 'div' : 'button', 'tl-row');
+    if (!strong) row.type = 'button';
+    var labelEl = el('span', 'tl-label' + (strong ? ' tl-label-strong' : ''), esc(label));
+    labelEl.title = label;
+    row.appendChild(labelEl);
+    var track = el('span', 'tl-track');
+    var bar = el('span', 'tl-bar');
+    bar.style.left = 'calc(min(' + leftPct + '%, 100% - 4px))'; bar.style.width = wPct + '%'; bar.style.background = color;
     if (barText) {
       bar.classList.add('tl-bar-has-text');
       bar.innerHTML = '<span class="tl-bar-text">' + esc(barText) + '</span>';
     }
     bar.title = label + ' · ' + durText; // .title property = safe (not parsed as HTML)
     track.appendChild(bar); row.appendChild(track);
-    row.appendChild(el('div', 'tl-dur', esc(durText)));
+    row.appendChild(el('span', 'tl-dur', esc(durText)));
     return row;
   }
   // Precise wall-clock timing for short timeline steps. The general report formatter rounds
@@ -992,135 +1008,264 @@
     ms = Math.max(0, ms || 0);
     if (ms < 1000) return Math.round(ms) + 'ms';
     if (ms < 60000) return (Math.round(ms / 100) / 10) + 's';
-    if (ms < 3600000) return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
-    return Math.floor(ms / 3600000) + 'h ' + Math.round((ms % 3600000) / 60000) + 'm';
+    var seconds = Math.round(ms / 1000);
+    if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's';
+    return Math.floor(seconds / 3600) + 'h ' + Math.floor(seconds % 3600 / 60) + 'm ' + seconds % 60 + 's';
   }
-  // Side panel content for a selected timeline step.
-  function tlDetailEl(d, sessionStart) {
+  function traceElapsed(d) {
+    if (Number.isFinite(d.elapsedMs)) return Math.max(0, d.elapsedMs);
+    if (Number.isFinite(d.completedAt) && Number.isFinite(d.start)) return Math.max(0, d.completedAt - d.start);
+    if (Number.isFinite(d.observedEnd) && Number.isFinite(d.start)) return Math.max(0, d.observedEnd - d.start);
+    // An asynchronous acknowledgement is not a completion time.
+    if (d.status === 'incomplete' || d.status === 'unknown') return 0;
+    return Math.max(0, Number.isFinite(d.durationMs) ? d.durationMs : 0);
+  }
+  function traceStatus(d) {
+    return { completed: 'Completed', failed: 'Failed', incomplete: 'Incomplete', unknown: 'Unknown' }[d.status] || 'Not recorded';
+  }
+  function exactWhen(ms) {
+    var date = new Date(ms);
+    return Number.isFinite(ms) && Number.isFinite(date.getTime()) ? date.toISOString().replace('T', ' ').replace('Z', ' UTC') : 'Not recorded';
+  }
+  function traceEntries(s) {
+    var byId = new Map(), byAgent = new Map(), duplicateIds = new Set(), duplicateAgents = new Set();
+    var counts = new Map(), occurrences = new Map();
+    var entries = (s.dispatches || []).map(function (d, i) {
+      var entry = { d: d, key: d.id != null ? String(d.id) : 'legacy:' + i, parent: null, children: [], level: 0, issue: '' };
+      if (d.id != null) {
+        if (byId.has(String(d.id))) { duplicateIds.add(String(d.id)); entry.key += ':duplicate:' + i; }
+        else byId.set(String(d.id), entry);
+      }
+      if (d.kind === 'agent' && d.agentId) {
+        if (byAgent.has(d.agentId)) duplicateAgents.add(d.agentId);
+        else byAgent.set(d.agentId, entry);
+      }
+      var nameKey = d.kind + ':' + d.name;
+      counts.set(nameKey, (counts.get(nameKey) || 0) + 1);
+      return entry;
+    }).sort(function (a, b) { return (a.d.start || 0) - (b.d.start || 0); });
+    entries.forEach(function (entry) {
+      var d = entry.d, nameKey = d.kind + ':' + d.name;
+      occurrences.set(nameKey, (occurrences.get(nameKey) || 0) + 1);
+      entry.label = d.kind + ' · ' + d.name + (counts.get(nameKey) > 1 ? ' #' + occurrences.get(nameKey) : '');
+      if (duplicateIds.has(String(d.id))) entry.issue = 'Repeated invocation ID';
+      else if (d.relationshipStatus === 'cycle') entry.issue = 'Ancestry cycle';
+      else if (d.relationshipStatus === 'conflict') entry.issue = 'Conflicting parent evidence';
+      else if (d.relationshipStatus === 'missing') entry.issue = 'Parent not resolved';
+      if (entry.issue) return;
+      if (d.parentId != null) {
+        entry.parent = !duplicateIds.has(String(d.parentId)) && byId.get(String(d.parentId)) || null;
+        if (!entry.parent) entry.issue = 'Parent not found';
+      } else if (d.ownerAgentId && d.ownerAgentId !== s.sessionId && d.ownerAgentId !== 'root') {
+        entry.parent = !duplicateAgents.has(d.ownerAgentId) && byAgent.get(d.ownerAgentId) || null;
+        if (!entry.parent) entry.issue = 'Owner not found';
+      } else if (d.depth > 1) entry.issue = 'Parent not recorded';
+    });
+    entries.forEach(function (entry) {
+      var path = [], positions = new Map(), current = entry;
+      while (current) {
+        if (positions.has(current)) {
+          path.slice(positions.get(current)).forEach(function (cyclic) { cyclic.issue = 'Ancestry cycle'; cyclic.parent = null; });
+          break;
+        }
+        positions.set(current, path.length); path.push(current); current = current.parent;
+      }
+    });
+    entries.forEach(function (entry) { if (entry.parent) entry.parent.children.push(entry); });
+    var ordered = [], visited = new Set();
+    function appendTree(rootEntry, unresolved) {
+      var pending = [{ entry: rootEntry, level: 0 }];
+      while (pending.length) {
+        var next = pending.pop(), entry = next.entry;
+        if (visited.has(entry)) continue;
+        visited.add(entry); entry.level = next.level; entry.unresolved = unresolved; ordered.push(entry);
+        for (var i = entry.children.length - 1; i >= 0; i--) pending.push({ entry: entry.children[i], level: next.level + 1 });
+      }
+    }
+    entries.filter(function (entry) { return !entry.parent && !entry.issue; }).forEach(function (entry) { appendTree(entry, false); });
+    entries.filter(function (entry) { return !entry.parent && entry.issue; }).forEach(function (entry) { appendTree(entry, true); });
+    entries.forEach(function (entry) { if (!visited.has(entry)) appendTree(entry, true); });
+    return ordered;
+  }
+  // Every link selects an invocation entry, never a potentially repeated display name.
+  function tlDetailEl(entry, s, sessionStart, select) {
     var panel = el('div', '');
-    if (!d) {
-      panel.appendChild(el('div', 'tl-side-empty', 'Click a timeline step to see details.'));
+    if (!entry) {
+      panel.appendChild(el('div', 'tl-side-empty', 'Select a timeline step to see details.'));
       return panel;
     }
+    var d = entry.d;
     var color = PALETTE[hashStr(d.kind + ':' + d.name) % PALETTE.length];
     var nameEl = el('div', 'tl-side-name');
     var dot = el('span', 'tl-side-dot'); dot.style.background = color;
-    nameEl.appendChild(dot);
-    nameEl.appendChild(document.createTextNode(d.kind + ' · ' + d.name));
-    panel.appendChild(nameEl);
-    var hasCost = d.costUSD != null;
-    var hasTok = d.tokens != null;
-    var startOffset = sessionStart != null && d.start != null ? Math.max(0, d.start - sessionStart) : null;
+    nameEl.appendChild(dot); nameEl.appendChild(document.createTextNode(entry.label)); panel.appendChild(nameEl);
+    var statusLine = el('div', 'tl-status', esc(traceStatus(d)));
+    if (entry.issue) statusLine.appendChild(document.createTextNode(' · ' + entry.issue));
+    panel.appendChild(statusLine);
+    if (Number.isFinite(d.depth)) panel.appendChild(el('p', 'tl-note', 'Recorded nesting level: ' + esc(d.depth) + '.'));
+    if (d.id != null) {
+      var identity = el('div', 'tl-identity');
+      identity.appendChild(el('span', 'modal-mono', esc(d.id)));
+      identity.appendChild(copyButton(function () { return String(d.id); }, 'Copy step ID'));
+      panel.appendChild(identity);
+    }
+    if (entry.parent) {
+      var parentButton = el('button', 'tl-link', '↑ Parent: ' + esc(entry.parent.label)); parentButton.type = 'button';
+      parentButton.addEventListener('click', function () { select(entry.parent, true); }); panel.appendChild(parentButton);
+    } else if (entry.issue) panel.appendChild(el('p', 'tl-note tl-warning', 'This step remains separate because its parent relationship is unresolved.'));
+    else if (d.ownerAgentId === s.sessionId || d.ownerAgentId === 'root' || d.relationshipStatus === 'root') panel.appendChild(el('p', 'tl-note', 'Owned by the session root.'));
+    else if (d.relationshipStatus == null) panel.appendChild(el('p', 'tl-note', 'Parent relationship was not recorded.'));
+    var estimated = d.attributionStatus === 'estimated';
+    var hasOwn = d.attributionScope === 'own' || d.inclusiveTokens != null;
+    var hasInclusive = d.inclusiveTokens != null || d.inclusiveCostUSD != null;
+    var hasDescendants = hasInclusive && entry.children.length > 0;
+    var totalCost = d.inclusiveCostUSD != null ? d.inclusiveCostUSD : d.costUSD;
+    var totalTokens = d.inclusiveTokens || d.tokens;
+    var incomplete = d.status === 'incomplete' || d.status === 'unknown';
     panel.appendChild(statsEl([
-      ['Cost', hasCost ? fmtUSD(d.costUSD) : '—', ''],
-      ['Tokens', hasTok ? fmtTokens(d.tokens.total) : '—', ''],
-      ['Duration', fmtTimelineDuration(d.durationMs), ''],
-      ['Started', startOffset != null ? fmtTimelineDuration(startOffset) : '—', 'into session'],
+      [estimated ? 'Estimated cost' : hasInclusive ? 'Total cost' : 'Cost', totalCost != null ? fmtExactUSD(totalCost) : '—', costSourceLabel(s)],
+      [estimated ? 'Estimated tokens' : hasInclusive ? 'Total tokens' : 'Tokens', totalTokens ? fmtNum(totalTokens.total) : '—', ''],
+      [incomplete ? 'Observed elapsed' : 'Elapsed', d.status === 'unknown' && !d.observedEnd ? 'Unknown' : fmtTimelineDuration(traceElapsed(d)), d.status === 'unknown' && !d.observedEnd ? '' : fmtNum(traceElapsed(d)) + ' ms'],
+      ['Started', Number.isFinite(d.start) ? fmtTimelineDuration(Math.max(0, d.start - sessionStart)) : '—', 'into session']
     ]));
-    if (hasTok) {
-      var tok = d.tokens;
-      var total = Math.max(tok.total, 1);
+    if (hasDescendants) {
+      var orchestration = el('div', 'tl-side-section');
+      orchestration.appendChild(el('div', 'tl-side-label', 'Parent orchestration only'));
+      orchestration.appendChild(statsEl([
+        ['Orchestration cost', d.costUSD != null ? fmtExactUSD(d.costUSD) : '—', ''],
+        ['Orchestration tokens', d.tokens ? fmtNum(d.tokens.total) : '—', '']
+      ]));
+      orchestration.appendChild(el('p', 'tl-note', 'The total above includes this parent and every descendant. Orchestration is the parent agent\'s direct model usage only. Child totals overlap the parent total; do not add them together.'));
+      panel.appendChild(orchestration);
+    }
+    if (estimated) panel.appendChild(el('p', 'tl-note', 'Estimated from this owner’s activity during the step. Overlapping skill or command estimates are not additional session cost.'));
+    else if (d.attributionStatus === 'ambiguous') panel.appendChild(el('p', 'tl-note tl-warning', 'Usage cannot be assigned confidently while the relationship is unresolved.'));
+    else if (d.attributionStatus === 'unavailable') panel.appendChild(el('p', 'tl-note', 'Usage attribution is unavailable for this step.'));
+    if (incomplete) panel.appendChild(el('p', 'tl-note tl-warning', 'Completion was not recorded. The bar shows only activity observed in this snapshot.'));
+    if (entry.outside) panel.appendChild(el('p', 'tl-note tl-warning', 'Some timing evidence is outside the captured session bounds. The bar is clipped to those bounds.'));
+    var timing = el('div', 'tl-side-section');
+    timing.appendChild(el('div', 'tl-side-label', 'Timing evidence'));
+    var timingRows = [['Started', d.start]];
+    if (d.acknowledgedAt != null) timingRows.push(['Acknowledged', d.acknowledgedAt]);
+    if (d.observedEnd != null) timingRows.push(['Last observed activity', d.observedEnd]);
+    if (d.completedAt != null) timingRows.push(['Completion recorded', d.completedAt]);
+    timingRows.forEach(function (item) { timing.appendChild(el('div', 'tl-evidence', '<span>' + esc(item[0]) + '</span><time>' + esc(exactWhen(item[1])) + '</time>')); });
+    if (d.acknowledgedAt != null && Number.isFinite(d.start)) timing.appendChild(el('p', 'tl-note', 'Acknowledgement delay: ' + esc(fmtTimelineDuration(Math.max(0, d.acknowledgedAt - d.start))) + '.'));
+    panel.appendChild(timing);
+    if (d.tokens) {
+      var tok = d.tokens, total = Math.max(tok.total, 1);
       var barEl = el('div', 'tl-tok-bar');
-      var segs = [
-        { val: tok.input,         color: '#7C5CFC' },
-        { val: tok.output,        color: '#F5A534' },
-        { val: tok.cacheRead,     color: '#259F4C' },
-        { val: tok.cacheCreation, color: '#3B82F6' },
-      ].filter(function(s) { return s.val > 0; });
-      segs.forEach(function(s) {
-        var seg = el('div', 'tl-tok-seg');
-        seg.style.flex = String(s.val / total * 100);
-        seg.style.background = s.color;
-        barEl.appendChild(seg);
+      [{ val: tok.input, color: '#7C5CFC' }, { val: tok.output, color: '#F5A534' }, { val: tok.cacheRead, color: '#259F4C' }, { val: tok.cacheCreation, color: '#3B82F6' }].filter(function (item) { return item.val > 0; }).forEach(function (item) {
+        var segment = el('div', 'tl-tok-seg'); segment.style.flex = String(item.val / total * 100); segment.style.background = item.color; barEl.appendChild(segment);
       });
       var tokSec = el('div', 'tl-side-section');
-      tokSec.appendChild(el('div', 'tl-side-label', 'Token breakdown'));
-      tokSec.appendChild(barEl);
-      tokSec.appendChild(statsEl([
-        ['Input',       fmtTokens(tok.input),         ''],
-        ['Output',      fmtTokens(tok.output),        ''],
-        ['Cache read',  fmtTokens(tok.cacheRead),     ''],
-        ['Cache write', fmtTokens(tok.cacheCreation), ''],
-      ]));
+      tokSec.appendChild(el('div', 'tl-side-label', hasDescendants ? 'Orchestration token breakdown' : hasOwn ? 'Direct token breakdown' : 'Token breakdown')); tokSec.appendChild(barEl);
+      tokSec.appendChild(statsEl([['Input', fmtNum(tok.input), ''], ['Output', fmtNum(tok.output), ''], ['Cache read', fmtNum(tok.cacheRead), ''], ['Cache write', fmtNum(tok.cacheCreation), '']]));
       panel.appendChild(tokSec);
     }
     if (d.tools && d.tools.length) {
-      var toolSec = el('div', 'tl-side-section');
-      toolSec.appendChild(el('div', 'tl-side-label', 'Tools called'));
+      var toolSec = el('div', 'tl-side-section'); toolSec.appendChild(el('div', 'tl-side-label', 'Tools called'));
       var chips = el('div', 'modal-chips');
-      d.tools.forEach(function(t) {
-        chips.appendChild(el('span', 'chip', esc(t.name) + '<b>\xd7' + fmtNum(t.calls) + '</b>'));
+      d.tools.forEach(function (tool) { chips.appendChild(el('span', 'chip', esc(tool.name) + '<b>×' + fmtNum(tool.calls) + '</b>')); });
+      toolSec.appendChild(chips); panel.appendChild(toolSec);
+    }
+    if (entry.children.length) {
+      var children = el('div', 'tl-side-section'); children.appendChild(el('div', 'tl-side-label', 'Child steps (' + entry.children.length + ')'));
+      entry.children.forEach(function (child) {
+        var button = el('button', 'tl-link', '↳ ' + esc(child.label)); button.type = 'button';
+        button.addEventListener('click', function () { select(child, true); }); children.appendChild(button);
       });
-      toolSec.appendChild(chips);
-      panel.appendChild(toolSec);
+      panel.appendChild(children);
     }
     return panel;
   }
-  // Gantt of top-level dispatches: session span on top, then every agent/skill/command
-  // dispatch positioned by wall-clock start time across the activity window, so each bar
-  // sits where it actually ran. Short skills and 0ms commands fall back to the CSS
-  // min-width (28px) so they stay visible as markers without distorting the time scale.
   function timelineEl(s) {
-    var dispatches = (s.dispatches || []).slice().sort(function (a, b) { return a.start - b.start; });
-    // Window = union of the tracked session span and the dispatch activity span. Resumed or
-    // compacted sessions can carry transcript dispatches that fall OUTSIDE the tracked
-    // start→end window; scaling to the session window alone would clamp them all to left:0%
-    // (single-column pile-up). The union positions every bar correctly and collapses back to
-    // exactly the session window for the normal case (dispatches fully inside it).
-    var winStart = s.startTime;
-    var winEnd = s.startTime + (s.durationMs || 0);
-    dispatches.forEach(function (d) {
-      if (d.start < winStart) winStart = d.start;
-      var end = d.start + (d.durationMs || 0);
-      if (end > winEnd) winEnd = end;
+    var entries = traceEntries(s);
+    var collapsed = new Set();
+    var capturedBounds = Number.isFinite(s.observedStart) && Number.isFinite(s.observedEnd) && s.observedEnd >= s.observedStart;
+    var firstTimed = entries.find(function (entry) { return Number.isFinite(entry.d.start); });
+    var winStart = capturedBounds ? s.observedStart : (Number.isFinite(s.startTime) ? s.startTime : firstTimed ? firstTimed.d.start : 0);
+    var winEnd = capturedBounds ? s.observedEnd : winStart + Math.max(0, s.durationMs || 0);
+    if (!capturedBounds) entries.forEach(function (entry) {
+      if (!Number.isFinite(entry.d.start)) return;
+      winStart = Math.min(winStart, entry.d.start); winEnd = Math.max(winEnd, entry.d.start + traceElapsed(entry.d));
     });
-    var ganttSpan = Math.max(1, winEnd - winStart);
-
+    var span = Math.max(1, winEnd - winStart);
+    var wrap = el('div', 'tl-wrap');
+    var summary = entries.length + ' steps · ' + sumCalls(dispatchCounts(s, 'agent')) + ' agents · ' + sumCalls(dispatchCounts(s, 'skill')) + ' skills · ' + sumCalls(dispatchCounts(s, 'command')) + ' commands';
+    wrap.appendChild(el('p', 'tl-note tl-summary', esc(summary)));
+    wrap.appendChild(el('p', 'tl-note', (capturedBounds ? 'Captured activity: ' : 'Activity window: ') + esc(exactWhen(winStart)) + ' to ' + esc(exactWhen(winEnd)) + '.'));
+    if (!s.dispatchesComplete) wrap.appendChild(el('p', 'tl-note', 'This older source may contain only part of the timeline; invocation totals use the available session summaries.'));
     var container = el('div', 'tl-container');
-    var gantt = el('div', 'tl-gantt timeline');
-    var sidePane = el('div', 'tl-side');
-
-    var selected = dispatches.filter(function (d) { return d.kind === 'agent'; })[0] || dispatches[0] || null;
-    sidePane.appendChild(tlDetailEl(selected, winStart));
-
-    function selectDispatch(d, barEl) {
-      gantt.querySelectorAll('.tl-bar[data-dispatch]').forEach(function(b) {
-        b.style.outline = b === barEl ? '2px solid rgba(255,255,255,0.55)' : 'none';
-      });
-      sidePane.innerHTML = '';
-      sidePane.appendChild(tlDetailEl(d, winStart));
+    var gantt = el('div', 'tl-gantt timeline'); gantt.setAttribute('aria-label', 'Session timeline');
+    var sidePane = el('div', 'tl-side'); sidePane.setAttribute('role', 'region'); sidePane.setAttribute('aria-label', 'Selected step details'); sidePane.setAttribute('aria-live', 'polite');
+    var selected = entries.filter(function (entry) { return entry.d.kind === 'agent'; })[0] || entries[0] || null;
+    var rowByEntry = new Map();
+    function rowLabel(entry) {
+      var disclosure = entry.children.length ? (collapsed.has(entry) ? '▸ ' : '▾ ') : (entry.level ? '↳ ' : '');
+      return disclosure + entry.label + (entry.issue ? ' · unresolved' : '');
     }
-
-    // Session bar spans the full window (the activity envelope). Its label shows the envelope
-    // span — equal to the tracked duration in the normal case, but revealing the true span when
-    // the tracked duration under-counts (e.g. dispatches predating a post-compaction window).
-    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(ganttSpan), fmtUSD(s.costUSD), true));
-
-    var occ = {};
-    dispatches.forEach(function (d) {
-      var key = d.kind + ':' + d.name;
-      var total = dispatches.filter(function (x) { return x.kind === d.kind && x.name === d.name; }).length;
-      occ[key] = (occ[key] || 0) + 1;
-      var label = d.kind + ' · ' + d.name + (total > 1 ? ' #' + occ[key] : '');
-      var leftPct = Math.max(0, (d.start - winStart) / ganttSpan * 100);
-      var wPct = (d.durationMs || 0) / ganttSpan * 100;
-      if (leftPct + wPct > 100) wPct = Math.max(0, 100 - leftPct);
-      var barText = d.costUSD != null && wPct >= 8 ? fmtUSD(d.costUSD) : '';
-      var color = PALETTE[hashStr(key) % PALETTE.length];
-      var row = tlRow(label, color, leftPct, wPct, fmtTimelineDuration(d.durationMs), barText, false);
-      var bar = row.querySelector('.tl-bar');
-      if (bar) {
-        bar.setAttribute('data-dispatch', key);
-        if (d === selected) bar.style.outline = '2px solid rgba(255,255,255,0.55)';
+    function refreshTreeVisibility() {
+      entries.forEach(function (entry) {
+        var ancestor = entry.parent, hidden = false;
+        while (ancestor) {
+          if (collapsed.has(ancestor)) { hidden = true; break; }
+          ancestor = ancestor.parent;
+        }
+        var row = rowByEntry.get(entry);
+        if (!row) return;
+        row.hidden = hidden;
+        var labelEl = row.querySelector('.tl-label');
+        labelEl.textContent = rowLabel(entry);
+        labelEl.title = entry.label;
+        if (entry.children.length) row.setAttribute('aria-expanded', collapsed.has(entry) ? 'false' : 'true');
+      });
+    }
+    function selectDispatch(entry, focus) {
+      if (focus) {
+        var ancestor = entry.parent;
+        while (ancestor) { collapsed.delete(ancestor); ancestor = ancestor.parent; }
+        refreshTreeVisibility();
       }
-      row.style.cursor = 'pointer';
-      row.addEventListener('click', function () { selectDispatch(d, bar); });
-      gantt.appendChild(row);
+      selected = entry;
+      rowByEntry.forEach(function (row, candidate) { row.classList.toggle('tl-selected', candidate === entry); row.setAttribute('aria-pressed', candidate === entry ? 'true' : 'false'); });
+      sidePane.innerHTML = ''; sidePane.appendChild(tlDetailEl(entry, s, winStart, selectDispatch));
+      var row = rowByEntry.get(entry);
+      if (focus && row) { row.focus({ preventScroll: true }); row.scrollIntoView({ block: 'nearest' }); }
+    }
+    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(Math.max(0, winEnd - winStart)), fmtUSD(s.costUSD), true));
+    var unresolvedHeading = false;
+    entries.forEach(function (entry) {
+      var d = entry.d, duration = traceElapsed(d);
+      if (entry.unresolved && !unresolvedHeading) {
+        unresolvedHeading = true;
+        gantt.appendChild(el('div', 'tl-group-label', 'Unresolved relationships (' + entries.filter(function (item) { return item.unresolved; }).length + ')'));
+      }
+      var start = Number.isFinite(d.start) ? d.start : winStart;
+      entry.outside = start < winStart || start + duration > winEnd;
+      var left = Math.max(0, Math.min(100, (start - winStart) / span * 100));
+      var width = Math.max(0, (Math.min(winEnd, start + duration) - Math.max(winStart, start)) / span * 100);
+      var label = rowLabel(entry);
+      var durationText = d.status === 'unknown' && !d.observedEnd ? 'Unknown' : (d.status === 'incomplete' ? '≥ ' : '') + fmtTimelineDuration(duration);
+      var displayedCost = d.kind === 'agent' && d.inclusiveCostUSD != null ? d.inclusiveCostUSD : d.costUSD;
+      var row = tlRow(label, PALETTE[hashStr(d.kind + ':' + d.name) % PALETTE.length], left, width, durationText, displayedCost != null && width >= 10 ? fmtUSD(displayedCost) : '', false);
+      row.setAttribute('data-dispatch', entry.key);
+      row.setAttribute('aria-label', entry.label + ', level ' + (entry.level + 1) + ', ' + traceStatus(d) + (entry.children.length ? ', expandable' : '') + (entry.issue ? ', ' + entry.issue : ''));
+      row.querySelector('.tl-label').style.paddingLeft = Math.min(72, entry.level * 12) + 'px';
+      if (entry.unresolved) row.classList.add('tl-unresolved');
+      row.addEventListener('click', function () {
+        selectDispatch(entry, false);
+        if (entry.children.length) {
+          if (collapsed.has(entry)) collapsed.delete(entry); else collapsed.add(entry);
+          refreshTreeVisibility();
+        }
+      });
+      rowByEntry.set(entry, row); gantt.appendChild(row);
     });
-
-    container.appendChild(gantt);
-    container.appendChild(sidePane);
-    return container;
+    refreshTreeVisibility();
+    selectDispatch(selected, false);
+    container.appendChild(gantt); container.appendChild(sidePane); wrap.appendChild(container);
+    return wrap;
   }
   /**
    * Rebuild a single-session ReportPayload matching what
@@ -1159,6 +1304,7 @@
     };
     // Same conditional-spread semantics as buildPayload: omit rather than emit null.
     if (DATA.meta && DATA.meta.userEmail !== undefined) meta.userEmail = DATA.meta.userEmail;
+    if (s.capturedAt !== undefined) meta.capturedAt = s.capturedAt;
     if (Number.isFinite(s.startTime) && s.startTime > 0) {
       meta.periodStart = new Date(s.startTime).toISOString();
       meta.periodEnd = new Date(s.startTime + Math.max(Number.isFinite(s.durationMs) ? s.durationMs : 0, 0)).toISOString();
@@ -1169,8 +1315,10 @@
   function openSessionModal(s, onBack) {
     if (!s) return;
     closeSessionModal();
+    modalReturnFocus = document.activeElement;
     var ov = el('div', 'modal-overlay'); ov.id = 'session-modal';
-    var modal = el('div', 'modal');
+    var modal = el('div', 'modal timeline-modal');
+    modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-label', 'Session details');
 
     // header — every interpolation through esc(); title is arbitrary user text (XSS vector).
     var head = el('div', 'modal-head');
@@ -1240,15 +1388,16 @@
     // which bills in premium requests rather than tokens, and whose older CLI versions
     // recorded no telemetry at all). Appended so other agents' cards are unchanged.
     var costRows = [
-      ['Cost', s.usageUnavailableReason ? '—' : fmtUSD(s.costUSD), s.usageUnavailableReason ? 'not measurable' : 'API-equivalent'],
+      ['Cost', s.usageUnavailableReason ? '—' : fmtExactUSD(s.costUSD), s.usageUnavailableReason ? 'not measurable' : costSourceLabel(s)],
       ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
-      ['Duration', fmtDuration(s.durationMs || 0), ''],
+      ['Duration', fmtTimelineDuration(s.durationMs || 0), fmtNum(s.durationMs) + ' ms'],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
     ];
     if (s.premiumRequests !== undefined) {
       costRows.push(['Premium requests', fmtNum(s.premiumRequests), 'provider billing unit']);
     }
     var costCard = card('Cost & Time'); costCard._body.appendChild(statsEl(costRows));
+    if (s.capturedAt !== undefined) costCard._body.appendChild(el('p', 'tl-note', 'Captured ' + esc(exactWhen(s.capturedAt)) + '.'));
     if (s.usageUnavailableReason) {
       costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">' + esc(s.usageUnavailableReason) + '</span>'));
     } else if (s.usagePartial) {
@@ -1269,6 +1418,26 @@
     grid3.appendChild(costCard); grid3.appendChild(tokCard); grid3.appendChild(actCard);
     body.appendChild(grid3);
 
+    if (s.rootOwnTokens && s.unlinkedTokens) {
+      var allocation = card('Usage allocation', 'each response belongs to one row; parent totals overlap child rows');
+      var linkedTokens = Math.max(0, (t.total || 0) - s.rootOwnTokens.total - s.unlinkedTokens.total);
+      var linkedCost = s.rootOwnCostUSD != null && s.unlinkedCostUSD != null ? Math.max(0, s.costUSD - s.rootOwnCostUSD - s.unlinkedCostUSD) : null;
+      allocation._body.appendChild(el('div', 'tl-allocation', tableHTML(['Owner', 'Tokens', 'Cost'], [
+        ['Session root', fmtNum(s.rootOwnTokens.total), fmtExactUSD(s.rootOwnCostUSD)],
+        ['Linked agents · own usage across all levels', fmtNum(linkedTokens), fmtExactUSD(linkedCost)],
+        ['Unlinked usage', fmtNum(s.unlinkedTokens.total), fmtExactUSD(s.unlinkedCostUSD)],
+        ['Session total', fmtNum(t.total), fmtExactUSD(s.costUSD)]
+      ], [false, true, true])));
+      allocation._body.appendChild(el('p', 'tl-note', 'A parent agent’s total includes all descendants. Adding parent and child totals would count their usage again.'));
+      if (s.unlinkedAgentIds && s.unlinkedAgentIds.length) {
+        var unlinked = el('details', 'tl-unlinked-agents');
+        unlinked.appendChild(el('summary', '', 'Unlinked agents (' + fmtNum(s.unlinkedAgentIds.length) + ')'));
+        var list = el('ul', ''); s.unlinkedAgentIds.forEach(function (id) { list.appendChild(el('li', 'modal-mono', esc(id))); });
+        unlinked.appendChild(list); allocation._body.appendChild(unlinked);
+      }
+      body.appendChild(allocation);
+    }
+
     // Code changes
     var ccCard = card('Code changes'); ccCard._body.appendChild(statsEl([
       ['Files changed', fmtNum(s.filesChanged || 0), 'written or edited'],
@@ -1279,7 +1448,7 @@
     body.appendChild(ccCard);
 
     // Token & cost growth chart (backfilled per-turn series; honest fallback when absent)
-    var growth = card('Token & cost growth', 'cumulative per turn — from the native log');
+    var growth = card('Token & cost growth', 'cumulative cost and token usage across the session');
     var series = s.costSeries || [];
     if (series.length >= 2 && window.Chart) {
       var useTs = series[0].t > 1e12; // epoch ms vs turn ordinal
@@ -1289,7 +1458,7 @@
       makeModalChart(cv, {
         type: 'line',
         data: { labels: labels, datasets: [
-          { label: 'Cost ($)', data: series.map(function (p) { return Math.round(p.cost * 10000) / 10000; }), borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.12)', fill: true, yAxisID: 'y', tension: 0.25, pointRadius: 0 },
+          { label: 'Cost ($)', data: series.map(function (p) { return p.cost; }), borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.12)', fill: true, yAxisID: 'y', tension: 0.25, pointRadius: 0 },
           { label: 'Tokens', data: series.map(function (p) { return p.tokens; }), borderColor: '#F5A534', backgroundColor: 'transparent', fill: false, yAxisID: 'y1', tension: 0.25, pointRadius: 0 }
         ] },
         options: { interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: true } },
@@ -1302,10 +1471,9 @@
     }
     body.appendChild(growth);
 
-    // Timeline — Gantt of all top-level agent, skill, and command dispatches.
+    // Timeline — every recorded invocation with exact parent/owner links when available.
     var hasDispatches = (s.dispatches || []).length > 0;
-    var hasCostData = (s.dispatches || []).some(function (d) { return d.costUSD != null; });
-    var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · positioned across the session' : 'click a step for timing details · positioned across the session') : '';
+    var tlSubtitle = hasDispatches ? 'select any step for ancestry, total and orchestration usage, and timing evidence' : '';
     var tlCard = card('Timeline', tlSubtitle);
     if (hasDispatches) {
       tlCard._body.appendChild(timelineEl(s));
@@ -1320,9 +1488,18 @@
     modal.appendChild(body);
     ov.appendChild(modal);
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeSessionModal(); });
-    modalEsc = function (ev) { if (ev.key === 'Escape') closeSessionModal(); };
+    modalEsc = function (ev) {
+      if (ev.key === 'Escape') { closeSessionModal(); return; }
+      if (ev.key !== 'Tab') return;
+      var focusable = Array.from(modal.querySelectorAll('button:not([disabled]), a[href], input, select, textarea, summary, [tabindex="0"]')).filter(function (node) { return node.offsetParent !== null; });
+      if (!focusable.length) return;
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (ev.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) { ev.preventDefault(); last.focus(); }
+      else if (!ev.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) { ev.preventDefault(); first.focus(); }
+    };
     document.addEventListener('keydown', modalEsc);
     document.body.appendChild(ov);
+    close.focus();
   }
 
   // ---- project-sessions modal --------------------------------------------

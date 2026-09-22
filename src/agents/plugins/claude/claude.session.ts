@@ -240,6 +240,10 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         messages: unknown[];
         toolUseId?: string;
         agentType?: string;
+        parentAgentId?: string;
+        spawnDepth?: number;
+        requestShape?: string;
+        requestNonInteractive?: boolean;
       }> = [];
 
       for (const subagentFile of subagentFiles) {
@@ -253,6 +257,10 @@ export class ClaudeSessionAdapter implements SessionAdapter {
             messages: subagentMessages,
             toolUseId: subagentFile.toolUseId,
             agentType: subagentFile.agentType,
+            parentAgentId: subagentFile.parentAgentId,
+            spawnDepth: subagentFile.spawnDepth,
+            requestShape: subagentFile.requestShape,
+            requestNonInteractive: subagentFile.requestNonInteractive,
           });
 
           logger.debug(
@@ -374,6 +382,10 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     filePath: string;
     toolUseId?: string;
     agentType?: string;
+    parentAgentId?: string;
+    spawnDepth?: number;
+    requestShape?: string;
+    requestNonInteractive?: boolean;
   }>> {
     try {
       const parentDir = dirname(sessionFilePath);
@@ -398,16 +410,35 @@ export class ClaudeSessionAdapter implements SessionAdapter {
             const filePath = join(subagentsDir, f);
             let toolUseId: string | undefined;
             let agentType: string | undefined;
+            let parentAgentId: string | undefined;
+            let spawnDepth: number | undefined;
+            let requestShape: string | undefined;
+            let requestNonInteractive: boolean | undefined;
             try {
               const metaRaw = JSON.parse(
                 await readFile(join(subagentsDir, f.replace('.jsonl', '.meta.json')), 'utf-8')
               );
               if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
               if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
+              if (typeof metaRaw.parentAgentId === 'string') parentAgentId = metaRaw.parentAgentId;
+              if (typeof metaRaw.spawnDepth === 'number') spawnDepth = metaRaw.spawnDepth;
+              if (typeof metaRaw.requestShape === 'string') requestShape = metaRaw.requestShape;
+              if (typeof metaRaw.requestNonInteractive === 'boolean') {
+                requestNonInteractive = metaRaw.requestNonInteractive;
+              }
             } catch {
               // meta file absent or malformed — proceed without it
             }
-            return { agentId, filePath, toolUseId, agentType };
+            return {
+              agentId,
+              filePath,
+              toolUseId,
+              agentType,
+              parentAgentId,
+              spawnDepth,
+              requestShape,
+              requestNonInteractive,
+            };
           })
       );
 

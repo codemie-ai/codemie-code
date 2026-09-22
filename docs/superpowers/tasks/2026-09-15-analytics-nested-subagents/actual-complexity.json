@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "generated": "2026-09-15T12:34:49Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L"
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL"
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS"
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M"
+    }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 33,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The implemented change spans the shared ParsedSession contract, Claude family parsing, native capture and OTEL loading, response ownership, dispatch ancestry and lifecycle, disjoint cost allocation, shared model pricing, public report projection, and the Sessions timeline. New ownership, trace, lifecycle, and allocation modules coordinate these components. Base XL scope is raised to XXL by the shared-core and multiple-workflow red flags. This remains consistent with the project L calibration anchor profile-provider-decoupling: the implementation has broader tracing and report scope but no persisted-data migration."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The requested outcomes are concrete and directly represented in the implementation: unique usage ownership, own versus inclusive cost, acknowledgement distinct from completion, full nested invocations, and accessible timeline selection. Minor evidence decisions are made explicit through resolved, missing, conflict, cycle, incomplete, unknown, and attribution status fields rather than leaving competing product behaviors."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The closest established patterns are appendDedupedRecord/takeUnseenRecords for response replay, the existing cost-enricher dispatch allocation path, dependency-injected native loading, and the report's escaped DOM rendering. They do not by themselves resolve nested ancestry, replayed inherited tools, contradictory launch identities, or protocol completion, requiring new deterministic indexes and conservative allocation. Regression fixtures cover discovery order, conflicts, cycles, missing timestamps, synchronous failures, nested notifications, large transcript bounds, export projection, and keyboard traversal. Existing output-encoding and boundary/error assertion patterns cover the relevant defensive surfaces; no additional security-pattern or missing-test-template bump applies."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "The supplied implementation diff contains 33 changed source and regression files, with 2141 insertions and 380 deletions, across src/agents, src/cli, and src/utils. Actual-mode file-count mapping places 16 or more changed files at XXL. The footprint materially exceeds the adjacent M endpoint calibration example."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "No dependency manifests or lockfiles appear in the changed-file list. The implementation uses existing Node.js facilities, project utilities, report infrastructure, and Vitest imports; pricing.json changes model-rate data without adding packages, changing runtime versions, or introducing integration configuration."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Three rubric layers are involved: DB-Persistence through local JSONL and sidecar ingestion plus captured-family reuse; Service through identity resolution, lifecycle, pricing, and report payload assembly; and UI through the HTML report, timeline hierarchy, and modal focus behavior. There is no storage schema migration, infrastructure change, new external service, or cross-repository coordination."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): changes the shared ParsedSession contract and shared model pricing foundation.",
+    "Multiple workflows and agent variants are affected through native discovery, cost enrichment, source-reported OTEL provenance, HTML/JSON reports, and Claude/Claude ACP/Claude Desktop handling; the additional Component Scope bump is capped at XXL (6)."
+  ],
+  "split_recommendation": null
+}

@@ -4,8 +4,8 @@
  * `generatedAt` so this stays deterministic and unit-testable.
  */
 
-import type { RootAnalytics } from '../types.js';
-import type { SessionCostIndex, CostSummary, AgentCoverage } from '../cost/types.js';
+import type { RootAnalytics, NamedInvocationStats } from '../types.js';
+import type { SessionCostIndex, CostSummary, AgentCoverage, SessionCost, DispatchEvent, TokenUsage } from '../cost/types.js';
 import { emptyUsage } from '../cost/cost-calculator.js';
 import type { ReportPayload, ReportSessionRecord, ReportMeta } from './types.js';
 import { detectSessionSource } from './session-source-detector.js';
@@ -17,6 +17,49 @@ export interface PayloadContext {
   userEmail?: string;   // caller stamps; absent when not authenticated
   periodStart?: string; // ISO — caller stamps from filter or session start
   periodEnd?: string;   // ISO — caller stamps from filter or session end
+}
+
+/** Public projections allowlist fields so internal transcript data cannot enter either export. */
+function pickDefined<T extends object, K extends keyof T>(value: T, keys: readonly K[]): Pick<T, K> {
+  return Object.fromEntries(keys.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])) as Pick<T, K>;
+}
+
+function projectTokens(tokens: TokenUsage): TokenUsage {
+  return pickDefined(tokens, ['input', 'output', 'cacheRead', 'cacheCreation', 'cacheCreation1h', 'total']);
+}
+
+function projectDispatch(dispatch: DispatchEvent): DispatchEvent {
+  return {
+    ...pickDefined(dispatch, ['kind', 'name', 'start', 'durationMs', 'id', 'ownerAgentId', 'agentId', 'parentId', 'depth',
+      'relationshipStatus', 'acknowledgedAt', 'observedEnd', 'completedAt', 'elapsedMs', 'status', 'costUSD',
+      'inclusiveCostUSD', 'attributionStatus', 'attributionScope']),
+    ...(dispatch.tokens && { tokens: projectTokens(dispatch.tokens) }),
+    ...(dispatch.inclusiveTokens && { inclusiveTokens: projectTokens(dispatch.inclusiveTokens) }),
+    ...(dispatch.tools && { tools: dispatch.tools.map(({ name, calls }) => ({ name, calls })) }),
+  };
+}
+
+function projectSnapshot(cost: SessionCost | undefined): Partial<ReportSessionRecord> {
+  if (!cost) return {};
+  return {
+    ...pickDefined(cost, ['capturedAt', 'observedStart', 'observedEnd', 'costSource', 'costBasis', 'dispatchesComplete',
+      'rootOwnCostUSD', 'unlinkedCostUSD', 'unlinkedAgentIds']),
+    ...(cost.rootOwnTokens && { rootOwnTokens: projectTokens(cost.rootOwnTokens) }),
+    ...(cost.unlinkedTokens && { unlinkedTokens: projectTokens(cost.unlinkedTokens) }),
+  };
+}
+
+function invocationStats(dispatches: DispatchEvent[], kind: DispatchEvent['kind']): NamedInvocationStats[] {
+  const byName = new Map<string, NamedInvocationStats>();
+  for (const dispatch of dispatches) {
+    if (dispatch.kind !== kind) continue;
+    const stats = byName.get(dispatch.name) ?? { name: dispatch.name, totalCalls: 0, successCount: 0, failureCount: 0 };
+    stats.totalCalls += 1;
+    if (dispatch.status === 'completed') stats.successCount += 1;
+    if (dispatch.status === 'failed') stats.failureCount += 1;
+    byName.set(dispatch.name, stats);
+  }
+  return [...byName.values()].sort((left, right) => right.totalCalls - left.totalCalls);
 }
 
 export function buildPayload(
@@ -38,6 +81,7 @@ export function buildPayload(
   // fall back to derived period when the caller did not stamp explicit dates.
   let minStartMs: number | undefined;
   let maxEndMs: number | undefined;
+  let capturedAt: number | undefined;
 
   for (const project of root.projects) {
     for (const branch of project.branches) {
@@ -46,26 +90,31 @@ export function buildPayload(
           continue;
         }
         seen.add(s.sessionId);
-        if (Number.isFinite(s.startTime) && s.startTime > 0) {
-          if (minStartMs === undefined || s.startTime < minStartMs) {
-            minStartMs = s.startTime;
+        const cost = costIndex.get(s.sessionId);
+        const startTime = cost?.observedStart !== undefined && Number.isFinite(cost.observedStart) && cost.observedStart > 0 ? cost.observedStart : s.startTime;
+        const durationMs = cost?.observedEnd !== undefined && Number.isFinite(cost.observedEnd) && cost.observedEnd >= startTime
+          ? cost.observedEnd - startTime : s.duration;
+        if (cost?.capturedAt !== undefined && Number.isFinite(cost.capturedAt)) capturedAt = Math.max(capturedAt ?? cost.capturedAt, cost.capturedAt);
+        if (Number.isFinite(startTime) && startTime > 0) {
+          if (minStartMs === undefined || startTime < minStartMs) {
+            minStartMs = startTime;
           }
-          const dur = Number.isFinite(s.duration) ? Math.max(s.duration, 0) : 0;
-          const endMs = s.startTime + dur;
+          const dur = Number.isFinite(durationMs) ? Math.max(durationMs, 0) : 0;
+          const endMs = startTime + dur;
           if (maxEndMs === undefined || endMs > maxEndMs) {
             maxEndMs = endMs;
           }
         }
-        const cost = costIndex.get(s.sessionId);
         // Prefer the path the cost logic actually resolved (raw.agentSessionFile OR the
         // correlation-file fallback — see cost-enricher.ts) over the aggregator's
         // native-discovery-only field, so a priced session (hadLog: true) never shows
         // "File: Not available" while its Cost card shows a real number (CR-002).
         const agentSessionFile = cost?.agentSessionFile ?? s.agentSessionFile;
         agents.add(s.agentName);
-        const skillInvocations = s.skillInvocations ?? [];
-        const agentInvocations = s.agentInvocations ?? [];
-        const commandInvocations = s.commandInvocations ?? [];
+        const dispatches = cost?.dispatches?.map(projectDispatch) ?? [];
+        const skillInvocations = cost?.dispatchesComplete ? invocationStats(dispatches, 'skill') : s.skillInvocations ?? [];
+        const agentInvocations = cost?.dispatchesComplete ? invocationStats(dispatches, 'agent') : s.agentInvocations ?? [];
+        const commandInvocations = cost?.dispatchesComplete ? invocationStats(dispatches, 'command') : s.commandInvocations ?? [];
         const cov = coverageMap.get(s.agentName) ?? { agentName: s.agentName, total: 0, priced: 0, withLog: 0 };
         cov.total += 1;
         if (cost?.hadLog) {
@@ -84,8 +133,8 @@ export function buildPayload(
           // The session's dominant branch — so a session that touched several branches is
           // attributed to where it did the most work, not whichever branch iterates first.
           branch: s.primaryBranch ?? branch.branchName,
-          startTime: s.startTime,
-          durationMs: s.duration,
+          startTime,
+          durationMs,
           turns: s.totalTurns,
           fileOps: s.totalFileOperations,
           linesAdded: s.totalLinesAdded,
@@ -101,7 +150,7 @@ export function buildPayload(
           models: s.models.map((m) => m.model),
           languages: s.languages.map((l) => l.language),
           tools: s.tools,
-          tokens: cost?.tokens ?? emptyUsage(),
+          tokens: cost ? projectTokens(cost.tokens) : emptyUsage(),
           costUSD: cost?.costUSD ?? 0,
           cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
@@ -115,7 +164,8 @@ export function buildPayload(
             ? { usageUnavailableReason: cost.usageUnavailableReason }
             : {}),
           ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
-          ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
+          ...(dispatches.length ? { dispatches } : {}),
+          ...projectSnapshot(cost),
           skillInvocations,
           agentInvocations,
           commandInvocations,
@@ -152,6 +202,7 @@ export function buildPayload(
 
   const meta: ReportMeta = {
     generatedAt: ctx.generatedAt,
+    ...(capturedAt !== undefined && { capturedAt }),
     rangeLabel: ctx.rangeLabel,
     agents: [...agents],
     projectFilter: ctx.projectFilter,

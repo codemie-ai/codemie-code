@@ -1,53 +1,59 @@
 # EPAM AI/Run CodeMie — Chrome Extension
 
 A Chrome (Manifest V3) side-panel extension that brings the CodeMie AI assistant into the
-browser — chat with CodeMie, extract page content, and drive DOM automation on the page you're
-viewing.
+browser. It reads and answers questions about the page you're on (including direct HTTP(S) PDF
+URLs), and — with your approval on each action by default — can click, type, and navigate to
+carry out multi-step tasks for you.
 
-> **Status: not yet on the Chrome Web Store.** The listing is pending Google's review. Until it's
-> approved, install the packaged build below manually ("sideloading"). No code changes are needed
-> to switch to the store listing later — you'll just remove the manual install and install from
-> the store instead.
+**Live on the Chrome Web Store** — install from there, no manual/developer-mode steps required:
 
-## What's in this folder
+**https://chromewebstore.google.com/detail/epam-airun-codemie/fhjgonmmblodipinpnhohbdbcobgeemp**
 
-| File | Version |
-|---|---|
-| `epam-airun-codemie-0.3.3.zip` | 0.3.3 |
+## What it does
 
-This is the same package built for Chrome Web Store submission — `manifest.json` sits at the
-archive root, ready to load unpacked or upload as-is.
+- Answers questions about the current page, grounded in its actual content.
+- Reads direct HTTP(S) PDF URLs and answers questions about the extracted text.
+- Select text on a page and ask about it, from the right-click menu or the floating **Ask
+  CodeMie** button.
+- Acts on the page on your behalf — clicking, typing, and multi-step flows. State-changing
+  actions ask for approval by default; Auto-approve skips that prompt and should only be used on
+  trusted pages for a narrowly scoped task.
+- Records a sequence of actions once and replays it later.
+- Attaches other open tabs as extra context for a question.
+- Searches the web and connects to your own tools via MCP servers.
+- Saves pages and notes locally as **Knowledge**, and can include matching snippets as context
+  when you enable it.
+- Syncs conversations tied to a selected assistant to your CodeMie account. Chats without an
+  assistant, and temporary chats, stay local to the current browser session only.
 
-## Install (manual, pending store review)
+## Install
 
-1. **Download and unzip** `epam-airun-codemie-0.3.3.zip` to a folder you'll keep around (Chrome
-   loads the extension from this folder every time it starts — don't delete it after installing).
-2. Open `chrome://extensions` in Chrome.
-3. Toggle **Developer mode** on (top-right corner).
-4. Click **Load unpacked** and select the unzipped folder (the one containing `manifest.json`
-   directly, not a parent folder).
-5. Pin **EPAM AI/Run CodeMie** from the toolbar puzzle-piece menu so the icon is always visible.
+1. Open the extension's
+   [Chrome Web Store listing](https://chromewebstore.google.com/detail/epam-airun-codemie/fhjgonmmblodipinpnhohbdbcobgeemp).
+2. Click **Add to Chrome**, then confirm **Add extension**.
+3. Pin **EPAM AI/Run CodeMie** from the toolbar puzzle-piece menu so the icon is always visible.
 
 Open the side panel with the toolbar icon, or the keyboard shortcut `Cmd+Shift+Y` (macOS) /
-`Ctrl+Shift+Y` (Windows/Linux). Close it with `Cmd/Ctrl+Shift+U`. If the shortcut doesn't respond,
-check `chrome://extensions/shortcuts` — Chrome silently drops a shortcut if another extension
-already claims it.
+`Ctrl+Shift+Y` (Windows/Linux). If the shortcut doesn't respond, check
+`chrome://extensions/shortcuts` — Chrome silently drops a shortcut if another extension already
+claims it.
 
 ### First-run setup
 
 The extension ships with no credentials pre-configured:
 
-1. Open the extension's **Options** page (right-click the toolbar icon → **Options**, or the gear
-   icon inside the panel).
-2. Set your **CodeMie base URL**.
-3. Sign in via SSO.
+1. Open the side panel.
+2. On the sign-in screen, enter your organization's CodeMie instance URL under **CodeMie
+   address**.
+3. Click **Sign in** — this opens your organization's SSO page in a new tab. Authenticate there.
+
+Authentication is session-scoped: after Chrome restarts, or if the CodeMie session expires, sign
+in again. There's no separate account or API key to manage — the extension always authenticates
+through your organization's CodeMie instance.
 
 ### Updating
 
-Chrome doesn't auto-update sideloaded extensions. To pick up a new version, download the new zip,
-unzip it over the same folder (or a new one), and click **Reload** (⟳) on the extension's card in
-`chrome://extensions`. Reload — don't remove and re-add — or you'll lose your saved settings and
-session and have to sign in again.
+The Chrome Web Store keeps the extension up to date automatically. No manual steps are needed.
 
 ## Requirements
 

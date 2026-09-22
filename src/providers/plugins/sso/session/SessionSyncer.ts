@@ -14,8 +14,11 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../agents/core/session/BaseProcessor.js';
+import { shouldStopSync } from '../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import { open, stat, unlink } from 'fs/promises';
 import { logger } from '../../../../utils/logger.js';
+import { getCodemiePath } from '../../../../utils/paths.js';
 import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
 import { MetricsSyncProcessor } from './processors/metrics/metrics-sync-processor.js';
 import { createSyncProcessor as createConversationSyncProcessor } from './processors/conversations/syncProcessor.js';
@@ -28,6 +31,14 @@ export interface SessionSyncResult {
   processorResults: Record<string, ProcessingResult>;
   failedProcessors: string[];
 }
+
+/** Lock files older than this are considered stale (holder died without releasing) */
+const SYNC_LOCK_STALE_MS = 120_000;
+
+type SyncLockState =
+  | 'acquired'        // We created the lock file and must release it
+  | 'held-by-other'   // A live process holds the lock — defer this sync
+  | 'unavailable';    // Lock could not be created (fs error) — proceed without it
 
 export class SessionSyncer {
   private sessionStore = new SessionStore();
@@ -75,6 +86,66 @@ export class SessionSyncer {
   }
 
   /**
+   * Try to acquire the cross-process sync lock for a session (exclusive create).
+   * A stale lock (holder killed mid-sync) is removed and acquisition retried once.
+   */
+  private async tryAcquireSyncLock(lockPath: string): Promise<SyncLockState> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const handle = await open(lockPath, 'wx');
+        try {
+          // Write the pid for debuggability
+          await handle.writeFile(String(process.pid));
+        } finally {
+          await handle.close();
+        }
+        return 'acquired';
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'EEXIST') {
+          // Best effort: if the sessions dir is missing/unwritable, proceed
+          // without a lock rather than blocking the sync entirely.
+          logger.debug(`[SessionSyncer] Sync lock unavailable (${code ?? String(error)}), proceeding without lock`);
+          return 'unavailable';
+        }
+
+        if (attempt === 0 && await this.isSyncLockStale(lockPath)) {
+          logger.debug(`[SessionSyncer] Removing stale sync lock: ${lockPath}`);
+          await unlink(lockPath).catch(() => undefined);
+          continue;
+        }
+
+        return 'held-by-other';
+      }
+    }
+    return 'held-by-other';
+  }
+
+  /**
+   * A lock is stale when its mtime is older than SYNC_LOCK_STALE_MS.
+   * Stat errors (e.g. lock vanished between open and stat) are treated as stale
+   * so acquisition is retried once.
+   */
+  private async isSyncLockStale(lockPath: string): Promise<boolean> {
+    try {
+      const stats = await stat(lockPath);
+      return Date.now() - stats.mtimeMs > SYNC_LOCK_STALE_MS;
+    } catch {
+      return true;
+    }
+  }
+
+  private async releaseSyncLock(lockPath: string): Promise<void> {
+    try {
+      await unlink(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.debug(`[SessionSyncer] Failed to release sync lock: ${error}`);
+      }
+    }
+  }
+
+  /**
    * Sync pending data to API
    * Iterates through processors (same logic as plugin)
    *
@@ -84,6 +155,21 @@ export class SessionSyncer {
    */
   async sync(sessionId: string, context: ProcessingContext): Promise<SessionSyncResult> {
     logger.debug(`[SessionSyncer] Starting sync for session ${sessionId}`);
+
+    // Cross-process guard: the SessionEnd hook, the proxy sync timer, and agent
+    // incremental syncs can run concurrently for the same session. Only one sync
+    // per session may run at a time; others defer to the next run.
+    const lockPath = getCodemiePath('sessions', `${sessionId}.sync.lock`);
+    const lockState = await this.tryAcquireSyncLock(lockPath);
+    if (lockState === 'held-by-other') {
+      logger.info(`[SessionSyncer] Sync already in progress for session ${sessionId} in another process, deferring`);
+      return {
+        success: true,
+        message: 'Sync in progress in another process, deferred',
+        processorResults: {},
+        failedProcessors: []
+      };
+    }
 
     try {
       // 1. Load session metadata
@@ -142,6 +228,13 @@ export class SessionSyncer {
       const allResults: ProcessingResult[] = [];
 
       for (const processor of this.processors) {
+        // Stop between processors when the sync deadline expired or an abort was
+        // signaled; processors that did not run are deferred to the next sync.
+        if (shouldStopSync(context)) {
+          logger.debug('[SessionSyncer] Sync deadline reached or aborted, deferring remaining processors');
+          break;
+        }
+
         try {
           // Check if processor should run for this session
           if (!processor.shouldProcess(emptySession)) {
@@ -215,6 +308,10 @@ export class SessionSyncer {
         processorResults: {},
         failedProcessors: []
       };
+    } finally {
+      if (lockState === 'acquired') {
+        await this.releaseSyncLock(lockPath);
+      }
     }
   }
 }
