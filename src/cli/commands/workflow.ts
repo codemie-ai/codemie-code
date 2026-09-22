@@ -2,8 +2,6 @@
  * Workflow management CLI commands
  */
 
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
@@ -22,7 +20,13 @@ import {
   type WorkflowInstallOptions,
 } from '../../workflows/index.js';
 import { getSdkClient, outputJson, handleSdkError } from './sdk/utils/cli-utils.js';
-import { listWorkflows, runWorkflow } from './sdk/services/workflows.js';
+import {
+  resolveWorkflowIdFromIdOrName,
+  resumeWorkflowExecution,
+  runWorkflow,
+} from './sdk/services/workflows.js';
+import { uploadWorkflowFile } from './sdk/services/files.js';
+import { parseWorkflowInput } from './sdk/utils/workflow-input.js';
 import { printSuccess } from './sdk/utils/render.js';
 
 export function createWorkflowCommand(): Command {
@@ -473,55 +477,22 @@ Examples:
       const spinner = ora('Running workflow...').start();
 
       try {
-        // Resolve workflow ID if name is provided
-        let targetId = idOrName;
-        if (!idOrName.startsWith('wfl_')) {
-          const workflows = await listWorkflows(client, { search: idOrName });
-          const match = workflows.find(
-            (w) => w.name.toLowerCase() === idOrName.toLowerCase() || w.id === idOrName
-          );
-          if (match) {
-            targetId = match.id;
-          } else if (workflows.length === 1) {
-            targetId = workflows[0].id;
-          } else {
-            spinner.stop();
-            console.error(chalk.red(`❌ Workflow with ID or name "${idOrName}" not found.`));
-            process.exit(1);
-          }
-        }
-
-        let userInput: any = options.input;
-        if (options.input) {
-          try {
-            userInput = JSON.parse(options.input);
-          } catch {
-            // Keep as string
-          }
-        }
+        const targetId = await resolveWorkflowIdFromIdOrName(client, idOrName);
+        const userInput = parseWorkflowInput(options.input);
 
         let uploadedFileName: string | undefined;
         if (options.file) {
           spinner.stop();
+          const uploadSpinner = ora(`Uploading ${options.file}...`).start();
           try {
-            const absolutePath = path.resolve(options.file);
-            const fileContent = await fs.readFile(absolutePath);
-            const uploadSpinner = ora(`Uploading ${path.basename(options.file)}...`).start();
-            try {
-              const uploadRes = await client.files.upload({
-                name: path.basename(options.file),
-                content: fileContent,
-                mimeType: 'application/octet-stream',
-              });
-              uploadedFileName = uploadRes.file_url;
-              uploadSpinner.succeed(chalk.green(`✓ File ${path.basename(options.file)} uploaded successfully.`));
-            } catch (uploadErr: any) {
-              uploadSpinner.fail(chalk.red(`Failed to upload file: ${uploadErr.message || uploadErr}`));
-              process.exit(1);
-            }
-          } catch {
-            console.error(chalk.red(`❌ Error: File "${options.file}" not found or could not be read.`));
-            process.exit(1);
+            const uploadedFile = await uploadWorkflowFile(client, options.file);
+            uploadedFileName = uploadedFile.fileUrl;
+            uploadSpinner.succeed(
+              chalk.green(`✓ File ${uploadedFile.fileName} uploaded successfully.`),
+            );
+          } catch (error) {
+            uploadSpinner.fail(chalk.red('Failed to upload workflow file.'));
+            handleSdkError(error, 'upload workflow file');
           }
           spinner.start();
         }
@@ -605,7 +576,7 @@ Examples:
             if (action === 'approve') {
               const resumeSpinner = ora('Resuming workflow...').start();
               try {
-                await client.workflows.executions(targetId).resume(execId);
+                await resumeWorkflowExecution(client, targetId, execId);
                 status = 'In Progress';
                 resumeSpinner.succeed(chalk.green('✓ Workflow resumed.'));
               } catch (error) {
@@ -625,10 +596,7 @@ Examples:
 
               const resumeSpinner = ora('Resuming workflow with edited message...').start();
               try {
-                await (client.workflows as any).api.put(
-                  `/v1/workflows/${targetId}/executions/${execId}/resume`,
-                  { user_input: editedMessage }
-                );
+                await resumeWorkflowExecution(client, targetId, execId, editedMessage);
                 status = 'In Progress';
                 resumeSpinner.succeed(chalk.green('✓ Workflow resumed with edited message.'));
               } catch (error) {

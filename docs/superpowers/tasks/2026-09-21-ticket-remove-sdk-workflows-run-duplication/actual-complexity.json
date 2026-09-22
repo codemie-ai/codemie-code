@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "generated": "2026-09-22T00:00:00Z",
+  "dimensions": {
+    "component_scope": { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk": { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies": { "score": 1, "label": "XS" },
+    "affected_layers": { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The implementation spans the workflow CLI command, SDK workflow command surface, workflow service wrapper, and shared CLI/authentication utilities; the shared utility touch increases the otherwise L-sized component scope."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "The supplied Stage 5 diffstat reports 7 changed files, which maps to the L file-change band even though the implementation is concentrated in existing files."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The workflow execution path uses the existing CodeMie SDK pattern, but the change also touches authenticated client construction and external workflow execution behavior; the authentication red flag raises risk from S to M."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches shared CLI and authentication utilities in addition to workflow command and service components.",
+    "Technical Risk bumped from S to M: affects authentication/client construction."
+  ],
+  "split_recommendation": null
+}

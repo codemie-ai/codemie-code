@@ -5,6 +5,13 @@ import type {
   WorkflowUpdateParams,
   WorkflowListParams,
 } from "codemie-sdk";
+import { NotFoundError } from "codemie-sdk";
+
+interface WorkflowServiceTransport {
+  api: {
+    put<T>(path: string, data: { user_input: string }): Promise<T>;
+  };
+}
 
 export async function listWorkflows(
   client: CodeMieClient,
@@ -18,6 +25,43 @@ export async function getWorkflow(
   workflowId: string,
 ): Promise<Workflow> {
   return client.workflows.get(workflowId);
+}
+
+export async function findWorkflowByExactName(
+  client: CodeMieClient,
+  workflowName: string,
+): Promise<Workflow> {
+  const workflows = await listWorkflows(client, { search: workflowName });
+  const matches = workflows.filter(
+    (workflow) => workflow.name.toLowerCase() === workflowName.toLowerCase(),
+  );
+
+  if (matches.length === 0) {
+    throw new Error(`Workflow with name "${workflowName}" was not found`);
+  }
+
+  if (matches.length > 1) {
+    throw new Error(`Multiple workflows matched the name "${workflowName}"`);
+  }
+
+  return matches[0];
+}
+
+export async function resolveWorkflowIdFromIdOrName(
+  client: CodeMieClient,
+  idOrName: string,
+): Promise<string> {
+  try {
+    const workflow = await getWorkflow(client, idOrName);
+    return workflow.id;
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) {
+      throw error;
+    }
+  }
+
+  const workflow = await findWorkflowByExactName(client, idOrName);
+  return workflow.id;
 }
 
 export async function createWorkflow(
@@ -75,4 +119,22 @@ export async function runWorkflow(
   sessionId?: string,
 ): Promise<unknown> {
   return client.workflows.run(workflowId, userInput, fileName, sessionId);
+}
+
+export async function resumeWorkflowExecution(
+  client: CodeMieClient,
+  workflowId: string,
+  executionId: string,
+  editedInput?: string,
+): Promise<void> {
+  if (editedInput === undefined) {
+    await client.workflows.executions(workflowId).resume(executionId);
+    return;
+  }
+
+  const workflowService = client.workflows as unknown as WorkflowServiceTransport;
+  await workflowService.api.put(
+    `/v1/workflows/${workflowId}/executions/${executionId}/resume`,
+    { user_input: editedInput },
+  );
 }

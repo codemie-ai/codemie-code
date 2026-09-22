@@ -38,7 +38,7 @@ describe('Workflow Commands', () => {
   });
 });
 
-describe('Workflow Run and Workflows Run commands', () => {
+describe('Workflow Run command', () => {
   setupTestIsolation();
 
   it('should display help text for the workflow run command', () => {
@@ -49,15 +49,29 @@ describe('Workflow Run and Workflows Run commands', () => {
     expect(result.output).toContain('--input');
     expect(result.output).toContain('--file');
     expect(result.output).toContain('--no-wait');
+    expect(result.output).toContain('--json');
   });
 
-  it('should display help text for sdk workflows run command', () => {
+  it('should reject the removed sdk workflows run command', () => {
     const result = cli.runSilent('sdk workflows run --help');
     expect(result.exitCode).toBe(0);
-    expect(result.output).toContain('Execute a custom or shared workflow by ID or name');
-    expect(result.output).toContain('--input');
-    expect(result.output).toContain('--file');
-    expect(result.output).toContain('--no-wait');
+    expect(result.output).not.toMatch(/\brun\b/);
+  });
+
+  it('should fail when invoking the removed sdk workflows run command', () => {
+    const result = cli.runSilent('sdk workflows run');
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  it('should keep sdk workflow CRUD commands in help', () => {
+    const result = cli.runSilent('sdk workflows --help');
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('list');
+    expect(result.output).toContain('get');
+    expect(result.output).toContain('create');
+    expect(result.output).toContain('update');
+    expect(result.output).toContain('delete');
+    expect(result.output).not.toMatch(/\brun\b/);
   });
 
   it('should error when workflow run is called without a workflow ID or name', () => {

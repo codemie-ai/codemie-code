@@ -1,0 +1,104 @@
+{
+  "decision": "request-changes",
+  "rationale": "The frozen diff does not implement the requested bounded deletion: it adds and registers `sdk workflows run`, while retaining a test that expects that command to succeed. It also changes the canonical workflow command, its SDK service, authentication helpers, and adds an unrelated GEMINI.md file despite the plan requiring those areas to remain unchanged.",
+  "confidence": "high",
+  "risk_flags": [
+    "breaking-change",
+    "public-api"
+  ],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "`codemie sdk workflows run` is no longer registered or accepted.",
+      "status": "fail",
+      "notes": "The frozen diff adds `cmd.command(\"run <id>\")` to src/cli/commands/sdk/workflows.ts."
+    },
+    {
+      "kind": "story-ac",
+      "item": "`codemie sdk workflows` retains list/get/create/update/delete.",
+      "status": "pass",
+      "notes": "The existing CRUD registrations remain in the diff, but the parent also retains the prohibited run child."
+    },
+    {
+      "kind": "story-ac",
+      "item": "`codemie workflow run` remains the sole execution entrypoint with ID/name resolution.",
+      "status": "fail",
+      "notes": "The diff introduces a second execution registration and also adds the global orchestration instead of preserving it unchanged."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Global workflow run retains --workflow, --input, --file, --no-wait, and --json.",
+      "status": "pass",
+      "notes": "The added global command declares all five options."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Global orchestration and sdk/services/workflows.ts::runWorkflow are unchanged.",
+      "status": "fail",
+      "notes": "workflow.ts and the service file both contain additions in the frozen diff."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Help/integration expectations describe the removed SDK run surface.",
+      "status": "fail",
+      "notes": "The test still expects `sdk workflows run --help` to succeed and does not assert CRUD help, rejection, or --json."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Historical task artifacts and generated evidence are not rewritten.",
+      "status": "pass",
+      "notes": "No prior task artifact is rewritten in the frozen diff; however, an unrelated root GEMINI.md is added."
+    }
+  ],
+  "standards_review": [],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/sdk/workflows.ts",
+      "line": 253,
+      "title": "The removed SDK run command is added instead of removed",
+      "problem": "The frozen diff registers `cmd.command(\"run <id>\")` and includes the complete duplicate execution orchestration.",
+      "impact": "`codemie sdk workflows run` remains an accepted, documented command, so the primary CLI-surface requirement and sole-entrypoint guarantee are violated.",
+      "recommendation": "Delete the SDK `run <id>` child block and only its run-only imports, retaining the SDK CRUD registrations."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "tests/integration/cli-commands/workflow.test.ts",
+      "line": 41,
+      "title": "Integration expectations still require the duplicate command",
+      "problem": "The test suite adds a positive `sdk workflows run --help` expectation and omits the required rejection, SDK CRUD help, and global `--json` assertions.",
+      "impact": "The tests encode the old public surface and will not protect the requested removal or the full canonical help contract.",
+      "recommendation": "Rename the suite to the canonical global command, replace the positive SDK-run test with a non-zero rejection assertion, add CRUD help coverage, and assert `--json`."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/workflow.ts",
+      "line": 442,
+      "title": "Canonical workflow orchestration is changed despite an unchanged-file constraint",
+      "problem": "The frozen diff adds the global `workflow run` command and roughly 250 lines of execution, polling, upload, and interruption handling.",
+      "impact": "This broadens the change beyond duplicate-command removal and makes canonical execution behavior depend on newly introduced code rather than preserving the existing implementation.",
+      "recommendation": "Restore workflow.ts to the reviewed baseline and leave the canonical command and its behavior byte-for-behavior unchanged."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/sdk/utils/cli-utils.ts",
+      "line": 15,
+      "title": "Unrelated authentication behavior is included in the task diff",
+      "problem": "The diff changes `getSdkClient` and `getAuthenticatedClient` to accept and propagate a new `quiet` parameter.",
+      "impact": "Authentication and SSO reauthentication behavior is outside this CLI deletion and increases regression surface in a task explicitly scoped to workflow command registration.",
+      "recommendation": "Revert the quiet-parameter changes and keep the workflow-removal diff limited to the specified command and affected expectations."
+    }
+  ]
+}
