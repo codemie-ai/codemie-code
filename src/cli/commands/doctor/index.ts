@@ -23,6 +23,7 @@ import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 import { VersionWarningStore } from '../../../utils/version-warnings.js';
+import { clearVersionCache } from '../../../utils/version-cache.js';
 import { renderTip } from '../../../utils/tips.js';
 
 export function createDoctorCommand(): Command {
@@ -32,10 +33,16 @@ export function createDoctorCommand(): Command {
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
     .option('--reset-version-warnings', 'Show agent version recommendations again on next launch')
-    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean }) => {
+    .option('--refresh-versions', 'Force a fresh agent version check (bypasses the 24h cache)')
+    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean; refreshVersions?: boolean }) => {
       if (options.resetVersionWarnings) {
         const { removed } = await VersionWarningStore.clear();
         console.log(chalk.blueBright(`Cleared version warnings — ${removed} marker(s) removed.\n`));
+      }
+
+      if (options.refreshVersions) {
+        const { removed } = await clearVersionCache();
+        console.log(chalk.blueBright(`Cleared version cache — ${removed} entries removed.\n`));
       }
 
       // Enable debug mode if verbose flag is set
