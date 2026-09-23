@@ -109,6 +109,33 @@ describe('ProfileDisplay — workspace-resolved codeMieUrl', () => {
       logSpy.mockRestore();
     }
   });
+
+  it("format() prefers the profile's own codeMieUrl over the workspace value", () => {
+    const output = ProfileDisplay.format(
+      { name: 'personal', active: true, profile: { provider: 'ai-run-sso', codeMieUrl: 'https://own' }, source: 'global' },
+      'https://workspace-url'
+    );
+
+    expect(output).toContain('https://own');
+    expect(output).not.toContain('https://workspace-url');
+  });
+
+  it("formatStatus() prefers the profile's own codeMieUrl over the workspace value", () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus(
+        { name: 'personal', active: true, profile: { provider: 'ai-run-sso', codeMieUrl: 'https://own' }, source: 'global' },
+        undefined,
+        'https://workspace-url'
+      );
+
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('https://own');
+      expect(rendered).not.toContain('https://workspace-url');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });
 
 describe('listProfiles — workspace-resolved codeMieUrl display', () => {

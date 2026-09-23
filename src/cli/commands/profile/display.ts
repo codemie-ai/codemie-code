@@ -37,7 +37,7 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
+      codeMieUrl: profile.codeMieUrl ?? workspaceCodeMieUrl,
       isActive: active
     });
 
@@ -111,7 +111,7 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
+      codeMieUrl: profile.codeMieUrl ?? workspaceCodeMieUrl,
       authStatus: authStatusDisplay,
       isActive: active
     });

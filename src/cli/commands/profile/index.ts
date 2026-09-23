@@ -150,10 +150,8 @@ async function handleStatus(): Promise<void> {
     ? chalk.yellow('(source: local .codemie/)')
     : chalk.cyan('(source: global ~/.codemie/)');
 
-  const workspace = await ConfigLoader.resolveWorkspace(workingDir);
-
-  // Display profile + auth status
-  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, workspace.codeMieUrl);
+  // Display profile + auth status. `config` already carries the resolved identity.
+  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, config.codeMieUrl);
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
 }
