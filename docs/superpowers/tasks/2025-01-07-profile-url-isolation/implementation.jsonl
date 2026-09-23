@@ -1,0 +1,6 @@
+{"task_id":"1","status":"done","commit":"cee0587","test_command":"npx vitest run --project unit src/utils/__tests__/config-project-override.test.ts"}
+{"task_id":"2","status":"done","commit":"099d175","test_command":"npx vitest run --project unit src/utils/__tests__/config-project-override.test.ts"}
+{"task_id":"3","status":"done","commit":"8d0786d","test_command":"npx vitest run --project unit src/utils/__tests__/config-project-override.test.ts"}
+{"task_id":"4","status":"done","commit":"ce37cf2","test_command":"npx vitest run --project unit src/cli/commands/profile/__tests__/index.test.ts"}
+{"task_id":"5","status":"done","commit":"4791be0","test_command":"npx vitest run --project unit src/agents/plugins/claude/plugin/__tests__/statusline.test.ts"}
+{"task_id":"6","status":"done","commit":"6a634be","test_command":"n/a — documentation only"}

@@ -1,0 +1,71 @@
+{
+  "decision": "request-changes",
+  "rationale": "CR-001 is resolved: listProfiles() now calls ConfigLoader.resolveIdentityWorkspace(), which filters to identity-bearing workspaces in scope order (config.ts:265-268), matching resolveIdentity()'s fallback logic instead of the raw resolveWorkspace() pick. CR-002 remains unresolved: splitProfileAndWorkspace() (config.ts:685-699) still casts to any at four call sites with no justifying comment or typed index signature. CR-003 remains unresolved: config.ts is now 1651 lines and the identity-resolution helpers were not extracted into a dedicated module. 1 of 3 blocking findings resolved; 2 code-quality violations still block.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "ProviderProfile declares optional codeMieUrl, codeMieProject, codeMieIntegration", "status": "pass", "notes": "src/env/types.ts:72-74 adds the three fields."},
+    {"kind": "spec", "item": "Updating a profile via codemie setup changes only that profile; other profiles resolve to the same identity as before", "status": "pass", "notes": "saveProfile() fully replaces profiles[name]; test 'updating one profile does not change another' config-project-override.test.ts:289-300."},
+    {"kind": "spec", "item": "Adding a new profile on a different server does not change existing profiles' resolution", "status": "pass", "notes": "Workspace identity seeded only when absent; test 'saving a second profile on another server' config-project-override.test.ts:276-287."},
+    {"kind": "spec", "item": "saveProfile() stores identity on profiles[name] and writes workspace identity only when workspace has none", "status": "pass", "notes": "config.ts:710-721 — profileFields keeps identity, seededIdentity seeds only if workspace has no prior identity."},
+    {"kind": "spec", "item": "Loading follows the read-path order; all eight Resolution-examples rows hold", "status": "pass", "notes": "resolveIdentity() config.ts:258-295 implements profile-group-first then same-server workspace fill; rows 1-8 covered in config-project-override.test.ts:382-460."},
+    {"kind": "spec", "item": "Existing configs with no per-profile identity resolve identically to current release", "status": "pass", "notes": "isSameServer treats missing URL as a match so workspace identity fills unconditionally for legacy profiles; confirmed by resolution tests."},
+    {"kind": "spec", "item": "Tooling fields store and resolve exactly as today", "status": "pass", "notes": "TOOLING_KEYS (config.ts:643-650) is old WORKSPACE_KEYS minus identity; test 'saveProfile still routes tooling fields' config-project-override.test.ts:312-319."},
+    {"kind": "spec", "item": "profile list, profile status, and Claude statusline show per-profile identity with workspace fallback", "status": "pass", "notes": "display.ts:40,113; profile/index.ts:174-179; statusline.mjs:216 all show profile.codeMieUrl with workspace fallback. See CR-001."},
+    {"kind": "spec", "item": "config-project-override.test.ts:395-410 asserts new storage location vs current shared-workspace behavior", "status": "pass", "notes": "Replaced by 'saveProfile stores identity on profiles[name] and seeds empty workspace' test at lines 255-273."},
+    {"kind": "spec", "item": "Regression tests: multi-profile URL isolation, cross-server add, all resolution rows, statusline selection", "status": "pass", "notes": "config-project-override.test.ts:276-300,382-460; statusline.test.ts:56-84."},
+    {"kind": "spec", "item": "project-config.md describes the read-path order", "status": "pass", "notes": "project-config.md:147-163 rewritten to describe profile-group-first, same-server workspace fallback order."},
+    {"kind": "spec", "item": "Non-Goal: no migration/repair of existing profiles, no codeMieUrl derivation from baseUrl", "status": "pass", "notes": "No migration code or baseUrl-derived logic added anywhere in diff."},
+    {"kind": "spec", "item": "Non-Goal: no new way to change global workspace identity after first set", "status": "pass", "notes": "config.ts:715-721 only ever seeds workspace identity when absent, preserving edit-file-only rule."},
+    {"kind": "spec", "item": "Non-Goal: no changes to provider plugins, setup, migration 007, tooling, or env/CLI override precedence", "status": "pass", "notes": "Diff scoped to config.ts/types.ts/display/statusline/profile-commands/tests/docs; env/CLI layers unchanged."},
+    {"kind": "spec", "item": "Resolved Decision: no mismatch warning between baseUrl host and resolved codeMieUrl host", "status": "pass", "notes": "No warning code added in diff."},
+    {"kind": "spec", "item": "Resolved Decision: initProjectConfig() keeps writing identity into local workspace unconditionally (field-level out of scope)", "status": "pass", "notes": "config.ts:1030-1032 unconditionally merges pickIdentity; test 'initProjectConfig stores identity' config-project-override.test.ts:321-334."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All 6 commits in range (67e1754..HEAD) match <type>(<scope>): <subject>; types (fix, docs) and scopes (config, agents, cli) allowed; subjects imperative under 100 chars."},
+    {"kind": "code-quality", "status": "partial", "notes": "Two documented rules violated: (1) splitProfileAndWorkspace() casts to any without comment — code-quality.md requires documenting why any is used. (2) config.ts is 1625 lines; this change adds ~140 lines of identity logic (resolveIdentity, isSameServer, helpers) to it instead of extracting into a module — violates 500-line guideline. Other conventions (return types, .js imports, naming) followed correctly."},
+    {"kind": "security", "status": "na", "notes": "No guide at documented path; manually verified against actual security guide (security-practices.md + header-injection audit): codeMieUrl/codeMieProject/codeMieIntegration new fields not read by header-injection plugin, so new identity resolution does not inject X-CodeMie headers. No secrets logged, no new credential paths, display to user not sensitive. No concrete security issue found."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/index.ts",
+      "line": 57,
+      "title": "Profile list fallback bypasses identity resolution",
+      "problem": "listProfiles() passes ConfigLoader.resolveWorkspace(workingDir).codeMieUrl—a single local-else-global whole-object pick—as the codeMieUrl fallback for every listed profile (line 64, display.ts:40), instead of the per-profile hasIdentity/same-server logic resolveIdentity() applies in load(). When the local workspace holds only tooling fields with no identity, resolveWorkspace() returns it anyway and its undefined codeMieUrl leaves the fallback blank, even though resolveIdentity() would have skipped that empty workspace and filled from global workspace.",
+      "impact": "codemie profile list displays a blank or different codeMieUrl for a profile than codemie profile status shows for the same profile, undermining the per-profile identity display this change is designed to guarantee.",
+      "recommendation": "Compute the fallback the same way resolveIdentity() does—skip workspaces with no identity fields and fall through to the next scope—rather than reusing raw resolveWorkspace() result for all profiles."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/config.ts",
+      "line": 659,
+      "title": "Undocumented any casts in splitProfileAndWorkspace",
+      "problem": "splitProfileAndWorkspace() at lines 659-673 casts input/profile/workspace to any four times without any comment explaining why.",
+      "impact": "Violates code-quality.md's documented rule that any is allowed only when the need is documented. Blocks the standards gate for this change.",
+      "recommendation": "Add a short comment justifying each cast, or replace the any casts with a typed index signature like Record<string, unknown> to avoid any entirely."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/config.ts",
+      "title": "config.ts exceeds the 500-line limit",
+      "problem": "This change adds roughly 140 new lines of identity-resolution logic (resolveIdentity, isSameServer, pickIdentity, hasIdentity, omitIdentity, splitProfileAndWorkspace) to src/utils/config.ts, which is already 1625 lines and far past code-quality.md's 500-line guideline, instead of extracting the new logic into its own module.",
+      "impact": "Violates a documented blocking code-quality standard and further erodes maintainability of an already oversized file.",
+      "recommendation": "Extract the new identity-resolution helpers into a dedicated module such as src/utils/config-identity.ts and import it into ConfigLoader."
+    }
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "listProfiles() now calls resolveIdentityWorkspace() (config.ts:265-268), filtering to identity-bearing workspaces in scope order — matches resolveIdentity()'s fallback logic."},
+    {"id": "CR-002", "status": "unresolved", "notes": "splitProfileAndWorkspace() (config.ts:685-699) still casts to any at 4 sites, no comment or typed signature added."},
+    {"id": "CR-003", "status": "unresolved", "notes": "config.ts grew to 1651 lines; identity helpers still inline, no dedicated module extracted."}
+  ]
+}
