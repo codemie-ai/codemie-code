@@ -26,6 +26,10 @@ export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, Co
 
 export { StorageScope };
 
+/** CodeMie identity fields: which server, project and integration a scope points at. */
+type IdentityKey = 'codeMieUrl' | 'codeMieProject' | 'codeMieIntegration';
+type IdentityFields = Pick<WorkspaceConfig, IdentityKey>;
+
 /**
  * Unified configuration loader with priority system:
  * CLI args > Env vars > Project config > Global config > Defaults
@@ -555,14 +559,18 @@ export class ConfigLoader {
   }
 
   /**
-   * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
-   * ProviderProfile. Used to split a saved profile's input into its profile half
+   * CodeMie identity keys. These live on a ProviderProfile (a profile points at
+   * one CodeMie server/project/integration) and may also appear on a scope's
+   * WorkspaceConfig as the shared repo/global default — see resolveIdentity().
+   */
+  private static readonly IDENTITY_KEYS: IdentityKey[] = ['codeMieUrl', 'codeMieProject', 'codeMieIntegration'];
+
+  /**
+   * Keys that belong to WorkspaceConfig (repo/tooling-context) alone and never to
+   * a ProviderProfile. Used to split a saved profile's input into its profile half
    * and its workspace half — see splitProfileAndWorkspace().
    */
-  private static readonly WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
-    'codeMieUrl',
-    'codeMieProject',
-    'codeMieIntegration',
+  private static readonly TOOLING_KEYS: (keyof WorkspaceConfig)[] = [
     'hooks',
     'plugins',
     'assistants',
@@ -572,9 +580,11 @@ export class ConfigLoader {
   ];
 
   /**
-   * Partition a profile-shaped input into its provider-identity half and its
+   * Partition a profile-shaped input into its profile half and its tooling-only
    * workspace half, so callers that persist a profile can route each half to
-   * where it belongs (profiles[name] vs. the scope's workspace).
+   * where it belongs (profiles[name] vs. the scope's workspace). Identity fields
+   * stay on the profile half; callers that also want them in the workspace take
+   * them from pickIdentity().
    */
   private static splitProfileAndWorkspace(
     input: Partial<CodeMieConfigOptions>
@@ -582,7 +592,7 @@ export class ConfigLoader {
     const profile: Partial<ProviderProfile> = { ...(input as any) };
     const workspace: Partial<WorkspaceConfig> = {};
 
-    for (const key of this.WORKSPACE_KEYS) {
+    for (const key of this.TOOLING_KEYS) {
       if ((input as any)[key] !== undefined) {
         (workspace as any)[key] = (input as any)[key];
         delete (profile as any)[key];
@@ -590,6 +600,32 @@ export class ConfigLoader {
     }
 
     return { profile, workspace };
+  }
+
+  /** The identity fields explicitly present on a source, as a group. */
+  private static pickIdentity(source: Partial<CodeMieConfigOptions> | null | undefined): IdentityFields {
+    const identity: IdentityFields = {};
+    if (!source) return identity;
+    for (const key of this.IDENTITY_KEYS) {
+      if (source[key] !== undefined) {
+        (identity as Record<IdentityKey, unknown>)[key] = source[key];
+      }
+    }
+    return identity;
+  }
+
+  /** Whether a source defines any identity field at all. */
+  private static hasIdentity(source: Partial<CodeMieConfigOptions> | null | undefined): boolean {
+    return Object.keys(this.pickIdentity(source)).length > 0;
+  }
+
+  /** A shallow copy of a source with every identity field removed. */
+  private static omitIdentity<T extends object>(source: T): T {
+    const copy = { ...source } as Record<string, unknown>;
+    for (const key of this.IDENTITY_KEYS) {
+      delete copy[key];
+    }
+    return copy as T;
   }
 
   /**
@@ -606,8 +642,12 @@ export class ConfigLoader {
     (profileFields as any).name = profileName;
     config.profiles[profileName] = profileFields as ProviderProfile;
 
-    if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
-      config.workspace = { ...config.workspace, ...workspaceFields };
+    // The saved profile owns its identity. The scope's workspace identity is only
+    // seeded when it has none, so saving one profile never retargets the others.
+    const seededIdentity = this.hasIdentity(config.workspace) ? {} : this.pickIdentity(cleanProfile);
+    const workspaceUpdate = { ...workspaceFields, ...seededIdentity };
+    if (Object.keys(this.removeUndefined(workspaceUpdate)).length > 0) {
+      config.workspace = { ...config.workspace, ...workspaceUpdate };
     }
 
     // If this is the first profile, make it active
@@ -897,7 +937,8 @@ export class ConfigLoader {
       }
     }
 
-    const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
+    const { profile, workspace: toolingWorkspace } = this.splitProfileAndWorkspace(rawOverrides);
+    const workspace = { ...toolingWorkspace, ...this.pickIdentity(rawOverrides) };
 
     const config: MultiProviderConfig = {
       version: 2,

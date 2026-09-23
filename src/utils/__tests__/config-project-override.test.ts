@@ -76,7 +76,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.profiles.default).toBeDefined();
     });
 
-    it('should apply codeMieProject override into workspace, not the profile', async () => {
+    it('should apply codeMieProject override to both the profile and the workspace', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {
         codeMieProject: 'frontend-app'
@@ -85,11 +85,11 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect((config.profiles.default as any).codeMieProject).toBeUndefined();
+      expect(config.profiles.default.codeMieProject).toBe('frontend-app');
       expect(config.workspace?.codeMieProject).toBe('frontend-app');
     });
 
-    it('should apply codeMieIntegration override into workspace, not the profile', async () => {
+    it('should apply codeMieIntegration override to both the profile and the workspace', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       const integration: CodeMieIntegrationInfo = {
         id: 'integration-123',
@@ -103,7 +103,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect((config.profiles.default as any).codeMieIntegration).toBeUndefined();
+      expect(config.profiles.default.codeMieIntegration).toEqual(integration);
       expect(config.workspace?.codeMieIntegration).toEqual(integration);
     });
 
@@ -133,8 +133,11 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const config: MultiProviderConfig = JSON.parse(content);
 
       expect(config.activeProfile).toBe('work');
-      expect((config.profiles.work as any).codeMieProject).toBeUndefined();
-      expect((config.profiles.work as any).codeMieIntegration).toBeUndefined();
+      expect(config.profiles.work.codeMieProject).toBe('backend-service');
+      expect(config.profiles.work.codeMieIntegration).toEqual({
+        id: 'backend-123',
+        alias: 'backend-team'
+      });
       expect(config.workspace?.codeMieProject).toBe('backend-service');
       expect(config.workspace?.codeMieIntegration).toEqual({
         id: 'backend-123',
@@ -392,34 +395,76 @@ describe('ConfigLoader - Project-Level Configuration', () => {
   });
 
   describe('saveProfile / initProjectConfig — workspace split', () => {
-    it('saveProfile routes workspace fields into the global scope workspace, not into profiles[name]', async () => {
+    it('saveProfile stores identity on profiles[name] and seeds an empty global workspace', async () => {
       await ConfigLoader.saveProfile('p1', {
         provider: 'ai-run-sso',
         codeMieUrl: 'https://x',
         codeMieProject: 'proj'
       } as any);
 
-      const content = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
-      const config: MultiProviderConfig = JSON.parse(content);
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
 
-      expect((config.profiles.p1 as any).codeMieUrl).toBeUndefined();
-      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
-      expect(config.profiles.p1.provider).toBe('ai-run-sso');
+      expect(config.profiles.p1.codeMieUrl).toBe('https://x');
+      expect(config.profiles.p1.codeMieProject).toBe('proj');
       expect(config.workspace?.codeMieUrl).toBe('https://x');
       expect(config.workspace?.codeMieProject).toBe('proj');
     });
 
-    it('initProjectConfig routes workspace fields into the local scope workspace, not into profiles[name]', async () => {
+    it('saving a second profile on another server leaves the first profile and the workspace identity untouched', async () => {
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a' } as any);
+      await ConfigLoader.saveProfile('p2', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
+
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+
+      expect(config.profiles.p1.codeMieUrl).toBe('https://a');
+      expect(config.profiles.p1.codeMieProject).toBe('proj-a');
+      expect(config.profiles.p2.codeMieUrl).toBe('https://b');
+      expect(config.workspace?.codeMieUrl).toBe('https://a');
+      expect(config.workspace?.codeMieProject).toBe('proj-a');
+    });
+
+    it('updating one profile does not change another profile or the workspace identity', async () => {
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a' } as any);
+      await ConfigLoader.saveProfile('p2', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a2' } as any);
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
+
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+
+      expect(config.profiles.p1.codeMieUrl).toBe('https://b');
+      expect(config.profiles.p2.codeMieUrl).toBe('https://a');
+      expect(config.profiles.p2.codeMieProject).toBe('proj-a2');
+      expect(config.workspace?.codeMieUrl).toBe('https://a');
+    });
+
+    it('re-saving a profile without an integration drops its previous integration', async () => {
+      const integration = { id: 'int-1', alias: 'old' } as unknown as CodeMieIntegrationInfo;
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj', codeMieIntegration: integration } as any);
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
+
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+
+      expect(config.profiles.p1.codeMieIntegration).toBeUndefined();
+    });
+
+    it('saveProfile still routes tooling fields into the global workspace', async () => {
+      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', skillsSearchUrl: 'https://skills' } as any);
+
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+
+      expect((config.profiles.p1 as any).skillsSearchUrl).toBeUndefined();
+      expect(config.workspace?.skillsSearchUrl).toBe('https://skills');
+    });
+
+    it('initProjectConfig stores identity on the local profile and in the local workspace', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {
         profileName: 'p1',
         codeMieProject: 'proj'
       });
 
-      const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
-      const config: MultiProviderConfig = JSON.parse(content);
+      const config: MultiProviderConfig = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
 
-      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
+      expect(config.profiles.p1.codeMieProject).toBe('proj');
       expect(config.workspace?.codeMieProject).toBe('proj');
     });
   });
