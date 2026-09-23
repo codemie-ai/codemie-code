@@ -122,7 +122,9 @@ export class OtlpDispatcher {
     const roots = event['workspace_roots'];
     const raw = Array.isArray(roots) && roots.length > 0 ? String(roots[0]) : String(event['cwd'] || '');
     // Cursor sends MINGW-style paths on Windows: /C:/foo → C:/foo
-    return raw.replace(/^\/([A-Za-z]):\//, '$1:/');
+    const normalized = raw.replace(/^\/([A-Za-z]):\//, '$1:/');
+    // Ensure Windows uses backslashes (C:\foo), while leaving POSIX paths untouched.
+    return /^[A-Za-z]:\//.test(normalized) ? normalized.replace(/\//g, '\\') : normalized;
   }
 
   private extractPromptBody(event: Record<string, unknown>): string {
@@ -424,7 +426,7 @@ export class OtlpDispatcher {
           );
         } else {
           logger.info(`[otlp-ingest] postOtlp: ok ${response.status}`, ...sanitizeLogArgs({ url }));
-          await response.body?.cancel().catch(() => {});
+          await response.body?.cancel().catch(() => { });
         }
       } finally {
         clearTimeout(timeout);
