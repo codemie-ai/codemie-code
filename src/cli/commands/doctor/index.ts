@@ -24,6 +24,7 @@ import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 import { VersionWarningStore } from '../../../utils/version-warnings.js';
 import { clearVersionCache } from '../../../utils/version-cache.js';
+import { isVersionChecksEnabled } from '../../../agents/core/version-resolution.js';
 import { renderTip } from '../../../utils/tips.js';
 
 export function createDoctorCommand(): Command {
@@ -41,8 +42,14 @@ export function createDoctorCommand(): Command {
       }
 
       if (options.refreshVersions) {
-        const { removed } = await clearVersionCache();
-        console.log(chalk.blueBright(`Cleared version cache — ${removed} entries removed.\n`));
+        if (await isVersionChecksEnabled()) {
+          const { removed } = await clearVersionCache();
+          console.log(chalk.blueBright(`Cleared version cache — ${removed} entries removed.\n`));
+        } else {
+          console.log(
+            chalk.dim('Version checks are disabled (versionChecks.enabled=false) — --refresh-versions is a no-op.\n')
+          );
+        }
       }
 
       // Enable debug mode if verbose flag is set

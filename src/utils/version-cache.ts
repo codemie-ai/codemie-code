@@ -5,7 +5,9 @@ import { getCodemiePath } from './paths.js';
 import { getLatestVersion } from './processes.js';
 
 const TTL_MS = 24 * 60 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 3000; // keeps a stale/first-run lookup from stalling agent startup
+// keeps a stale/first-run lookup from stalling agent startup; exported so callers racing this
+// lookup against their own timeout (e.g. `codemie setup`) can size their timeout with margin.
+export const FETCH_TIMEOUT_MS = 3000;
 
 interface CacheEntry {
 	version: string;
@@ -19,6 +21,19 @@ interface CacheFile {
 
 const filePath = (): string => getCodemiePath('version-cache.json');
 const emptyCache = (): CacheFile => ({ version: 1, packages: {} });
+
+// Serializes every cache write (including clear) behind an in-process promise chain so
+// concurrent callers (e.g. `Promise.all` over all agents in `checkAllAgentsForUpdates`) can't
+// interleave a read-modify-write and silently drop each other's freshly-fetched entries.
+let writeQueue: Promise<unknown> = Promise.resolve();
+function enqueueCacheWrite<T>(task: () => Promise<T>): Promise<T> {
+	const result = writeQueue.then(task, task);
+	writeQueue = result.then(
+		() => undefined,
+		() => undefined
+	);
+	return result;
+}
 
 async function loadCache(): Promise<CacheFile> {
 	try {
@@ -48,17 +63,27 @@ async function saveCache(cache: CacheFile): Promise<void> {
 	await fs.writeFile(file, JSON.stringify(cache, null, 2), 'utf-8');
 }
 
-export async function getCachedLatestVersion(packageName: string): Promise<string | null> {
+export async function getCachedLatestVersion(
+	packageName: string,
+	options: { forceRefresh?: boolean } = {}
+): Promise<string | null> {
 	const cache = await loadCache();
 	const entry = cache.packages[packageName];
-	const isFresh = entry && Date.now() - Date.parse(entry.fetchedAt) < TTL_MS;
+	const isFresh =
+		!options.forceRefresh && !!entry && Date.now() - Date.parse(entry.fetchedAt) < TTL_MS;
 	if (isFresh) return entry.version;
 
 	try {
 		const live = await getLatestVersion(packageName, { timeout: FETCH_TIMEOUT_MS });
 		if (!live) return entry?.version ?? null;
-		cache.packages[packageName] = { version: live, fetchedAt: new Date().toISOString() };
-		await saveCache(cache);
+		// Scoped write: only this package's entry changes. Re-read the cache at write time
+		// (inside the serialized queue) rather than reusing the pre-fetch snapshot, so a
+		// concurrent refresh of another package isn't clobbered by this one.
+		await enqueueCacheWrite(async () => {
+			const latest = await loadCache();
+			latest.packages[packageName] = { version: live, fetchedAt: new Date().toISOString() };
+			await saveCache(latest);
+		});
 		return live;
 	} catch (error) {
 		logger.debug('[version-cache] live lookup failed, using stale cache if present', {
@@ -70,16 +95,18 @@ export async function getCachedLatestVersion(packageName: string): Promise<strin
 }
 
 export async function clearVersionCache(): Promise<{ removed: number }> {
-	const file = filePath();
-	const cache = await loadCache();
-	const removed = Object.keys(cache.packages).length;
-	try {
-		await fs.unlink(file);
-		return { removed };
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code === 'ENOENT') return { removed: 0 };
-		logger.warn('[version-cache] clear() failed; cache left in place', { file, code });
-		return { removed: 0 };
-	}
+	return enqueueCacheWrite(async () => {
+		const file = filePath();
+		const cache = await loadCache();
+		const removed = Object.keys(cache.packages).length;
+		try {
+			await fs.unlink(file);
+			return { removed };
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT') return { removed: 0 };
+			logger.warn('[version-cache] clear() failed; cache left in place', { file, code });
+			return { removed: 0 };
+		}
+	});
 }
