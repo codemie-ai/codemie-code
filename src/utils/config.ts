@@ -1346,6 +1346,15 @@ export class ConfigLoader {
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
     const workspace = await this.resolveWorkspace(workingDir);
 
+    // Identity is attributed from resolveIdentity() — the same helper load() uses —
+    // so --show-sources cannot report a scope that did not supply the value. Each
+    // field becomes its own layer, placed after the profile and workspace layers
+    // but before env and cli so overrides still win the last-one-wins loop below.
+    const { identity, sources: identitySources } = await this.resolveIdentity(workingDir, globalConfig, effectiveLocalConfig);
+    const identityLayers: ConfigLayer[] = this.IDENTITY_KEYS
+      .filter(key => identity[key] !== undefined)
+      .map(key => ({ data: { [key]: identity[key] }, source: identitySources[key] ?? 'global' }));
+
     const configs: ConfigLayer[] = [
       {
         data: {
@@ -1355,17 +1364,18 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: globalConfig,
+        data: this.omitIdentity(globalConfig),
         source: 'global'
       },
       {
-        data: effectiveLocalConfig,
+        data: this.omitIdentity(effectiveLocalConfig),
         source: 'project'
       },
       {
-        data: workspace,
+        data: this.omitIdentity(workspace),
         source: workspaceSource
       },
+      ...identityLayers,
       {
         data: this.loadFromEnv(),
         source: 'env'

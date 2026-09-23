@@ -995,6 +995,57 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
           delete process.env.CODEMIE_URL;
         }
       });
+
+      it('attributes a global profile own codeMieUrl to "global"', async () => {
+        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://own.example.com', name: 'jwt' } });
+        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: 'https://workspace.example.com' });
+
+        const { config: merged, sources } = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'jwt' });
+
+        expect(merged.codeMieUrl).toBe('https://own.example.com');
+        expect(sources.codeMieUrl?.value).toBe('https://own.example.com');
+        expect(sources.codeMieUrl?.source).toBe('global');
+      });
+
+      it('attributes a same-name local profile identity to "project"', async () => {
+        await writeGlobal('epm', { epm: { provider: 'ai-run-sso', codeMieUrl: 'https://lab.example.com', codeMieProject: 'old', name: 'epm' } });
+        await writeLocal('epm', { epm: { provider: 'ai-run-sso', codeMieUrl: 'https://preview.example.com', codeMieProject: 'new', name: 'epm' } });
+
+        const { sources } = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'epm' });
+
+        expect(sources.codeMieProject?.value).toBe('new');
+        expect(sources.codeMieProject?.source).toBe('project');
+      });
+
+      it('attributes a global-workspace-filled project to "global" and a repo-workspace-filled one to "project"', async () => {
+        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
+        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'proj-g' });
+        const elsewhere = path.join(TEST_DIR, 'elsewhere');
+        await fs.mkdir(elsewhere, { recursive: true });
+
+        const outside = await ConfigLoader.loadWithSources(elsewhere, { name: 'jwt' });
+        expect(outside.sources.codeMieProject?.source).toBe('global');
+
+        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
+        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'team-x' });
+
+        const inside = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'jwt' });
+        expect(inside.sources.codeMieProject?.value).toBe('team-x');
+        expect(inside.sources.codeMieProject?.source).toBe('project');
+      });
+
+      it('still attributes CODEMIE_URL to "env" when it wins', async () => {
+        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
+        const elsewhere = path.join(TEST_DIR, 'elsewhere');
+        await fs.mkdir(elsewhere, { recursive: true });
+        process.env.CODEMIE_URL = 'https://env.example.com';
+        try {
+          const { sources } = await ConfigLoader.loadWithSources(elsewhere);
+          expect(sources.codeMieUrl?.source).toBe('env');
+        } finally {
+          delete process.env.CODEMIE_URL;
+        }
+      });
     });
   });
 });
