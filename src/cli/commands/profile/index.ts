@@ -54,14 +54,17 @@ async function listProfiles(): Promise<void> {
     const workingDir = process.cwd();
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
-    const workspace = await ConfigLoader.resolveWorkspace(workingDir);
+    // The fallback for profiles without their own URL must be the workspace that
+    // actually holds identity, matching what load() resolves — see
+    // ConfigLoader.resolveIdentityWorkspace().
+    const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(workingDir);
 
     // Show context indicator
     if (hasLocal) {
       console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
     }
 
-    ProfileDisplay.formatList(profiles, workspace.codeMieUrl);
+    ProfileDisplay.formatList(profiles, identityWorkspace.codeMieUrl);
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);

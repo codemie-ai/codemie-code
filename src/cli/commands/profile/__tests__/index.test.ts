@@ -7,6 +7,7 @@ vi.mock('../../../../utils/config.js', () => ({
     listProfiles: vi.fn(),
     hasLocalConfig: vi.fn(),
     resolveWorkspace: vi.fn(),
+    resolveIdentityWorkspace: vi.fn(),
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
   },
@@ -149,7 +150,7 @@ describe('listProfiles — workspace-resolved codeMieUrl display', () => {
       { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
     ]);
     (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(false);
-    (ConfigLoader.resolveWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (ConfigLoader.resolveIdentityWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
       codeMieUrl: 'https://workspace-url',
     });
 
@@ -160,6 +161,33 @@ describe('listProfiles — workspace-resolved codeMieUrl display', () => {
 
       const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
       expect(rendered).toContain('https://workspace-url');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('falls back to the identity-bearing workspace, not a repo workspace holding only tooling fields', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    (ConfigLoader.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+    ]);
+    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    // The repo workspace wins resolveWorkspace()'s whole-object pick but carries no
+    // identity, so the list must not take its blank codeMieUrl as the fallback.
+    (ConfigLoader.resolveWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
+      skillsSearchUrl: 'https://skills',
+    });
+    (ConfigLoader.resolveIdentityWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
+      codeMieUrl: 'https://global-workspace-url',
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const command = createProfileCommand();
+      await command.parseAsync([], { from: 'user' });
+
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('https://global-workspace-url');
     } finally {
       logSpy.mockRestore();
     }

@@ -234,6 +234,40 @@ export class ConfigLoader {
   }
 
   /**
+   * The workspaces that could supply CodeMie identity, in scope order (repo, then
+   * global), skipping any that defines no identity field. resolveWorkspace()'s
+   * whole-object rule cannot be reused here: a repo workspace holding only tooling
+   * settings wins that pick and would contribute a blank identity, hiding the
+   * global workspace behind it.
+   */
+  private static async identityWorkspaces(
+    workingDir: string
+  ): Promise<{ workspace: WorkspaceConfig; source: 'project' | 'global' }[]> {
+    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
+    const globalMultiConfig = await this.loadMultiProviderConfig();
+
+    return [
+      { workspace: localMultiConfig.workspace, source: 'project' as const },
+      { workspace: globalMultiConfig.workspace, source: 'global' as const }
+    ].filter(
+      (layer): layer is { workspace: WorkspaceConfig; source: 'project' | 'global' } =>
+        Boolean(layer.workspace) && this.hasIdentity(layer.workspace)
+    );
+  }
+
+  /**
+   * The first workspace that defines CodeMie identity, in scope order (repo, then
+   * global), or `{}` when neither does. This is the identity a profile without its
+   * own falls back to, so display surfaces listing many profiles at once can show
+   * the same URL load() would resolve. Unlike load(), it applies no same-server
+   * check — it has no single profile URL to compare against.
+   */
+  static async resolveIdentityWorkspace(workingDir: string): Promise<WorkspaceConfig> {
+    const layers = await this.identityWorkspaces(workingDir);
+    return layers[0]?.workspace ?? {};
+  }
+
+  /**
    * Whether two CodeMie URLs address the same server, comparing them with the
    * trailing slash stripped and case folded. A missing URL on either side counts
    * as a match: an unset URL makes no claim about which server it is not.
@@ -271,15 +305,7 @@ export class ConfigLoader {
       return { identity, sources };
     }
 
-    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
-    const globalMultiConfig = await this.loadMultiProviderConfig();
-    const layers: { workspace: WorkspaceConfig | null | undefined; source: 'project' | 'global' }[] = [
-      { workspace: localMultiConfig.workspace, source: 'project' },
-      { workspace: globalMultiConfig.workspace, source: 'global' }
-    ];
-
-    for (const { workspace, source } of layers) {
-      if (!workspace || !this.hasIdentity(workspace)) continue;
+    for (const { workspace, source } of await this.identityWorkspaces(workingDir)) {
       if (!this.isSameServer(identity.codeMieUrl, workspace.codeMieUrl)) continue;
 
       for (const key of this.IDENTITY_KEYS) {

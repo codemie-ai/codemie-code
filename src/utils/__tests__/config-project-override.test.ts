@@ -892,6 +892,30 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         expect(cfg.codeMieIntegration).toBeUndefined();
       });
 
+      it('resolveIdentityWorkspace skips a repo workspace that carries only tooling fields', async () => {
+        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
+        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'proj-g' });
+        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
+        await setWorkspace(LOCAL_CONFIG_PATH, { skillsSearchUrl: 'https://skills.example.com' });
+
+        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
+        const toolingWorkspace = await ConfigLoader.resolveWorkspace(PROJECT_DIR);
+
+        expect(identityWorkspace.codeMieUrl).toBe(LAB);
+        expect(identityWorkspace.codeMieProject).toBe('proj-g');
+        expect(toolingWorkspace.codeMieUrl).toBeUndefined();
+      });
+
+      it('resolveIdentityWorkspace matches what load() resolves for a profile without identity', async () => {
+        await writeFixture('sso', { provider: 'ai-run-sso' }, { repo: true });
+
+        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
+        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'sso' });
+
+        expect(identityWorkspace.codeMieUrl).toBe(cfg.codeMieUrl);
+        expect(identityWorkspace.codeMieProject).toBe('team-x');
+      });
+
       it('a same-name local profile with its own identity wins over the global profile identity', async () => {
         await writeGlobal('epm', {
           epm: { provider: 'ai-run-sso', codeMieUrl: 'https://lab.example.com', codeMieProject: 'old-proj', name: 'epm' }
@@ -994,6 +1018,28 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         } finally {
           delete process.env.CODEMIE_URL;
         }
+      });
+
+      it('resolveIdentityWorkspace prefers the repo workspace when it holds identity', async () => {
+        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
+        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'proj-g' });
+        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
+        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: PREVIEW, codeMieProject: 'team-x' });
+
+        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
+
+        expect(identityWorkspace.codeMieUrl).toBe(PREVIEW);
+        expect(identityWorkspace.codeMieProject).toBe('team-x');
+      });
+
+      it('resolveIdentityWorkspace returns no identity when neither scope defines any', async () => {
+        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
+        await setWorkspace(GLOBAL_CONFIG_PATH, { skillsSearchUrl: 'https://skills.example.com' });
+
+        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
+
+        expect(identityWorkspace.codeMieUrl).toBeUndefined();
+        expect(identityWorkspace.codeMieProject).toBeUndefined();
       });
 
       it('attributes a global profile own codeMieUrl to "global"', async () => {
