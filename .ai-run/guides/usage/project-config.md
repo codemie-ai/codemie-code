@@ -147,14 +147,21 @@ Keep global config with provider/model. Each repo's local config sets only `code
 
 ### Team project context with a selected provider profile
 
-A repository's local team profile can supply `codeMieProject`, `codeMieIntegration`, and
-`codeMieUrl` when the selected global profile does not define its own project context and
-the URLs are compatible. If the selected global profile defines a project or integration,
-those selected-profile values win.
+CodeMie identity — `codeMieUrl`, `codeMieProject`, `codeMieIntegration` — resolves as a
+group, never field by field:
+
+1. The profile's own identity wins when it names a project or integration. A local profile
+   of the same name replaces the global profile's identity as a whole, so a repo-level
+   `codemie setup` takes effect without inheriting the global profile's integration.
+2. Otherwise the first workspace that holds identity — the repo's, then the global one —
+   fills what the profile lacks, but only when it is on the same server. A workspace on a
+   different `codeMieUrl` contributes nothing, so a profile pointing at another server
+   resolves with no project rather than a foreign one.
+3. Environment variables and CLI flags still override the result.
 
 ```bash
-codemie-kimi   --profile kimi       # selected project wins when the profile defines one
-codemie-claude --profile anthropic  # otherwise compatible local project context is used
+codemie-kimi   --profile kimi       # the profile's own project wins when it defines one
+codemie-claude --profile anthropic  # otherwise same-server workspace context fills it in
 ```
 
 ### CI/CD overrides
