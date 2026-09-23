@@ -132,12 +132,21 @@ export class ConfigLoader {
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
-    // Workspace (repo/tooling-context) fields resolve by whole-object override — the
-    // local scope's workspace if defined, else the global scope's — independent of
-    // which profile is active, so switching the active profile never drops workspace
-    // context.
+    // Tooling-context workspace fields resolve by whole-object override — the local
+    // scope's workspace if defined, else the global scope's — independent of which
+    // profile is active, so switching the active profile never drops workspace
+    // context. CodeMie identity does not follow that rule: it belongs to the
+    // profile, so resolveIdentity() owns it. Identity is deleted before being
+    // reassigned because the profile Object.assigns above merge it field by field
+    // across the global and local profiles, which identity must never be.
     const workspace = await this.resolveWorkspace(workingDir);
-    Object.assign(config, this.removeUndefined(workspace));
+    Object.assign(config, this.removeUndefined(this.omitIdentity(workspace)));
+
+    const { identity } = await this.resolveIdentity(workingDir, globalConfig, effectiveLocalConfig);
+    for (const key of this.IDENTITY_KEYS) {
+      delete (config as Record<string, unknown>)[key];
+    }
+    Object.assign(config, this.removeUndefined(identity));
 
     // 2. Environment variables (load .env first if in project)
     const envPath = path.join(workingDir, '.env');
@@ -222,6 +231,67 @@ export class ConfigLoader {
 
     const globalMultiConfig = await this.loadMultiProviderConfig();
     return globalMultiConfig.workspace ?? {};
+  }
+
+  /**
+   * Whether two CodeMie URLs address the same server, comparing them with the
+   * trailing slash stripped and case folded. A missing URL on either side counts
+   * as a match: an unset URL makes no claim about which server it is not.
+   */
+  private static isSameServer(a?: string, b?: string): boolean {
+    if (!a || !b) return true;
+    const normalize = (url: string): string => url.replace(/\/+$/, '').toLowerCase();
+    return normalize(a) === normalize(b);
+  }
+
+  /**
+   * Resolve the CodeMie identity (URL, project, integration) for a working
+   * directory, and report which scope supplied each field.
+   *
+   * Order: the profile's own identity as a group — the local profile's when it
+   * defines any identity field, else the global profile's — then, only when that
+   * group names neither a project nor an integration, the first workspace that
+   * holds identity and is on the same server (repo, then global) fills the gaps.
+   * Identity is never merged field by field across profiles or across workspaces:
+   * one workspace either contributes or is skipped whole.
+   */
+  private static async resolveIdentity(
+    workingDir: string,
+    globalProfile: Partial<CodeMieConfigOptions>,
+    localProfile: Partial<CodeMieConfigOptions>
+  ): Promise<{ identity: IdentityFields; sources: Partial<Record<IdentityKey, 'global' | 'project'>> }> {
+    const useLocal = this.hasIdentity(localProfile);
+    const identity = this.pickIdentity(useLocal ? localProfile : globalProfile);
+    const sources: Partial<Record<IdentityKey, 'global' | 'project'>> = {};
+    for (const key of Object.keys(identity) as IdentityKey[]) {
+      sources[key] = useLocal ? 'project' : 'global';
+    }
+
+    if (identity.codeMieProject !== undefined || identity.codeMieIntegration !== undefined) {
+      return { identity, sources };
+    }
+
+    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
+    const globalMultiConfig = await this.loadMultiProviderConfig();
+    const layers: { workspace: WorkspaceConfig | null | undefined; source: 'project' | 'global' }[] = [
+      { workspace: localMultiConfig.workspace, source: 'project' },
+      { workspace: globalMultiConfig.workspace, source: 'global' }
+    ];
+
+    for (const { workspace, source } of layers) {
+      if (!workspace || !this.hasIdentity(workspace)) continue;
+      if (!this.isSameServer(identity.codeMieUrl, workspace.codeMieUrl)) continue;
+
+      for (const key of this.IDENTITY_KEYS) {
+        if (identity[key] === undefined && workspace[key] !== undefined) {
+          (identity as Record<IdentityKey, unknown>)[key] = workspace[key];
+          sources[key] = source;
+        }
+      }
+      break;
+    }
+
+    return { identity, sources };
   }
 
   /**
