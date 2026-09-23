@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-09-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two new abstraction modules (agents/core/version-resolution.ts, utils/version-cache.ts) plus edits across BaseAgentAdapter (shared base class for all agent plugins), two agent plugins (claude, kimi), three CLI commands (doctor, setup, update), config schema (env/types.ts, utils/config.ts), and version-utils.ts — 4+ components spanning CLI, core-agent, plugin, and config subsystems." },
+    { "dimension": "technical_risk", "reason": "New live npm-registry lookup path with a 24h file cache: serialized write queue to avoid concurrent read-modify-write loss, forceRefresh bypass, prerelease-suffix guard against untrusted npm dist-tag data, and reuse of the existing isValidSemanticVersion util to keep the version string safe before it reaches install/exec paths. No exact precedent for the caching/concurrency layer; fail-safe fallbacks (config load failure, live lookup failure) limit blast radius." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 12 files changed (313 insertions, 62 deletions), mapping to the XL band (11-15) per the actual-mode file-count table." },
+    { "dimension": "affected_layers", "reason": "Touches CLI (doctor/setup/update commands), core Service layer (BaseAgentAdapter, version-resolution), Infrastructure/config (env/types.ts, config.ts, version-cache.json on disk), and External (live npm registry lookup via getLatestVersion) — 4 distinct layers." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

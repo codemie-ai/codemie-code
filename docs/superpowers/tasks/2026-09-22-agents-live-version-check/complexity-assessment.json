@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "task": "Replace hand-edited agent supported-version constants (Claude, Kimi) with live npm-tracked version checks, add a 24h cache, reconcile the two divergent version-check code paths, and add a global on/off config toggle gating three flows.",
+  "generated": "2026-09-22T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 4+ subsystems: Agent Core (BaseAgentAdapter.checkVersionCompatibility/warnOnceIfUntested — shared by every agent), two named Agent Plugins (claude.plugin.ts, kimi.plugin.ts, with Gemini sharing the same pattern), four CLI Commands (update.ts's checkAgentForUpdate/updateAgent, setup.ts's checkAndInstallClaude, AgentsCheck.ts, install.ts), and Utils/Config (processes.ts.getLatestVersion, version-utils.ts, a brand-new TTL-cache module, and ConfigLoader/env/types.ts for the new global toggle)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No precedent anywhere in the codebase for a TTL-based value cache (the closest thing, VersionWarningStore, is a dedup marker not a fetched-value cache with expiry). The fail-safe-enabled requirement for the new toggle actively contradicts the codebase's one existing boolean-env-var convention (CODEMIE_DEBUG === 'true', which is fail-closed), so the design can't just copy that pattern. checkAgentForUpdate() — the primary function being changed, including the Claude special-case removal — has no direct test coverage today."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Technical analysis states the minimum named-scope surface (unify checkAgentForUpdate for Claude/Kimi, reword both 'verified' UI strings, add the global toggle, gate three flows) spans at least 7-9 files before counting the new cache module, landing around 9-11 modified files plus 1-2 new files (the cache module) across 4+ directories (agents/core, agents/plugins/{claude,kimi}, cli/commands(+doctor/checks), utils, env)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 distinct layers touched with a cross-cutting concern: Service (BaseAgentAdapter's core compare logic), UI (CLI copy in update.ts/setup.ts/AgentsCheck.ts), Infrastructure (ConfigLoader/env global toggle plus the new cache module), and External (npm registry lookups now applied uniformly to Claude/Kimi). The single toggle must gate three separate flows (agent-run startup, setup, update), which is the cross-cutting-concern pattern the XL layer criteria describes, even though no persistence/schema migration is involved."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
