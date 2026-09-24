@@ -1,5 +1,5 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -264,10 +264,31 @@ export interface ModelPickerOption {
 }
 
 /**
+ * Whether a catalog entry — plain model or router — resolves to a Claude-family backend, for
+ * the model picker. Mirrors codex-models.ts's `isCodexCompatibleModel`: a LiteLLM auto-router's
+ * own alias name is family-agnostic by convention (`claude-smart-router` and `gpt-smart-router`
+ * are both named like routers, not like their target), so `counterfactual_model` — the concrete
+ * deployment it currently resolves to — is the deterministic signal to judge it by when present.
+ * A Switchyard virtual router carries no target-model field to check deterministically, so
+ * CodeMie's own naming convention (base_name/label embedding the constituent families, e.g.
+ * `sy-signal-claude-sonnet-haiku` vs `sy-signal-gpt-terra-luna`) is trusted instead — the same
+ * name check already used for a plain model.
+ */
+function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
+  const counterfactual = model.litellm_router?.counterfactual_model;
+  if (counterfactual) {
+    return CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(counterfactual));
+  }
+  return CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(getSearchText(model)));
+}
+
+/**
  * Builds the option list for Claude Code's `modelPicker` settings key (v2.1.243+) from the live
- * CodeMie catalog: every enabled, servable model that is either Claude-family (by name) or a
- * router entry (Switchyard virtual router / LiteLLM auto-router — see `isRouterCatalogEntry`),
- * since a router dispatches to a Claude-capable backend regardless of its own name.
+ * CodeMie catalog: every enabled, servable model that resolves to a Claude-family backend —
+ * a plain Claude-named deployment, or a router (Switchyard virtual router / LiteLLM auto-router
+ * — see `isRouterCatalogEntry`) whose target is Claude-family (see `isClaudeFamilyPickerEntry`).
+ * A router targeting a different family (e.g. a GPT auto-router) is excluded — Claude Code can't
+ * drive it anyway, so listing it would just be catalog noise.
  *
  * Ranked with the same `rankModel`/`compareRankedModels` ordering already used for tier
  * auto-resolution, so the picker's top rows match what auto-resolution would have picked.
@@ -279,11 +300,7 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
   try {
     const catalog = await fetchCatalog(env);
     const ranked = catalog
-      .filter((model) => {
-        if (!isServableModel(model)) return false;
-        const searchText = getSearchText(model);
-        return CLAUDE_FAMILY_PATTERNS.some((pattern) => pattern.test(searchText)) || isRouterCatalogEntry(model);
-      })
+      .filter((model) => isServableModel(model) && isClaudeFamilyPickerEntry(model))
       .map((model) => {
         try {
           return { ranked: rankModel(model), model };
@@ -295,16 +312,17 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
       .filter((entry): entry is { ranked: RankedClaudeModel; model: LlmModel } => entry !== null)
       .sort((a, b) => compareRankedModels(a.ranked, b.ranked));
 
+    // Built from the FULL catalog, not just `ranked` — a router's classifier model can
+    // belong to a family this picker otherwise filters out (a Claude classifier gating a
+    // GPT-targeting router still needs its label resolved).
+    const labelIndex = buildModelLabelIndex(catalog);
+
     const seen = new Set<string>();
     const options: ModelPickerOption[] = [];
     for (const { ranked: rankedModel, model } of ranked) {
       if (seen.has(rankedModel.id)) continue; // a model may rank under >1 identifier
       seen.add(rankedModel.id);
-      // `model.provider` is not used here: it's unvalidated backend free text (see
-      // getSearchText — every other consumer only folds it into fuzzy search, never displays
-      // it), so it could be an internal code or absent. `router` is the one thing this function
-      // itself establishes reliably (isRouterCatalogEntry).
-      const description = isRouterCatalogEntry(model) ? 'router' : undefined;
+      const description = describeRouter(model, labelIndex) || undefined;
       options.push({ model: rankedModel.id, label: model.label || rankedModel.id, description });
     }
     return options;
