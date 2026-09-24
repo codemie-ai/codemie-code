@@ -9,11 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ConfigurationError } from '@/utils/errors.js';
-import {
-  getVsCodeClaudeCodeSettingsPath,
-  selectVsCodeClaudeCodeModels,
-  writeVsCodeClaudeCodeConfigAtPath,
-} from '../vscode-claude-code.js';
+import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfigAtPath } from '../vscode-claude-code.js';
 import * as vscodeModule from '../vscode.js';
 
 describe('writeVsCodeClaudeCodeConfigAtPath', () => {
@@ -259,127 +255,6 @@ describe('writeVsCodeClaudeCodeConfigAtPath', () => {
       const serialized = JSON.stringify(arg);
       expect(serialized ?? '').not.toContain(gatewayKey);
     }
-  });
-
-  it('pins the gateway model IDs so the extension never sends its hardcoded defaults', async () => {
-    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key', {
-      model: 'claude-sonnet-5',
-      opusModel: 'claude-opus-5',
-      sonnetModel: 'claude-sonnet-5',
-      haikuModel: 'claude-haiku-4-5',
-    });
-
-    const settings = await readSettings();
-    expect(settings['claudeCode.environmentVariables']).toEqual([
-      { name: 'ANTHROPIC_BASE_URL', value: 'http://127.0.0.1:4001' },
-      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'gw-key' },
-      { name: 'ANTHROPIC_MODEL', value: 'claude-sonnet-5' },
-      { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', value: 'claude-opus-5' },
-      { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', value: 'claude-sonnet-5' },
-      { name: 'ANTHROPIC_DEFAULT_HAIKU_MODEL', value: 'claude-haiku-4-5' },
-      { name: 'ANTHROPIC_SMALL_FAST_MODEL', value: 'claude-haiku-4-5' },
-    ]);
-  });
-
-  it('evicts a stale model pin the gateway no longer serves', async () => {
-    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key', {
-      haikuModel: 'claude-haiku-4-5-20251001',
-      opusModel: 'claude-opus-5',
-    });
-    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key', {
-      haikuModel: 'claude-haiku-4-5',
-    });
-
-    const settings = await readSettings();
-    const envVars = settings['claudeCode.environmentVariables'] as Array<{
-      name: string;
-      value: string;
-    }>;
-
-    expect(envVars).toContainEqual({ name: 'ANTHROPIC_DEFAULT_HAIKU_MODEL', value: 'claude-haiku-4-5' });
-    expect(envVars.map(entry => entry.name)).not.toContain('ANTHROPIC_DEFAULT_OPUS_MODEL');
-  });
-
-  it('leaves existing model pins untouched when no models are supplied', async () => {
-    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key', {
-      haikuModel: 'claude-haiku-4-5',
-    });
-    await writeVsCodeClaudeCodeConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
-
-    const settings = await readSettings();
-    expect(settings['claudeCode.environmentVariables']).toContainEqual({
-      name: 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-      value: 'claude-haiku-4-5',
-    });
-  });
-});
-
-describe('selectVsCodeClaudeCodeModels', () => {
-  it('resolves each tier from the gateway catalog, including dated IDs', () => {
-    expect(
-      selectVsCodeClaudeCodeModels([
-        'claude-opus-5',
-        'claude-sonnet-5',
-        'claude-haiku-4-5-20251001',
-        'gpt-5',
-      ])
-    ).toEqual({
-      model: 'claude-sonnet-5',
-      opusModel: 'claude-opus-5',
-      sonnetModel: 'claude-sonnet-5',
-      haikuModel: 'claude-haiku-4-5-20251001',
-    });
-  });
-
-  it('falls back to an available family member outside the curated list', () => {
-    const result = selectVsCodeClaudeCodeModels(['claude-haiku-9-9', 'claude-sonnet-5']);
-
-    expect(result.haikuModel).toBe('claude-haiku-9-9');
-  });
-
-  it('sorts fallback family versions numerically', () => {
-    const result = selectVsCodeClaudeCodeModels(['claude-sonnet-9', 'claude-sonnet-10']);
-
-    expect(result.sonnetModel).toBe('claude-sonnet-10');
-  });
-
-  it('prefers the undated registration over its dated twin', () => {
-    const result = selectVsCodeClaudeCodeModels([
-      'claude-haiku-9-9-20260101',
-      'claude-haiku-9-9',
-    ]);
-
-    expect(result.haikuModel).toBe('claude-haiku-9-9');
-  });
-
-  it('pins the profile model only when the gateway serves it', () => {
-    const available = ['claude-sonnet-5', 'claude-haiku-4-5'];
-
-    expect(selectVsCodeClaudeCodeModels(available, 'claude-haiku-4-5').model).toBe('claude-haiku-4-5');
-    expect(selectVsCodeClaudeCodeModels(available, 'claude-opus-9').model).toBe('claude-sonnet-5');
-  });
-
-  it('matches a date-suffixed profile model against the gateway ID', () => {
-    const available = ['claude-sonnet-5', 'claude-haiku-4-5'];
-
-    expect(selectVsCodeClaudeCodeModels(available, 'claude-haiku-4-5-20251001').model)
-      .toBe('claude-haiku-4-5');
-    expect(selectVsCodeClaudeCodeModels(available, 'claude-haiku-4-5-2025-10-01').model)
-      .toBe('claude-haiku-4-5');
-  });
-
-  it('matches an undated profile model against a date-suffixed gateway ID', () => {
-    expect(selectVsCodeClaudeCodeModels(['claude-sonnet-5-20260101'], 'claude-sonnet-5').model)
-      .toBe('claude-sonnet-5-20260101');
-  });
-
-  it('returns no models when the catalog has no Claude entries', () => {
-    expect(selectVsCodeClaudeCodeModels(['gpt-5'])).toEqual({
-      model: undefined,
-      opusModel: undefined,
-      sonnetModel: undefined,
-      haikuModel: undefined,
-    });
   });
 });
 

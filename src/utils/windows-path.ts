@@ -24,7 +24,7 @@ export interface PathUpdateResult {
  * Get Windows System32 directory path
  * Defaults to C:\Windows\System32 if SystemRoot env var not set
  */
-const getWindowsSystem32 = (): string => {
+export const getWindowsSystem32 = (): string => {
 	return process.env.SystemRoot
 		? `${process.env.SystemRoot}\\System32`
 		: 'C:\\Windows\\System32';

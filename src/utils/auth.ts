@@ -11,7 +11,7 @@ import { AuthMethod } from '@/providers/core/types.js';
 import type { ProviderProfile } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
-import { primeProxyEnv } from '@/utils/system-proxy.js';
+import { applySystemProxyEnvironment } from '@/utils/system-proxy.js';
 
 export interface AuthenticationOptions {
   /**
@@ -51,7 +51,7 @@ export async function getAuthenticatedClient(
     }
     // The SDK talks over axios, which resolves proxies from the environment per
     // request; on Windows the corporate proxy lives in Internet Settings only.
-    await primeProxyEnv(config.baseUrl);
+    await applySystemProxyEnvironment(config.baseUrl);
     return new CodeMieClient({
       codemie_api_domain: config.baseUrl,
       external_token: token,

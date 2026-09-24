@@ -16,7 +16,7 @@ import { DesktopTelemetryRuntime } from '../telemetry/runtime/DesktopTelemetryRu
 import { DesktopRepositoryResolver } from '../telemetry/runtime/DesktopRepositoryResolver.js';
 import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
-import { primeProxyEnv } from '../utils/system-proxy.js';
+import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 
 function readCliVersion(): string {
@@ -94,10 +94,9 @@ const config: ProxyConfig = {
   syncCodeMieUrl,
 };
 
-// Seed HTTP(S)_PROXY from Windows Internet Settings before anything builds an
-// agent: ProxyHTTPClient reads these at construction, and spawned agent CLIs
-// inherit them. Resolved against the real upstream so a PAC picks the right hop.
-await primeProxyEnv(targetUrl);
+// Resolve proxy/PAC routing lazily per request. This keeps daemon startup
+// independent of PAC availability and lets a running daemon recover with VPN.
+installSystemProxyDispatcher();
 
 let proxy = new CodeMieProxy(config);
 let telemetryRuntime: DesktopTelemetryRuntime | undefined;

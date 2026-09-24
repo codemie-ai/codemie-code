@@ -3,22 +3,17 @@
  *
  * KISS: Does one thing well - forwards HTTP requests with streaming.
  * Memory efficient: Returns streams directly, no buffering.
- * Proxy support: Respects HTTP_PROXY/HTTPS_PROXY environment variables.
+ * Proxy support: Uses the shared environment/Windows/PAC resolver per request.
  */
 
 import { pipeline } from 'stream/promises';
 import https from 'https';
 import http from 'http';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import { HttpProxyAgent } from 'http-proxy-agent';
 import { NetworkError } from './proxy-errors.js';
 import { logger } from '../../../../utils/logger.js';
 import {
-  getEnvNoProxyEntries,
-  getEnvProxyUrl,
-  parseNoProxyRules,
-  shouldBypassProxy,
-  type NoProxyRule,
+  getProxyAgentForUrl,
+  isTlsVerificationEnabled,
 } from '../../../../utils/system-proxy.js';
 
 export interface HTTPClientOptions {
@@ -38,23 +33,13 @@ export interface ForwardRequestOptions {
 export class ProxyHTTPClient {
   private directHttpsAgent: https.Agent;
   private directHttpAgent: http.Agent;
-  private proxyHttpsAgent: https.Agent | undefined;
-  private proxyHttpAgent: http.Agent | undefined;
   private timeout: number;
   private rejectUnauthorized: boolean;
-  private noProxyRules: NoProxyRule[];
 
   constructor(options: HTTPClientOptions = {}) {
     // Use provided timeout or 0 for unlimited (AI requests can be very long)
     this.timeout = options.timeout || 0;
-    this.rejectUnauthorized = options.rejectUnauthorized ?? false;
-
-    // Proxy configuration comes from the environment. On Windows these are
-    // seeded from Internet Settings by primeProxyEnv() during CLI bootstrap.
-    const httpsProxyUrl = getEnvProxyUrl('https:');
-    const httpProxyUrl = getEnvProxyUrl('http:');
-    const noProxyEntries = getEnvNoProxyEntries();
-    this.noProxyRules = parseNoProxyRules(noProxyEntries);
+    this.rejectUnauthorized = options.rejectUnauthorized ?? isTlsVerificationEnabled();
 
     // Connection pooling with keep-alive
     // NO timeout on agent - we handle it at request level
@@ -64,59 +49,21 @@ export class ProxyHTTPClient {
       maxSockets: 50
     };
 
-    // Create HTTPS agent (with proxy support if configured)
-    if (httpsProxyUrl) {
-      logger.debug('[proxy-http-client] Using HTTPS proxy:', httpsProxyUrl);
-      this.proxyHttpsAgent = new HttpsProxyAgent(httpsProxyUrl, baseAgentOptions);
-    }
     this.directHttpsAgent = new https.Agent(baseAgentOptions);
 
-    // Create HTTP agent (with proxy support if configured)
-    if (httpProxyUrl) {
-      logger.debug('[proxy-http-client] Using HTTP proxy:', httpProxyUrl);
-      this.proxyHttpAgent = new HttpProxyAgent(httpProxyUrl, {
-        keepAlive: true,
-        maxSockets: 50
-      });
-    }
     this.directHttpAgent = new http.Agent({
       keepAlive: true,
       maxSockets: 50
     });
-
-    logger.debug('[proxy-http-client] NO_PROXY rules loaded', {
-      entries: noProxyEntries,
-      totalRules: this.noProxyRules.length,
-    });
   }
 
-  private getAgentForUrl(url: URL): http.Agent {
-    const port = Number.parseInt(url.port, 10) || (url.protocol === 'https:' ? 443 : 80);
-    const bypass = shouldBypassProxy(url.hostname, port, this.noProxyRules);
-
-    if (url.protocol === 'https:') {
-      if (!bypass && this.proxyHttpsAgent) {
-        logger.debug('[proxy-http-client] Routing HTTPS request via proxy', { host: url.hostname, port });
-        return this.proxyHttpsAgent;
-      }
-      logger.debug('[proxy-http-client] Routing HTTPS request directly (no_proxy match or proxy disabled)', {
-        host: url.hostname,
-        port,
-        bypass,
-      });
-      return this.directHttpsAgent;
-    }
-
-    if (!bypass && this.proxyHttpAgent) {
-      logger.debug('[proxy-http-client] Routing HTTP request via proxy', { host: url.hostname, port });
-      return this.proxyHttpAgent;
-    }
-    logger.debug('[proxy-http-client] Routing HTTP request directly (no_proxy match or proxy disabled)', {
-      host: url.hostname,
-      port,
-      bypass,
+  private async getAgentForUrl(url: URL): Promise<http.Agent> {
+    const proxyAgent = await getProxyAgentForUrl(url, {
+      rejectUnauthorized: this.rejectUnauthorized,
+      keepAlive: true,
+      maxSockets: 50,
     });
-    return this.directHttpAgent;
+    return proxyAgent ?? (url.protocol === 'https:' ? this.directHttpsAgent : this.directHttpAgent);
   }
 
   /**
@@ -128,7 +75,7 @@ export class ProxyHTTPClient {
     options: ForwardRequestOptions
   ): Promise<http.IncomingMessage> {
     const protocol = url.protocol === 'https:' ? https : http;
-    const agent = this.getAgentForUrl(url);
+    const agent = await this.getAgentForUrl(url);
 
     logger.debug('[http-client] Forwarding request to upstream', {
       url: url.toString(),
@@ -315,7 +262,5 @@ export class ProxyHTTPClient {
   close(): void {
     this.directHttpsAgent.destroy();
     this.directHttpAgent.destroy();
-    this.proxyHttpsAgent?.destroy();
-    this.proxyHttpAgent?.destroy();
   }
 }

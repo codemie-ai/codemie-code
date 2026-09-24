@@ -42,7 +42,9 @@ import { createTipsCommand } from './commands/tips.js';
 import { createWhatsnewCommand } from './commands/whatsnew.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
+import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 
+installSystemProxyDispatcher();
 const program = new Command();
 
 // Read version from package.json

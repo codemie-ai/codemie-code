@@ -30,6 +30,7 @@ import { ProviderRegistry } from '../../../core/registry.js';
 import { AuthMethod } from '../../../core/types.js';
 import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
+import { isTlsVerificationEnabled } from '../../../../utils/system-proxy.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
@@ -52,7 +53,7 @@ export class CodeMieProxy {
     // Initialize HTTP client with streaming support
     this.httpClient = new ProxyHTTPClient({
       timeout: config.timeout || 300000,
-      rejectUnauthorized: false // Allow self-signed certificates
+      rejectUnauthorized: isTlsVerificationEnabled()
     });
   }
 

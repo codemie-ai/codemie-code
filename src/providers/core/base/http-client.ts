@@ -9,14 +9,14 @@ import http from 'http';
 import { URL } from 'url';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeHeaders } from '../../../utils/security.js';
-import { getProxyAgentForUrl } from '../../../utils/system-proxy.js';
+import { getProxyAgentForUrl, isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
 
 export interface HTTPClientConfig {
   timeout?: number;                  // Timeout in milliseconds (default: 5000)
   headers?: Record<string, string>;  // Additional headers
   maxRedirects?: number;             // Maximum redirects to follow (default: 5)
   maxRetries?: number;               // Maximum retries on failure (default: 3)
-  rejectUnauthorized?: boolean;      // Allow self-signed certificates (default: false)
+  rejectUnauthorized?: boolean;      // Verify TLS certificates (default: true)
 }
 
 export interface HTTPResponse<T = unknown> {
@@ -37,7 +37,7 @@ export class HTTPClient {
       timeout: 5000,
       maxRedirects: 5,
       maxRetries: 3,
-      rejectUnauthorized: false,
+      rejectUnauthorized: isTlsVerificationEnabled(),
       headers: {},
       ...config
     };
@@ -111,6 +111,7 @@ export class HTTPClient {
         method,
         headers: requestHeaders,
         timeout: this.config.timeout,
+        ...(isHttps ? { rejectUnauthorized: this.config.rejectUnauthorized } : {}),
         ...(agent ? { agent } : {})
       };
 

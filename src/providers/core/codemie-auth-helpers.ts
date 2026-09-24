@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { HTTPClient } from './base/http-client.js';
 import type { SSOAuthResult } from './types.js';
 import { ConfigurationError } from '../../utils/errors.js';
+import { isTlsVerificationEnabled } from '../../utils/system-proxy.js';
 
 export const DEFAULT_CODEMIE_BASE_URL = 'https://codemie.lab.epam.com';
 
@@ -105,7 +106,7 @@ export async function fetchCodeMieUserInfo(
     timeout: 10000,
     maxRetries: 3,
     // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
-    rejectUnauthorized: false
+    rejectUnauthorized: isTlsVerificationEnabled()
   });
 
   const response = await client.getRaw(url, headers);
