@@ -162,8 +162,9 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
     return;
   }
 
-  // Pre-flight: every selected skill must be readable before the first write.
-  const details = await prefetchSkillDetails(toRegister, fetcher);
+  // Pre-flight: fetchSkillsByIds already read every selected skill's details, so
+  // any unreadable one has aborted the run before the first write.
+  const details = new Map(selectedSkills.map(skill => [skill.id, skill]));
 
   for (const skill of toUnregister) {
     await unregisterSkill(skill, storageScope, workingDir, target);
