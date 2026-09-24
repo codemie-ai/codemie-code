@@ -6,7 +6,7 @@ vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
     listProfiles: vi.fn(),
     hasLocalConfig: vi.fn(),
-    resolveWorkspace: vi.fn(),
+    resolveProfileWorkspace: vi.fn(),
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
   },
@@ -116,25 +116,36 @@ describe('listProfiles — workspace-resolved codeMieUrl display', () => {
     vi.clearAllMocks();
   });
 
-  it('displays the workspace-resolved codeMieUrl for the profile list, not a per-profile one', async () => {
+  it('displays each profile with the codeMieUrl of its own scope workspace', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     (ConfigLoader.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      { name: 'team', active: true, profile: { provider: 'ai-run-sso' }, source: 'local' },
+      { name: 'personal', active: false, profile: { provider: 'ai-run-sso' }, source: 'global' },
     ]);
-    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(false);
-    (ConfigLoader.resolveWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
-      codeMieUrl: 'https://workspace-url',
-    });
+    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (ConfigLoader.resolveProfileWorkspace as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_workingDir: string, isLocalProfile: boolean) => ({
+        codeMieUrl: isLocalProfile ? 'https://local-workspace-url' : 'https://global-workspace-url',
+      })
+    );
 
+    const formatSpy = vi.spyOn(ProfileDisplay, 'format');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const command = createProfileCommand();
       await command.parseAsync([], { from: 'user' });
 
-      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
-      expect(rendered).toContain('https://workspace-url');
+      expect(formatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'team' }),
+        'https://local-workspace-url'
+      );
+      expect(formatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'personal' }),
+        'https://global-workspace-url'
+      );
     } finally {
       logSpy.mockRestore();
+      formatSpy.mockRestore();
     }
   });
 });
