@@ -74,7 +74,7 @@
   {
     "id": "cmd-install-version",
     "category": "Getting Started",
-    "message": "Pinpoint control: `codemie install claude 2.0.30` grabs that exact version, while `codemie install claude --supported` picks the one CodeMie tested.",
+    "message": "Pinpoint control: `codemie install claude 2.0.30` grabs that exact version, while `codemie install claude --supported` picks the one CodeMie is tracking.",
     "command": "install",
     "commands": [
       "codemie install claude 2.0.30",
@@ -93,7 +93,7 @@
   {
     "id": "cmd-update",
     "category": "Getting Started",
-    "message": "Worth running `codemie update` once in a while — it brings your installed agents up to their recommended versions.",
+    "message": "Worth running `codemie update` once in a while — it brings your installed agents up to their tracked versions.",
     "command": "update",
     "commands": [
       "codemie update"
