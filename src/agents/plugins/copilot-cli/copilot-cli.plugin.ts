@@ -21,9 +21,10 @@ export {
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
 
-// Recommended version (one non-blocking notice on mismatch) and the hard gate
-// below which the agent refuses to launch. Rule: the minimum is the previously
-// recommended version — when bumping the former, move its old value to the latter.
+// Live-tracked version (one non-blocking notice on mismatch; this constant is
+// only the fallback — see `LIVE_TRACKED_AGENT_NAMES`) and the hard gate below
+// which the agent refuses to launch. Rule: the minimum is the previously
+// tracked version — when bumping the former, move its old value to the latter.
 const COPILOT_SUPPORTED_VERSION = '1.0.83';
 const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
