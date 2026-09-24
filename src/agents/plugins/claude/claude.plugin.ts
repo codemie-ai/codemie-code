@@ -36,7 +36,7 @@ let statuslineManagedThisSession = false;
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-export const CLAUDE_SUPPORTED_VERSION = '2.1.269';
+export const CLAUDE_SUPPORTED_VERSION = '2.1.281';
 
 /**
  * Minimum supported Claude Code version — the only hard gate; below it the
@@ -48,7 +48,7 @@ export const CLAUDE_SUPPORTED_VERSION = '2.1.269';
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.218';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
 
 /**
  * Claude Code installer URLs
