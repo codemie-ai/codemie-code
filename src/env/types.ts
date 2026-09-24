@@ -67,12 +67,6 @@ export interface ProviderProfile {
   allowedDirs?: string[];
   ignorePatterns?: string[];
 
-  // CodeMie identity: which CodeMie server/project/integration this profile points at.
-  // Stored per profile so saving one profile cannot retarget the others.
-  codeMieUrl?: string;
-  codeMieProject?: string;  // Selected project/application name
-  codeMieIntegration?: CodeMieIntegrationInfo;
-
   // SSO-specific fields
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   ssoConfig?: {

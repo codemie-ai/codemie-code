@@ -197,45 +197,18 @@ describe('resolveBudget', () => {
     expect(result).toEqual({ budget: null, budgetError: null });
   });
 
-  it('skips silently when userEmail exists only on the profile, not at the top level', async () => {
+  it('skips silently when codeMieUrl/userEmail only exist on the profile — migration 006 moved them to workspace/top-level', async () => {
     const readFile = vi.fn()
       .mockRejectedValueOnce(new Error('no cache'))
       .mockResolvedValueOnce(JSON.stringify({
         activeProfile: 'default',
+        // Pre-fix (stale) shape: codeMieUrl/userEmail stranded on the profile with no
+        // top-level `workspace`/`userEmail`. Must not be read from the profile object —
+        // regression test for the statusline reading raw profile fields post-migration.
         profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
       }));
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: null, budgetError: null });
-  });
-
-  it('uses the active profile codeMieUrl when the workspace has none', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
-        activeProfile: 'default',
-        userEmail: 'me@x.com',
-        profiles: { default: { codeMieUrl: 'https://own', baseUrl: 'https://own/api' } },
-      }));
-    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
-    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
-
-    expect(getAuthHeadersImpl).toHaveBeenCalledWith('https://own');
-    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
-  });
-
-  it('prefers the active profile codeMieUrl over the workspace codeMieUrl', async () => {
-    const readFile = vi.fn()
-      .mockRejectedValueOnce(new Error('no cache'))
-      .mockResolvedValueOnce(JSON.stringify({
-        activeProfile: 'default',
-        userEmail: 'me@x.com',
-        workspace: { codeMieUrl: 'https://workspace' },
-        profiles: { default: { codeMieUrl: 'https://own', baseUrl: 'https://own/api' } },
-      }));
-    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
-    await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
-
-    expect(getAuthHeadersImpl).toHaveBeenCalledWith('https://own');
   });
 
   it('returns a "reauthenticate" error when no auth headers are available', async () => {

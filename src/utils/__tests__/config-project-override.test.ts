@@ -76,7 +76,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.profiles.default).toBeDefined();
     });
 
-    it('should apply codeMieProject override to both the profile and the workspace', async () => {
+    it('should apply codeMieProject override into workspace, not the profile', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {
         codeMieProject: 'frontend-app'
@@ -85,11 +85,11 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.default.codeMieProject).toBe('frontend-app');
+      expect((config.profiles.default as any).codeMieProject).toBeUndefined();
       expect(config.workspace?.codeMieProject).toBe('frontend-app');
     });
 
-    it('should apply codeMieIntegration override to both the profile and the workspace', async () => {
+    it('should apply codeMieIntegration override into workspace, not the profile', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       const integration: CodeMieIntegrationInfo = {
         id: 'integration-123',
@@ -103,7 +103,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.default.codeMieIntegration).toEqual(integration);
+      expect((config.profiles.default as any).codeMieIntegration).toBeUndefined();
       expect(config.workspace?.codeMieIntegration).toEqual(integration);
     });
 
@@ -133,11 +133,8 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const config: MultiProviderConfig = JSON.parse(content);
 
       expect(config.activeProfile).toBe('work');
-      expect(config.profiles.work.codeMieProject).toBe('backend-service');
-      expect(config.profiles.work.codeMieIntegration).toEqual({
-        id: 'backend-123',
-        alias: 'backend-team'
-      });
+      expect((config.profiles.work as any).codeMieProject).toBeUndefined();
+      expect((config.profiles.work as any).codeMieIntegration).toBeUndefined();
       expect(config.workspace?.codeMieProject).toBe('backend-service');
       expect(config.workspace?.codeMieIntegration).toEqual({
         id: 'backend-123',
@@ -395,76 +392,34 @@ describe('ConfigLoader - Project-Level Configuration', () => {
   });
 
   describe('saveProfile / initProjectConfig — workspace split', () => {
-    it('saveProfile stores identity on profiles[name] and seeds an empty global workspace', async () => {
+    it('saveProfile routes workspace fields into the global scope workspace, not into profiles[name]', async () => {
       await ConfigLoader.saveProfile('p1', {
         provider: 'ai-run-sso',
         codeMieUrl: 'https://x',
         codeMieProject: 'proj'
       } as any);
 
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      const content = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
+      const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.p1.codeMieUrl).toBe('https://x');
-      expect(config.profiles.p1.codeMieProject).toBe('proj');
+      expect((config.profiles.p1 as any).codeMieUrl).toBeUndefined();
+      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
+      expect(config.profiles.p1.provider).toBe('ai-run-sso');
       expect(config.workspace?.codeMieUrl).toBe('https://x');
       expect(config.workspace?.codeMieProject).toBe('proj');
     });
 
-    it('saving a second profile on another server leaves the first profile and the workspace identity untouched', async () => {
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a' } as any);
-      await ConfigLoader.saveProfile('p2', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
-
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
-
-      expect(config.profiles.p1.codeMieUrl).toBe('https://a');
-      expect(config.profiles.p1.codeMieProject).toBe('proj-a');
-      expect(config.profiles.p2.codeMieUrl).toBe('https://b');
-      expect(config.workspace?.codeMieUrl).toBe('https://a');
-      expect(config.workspace?.codeMieProject).toBe('proj-a');
-    });
-
-    it('updating one profile does not change another profile or the workspace identity', async () => {
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a' } as any);
-      await ConfigLoader.saveProfile('p2', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj-a2' } as any);
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
-
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
-
-      expect(config.profiles.p1.codeMieUrl).toBe('https://b');
-      expect(config.profiles.p2.codeMieUrl).toBe('https://a');
-      expect(config.profiles.p2.codeMieProject).toBe('proj-a2');
-      expect(config.workspace?.codeMieUrl).toBe('https://a');
-    });
-
-    it('re-saving a profile without an integration drops its previous integration', async () => {
-      const integration = { id: 'int-1', alias: 'old' } as unknown as CodeMieIntegrationInfo;
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://a', codeMieProject: 'proj', codeMieIntegration: integration } as any);
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', codeMieUrl: 'https://b', codeMieProject: 'proj-b' } as any);
-
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
-
-      expect(config.profiles.p1.codeMieIntegration).toBeUndefined();
-    });
-
-    it('saveProfile still routes tooling fields into the global workspace', async () => {
-      await ConfigLoader.saveProfile('p1', { provider: 'ai-run-sso', skillsSearchUrl: 'https://skills' } as any);
-
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
-
-      expect((config.profiles.p1 as any).skillsSearchUrl).toBeUndefined();
-      expect(config.workspace?.skillsSearchUrl).toBe('https://skills');
-    });
-
-    it('initProjectConfig stores identity on the local profile and in the local workspace', async () => {
+    it('initProjectConfig routes workspace fields into the local scope workspace, not into profiles[name]', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {
         profileName: 'p1',
         codeMieProject: 'proj'
       });
 
-      const config: MultiProviderConfig = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
+      const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.p1.codeMieProject).toBe('proj');
+      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
       expect(config.workspace?.codeMieProject).toBe('proj');
     });
   });
@@ -531,12 +486,6 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         profiles: profiles as MultiProviderConfig['profiles']
       };
       await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(config, null, 2));
-    }
-
-    async function setWorkspace(configPath: string, workspace: Record<string, unknown>) {
-      const raw = JSON.parse(await fs.readFile(configPath, 'utf-8'));
-      raw.workspace = workspace;
-      await fs.writeFile(configPath, JSON.stringify(raw, null, 2));
     }
 
     it('keeps a globally defined profile selected by local activeProfile when --profile is omitted', async () => {
@@ -783,315 +732,6 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
 
       expect(merged.codeMieUrl).toBe('https://local-workspace.example.com');
       expect(sources['codeMieUrl']?.source).toBe('project');
-    });
-
-    describe('identity resolution', () => {
-      const LAB = 'https://lab.example.com';
-      const PREVIEW = 'https://preview.example.com';
-      const PROJECT_DIR = path.join(TEST_DIR, 'project');
-      const ELSEWHERE_DIR = path.join(TEST_DIR, 'elsewhere');
-
-      /**
-       * Global workspace: lab / proj-g. Repo workspace: lab / team-x. The repo's
-       * activeProfile is a local-only `team` profile with no identity, so a
-       * selected global profile composes through applyProjectOnly.
-       */
-      async function writeFixture(
-        profileName: string,
-        profile: Record<string, unknown>,
-        options: { repo: boolean }
-      ) {
-        await writeGlobal(profileName, { [profileName]: { ...profile, name: profileName } as never });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'proj-g' });
-
-        if (options.repo) {
-          await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-          await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'team-x' });
-        } else {
-          await fs.mkdir(ELSEWHERE_DIR, { recursive: true });
-        }
-      }
-
-      it('row 1: a profile URL and project on another server win over both workspaces', async () => {
-        await writeFixture('own', { provider: 'ai-run-sso', codeMieUrl: PREVIEW, codeMieProject: 'my-proj' }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'own' });
-
-        expect(cfg.codeMieUrl).toBe(PREVIEW);
-        expect(cfg.codeMieProject).toBe('my-proj');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 2: a profile URL and project on the same server still win over both workspaces', async () => {
-        await writeFixture('own', { provider: 'ai-run-sso', codeMieUrl: LAB, codeMieProject: 'my-proj' }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'own' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('my-proj');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 3: a profile without identity outside a repo takes the global workspace identity', async () => {
-        await writeFixture('sso', { provider: 'ai-run-sso' }, { repo: false });
-
-        const cfg = await ConfigLoader.load(ELSEWHERE_DIR, { name: 'sso' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('proj-g');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 4: a profile without identity inside a repo takes the repo workspace identity', async () => {
-        await writeFixture('sso', { provider: 'ai-run-sso' }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'sso' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('team-x');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 5: a non-CodeMie provider without identity outside a repo takes the global workspace identity', async () => {
-        await writeFixture('bedrock', { provider: 'bedrock' }, { repo: false });
-
-        const cfg = await ConfigLoader.load(ELSEWHERE_DIR, { name: 'bedrock' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('proj-g');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 6: a non-CodeMie provider without identity inside a repo takes the repo workspace identity', async () => {
-        await writeFixture('bedrock', { provider: 'bedrock' }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'bedrock' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('team-x');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 7: a profile URL on the same server as the repo workspace gains the repo project', async () => {
-        await writeFixture('sso', { provider: 'ai-run-sso', codeMieUrl: LAB }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'sso' });
-
-        expect(cfg.codeMieUrl).toBe(LAB);
-        expect(cfg.codeMieProject).toBe('team-x');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('row 8: a profile URL no workspace matches resolves with no project and no integration', async () => {
-        await writeFixture('sso', { provider: 'ai-run-sso', codeMieUrl: PREVIEW }, { repo: true });
-
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'sso' });
-
-        expect(cfg.codeMieUrl).toBe(PREVIEW);
-        expect(cfg.codeMieProject).toBeUndefined();
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('resolveIdentityWorkspace skips a repo workspace that carries only tooling fields', async () => {
-        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'proj-g' });
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { skillsSearchUrl: 'https://skills.example.com' });
-
-        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
-        const toolingWorkspace = await ConfigLoader.resolveWorkspace(PROJECT_DIR);
-
-        expect(identityWorkspace.codeMieUrl).toBe(LAB);
-        expect(identityWorkspace.codeMieProject).toBe('proj-g');
-        expect(toolingWorkspace.codeMieUrl).toBeUndefined();
-      });
-
-      it('resolveIdentityWorkspace matches what load() resolves for a profile without identity', async () => {
-        await writeFixture('sso', { provider: 'ai-run-sso' }, { repo: true });
-
-        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
-        const cfg = await ConfigLoader.load(PROJECT_DIR, { name: 'sso' });
-
-        expect(identityWorkspace.codeMieUrl).toBe(cfg.codeMieUrl);
-        expect(identityWorkspace.codeMieProject).toBe('team-x');
-      });
-
-      it('a same-name local profile with its own identity wins over the global profile identity', async () => {
-        await writeGlobal('epm', {
-          epm: { provider: 'ai-run-sso', codeMieUrl: 'https://lab.example.com', codeMieProject: 'old-proj', name: 'epm' }
-        });
-        await ConfigLoader.initProjectConfig(path.join(TEST_DIR, 'project'), {
-          profileName: 'epm',
-          provider: 'ai-run-sso',
-          codeMieUrl: 'https://preview.example.com',
-          codeMieProject: 'new-proj'
-        });
-
-        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'epm' });
-
-        expect(cfg.codeMieUrl).toBe('https://preview.example.com');
-        expect(cfg.codeMieProject).toBe('new-proj');
-      });
-
-      it('does not combine a local profile identity with the global profile integration', async () => {
-        await writeGlobal('epm', {
-          epm: {
-            provider: 'ai-run-sso',
-            codeMieUrl: 'https://lab.example.com',
-            codeMieProject: 'lab-proj',
-            codeMieIntegration: { id: 'lab-int' } as unknown as CodeMieIntegrationInfo,
-            name: 'epm'
-          }
-        });
-        await writeLocal('epm', {
-          epm: { provider: 'ai-run-sso', codeMieUrl: 'https://preview.example.com', codeMieProject: 'preview-proj', name: 'epm' }
-        });
-
-        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'epm' });
-
-        expect(cfg.codeMieUrl).toBe('https://preview.example.com');
-        expect(cfg.codeMieProject).toBe('preview-proj');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('takes identity from one workspace only — no repo project with a global integration', async () => {
-        await writeGlobal('anthropic', { anthropic: { provider: 'anthropic-subscription', name: 'anthropic' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, {
-          codeMieUrl: 'https://lab.example.com',
-          codeMieProject: 'proj-g',
-          codeMieIntegration: { id: 'g-int' }
-        });
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'team-x' });
-
-        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'anthropic' });
-
-        expect(cfg.codeMieProject).toBe('team-x');
-        expect(cfg.codeMieIntegration).toBeUndefined();
-      });
-
-      it('a repo workspace holding only tooling fields falls through to the global workspace identity', async () => {
-        await writeGlobal('anthropic', { anthropic: { provider: 'anthropic-subscription', name: 'anthropic' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'proj-g' });
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { skillsSearchUrl: 'https://skills' });
-
-        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'anthropic' });
-
-        expect(cfg.codeMieUrl).toBe('https://lab.example.com');
-        expect(cfg.codeMieProject).toBe('proj-g');
-        expect(cfg.skillsSearchUrl).toBe('https://skills');
-      });
-
-      it('treats URLs differing only by trailing slash or case as the same server', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'HTTPS://LAB.example.com/', name: 'jwt' } });
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'team-x' });
-
-        const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'jwt' });
-
-        expect(cfg.codeMieUrl).toBe('HTTPS://LAB.example.com/');
-        expect(cfg.codeMieProject).toBe('team-x');
-      });
-
-      it('CODEMIE_URL overrides the resolved identity when no profile is explicitly selected', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
-        const elsewhere = path.join(TEST_DIR, 'elsewhere');
-        await fs.mkdir(elsewhere, { recursive: true });
-        process.env.CODEMIE_URL = 'https://env.example.com';
-        try {
-          const cfg = await ConfigLoader.load(elsewhere);
-          expect(cfg.codeMieUrl).toBe('https://env.example.com');
-        } finally {
-          delete process.env.CODEMIE_URL;
-        }
-      });
-
-      it('an explicitly selected profile keeps its own URL over CODEMIE_URL (profile protection)', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
-        const elsewhere = path.join(TEST_DIR, 'elsewhere');
-        await fs.mkdir(elsewhere, { recursive: true });
-        process.env.CODEMIE_URL = 'https://env.example.com';
-        try {
-          const cfg = await ConfigLoader.load(elsewhere, { name: 'jwt' });
-          expect(cfg.codeMieUrl).toBe('https://lab.example.com');
-        } finally {
-          delete process.env.CODEMIE_URL;
-        }
-      });
-
-      it('resolveIdentityWorkspace prefers the repo workspace when it holds identity', async () => {
-        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: LAB, codeMieProject: 'proj-g' });
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: PREVIEW, codeMieProject: 'team-x' });
-
-        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
-
-        expect(identityWorkspace.codeMieUrl).toBe(PREVIEW);
-        expect(identityWorkspace.codeMieProject).toBe('team-x');
-      });
-
-      it('resolveIdentityWorkspace returns no identity when neither scope defines any', async () => {
-        await writeGlobal('sso', { sso: { provider: 'ai-run-sso', name: 'sso' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { skillsSearchUrl: 'https://skills.example.com' });
-
-        const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(PROJECT_DIR);
-
-        expect(identityWorkspace.codeMieUrl).toBeUndefined();
-        expect(identityWorkspace.codeMieProject).toBeUndefined();
-      });
-
-      it('attributes a global profile own codeMieUrl to "global"', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://own.example.com', name: 'jwt' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: 'https://workspace.example.com' });
-
-        const { config: merged, sources } = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'jwt' });
-
-        expect(merged.codeMieUrl).toBe('https://own.example.com');
-        expect(sources.codeMieUrl?.value).toBe('https://own.example.com');
-        expect(sources.codeMieUrl?.source).toBe('global');
-      });
-
-      it('attributes a same-name local profile identity to "project"', async () => {
-        await writeGlobal('epm', { epm: { provider: 'ai-run-sso', codeMieUrl: 'https://lab.example.com', codeMieProject: 'old', name: 'epm' } });
-        await writeLocal('epm', { epm: { provider: 'ai-run-sso', codeMieUrl: 'https://preview.example.com', codeMieProject: 'new', name: 'epm' } });
-
-        const { sources } = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'epm' });
-
-        expect(sources.codeMieProject?.value).toBe('new');
-        expect(sources.codeMieProject?.source).toBe('project');
-      });
-
-      it('attributes a global-workspace-filled project to "global" and a repo-workspace-filled one to "project"', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
-        await setWorkspace(GLOBAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'proj-g' });
-        const elsewhere = path.join(TEST_DIR, 'elsewhere');
-        await fs.mkdir(elsewhere, { recursive: true });
-
-        const outside = await ConfigLoader.loadWithSources(elsewhere, { name: 'jwt' });
-        expect(outside.sources.codeMieProject?.source).toBe('global');
-
-        await writeLocal('team', { team: { provider: 'ai-run-sso', name: 'team' } });
-        await setWorkspace(LOCAL_CONFIG_PATH, { codeMieUrl: 'https://lab.example.com', codeMieProject: 'team-x' });
-
-        const inside = await ConfigLoader.loadWithSources(path.join(TEST_DIR, 'project'), { name: 'jwt' });
-        expect(inside.sources.codeMieProject?.value).toBe('team-x');
-        expect(inside.sources.codeMieProject?.source).toBe('project');
-      });
-
-      it('still attributes CODEMIE_URL to "env" when it wins', async () => {
-        await writeGlobal('jwt', { jwt: { provider: 'ai-run-jwt', codeMieUrl: 'https://lab.example.com', name: 'jwt' } });
-        const elsewhere = path.join(TEST_DIR, 'elsewhere');
-        await fs.mkdir(elsewhere, { recursive: true });
-        process.env.CODEMIE_URL = 'https://env.example.com';
-        try {
-          const { sources } = await ConfigLoader.loadWithSources(elsewhere);
-          expect(sources.codeMieUrl?.source).toBe('env');
-        } finally {
-          delete process.env.CODEMIE_URL;
-        }
-      });
     });
   });
 });

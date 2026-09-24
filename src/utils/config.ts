@@ -26,10 +26,6 @@ export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, Co
 
 export { StorageScope };
 
-/** CodeMie identity fields: which server, project and integration a scope points at. */
-type IdentityKey = 'codeMieUrl' | 'codeMieProject' | 'codeMieIntegration';
-type IdentityFields = Pick<WorkspaceConfig, IdentityKey>;
-
 /**
  * Unified configuration loader with priority system:
  * CLI args > Env vars > Project config > Global config > Defaults
@@ -132,21 +128,12 @@ export class ConfigLoader {
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
-    // Tooling-context workspace fields resolve by whole-object override — the local
-    // scope's workspace if defined, else the global scope's — independent of which
-    // profile is active, so switching the active profile never drops workspace
-    // context. CodeMie identity does not follow that rule: it belongs to the
-    // profile, so resolveIdentity() owns it. Identity is deleted before being
-    // reassigned because the profile Object.assigns above merge it field by field
-    // across the global and local profiles, which identity must never be.
-    const workspace = await this.resolveWorkspace(workingDir);
-    Object.assign(config, this.removeUndefined(this.omitIdentity(workspace)));
-
-    const { identity } = await this.resolveIdentity(workingDir, globalConfig, effectiveLocalConfig);
-    for (const key of this.IDENTITY_KEYS) {
-      delete (config as Record<string, unknown>)[key];
-    }
-    Object.assign(config, this.removeUndefined(identity));
+    // Workspace fields resolve via resolveProfileWorkspace(): tooling context by
+    // whole-object override (local scope, else global), CodeMie identity from the
+    // scope of the profile in use.
+    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
+    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
+    Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
     const envPath = path.join(workingDir, '.env');
@@ -234,90 +221,45 @@ export class ConfigLoader {
   }
 
   /**
-   * The workspaces that could supply CodeMie identity, in scope order (repo, then
-   * global), skipping any that defines no identity field. resolveWorkspace()'s
-   * whole-object rule cannot be reused here: a repo workspace holding only tooling
-   * settings wins that pick and would contribute a blank identity, hiding the
-   * global workspace behind it.
-   */
-  private static async identityWorkspaces(
-    workingDir: string
-  ): Promise<{ workspace: WorkspaceConfig; source: 'project' | 'global' }[]> {
-    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
-    const globalMultiConfig = await this.loadMultiProviderConfig();
-
-    return [
-      { workspace: localMultiConfig.workspace, source: 'project' as const },
-      { workspace: globalMultiConfig.workspace, source: 'global' as const }
-    ].filter(
-      (layer): layer is { workspace: WorkspaceConfig; source: 'project' | 'global' } =>
-        Boolean(layer.workspace) && this.hasIdentity(layer.workspace)
-    );
-  }
-
-  /**
-   * The first workspace that defines CodeMie identity, in scope order (repo, then
-   * global), or `{}` when neither does. This is the identity a profile without its
-   * own falls back to, so display surfaces listing many profiles at once can show
-   * the same URL load() would resolve. Unlike load(), it applies no same-server
-   * check — it has no single profile URL to compare against.
-   */
-  static async resolveIdentityWorkspace(workingDir: string): Promise<WorkspaceConfig> {
-    const layers = await this.identityWorkspaces(workingDir);
-    return layers[0]?.workspace ?? {};
-  }
-
-  /**
-   * Whether two CodeMie URLs address the same server, comparing them with the
-   * trailing slash stripped and case folded. A missing URL on either side counts
-   * as a match: an unset URL makes no claim about which server it is not.
-   */
-  private static isSameServer(a?: string, b?: string): boolean {
-    if (!a || !b) return true;
-    const normalize = (url: string): string => url.replace(/\/+$/, '').toLowerCase();
-    return normalize(a) === normalize(b);
-  }
-
-  /**
-   * Resolve the CodeMie identity (URL, project, integration) for a working
-   * directory, and report which scope supplied each field.
+   * Resolve the workspace for the profile in use. Tooling-context fields follow
+   * resolveWorkspace(). CodeMie identity fields (codeMieUrl, codeMieProject,
+   * codeMieIntegration) come from the scope the profile lives in: a local profile
+   * takes them from resolveWorkspace(), a global profile only from the global
+   * scope's workspace, so a repo's workspace never retargets global profiles.
    *
-   * Order: the profile's own identity as a group — the local profile's when it
-   * defines any identity field, else the global profile's — then, only when that
-   * group names neither a project nor an integration, the first workspace that
-   * holds identity and is on the same server (repo, then global) fills the gaps.
-   * Identity is never merged field by field across profiles or across workspaces:
-   * one workspace either contributes or is skipped whole.
+   * @param workingDir - Directory whose local config is considered
+   * @param isLocalProfile - Whether the profile in use is defined in the local config
    */
-  private static async resolveIdentity(
-    workingDir: string,
-    globalProfile: Partial<CodeMieConfigOptions>,
-    localProfile: Partial<CodeMieConfigOptions>
-  ): Promise<{ identity: IdentityFields; sources: Partial<Record<IdentityKey, 'global' | 'project'>> }> {
-    const useLocal = this.hasIdentity(localProfile);
-    const identity = this.pickIdentity(useLocal ? localProfile : globalProfile);
-    const sources: Partial<Record<IdentityKey, 'global' | 'project'>> = {};
-    for (const key of Object.keys(identity) as IdentityKey[]) {
-      sources[key] = useLocal ? 'project' : 'global';
+  static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
+    const workspace = await this.resolveWorkspace(workingDir);
+    if (isLocalProfile) {
+      return workspace;
     }
 
-    if (identity.codeMieProject !== undefined || identity.codeMieIntegration !== undefined) {
-      return { identity, sources };
-    }
-
-    for (const { workspace, source } of await this.identityWorkspaces(workingDir)) {
-      if (!this.isSameServer(identity.codeMieUrl, workspace.codeMieUrl)) continue;
-
-      for (const key of this.IDENTITY_KEYS) {
-        if (identity[key] === undefined && workspace[key] !== undefined) {
-          (identity as Record<IdentityKey, unknown>)[key] = workspace[key];
-          sources[key] = source;
-        }
+    const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
+    const result: Record<string, unknown> = { ...workspace };
+    for (const key of this.IDENTITY_KEYS) {
+      delete result[key];
+      if (globalWorkspace[key] !== undefined) {
+        result[key] = globalWorkspace[key];
       }
-      break;
     }
+    return result as WorkspaceConfig;
+  }
 
-    return { identity, sources };
+  /**
+   * Scope that supplies CodeMie identity fields for the profile in use — the
+   * attribution counterpart of resolveProfileWorkspace().
+   */
+  private static async resolveIdentitySource(
+    workingDir: string,
+    isLocalProfile: boolean
+  ): Promise<'project' | 'global'> {
+    if (!isLocalProfile) {
+      return 'global';
+    }
+    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
+    return localMultiConfig.workspace != null ? 'project' : 'global';
   }
 
   /**
@@ -655,18 +597,24 @@ export class ConfigLoader {
   }
 
   /**
-   * CodeMie identity keys. These live on a ProviderProfile (a profile points at
-   * one CodeMie server/project/integration) and may also appear on a scope's
-   * WorkspaceConfig as the shared repo/global default — see resolveIdentity().
+   * CodeMie identity keys. Resolved from the workspace of the scope the active
+   * profile lives in — see resolveProfileWorkspace().
    */
-  private static readonly IDENTITY_KEYS: IdentityKey[] = ['codeMieUrl', 'codeMieProject', 'codeMieIntegration'];
+  private static readonly IDENTITY_KEYS: (keyof WorkspaceConfig)[] = [
+    'codeMieUrl',
+    'codeMieProject',
+    'codeMieIntegration'
+  ];
 
   /**
-   * Keys that belong to WorkspaceConfig (repo/tooling-context) alone and never to
-   * a ProviderProfile. Used to split a saved profile's input into its profile half
+   * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
+   * ProviderProfile. Used to split a saved profile's input into its profile half
    * and its workspace half — see splitProfileAndWorkspace().
    */
-  private static readonly TOOLING_KEYS: (keyof WorkspaceConfig)[] = [
+  private static readonly WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
+    'codeMieUrl',
+    'codeMieProject',
+    'codeMieIntegration',
     'hooks',
     'plugins',
     'assistants',
@@ -676,11 +624,9 @@ export class ConfigLoader {
   ];
 
   /**
-   * Partition a profile-shaped input into its profile half and its tooling-only
+   * Partition a profile-shaped input into its provider-identity half and its
    * workspace half, so callers that persist a profile can route each half to
-   * where it belongs (profiles[name] vs. the scope's workspace). Identity fields
-   * stay on the profile half; callers that also want them in the workspace take
-   * them from pickIdentity().
+   * where it belongs (profiles[name] vs. the scope's workspace).
    */
   private static splitProfileAndWorkspace(
     input: Partial<CodeMieConfigOptions>
@@ -688,7 +634,7 @@ export class ConfigLoader {
     const profile: Partial<ProviderProfile> = { ...(input as any) };
     const workspace: Partial<WorkspaceConfig> = {};
 
-    for (const key of this.TOOLING_KEYS) {
+    for (const key of this.WORKSPACE_KEYS) {
       if ((input as any)[key] !== undefined) {
         (workspace as any)[key] = (input as any)[key];
         delete (profile as any)[key];
@@ -696,32 +642,6 @@ export class ConfigLoader {
     }
 
     return { profile, workspace };
-  }
-
-  /** The identity fields explicitly present on a source, as a group. */
-  private static pickIdentity(source: Partial<CodeMieConfigOptions> | null | undefined): IdentityFields {
-    const identity: IdentityFields = {};
-    if (!source) return identity;
-    for (const key of this.IDENTITY_KEYS) {
-      if (source[key] !== undefined) {
-        (identity as Record<IdentityKey, unknown>)[key] = source[key];
-      }
-    }
-    return identity;
-  }
-
-  /** Whether a source defines any identity field at all. */
-  private static hasIdentity(source: Partial<CodeMieConfigOptions> | null | undefined): boolean {
-    return Object.keys(this.pickIdentity(source)).length > 0;
-  }
-
-  /** A shallow copy of a source with every identity field removed. */
-  private static omitIdentity<T extends object>(source: T): T {
-    const copy = { ...source } as Record<string, unknown>;
-    for (const key of this.IDENTITY_KEYS) {
-      delete copy[key];
-    }
-    return copy as T;
   }
 
   /**
@@ -738,12 +658,8 @@ export class ConfigLoader {
     (profileFields as any).name = profileName;
     config.profiles[profileName] = profileFields as ProviderProfile;
 
-    // The saved profile owns its identity. The scope's workspace identity is only
-    // seeded when it has none, so saving one profile never retargets the others.
-    const seededIdentity = this.hasIdentity(config.workspace) ? {} : this.pickIdentity(cleanProfile);
-    const workspaceUpdate = { ...workspaceFields, ...seededIdentity };
-    if (Object.keys(this.removeUndefined(workspaceUpdate)).length > 0) {
-      config.workspace = { ...config.workspace, ...workspaceUpdate };
+    if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
+      config.workspace = { ...config.workspace, ...workspaceFields };
     }
 
     // If this is the first profile, make it active
@@ -1033,8 +949,7 @@ export class ConfigLoader {
       }
     }
 
-    const { profile, workspace: toolingWorkspace } = this.splitProfileAndWorkspace(rawOverrides);
-    const workspace = { ...toolingWorkspace, ...this.pickIdentity(rawOverrides) };
+    const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
 
     const config: MultiProviderConfig = {
       version: 2,
@@ -1368,18 +1283,22 @@ export class ConfigLoader {
     // supplied it (mirrors resolveWorkspace()'s own local-else-global rule) rather
     // than hardcoding 'project', so --show-sources doesn't misattribute a
     // global-scope-only workspace value to the local config.
+    // CodeMie identity fields are labelled separately: they come from the scope of
+    // the profile in use (see resolveProfileWorkspace()).
     const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
-    const workspace = await this.resolveWorkspace(workingDir);
-
-    // Identity is attributed from resolveIdentity() — the same helper load() uses —
-    // so --show-sources cannot report a scope that did not supply the value. Each
-    // field becomes its own layer, placed after the profile and workspace layers
-    // but before env and cli so overrides still win the last-one-wins loop below.
-    const { identity, sources: identitySources } = await this.resolveIdentity(workingDir, globalConfig, effectiveLocalConfig);
-    const identityLayers: ConfigLayer[] = this.IDENTITY_KEYS
-      .filter(key => identity[key] !== undefined)
-      .map(key => ({ data: { [key]: identity[key] }, source: identitySources[key] ?? 'global' }));
+    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
+    const identitySource = await this.resolveIdentitySource(workingDir, isLocalProfile);
+    const profileWorkspace: Record<string, unknown> = {
+      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile))
+    };
+    const identityWorkspace: Record<string, unknown> = {};
+    for (const key of this.IDENTITY_KEYS) {
+      if (profileWorkspace[key] !== undefined) {
+        identityWorkspace[key] = profileWorkspace[key];
+      }
+      delete profileWorkspace[key];
+    }
 
     const configs: ConfigLayer[] = [
       {
@@ -1390,18 +1309,21 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: this.omitIdentity(globalConfig),
+        data: globalConfig,
         source: 'global'
       },
       {
-        data: this.omitIdentity(effectiveLocalConfig),
+        data: effectiveLocalConfig,
         source: 'project'
       },
       {
-        data: this.omitIdentity(workspace),
+        data: profileWorkspace,
         source: workspaceSource
       },
-      ...identityLayers,
+      {
+        data: identityWorkspace,
+        source: identitySource
+      },
       {
         data: this.loadFromEnv(),
         source: 'env'

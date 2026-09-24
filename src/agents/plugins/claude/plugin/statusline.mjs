@@ -213,9 +213,9 @@ export async function resolveBudget({
 
   const profile = config.profiles?.[config.activeProfile];
   const { baseUrl } = profile ?? {};
-  // codeMieUrl belongs to the profile that points at that server, falling back to the
-  // scope-level workspace default. userEmail is top-level only, never per-profile.
-  const codeMieUrl = profile?.codeMieUrl ?? config.workspace?.codeMieUrl;
+  // codeMieUrl now lives on the scope-level workspace object (migration 006), and
+  // userEmail is a top-level MultiProviderConfig field — neither is per-profile anymore.
+  const codeMieUrl = config.workspace?.codeMieUrl;
   const userEmail = config.userEmail;
   if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently

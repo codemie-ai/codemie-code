@@ -54,17 +54,18 @@ async function listProfiles(): Promise<void> {
     const workingDir = process.cwd();
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
-    // The fallback for profiles without their own URL must be the workspace that
-    // actually holds identity, matching what load() resolves — see
-    // ConfigLoader.resolveIdentityWorkspace().
-    const identityWorkspace = await ConfigLoader.resolveIdentityWorkspace(workingDir);
+    const localWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, true);
+    const globalWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
 
     // Show context indicator
     if (hasLocal) {
       console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
     }
 
-    ProfileDisplay.formatList(profiles, identityWorkspace.codeMieUrl);
+    ProfileDisplay.formatList(profiles, {
+      local: localWorkspace.codeMieUrl,
+      global: globalWorkspace.codeMieUrl
+    });
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);
@@ -153,7 +154,7 @@ async function handleStatus(): Promise<void> {
     ? chalk.yellow('(source: local .codemie/)')
     : chalk.cyan('(source: global ~/.codemie/)');
 
-  // Display profile + auth status. `config` already carries the resolved identity.
+  // Display profile + auth status
   ProfileDisplay.formatStatus(activeProfileInfo, authStatus, config.codeMieUrl);
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));

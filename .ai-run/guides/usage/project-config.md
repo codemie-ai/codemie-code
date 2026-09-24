@@ -147,21 +147,14 @@ Keep global config with provider/model. Each repo's local config sets only `code
 
 ### Team project context with a selected provider profile
 
-CodeMie identity — `codeMieUrl`, `codeMieProject`, `codeMieIntegration` — resolves as a
-group, never field by field:
-
-1. The profile's own identity wins when it names a project or integration. A local profile
-   of the same name replaces the global profile's identity as a whole, so a repo-level
-   `codemie setup` takes effect without inheriting the global profile's integration.
-2. Otherwise the first workspace that holds identity — the repo's, then the global one —
-   fills what the profile lacks, but only when it is on the same server. A workspace on a
-   different `codeMieUrl` contributes nothing, so a profile pointing at another server
-   resolves with no project rather than a foreign one.
-3. Environment variables and CLI flags still override the result.
+`codeMieUrl`, `codeMieProject`, and `codeMieIntegration` come from the workspace of the scope
+the profile in use belongs to. A local profile (defined in `.codemie/codemie-cli.config.json`)
+uses the local workspace, falling back to the global one when the local config has none. A
+global profile always uses the global workspace, even inside a repository with a local config.
 
 ```bash
-codemie-kimi   --profile kimi       # the profile's own project wins when it defines one
-codemie-claude --profile anthropic  # otherwise same-server workspace context fills it in
+codemie-claude                      # repo's local profile: repo's CodeMie URL and project
+codemie-claude --profile anthropic  # global profile: global CodeMie URL and project
 ```
 
 ### CI/CD overrides
