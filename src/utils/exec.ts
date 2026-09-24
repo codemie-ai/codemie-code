@@ -57,16 +57,17 @@ export async function exec(
     let finalCommand = command;
     let finalArgs = args;
 
-    if (useShell && args.length > 0) {
-      // Quote arguments that contain spaces or shell-special characters.
+    if (useShell) {
+      // Quote the command and arguments that contain spaces or shell-special
+      // characters — the command itself needs this as much as the args do,
+      // since callers may pass an env-overridden binary path/name through it.
       // On Windows CMD, & | < > ^ % are metacharacters and must be quoted.
-      const needsQuoting = (arg: string) =>
-        arg.includes(' ') || arg.includes('"') ||
-        (isWindows && /[&|<>^%()[\]{}]/.test(arg));
-      const quotedArgs = args.map(arg =>
-        needsQuoting(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
-      );
-      finalCommand = `${command} ${quotedArgs.join(' ')}`;
+      const needsQuoting = (value: string) =>
+        value.includes(' ') || value.includes('"') ||
+        (isWindows && /[&|<>^%()[\]{}]/.test(value));
+      const quoteIfNeeded = (value: string) =>
+        needsQuoting(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+      finalCommand = [quoteIfNeeded(command), ...args.map(quoteIfNeeded)].join(' ');
       finalArgs = [];
     }
 
