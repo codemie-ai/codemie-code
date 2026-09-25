@@ -1214,6 +1214,43 @@ describe('removeDesktopConfig', () => {
     expect(remainingServers.some((s: any) => s.name === 'sample')).toBe(false);
     expect(remainingServers.some((s: any) => s.name === 'Notion')).toBe(false);
   });
+
+  // CR-001 fallback: a first `connect` whose org-catalog fetch failed writes
+  // the gateway keys but never seeds the marker (writeDesktopConfig gates the
+  // marker write on orgFetchSucceeded). Disconnect must still recover those
+  // stranded keys by detecting them directly on the config file.
+  it('recovers stranded gateway keys when no marker was ever written', async () => {
+    const libDir = join(baseDir, 'configLibrary');
+    await mkdir(libDir, { recursive: true });
+    const configId = 'stranded-config-id';
+    const configPath = join(libDir, `${configId}.json`);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        someUserPreference: 'keep-me',
+        ...buildGatewayConfig('http://127.0.0.1:4001', 'codemie-proxy'),
+      }),
+      'utf-8'
+    );
+    await writeFile(
+      join(libDir, '_meta.json'),
+      JSON.stringify({ appliedId: configId, entries: [{ id: configId, name: 'CodeMie Proxy' }] }),
+      'utf-8'
+    );
+    // No marker state file at all — readManagedMcpState will return [].
+    expect(existsSync(statePath)).toBe(false);
+    expect(await getDesktopConfigPath(baseDir)).toBe(configPath);
+
+    const result = await removeDesktopConfig(statePath, baseDir);
+
+    expect(result).toEqual({ removed: true, configPath });
+    const after = JSON.parse(await readFile(configPath, 'utf-8'));
+    expect(after.someUserPreference).toBe('keep-me');
+    expect(after.inferenceProvider).toBeUndefined();
+    expect(after.inferenceGatewayBaseUrl).toBeUndefined();
+    expect(after.inferenceGatewayApiKey).toBeUndefined();
+    expect(after.inferenceGatewayAuthScheme).toBeUndefined();
+  });
 });
 
 describe('readManagedMcpState (exported)', () => {

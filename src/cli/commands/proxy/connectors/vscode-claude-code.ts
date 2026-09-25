@@ -256,8 +256,9 @@ export async function writeVsCodeClaudeCodeConfig(
  * corrupt/unparseable settings.json at a resolved path still throws, via
  * `readSettings`'s own `ConfigurationError`.
  */
-export async function removeVsCodeClaudeCodeConfig(): Promise<{ removed: boolean }> {
+export async function removeVsCodeClaudeCodeConfig(): Promise<{ removed: boolean; error?: string }> {
   let removedAny = false;
+  const failures: string[] = [];
 
   for (const insiders of [false, true]) {
     let configPath: string;
@@ -284,16 +285,26 @@ export async function removeVsCodeClaudeCodeConfig(): Promise<{ removed: boolean
       modify(raw, ['claudeCode.environmentVariables'], filtered, { formattingOptions })
     );
 
+    // Isolated per-location: an Insiders write failure must not discard an
+    // already-successful stable write (mirrors removeVsCodeLanguageModelsConfig).
     try {
       await writeAtomically(configPath, nextText);
+      removedAny = true;
     } catch (error) {
-      throw new ConfigurationError(
-        `Failed to update VS Code Claude Code settings at ${configPath}: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        '[proxy] Failed to write VS Code Claude Code settings at one location during disconnect',
+        ...sanitizeLogArgs({ configPath, insiders, error: message })
       );
+      failures.push(`${insiders ? 'Insiders' : 'stable'} (${configPath}): ${message}`);
     }
-    removedAny = true;
   }
 
-  return { removed: removedAny };
+  if (failures.length > 0 && !removedAny) {
+    throw new ConfigurationError(
+      `Failed to update VS Code Claude Code settings: ${failures.join('; ')}`
+    );
+  }
+
+  return failures.length > 0 ? { removed: removedAny, error: failures.join('; ') } : { removed: removedAny };
 }

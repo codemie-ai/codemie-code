@@ -217,4 +217,52 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
       },
     });
   });
+
+  it('routes `proxy disconnect --claude-desktop` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--claude-desktop'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      targets: {
+        claudeDesktop: true,
+        vscode: false,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+      },
+    });
+  });
+
+  it('routes `proxy disconnect --vscode` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--vscode'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      targets: {
+        claudeDesktop: false,
+        vscode: true,
+        vscodeClaudeCode: false,
+        codexDesktop: false,
+      },
+    });
+  });
+
+  it('routes `proxy disconnect --vscode-claude-code` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--vscode-claude-code'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      targets: {
+        claudeDesktop: false,
+        vscode: false,
+        vscodeClaudeCode: true,
+        codexDesktop: false,
+      },
+    });
+  });
 });

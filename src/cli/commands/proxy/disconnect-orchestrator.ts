@@ -37,11 +37,22 @@ const DISCONNECT_TARGET_LIST = [
   '  codemie proxy disconnect --claude-desktop --vscode',
 ].join('\n');
 
-/** One per-target disconnect outcome. */
+/** One per-target disconnect outcome (spec §3.4's TargetResult/printSummary convention). */
 interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
+}
+
+function printSummary(results: TargetResult[]): void {
+  console.log(chalk.bold('\nTargets disconnected:'));
+  for (const r of results) {
+    if (r.ok) {
+      console.log(chalk.green(`  ✓ ${r.label}`));
+    } else {
+      console.log(chalk.red(`  ✗ ${r.label}  — ${r.error ?? 'failed'}`));
+    }
+  }
 }
 
 async function runClaudeDesktop(): Promise<TargetResult> {
@@ -69,6 +80,9 @@ async function runVscode(): Promise<TargetResult> {
       return { label: 'VS Code (Copilot models)', ok: true };
     }
     console.log(chalk.green('✓ VS Code (Copilot models) disconnected'));
+    if (result.error) {
+      console.log(chalk.yellow(`  ⚠ One location could not be updated: ${result.error}`));
+    }
     return { label: 'VS Code (Copilot models)', ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -86,6 +100,9 @@ async function runVscodeClaudeCode(): Promise<TargetResult> {
       return { label: 'VS Code Claude Code', ok: true };
     }
     console.log(chalk.green('✓ VS Code Claude Code disconnected'));
+    if (result.error) {
+      console.log(chalk.yellow(`  ⚠ One location could not be updated: ${result.error}`));
+    }
     return { label: 'VS Code Claude Code', ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -137,6 +154,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode());
   if (targets.codexDesktop) results.push(await runCodexDesktop());
 
+  printSummary(results);
   if (results.some((r) => !r.ok)) {
     process.exitCode = 1;
   }

@@ -944,15 +944,19 @@ export async function writeDesktopConfig(
  *
  * Genuine user-added MCP entries (never recorded in the marker) survive —
  * `managedMcpServers` is only dropped entirely when nothing is left to keep.
+ *
+ * Fallback for a stranded key (no marker): a first `connect` whose org-catalog
+ * fetch failed writes the gateway keys but skips the marker (marker write is
+ * gated on `orgFetchSucceeded` in `writeDesktopConfig`). With no marker,
+ * `managedNames` is empty and there is nothing to reconcile in
+ * `managedMcpServers`, but the config's own top-level `INFERENCE_KEYS` are
+ * checked directly so the gateway key/URL are still recoverable.
  */
 export async function removeDesktopConfig(
   statePath: string = getManagedMcpStatePath(),
   baseDir: string = getDesktopBaseDir()
 ): Promise<{ removed: boolean; configPath: string | null }> {
   const managedNames = await readManagedMcpState(statePath);
-  if (managedNames.length === 0) {
-    return { removed: false, configPath: null };
-  }
 
   const configPath = await getDesktopConfigPath(baseDir);
   if (!existsSync(configPath)) {
@@ -969,6 +973,11 @@ export async function removeDesktopConfig(
     );
   }
 
+  const hasStrandedGatewayKeys = INFERENCE_KEYS.some((key) => key in existing);
+  if (managedNames.length === 0 && !hasStrandedGatewayKeys) {
+    return { removed: false, configPath: null };
+  }
+
   const { servers: remaining } = reconcileManagedMcpServers(existing.managedMcpServers, [], managedNames);
 
   for (const key of INFERENCE_KEYS) {
@@ -983,7 +992,20 @@ export async function removeDesktopConfig(
   }
 
   await writeAtomically(configPath, JSON.stringify(existing, null, 2));
-  await writeAtomically(statePath, '');
+
+  // The config write is the effect that matters (it strips the gateway keys
+  // and managed entries); the marker clear is bookkeeping. If it throws after
+  // the config already succeeded, don't report the whole disconnect as
+  // failed — log and move on. A stale marker just makes the next disconnect
+  // run redundantly re-filter an already-clean config, which is a no-op.
+  try {
+    await writeAtomically(statePath, '');
+  } catch (error) {
+    logger.warn(
+      '[proxy] Claude Desktop config stripped but marker clear failed (next disconnect run will retry harmlessly)',
+      ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
+    );
+  }
 
   return { removed: true, configPath };
 }

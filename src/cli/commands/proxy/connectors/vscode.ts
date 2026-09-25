@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveTenantModelId } from './model-name-resolver.js';
 import { fetchTenantModelCatalog } from './tenant-catalog.js';
 import {
@@ -333,8 +335,9 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
  * that case. A genuinely corrupt config at a resolved path still throws, via
  * `readProviders`'s own `ConfigurationError`.
  */
-export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boolean }> {
+export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boolean; error?: string }> {
   let removedAny = false;
+  const failures: string[] = [];
 
   for (const insiders of [false, true]) {
     let configPath: string;
@@ -349,9 +352,27 @@ export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boo
     const filtered = providers.filter((provider) => !isManagedProvider(provider));
     if (filtered.length === providers.length) continue;
 
-    await writeAtomically(configPath, `${JSON.stringify(filtered, null, '\t')}\n`);
-    removedAny = true;
+    // Each location's write is isolated: a failure at one location (e.g.
+    // Insiders) must not discard an already-successful write at the other
+    // (e.g. stable) — the caller needs to know the stable removal landed.
+    try {
+      await writeAtomically(configPath, `${JSON.stringify(filtered, null, '\t')}\n`);
+      removedAny = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        '[proxy] Failed to write VS Code Copilot Chat config at one location during disconnect',
+        ...sanitizeLogArgs({ configPath, insiders, error: message })
+      );
+      failures.push(`${insiders ? 'Insiders' : 'stable'} (${configPath}): ${message}`);
+    }
   }
 
-  return { removed: removedAny };
+  if (failures.length > 0 && !removedAny) {
+    throw new ConfigurationError(
+      `Failed to update VS Code language model configuration: ${failures.join('; ')}`
+    );
+  }
+
+  return failures.length > 0 ? { removed: removedAny, error: failures.join('; ') } : { removed: removedAny };
 }
