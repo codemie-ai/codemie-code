@@ -182,14 +182,26 @@ async function startVsCodeProxy(targetApiUrl: string): Promise<{
   return { proxy, url: started.url };
 }
 
-describe('VS Code BYOK model matrix', () => {
+interface VsCodeByokHarness {
+  proxies: CodeMieProxy[];
+  servers: Server[];
+  testDir: () => string;
+}
+
+/**
+ * Registers the shared per-test lifecycle (fresh plugin registry, a scratch
+ * `User/` dir, and teardown of every proxy/server/tmpdir a test pushed onto
+ * the returned arrays) so each `describe` block below only states what's
+ * specific to it.
+ */
+function useVsCodeByokHarness(tmpPrefix: string): VsCodeByokHarness {
   const proxies: CodeMieProxy[] = [];
   const servers: Server[] = [];
-  let testDir: string;
+  let testDir = '';
 
   beforeEach(async () => {
     resetPluginRegistry();
-    testDir = await mkdtemp(join(tmpdir(), 'codemie-vscode-byok-'));
+    testDir = await mkdtemp(join(tmpdir(), tmpPrefix));
     await mkdir(join(testDir, 'User'));
   });
 
@@ -199,6 +211,12 @@ describe('VS Code BYOK model matrix', () => {
     await rm(testDir, { recursive: true, force: true });
     resetPluginRegistry();
   });
+
+  return { proxies, servers, testDir: () => testDir };
+}
+
+describe('VS Code BYOK model matrix', () => {
+  const { proxies, servers, testDir } = useVsCodeByokHarness('codemie-vscode-byok-');
 
   it('forwards every selected model and supported effort without using the profile model', async () => {
     const captured: CapturedRequest[] = [];
@@ -229,7 +247,7 @@ describe('VS Code BYOK model matrix', () => {
     const startedProxy = await startVsCodeProxy(upstream.url);
     proxies.push(startedProxy.proxy);
 
-    const configPath = join(testDir, 'User', 'chatLanguageModels.json');
+    const configPath = join(testDir(), 'User', 'chatLanguageModels.json');
     await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url, GATEWAY_KEY);
     const providers = JSON.parse(
       await readFile(configPath, 'utf-8')
@@ -436,5 +454,124 @@ describe('VS Code BYOK model matrix', () => {
     expect(captured[1]?.headers['content-length']).toBe(
       String(Buffer.byteLength(JSON.stringify(strippedBody), 'utf-8'))
     );
+  });
+});
+
+// changing the default model in CodeMie Setup must never
+// narrow the VS Code model selector down to that one model. `resolveManagedModels`
+// treats `profileModel` as a pin — see vscode.ts's `resolveManagedModels` — which
+// currently returns a single-element array whenever a profile model resolves
+// against the tenant catalog, instead of leaving the full intersected list
+// in place and only marking the profile's model as the default.
+//
+// Both tests below use `it.fails` on purpose: the fix has not landed yet, so
+// the assertions correctly throw today. `it.fails` inverts that — the suite
+// stays green while the bug is open — and it will itself start failing the
+// moment `resolveManagedModels` stops narrowing the list, which is the cue to
+// drop `.fails` and let these run as plain regression tests.
+describe('VS Code BYOK model list consistency across default-model changes', () => {
+  const { proxies, servers, testDir } = useVsCodeByokHarness('codemie-vscode-model-consistency-');
+
+  it.fails('keeps every model visible after changing the default model in CodeMie Setup', async () => {
+    // Every id here resolves 1:1 against VS_CODE_CAPABILITY_TABLE (verified
+    // against `resolveTenantModelId` directly) — no family aliases to a
+    // shared tenant id, so the expected count below is unambiguous.
+    const tenantCatalog = [
+      { id: 'claude-sonnet-5' },  // Sonnet 5
+      { id: 'gpt-5.6-sol' },      // GPT-6 Sol
+      { id: 'gpt-5.4' },
+      { id: 'claude-opus-5' },    // newly added model
+    ];
+
+    const upstream = await listen(createServer((req, res) => {
+      if (req.url?.startsWith('/v1/llm_models')) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ data: tenantCatalog }));
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true }));
+    }));
+    servers.push(upstream.server);
+
+    const startedProxy = await startVsCodeProxy(upstream.url);
+    proxies.push(startedProxy.proxy);
+
+    const configPath = join(testDir(), 'User', 'chatLanguageModels.json');
+    const readModelIds = async (): Promise<string[]> => {
+      const providers = JSON.parse(
+        await readFile(configPath, 'utf-8')
+      ) as LanguageModelProvider[];
+      const codeMieProvider = providers.find(
+        provider => provider.name === 'CodeMie' && provider.vendor === 'customendpoint'
+      );
+      return (codeMieProvider?.models ?? []).map(model => model.id).sort();
+    };
+    const expectedModelIds = tenantCatalog.map(entry => entry.id).sort();
+
+    // Initial setup: no default model selected yet, so every tenant model shows up.
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url, GATEWAY_KEY, undefined);
+    expect(await readModelIds()).toEqual(expectedModelIds);
+
+    // Select Sonnet 5 as the default model in CodeMie Setup.
+    await writeVsCodeLanguageModelsConfigAtPath(
+      configPath, startedProxy.url, GATEWAY_KEY, 'claude-sonnet-5'
+    );
+    expect(await readModelIds()).toEqual(expectedModelIds);
+
+    // Switch the default model to GPT-6 Sol: the full list must still be intact,
+    // including models that were never selected as the default (claude-opus-5).
+    await writeVsCodeLanguageModelsConfigAtPath(
+      configPath, startedProxy.url, GATEWAY_KEY, 'gpt-5.6-sol'
+    );
+    expect(await readModelIds()).toEqual(expectedModelIds);
+  });
+
+  it.fails('does not shrink the model list on repeated writes as the default model changes', async () => {
+    // Verified against `resolveTenantModelId` directly: these four ids each
+    // resolve to exactly themselves, with no other capability-table family
+    // aliasing onto the same tenant id (unlike e.g. `claude-sonnet-4-5` /
+    // `claude-4-5-sonnet`, which collide) — so the expected count is exactly
+    // `tenantCatalog.length`, independent of whatever a given write returns.
+    const tenantCatalog = [
+      { id: 'gpt-4.1' },
+      { id: 'gpt-5' },
+      { id: 'gemini-3-flash' },
+      { id: 'claude-opus-5' },
+    ];
+
+    const upstream = await listen(createServer((req, res) => {
+      if (req.url?.startsWith('/v1/llm_models')) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ data: tenantCatalog }));
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true }));
+    }));
+    servers.push(upstream.server);
+
+    const startedProxy = await startVsCodeProxy(upstream.url);
+    proxies.push(startedProxy.proxy);
+
+    const configPath = join(testDir(), 'User', 'chatLanguageModels.json');
+    const profileModels = [undefined, 'gpt-4.1', 'gpt-5', 'gpt-4.1', undefined];
+
+    for (const profileModel of profileModels) {
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url, GATEWAY_KEY, profileModel);
+
+      const providers = JSON.parse(
+        await readFile(configPath, 'utf-8')
+      ) as LanguageModelProvider[];
+      const codeMieProvider = providers.find(
+        provider => provider.name === 'CodeMie' && provider.vendor === 'customendpoint'
+      );
+      const modelIds = (codeMieProvider?.models ?? []).map(model => model.id);
+
+      // The bug narrows this to a single model as soon as profileModel resolves
+      // against the tenant catalog.
+      expect(modelIds).toHaveLength(tenantCatalog.length);
+      modelIds.forEach(id => expect(tenantCatalog.some(model => model.id === id)).toBe(true));
+    }
   });
 });
