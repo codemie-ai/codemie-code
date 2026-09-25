@@ -24,6 +24,8 @@ import {
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
   reconcileManagedMcpServers,
+  readManagedMcpState,
+  removeDesktopConfig,
   resolveDesktopOAuth,
   selectDesktopClaudeModels,
   selectPreferredClaudeModels,
@@ -1124,6 +1126,100 @@ describe('writeDesktopConfig', () => {
     const names = servers.map((s: any) => s.name);
     expect(names.slice(0, 7)).toEqual(['Notion', 'Linear', 'Box', 'Canva', 'Vercel', 'Netlify', 'Miro']);
     expect(names[7]).toBe('onehub_core');
+  });
+});
+
+describe('removeDesktopConfig', () => {
+  let baseDir: string;
+  let statePath: string;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-remove-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    statePath = join(baseDir, 'managed-state.json');
+    await rm(baseDir, { recursive: true, force: true });
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+      json: async () => MODEL_LIST_RESPONSE,
+    }) as unknown as typeof globalThis.fetch;
+  });
+
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it('no-ops when the marker state file is absent', async () => {
+    const result = await removeDesktopConfig(statePath, baseDir);
+    expect(result).toEqual({ removed: false, configPath: null });
+  });
+
+  it('no-ops when managedNames is empty', async () => {
+    await mkdir(join(statePath, '..'), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ managedNames: [] }), 'utf-8');
+    const result = await removeDesktopConfig(statePath, baseDir);
+    expect(result.removed).toBe(false);
+  });
+
+  it('no-ops when the resolved config file does not exist', async () => {
+    await mkdir(join(statePath, '..'), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ managedNames: ['sample'] }), 'utf-8');
+    const result = await removeDesktopConfig(statePath, baseDir);
+    expect(result.removed).toBe(false);
+  });
+
+  it('removes managed entries, deletes inference keys, and clears the marker', async () => {
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const result = await removeDesktopConfig(statePath, baseDir);
+    expect(result.removed).toBe(true);
+    expect(result.configPath).toBe(configPath);
+
+    const after = JSON.parse(await readFile(configPath, 'utf-8'));
+    expect(after.inferenceProvider).toBeUndefined();
+    expect(after.inferenceGatewayBaseUrl).toBeUndefined();
+    expect(after.inferenceGatewayApiKey).toBeUndefined();
+    expect(after.inferenceGatewayAuthScheme).toBeUndefined();
+    expect(after.inferenceModels).toBeUndefined();
+    expect(after.coworkEgressAllowedHosts).toBeUndefined();
+    // No surviving non-managed entries in this run, so the whole key is dropped
+    // rather than written back as an empty array.
+    expect(after.managedMcpServers).toBeUndefined();
+
+    const stateAfter = await readFile(statePath, 'utf-8');
+    expect(stateAfter.trim()).toBe('');
+  });
+
+  it('preserves non-managed MCP entries and unrelated top-level keys', async () => {
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const before = JSON.parse(await readFile(configPath, 'utf-8'));
+    before.someUserPreference = 'keep-me';
+    const servers = JSON.parse(before.managedMcpServers);
+    servers.push({ name: 'my-own-server', url: 'https://mine.example.com/mcp' });
+    before.managedMcpServers = JSON.stringify(servers);
+    await writeFile(configPath, JSON.stringify(before, null, 2), 'utf-8');
+
+    await removeDesktopConfig(statePath, baseDir);
+
+    const after = JSON.parse(await readFile(configPath, 'utf-8'));
+    expect(after.someUserPreference).toBe('keep-me');
+    const remainingServers = JSON.parse(after.managedMcpServers);
+    expect(remainingServers.some((s: any) => s.name === 'my-own-server')).toBe(true);
+    expect(remainingServers.some((s: any) => s.name === 'sample')).toBe(false);
+    expect(remainingServers.some((s: any) => s.name === 'Notion')).toBe(false);
+  });
+});
+
+describe('readManagedMcpState (exported)', () => {
+  it('returns [] when the state file does not exist', async () => {
+    const statePath = join(tmpdir(), `no-such-state-${Date.now()}.json`);
+    expect(await readManagedMcpState(statePath)).toEqual([]);
   });
 });
 

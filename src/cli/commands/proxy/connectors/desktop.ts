@@ -13,6 +13,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveTenantModelId } from './model-name-resolver.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
+import { writeAtomically } from './vscode.js';
 
 const INFERENCE_KEYS = [
   'inferenceProvider',
@@ -653,7 +654,7 @@ export function getManagedMcpStatePath(): string {
   return getCodemiePath('proxy', 'desktop-managed-mcp-state.json');
 }
 
-async function readManagedMcpState(statePath: string): Promise<string[]> {
+export async function readManagedMcpState(statePath: string): Promise<string[]> {
   if (!existsSync(statePath)) return [];
   try {
     const parsed = JSON.parse(await readFile(statePath, 'utf-8')) as ManagedMcpState;
@@ -934,4 +935,55 @@ export async function writeDesktopConfig(
   await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
 
   return configPath;
+}
+
+/**
+ * Reverse what `writeDesktopConfig` wrote: strips the full `INFERENCE_KEYS`
+ * set, `inferenceModels`, `coworkEgressAllowedHosts`, and every marker-managed
+ * MCP entry from the resolved config file, then clears the marker state.
+ *
+ * Genuine user-added MCP entries (never recorded in the marker) survive —
+ * `managedMcpServers` is only dropped entirely when nothing is left to keep.
+ */
+export async function removeDesktopConfig(
+  statePath: string = getManagedMcpStatePath(),
+  baseDir: string = getDesktopBaseDir()
+): Promise<{ removed: boolean; configPath: string | null }> {
+  const managedNames = await readManagedMcpState(statePath);
+  if (managedNames.length === 0) {
+    return { removed: false, configPath: null };
+  }
+
+  const configPath = await getDesktopConfigPath(baseDir);
+  if (!existsSync(configPath)) {
+    return { removed: false, configPath: null };
+  }
+
+  let existing: Record<string, unknown>;
+  try {
+    existing = JSON.parse(await readFile(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Claude Desktop config at ${configPath} is not valid JSON and was not changed: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const { servers: remaining } = reconcileManagedMcpServers(existing.managedMcpServers, [], managedNames);
+
+  for (const key of INFERENCE_KEYS) {
+    delete existing[key];
+  }
+  delete existing.inferenceModels;
+  delete existing.coworkEgressAllowedHosts;
+  if (remaining.length > 0) {
+    existing.managedMcpServers = JSON.stringify(remaining);
+  } else {
+    delete existing.managedMcpServers;
+  }
+
+  await writeAtomically(configPath, JSON.stringify(existing, null, 2));
+  await writeAtomically(statePath, '');
+
+  return { removed: true, configPath };
 }
