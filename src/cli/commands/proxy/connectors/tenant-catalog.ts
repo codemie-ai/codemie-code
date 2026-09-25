@@ -6,6 +6,22 @@ interface CodeMieLlmModel {
   id?: string;
   base_name?: string;
   deployment_name?: string;
+  label?: string;
+  enabled?: boolean;
+  provider?: string;
+  multimodal?: boolean;
+  features?: { tools?: boolean };
+}
+
+/** One enabled tenant deployment, as reported by `/v1/llm_models?include_all=true`. */
+export interface TenantModelDescriptor {
+  /** `id || base_name || deployment_name`, verbatim. */
+  id: string;
+  label?: string;
+  provider?: string;
+  multimodal?: boolean;
+  /** From `features.tools`. */
+  toolCalling?: boolean;
 }
 
 interface ModelsListResponse {
@@ -34,11 +50,31 @@ function extractModelId(model: CodeMieLlmModel): string | undefined {
   return model.id || model.base_name || model.deployment_name;
 }
 
-function parseCatalogResponseIds(json: ModelsListResponse | CodeMieLlmModel[]): string[] {
+function toDescriptor(model: CodeMieLlmModel, id: string): TenantModelDescriptor {
+  const descriptor: TenantModelDescriptor = { id };
+  if (typeof model.label === 'string') descriptor.label = model.label;
+  if (typeof model.provider === 'string') descriptor.provider = model.provider;
+  if (typeof model.multimodal === 'boolean') descriptor.multimodal = model.multimodal;
+  if (typeof model.features?.tools === 'boolean') descriptor.toolCalling = model.features.tools;
+  return descriptor;
+}
+
+/**
+ * Enabled entries in catalog order, first occurrence wins per id. A missing
+ * `enabled` flag means enabled — only an explicit `false` drops an entry.
+ */
+function parseCatalogResponseDescriptors(json: ModelsListResponse | CodeMieLlmModel[]): TenantModelDescriptor[] {
   const models = Array.isArray(json) ? json : (json.data ?? []);
-  return models
-    .map(extractModelId)
-    .filter((id): id is string => typeof id === 'string');
+  const seen = new Set<string>();
+  const descriptors: TenantModelDescriptor[] = [];
+  for (const model of models) {
+    const rawId = extractModelId(model);
+    const id = typeof rawId === 'string' ? rawId.trim() : '';
+    if (!id || model.enabled === false || seen.has(id)) continue;
+    seen.add(id);
+    descriptors.push(toDescriptor(model, id));
+  }
+  return descriptors;
 }
 
 function buildCatalogHttpError(response: Response, endpoint: string): ConfigurationError {
@@ -73,10 +109,10 @@ function logCatalogFetchFailed(endpoint: string, response: Response, proxyUrl: s
   );
 }
 
-function logCatalogFetchCompleted(endpoint: string, ids: string[]): void {
+function logCatalogFetchCompleted(endpoint: string, count: number): void {
   logger.info(
     '[proxy] Tenant model catalog discovery completed',
-    ...sanitizeLogArgs({ endpoint, totalModelCount: ids.length })
+    ...sanitizeLogArgs({ endpoint, totalModelCount: count })
   );
 }
 
@@ -96,15 +132,18 @@ function isAbortError(error: unknown): boolean {
 }
 
 /**
- * Fetch every deployment id the tenant's gateway exposes, unfiltered.
+ * Fetch a descriptor for every enabled deployment the tenant's gateway
+ * exposes, in catalog order.
  *
  * Modeled on `desktop.ts`'s `fetchClaudeModels`, minus its Claude-family
  * filter and vertex/curated-list fallback — this is a generic catalog read
- * consumed by connectors (VS Code Copilot BYOK) that must intersect the
- * result against their own capability table rather than a Claude-specific
- * curated list.
+ * consumed by connectors (VS Code Copilot BYOK) that enrich the result from
+ * their own capability table rather than a Claude-specific curated list.
  */
-export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: string): Promise<string[]> {
+export async function fetchTenantModelDescriptors(
+  proxyUrl: string,
+  gatewayKey: string
+): Promise<TenantModelDescriptor[]> {
   let endpoint: string;
   try {
     endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
@@ -134,9 +173,9 @@ export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: stri
       );
     }
     const json = await response.json() as ModelsListResponse | CodeMieLlmModel[];
-    const ids = parseCatalogResponseIds(json);
-    logCatalogFetchCompleted(endpoint, ids);
-    return ids;
+    const descriptors = parseCatalogResponseDescriptors(json);
+    logCatalogFetchCompleted(endpoint, descriptors.length);
+    return descriptors;
   } catch (error) {
     if (error instanceof ConfigurationError) {
       throw error;
@@ -152,4 +191,9 @@ export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: stri
       `Reason: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+/** Every enabled deployment id the tenant's gateway exposes, in catalog order. */
+export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: string): Promise<string[]> {
+  return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey)).map((d) => d.id);
 }

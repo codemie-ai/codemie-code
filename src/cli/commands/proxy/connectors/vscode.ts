@@ -3,10 +3,10 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
-import { resolveTenantModelId } from './model-name-resolver.js';
-import { fetchTenantModelCatalog } from './tenant-catalog.js';
+import { fetchTenantModelDescriptors } from './tenant-catalog.js';
 import {
-  VS_CODE_CAPABILITY_TABLE,
+  buildDefaultVsCodeCapability,
+  findVsCodeCapabilityEntry,
   type VsCodeApiType,
   type VsCodeCapabilityEntry,
   type VsCodeReasoningEffort,
@@ -29,7 +29,7 @@ interface VsCodeManagedModel {
   name: string;
   url: string;
   apiType: VsCodeApiType;
-  toolCalling: true;
+  toolCalling: boolean;
   vision: boolean;
   streaming: true;
   thinking: boolean;
@@ -111,14 +111,15 @@ function getApiPath(apiType: VsCodeApiType): string {
 function buildManagedModel(
   entry: VsCodeCapabilityEntry,
   tenantId: string,
+  name: string,
   proxyUrl: string
 ): VsCodeManagedModel {
   const model: VsCodeManagedModel = {
     id: tenantId,
-    name: tenantId,
+    name,
     url: new URL(getApiPath(entry.apiType), proxyUrl).toString(),
     apiType: entry.apiType,
-    toolCalling: true,
+    toolCalling: entry.toolCalling ?? true,
     vision: entry.vision,
     streaming: true,
     thinking: entry.thinking,
@@ -142,48 +143,37 @@ function buildManagedModel(
   return model;
 }
 
+const GITHUB_COPILOT_DEPLOYMENT_PATTERN = /^github-copilot-/i;
+
 /**
- * Fetch the tenant's live model catalog and intersect it against the VS Code
- * capability table via {@link resolveTenantModelId}. A capability family with
- * no tenant match is silently dropped — the VS Code Copilot BYOK picker must
- * never offer a model the tenant does not actually serve. Throws when the
- * intersection is empty, mirroring `desktop.ts`'s zero-match throw.
+ * Fetch the tenant's live model catalog and write one VS Code model per
+ * enabled deployment, in catalog order. The capability table only enriches a
+ * model whose family it knows ({@link findVsCodeCapabilityEntry}); any other
+ * model gets conservative defaults ({@link buildDefaultVsCodeCapability}).
+ * The list is rebuilt from the live catalog on every call — never narrowed to
+ * the profile model, reordered, or marked with a default.
  *
- * When `profileModel` names a model the active profile is pinned to (e.g. a
- * provider-qualified id like `openai.gpt-5.6-sol`), and it resolves against
- * the same tenant catalog, narrow the result to just that one entry instead
- * of offering every family the tenant serves — the picker should show
- * exactly what the profile is configured to use, under its real tenant id,
- * rather than every reachable model. An unrecognized or unset `profileModel`
- * falls back to the full intersected list.
+ * `github-copilot-*` deployments stay excluded (kept product-owner decision).
+ * Throws when no enabled model remains, mirroring `desktop.ts`'s zero-match throw.
  */
 async function resolveManagedModels(
   proxyUrl: string,
-  gatewayKey: string,
-  profileModel: string | undefined
+  gatewayKey: string
 ): Promise<VsCodeManagedModel[]> {
-  const catalog = await fetchTenantModelCatalog(proxyUrl, gatewayKey);
+  const descriptors = await fetchTenantModelDescriptors(proxyUrl, gatewayKey);
   const models: VsCodeManagedModel[] = [];
-  for (const entry of VS_CODE_CAPABILITY_TABLE) {
-    const tenantId = resolveTenantModelId(entry.family, catalog);
-    if (!tenantId) continue;
-    models.push(buildManagedModel(entry, tenantId, proxyUrl));
+  for (const descriptor of descriptors) {
+    if (GITHUB_COPILOT_DEPLOYMENT_PATTERN.test(descriptor.id)) continue;
+    const known = findVsCodeCapabilityEntry(descriptor.id);
+    const entry = known ?? buildDefaultVsCodeCapability(descriptor);
+    const name = known ? descriptor.id : (descriptor.label?.trim() || descriptor.id);
+    models.push(buildManagedModel(entry, descriptor.id, name, proxyUrl));
   }
   if (models.length === 0) {
     throw new ConfigurationError(
-      'Local proxy discovered tenant models, but none matched the CodeMie VS Code Copilot capability table.'
+      'Local proxy discovered no enabled tenant models to offer in VS Code Copilot.'
     );
   }
-
-  const pinnedModel = profileModel?.trim();
-  if (pinnedModel) {
-    const pinnedTenantId = resolveTenantModelId(pinnedModel, catalog);
-    const pinnedManagedModel = pinnedTenantId
-      ? models.find(model => model.id === pinnedTenantId)
-      : undefined;
-    if (pinnedManagedModel) return [pinnedManagedModel];
-  }
-
   return models;
 }
 
@@ -277,25 +267,22 @@ export async function writeAtomically(configPath: string, content: string): Prom
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
   gatewayKey: string,
-  insiders = false,
-  profileModel?: string
+  insiders = false
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
     proxyUrl,
-    gatewayKey,
-    profileModel
+    gatewayKey
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
   proxyUrl: string,
-  gatewayKey: string,
-  profileModel?: string
+  gatewayKey: string
 ): Promise<WriteVsCodeConfigResult> {
   const providers = await readProviders(configPath);
-  const models = await resolveManagedModels(proxyUrl, gatewayKey, profileModel);
+  const models = await resolveManagedModels(proxyUrl, gatewayKey);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
     .filter(index => index >= 0);
