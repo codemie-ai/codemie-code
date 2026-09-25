@@ -105,7 +105,7 @@ codemie proxy connect vscode --profile work
 codemie proxy connect vscode --insiders
 ```
 
-The connector resolves the selected profile once, synchronizes skills, and writes the managed CodeMie model catalog into VS Code's `User/chatLanguageModels.json`. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
+The connector resolves the selected profile once, synchronizes skills, and writes every enabled tenant model from the live catalog into VS Code's `User/chatLanguageModels.json`, in catalog order. Known families are enriched from the capability table; unknown models get conservative defaults rather than being dropped. The profile's default model does not affect which models are written. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
 
 `--profile <name>` is a one-command override and does not change the active CodeMie profile. Model and project remain independent: the model is written into VS Code configuration, while `codeMieProject` is passed to the daemon and emitted as `X-CodeMie-Project`. When a selected profile has no project of its own, compatible repository-local project context continues to apply through the standard profile merge rules.
 
@@ -199,7 +199,7 @@ and routing coverage runs as part of `npm test`.
 | Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect vscode` |
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
-| Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
+| New tenant models missing | VS Code configuration was written before the tenant catalog grew | Re-run `codemie proxy connect --vscode` |
 | `previous_response_id` appears in a VS Code request | VS Code is older than the stateless Responses implementation or has stale model metadata | Upgrade to a current VS Code release, re-run the connector, reload VS Code, and verify `store: false` plus no `previous_response_id` in Chat Debug logs |
 | `previous_response_not_found` occurs on a follow-up | The client is still using stateful Responses replay | Complete the compatibility check above; do not add proxy-side response caching or deployment affinity |
 | `invalid_encrypted_content` occurs on a follow-up | The affinity pin expired, or `encrypted_content_affinity` is not configured on the gateway | Retry the turn — the proxy strips reasoning state after the first rejection and the session continues. If it recurs on every session, verify the gateway's `optional_pre_call_checks` and `deployment_affinity_ttl_seconds`. Never share encrypted reasoning content in logs |
