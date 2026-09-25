@@ -10,8 +10,14 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
+import { removeDesktopConfig } from './connectors/desktop.js';
+import { removeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
+import { removeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 
 export interface DisconnectTargets {
+  claudeDesktop?: boolean;
+  vscode?: boolean;
+  vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
 }
 
@@ -22,24 +28,80 @@ export interface DisconnectOptions {
 const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
-  '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
+  '  --claude-desktop        Claude Desktop app (removes MCP servers and gateway config)',
+  "  --vscode                VS Code Copilot Chat models (removes chatLanguageModels.json entry)",
+  '  --vscode-claude-code    VS Code Claude Code extension (removes ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN)',
+  '  --codex-desktop         Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
   '',
   'Example:',
-  '  codemie proxy disconnect --codex-desktop',
+  '  codemie proxy disconnect --claude-desktop --vscode',
 ].join('\n');
 
-export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
-  if (!opts.targets.codexDesktop) {
-    console.log(DISCONNECT_TARGET_LIST);
-    return;
-  }
+/** One per-target disconnect outcome. */
+interface TargetResult {
+  label: string;
+  ok: boolean;
+  error?: string;
+}
 
+async function runClaudeDesktop(): Promise<TargetResult> {
+  try {
+    const result = await removeDesktopConfig();
+    if (!result.removed) {
+      console.log(chalk.dim('Claude Desktop: nothing to disconnect.'));
+      return { label: 'Claude Desktop', ok: true };
+    }
+    console.log(chalk.green(`✓ Claude Desktop disconnected (${result.configPath})`));
+    return { label: 'Claude Desktop', ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Claude Desktop disconnect failed', ...sanitizeLogArgs({ error: message }));
+    console.error(chalk.red(`✗ Claude Desktop — ${message}`));
+    return { label: 'Claude Desktop', ok: false, error: message };
+  }
+}
+
+async function runVscode(): Promise<TargetResult> {
+  try {
+    const result = await removeVsCodeLanguageModelsConfig();
+    if (!result.removed) {
+      console.log(chalk.dim('VS Code (Copilot models): nothing to disconnect.'));
+      return { label: 'VS Code (Copilot models)', ok: true };
+    }
+    console.log(chalk.green('✓ VS Code (Copilot models) disconnected'));
+    return { label: 'VS Code (Copilot models)', ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] VS Code Copilot Chat disconnect failed', ...sanitizeLogArgs({ error: message }));
+    console.error(chalk.red(`✗ VS Code (Copilot models) — ${message}`));
+    return { label: 'VS Code (Copilot models)', ok: false, error: message };
+  }
+}
+
+async function runVscodeClaudeCode(): Promise<TargetResult> {
+  try {
+    const result = await removeVsCodeClaudeCodeConfig();
+    if (!result.removed) {
+      console.log(chalk.dim('VS Code Claude Code: nothing to disconnect.'));
+      return { label: 'VS Code Claude Code', ok: true };
+    }
+    console.log(chalk.green('✓ VS Code Claude Code disconnected'));
+    return { label: 'VS Code Claude Code', ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] VS Code Claude Code disconnect failed', ...sanitizeLogArgs({ error: message }));
+    console.error(chalk.red(`✗ VS Code Claude Code — ${message}`));
+    return { label: 'VS Code Claude Code', ok: false, error: message };
+  }
+}
+
+async function runCodexDesktop(): Promise<TargetResult> {
   try {
     const result = await removeCodexDesktopConfig();
 
     if (!result.removed) {
       console.log(chalk.dim('Codex Desktop: nothing to disconnect.'));
-      return;
+      return { label: 'Codex Desktop', ok: true };
     }
 
     console.log(chalk.green(`✓ Codex Desktop disconnected (${result.configPath})`));
@@ -49,10 +111,33 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
       ));
     }
     console.log(chalk.yellow('⚠ Quit and reopen the ChatGPT desktop app to apply the change.'));
+    return { label: 'Codex Desktop', ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('[proxy] Codex Desktop disconnect failed', ...sanitizeLogArgs({ error: message }));
     console.error(chalk.red(`✗ Codex Desktop — ${message}`));
+    return { label: 'Codex Desktop', ok: false, error: message };
+  }
+}
+
+export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
+  const { targets } = opts;
+  const hasAnyTarget = Boolean(
+    targets.claudeDesktop || targets.vscode || targets.vscodeClaudeCode || targets.codexDesktop
+  );
+
+  if (!hasAnyTarget) {
+    console.log(DISCONNECT_TARGET_LIST);
+    return;
+  }
+
+  const results: TargetResult[] = [];
+  if (targets.claudeDesktop) results.push(await runClaudeDesktop());
+  if (targets.vscode) results.push(await runVscode());
+  if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode());
+  if (targets.codexDesktop) results.push(await runCodexDesktop());
+
+  if (results.some((r) => !r.ok)) {
     process.exitCode = 1;
   }
 }
