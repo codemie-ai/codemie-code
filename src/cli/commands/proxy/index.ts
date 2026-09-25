@@ -316,9 +316,24 @@ export function createProxyCommand(): Command {
   proxy
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
+    .option('--claude-desktop', 'Remove the CodeMie MCP entries and gateway config from Claude Desktop')
+    .option('--vscode', "Remove CodeMie's entry from VS Code Copilot Chat models (chatLanguageModels.json)")
+    .option('--vscode-claude-code', "Remove CodeMie's ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN from the VS Code Claude Code extension")
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .action(async (opts: { codexDesktop?: boolean }) => {
-      await disconnectTargets({ targets: { codexDesktop: Boolean(opts.codexDesktop) } });
+    .action(async (opts: {
+      claudeDesktop?: boolean;
+      vscode?: boolean;
+      vscodeClaudeCode?: boolean;
+      codexDesktop?: boolean;
+    }) => {
+      await disconnectTargets({
+        targets: {
+          claudeDesktop: Boolean(opts.claudeDesktop),
+          vscode: Boolean(opts.vscode),
+          vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
+          codexDesktop: Boolean(opts.codexDesktop),
+        },
+      });
     });
 
   // Deprecated aliases — kept working, mapped onto the unified target flags.

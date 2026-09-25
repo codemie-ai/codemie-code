@@ -208,6 +208,13 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     await createProxyCommand().parseAsync(['disconnect', '--codex-desktop'], { from: 'user' });
 
-    expect(disconnectTargets).toHaveBeenCalledWith({ targets: { codexDesktop: true } });
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      targets: {
+        claudeDesktop: false,
+        vscode: false,
+        vscodeClaudeCode: false,
+        codexDesktop: true,
+      },
+    });
   });
 });
