@@ -1,0 +1,5 @@
+{"task_id":"task-1-claude-desktop-remove","status":"done","commit":"82aa3b61","test_command":"npx vitest run desktop.test.ts"}
+{"task_id":"task-2-vscode-copilot-remove","status":"done","commit":"760cdfcb","test_command":"npx vitest run vscode.test.ts"}
+{"task_id":"task-3-vscode-claude-code-remove","status":"done","commit":"7de4c944","test_command":"npx vitest run vscode-claude-code.test.ts"}
+{"task_id":"task-4-disconnect-orchestrator","status":"done","commit":"737dec0f","test_command":"npx vitest run disconnect-orchestrator.test.ts"}
+{"task_id":"task-5-cli-wiring","status":"done","commit":"6c691baa","test_command":"npx vitest run src/cli/commands/proxy"}

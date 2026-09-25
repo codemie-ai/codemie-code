@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Add --claude-desktop, --vscode, and --vscode-claude-code disconnect flags mirroring the existing --codex-desktop reference implementation, extending disconnect-orchestrator.ts to four-target dispatch with per-target success/failure reporting.",
+  "generated": "2026-09-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 5, "label": "XL" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches 5 files across 2-3 layers: CLI (index.ts flag declarations), orchestrator (disconnect-orchestrator.ts extending single-target DISCONNECT_TARGET_LIST to four with a new per-target result/summary shape), and 3 connector files (desktop.ts, vscode.ts, vscode-claude-code.ts) each needing a new exported removal function alongside its existing write function. Shared utilities (writeAtomically, ConfigurationError, getCodemiePath marker-file convention) are reused rather than invented." },
+    { "dimension": "requirements_clarity", "reason": "Core flow is clear and mirrors an existing implementation, but the ticket text leaves several open design decisions unresolved per the technical analysis's Risk Indicators: no --insiders equivalent for the two VS Code disconnect targets, whether Claude Desktop's non-MCP inferenceProvider/gatewayKey top-level keys should also be cleared, no backup-fallback mechanism defined for the three new targets if structural removal fails to cleanly identify CodeMie's entries, and desktop.ts's marker-read/write helpers being module-private today. These are design decisions to be settled in spec/plan, not just wiring." },
+    { "dimension": "technical_risk", "reason": "The 4th target (codex-desktop) is an exact, working precedent for the orchestrator/CLI wiring and error-reporting contract, which lowers novelty. But no exact precedent exists for Claude Desktop's specific removal logic (reading a currently-private managedNames marker and re-running reconcileManagedMcpServers with an empty managed set through the _meta.json/appliedId indirection), and none of the three new targets has a backup-fallback the way codex-desktop's .codemie-backup does — a rollback plan is needed if structural removal misses entries." },
+    { "dimension": "file_change_estimate", "reason": "5 files modified in src/ (index.ts, disconnect-orchestrator.ts, desktop.ts, vscode.ts, vscode-claude-code.ts) plus the existing disconnect-orchestrator.test.ts needing restructuring (not just additions, since the target set and reporting shape change), plus ~3 new test files for the three new removal functions (no existing removal test coverage for any of them) — spanning 4 directories (src/cli/commands/proxy/, connectors/, and their respective __tests__/ subdirectories)." }
+  ],
+  "red_flags_applied": [
+    "Requirements Clarity bumped from L (4) to XL (5): the technical analysis's Risk Indicators section lists multiple unresolved design questions the ticket text does not address — the missing --insiders selector for VS Code disconnect targets, whether Claude Desktop's non-MCP inferenceProvider/gatewayKey keys should be cleared alongside managedMcpServers, and the absence of any backup-fallback mechanism for the three new targets."
+  ],
+  "split_recommendation": null
+}
