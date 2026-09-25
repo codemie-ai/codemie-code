@@ -9,7 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ConfigurationError } from '@/utils/errors.js';
-import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfigAtPath } from '../vscode-claude-code.js';
+import {
+  getVsCodeClaudeCodeSettingsPath,
+  removeVsCodeClaudeCodeConfig,
+  writeVsCodeClaudeCodeConfigAtPath,
+} from '../vscode-claude-code.js';
 import * as vscodeModule from '../vscode.js';
 
 describe('writeVsCodeClaudeCodeConfigAtPath', () => {
@@ -281,5 +285,89 @@ describe('getVsCodeClaudeCodeSettingsPath', () => {
     vi.spyOn(vscodeModule, 'getVsCodeProductDir').mockReturnValue(testDir);
 
     expect(getVsCodeClaudeCodeSettingsPath(false)).toBe(join(testDir, 'User', 'settings.json'));
+  });
+});
+
+describe('removeVsCodeClaudeCodeConfig', () => {
+  let testDir: string;
+  let stableDir: string;
+  let insidersDir: string;
+  let stablePath: string;
+  let insidersPath: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), 'codemie-vscode-claude-code-remove-'));
+    stableDir = join(testDir, 'Code');
+    insidersDir = join(testDir, 'Code - Insiders');
+    stablePath = join(stableDir, 'User', 'settings.json');
+    insidersPath = join(insidersDir, 'User', 'settings.json');
+    vi.spyOn(vscodeModule, 'getVsCodeProductDir').mockImplementation(
+      (insiders: boolean) => (insiders ? insidersDir : stableDir)
+    );
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  async function readSettingsFile(path: string): Promise<Record<string, unknown>> {
+    return JSON.parse(await readFile(path, 'utf-8')) as Record<string, unknown>;
+  }
+
+  it('reports removed: false when both stable and Insiders product dirs are missing', async () => {
+    const result = await removeVsCodeClaudeCodeConfig();
+    expect(result).toEqual({ removed: false });
+  });
+
+  it('reports removed: false when environmentVariables has neither managed key', async () => {
+    await mkdir(join(stableDir, 'User'), { recursive: true });
+    await writeFile(stablePath, JSON.stringify({
+      'claudeCode.environmentVariables': [{ name: 'OTHER', value: 'x' }],
+    }));
+
+    const result = await removeVsCodeClaudeCodeConfig();
+
+    expect(result).toEqual({ removed: false });
+    const settings = await readSettingsFile(stablePath);
+    expect(settings['claudeCode.environmentVariables']).toEqual([{ name: 'OTHER', value: 'x' }]);
+  });
+
+  it('strips both managed entries, preserving other env vars and top-level settings', async () => {
+    await mkdir(join(stableDir, 'User'), { recursive: true });
+    await writeVsCodeClaudeCodeConfigAtPath(stablePath, 'http://127.0.0.1:4001', 'gw-key');
+    let settings = await readSettingsFile(stablePath);
+    (settings['claudeCode.environmentVariables'] as unknown[]).push({ name: 'MY_CUSTOM_VAR', value: 'keep-me' });
+    settings['editor.fontSize'] = 14;
+    await writeFile(stablePath, JSON.stringify(settings, null, 2));
+
+    const result = await removeVsCodeClaudeCodeConfig();
+
+    expect(result).toEqual({ removed: true });
+    settings = await readSettingsFile(stablePath);
+    expect(settings['editor.fontSize']).toBe(14);
+    expect(settings['claudeCode.environmentVariables']).toEqual([
+      { name: 'MY_CUSTOM_VAR', value: 'keep-me' },
+    ]);
+  });
+
+  it('removes managed entries from both stable and Insiders when both match', async () => {
+    await mkdir(join(stableDir, 'User'), { recursive: true });
+    await mkdir(join(insidersDir, 'User'), { recursive: true });
+    await writeVsCodeClaudeCodeConfigAtPath(stablePath, 'http://127.0.0.1:4001', 'gw-key');
+    await writeVsCodeClaudeCodeConfigAtPath(insidersPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const result = await removeVsCodeClaudeCodeConfig();
+
+    expect(result).toEqual({ removed: true });
+    expect((await readSettingsFile(stablePath))['claudeCode.environmentVariables']).toEqual([]);
+    expect((await readSettingsFile(insidersPath))['claudeCode.environmentVariables']).toEqual([]);
+  });
+
+  it('throws on corrupt/unparseable JSONC at a resolved path instead of silently no-opping', async () => {
+    await mkdir(join(stableDir, 'User'), { recursive: true });
+    await writeFile(stablePath, '{ not valid json');
+
+    await expect(removeVsCodeClaudeCodeConfig()).rejects.toThrow(ConfigurationError);
   });
 });
