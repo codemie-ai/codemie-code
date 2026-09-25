@@ -9,13 +9,14 @@ import http from 'http';
 import { URL } from 'url';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeHeaders } from '../../../utils/security.js';
+import { getProxyAgentForUrl, isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
 
 export interface HTTPClientConfig {
   timeout?: number;                  // Timeout in milliseconds (default: 5000)
   headers?: Record<string, string>;  // Additional headers
   maxRedirects?: number;             // Maximum redirects to follow (default: 5)
   maxRetries?: number;               // Maximum retries on failure (default: 3)
-  rejectUnauthorized?: boolean;      // Allow self-signed certificates (default: false)
+  rejectUnauthorized?: boolean;      // Verify TLS certificates (default: true)
 }
 
 export interface HTTPResponse<T = unknown> {
@@ -36,7 +37,7 @@ export class HTTPClient {
       timeout: 5000,
       maxRedirects: 5,
       maxRetries: 3,
-      rejectUnauthorized: false,
+      rejectUnauthorized: isTlsVerificationEnabled(),
       headers: {},
       ...config
     };
@@ -80,8 +81,14 @@ export class HTTPClient {
     data?: unknown,
     headers?: Record<string, string>
   ): Promise<HTTPResponse<T>> {
+    const parsedUrl = new URL(url);
+    // Node never applies proxy settings on its own; resolve one per request so
+    // PAC-based configs can route different hosts differently.
+    const agent = await getProxyAgentForUrl(parsedUrl, {
+      rejectUnauthorized: this.config.rejectUnauthorized,
+    });
+
     return new Promise((resolve, reject) => {
-      const parsedUrl = new URL(url);
       const isHttps = parsedUrl.protocol === 'https:';
       const client = isHttps ? https : http;
 
@@ -103,7 +110,9 @@ export class HTTPClient {
         path: parsedUrl.pathname + parsedUrl.search,
         method,
         headers: requestHeaders,
-        timeout: this.config.timeout
+        timeout: this.config.timeout,
+        ...(isHttps ? { rejectUnauthorized: this.config.rejectUnauthorized } : {}),
+        ...(agent ? { agent } : {})
       };
 
       const req = client.request(options, (res) => {
@@ -167,11 +176,17 @@ export class HTTPClient {
     const parsedUrl = new URL(url);
     const protocol = parsedUrl.protocol === 'https:' ? https : http;
 
+    // Resolved per hop: a redirect may cross from a proxied host to a bypassed one.
+    const agent = await getProxyAgentForUrl(parsedUrl, {
+      rejectUnauthorized: this.config.rejectUnauthorized,
+    });
+
     const options: https.RequestOptions = {
       ...requestOptions,
       hostname: parsedUrl.hostname,
       port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
       path: parsedUrl.pathname + parsedUrl.search,
+      ...(agent ? { agent } : {}),
     };
 
     if (logger.isDebugMode()) {

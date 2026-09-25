@@ -10,6 +10,7 @@ import {
   fetchCodeMieUserInfo,
   buildAuthHeaders
 } from '../../core/codemie-auth-helpers.js';
+import { isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
 export { fetchCodeMieUserInfo };
 export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
 
@@ -241,7 +242,7 @@ export async function fetchCodeMieLlmModels(
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false,
+    rejectUnauthorized: isTlsVerificationEnabled(),
   });
 
   const response = await client.getRaw(url, headers);
@@ -284,7 +285,7 @@ export async function fetchCodeMieModels(
   const client = new HTTPClient({
     timeout: 30000,
     maxRetries: 5,
-    rejectUnauthorized: false
+    rejectUnauthorized: isTlsVerificationEnabled()
   });
 
   const response = await client.getRaw(url, headers);
@@ -354,7 +355,7 @@ export async function fetchApplicationDetails(
     const client = new HTTPClient({
       timeout: 5000,
       maxRetries: 1,
-      rejectUnauthorized: false
+      rejectUnauthorized: isTlsVerificationEnabled()
     });
 
     const response = await client.getRaw(url, headers);
@@ -463,7 +464,7 @@ async function fetchIntegrationsPage(fullUrl: string, auth: Record<string, strin
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false
+    rejectUnauthorized: isTlsVerificationEnabled()
   });
 
   const response = await client.getRaw(fullUrl, headers);
