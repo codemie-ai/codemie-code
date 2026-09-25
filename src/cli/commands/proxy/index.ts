@@ -35,6 +35,8 @@ interface UnifiedConnectOptions {
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
+  cursorIde?: boolean;
+  analytics?: boolean;
   profile?: string;
   force?: boolean;
   verbose?: boolean;
@@ -292,6 +294,8 @@ export function createProxyCommand(): Command {
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
+    .option('--cursor-ide', 'Configure Cursor IDE — writes .cursor/hooks.json (requires --analytics)')
+    .option('--analytics', 'Enable analytics-only hook ingestion (applies to --cursor-ide)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
@@ -304,12 +308,14 @@ export function createProxyCommand(): Command {
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
+          cursorIde: Boolean(opts.cursorIde),
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
+        analytics: Boolean(opts.analytics),
       });
     });
 
@@ -317,8 +323,14 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .action(async (opts: { codexDesktop?: boolean }) => {
-      await disconnectTargets({ targets: { codexDesktop: Boolean(opts.codexDesktop) } });
+    .option('--cursor-ide', 'Remove codemie-authored entries from .cursor/hooks.json')
+    .action(async (opts: { codexDesktop?: boolean; cursorIde?: boolean }) => {
+      await disconnectTargets({
+        targets: {
+          codexDesktop: Boolean(opts.codexDesktop),
+          cursorIde: Boolean(opts.cursorIde),
+        },
+      });
     });
 
   // Deprecated aliases — kept working, mapped onto the unified target flags.

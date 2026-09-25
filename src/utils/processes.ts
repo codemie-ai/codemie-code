@@ -397,7 +397,7 @@ export async function npxRun(
  */
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000 });
+    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
     const remoteUrl = stdout.trim();
     const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
     if (match) return `${match[1]}/${match[2]}`;
@@ -432,7 +432,8 @@ export async function detectGitBranch(cwd: string): Promise<string | undefined> 
   try {
     const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', {
       cwd,
-      timeout: 5000 // 5 second timeout
+      timeout: 5000,
+      windowsHide: true,
     });
 
     const branch = stdout.trim();

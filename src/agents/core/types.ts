@@ -664,6 +664,35 @@ export interface AgentHookConfig {
    * }
    */
   eventNameMapping?: Record<string, InternalHookEventName>;
+
+
+  /**
+   * When true, the `codemie hook` CLI path never exits non-zero for this
+   * agent: JSON-parse failures and `validateHookEvent` failures degrade to a
+   * non-blocking failure (thrown internally, caught, and turned into a
+   * successful exit) instead of `process.exit(2)`. Set by agents whose host
+   * treats a non-zero exit as a hard block on the user's action.
+   */
+  neverBlockingExit?: boolean;
+
+  /**
+   * Optional per-agent stdout response contract, invoked with the
+   * agent-native event name (`event.hook_event_name`, unmutated by
+   * `eventNameMapping`) after the hook has been routed. Lets a host that
+   * inspects stdout for a synchronous response (e.g. Cursor's
+   * `{"permission":"allow"}`/`{"continue":true}`) get one without adding an
+   * agent-name literal to `hook.ts` — set only by agents whose host reads a
+   * response from stdout.
+   */
+  writeStdoutResponse?: (nativeEventName: string) => void;
+
+
+  /**
+   * When true, the hook action forwards every event as-is to the local proxy
+   * daemon (see forwardOtlpEvent) and returns immediately, before the shared
+   * transform/validate/route pipeline and its legacy analytics handlers run.
+   */
+  otlpIngestion?: boolean;
 }
 
 /**
