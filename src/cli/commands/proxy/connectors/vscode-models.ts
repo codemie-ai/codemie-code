@@ -1,3 +1,6 @@
+import { resolveTenantModelId } from './model-name-resolver.js';
+import type { TenantModelDescriptor } from './tenant-catalog.js';
+
 export type VsCodeApiType = 'chat-completions' | 'responses' | 'messages';
 
 export type VsCodeReasoningEffort =
@@ -14,6 +17,8 @@ export interface VsCodeCapabilityEntry {
   apiType: VsCodeApiType;
   vision: boolean;
   thinking: boolean;
+  /** Absent means the model supports tool calling. */
+  toolCalling?: boolean;
   zeroDataRetentionEnabled?: boolean;
   adaptiveThinking?: true;
   modelOptions?: Readonly<{
@@ -313,3 +318,46 @@ export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
     maxOutputTokens: 16384,
   },
 ];
+
+/**
+ * The capability-table entry that describes `tenantId`, or `undefined` when no
+ * family matches. An exact family match wins; otherwise the first entry whose
+ * family the shared resolver maps onto `tenantId` (dated / vendor-prefixed /
+ * reordered tenant naming).
+ */
+export function findVsCodeCapabilityEntry(tenantId: string): VsCodeCapabilityEntry | undefined {
+  return VS_CODE_CAPABILITY_TABLE.find((entry) => entry.family === tenantId)
+    ?? VS_CODE_CAPABILITY_TABLE.find((entry) => resolveTenantModelId(entry.family, [tenantId]) === tenantId);
+}
+
+const DEFAULT_MAX_INPUT_TOKENS = 128000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+const MIN_RESPONSES_GPT_MAJOR = 6;
+
+/** GPT-6 and newer only serve the Responses API; older/other ids use chat-completions. */
+function isResponsesOnlyGpt(id: string): boolean {
+  const name = id.toLowerCase().replace(/^openai\./, '');
+  const match = name.match(/^gpt-(\d+)/);
+  return match !== null && Number(match[1]) >= MIN_RESPONSES_GPT_MAJOR;
+}
+
+/**
+ * Conservative capability entry for a tenant model with no capability-table
+ * family. No reasoning effort, no custom headers, modest token limits. A
+ * Responses model is always stateless (zero data retention) so the proxy's
+ * Responses invariants still hold. Never `messages`: that needs per-family
+ * auth headers the table owns.
+ */
+export function buildDefaultVsCodeCapability(descriptor: TenantModelDescriptor): VsCodeCapabilityEntry {
+  const responses = isResponsesOnlyGpt(descriptor.id);
+  return {
+    family: descriptor.id,
+    apiType: responses ? 'responses' : 'chat-completions',
+    vision: descriptor.multimodal === true,
+    thinking: false,
+    toolCalling: descriptor.toolCalling !== false,
+    ...(responses ? { zeroDataRetentionEnabled: true } : {}),
+    maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
+    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+  };
+}
