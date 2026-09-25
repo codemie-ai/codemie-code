@@ -209,8 +209,17 @@ export type CodeMieConfigOptions = ProviderProfile & WorkspaceConfig;
  * Type guard to check if config is multi-provider format
  */
 export function isMultiProviderConfig(config: any): config is MultiProviderConfig {
+  const profiles = config?.profiles;
+
   return Boolean(
-    config?.version === 2 && config.profiles && config.activeProfile
+    config?.version === 2
+    && typeof config.activeProfile === 'string'
+    && profiles !== null
+    && typeof profiles === 'object'
+    && !Array.isArray(profiles)
+    && Object.values(profiles).every(
+      profile => profile !== null && typeof profile === 'object' && !Array.isArray(profile)
+    )
   );
 }
 
