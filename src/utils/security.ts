@@ -7,13 +7,17 @@
  * - Sensitive data detection
  */
 
-import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
-import { URL } from 'url';
 import { SSOCredentials, JWTCredentials } from '../providers/core/types.js';
 import { getCodemiePath } from './paths.js';
+import {
+  deriveMachineEncryptionKey,
+  encryptWithKey,
+  decryptWithKey,
+  deriveUrlStorageKey,
+  deriveLegacyUrlStorageKey,
+} from './credential-crypto.js';
 
 // ============================================================================
 // Data Sanitization and Redaction
@@ -288,10 +292,10 @@ async function getKeytar(): Promise<typeof import('keytar') | null> {
  */
 export class CredentialStore {
   private static instance: CredentialStore;
-  private encryptionKey: string;
+  private encryptionKey: Buffer;
 
   private constructor() {
-    this.encryptionKey = this.getOrCreateEncryptionKey();
+    this.encryptionKey = deriveMachineEncryptionKey();
   }
 
   static getInstance(): CredentialStore {
@@ -301,62 +305,13 @@ export class CredentialStore {
     return CredentialStore.instance;
   }
 
-  /**
-   * Generate a storage key for a given URL.
-   *
-   * Reduces the URL to protocol+host before hashing so storage and retrieval
-   * always agree on a key regardless of which path a caller passes in (e.g.
-   * a bare portal URL from `codemie setup` vs. a full API URL from
-   * `codemie profile login --url <api-url>`). Only stripping a trailing
-   * slash here (without dropping the path) would make the key sensitive to
-   * whichever URL variant happened to be passed at store time.
-   * @param baseUrl - The URL to hash (path/query/hash, if any, are discarded)
-   * @returns Storage key (e.g., "sso-abc123...")
-   */
-  private getUrlStorageKey(baseUrl: string): string {
-    return this.hashStorageKey(this.normalizeForKey(baseUrl));
-  }
-
-  /**
-   * Storage key as it was derived before the URL was normalized to protocol+host.
-   * Only used to find and clean up credentials written by an earlier version.
-   */
-  private getLegacyUrlStorageKey(baseUrl: string): string {
-    return this.hashStorageKey(baseUrl.replace(/\/$/, '').toLowerCase());
-  }
-
-  private hashStorageKey(normalized: string): string {
-    return `sso-${crypto.createHash('sha256').update(normalized).digest('hex')}`;
-  }
-
-  /**
-   * Reduce a URL to protocol+host, or return it unchanged if it is not an
-   * http(s) URL with a host.
-   *
-   * `new URL()` does not throw on `scheme:rest` strings — `new URL('localhost:8080')`
-   * parses as protocol `localhost:` with an *empty* host. Without the host and
-   * protocol guard every scheme-less `host:port` would normalize to the same
-   * `scheme://` and two different instances would share one credential entry.
-   */
-  private normalizeForKey(baseUrl: string): string {
-    try {
-      const parsed = new URL(baseUrl);
-      if (parsed.host && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) {
-        return `${parsed.protocol}//${parsed.host}`.toLowerCase();
-      }
-    } catch {
-      // Not a parseable URL — fall through to the raw form.
-    }
-    return baseUrl.replace(/\/$/, '').toLowerCase();
-  }
-
   async storeSSOCredentials(credentials: SSOCredentials, baseUrl?: string): Promise<void> {
-    const encrypted = this.encrypt(JSON.stringify(credentials));
+    const encrypted = encryptWithKey(JSON.stringify(credentials), this.encryptionKey);
 
     // Determine storage key based on whether baseUrl is provided
-    const accountName = baseUrl ? this.getUrlStorageKey(baseUrl) : ACCOUNT_NAME;
+    const accountName = baseUrl ? deriveUrlStorageKey(baseUrl) : ACCOUNT_NAME;
     const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `${this.getUrlStorageKey(baseUrl)}.enc`)
+      ? path.join(CREDENTIALS_DIR, `${deriveUrlStorageKey(baseUrl)}.enc`)
       : FALLBACK_FILE;
 
     // Store to keychain if available (best effort, don't fail if it errors)
@@ -378,7 +333,7 @@ export class CredentialStore {
       return this.readCredential(ACCOUNT_NAME, FALLBACK_FILE);
     }
 
-    const key = this.getUrlStorageKey(baseUrl);
+    const key = deriveUrlStorageKey(baseUrl);
     const current = await this.readCredential(key, this.credentialFilePath(key));
     if (current) {
       return current;
@@ -387,7 +342,7 @@ export class CredentialStore {
     // Credentials written before the key was normalized live under the raw-URL key.
     // Migrate on first read, otherwise they stay unreachable — and undeletable,
     // since clearSSOCredentials would only ever look at the normalized key.
-    const legacyKey = this.getLegacyUrlStorageKey(baseUrl);
+    const legacyKey = deriveLegacyUrlStorageKey(baseUrl);
     if (legacyKey === key) {
       return null;
     }
@@ -408,10 +363,10 @@ export class CredentialStore {
       return;
     }
 
-    const key = this.getUrlStorageKey(baseUrl);
+    const key = deriveUrlStorageKey(baseUrl);
     await this.deleteCredential(key, this.credentialFilePath(key));
 
-    const legacyKey = this.getLegacyUrlStorageKey(baseUrl);
+    const legacyKey = deriveLegacyUrlStorageKey(baseUrl);
     if (legacyKey !== key) {
       await this.deleteCredential(legacyKey, this.credentialFilePath(legacyKey));
     }
@@ -430,7 +385,7 @@ export class CredentialStore {
       try {
         const encrypted = await keytarModule.getPassword(SERVICE_NAME, accountName);
         if (encrypted) {
-          return JSON.parse(this.decrypt(encrypted));
+          return JSON.parse(decryptWithKey(encrypted, this.encryptionKey));
         }
       } catch {
         // Fall through to file storage
@@ -440,7 +395,7 @@ export class CredentialStore {
     try {
       const encrypted = await this.retrieveFromFile(filePath);
       if (encrypted) {
-        return JSON.parse(this.decrypt(encrypted));
+        return JSON.parse(decryptWithKey(encrypted, this.encryptionKey));
       }
     } catch {
       // Unable to decrypt file storage
@@ -472,13 +427,13 @@ export class CredentialStore {
    * @param baseUrl - Optional base URL for per-URL storage
    */
   async storeJWTCredentials(credentials: JWTCredentials, baseUrl?: string): Promise<void> {
-    const encrypted = this.encrypt(JSON.stringify(credentials));
+    const encrypted = encryptWithKey(JSON.stringify(credentials), this.encryptionKey);
 
     // Determine storage key based on whether baseUrl is provided
     // Use jwt- prefix to avoid collision with SSO credentials
-    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const accountName = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
     const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      ? path.join(CREDENTIALS_DIR, `jwt-${deriveUrlStorageKey(baseUrl)}.enc`)
       : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
 
     // Store to keychain if available (best effort, don't fail if it errors)
@@ -502,9 +457,9 @@ export class CredentialStore {
    */
   async retrieveJWTCredentials(baseUrl?: string): Promise<JWTCredentials | null> {
     // Determine storage key based on whether baseUrl is provided
-    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const accountName = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
     const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      ? path.join(CREDENTIALS_DIR, `jwt-${deriveUrlStorageKey(baseUrl)}.enc`)
       : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
 
     // Try keychain first if available
@@ -513,7 +468,7 @@ export class CredentialStore {
       try {
         const encrypted = await keytarModule.getPassword(SERVICE_NAME, accountName);
         if (encrypted) {
-          const decrypted = this.decrypt(encrypted);
+          const decrypted = decryptWithKey(encrypted, this.encryptionKey);
           const credentials = JSON.parse(decrypted) as JWTCredentials;
 
           // Check token expiration
@@ -532,7 +487,7 @@ export class CredentialStore {
     try {
       const encrypted = await this.retrieveFromFile(filePath);
       if (encrypted) {
-        const decrypted = this.decrypt(encrypted);
+        const decrypted = decryptWithKey(encrypted, this.encryptionKey);
         const credentials = JSON.parse(decrypted) as JWTCredentials;
 
         // Check token expiration
@@ -555,9 +510,9 @@ export class CredentialStore {
    */
   async clearJWTCredentials(baseUrl?: string): Promise<void> {
     // Determine storage key based on whether baseUrl is provided
-    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const accountName = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
     const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      ? path.join(CREDENTIALS_DIR, `jwt-${deriveUrlStorageKey(baseUrl)}.enc`)
       : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
 
     // Clear keychain if available
@@ -576,45 +531,6 @@ export class CredentialStore {
     } catch {
       // Ignore file not found errors
     }
-  }
-
-  private encrypt(text: string): string {
-    const iv = crypto.randomBytes(12);
-    const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    const authTag = cipher.getAuthTag();
-    return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
-  }
-
-  private decrypt(text: string): string {
-    const parts = text.split(':');
-    const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
-
-    if (parts.length === 3) {
-      // GCM format: iv:authTag:encrypted
-      const iv = Buffer.from(parts[0], 'hex');
-      const authTag = Buffer.from(parts[1], 'hex');
-      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-      decipher.setAuthTag(authTag);
-      let decrypted = decipher.update(parts[2], 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      return decrypted;
-    }
-
-    // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
-    const iv = Buffer.from(parts[0], 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-    let decrypted = decipher.update(parts[1], 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  }
-
-  private getOrCreateEncryptionKey(): string {
-    // Use machine-specific key based on hardware info
-    const machineId = os.hostname() + os.platform() + os.arch();
-    return crypto.createHash('sha256').update(machineId).digest('hex');
   }
 
   private async storeToFile(encrypted: string, filePath: string): Promise<void> {

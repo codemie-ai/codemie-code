@@ -46,11 +46,20 @@ describe('statusline-installer', () => {
     vi.restoreAllMocks();
   });
 
+  // Path-aware rather than call-ordered. installStatusline reads several files (the statusline
+  // source, the deployed rate card, settings.json); queueing mockResolvedValueOnce by call index
+  // silently feeds the wrong content to the wrong read as soon as that set changes.
+  const mockReads = ({ settings }: { settings: string }) =>
+    vi.mocked(fsp.readFile).mockImplementation((async (filePath: string) => {
+      const p = String(filePath);
+      if (p.endsWith('settings.json')) return settings;
+      if (p.endsWith('pricing.json')) return '{}';
+      return '#!/usr/bin/env node\n// statusline';
+    }) as never);
+
   describe('installStatusline', () => {
-    it('deploys the script and reports alreadyConfigured=false when settings.json has no statusLine yet', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('#!/usr/bin/env node\n// statusline' as any) // script source
-        .mockResolvedValueOnce(JSON.stringify({ theme: 'dark' }) as any);   // settings.json
+    it('deploys the bundled script and reports alreadyConfigured=false when settings.json has no statusLine yet', async () => {
+      mockReads({ settings: JSON.stringify({ theme: 'dark' }) });
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -61,17 +70,23 @@ describe('statusline-installer', () => {
       expect(result.alreadyConfigured).toBe(false);
       expect(result.scriptPath).toBe(SCRIPT_PATH);
 
+      expect(fsp.readFile).toHaveBeenCalledWith(
+        expect.stringContaining('statusline.bundle.mjs'),
+        'utf-8'
+      );
+
+      const scriptWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === SCRIPT_PATH);
+      expect(scriptWrite).toBeDefined();
+
       const settingsWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === SETTINGS_PATH);
       expect(settingsWrite).toBeDefined();
       const written = JSON.parse(settingsWrite![1] as string);
       expect(written.statusLine.type).toBe('command');
-      expect(written.statusLine.refreshInterval).toBe(60);
+      expect(written.statusLine.refreshInterval).toBe(3);
     });
 
     it('reports alreadyConfigured=true (and still refreshes settings) when statusLine already exists', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('// script' as any)
-        .mockResolvedValueOnce(JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) as any);
+      mockReads({ settings: JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) });
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -96,9 +111,7 @@ describe('statusline-installer', () => {
     });
 
     it('throws ConfigurationError and does not overwrite malformed settings.json', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('// script' as any)
-        .mockResolvedValueOnce('{ bad json' as any);
+      mockReads({ settings: '{ bad json' });
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -121,6 +134,8 @@ describe('statusline-installer', () => {
       await uninstallStatusline();
 
       expect(fsp.rm).toHaveBeenCalledWith(SCRIPT_PATH);
+      expect(fsp.rm).not.toHaveBeenCalledWith(expect.stringContaining('routing-headers.mjs'));
+      expect(fsp.rm).not.toHaveBeenCalledWith(expect.stringContaining('bedrock-pricing.mjs'));
       const written = JSON.parse(vi.mocked(fsp.writeFile).mock.calls[0][1] as string);
       expect(written.statusLine).toBeUndefined();
       expect(written.theme).toBe('dark');

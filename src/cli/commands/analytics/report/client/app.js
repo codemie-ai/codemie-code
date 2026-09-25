@@ -41,7 +41,7 @@
     return '$' + Math.round(n).toLocaleString('en-US');
   }
   function fmtExactUSD(n) {
-    return Number.isFinite(n) ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 }) : '—';
+    return Number.isFinite(n) ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
   }
   function costSourceLabel(s) {
     return s.costSource === 'authoritative' ? 'reported by source' : s.costSource === 'native-estimate' ? 'API-equivalent estimate' : 'source not recorded';
@@ -61,8 +61,8 @@
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function shortPath(p) { var parts = String(p || '').split('/'); return parts[parts.length - 1] || p; }
-  // Human-readable session label: the cleaned first-prompt title, falling back to a short id.
-  function sessTitle(s) { return (s && s.title && s.title.trim()) ? s.title.trim() : ('#' + String((s && s.sessionId) || '').slice(0, 8)); }
+  // Human-readable session label: AI-generated name when available, else cleaned first-prompt title, else short id.
+  function sessTitle(s) { var t = (s && s.title && s.title.trim()) ? s.title.trim() : ''; if (t && t.charAt(0) === '/') { var m = t.match(/^\/\S+\s+([\s\S]+)/); if (m) t = m[1].trim(); } return t || ('#' + String((s && s.sessionId) || '').slice(0, 8)); }
   function truncStr(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
   // First n whitespace-delimited words (the "starting message" preview), '…' when truncated.
   function firstWords(s, n) { s = String(s == null ? '' : s).trim(); var w = s.split(/\s+/); return w.length > n ? w.slice(0, n).join(' ') + '…' : s; }
@@ -829,6 +829,144 @@
     });
     host.appendChild(grid);
 
+    // Routing KPI section — only shown when at least one session has routing. routingCostKnown
+    // is set (true OR false) whenever a session had at least one routed turn — see
+    // cost-enricher.ts's `routedTurns > 0` guard — so `!= null` alone identifies "was routed",
+    // independent of whether a classifier cost was actually incurred (heuristic-only Switchyard
+    // decisions report zero classifier cost but are still routing). routingCostKnown === false
+    // just means no classifier ran for one of the session's routed turns — not a measurement
+    // gap — so it is never surfaced as "unmeasured" here.
+    var routedSessions = fs.filter(function (s) { return s.classifierCostUSD != null || s.routingCostKnown != null; });
+    if (routedSessions.length > 0) {
+      host.appendChild(el('h3', 'section-title', 'Routing'));
+      var rsGrid = el('div', 'kpi-grid'); rsGrid.style.gridTemplateColumns = 'repeat(2,1fr)';
+      var measuredSessions = routedSessions.filter(function (s) { return s.classifierCostUSD != null && s.classifierCostUSD > 0; });
+      var totalClassifierCost = sum(measuredSessions, function (s) { return s.classifierCostUSD || 0; });
+      [
+        ['Sessions with routing', fmtNum(routedSessions.length) + ' / ' + fmtNum(fs.length)],
+        ['Classifier routing cost', fmtUSD(totalClassifierCost)]
+      ].forEach(function (k) {
+        var c = el('div', 'kpi'); c.innerHTML = '<div class="kpi-label">' + k[0] + '</div><div class="kpi-value">' + k[1] + '</div>'; rsGrid.appendChild(c);
+      });
+      host.appendChild(rsGrid);
+
+      // Flatten every routed turn (routingFamily set) across sessions in view. estimatedMaxCostUSD/
+      // potentialSavingsUSD are computed at report time (cost-enricher.ts) by repricing the
+      // turn's own usage at the backend's counterfactualModel rate (from
+      // x-codemie-routing-counterfactual-model). Absent (not zero) on a turn whose backend didn't
+      // report a counterfactual, or whose counterfactual model has no rate-card entry — so
+      // savings for those stay unknown rather than wrong.
+      var routedTurns = [];
+      fs.forEach(function (s) { (s.modelTimeline || []).forEach(function (p) { if (p.routingFamily != null) routedTurns.push(p); }); });
+
+      if (routedTurns.length > 0) {
+        var knownSavingsTurns = routedTurns.filter(function (p) { return p.estimatedMaxCostUSD != null; });
+        var unknownSavingsCount = routedTurns.length - knownSavingsTurns.length;
+        var actualRoutedCost = sum(routedTurns, function (p) { return p.costUSD || 0; });
+        var estimatedNoRoutingCost = sum(knownSavingsTurns, function (p) { return p.estimatedMaxCostUSD; });
+        var potentialSavings = sum(knownSavingsTurns, function (p) { return p.potentialSavingsUSD || 0; });
+        var savingsNote = unknownSavingsCount ? (fmtNum(unknownSavingsCount) + ' turn' + (unknownSavingsCount === 1 ? '' : 's') + ' not estimable') : (fmtNum(knownSavingsTurns.length) + ' turns estimated');
+
+        var svGrid = el('div', 'kpi-grid'); svGrid.style.gridTemplateColumns = 'repeat(3,1fr)';
+        [
+          ['Actual routed cost', fmtUSD(actualRoutedCost), fmtNum(routedTurns.length) + ' routed turns'],
+          ['Est. cost without routing', knownSavingsTurns.length ? fmtUSD(estimatedNoRoutingCost) : '—', savingsNote],
+          ['Estimated savings', knownSavingsTurns.length ? fmtUSD(potentialSavings) : '—', 'self-computed, not reported by proxy']
+        ].forEach(function (k) {
+          var c = el('div', 'kpi'); c.appendChild(el('div', 'kpi-label', k[0])); c.appendChild(el('div', 'kpi-value', k[1])); if (k[2]) c.appendChild(el('div', 'kpi-sub', k[2])); svGrid.appendChild(c);
+        });
+        host.appendChild(svGrid);
+
+        // Canonical tier vocabulary first (routing-headers.mjs), then any unrecognized value.
+        var TIER_ORDER = ['simple', 'middle', 'complex', 'reasoning'];
+        var TIER_COLORS = { simple: '#259F4C', middle: '#2297F6', complex: '#F5A534', reasoning: '#C084FC' };
+        function tierKey(p) { return p.routingTier || 'other'; }
+        // requestedAlias: the exact literal model/router alias active for this specific turn
+        // (cost-enricher.ts resolves it from Claude Code's own model-identity markers, correct
+        // turn-by-turn even across an in-session /model switch). Falls back to the header's
+        // coarser capable-tier ceiling (requestedModel) when this agent's log has no such marker.
+        function routerLabel(p) { return p.requestedAlias || p.requestedModel || 'unknown'; }
+        function tierLabel(t) { t = String(t || 'other'); return t.charAt(0).toUpperCase() + t.slice(1); }
+        function tierSort(a, b) {
+          var ia = TIER_ORDER.indexOf(a), ib = TIER_ORDER.indexOf(b);
+          if (ia === -1 && ib === -1) return a.localeCompare(b);
+          if (ia === -1) return 1;
+          if (ib === -1) return -1;
+          return ia - ib;
+        }
+
+        var routingRow = el('div', 'grid-2 mb16');
+        var routersCard = card('Routers', 'router/tier alias actually addressed, by request count');
+        var byRouter = groupBy(routedTurns, routerLabel);
+        var routerLabels = Array.from(byRouter.keys());
+        makeChart(canvasIn(routersCard._body), {
+          type: 'doughnut',
+          data: { labels: routerLabels, datasets: [{ data: routerLabels.map(function (k) { return byRouter.get(k).length; }), backgroundColor: routerLabels.map(function (_, i) { return PALETTE[i % PALETTE.length]; }), borderWidth: 0 }] },
+          options: { cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10 } }, tooltip: { callbacks: { label: function (c) { return c.label + ': ' + fmtNum(c.parsed) + ' requests'; } } } } }
+        });
+        routingRow.appendChild(routersCard);
+
+        var activityCard = card('Routing Activity', 'routed requests per day, stacked by tier');
+        // Cross-session day-bucketing needs a real epoch; per-session turn ordinals (used when
+        // a session's own timestamps are unavailable) don't align across sessions.
+        var timedRoutedTurns = routedTurns.filter(function (p) { return p.t > 1e11; });
+        if (timedRoutedTurns.length > 0) {
+          var byDay = new Map();
+          timedRoutedTurns.forEach(function (p) {
+            var k = dayKey(p.t), tier = tierKey(p);
+            if (!byDay.has(k)) byDay.set(k, {});
+            var o = byDay.get(k); o[tier] = (o[tier] || 0) + 1;
+          });
+          var actDays = Array.from(byDay.keys()).sort();
+          var actTiers = Array.from(new Set(timedRoutedTurns.map(tierKey))).sort(tierSort);
+          var actDatasets = actTiers.map(function (tier, i) {
+            return { label: tierLabel(tier), data: actDays.map(function (d) { return (byDay.get(d) || {})[tier] || 0; }), backgroundColor: TIER_COLORS[tier] || PALETTE[i % PALETTE.length] };
+          });
+          makeChart(canvasIn(activityCard._body), {
+            type: 'bar', data: { labels: actDays, datasets: actDatasets },
+            options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10 } }, tooltip: { callbacks: { label: function (c) { return ' ' + c.dataset.label + ': ' + fmtNum(c.parsed.y); } } } }, scales: { x: { stacked: true, grid: { display: false }, ticks: { maxTicksLimit: 8 } }, y: { stacked: true, grid: { color: GRID }, ticks: { callback: function (v) { return fmtNum(v); } } } } }
+          });
+        } else { activityCard._body.appendChild(el('div', 'empty', 'No timestamped routed turns in view.')); }
+        routingRow.appendChild(activityCard);
+        host.appendChild(routingRow);
+
+        var pathsCard = card('Routing Paths', 'requested alias → routed model, with request volume and cost');
+        function pathKey(p) { return routerLabel(p) + '::' + (p.routedModel || p.model || '—') + '::' + tierKey(p); }
+        var byPath = groupBy(routedTurns, pathKey);
+        var pathRows = Array.from(byPath.values()).map(function (turns) {
+          var first = turns[0];
+          var known = turns.filter(function (p) { return p.estimatedMaxCostUSD != null; });
+          return {
+            router: routerLabel(first),
+            routedModel: first.routedModel || first.model || '—',
+            tier: tierLabel(tierKey(first)),
+            count: turns.length,
+            actual: sum(turns, function (p) { return p.costUSD || 0; }),
+            estMax: known.length ? sum(known, function (p) { return p.estimatedMaxCostUSD; }) : null,
+            savings: known.length ? sum(known, function (p) { return p.potentialSavingsUSD || 0; }) : null,
+            unknown: turns.length - known.length
+          };
+        }).sort(function (a, b) { return b.count - a.count; });
+        pathsCard._body.style.paddingTop = '0';
+        pathsCard._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
+          ['Router', 'Routed model', 'Tier', 'Requests', 'Actual cost', 'Est. cost (no routing)', 'Savings'],
+          pathRows.map(function (r) {
+            return [
+              '<span class="tag tag-sm">' + esc(r.router) + '</span>',
+              esc(r.routedModel),
+              esc(r.tier),
+              fmtNum(r.count),
+              fmtUSD(r.actual),
+              r.estMax == null ? '—' + (r.unknown ? ' (' + fmtNum(r.unknown) + ' unknown)' : '') : fmtUSD(r.estMax),
+              r.savings == null ? '—' : fmtUSD(r.savings)
+            ];
+          }),
+          [false, false, false, true, true, true, true]
+        ) + '</div>';
+        host.appendChild(pathsCard);
+      }
+    }
+
     // per-agent coverage — answers "which tools' metrics are included?"
     var cov = DATA.meta.coverage || [];
     if (cov.length) {
@@ -875,14 +1013,15 @@
     var top = fs.slice().sort(function (a, b) { return b.costUSD - a.costUSD; }).slice(0, 10);
     topCard._body.style.paddingTop = '0';
     topCard._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
-      ['Session', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
+      ['Session', 'Name', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
       top.map(function (s) {
         return [esc(s.sessionId.slice(0, 8)),
+          esc(sessTitle(s)),
           '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>',
           fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtTokens(s.tokens ? s.tokens.total : 0), fmtUSD(s.costUSD)];
       }),
-      [false, false, false, true, true, true, true, true]) + '</div>';
+      [false, false, false, false, true, true, true, true, true]) + '</div>';
     host.appendChild(topCard);
   };
 
@@ -909,18 +1048,19 @@
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
-        ['Date', 'Prompt', 'Agent', 'Project', 'Branch', 'Source', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
+        ['Date', 'Name / Prompt', 'Agent', 'Project', 'Branch', 'Source', 'Turns', 'Routed %', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
         shown.map(function (s) {
           var branchCell = s.branch ? '<span title="' + esc(s.branch) + '" style="max-width:90px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">' + esc(s.branch) + '</span>' : '—';
-          var promptCell = '<span title="' + esc(s.title || '') + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(s.title || '—', 80)) + '</span>';
+          var sessionLabel = s.title || '';
+          var promptCell = '<span title="' + esc(sessionLabel) + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(sessionLabel || '—', 80)) + '</span>';
           var sourceCell = '<span class="tag tag-sm">' + esc(s.sessionSource || 'Pure chat') + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
             '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
-            fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
+            fmtNum(s.turns), s.routedTurnsPct != null ? s.routedTurnsPct + '%' : '—', fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
-        [false, false, false, false, false, false, true, true, true, true, true, true],
+        [false, false, false, false, false, false, true, true, true, true, true, true, true],
         shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
       if (list.length > 300) holder.appendChild(el('p', 'text-muted', '<span style="font-size:12px">Showing first 300 of ' + list.length + '.</span>'));
     }
@@ -1393,6 +1533,12 @@
       ['Duration', fmtTimelineDuration(s.durationMs || 0), fmtNum(s.durationMs) + ' ms'],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
     ];
+    // routingCostKnown === false with no classifierCostUSD just means no classifier ran for
+    // one of this session's routed turns (e.g. a heuristic-only decision) — not a measurement
+    // gap, so it gets no row of its own here.
+    if (s.classifierCostUSD != null) {
+      costRows.push(['Routing (classifier)', s.classifierCostUSD > 0 ? fmtUSD(s.classifierCostUSD) : '—', 'included in cost']);
+    }
     if (s.premiumRequests !== undefined) {
       costRows.push(['Premium requests', fmtNum(s.premiumRequests), 'provider billing unit']);
     }
@@ -1403,11 +1549,12 @@
     } else if (s.usagePartial) {
       costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — output tokens only; this session recorded no full rollup, so cost is understated.</span>'));
     }
-    var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
+    var tokRows = [
       ['Input', fmtTokens(t.input), ''], ['Output', fmtTokens(t.output), ''],
       ['Cache read', fmtTokens(t.cacheRead), ''], ['Cache create', fmtTokens(t.cacheCreation), ''],
       ['Total', fmtTokens(t.total), '']
-    ]));
+    ];
+    var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl(tokRows));
     var actCard = card('Activity'); actCard._body.appendChild(statsEl([
       ['Turns / API', fmtNum(s.turns), ''],
       ['Tool calls', fmtNum(s.toolCallsTotal), (s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 100) + '% ok' : '')],
@@ -1471,7 +1618,103 @@
     }
     body.appendChild(growth);
 
-    // Timeline — every recorded invocation with exact parent/owner links when available.
+    // Model routing tier chart — bar height = tier level; everything else the turn carries
+    // (requested/routed/classifier model, router type/score, decision cause, escalation) shows
+    // in the tooltip only, since none of it is dense enough per turn to warrant its own series.
+    var timeline = s.modelTimeline || [];
+    var tlHasRouting = timeline.some(function (p) { return p.routingTier != null; });
+    if (timeline.length >= 2 && tlHasRouting && window.Chart) {
+      var tierCounts = timeline.reduce(function (acc, p) {
+        if (p.routingTier === 'simple' || p.routingTier === 'middle' || p.routingTier === 'complex' || p.routingTier === 'reasoning') {
+          acc.total++;
+          if (p.routingTier === 'simple' || p.routingTier === 'middle') acc.simpleOrMiddle++;
+        }
+        return acc;
+      }, { total: 0, simpleOrMiddle: 0 });
+      var tierSubtitle = '';
+      if (tierCounts.total > 0) {
+        var simplePct = Math.round((tierCounts.simpleOrMiddle / tierCounts.total) * 100);
+        tierSubtitle = simplePct + '% simple/middle · ' + (100 - simplePct) + '% complex/reasoning';
+      }
+      var tlCard = card('Routing', tierSubtitle);
+
+      var TIER_LEVELS = {
+        'simple': 1,
+        'middle': 2,
+        'complex': 3,
+        'reasoning': 4
+      };
+      var TIER_LABELS = {
+        1: 'simple',
+        2: 'middle',
+        3: 'complex',
+        4: 'reasoning'
+      };
+      function tierLevel(p) { return TIER_LEVELS[p.routingTier] || 0; }
+      function tierName(p) { return p.routingTier || 'unknown'; }
+
+      var useEpoch = timeline[0].t > 1e12;
+      var t0tl = timeline[0].t;
+      var tlLabels = timeline.map(function (p, i) { return useEpoch ? fmtDuration(Math.max(0, p.t - t0tl)) : ('turn ' + (i + 1)); });
+      var tlCv = canvasIn(tlCard._body, 180);
+      var tierData = timeline.map(function (p) { return tierLevel(p); });
+      // Color each bar by routingFamily:routingSource — whatever values the backend reports,
+      // without enumerating them here: same hash-into-PALETTE scheme used for dispatch
+      // kind/name above. Composite key so two families' same-named source (e.g. both reporting
+      // 'judge') don't collide onto one color.
+      function routingSourceColor(p) { return PALETTE[hashStr((p.routingFamily || 'unknown') + ':' + (p.routingSource || 'unknown')) % PALETTE.length]; }
+      var tierColors = timeline.map(routingSourceColor);
+
+      makeModalChart(tlCv, {
+        type: 'bar',
+        data: { labels: tlLabels, datasets: [{
+          data: tierData,
+          backgroundColor: tierColors,
+          borderRadius: 2,
+          barPercentage: 0.72,
+          categoryPercentage: 1.0,
+        }] },
+        options: {
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: function () { return ''; },
+                label: function (item) {
+                  var p = timeline[item.dataIndex];
+                  var lines = [p.model, 'tier:        ' + tierName(p)];
+                  if (p.requestedModel) lines.push('requested:   ' + p.requestedModel);
+                  if (p.routedModel) lines.push('routed to:   ' + p.routedModel);
+                  if (p.classifierModel) lines.push('classifier:  ' + p.classifierModel);
+                  if (p.routerType) lines.push('router type: ' + p.routerType);
+                  if (p.routingSource) lines.push('source:      ' + p.routingSource);
+                  if (p.decisionSource) lines.push('cause:       ' + p.decisionSource);
+                  if (p.routingFamily) lines.push('family:      ' + p.routingFamily);
+                  if (p.counterfactualModel) lines.push('counterfactual: ' + p.counterfactualModel);
+                  if (p.potentialSavingsUSD != null) lines.push('savings:     ' + fmtUSD(p.potentialSavingsUSD));
+                  return lines;
+                }
+              }
+            }
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+            y: {
+              min: 0, max: 4,
+              ticks: {
+                stepSize: 1,
+                callback: function (v) { return TIER_LABELS[v] || ''; }
+              },
+              grid: { color: GRID }
+            }
+          }
+        }
+      });
+
+      body.appendChild(tlCard);
+    }
+
+    // Timeline — Gantt of all top-level agent, skill, and command dispatches.
     var hasDispatches = (s.dispatches || []).length > 0;
     var tlSubtitle = hasDispatches ? 'select any step for ancestry, total and orchestration usage, and timing evidence' : '';
     var tlCard = card('Timeline', tlSubtitle);

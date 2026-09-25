@@ -93,7 +93,7 @@ function detectLimits(id: string, family: string): { context: number; output: nu
  *   e.g. 0.000003 $/token → 3.0 $/M tokens
  */
 export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelConfig {
-  const id = model.deployment_name;
+  const id = model.deployment_name || model.base_name;
   const family = detectFamily(id);
   const limit = detectLimits(id, family);
   const responsesApi = isResponsesApiModel(id);
