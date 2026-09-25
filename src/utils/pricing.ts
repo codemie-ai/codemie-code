@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { getDirname } from './paths.js';
 import { normalizeModelName } from './model-normalizer.js';
 import { logger } from './logger.js';
+import { applyBedrockRegionalPremium } from './bedrock-pricing.mjs';
 
 /** USD per 1,000,000 tokens. */
 export interface ModelPrice {
@@ -19,6 +20,14 @@ export interface ModelPrice {
   cacheRead: number;
   cacheCreation: number;
   cacheWrite1h?: number;
+  /**
+   * Amazon Bedrock's premium for a regional/multi-region endpoint over this model's global one
+   * — present only on rows where Anthropic documents the two-endpoint-type Bedrock pricing
+   * structure (Sonnet 4.5+, Haiku 4.5+, Opus 4.5+ and their dated snapshots). Absent (no premium)
+   * on every older row, since Anthropic does not document this structure applying there. See
+   * isBedrockRegionalPremium()'s own doc comment (bedrock-pricing.mjs) for the source.
+   */
+  bedrockRegionalMultiplier?: number;
 }
 
 interface RawPrice {
@@ -27,7 +36,22 @@ interface RawPrice {
   cacheRead?: number;
   cacheWrite?: number;
   cacheWrite1h?: number;
+  bedrockRegionalMultiplier?: number;
 }
+
+/**
+ * CodeMie-specific ids the vendored table will never carry. Merged over the vendored rows
+ * in {@link table}, so re-copying `pricing.json` from agentlytics does not silently drop them.
+ *
+ * `claude-smart-router` is a Switchyard routing alias, not a generation model. The alias bills
+ * only the Haiku classifier hop that picks a target; the generation itself is billed against the
+ * model the router dispatched to, which arrives in the response body's own `model` field and is
+ * priced from its own row. Haiku rates therefore price what this id actually costs — without a
+ * row at all, `lookupPrice` returns null and the turn drops out of every cost total.
+ */
+const CODEMIE_PRICES: Record<string, RawPrice> = {
+  'claude-smart-router': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
+};
 
 const HERE = getDirname(import.meta.url);
 
@@ -39,7 +63,7 @@ function table(): Record<string, ModelPrice> {
   }
   const raw = JSON.parse(readFileSync(join(HERE, 'pricing.json'), 'utf-8')) as Record<string, RawPrice>;
   const built: Record<string, ModelPrice> = {};
-  for (const [key, p] of Object.entries(raw)) {
+  for (const [key, p] of Object.entries({ ...raw, ...CODEMIE_PRICES })) {
     if (key.startsWith('_')) {
       continue; // skip _meta and similar
     }
@@ -49,6 +73,7 @@ function table(): Record<string, ModelPrice> {
       cacheRead: p.cacheRead ?? 0,
       cacheCreation: p.cacheWrite ?? 0,
       cacheWrite1h: p.cacheWrite1h,
+      bedrockRegionalMultiplier: p.bedrockRegionalMultiplier,
     };
   }
   TABLE = built;
@@ -142,12 +167,27 @@ function claudeTierFallback(normalized: string, prices: Record<string, ModelPric
 }
 
 /**
+ * The fully built rate card: the vendored table with {@link CODEMIE_PRICES} merged over it and every
+ * key lowercased. Exported so consumers that cannot import this module — the standalone Claude
+ * statusline, which runs as a detached `node <path>` process — can be handed the same rates rather
+ * than a copy of the raw `pricing.json`, which carries none of the CodeMie-only rows.
+ */
+export function priceTable(): Record<string, ModelPrice> {
+  return table();
+}
+
+/**
  * Look up pricing for a model. Returns null when no entry matches (the caller marks the model
  * `unpriced` — never a silent $0). Resolution order:
  *   1. Exact (normalized) match — authoritative.
  *   2. Longest key aligned to a segment boundary — a deliberate family fallback, logged as inexact.
  *   3. Latest same-tier Claude price — for a model newer than every table entry, logged as inexact.
  * Dots are folded to dashes first because the table keys use dashes (e.g. `gpt-4-1`, not `gpt-4.1`).
+ *
+ * `model` is also checked, in its original unnormalized form, for a Bedrock region qualifier
+ * (see {@link applyBedrockRegionalPremium}) — pass the raw backend id straight through rather
+ * than pre-normalizing it, or the premium this exists to detect is invisible by the time it gets
+ * here.
  */
 export function lookupPrice(model: string): ModelPrice | null {
   const normalized = normalizeModelName(model).toLowerCase().replace(/\./g, '-');
@@ -155,7 +195,7 @@ export function lookupPrice(model: string): ModelPrice | null {
 
   const exact = prices[normalized];
   if (exact) {
-    return exact;
+    return applyBedrockRegionalPremium(exact, model);
   }
 
   let best: { key: string; price: ModelPrice } | null = null;
@@ -166,13 +206,13 @@ export function lookupPrice(model: string): ModelPrice | null {
   }
   if (best) {
     logger.debug(`[pricing] no exact entry for "${normalized}"; using family price "${best.key}"`);
-    return best.price;
+    return applyBedrockRegionalPremium(best.price, model);
   }
 
   const tierFallback = claudeTierFallback(normalized, prices);
   if (tierFallback) {
     logger.debug(`[pricing] no entry for "${normalized}"; using latest same-tier price "${tierFallback.key}"`);
-    return tierFallback.price;
+    return applyBedrockRegionalPremium(tierFallback.price, model);
   }
 
   return null;

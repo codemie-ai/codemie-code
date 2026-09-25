@@ -17,7 +17,12 @@ const copyConfigs = [
   {
     name: 'Claude plugin',
     src: join(rootDir, 'src/agents/plugins/claude/plugin'),
-    dest: join(rootDir, 'dist/agents/plugins/claude/plugin')
+    dest: join(rootDir, 'dist/agents/plugins/claude/plugin'),
+    // statusline.ts lives in this tree as normal TS source; tsc compiles it and
+    // scripts/bundle-statusline.mjs bundles it separately, both under dist/. Exclude .ts here so
+    // this wholesale asset copy doesn't also duplicate the raw source (and its __tests__ file)
+    // into the published package.
+    filter: (src) => !src.endsWith('.ts')
   },
   {
     name: 'Gemini extension',
@@ -63,6 +68,18 @@ const fileConfigs = [
     name: 'Model pricing table',
     src: join(rootDir, 'src/utils/pricing.json'),
     dest: join(rootDir, 'dist/utils/pricing.json')
+  },
+  {
+    // Plain JS, zero project imports — deployed as-is beside any agent's statusline (see
+    // statusline-installer.ts) as well as imported normally by pricing.ts/usage-readers.ts.
+    name: 'Routing headers domain module',
+    src: join(rootDir, 'src/utils/routing-headers.mjs'),
+    dest: join(rootDir, 'dist/utils/routing-headers.mjs')
+  },
+  {
+    name: 'Bedrock pricing domain module',
+    src: join(rootDir, 'src/utils/bedrock-pricing.mjs'),
+    dest: join(rootDir, 'dist/utils/bedrock-pricing.mjs')
   }
 ];
 
@@ -89,7 +106,7 @@ for (const config of copyConfigs) {
 
   // Copy recursively
   console.log(`  - Copying from ${config.src}`);
-  cpSync(config.src, config.dest, { recursive: true });
+  cpSync(config.src, config.dest, { recursive: true, ...(config.filter ? { filter: config.filter } : {}) });
 
   console.log(`  ✓ ${config.name} copied successfully\n`);
 }

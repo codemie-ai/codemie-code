@@ -88,7 +88,7 @@ describe('lookupPrice', () => {
     'converse/global.anthropic.claude-sonnet-5-v1:0',
   ])('uses the verified five Sonnet 5 token rates for %s', (model) => {
     expect(lookupPrice(model)).toEqual({
-      input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, cacheWrite1h: 4,
+      input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, cacheWrite1h: 4, bedrockRegionalMultiplier: 1.1,
     });
   });
 
@@ -98,7 +98,7 @@ describe('lookupPrice', () => {
     'converse/global.anthropic.claude-opus-5-v1:0',
   ])('uses the verified five Opus 5 token rates for %s', (model) => {
     expect(lookupPrice(model)).toEqual({
-      input: 5, output: 25, cacheRead: 0.5, cacheCreation: 6.25, cacheWrite1h: 10,
+      input: 5, output: 25, cacheRead: 0.5, cacheCreation: 6.25, cacheWrite1h: 10, bedrockRegionalMultiplier: 1.1,
     });
   });
 

@@ -8,29 +8,40 @@ import type { ModelInfo } from '../../providers/core/types.js';
 const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
 
 function formatTable(models: ModelInfo[]): void {
-  const ID_WIDTH = 40;
+  // Router aliases (Switchyard virtual routers, LiteLLM auto-router declarations) are
+  // free-form custom names and routinely run longer than any concrete deployment id
+  // (e.g. a custom Switchyard variant name) — wide enough not to silently truncate those.
+  const ID_WIDTH = 55;
   const NAME_WIDTH = 35;
   const ORIGIN_WIDTH = 10;
+  const TYPE_WIDTH = 9;
   const DESC_WIDTH = 60;
 
   // Only providers that tag model origin (e.g. ollama local/cloud) get the column
   const showOrigin = models.some(m => typeof m.metadata?.origin === 'string');
+  // Only shown when the catalog actually has router entries — see fetchModelsFromAPI's
+  // metadata.isRouter (Switchyard virtual routers and LiteLLM auto-router declarations alike).
+  const showType = models.some(m => m.metadata?.isRouter === true);
 
   const header =
     chalk.bold(padEnd('ID', ID_WIDTH)) +
     chalk.bold(padEnd('NAME', NAME_WIDTH)) +
     (showOrigin ? chalk.bold(padEnd('ORIGIN', ORIGIN_WIDTH)) : '') +
+    (showType ? chalk.bold(padEnd('TYPE', TYPE_WIDTH)) : '') +
     chalk.bold('DESCRIPTION');
 
   console.log(header);
-  console.log(chalk.dim('─'.repeat(ID_WIDTH + NAME_WIDTH + (showOrigin ? ORIGIN_WIDTH : 0) + DESC_WIDTH)));
+  console.log(chalk.dim('─'.repeat(
+    ID_WIDTH + NAME_WIDTH + (showOrigin ? ORIGIN_WIDTH : 0) + (showType ? TYPE_WIDTH : 0) + DESC_WIDTH
+  )));
 
   for (const model of models) {
     const id = padEnd(model.id, ID_WIDTH);
     const name = padEnd(model.name || model.id, NAME_WIDTH);
     const desc = truncate(model.description ?? '', DESC_WIDTH);
     const origin = showOrigin ? formatOrigin(model.metadata?.origin, ORIGIN_WIDTH) : '';
-    console.log(chalk.cyan(id) + chalk.white(name) + origin + chalk.dim(desc));
+    const type = showType ? formatType(model.metadata?.isRouter, TYPE_WIDTH) : '';
+    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + chalk.dim(desc));
   }
 }
 
@@ -38,6 +49,11 @@ function formatOrigin(origin: unknown, width: number): string {
   const value = typeof origin === 'string' ? origin : '';
   const padded = padEnd(value, width);
   return value === 'cloud' ? chalk.yellow(padded) : chalk.green(padded);
+}
+
+function formatType(isRouter: unknown, width: number): string {
+  const padded = padEnd(isRouter === true ? 'router' : 'model', width);
+  return isRouter === true ? chalk.magenta(padded) : chalk.dim(padded);
 }
 
 function padEnd(str: string, width: number): string {

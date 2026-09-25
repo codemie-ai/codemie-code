@@ -12,6 +12,10 @@ import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+// Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
+// statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
+import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
+import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
 
 /** model -> usage */
 type UsageMap = Map<string, TokenUsage>;
@@ -49,7 +53,7 @@ function allMessageArrays(parsed: ParsedSession): unknown[][] {
 interface ClaudeRawMessage {
   requestId?: string;
   timestamp?: string; // top-level ISO timestamp on the native JSONL line
-  message?: {
+  message?: RoutingHeaderSource & {
     id?: string;
     model?: string;
     usage?: {
@@ -65,8 +69,13 @@ interface ClaudeRawMessage {
   };
 }
 
-/** One assistant API response's usage, plus a dedup key for cross-session de-duplication. */
-export interface UsageRecord {
+/**
+ * One assistant API response's usage, plus a dedup key for cross-session de-duplication.
+ * Routing fields (see {@link RoutingDecision}) are parsed once by {@link parseRoutingHeaders}
+ * and merged in — this interface adds only the per-message concerns routing parsing knows
+ * nothing about.
+ */
+export interface UsageRecord extends RoutingDecision {
   /** `${message.id}::${requestId}` — null when neither is present (cannot dedupe ⇒ always counted). */
   key: string | null;
   /** Message epoch ms (for per-turn series); null when absent/unparseable. */
@@ -168,7 +177,14 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       if (!usage) {
         continue;
       }
-      const model = raw.message?.model ?? 'unknown';
+      // Prefer the raw backend id (x-litellm-model-name) over the response's own `model` field:
+      // both name the same billable model, but a routed/"capable"-tier turn's own `model` can
+      // already be the CodeMie-cleaned name (region qualifier stripped) while the LiteLLM header
+      // still carries it — see isBedrockRegionalPremium() in bedrock-pricing.mjs, which
+      // needs that qualifier to detect Bedrock's regional pricing premium. `lookupPrice` strips
+      // the same qualifier for the base-rate lookup, so this changes nothing about which rate a
+      // model resolves to, only whether the region survives for the premium check.
+      const model = parseBackendModelName(raw.message) ?? raw.message?.model ?? 'unknown';
       if (model === '<synthetic>') {
         continue; // synthetic system messages — not a billable model
       }
@@ -182,12 +198,20 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
       const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
       const ts = Number.isFinite(parsedTs) ? parsedTs : null;
+
+      // CodeMie's abstract routing metadata from proxy response headers (stored by Claude Code
+      // in message metadata) — parsed once into the RoutingDecision domain entity; the statusline
+      // reads the same entity from its own copy of this module (see routing-headers.mjs's header
+      // comment) rather than re-deriving it from the raw header strings.
+      const routing = parseRoutingHeaders(raw.message);
+
       appendDedupedRecord(records, keyedRecords, {
         key,
         ts,
         model,
         ownerAgentId: key === null ? ownerAgentId : ownership.responseOwners.get(key),
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
+        ...routing,
       });
     }
   }
@@ -207,6 +231,48 @@ function readClaude(parsed: ParsedSession): UsageMap {
   for (const r of extractClaudeUsageRecords(parsed)) {
     accumulate(out, r.model, r.usage);
   }
+  return out;
+}
+
+interface ClaudeModelAttachmentLine {
+  type?: string;
+  timestamp?: string;
+  attachment?: { type?: string; identity?: { modelId?: string } };
+}
+
+/** One literal model/router alias becoming active at a point in time (see {@link extractModelIdentityTimeline}). */
+export interface ModelIdentityEvent {
+  ts: number; // epoch ms
+  modelId: string;
+}
+
+/**
+ * Every model switch this session recorded, in chronological order: Claude Code stamps a
+ * `type: 'attachment'` line (`attachment.type === 'model'`) with the exact literal alias/id the
+ * `model` param held, once at session start and again on every in-session `/model` switch (see
+ * `attachment.identity.modelId`). This is the ONE signal that carries the literal alias — even a
+ * custom Switchyard variant name that never appears anywhere else — unlike RoutingDecision's own
+ * `requestedModel` (from `x-codemie-requested-model`), which for Switchyard reports only the
+ * capable-tier CEILING. Sorted ascending so a caller can resolve "which alias was active for a
+ * turn at time T" by taking the last entry with `ts <= T` (see cost-enricher.ts's
+ * `resolveAliasAt`). Returns null when the session has none (e.g. not this agent's log format).
+ */
+export function extractModelIdentityTimeline(parsed: ParsedSession): ModelIdentityEvent[] | null {
+  const out: ModelIdentityEvent[] = [];
+  for (const raw of messagesOf(parsed) as ClaudeModelAttachmentLine[]) {
+    if (raw.type !== 'attachment' || raw.attachment?.type !== 'model') {
+      continue;
+    }
+    const modelId = raw.attachment.identity?.modelId;
+    const ts = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
+    if (modelId && Number.isFinite(ts)) {
+      out.push({ ts, modelId });
+    }
+  }
+  if (!out.length) {
+    return null;
+  }
+  out.sort((a, b) => a.ts - b.ts);
   return out;
 }
 

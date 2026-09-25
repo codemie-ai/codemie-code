@@ -90,7 +90,7 @@ describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
     );
   });
 
-  it('does not set CODEMIE_MODEL_SOURCE when --model is not passed (implicit/profile-sourced model)', async () => {
+  it('sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)', async () => {
     mockHandleRunDependencies('claude-sonnet-5[1m]');
     const run = vi.fn().mockResolvedValue(undefined);
     const cli = new AgentCLI(createAdapter({ run })) as unknown as {
@@ -100,8 +100,11 @@ describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
     // No `model` in options — same as launching without --model, interactive or not.
     await cli.handleRun([], {});
 
+    // Distinct from 'cli'/'env': codex-models.ts's isExplicitModelChoice() treats only those
+    // two as an explicit user choice, so 'default' must stay a real, distinguishable value
+    // rather than the field being merely present-or-absent.
     const [, env] = run.mock.calls[0] as [string[], Record<string, unknown>, unknown];
-    expect(env.CODEMIE_MODEL_SOURCE).toBeUndefined();
+    expect(env.CODEMIE_MODEL_SOURCE).toBe('default');
   });
 
   it('also propagates CODEMIE_MODEL_SOURCE=cli in interactive mode (no --task) — no regression', async () => {
