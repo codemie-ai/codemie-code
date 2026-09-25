@@ -324,3 +324,34 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
 
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
 }
+
+/**
+ * Remove the CodeMie provider entry from VS Code Copilot Chat's language model
+ * config, at both the stable and Insiders locations. A missing product dir
+ * (edition not installed) is treated as nothing-to-do for that location, not
+ * propagated — `getVsCodeLanguageModelsPath` throws `ConfigurationError` in
+ * that case. A genuinely corrupt config at a resolved path still throws, via
+ * `readProviders`'s own `ConfigurationError`.
+ */
+export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boolean }> {
+  let removedAny = false;
+
+  for (const insiders of [false, true]) {
+    let configPath: string;
+    try {
+      configPath = getVsCodeLanguageModelsPath(insiders);
+    } catch (error) {
+      if (error instanceof ConfigurationError) continue;
+      throw error;
+    }
+
+    const providers = await readProviders(configPath);
+    const filtered = providers.filter((provider) => !isManagedProvider(provider));
+    if (filtered.length === providers.length) continue;
+
+    await writeAtomically(configPath, `${JSON.stringify(filtered, null, '\t')}\n`);
+    removedAny = true;
+  }
+
+  return { removed: removedAny };
+}

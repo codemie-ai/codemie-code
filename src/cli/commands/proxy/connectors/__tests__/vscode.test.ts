@@ -9,7 +9,10 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VS_CODE_CAPABILITY_TABLE, type VsCodeApiType } from '../vscode-models.js';
-import { writeVsCodeLanguageModelsConfigAtPath } from '../vscode.js';
+import {
+  removeVsCodeLanguageModelsConfig,
+  writeVsCodeLanguageModelsConfigAtPath,
+} from '../vscode.js';
 import { ConfigurationError } from '@/utils/errors.js';
 
 const EXPECTED_MODEL_IDS = [
@@ -460,5 +463,89 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
       expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
     });
+  });
+});
+
+describe('removeVsCodeLanguageModelsConfig', () => {
+  const originalPlatform = process.platform;
+  const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  let configHome: string;
+
+  function simulatePlatform(value: string): void {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  }
+
+  function stableModelsPath(): string {
+    return join(configHome, 'Code', 'User', 'chatLanguageModels.json');
+  }
+
+  function insidersModelsPath(): string {
+    return join(configHome, 'Code - Insiders', 'User', 'chatLanguageModels.json');
+  }
+
+  const codeMieProvider = { name: 'CodeMie', vendor: 'customendpoint', models: [] };
+  const userProvider = { name: 'OpenAI', vendor: 'openai', models: [] };
+
+  beforeEach(async () => {
+    simulatePlatform('linux');
+    configHome = await mkdtemp(join(tmpdir(), 'codemie-vscode-remove-'));
+    process.env.XDG_CONFIG_HOME = configHome;
+  });
+
+  afterEach(async () => {
+    simulatePlatform(originalPlatform);
+    if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+    await rm(configHome, { recursive: true, force: true });
+  });
+
+  it('reports removed: false when neither stable nor Insiders product dir exists', async () => {
+    const result = await removeVsCodeLanguageModelsConfig();
+    expect(result).toEqual({ removed: false });
+  });
+
+  it('reports removed: false when a location exists but has no CodeMie entry', async () => {
+    const path = stableModelsPath();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, JSON.stringify([userProvider]), 'utf-8');
+
+    const result = await removeVsCodeLanguageModelsConfig();
+
+    expect(result).toEqual({ removed: false });
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual([userProvider]);
+  });
+
+  it('removes the CodeMie entry from stable VS Code, preserving other providers', async () => {
+    const path = stableModelsPath();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, JSON.stringify([userProvider, codeMieProvider]), 'utf-8');
+
+    const result = await removeVsCodeLanguageModelsConfig();
+
+    expect(result).toEqual({ removed: true });
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual([userProvider]);
+  });
+
+  it('removes the CodeMie entry from both stable and Insiders when both match', async () => {
+    const stablePath = stableModelsPath();
+    const insidersPath = insidersModelsPath();
+    await mkdir(join(stablePath, '..'), { recursive: true });
+    await mkdir(join(insidersPath, '..'), { recursive: true });
+    await writeFile(stablePath, JSON.stringify([codeMieProvider]), 'utf-8');
+    await writeFile(insidersPath, JSON.stringify([codeMieProvider]), 'utf-8');
+
+    const result = await removeVsCodeLanguageModelsConfig();
+
+    expect(result).toEqual({ removed: true });
+    expect(JSON.parse(await readFile(stablePath, 'utf-8'))).toEqual([]);
+    expect(JSON.parse(await readFile(insidersPath, 'utf-8'))).toEqual([]);
+  });
+
+  it('throws on genuinely corrupt JSON at a resolved path instead of silently no-opping', async () => {
+    const path = stableModelsPath();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, 'not-json{{{', 'utf-8');
+
+    await expect(removeVsCodeLanguageModelsConfig()).rejects.toThrow(ConfigurationError);
   });
 });
