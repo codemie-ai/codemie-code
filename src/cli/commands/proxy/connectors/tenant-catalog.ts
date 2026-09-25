@@ -68,8 +68,9 @@ function parseCatalogResponseDescriptors(json: ModelsListResponse | CodeMieLlmMo
   const seen = new Set<string>();
   const descriptors: TenantModelDescriptor[] = [];
   for (const model of models) {
-    const id = extractModelId(model);
-    if (typeof id !== 'string' || model.enabled === false || seen.has(id)) continue;
+    const rawId = extractModelId(model);
+    const id = typeof rawId === 'string' ? rawId.trim() : '';
+    if (!id || model.enabled === false || seen.has(id)) continue;
     seen.add(id);
     descriptors.push(toDescriptor(model, id));
   }

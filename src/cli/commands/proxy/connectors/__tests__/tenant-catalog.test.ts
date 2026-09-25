@@ -153,6 +153,19 @@ describe('fetchTenantModelDescriptors', () => {
     expect(descriptors.map((d) => d.id)).toEqual(['on', 'implicit']);
   });
 
+  it('trims extracted ids and skips blank ones (CR-001)', async () => {
+    mockJson([
+      { id: '', base_name: '', deployment_name: '' },
+      { id: '   ', label: 'Whitespace' },
+      { base_name: '  padded-model  ' },
+      { base_name: 'padded-model' },
+      { deployment_name: 'real' },
+    ]);
+
+    const descriptors = await fetchTenantModelDescriptors('http://127.0.0.1:4001', 'gw-key');
+    expect(descriptors.map((d) => d.id)).toEqual(['padded-model', 'real']);
+  });
+
   it('keeps the first of two same-id entries, in response order', async () => {
     mockJson([
       { base_name: 'b-model', label: 'First B' },

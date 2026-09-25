@@ -332,13 +332,29 @@ export function findVsCodeCapabilityEntry(tenantId: string): VsCodeCapabilityEnt
 
 const DEFAULT_MAX_INPUT_TOKENS = 128000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
-const MIN_RESPONSES_GPT_MAJOR = 6;
+const MIN_RESPONSES_GPT_5_MINOR = 5;
+/** Leading vendor prefix such as `openai.`, `azure.` or `azure_openai/`. */
+const VENDOR_PREFIX = /^[a-z_]+[./]/;
+/**
+ * `gpt-<major>` with an optional 1–2 digit minor after `.` or `-`. The
+ * lookahead keeps a date suffix (`gpt-5-2025-08-07`) from reading as a minor.
+ */
+const GPT_VERSION = /^gpt-(\d+)(?:[.-](\d{1,2})(?!\d))?/;
 
-/** GPT-6 and newer only serve the Responses API; older/other ids use chat-completions. */
+/**
+ * Responses-only for an untabled id: any codex variant, GPT-6 and newer, and
+ * GPT-5.5 and newer (dot- or dash-separated minor). Everything else uses
+ * chat-completions. Mirrors the Responses families opencode-dynamic-models.ts
+ * records; kept local because src/cli must not import from an agent plugin.
+ */
 function isResponsesOnlyGpt(id: string): boolean {
-  const name = id.toLowerCase().replace(/^openai\./, '');
-  const match = name.match(/^gpt-(\d+)/);
-  return match !== null && Number(match[1]) >= MIN_RESPONSES_GPT_MAJOR;
+  const name = id.trim().toLowerCase().replace(VENDOR_PREFIX, '');
+  if (name.includes('codex')) return true;
+  const match = name.match(GPT_VERSION);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  const minor = match[2] === undefined ? 0 : Number(match[2]);
+  return major > 5 || (major === 5 && minor >= MIN_RESPONSES_GPT_5_MINOR);
 }
 
 /**

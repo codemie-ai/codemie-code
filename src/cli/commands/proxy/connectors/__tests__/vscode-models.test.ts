@@ -54,7 +54,20 @@ describe('buildDefaultVsCodeCapability', () => {
     });
   });
 
-  it.each(['gpt-6-sol', 'openai.gpt-6-sol', 'GPT-7'])('uses stateless responses for %s', (id) => {
+  it.each([
+    'gpt-6-sol',
+    'openai.gpt-6-sol',
+    'GPT-7',
+    'gpt-6-luna',
+    'azure.gpt-6-sol',
+    'azure_openai/gpt-6-sol',
+    'gpt-5.7-nova',
+    'gpt-5-7-nova',
+    'gpt-5.5-preview',
+    'gpt-5-1-codex-2025-11-13',
+    'gpt-5.1-codex-mini',
+    'openai.gpt-5-codex',
+  ])('uses stateless responses for %s (CR-002)', (id) => {
     const entry = buildDefaultVsCodeCapability({ id });
     expect(entry.apiType).toBe('responses');
     expect(entry.zeroDataRetentionEnabled).toBe(true);
@@ -62,7 +75,17 @@ describe('buildDefaultVsCodeCapability', () => {
     expect(entry.requestHeaders).toBeUndefined();
   });
 
-  it('keeps an older GPT id on chat-completions', () => {
-    expect(buildDefaultVsCodeCapability({ id: 'gpt-5.9-new' }).apiType).toBe('chat-completions');
+  it.each([
+    'gpt-5-turbo-2025-08-07',
+    'gpt-5-2025-08-07',
+    'gpt-5.4-mini',
+    'gpt-5-4-mini',
+    'gpt-4.1-nano',
+    'claude-future-9',
+    'grok-4.6',
+  ])('keeps %s on chat-completions (CR-002)', (id) => {
+    const entry = buildDefaultVsCodeCapability({ id });
+    expect(entry.apiType).toBe('chat-completions');
+    expect(entry.zeroDataRetentionEnabled).toBeUndefined();
   });
 });
