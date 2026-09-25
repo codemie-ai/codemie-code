@@ -1,0 +1,38 @@
+{
+  "decision": "request-changes",
+  "rationale": "No-spec round: there is no story/spec, so acceptance never ran and confidence is low; the edge-case lens ran and the standards audit passed with no coverage gap. 2 blocking findings: isResponsesOnlyGpt sends Responses-only GPT ids that are not in the table to chat-completions (CR-002), and blank/whitespace catalog ids get through as VS Code models (CR-001, reachability not confirmed). 1 deferred (known-family table values override the tenant's features.tools/multimodal flags; this predates the change) -> code-review-deferred.md; 2 dismissed (non-chat deployments: embeddings use a separate endpoint; listing every tenant variant is what the task asks for).",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "4 commits all follow Conventional Commits format: docs(proxy), fix(proxy), feat(proxy), feat(proxy). All have <type>(<scope>): <subject> structure within 100 char limit."},
+    {"kind": "code-quality", "status": "pass", "notes": "All imports include .js extensions per code-quality.md. No console.log or require() detected. Proper type annotations on exports (TenantModelDescriptor, VsCodeCapabilityEntry, WriteVsCodeConfigResult, etc.). Error handling uses ConfigurationError. Functions under 50 lines except utility functions. No hardcoded secrets or unsafe patterns."},
+    {"kind": "security", "status": "pass", "notes": "Credentials (gatewayKey) passed in Authorization headers, not logged. All logging uses sanitizeLogArgs() to redact sensitive parameters (gatewayKey, proxyUrl treated as inferenceGatewayApiKey/inferenceGatewayBaseUrl). No hardcoded secrets. Request headers properly scoped. Path operations use safe methods (homedir, join, path.resolve). No new attribution header injection paths added to header-injection.plugin.ts."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/tenant-catalog.ts",
+      "line": 72,
+      "title": "Blank catalog ids become VS Code models",
+      "problem": "parseCatalogResponseDescriptors only checks typeof id === 'string'. extractModelId returns '' when id and base_name are falsy and deployment_name is '', and a whitespace-only id is truthy, so both pass the filter untrimmed.",
+      "impact": "A model with an empty or whitespace id and name is written to chatLanguageModels.json and shown in the VS Code picker, and it cannot serve requests. Before this change only table-matched ids were written, so the path is new. Reachability is unconfirmed: it depends on the live /v1/llm_models data containing such an entry.",
+      "recommendation": "Trim the extracted id and skip empty results: const id = extractModelId(model)?.trim(); if (!id || model.enabled === false || seen.has(id)) continue;"
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/vscode-models.ts",
+      "line": 338,
+      "title": "Responses-only GPT ids routed to chat-completions",
+      "problem": "isResponsesOnlyGpt marks an unknown id as Responses-only only when its GPT major is 6 or higher, and it strips only the 'openai.' prefix. Untabled 5.x Responses deployments fall through to apiType chat-completions with no zero data retention. Examples: gpt-5.1-codex, gpt-5.6-nova, a gpt-5.5+ variant the resolver does not match, or a GPT-6 id with another vendor prefix such as azure.gpt-6-sol. This contradicts the table (gpt-5.5 and gpt-5.6-* are responses) and opencode-dynamic-models.ts, which records gpt-5.1-codex, gpt-5.2-*, gpt-5.4-* and 5.5/5.6 CodeMie deployments as Responses-API-only.",
+      "impact": "Every tenant model in these families is now listed, so VS Code offers these deployments with the wrong endpoint (/v1/chat/completions), and every request to them fails. Before this change they were not listed at all.",
+      "recommendation": "Make the default detection match the repo's known Responses families: parse major and minor and treat major > 5 or (major === 5 && minor >= 5) as responses, plus codex variants. Strip any vendor prefix (e.g. /^[a-z_]+[./]/) instead of only 'openai.'. Consider sharing the RESPONSES_API_MODEL_PATTERNS list from opencode-dynamic-models.ts."
+    }
+  ]
+}
