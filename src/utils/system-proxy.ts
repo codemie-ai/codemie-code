@@ -3,7 +3,8 @@
  *
  * Resolves the effective proxy for an outbound request, in precedence order:
  *   1. `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` environment variables
- *   2. Windows Internet Settings — static `ProxyServer`, or `AutoConfigURL` (PAC)
+ *   2. Windows Internet Settings — `ProxyOverride`, then `AutoConfigURL` (PAC),
+ *      then the static `ProxyServer` only when the PAC is unavailable
  *
  * Node's `http`/`https` modules never consult any system proxy configuration, so
  * without this module Windows users behind a PAC-based corporate proxy (Zscaler
@@ -911,9 +912,15 @@ export async function getProxyAgentForUrl(
   }
 }
 
-/** Return whether outbound TLS certificates must be verified. */
+/**
+ * Return whether outbound TLS certificates must be verified.
+ *
+ * Callers pass the result as an explicit `rejectUnauthorized`, which overrides
+ * Node's own process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` opt-out, so honor it
+ * here alongside `CODEMIE_INSECURE`.
+ */
 export function isTlsVerificationEnabled(): boolean {
-  return process.env.CODEMIE_INSECURE !== '1';
+  return process.env.CODEMIE_INSECURE !== '1' && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
 }
 
 function formatIpv4(value: number): string {

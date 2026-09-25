@@ -166,10 +166,12 @@ are merged into `NO_PROXY`/`no_proxy`. A single exported value cannot represent
 host-dependent PAC decisions, so this export is target-specific.
 
 TLS certificates are verified by default on direct and proxied connections.
-Install the trusted corporate root or use `NODE_EXTRA_CA_CERTS` for enterprise
-TLS inspection. `CODEMIE_INSECURE=1` is an explicit escape hatch for controlled
-self-signed development environments and should not be used as the permanent
-corporate configuration.
+Node.js uses its bundled CA list rather than the Windows certificate store, so
+for enterprise TLS inspection point `NODE_EXTRA_CA_CERTS` at the corporate root
+certificate (PEM). `CODEMIE_INSECURE=1` (or Node's own
+`NODE_TLS_REJECT_UNAUTHORIZED=0`) disables verification; it is an explicit
+escape hatch for controlled self-signed development environments and should not
+be used as the permanent corporate configuration.
 
 #### AI/Run SSO Configuration
 
