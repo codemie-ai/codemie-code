@@ -389,6 +389,9 @@ export const CodexPluginMetadata: AgentMetadata = {
           const latestSession = recentSessions[0];
           logger.debug(`[codex] Processing latest rollout: ${latestSession.sessionId}`);
 
+          // Must land before SessionEnd renames the record to completed_{id}.json.
+          await recordRolloutCorrelation(sessionId, latestSession.filePath);
+
           const context = {
             sessionId,
             apiBaseUrl: env.CODEMIE_BASE_URL || '',
@@ -431,6 +434,36 @@ export const CodexPluginMetadata: AgentMetadata = {
     },
   },
 };
+
+/**
+ * Point the CodeMie session record at the rollout this run produced.
+ *
+ * Codex has no hook that reports a transcript path, so SessionStart records
+ * `correlation.agentSessionFile` as ''. Analytics resolves the native log (and
+ * therefore token usage and cost) through that field, so without this every
+ * codex session reported hadLog=false and costUSD=0. It also lets the native
+ * loader recognise the rollout as CodeMie-owned instead of an untracked session.
+ */
+async function recordRolloutCorrelation(sessionId: string, rolloutPath: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../core/session/SessionStore.js');
+    const store = new SessionStore();
+    const session = await store.loadSession(sessionId);
+    if (!session) {
+      logger.debug(`[codex] No session record for ${sessionId}; skipping rollout correlation`);
+      return;
+    }
+    session.correlation = {
+      ...session.correlation,
+      status: 'matched',
+      agentSessionFile: rolloutPath,
+    };
+    await store.saveSession(session);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug(`[codex] Failed to record rollout correlation (non-blocking): ${msg}`);
+  }
+}
 
 function getExplicitModelArg(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
