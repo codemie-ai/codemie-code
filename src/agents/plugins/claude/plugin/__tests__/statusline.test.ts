@@ -338,6 +338,7 @@ describe('lookupRate', () => {
   const TABLE = {
     'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
     'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+    'claude-opus-4-6': { input: 20, output: 100, cacheRead: 2, cacheWrite: 25 },
     'claude-smart-router': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
     'gemini-3.7-flash': { input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
     _meta: { note: 'must never be matched as a model id' },
@@ -365,8 +366,8 @@ describe('lookupRate', () => {
     expect(lookupRate(TABLE, 'Claude-Sonnet-5')?.input).toBe(3);
   });
 
-  it('matches only on a segment boundary, never mid-token', () => {
-    expect(lookupRate(TABLE, 'claude-haiku-4-5-20251001')?.input).toBe(1); // suffixed -> family match
+  it('resolves a dated snapshot id to its unsuffixed row, but never matches mid-token', () => {
+    expect(lookupRate(TABLE, 'claude-haiku-4-5-20251001')?.input).toBe(1); // snapshot suffix stripped
     expect(lookupRate(TABLE, 'notclaude-sonnet-5x')).toBeNull();
   });
 
@@ -374,6 +375,18 @@ describe('lookupRate', () => {
     expect(lookupRate(TABLE, '_meta')).toBeNull();
     expect(lookupRate(TABLE, 'some-other-vendor-model')).toBeNull();
     expect(lookupRate(null, 'claude-sonnet-5')).toBeNull();
+  });
+
+  it('returns null for an unpriced model, with no family/tier fallback to a same-tier row', () => {
+    // claude-opus-6 shares no version segment with claude-opus-4-6 and has no snapshot suffix to
+    // strip — the removed claudeTierFallback would have matched it to the opus row anyway.
+    expect(lookupRate(TABLE, 'claude-opus-6')).toBeNull();
+  });
+
+  it('resolves a Vertex `@`-dated id to its snapshot-stripped row, matching resolvePrice()', () => {
+    // '@' folds to '-' during canonicalization, so 'claude-opus-4-6@20260205' canonicalizes to
+    // 'claude-opus-4-6-20260205', which then resolves via the snapshot-suffix-stripped exact match.
+    expect(lookupRate(TABLE, 'claude-opus-4-6@20260205')).toEqual(TABLE['claude-opus-4-6']);
   });
 });
 

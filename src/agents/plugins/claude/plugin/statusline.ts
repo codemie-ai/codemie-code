@@ -150,6 +150,34 @@ export function normalizeModelId(modelId) {
     .replace(/-v\d+:\d+$/, '');
 }
 
+const KIMI_PREFIX = 'kimi-code/';
+/**
+ * Vendor path prefixes some proxies/wire logs prepend ahead of the bare model id — mirrors
+ * src/utils/model-normalizer.ts's VENDOR_PREFIX_PATTERN; duplicated here because this file is
+ * bundled standalone and cannot import that module (see the header comment).
+ */
+const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/)/i;
+
+/**
+ * Canonicalizes an observed model id into the same pricing-table-key form as
+ * src/utils/pricing.ts's canonicalizeModelId(): extends {@link normalizeModelId} (Bedrock
+ * prefix/version stripping) with the Kimi and vendor-path prefixes, then lowercases, turns dots
+ * and `@` into dashes (so Vertex's `claude-x@20260205` folds to the same shape as a dated id),
+ * and strips a trailing `-vertex` suffix. Duplicated here rather than imported because this file
+ * is bundled standalone into a single self-contained artifact — see the header comment.
+ */
+export function canonicalizeModelId(modelId) {
+  if (!modelId) return '';
+  let stripped = normalizeModelId(modelId);
+  if (stripped.startsWith(KIMI_PREFIX)) stripped = stripped.slice(KIMI_PREFIX.length);
+  const vendorMatch = stripped.match(VENDOR_PREFIX_PATTERN);
+  if (vendorMatch) stripped = stripped.slice(vendorMatch[0].length);
+  return stripped
+    .replace(/\./g, '-')
+    .replace(/@/g, '-')
+    .replace(/-vertex$/, '');
+}
+
 /**
  * Scans transcript JSONL text backwards for the most recent assistant turn and returns the
  * response body's own model plus any header-injected routed model. The first (partial) line
@@ -363,86 +391,47 @@ function normalizedTable(table) {
   const normalized = new Map();
   for (const [key, rate] of Object.entries(table)) {
     if (key.startsWith('_')) continue; // _meta and similar
-    normalized.set(normalizeModelId(key).replace(/\./g, '-'), rate);
+    normalized.set(canonicalizeModelId(key), rate);
   }
   NORMALIZED_TABLES.set(table, normalized);
   return normalized;
 }
 
-/** Claude pricing tiers whose per-tier rate has stayed flat across every `-4-*` version bump seen so far. */
-const CLAUDE_TIERS = ['claude-opus', 'claude-sonnet', 'claude-haiku'];
-
 /**
- * Parse the version segments trailing a tier prefix into a numeric tuple for comparison, e.g.
- * `claude-sonnet-4-8` under tier `claude-sonnet` -> `[4, 8]`. Returns null for keys that don't
- * fit the plain `<tier>(-<digits>)*` shape — non-numeric segments (`-latest`) or a long numeric
- * segment (a pinned date snapshot like `-20250514`, 8 digits).
+ * A trailing snapshot/version suffix stripped once during lookup (never during
+ * canonicalization): an 8-digit date (`-20260205`), a dashed date (`-2026-02-05`), or the
+ * `-latest`/`-preview` tags. Mirrors src/utils/pricing.ts's SNAPSHOT_SUFFIX_PATTERN; duplicated
+ * here because this file is bundled standalone and cannot import that module.
  */
-function tierVersionTuple(key: string, tier: string): number[] | null {
-  const rest = key.slice(tier.length);
-  if (!rest) return [0];
-  const segments = rest.split('-').filter(Boolean);
-  const nums: number[] = [];
-  for (const segment of segments) {
-    if (!/^\d+$/.test(segment) || segment.length >= 8) return null;
-    nums.push(Number(segment));
-  }
-  return nums;
-}
-
-function compareVersionTuples(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
+const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
 
 /**
- * Fall back to the latest known rate within the same Claude tier (opus/sonnet/haiku) when `name`
- * matches no table entry at all — e.g. a brand-new major-version model (`claude-sonnet-5`) that
- * shares no version segment with any `-4-*` key. Mirrors src/utils/pricing.ts's
- * claudeTierFallback(); duplicated here because this file is bundled standalone and cannot import
- * that module.
- */
-function claudeTierFallback(name: string, rates: Map<string, unknown>) {
-  const tier = CLAUDE_TIERS.find((t) => name === t || name.startsWith(`${t}-`));
-  if (!tier) return null;
-  let best: { key: string; version: number[]; rate: unknown } | null = null;
-  for (const [key, rate] of rates.entries()) {
-    if (key !== tier && !key.startsWith(`${tier}-`)) continue;
-    const version = tierVersionTuple(key, tier);
-    if (version === null) continue;
-    if (!best || compareVersionTuples(version, best.version) > 0) best = { key, version, rate };
-  }
-  return best ? best.rate : null;
-}
-
-/**
- * Longest table key that aligns to a `-`-delimited segment boundary, so `claude-haiku` never
- * matches mid-token, falling back to the latest same-tier Claude rate when even that misses —
- * the same three-tier resolution order as src/utils/pricing.ts's lookupPrice().
+ * Resolves a rate from `table` for `modelId`, mirroring src/utils/pricing.ts's
+ * resolvePrice()/lookupPrice() resolution order exactly — a divergence here would silently
+ * misprice the transcript relative to the analytics report. Against the {@link canonicalizeModelId}
+ * form of `modelId`:
+ *   1. Exact match.
+ *   2. Exact match after stripping one trailing snapshot suffix (see
+ *      {@link SNAPSHOT_SUFFIX_PATTERN}) — e.g. `claude-opus-4-6-20260205` resolves to the
+ *      `claude-opus-4-6` row.
+ *   3. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
  */
 export function lookupRate(table, modelId) {
   if (!table) return null;
-  const name = normalizeModelId(modelId).replace(/\./g, '-');
+  const name = canonicalizeModelId(modelId);
   if (!name) return null;
   const rates = normalizedTable(table);
+
   const exact = rates.get(name);
   if (exact) return applyBedrockRegionalPremium(exact, modelId);
-  let best: string | null = null;
-  for (const key of rates.keys()) {
-    if (key.length > name.length) continue;
-    const idx = name.indexOf(key);
-    if (idx === -1) continue;
-    const before = idx === 0 ? '-' : name[idx - 1];
-    const after = idx + key.length === name.length ? '-' : name[idx + key.length];
-    if (before === '-' && after === '-' && (!best || key.length > best.length)) best = key;
+
+  const withoutSnapshot = name.replace(SNAPSHOT_SUFFIX_PATTERN, '');
+  if (withoutSnapshot !== name) {
+    const snapshot = rates.get(withoutSnapshot);
+    if (snapshot) return applyBedrockRegionalPremium(snapshot, modelId);
   }
-  const rate = best ? rates.get(best) : null;
-  if (rate) return applyBedrockRegionalPremium(rate, modelId);
-  const tierFallback = claudeTierFallback(name, rates);
-  return tierFallback ? applyBedrockRegionalPremium(tierFallback, modelId) : null;
+
+  return null;
 }
 
 function messageCost(rate, usage) {
