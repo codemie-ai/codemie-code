@@ -6,11 +6,11 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { spoolRoot, sessionFile } from './claude-analytics-spool/spool-paths.js';
-import { withSessionLock } from './claude-analytics-spool/session-lock.js';
-import { processSessionTick } from './claude-analytics-spool/tick-processor.js';
-import { sweepExpired } from './claude-analytics-spool/ttl-sweep.js';
-import type { SessionStatus } from './claude-analytics-spool/completeness-gate.js';
+import { spoolRoot, sessionFile } from './otlp-spool/spool-paths.js';
+import { withSessionLock } from './otlp-spool/session-lock.js';
+import { processSessionTick } from './otlp-spool/tick-processor.js';
+import { sweepExpired } from './otlp-spool/ttl-sweep.js';
+import type { SessionStatus } from './otlp-spool/completeness-gate.js';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 
 const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
@@ -50,8 +50,8 @@ function sendError(res: ServerResponse, status: number, type: string, message: s
   return true;
 }
 
-class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
-  name = 'claude-analytics-ingest';
+class OtlpInterceptor implements ProxyInterceptor {
+  name = 'otlp-ingest';
   private tickHandle?: ReturnType<typeof setInterval>;
   private sweepHandle?: ReturnType<typeof setInterval>;
 
@@ -61,21 +61,21 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
     // Eager tick on startup for crash recovery
     await this.tick().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[claude-analytics-ingest] startup tick error', ...sanitizeLogArgs({ err: msg }));
+      logger.debug('[otlp-ingest] startup tick error', ...sanitizeLogArgs({ err: msg }));
     });
 
-    const sendInterval = Number(process.env['CODEMIE_CLAUDE_ANALYTICS_SEND_INTERVAL_MS'] ?? '5000');
+    const sendInterval = Number(process.env['OTLP_SEND_INTERVAL_MS'] ?? '5000');
     this.tickHandle = setInterval(() => {
       void this.tick().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[claude-analytics-ingest] tick error', ...sanitizeLogArgs({ err: msg }));
+        logger.debug('[otlp-ingest] tick error', ...sanitizeLogArgs({ err: msg }));
       });
     }, sendInterval);
 
     this.sweepHandle = setInterval(() => {
       void this.sweep().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[claude-analytics-ingest] sweep error', ...sanitizeLogArgs({ err: msg }));
+        logger.debug('[otlp-ingest] sweep error', ...sanitizeLogArgs({ err: msg }));
       });
     }, 5 * 60 * 1_000);
   }
@@ -85,7 +85,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
     if (this.sweepHandle) clearInterval(this.sweepHandle);
     await this.tick().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[claude-analytics-ingest] final tick error', ...sanitizeLogArgs({ err: msg }));
+      logger.debug('[otlp-ingest] final tick error', ...sanitizeLogArgs({ err: msg }));
     });
   }
 
@@ -106,7 +106,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
       const sessionId = fileName.slice(0, -'.status'.length);
       await processSessionTick(sessionId, creds).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[claude-analytics-ingest] session tick error', ...sanitizeLogArgs({ sessionId, err: msg }));
+        logger.debug('[otlp-ingest] session tick error', ...sanitizeLogArgs({ sessionId, err: msg }));
       });
     }
   }
@@ -127,19 +127,19 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
   ): Promise<boolean> {
     const { method, url } = ctx;
 
-    // Route: POST /v1/analytics/claude-code/hooks
-    if (method === 'POST' && url === '/v1/analytics/claude-code/hooks') {
+    // Route: POST /v1/analytics/hooks
+    if (method === 'POST' && url === '/v1/analytics/hooks') {
       return this.handleHooks(ctx, res);
     }
 
-    // Route: POST /v1/analytics/claude-code/otlp/logs|metrics|traces
-    if (method === 'POST' && url === '/v1/analytics/claude-code/otlp/v1/logs') {
+    // Route: POST /v1/analytics/otlp/logs|metrics|traces
+    if (method === 'POST' && url === '/v1/analytics/otlp/v1/logs') {
       return this.handleOtlp(ctx, res, 'otel_logs');
     }
-    if (method === 'POST' && url === '/v1/analytics/claude-code/otlp/v1/metrics') {
+    if (method === 'POST' && url === '/v1/analytics/otlp/v1/metrics') {
       return this.handleOtlp(ctx, res, 'otel_metrics');
     }
-    if (method === 'POST' && url === '/v1/analytics/claude-code/otlp/v1/traces') {
+    if (method === 'POST' && url === '/v1/analytics/otlp/v1/traces') {
       return this.handleOtlp(ctx, res, 'otel_traces');
     }
 
@@ -148,7 +148,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
 
   private async handleHooks(ctx: ProxyContext, res: ServerResponse): Promise<true> {
     if (!ctx.metadata.gatewayKeyValidated) {
-      logger.warn('[claude-analytics-ingest] Rejected hooks request: gateway key not validated');
+      logger.warn('[otlp-ingest] Rejected hooks request: gateway key not validated');
       return sendError(res, 401, 'authentication_error', 'Unauthorized');
     }
 
@@ -171,7 +171,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
     // Validate agentName - dynamic import avoids circular dependency
     try {
       const { AgentRegistry } = await import('../../../../../agents/registry.js');
-      if (!AgentRegistry.getAgentNames().includes(agentName)) {
+      if (!AgentRegistry.getAnalyticsAgent(agentName)) {
         return sendError(res, 400, 'invalid_request_error', 'Unrecognized agentName');
       }
     } catch {
@@ -189,7 +189,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
 
     if (!sessionId) {
       // No session id — log and accept without spooling
-      logger.debug('[claude-analytics-ingest] hooks: no session_id in raw, discarding');
+      logger.debug('[otlp-ingest] hooks: no session_id in raw, discarding');
       res.statusCode = 202;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ accepted: true }));
@@ -207,7 +207,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn('[claude-analytics-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
+      logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
       // Still respond 202 — data loss is logged but we don't block the hook
     }
 
@@ -223,7 +223,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
     signal: 'otel_logs' | 'otel_metrics' | 'otel_traces'
   ): Promise<true> {
     if (!ctx.metadata.gatewayKeyValidated) {
-      logger.warn(`[claude-analytics-ingest] Rejected ${signal} request: gateway key not validated`);
+      logger.warn(`[otlp-ingest] Rejected ${signal} request: gateway key not validated`);
       return sendError(res, 401, 'authentication_error', 'Unauthorized');
     }
 
@@ -263,7 +263,7 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[claude-analytics-ingest] ${signal} disk write error`, ...sanitizeLogArgs({ sessionId, err: msg }));
+      logger.warn(`[otlp-ingest] ${signal} disk write error`, ...sanitizeLogArgs({ sessionId, err: msg }));
     }
 
     res.statusCode = 200;
@@ -272,14 +272,14 @@ class ClaudeAnalyticsIngestInterceptor implements ProxyInterceptor {
   }
 }
 
-export class ClaudeAnalyticsIngestPlugin implements ProxyPlugin {
-  id = '@codemie/proxy-claude-analytics-ingest';
-  name = 'Claude Analytics Ingestion';
+export class OtlpPlugin implements ProxyPlugin {
+  id = '@codemie/otlp';
+  name = 'OTLP Ingestion';
   version = '1.0.0';
   priority = 10;
 
   createInterceptor(context: PluginContext): ProxyInterceptor {
-    return new ClaudeAnalyticsIngestInterceptor(
+    return new OtlpInterceptor(
       context.syncCredentials || context.credentials
     );
   }

@@ -2,11 +2,11 @@ import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 
 /**
- * Root directory where all Claude analytics spool files are stored.
- * Resolves to `~/.codemie/proxy/claude-analytics-spool`.
+ * Root directory where all OTLP analytics spool files are stored.
+ * Resolves to `~/.codemie/proxy/otlp-spool`.
  */
 export function spoolRoot(): string {
-  return getCodemiePath('proxy', 'claude-analytics-spool');
+  return getCodemiePath('proxy', 'otlp-spool');
 }
 
 type SpoolSignal = 'hooks' | 'otel_logs' | 'otel_metrics' | 'otel_traces' | 'status';

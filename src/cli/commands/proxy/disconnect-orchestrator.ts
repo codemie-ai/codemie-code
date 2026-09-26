@@ -11,10 +11,10 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { removeClaudeCodeAnalyticsConfig } from './connectors/claude-code-analytics/claude-code-analytics.js';
+import { removeClaudeCodeAnalyticsConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
 
 export interface DisconnectTargets {
-  claudeCode?: boolean;
+  claudeCodeOtlp?: boolean;
   codexDesktop?: boolean;
   cursorIde?: boolean;
 }
@@ -29,7 +29,7 @@ const DISCONNECT_TARGET_LIST = [
   '',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
   '  --cursor-ide           Cursor IDE (removes codemie-authored entries from .cursor/hooks.json)',
-  '  --claude-code          Claude Code (removes hook/env entries from <projectRoot>/.claude/settings.json)',
+  '  --claude-code-otlp     Claude Code OTLP (removes hook/env entries)',
   '',
   'Example:',
   '  codemie proxy disconnect --codex-desktop',
@@ -82,16 +82,16 @@ async function disconnectCursorIde(): Promise<void> {
   }
 }
 
-async function disconnectClaudeCode(scope?: 'user' | 'project'): Promise<void> {
+async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
     const result = await removeClaudeCodeAnalyticsConfig({ scope });
 
     if (!result.removed) {
-      console.log(chalk.dim('Claude Code Analytics: nothing to disconnect.'));
+      console.log(chalk.dim('Claude Code OTLP: nothing to disconnect.'));
       return;
     }
 
-    console.log(chalk.green(`✓ Claude Code Analytics disconnected (${result.path})`));
+    console.log(chalk.green(`✓ Claude Code OTLP disconnected (${result.path})`));
     if (result.usedBackup) {
       console.log(chalk.yellow(
         "⚠ Restored the pre-connect backup because CodeMie's entries were the file's only content."
@@ -99,13 +99,13 @@ async function disconnectClaudeCode(scope?: 'user' | 'project'): Promise<void> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(chalk.red(`✗ Claude Code Analytics - ${message}`));
+    console.error(chalk.red(`✗ Claude Code OTLP - ${message}`));
     process.exitCode = 1;
   }
 }
 
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
-  if (!opts.targets.codexDesktop && !opts.targets.cursorIde && !opts.targets.claudeCode) {
+  if (!opts.targets.codexDesktop && !opts.targets.cursorIde && !opts.targets.claudeCodeOtlp) {
     console.log(DISCONNECT_TARGET_LIST);
     return;
   }
@@ -118,7 +118,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
     await disconnectCursorIde();
   }
 
-  if (opts.targets.claudeCode) {
-    await disconnectClaudeCode(opts.scope);
+  if (opts.targets.claudeCodeOtlp) {
+    await disconnectClaudeCodeOtlp(opts.scope);
   }
 }

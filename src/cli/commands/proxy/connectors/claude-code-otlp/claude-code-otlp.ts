@@ -12,7 +12,6 @@
 import { existsSync } from 'node:fs';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -20,8 +19,9 @@ import { resolveProjectRoot } from '@/utils/project-root.js';
 import { resolveHomeDir } from '@/utils/paths.js';
 import { readState } from '../../daemon-manager.js';
 import { writeAtomically } from '../vscode.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
-const CODEMIE_COMMAND_MARKER = 'hook --agent claude --analytics';
+const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME} --analytics`;
 const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 
 const HOOK_EVENTS = [
@@ -89,20 +89,18 @@ interface RemoveClaudeCodeAnalyticsResult {
 }
 
 function isCodemieEntry(entry: unknown): boolean {
-  if (typeof entry !== 'object' || entry === null) return false;
-  const obj = entry as Record<string, unknown>;
-  // Current grouped format: { matcher, hooks: [{type, command}] }
-  if (Array.isArray(obj.hooks)) {
-    return (obj.hooks as unknown[]).some(
-      (h) =>
-        typeof h === 'object' &&
-        h !== null &&
-        typeof (h as HookEntry).command === 'string' &&
-        (h as HookEntry).command.includes(CODEMIE_COMMAND_MARKER)
-    );
+  if (typeof entry !== 'object' || entry === null) {
+    return false;
   }
-  // Legacy flat format: { type, command }
-  return typeof obj.command === 'string' && obj.command.includes(CODEMIE_COMMAND_MARKER);
+
+  const obj = entry as Record<string, unknown>;
+  return (obj.hooks as unknown[]).some(
+    (h) =>
+      typeof h === 'object' &&
+      h !== null &&
+      typeof (h as HookEntry).command === 'string' &&
+      (h as HookEntry).command.includes(CODEMIE_COMMAND_MARKER)
+  );
 }
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
@@ -157,7 +155,7 @@ export async function writeClaudeCodeAnalyticsConfig(
   const codemieEnv: Record<string, string> = {
     CLAUDE_CODE_ENABLE_TELEMETRY: '1',
     CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
-    OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/claude-code/otlp`,
+    OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/otlp`,
     OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${state.gatewayKey}`,
     OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
     OTEL_LOGS_EXPORTER: 'otlp',
@@ -210,16 +208,10 @@ export async function writeClaudeCodeAnalyticsConfig(
     const foreignEntries = existingEntries.filter((e) => !isCodemieEntry(e));
     const codemieEntry: HookGroup = {
       matcher: '',
-      hooks: [{ type: 'command', command: 'codemie hook --agent claude --analytics' }],
+      hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
     };
     hooks[eventName] = [...foreignEntries, codemieEntry];
   }
-
-  const authCheckPath = fileURLToPath(new URL('./hooks/auth-check.js', import.meta.url));
-  hooks["UserPromptSubmit"].push({
-    matcher: '',
-    hooks: [{ type: 'command', command: `node ${authCheckPath}` }],
-  });
 
   // Merge env block
   const mergedEnv: Record<string, string> = { ...(existing.env ?? {}), ...codemieEnv };

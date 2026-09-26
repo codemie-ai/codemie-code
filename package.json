@@ -57,11 +57,11 @@
     "prepublishOnly": "npm run build",
     "prepack": "npm run build",
     "poc:logs:clear": "docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"TRUNCATE TABLE codemie_analytics.coding_agent_logs\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"TRUNCATE TABLE codemie_analytics.coding_agent_traces\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"TRUNCATE TABLE codemie_analytics.coding_agent_metrics_sum\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"TRUNCATE TABLE codemie_analytics.coding_agent_hook_events\"",
-    "poc:logs:hooks": "tail -f ~/.codemie/logs/debug-$(date +%Y-%m-%d).log | grep --line-buffered -F '[test'",
+    "poc:logs:hooks": "tail -f ~/.codemie/logs/debug-$(date +%Y-%m-%d).log | grep --line-buffered -F",
     "poc:logs:docker": "docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"SELECT '=== LOGS ===' AS s, '' AS t2, '' AS t3, '' AS t4 UNION ALL SELECT Timestamp::String, ServiceName, event_type, session_id FROM codemie_analytics.coding_agent_logs ORDER BY Timestamp DESC LIMIT 20\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"SELECT '=== TRACES ===' AS s, '' AS t2, '' AS t3, '' AS t4 UNION ALL SELECT Timestamp::String, ServiceName, SpanName, session_id FROM codemie_analytics.coding_agent_traces ORDER BY Timestamp DESC LIMIT 20\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"SELECT '=== METRICS ===' AS s, '' AS t2, '' AS t3, '' AS t4 UNION ALL SELECT TimeUnix::String, ServiceName, MetricName, Value::String FROM codemie_analytics.coding_agent_metrics_sum ORDER BY TimeUnix DESC LIMIT 20\" && docker exec codemie-clickhouse-1 clickhouse-client --user otel --password otel --query \"SELECT '=== HOOKS ===' AS s, '' AS t2, '' AS t3, '' AS t4 UNION ALL SELECT Timestamp::String, event_type, session_id, developer_name FROM codemie_analytics.coding_agent_hook_events ORDER BY Timestamp DESC LIMIT 20\"",
-    "poc:proxy:start": "bin/codemie.js proxy connect --claude-code --analytics  --scope project",
+    "poc:proxy:start": "bin/codemie.js proxy connect --claude-code-otlp --analytics --scope project",
     "poc:proxy:state": "cat ~/.codemie/proxy-daemon.json",
-    "poc:proxy:stop": "bin/codemie.js proxy stop && bin/codemie.js proxy disconnect --claude-code --scope project",
+    "poc:proxy:stop": "bin/codemie.js proxy stop && bin/codemie.js proxy disconnect --claude-code-otlp --scope project",
     "poc:proxy:kill": "pkill -f 'proxy-daemon.js' && rm -f ~/.codemie/proxy-daemon.json"
   },
   "lint-staged": {

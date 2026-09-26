@@ -43,7 +43,7 @@ export async function processSessionTick(
 
     const decision = gateDecision(status);
     logger.debug(
-      '[claude-analytics-tick] gate decision',
+      '[otlp-tick] gate decision',
       ...sanitizeLogArgs({ sessionId, decision, waitTicks: status.waitTicks })
     );
 

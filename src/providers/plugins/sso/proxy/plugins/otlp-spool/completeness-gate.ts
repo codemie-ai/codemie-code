@@ -29,8 +29,8 @@ export type GateDecision = 'send' | 'hooks-only-force' | 'wait' | 'noop';
  * Case C (neither group) -> 'noop'
  */
 export function gateDecision(status: SessionStatus): GateDecision {
-  const maxAttempts = Number(process.env['CODEMIE_CLAUDE_ANALYTICS_MAX_ATTEMPTS'] ?? '4');
-  const allowHooksOnly = (process.env['ALLOW_HOOKS_ONLY_FORWARD'] ?? 'true') === 'true';
+  const maxAttempts = Number(process.env['OTLP_SEND_MAX_ATTEMPTS'] ?? '4');
+  const allowHooksOnly = (process.env['OTLP_ALLOW_HOOKS_ONLY_FORWARD'] ?? 'true') === 'true';
 
   const hooksGroup = status.hooksWritten;
   const otelGroup = status.otelLogsWritten || status.otelMetricsWritten || status.otelTracesWritten;

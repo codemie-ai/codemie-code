@@ -36,7 +36,7 @@ export async function sweepExpired(credentials: SSOCredentials | JWTCredentials)
       await sweepSession(root, sessionId, ttlMs);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[claude-analytics-sweep] per-session error', ...sanitizeLogArgs({ sessionId, err: msg }));
+      logger.debug('[otlp-sweep] per-session error', ...sanitizeLogArgs({ sessionId, err: msg }));
     }
   }
 }
@@ -82,6 +82,6 @@ async function sweepSession(root: string, sessionId: string, ttlMs: number): Pro
         // File may already be gone
       }
     }
-    logger.debug('[claude-analytics-sweep] swept expired session', ...sanitizeLogArgs({ sessionId, ageMs }));
+    logger.debug('[otlp-sweep] swept expired session', ...sanitizeLogArgs({ sessionId, ageMs }));
   });
 }

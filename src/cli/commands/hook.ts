@@ -6,7 +6,7 @@ import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/ty
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { forwardOtlpEvent } from '@/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.js';
-import { forwardHookEventToSpool } from '@/agents/plugins/claude/claude-code-analytics.hook-forwarder.js';
+import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -1602,8 +1602,6 @@ export function createHookCommand(): Command {
     .action(async (opts: { agent?: string; analytics?: boolean }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
-      // Hoisted so the catch block can also resolve declarative agent gating
-      // (agentNeverBlocks/writeAgentStdoutResponse) after a failure.
       let agentName: string | undefined;
 
       // Graceful teardown: Claude Code may SIGTERM/SIGINT this hook while the
@@ -1674,7 +1672,9 @@ export function createHookCommand(): Command {
         }
 
         if (opts.analytics) {
-          await forwardHookEventToSpool(input, agentName);
+          await ensureOtlpProxy(agentName);
+          const analyticsAgent = AgentRegistry.getAnalyticsAgent(agentName);
+          await analyticsAgent?.processOtlpEvent(input);
           await logger.close();
           process.exitCode = 0;
           return;

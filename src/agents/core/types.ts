@@ -755,10 +755,23 @@ export interface ResumeOwnershipResult {
   auditData?: Record<string, unknown>;
 }
 
+export enum AgentAdapterType {
+  BASE,
+  OTLP,
+}
+
+export interface OTLPAgentAdapter  {
+  readonly name: string;
+  readonly type: AgentAdapterType.OTLP;
+
+  processOtlpEvent(rawHookInput: string): Promise<void>;
+}
+
 /**
  * Agent adapter interface - implemented by BaseAgentAdapter
  */
 export interface AgentAdapter {
+  readonly type: AgentAdapterType.BASE;
   name: string;
   displayName: string;
   description: string;

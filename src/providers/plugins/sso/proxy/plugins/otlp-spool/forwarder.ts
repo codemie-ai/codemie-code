@@ -254,7 +254,7 @@ export async function forwardSession(
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.debug('[claude-analytics-forwarder] hooks forward error', ...sanitizeLogArgs({ sessionId, err: msg }));
+          logger.debug('[otlp-forwarder] hooks forward error', ...sanitizeLogArgs({ sessionId, err: msg }));
           return;
         }
       }
@@ -348,7 +348,7 @@ export async function forwardSession(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug(`[claude-analytics-forwarder] ${signal} forward error`, ...sanitizeLogArgs({ sessionId, err: msg }));
+      logger.debug(`[otlp-forwarder] ${signal} forward error`, ...sanitizeLogArgs({ sessionId, err: msg }));
     }
   }
 

@@ -22,6 +22,7 @@ import { ensureApiBase } from '../../../providers/core/codemie-auth-helpers.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
+  isProcessAlive,
   readState,
   spawnDaemon,
   stopDaemon,
@@ -48,7 +49,7 @@ import {
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
 import { writeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { writeClaudeCodeAnalyticsConfig } from './connectors/claude-code-analytics/claude-code-analytics.js';
+import { writeClaudeCodeAnalyticsConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -57,7 +58,7 @@ export const DEFAULT_DAEMON_PORT = 4001;
 /** The orthogonal targets a single `connect` invocation may configure. */
 export interface ConnectTargets {
   claudeDesktop?: boolean;
-  claudeCode?: boolean;
+  claudeCodeOtlp?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
@@ -80,7 +81,7 @@ export interface ConnectOptions {
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'claude-code' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide';
+export type EffectiveClientType = 'claude-desktop' | 'claude-code' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide' | 'claude-code-otlp';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -96,7 +97,7 @@ export interface DaemonIdentity {
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
     | { clientType: 'cursor-ide' }
-    | { clientType: 'claude-code' };
+    | { clientType: 'claude-code-otlp' };
 }
 
 /**
@@ -109,8 +110,8 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
     return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
   }
-  if (targets.claudeCode) {
-    return { clientType: 'claude-code', spawnOptions: { clientType: 'claude-code' } };
+  if (targets.claudeCodeOtlp) {
+    return { clientType: 'claude-code-otlp', spawnOptions: { clientType: 'claude-code-otlp' } };
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
@@ -306,7 +307,7 @@ const TARGET_LIST = [
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.claudeCode || t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.cursorIde);
+  return Boolean(t.claudeDesktop || t.claudeCodeOtlp || t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.cursorIde);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -314,7 +315,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   const flags: string[] = [];
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
-  if (t.claudeCode) { flags.push('--claude-code'); labels.push('Claude Code'); }
+  if (t.claudeCodeOtlp) { flags.push('--claude-code-otlp'); labels.push('Claude Code'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
@@ -345,8 +346,8 @@ async function ensureDaemon(
   requested: RequestedDaemonConfig,
   identity: DaemonIdentity,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  force: boolean,
-  verbose: boolean
+  force?: boolean,
+  verbose?: boolean
 ): Promise<{ state: DaemonState; startedInThisRun: boolean }> {
   let { running, state } = await checkStatus();
   const matches = Boolean(running && state && daemonMatchesRequest(state, requested));
@@ -381,7 +382,7 @@ async function ensureDaemon(
   if (!running || !state) {
     console.log('Starting proxy...');
     state = await spawnDaemon({
-      targetUrl: config.baseUrl as string,
+      targetUrl: 'http://localhost:8080',
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
@@ -391,8 +392,8 @@ async function ensureDaemon(
       // config.ssoConfig is never populated anywhere in this codebase - it's a
       // dead field. Fall back to codeMieUrl/baseUrl, the same convention
       // sso.models.ts uses to resolve the CodeMie backend API URL.
-      syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
-      syncCodeMieUrl: config.codeMieUrl,
+      syncApiUrl: 'http://localhost:8080',
+      syncCodeMieUrl: 'http://localhost:8080',
     });
     startedInThisRun = true;
     console.log(verbose
@@ -401,6 +402,42 @@ async function ensureDaemon(
   }
 
   return { state, startedInThisRun };
+}
+
+export async function ensureOtlpProxy(agentName: string): Promise<void> {
+  const state = await readState();
+
+  if (state && isProcessAlive(state.pid)) {
+    return;
+  }
+
+  const cwd = process.cwd();
+
+  const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
+
+  const config = await ConfigLoader.load(
+    cwd,
+    activeProfileName ? { name: activeProfileName } : undefined
+  );
+
+  const daemonConfig = {
+    clientType: agentName,
+    port: DEFAULT_DAEMON_PORT,
+    profile: config.name ?? 'default',
+    project: config.codeMieProject,
+    provider: config.provider ?? 'ai-run-sso',
+    syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
+    syncCodeMieUrl: config.codeMieUrl,
+    targetUrl: config.baseUrl,
+    model: normalizeDaemonModel(config.model)
+  }
+
+  const daemonIdentity = {
+    clientType: agentName,
+    spawnOptions: { clientType: agentName },
+  } as DaemonIdentity;
+
+  await ensureDaemon(daemonConfig, daemonIdentity, config)
 }
 
 /** One per-target write outcome, collected for the summary (spec §3.4). */
@@ -689,8 +726,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // ahead of hasAnyTarget — otherwise "--analytics" alone (or with unrelated
   // flags but no target) silently falls through to the generic target list
   // instead of explaining that --analytics only applies to --cursor-ide / --claude-code.
-  if (analytics && !targets.cursorIde && !targets.claudeCode) {
-    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide or --claude-code.'));
+  if (analytics && !targets.cursorIde && !targets.claudeCodeOtlp) {
+    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide or --claude-code-otlp.'));
     return;
   }
 
@@ -706,7 +743,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     return;
   }
 
-  if (targets.claudeCode && !analytics) {
+  if (targets.claudeCodeOtlp && !analytics) {
     console.log(chalk.yellow('Note: --claude-code requires --analytics. Re-run with --claude-code --analytics.'));
     return;
   }
@@ -808,7 +845,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     }));
   }
   if (targets.cursorIde) results.push(await runCursorIde({ force: Boolean(opts.force) }));
-  if (targets.claudeCode) results.push(await runClaudeCode({ force: Boolean(opts.force), scope: opts.scope }));
+  if (targets.claudeCodeOtlp) results.push(await runClaudeCode({ force: Boolean(opts.force), scope: opts.scope }));
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);

@@ -1,5 +1,6 @@
 import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
 import { ClaudeAcpPlugin } from './plugins/claude/claude-acp.plugin.js';
+import { ClaudeCodeOtlpPlugin } from './plugins/claude-code-otlp/claude-code-otlp.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { OpenCodePlugin } from './plugins/opencode/index.js';
@@ -10,7 +11,7 @@ import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
 import { CursorIdePlugin } from './plugins/cursor-ide/cursor-ide.plugin.js';
-import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
+import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter, OTLPAgentAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
 export { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
@@ -23,6 +24,7 @@ export { BUILTIN_AGENT_NAME } from './plugins/codemie-code.plugin.js';
 export class AgentRegistry {
   private static readonly adapters: Map<string, AgentAdapter> = new Map();
   private static readonly analyticsAdapters: Map<string, AgentAnalyticsAdapter> = new Map();
+  private static readonly otlpAdapters: Map<string, OTLPAgentAdapter> = new Map();
   private static initialized = false;
 
   /**
@@ -45,6 +47,7 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new OpenWikiPlugin());
     AgentRegistry.registerPlugin(new CopilotCliPlugin());
     AgentRegistry.registerPlugin(new CursorIdePlugin());
+    AgentRegistry.registerPlugin(new ClaudeCodeOtlpPlugin());
 
     AgentRegistry.initialized = true;
   }
@@ -52,7 +55,12 @@ export class AgentRegistry {
   /**
    * Register a plugin and its analytics adapter (if available)
    */
-  private static registerPlugin(plugin: AgentAdapter): void {
+  private static registerPlugin(plugin: AgentAdapter | OTLPAgentAdapter): void {
+    if (plugin.type === AgentAdapterType.OTLP) {
+      AgentRegistry.otlpAdapters.set(plugin.name, plugin)
+      return;
+    }
+
     AgentRegistry.adapters.set(plugin.name, plugin);
 
     // Auto-register analytics adapter if provided in metadata
@@ -65,6 +73,11 @@ export class AgentRegistry {
   static getAgent(name: string): AgentAdapter | undefined {
     AgentRegistry.initialize();
     return AgentRegistry.adapters.get(name);
+  }
+
+  static getAnalyticsAgent(name: string): OTLPAgentAdapter |  undefined {
+    AgentRegistry.initialize();
+    return AgentRegistry.otlpAdapters.get(name);
   }
 
   static getAllAgents(): AgentAdapter[] {

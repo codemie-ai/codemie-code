@@ -102,7 +102,7 @@ export class CodeMieProxy {
     if (this.config.syncCodeMieUrl) {
       const { CodeMieSSO } = await import('../sso.auth.js');
       const sso = new CodeMieSSO();
-      syncCredentials = await sso.getStoredCredentials(this.config.syncCodeMieUrl);
+      syncCredentials = await sso.getStoredCredentials('http://localhost:8080');
       if (!syncCredentials) {
         logger.debug(
           `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login --url ${this.config.syncCodeMieUrl}`

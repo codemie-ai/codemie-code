@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
@@ -41,6 +41,7 @@ import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
   public readonly metadata: AgentMetadata;
+  public readonly type = AgentAdapterType.BASE;
 
   constructor(metadata: AgentMetadata) {
     // Clone metadata to allow runtime overrides (e.g., CLI flags)
