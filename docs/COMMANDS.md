@@ -701,12 +701,15 @@ API value of your usage, not dollars billed.
 > { input, output, cacheRead, cacheWrite } }`, USD per 1M tokens). When new models ship,
 > add or update entries there — unpriced models are surfaced in the Cost view's banner
 > and the terminal's `Unpriced models:` line. A model resolves only through an exact
-> match, or an exact match after stripping one trailing snapshot suffix
-> (`-YYYYMMDD`/`-YYYY-MM-DD`/`-latest`/`-preview`) — there is no family/tier fallback, so
-> an unlisted model always shows as unpriced rather than being guessed from a nearby one.
-> Rows marked `"estimated": true` (a tier estimate, not a confirmed published price) are
-> priced but also listed separately under `Estimated models:` / `meta.estimatedModels`.
-> See [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#model-pricing-resolution) for the full
+> match, an exact match after stripping one trailing snapshot suffix
+> (`-YYYYMMDD`/`-YYYY-MM-DD`/`-latest`/`-preview`), or — for a version-first Claude id —
+> the same two steps tried again after reordering it to the table's family-first form
+> (e.g. `claude-4-5-sonnet` → `claude-sonnet-4-5`) — there is no other family/tier
+> fallback, so an unlisted model always shows as unpriced rather than being guessed from
+> a nearby one. Rows marked `"estimated": true` (a tier estimate, not a confirmed
+> published price) are priced but also listed separately under `Estimated models:` /
+> `meta.estimatedModels`. See
+> [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#model-pricing-resolution) for the full
 > canonicalization and lookup order.
 
 **Analytics Features:**
@@ -1381,7 +1384,7 @@ codemie analytics [options]
 **Output Options:**
 - `-v, --verbose` - Show detailed session-level breakdown
 - `--export [format]` - Write a report: `html` (default when bare), `json`, or `both`; any other value is an invalid-format error
-- `-o, --output <path>` - Output file or directory (default: `./codemie-analytics-YYYY-MM-DD.{ext}`); a directory target writes each requested format under its default name inside it
+- `-o, --output <path>` - Output file or directory (default: `./codemie-analytics-YYYY-MM-DD.{ext}`); a directory target writes each requested format under its default name inside it; given alone (no `--export`/`--open`) it also implies an export, with the format inferred from the path (`.json` → `json`, otherwise → `html`)
 - `--open` - Open the generated HTML report in the default browser (implies `--export html` when `--export` is not given)
 
 **Metrics Displayed:**

@@ -163,7 +163,7 @@ Key elements:
 Every observed model id is canonicalized before it is looked up in `src/utils/pricing.json`:
 
 1. Strip a Bedrock `bedrock/`/`converse/` prefix (including the stacked `bedrock/converse/` form), the `<region>.anthropic.` prefix, and a trailing `-v<N>:<N>` suffix.
-2. Strip vendor path prefixes: `kimi-code/`, `openai.`, `openai/`, `azure/`, `vertex_ai/`, `anthropic/`.
+2. Strip vendor path prefixes: `kimi-code/`, `openai.`, `openai/`, `azure/`, `vertex_ai/`, `anthropic/`, and the dot-form `moonshotai.` and `qwen.` (e.g. `moonshotai.kimi-k2.5`, `qwen.qwen3-coder-480b-a35b-v1`).
 3. Lowercase the id, turn dots into dashes, and turn `@` into `-` (so Vertex's `claude-x@20260205` normalizes the same as a dated id).
 4. Strip a trailing `-vertex` suffix.
 
@@ -171,9 +171,10 @@ The canonical id is then looked up in order:
 
 1. Exact match — this keeps distinct dated rows apart, e.g. `gpt-4o-2024-05-13`.
 2. Exact match after stripping one trailing snapshot suffix — `-YYYYMMDD`, `-YYYY-MM-DD`, `-latest`, or `-preview`.
-3. Otherwise the model is **unpriced**.
+3. A version-first Claude id (`claude-<ver>-<family>`, e.g. `claude-4-5-sonnet`) reordered to the table's family-first form (`claude-<family>-<ver>`, e.g. `claude-sonnet-4-5`) and tried the same way — exact, then snapshot-stripped — only once steps 1-2 have failed on the id as observed. Reported as `match: 'reordered'`.
+4. Otherwise the model is **unpriced**.
 
-There is no family or tier fallback: `gpt-5.5` does not fall back to `gpt-5`'s price, and there is no assumption that a Claude tier's price stays flat across dated releases. A model without its own row, or without a row reachable through the two lookup steps above, always shows as unpriced rather than being silently priced from a nearby model. `CODEMIE_PRICES` still overrides the vendored table, and the Bedrock regional premium still applies on top of the resolved price.
+There is no family or tier fallback: `gpt-5.5` does not fall back to `gpt-5`'s price, and there is no assumption that a Claude tier's price stays flat across dated releases. The `reordered` step above is not a fallback in that sense — it maps an id onto an existing published row under its other, family-first spelling, never onto a different model. A model without its own row, or without a row reachable through the three lookup steps above, always shows as unpriced rather than being silently priced from a nearby model. `CODEMIE_PRICES` still overrides the vendored table, and the Bedrock regional premium still applies on top of the resolved price. A price-table build collision (two raw keys normalizing to the same table key with different prices) throws a `ConfigurationError`.
 
 **`unpricedModels`** (report meta and terminal summary) lists every distinct model that could not be resolved by the rules above. **`estimatedModels`** lists distinct models that *were* priced, but from a `pricing.json` row marked `"estimated": true` — a tier estimate rather than a confirmed published price (cited in the row's own source note) — surfaced so you can see which numbers are estimates without treating them as errors. A model appears in at most one of the two lists.
 
