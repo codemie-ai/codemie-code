@@ -287,7 +287,7 @@ describe('enrichCosts', () => {
           metadata: {},
           messages: [
             { message: { model: 'claude-sonnet-4-7', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
-            { message: { model: 'gpt-5.5', usage: { input_tokens: 10, output_tokens: 5 } } },
+            { message: { model: 'gpt-5.9', usage: { input_tokens: 10, output_tokens: 5 } } },
           ],
         }) as never,
     };
@@ -296,11 +296,11 @@ describe('enrichCosts', () => {
     const estimatedLine = c.perModel.find((m) => m.model === 'claude-sonnet-4-7')!;
     expect(estimatedLine.estimated).toBe(true);
     expect(estimatedLine.costUSD).toBeCloseTo(3, 6); // 1M input @ $3/1M (tier-estimate row)
-    const unknownLine = c.perModel.find((m) => m.model === 'gpt-5.5')!;
+    const unknownLine = c.perModel.find((m) => m.model === 'gpt-5.9')!;
     expect(unknownLine.unpriced).toBe(true);
     expect(unknownLine.estimated).toBeFalsy();
     expect(summary.estimatedModels).toContain('claude-sonnet-4-7');
-    expect(summary.unpricedModels).toContain('gpt-5.5');
+    expect(summary.unpricedModels).toContain('gpt-5.9');
   });
 
   it('costSeries endpoint equals the session total (same records, same pricing)', async () => {

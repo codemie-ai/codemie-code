@@ -116,8 +116,8 @@ describe('lookupPrice', () => {
     expect(lookupPrice('totally-made-up-model')).toBeNull();
   });
 
-  it('returns null for a wrong-model-family guess (gpt-5.5 must not resolve to gpt-5)', () => {
-    expect(lookupPrice('gpt-5.5')).toBeNull();
+  it('returns null for a wrong-model-family guess (gpt-5.9 must not resolve to gpt-5)', () => {
+    expect(lookupPrice('gpt-5.9')).toBeNull();
   });
 
   it('returns null for claude-opus-6 (no family/tier guess)', () => {
@@ -177,7 +177,7 @@ describe('canonicalizeModelId', () => {
 
 describe('resolvePrice', () => {
   it('returns null for an unknown model', () => {
-    expect(resolvePrice('gpt-5.5')).toBeNull();
+    expect(resolvePrice('gpt-5.9')).toBeNull();
   });
 
   it('returns null for claude-opus-6', () => {
@@ -281,8 +281,14 @@ describe('resolvePrice', () => {
     expect(resolution!.key).toBe('kimi-k2-5');
   });
 
-  it('leaves qwen.qwen3-coder-480b-a35b-v1 unpriced once the qwen. prefix is stripped (no such row)', () => {
-    expect(resolvePrice('qwen.qwen3-coder-480b-a35b-v1')).toBeNull();
+  it('resolves qwen.qwen3-coder-480b-a35b-v1 to its own row once the qwen. prefix is stripped', () => {
+    const resolution = resolvePrice('qwen.qwen3-coder-480b-a35b-v1');
+    expect(resolution).not.toBeNull();
+    expect(resolution!.key).toBe('qwen3-coder-480b-a35b-v1');
+  });
+
+  it('leaves an unknown qwen variant unpriced once the qwen. prefix is stripped (no such row)', () => {
+    expect(resolvePrice('qwen.qwen3-coder-7b-a1b-v1')).toBeNull();
   });
 
   it('still applies the Bedrock regional premium for the combined bedrock/converse/ prefix', () => {

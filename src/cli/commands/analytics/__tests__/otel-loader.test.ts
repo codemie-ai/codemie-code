@@ -91,9 +91,9 @@ describe('buildCostIndex - pricing fallback (no cost_usd)', () => {
 
   it('lists a model with no cost_usd that the resolver cannot price as unpriced', () => {
     const { summary } = buildCostIndex([
-      ev('U1', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.5', input_tokens: 1000, output_tokens: 500 }),
+      ev('U1', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.9', input_tokens: 1000, output_tokens: 500 }),
     ]);
-    expect(summary.unpricedModels).toEqual(['gpt-5.5']);
+    expect(summary.unpricedModels).toEqual(['gpt-5.9']);
   });
 
   it('prices usage through resolvePrice when cost_usd is absent', () => {
