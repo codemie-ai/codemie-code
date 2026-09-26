@@ -288,6 +288,66 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  // ── GPT-6 Models (vendor-published: 1,050,000 context, 128k output, Responses API) ──
+  'gpt-6-luna': {
+    id: 'gpt-6-luna',
+    name: 'GPT-6 Luna',
+    displayName: 'GPT-6 Luna',
+    family: 'gpt-6',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    structured_output: true,
+    use_responses_api: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2026-05-18',
+    release_date: '2026-09-22',
+    last_updated: '2026-09-22',
+    open_weights: false,
+    cost: {
+      input: 0.10,
+      output: 0.50,
+      cache_read: 0.01
+    },
+    limit: {
+      context: 1050000,
+      output: 128000
+    }
+  },
+  'gpt-6-sol': {
+    id: 'gpt-6-sol',
+    name: 'GPT-6 Sol',
+    displayName: 'GPT-6 Sol',
+    family: 'gpt-6',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    structured_output: true,
+    use_responses_api: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2026-05-18',
+    release_date: '2026-09-22',
+    last_updated: '2026-09-22',
+    open_weights: false,
+    cost: {
+      input: 2,
+      output: 10,
+      cache_read: 0.20
+    },
+    limit: {
+      context: 1050000,
+      output: 128000
+    }
+  },
+
   // ── Claude Models ──────────────────────────────────────────────────
   'claude-4-5-sonnet': {
     id: 'claude-4-5-sonnet',
@@ -646,6 +706,14 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
     structured_output: true,
     modalities: { input: ['text', 'image', 'audio', 'video'], output: ['text'] },
     limit: { context: 1048576, output: 65536 }
+  },
+  'gpt-6': {
+    family: 'gpt-6',
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    limit: { context: 1050000, output: 128000 }
   },
   'gpt': {
     family: 'gpt-5',
