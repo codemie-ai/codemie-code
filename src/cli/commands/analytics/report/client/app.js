@@ -802,6 +802,21 @@
     host.appendChild(changeCard);
   };
 
+  /**
+   * Builds the cost-banner text (spec section B: "The HTML report and the terminal summary
+   * show both lists"). Pure string builder kept separate from VIEWS.cost's DOM assembly so it
+   * can be executed directly in a test (see report-views.test.ts CR-014).
+   */
+  function costBannerMessage(meta) {
+    var priced = meta.totals.pricedSessions, totalSessions = meta.totals.sessions;
+    var msg = 'Priced ' + priced + ' of ' + totalSessions + ' sessions with recoverable token usage. '
+      + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
+      + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
+    if (meta.unpricedModels && meta.unpricedModels.length) msg += ' Unpriced models: ' + meta.unpricedModels.join(', ') + '.';
+    if (meta.estimatedModels && meta.estimatedModels.length) msg += ' Estimated models: ' + meta.estimatedModels.join(', ') + '.';
+    return msg;
+  }
+
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
     var allEstimated = fs.length && fs.every(function (s) { return s.costSource === 'native-estimate'; });
@@ -815,12 +830,7 @@
     var priced = DATA.meta.totals.pricedSessions, totalSessions = DATA.meta.totals.sessions;
 
     var banner = el('div', 'alert ' + (priced < totalSessions ? 'alert-warning' : 'alert-info'));
-    var msg = 'Priced ' + priced + ' of ' + totalSessions + ' sessions with recoverable token usage. '
-      + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
-      + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
-    if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Unpriced models: ' + DATA.meta.unpricedModels.join(', ') + '.';
-    if (DATA.meta.estimatedModels && DATA.meta.estimatedModels.length) msg += ' Estimated models: ' + DATA.meta.estimatedModels.join(', ') + '.';
-    banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
+    banner.textContent = costBannerMessage(DATA.meta); // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
 
     var grid = el('div', 'kpi-grid'); grid.style.gridTemplateColumns = 'repeat(3,1fr)';

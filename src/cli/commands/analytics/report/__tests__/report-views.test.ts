@@ -7,7 +7,33 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { runInNewContext } from 'vm';
 import { renderReportHtml } from '../report-generator.js';
+
+/**
+ * Executes app.js's `sessionPayload()` in isolation, following the vm-slice pattern in
+ * modal-focus.test.ts: slice the function's real source out of app.js and run it in a
+ * fresh vm context with just the globals it touches (`DATA`).
+ */
+function sessionPayloadHarness(): (s: unknown) => { meta: { estimatedModels: string[]; unpricedModels: string[] } } {
+  const appPath = fileURLToPath(new URL('../client/app.js', import.meta.url));
+  const source = readFileSync(appPath, 'utf-8');
+  const start = source.indexOf('function sessionPayload(s) {');
+  const end = source.indexOf('function openSessionModal(s, onBack) {', start);
+  if (start === -1 || end === -1) throw new Error('sessionPayload slice markers not found in app.js');
+  const context = { DATA: { meta: {} } };
+  return runInNewContext(`${source.slice(start, end)} sessionPayload`, context) as never;
+}
+
+/** Executes app.js's `costBannerMessage()` builder in isolation (see the harness above). */
+function costBannerHarness(): (meta: unknown) => string {
+  const appPath = fileURLToPath(new URL('../client/app.js', import.meta.url));
+  const source = readFileSync(appPath, 'utf-8');
+  const start = source.indexOf('function costBannerMessage(meta) {');
+  const end = source.indexOf('VIEWS.cost = function (host, fs) {', start);
+  if (start === -1 || end === -1) throw new Error('costBannerMessage slice markers not found in app.js');
+  return runInNewContext(`${source.slice(start, end)} costBannerMessage`, {}) as never;
+}
 
 const template = `<style>/* __CODEMIE_CSS__ */</style>
 <script>window.__ANALYTICS__ = /*__ANALYTICS_DATA__*/ null;</script>
@@ -45,17 +71,29 @@ describe('report views contract', () => {
 });
 
 describe('cost view surfaces unpriced and estimated models', () => {
-  it('app.js reads meta.estimatedModels alongside meta.unpricedModels for the cost banner', () => {
-    const appPath = fileURLToPath(new URL('../client/app.js', import.meta.url));
-    const app = readFileSync(appPath, 'utf-8');
+  it('CR-014 sessionPayload derives meta.estimatedModels from perModelCost[].estimated', () => {
+    const sessionPayload = sessionPayloadHarness();
+    const session = {
+      agentName: 'claude',
+      perModelCost: [{ model: 'claude-opus-4-7', estimated: true }],
+    };
 
-    // The run-level cost banner (VIEWS.cost) must surface both lists (spec section B:
-    // "The HTML report and the terminal summary show both lists").
-    expect(app).toMatch(/DATA\.meta\.estimatedModels/);
-    // The per-session payload rebuild (sessionPayload) must keep estimatedModels consistent
-    // with unpricedModels, derived from perModelCost[].estimated.
-    expect(app).toMatch(/estimatedModels:\s*estimatedModels/);
-    expect(app).toMatch(/m\.estimated/);
+    const result = sessionPayload(session);
+
+    expect(result.meta.estimatedModels).toEqual(['claude-opus-4-7']);
+    expect(result.meta.unpricedModels).toEqual([]);
+  });
+
+  it('CR-014 the cost banner text names estimated models', () => {
+    const costBannerMessage = costBannerHarness();
+
+    const msg = costBannerMessage({
+      totals: { pricedSessions: 1, sessions: 1 },
+      unpricedModels: [],
+      estimatedModels: ['claude-opus-4-7'],
+    });
+
+    expect(msg).toContain('Estimated models: claude-opus-4-7');
   });
 
   it('rendered HTML embeds meta.estimatedModels so the cost view can read it', () => {
