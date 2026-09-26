@@ -219,8 +219,11 @@ export interface AgentMetadata {
   cliCommand: string | null;       // 'claude' or null for built-in
 
   /**
-   * Latest version tested with the CodeMie backend — a recommendation, not a
-   * requirement. A mismatch produces one non-blocking notice per version.
+   * The version CodeMie tracks as current — not a requirement. For
+   * live-tracked agents (see `LIVE_TRACKED_AGENT_NAMES`) this is resolved from
+   * the package's live npm `latest` tag rather than backend-tested; for other
+   * agents it is this maintainer-pinned fallback. A mismatch produces one
+   * non-blocking notice per version.
    *
    * Format: Semantic version string (e.g., '2.0.30')
    * Special values: 'latest', 'stable' (channels)

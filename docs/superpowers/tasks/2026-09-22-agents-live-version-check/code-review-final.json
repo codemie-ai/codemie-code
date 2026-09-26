@@ -1,0 +1,117 @@
+{
+  "decision": "request-changes",
+  "rationale": "Full-profile review (blind, edge-case, acceptance, verification-gap, standards) all ran cleanly with parseable output and no coverage gaps; standards coverage_gap is false and the diff is not oversized. 7 findings confirmed against source; CR-001, CR-004 and CR-005 correspond to partial-status required spec/story-ac items from the acceptance lens: the versionChecks toggle doesn't make --refresh-versions/--force-refresh a true no-op (CR-001), force-refresh wipes the entire shared cache instead of scoping to the target package (CR-004), and update.ts's Claude up-to-date message was deleted/unified with generic text rather than reworded per the two-strings-only UI-copy scope (CR-005). CR-002/CR-003 are blind-lens-caught defects in setup.ts's version-check messaging and timeout race, independently verified against source. CR-006/CR-007 are edge-case concurrency and prerelease-handling gaps in the new cache/version-utils code. 7 candidates dismissed as noise: tabs-vs-spaces indentation (lint/formatter-covered), two false-positive reports treating the required fail-safe toggle behavior (invalid values resolve to enabled) as a bug, a disproven assumption that getLatestVersion() ignores its timeout option (it accepts one via NpmOptions), and 3 missing-test-coverage gaps explicitly excluded by the task's own 'no new tests except forced Kimi-mock maintenance' scope. No pre-existing/deferred findings identified.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "spec", "item": "Version cache: getCachedLatestVersion(pkg,{forceRefresh?}) 24h TTL, persists version-cache.json, npm-failure fallback to last cached value", "status": "partial", "notes": "TTL/persist/fallback all match; no forceRefresh param — refresh is clearVersionCache() wiping ALL cached packages instead" },
+    { "kind": "spec", "item": "resolveSupportedVersion() single accessor: allowlist check, toggle short-circuit, live lookup, fallback on failure", "status": "pass", "notes": "Implements all 4 steps; checkVersionCompatibility() and claude/kimi install() call it" },
+    { "kind": "spec", "item": "checkVersionCompatibility() async; all callers (startup, install, update, AgentsCheck, setup) await it", "status": "pass", "notes": "install.ts, AgentsCheck.ts, BaseAgentAdapter.ts warnOnceIfUntested/blockIfBelowMinimum all await it" },
+    { "kind": "spec", "item": "checkAgentForUpdate()'s Claude special-case deleted; Claude uses the uniform allowlisted path", "status": "pass", "notes": "Special-case block removed; isLiveTrackedAgent(agent.name) branch added in update.ts" },
+    { "kind": "spec", "item": "workspace.versionChecks.enabled resolved through ConfigLoader's CLI>env>project>global>defaults chain, fail-safe", "status": "pass", "notes": "env/types.ts, config.ts env parsing, version-resolution.ts config check, WORKSPACE_KEYS all updated" },
+    { "kind": "spec", "item": "Toggle off -> resolveSupportedVersion returns fallback with zero network calls; force-refresh is a no-op when toggle off", "status": "partial", "notes": "resolveSupportedVersion short-circuits correctly, but clearVersionCache() runs unconditionally on --refresh-versions/--force-refresh regardless of toggle" },
+    { "kind": "spec", "item": "Notice-dedup: unchanged live version keeps VersionWarningStore silent, no code change needed", "status": "pass", "notes": "version-warnings.ts untouched; resolveSupportedVersion returns identical string when unchanged" },
+    { "kind": "spec", "item": "Reword the two 'verified' framings to 'newer version available' — setup.ts and update.ts", "status": "partial", "notes": "setup.ts:783 reworded correctly; update.ts's Claude up-to-date message deleted/unified with generic text instead of reworded" },
+    { "kind": "spec", "item": "Non-goal: minimumSupportedVersion/isBelowMinimum/blockIfBelowMinimum stay hardcoded, untouched", "status": "pass", "notes": "No diff hunks touch these" },
+    { "kind": "spec", "item": "Non-goal: Claude ACP and other non-allowlisted plugins stay out of scope despite npmPackage-shaped metadata", "status": "pass", "notes": "claude-acp.plugin.ts not in diff; LIVE_TRACKED_AGENT_NAMES excludes it by name" },
+    { "kind": "spec", "item": "Non-goal: no per-agent toggle granularity, one global switch only", "status": "pass", "notes": "Single versionChecks.enabled boolean added, no per-agent field" },
+    { "kind": "story-ac", "item": "All five allowlisted agents' supportedVersion sourced from cached npm latest, fallback on fetch failure or toggle off", "status": "pass", "notes": "codex/gemini/copilot-cli via BaseAgentAdapter's generic check; claude/kimi's duplicated install() resolution separately patched" },
+    { "kind": "story-ac", "item": "resolveSupportedVersion() keys off an explicit named allowlist, not metadata.npmPackage presence", "status": "pass", "notes": "LIVE_TRACKED_AGENT_NAMES=['claude','codex','gemini','kimi','copilot-cli']; isLiveTrackedAgent checked before npmPackage" },
+    { "kind": "story-ac", "item": "checkAgentForUpdate() no longer special-cases Claude; all five allowlisted agents go through one uniform check", "status": "pass", "notes": "Special-case removed; replaced by isLiveTrackedAgent(agent.name) branch" },
+    { "kind": "story-ac", "item": "A single global config setting gates the startup warning, codemie setup, and codemie update identically", "status": "pass", "notes": "All three flows funnel through checkVersionCompatibility() -> resolveSupportedVersion() -> the same enabled check" },
+    { "kind": "story-ac", "item": "An invalid or unrecognized stored value for the toggle resolves to checks enabled", "status": "pass", "notes": "version-resolution.ts config check and config.ts env-var parsing both use != false / != 'false'" },
+    { "kind": "story-ac", "item": "codemie doctor and codemie update can force a cache refresh, bypassing only the 24h TTL", "status": "partial", "notes": "Both call clearVersionCache(), which deletes the whole cache file for all packages, not scoped to the target agent's package" },
+    { "kind": "story-ac", "item": "A cache refresh resolving to an unchanged version does not re-trigger VersionWarningStore's notice", "status": "pass", "notes": "version-warnings.ts untouched; dedup keys off the resolved string, identical when the live version hasn't changed" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "10 subjects in range match <type>(<scope>): <subject>; feat/fix/refactor scopes all commitlint-allowed; imperative mood, no trailing period, under 100 chars." },
+    { "kind": "code-quality", "status": "pass", "notes": "Follows guide: .js imports, explicit return types, interfaces, correct naming, logger not console, fail-safe try/catch; no new oversized files introduced." },
+    { "kind": "security", "status": "na", "notes": "No security guide at documented path (na); reviewed lookup/cache code directly — array-form npm exec, no user input, fail-safe try/catch, no secrets logged. No issue found." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/doctor/index.ts",
+      "line": 43,
+      "title": "Cache refresh ignores versionChecks toggle",
+      "problem": "doctor/index.ts:43-46 (--refresh-versions) and update.ts:230-232 (--force-refresh) call clearVersionCache() unconditionally, before any check of config.versionChecks.enabled.",
+      "impact": "When versionChecks is disabled, the CLI prints 'Cleared version cache — N entries removed' but resolveSupportedVersion() still short-circuits to the hardcoded fallback, so the promised refresh never happens — user-visible confirmation of an action with no effect, and a direct violation of the spec's 'force-refresh is a no-op when toggle is off' requirement (acceptance criterion graded partial).",
+      "recommendation": "Gate both clearVersionCache() calls behind an explicit config.versionChecks.enabled check (skip + inform the user) before wiping the cache."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 772,
+      "title": "Setup version-check race drops notice",
+      "problem": "setup.ts:772-777 races claude.checkVersionCompatibility() against a flat 3000ms timeout, but the internal path (ConfigLoader.load() + getCachedLatestVersion()'s own npm exec with its own 3000ms timeout) starts its clock after that preceding overhead, so its worst-case completion time is strictly later than the outer race's 3000ms mark.",
+      "impact": "On a cold cache or after 24h TTL expiry — precisely when a live npm lookup is needed — the outer race is likely to lose to its own inner timeout, throwing into the catch branch and silently suppressing the new 'newer version available' notice this feature exists to show.",
+      "recommendation": "Raise the outer setup timeout above FETCH_TIMEOUT_MS plus margin, or thread a shared AbortSignal through instead of two independent timers."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 783,
+      "title": "Newer-version copy inverted on isNewer branch",
+      "problem": "setup.ts:779-783's own comment says the branch fires when the 'installed version is newer than supported', yet the printed line reads 'A newer version is available: v${compat.supportedVersion}' — naming the older, supported/recommended version as the 'newer' one.",
+      "impact": "Users who already have a newer install than the recommended baseline are told a newer version exists and are pointed at 'codemie install claude --supported', which would downgrade them — the opposite of what the message and command are meant to achieve.",
+      "recommendation": "Reword this branch to reflect that the installed version already exceeds the recommended baseline (e.g. 'Note: v${installedVersion} is ahead of the recommended v${supportedVersion}'), not 'a newer version is available'."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/update.ts",
+      "line": 230,
+      "title": "Force-refresh wipes entire shared cache",
+      "problem": "update.ts:230-232's --force-refresh and doctor/index.ts's --refresh-versions both call clearVersionCache(), which unlinks the whole version-cache.json — every tracked package's entry, not just the one agent/package the user targeted.",
+      "impact": "Running 'codemie update claude --force-refresh' discards codex/gemini/kimi/copilot-cli's cached entries too, forcing unnecessary npm lookups for agents the user never asked to refresh; violates the acceptance criterion that force-refresh bypass only the target package's TTL (graded partial).",
+      "recommendation": "Add a scoped refresh path (e.g. getCachedLatestVersion(pkg, { forceRefresh: true }) that deletes/bypasses only that package's cache entry) instead of clearVersionCache()'s blanket wipe."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/update.ts",
+      "line": 269,
+      "title": "Claude up-to-date copy deleted, not reworded",
+      "problem": "update.ts's previous Claude-specific 'already up to date with latest verified version by CodeMie' message was removed entirely and unified into the generic '<agent> is already up to date' text (line 269) instead of being reworded to the 'newer version available' framing.",
+      "impact": "Deviates from the spec's two-strings-only rework (setup.ts:783 and update.ts's up-to-date message) and its 'no other UI copy touched' constraint — the acceptance lens grades both the spec item and the story-ac item covering this string as partial.",
+      "recommendation": "Restore a live-tracked-agent-specific up-to-date message reworded to the 'newer version available' framing rather than folding it into the generic message."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/version-cache.ts",
+      "line": 51,
+      "title": "Concurrent cache writes race and drop entries",
+      "problem": "getCachedLatestVersion()'s read-modify-write (loadCache() -> mutate cache.packages[packageName] -> saveCache(cache)) has no locking; update.ts's checkAllAgentsForUpdates() runs Promise.all(agents.map(checkAgentForUpdate)), so all five live-tracked agents can hit this function concurrently against the same version-cache.json.",
+      "impact": "When two calls' loadCache() reads interleave with saveCache() writes, the call that writes last wins with a cache object built from a stale read, silently dropping the other call's freshly-fetched entry — defeating the 24h TTL's purpose of avoiding repeat npm calls on every plain 'codemie update'/'codemie doctor' run.",
+      "recommendation": "Serialize writes with a file lock, or merge the freshly-fetched entry into a re-read of the current file at write time instead of mutating the pre-fetch snapshot."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/version-utils.ts",
+      "line": 29,
+      "title": "extractVersion silently accepts prerelease tags",
+      "problem": "extractVersion()'s regex /v?(\\d+\\.\\d+\\.\\d+)/ matches and returns only the numeric major.minor.patch portion of whatever string npm's 'latest' dist-tag resolves to, discarding any -beta/-rc suffix without flagging that the source was a prerelease.",
+      "impact": "If any of the five live-tracked packages' 'latest' dist-tag ever points at a prerelease build, resolveSupportedVersion() presents that unstable version as the recommended 'supported' version with no guard, indistinguishable from a genuine stable release.",
+      "recommendation": "Reject or fall back to fallbackSupportedVersion when the raw live string carries a prerelease/build suffix, rather than silently stripping it in extractVersion() or resolveSupportedVersion() before use."
+    }
+  ]
+}

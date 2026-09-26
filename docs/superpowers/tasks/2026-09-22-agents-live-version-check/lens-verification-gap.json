@@ -1,0 +1,25 @@
+[{
+  "location": "src/agents/core/version-resolution.ts:77-105 (resolveSupportedVersion) and src/utils/version-cache.ts:444-463 (getCachedLatestVersion TTL/staleness logic)",
+  "trigger_condition": "no test drives resolveSupportedVersion through its real live-lookup branch (config check + 24h-cached npm fetch) with a live-tracked agent name and a real npmPackage; every existing test either bypasses it (npmPackage: null) or mocks the whole module",
+  "guard_snippet": "an assertion that a second getCachedLatestVersion call within the 24h TTL returns the cached value without re-invoking npm.getLatestVersion, and that a failed live fetch falls back to the last-known cached version (or that a corrupt cache file is recovered as empty)",
+  "potential_consequence": "a regression in the TTL comparison (e.g. always-stale or always-fresh) or in the fetch-failure/corrupt-file fallback would ship silently: agents could hammer npm on every version check, or permanently serve a stale/incorrect 'supported version' into install and compatibility flows, and the existing suite would still pass because it never re-warms or invalidates the cache within a run",
+  "gap_shape": "broken-verification-gap",
+  "consumer": "BaseAgentAdapter.checkVersionCompatibility/install (src/agents/core/BaseAgentAdapter.ts:189-199,291-296) and ClaudePlugin.install (src/agents/plugins/claude/claude.plugin.ts:611-127), which call resolveSupportedVersion in production for live-tracked agents with a real npmPackage",
+  "evidence": "Read BaseAgentAdapter.test.ts and BaseAgentAdapter.version-notice.test.ts — every AgentMetadata fixture sets npmPackage: null (lines 146,170,194,223,247,318,386,469,583 and metadata() at version-notice.test.ts:62), which makes resolveSupportedVersion short-circuit to the fallback before touching config/cache at all; kimi.plugin.test.ts mocks '../../../core/version-resolution.js' wholesale (lines 147-151); Glob for version-resolution*.test.ts and version-cache*.test.ts found no dedicated test file; cli-misc-coverage.test.ts's update-command tests (lines 390-449) only exercise a single first-call, empty-cache, successful-fetch path once per test with vi.clearAllMocks() resetting state, never a warm-cache or fetch-failure scenario"
+}, {
+  "location": "src/cli/commands/doctor/index.ts:206-216 (--refresh-versions option calling clearVersionCache())",
+  "trigger_condition": "the new --refresh-versions flag calls clearVersionCache() and prints a 'Cleared version cache — N entries removed' message; no test invokes doctor with this flag",
+  "guard_snippet": "an assertion that running `doctor --refresh-versions` invokes clearVersionCache and that the printed removed-count reflects the cache contents",
+  "potential_consequence": "if the flag stopped calling clearVersionCache, or always reported 0 removed regardless of cache contents, the cache would never actually refresh on user request and no test would fail",
+  "gap_shape": "broken-verification-gap",
+  "consumer": "`codemie doctor --refresh-versions` CLI surface",
+  "evidence": "grep for 'refresh-versions|refreshVersions' across src/cli/commands/doctor/checks/__tests__/doctor-checks.test.ts and tests/integration/cli-commands/doctor.test.ts returned no matches; doctor.test.ts's only invocation is `cli.runSilent('doctor')` (line 24) without any flags"
+}, {
+  "location": "src/cli/commands/update.ts:227-231 (--force-refresh option calling clearVersionCache() before checking)",
+  "trigger_condition": "the new --force-refresh option is meant to bypass the 24h version cache before checking/updating an agent; no test exercises this flag",
+  "guard_snippet": "an assertion that `update --force-refresh` calls clearVersionCache before resolving the latest version, and/or that a stale cached value is ignored when the flag is passed",
+  "potential_consequence": "if the flag were wired to a no-op or the wrong function, users passing --force-refresh would keep getting the stale cached version with no test catching the omission",
+  "gap_shape": "broken-verification-gap",
+  "consumer": "`codemie update --force-refresh`, exercised in src/cli/commands/__tests__/cli-misc-coverage.test.ts",
+  "evidence": "Read cli-misc-coverage.test.ts's three `createUpdateCommand` tests (lines 390-449): 'updates a specific npm-based agent', 'does NOT install in --check mode', 'does NOT install when already up to date' — none pass '--force-refresh'; repo-wide grep for forceRefresh/force-refresh found no other test reference besides update.ts itself"
+}]

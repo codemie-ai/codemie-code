@@ -4,6 +4,7 @@ import type {
   ResumeOwnershipResult,
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { resolveSupportedVersion } from '../../core/version-resolution.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
@@ -32,7 +33,8 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Recommended Claude Code version — the one CodeMie verifies against.
+ * Fallback tracked Claude Code version, used only if the live npm lookup
+ * fails (Claude is live-tracked — see `LIVE_TRACKED_AGENT_NAMES`).
  * A different installed version produces one non-blocking notice, never a block.
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
@@ -128,7 +130,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   sessionAnalyticsReport: true,
 
   // Version management configuration
-  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
+  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Live-tracked from npm; this is only the fallback
   minimumSupportedVersion: CLAUDE_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   // Native installer URLs (used by installNativeAgent utility)
@@ -724,13 +726,18 @@ export class ClaudePlugin extends BaseAgentAdapter {
     // Resolve 'supported' to actual version from metadata
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!metadata.supportedVersion) {
+      const resolved = await resolveSupportedVersion({
+        agentName: metadata.name,
+        npmPackage: metadata.npmPackage,
+        fallbackSupportedVersion: metadata.supportedVersion,
+      });
+      if (!resolved) {
         throw new AgentInstallationError(
           metadata.name,
           'No supported version defined in metadata',
         );
       }
-      resolvedVersion = metadata.supportedVersion;
+      resolvedVersion = resolved;
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,

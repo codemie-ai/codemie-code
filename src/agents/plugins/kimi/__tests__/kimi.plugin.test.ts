@@ -14,6 +14,12 @@ vi.mock('../../../../utils/native-installer.js', () => ({
   }),
 }));
 
+vi.mock('../../../core/version-resolution.js', () => ({
+  resolveSupportedVersion: vi
+    .fn()
+    .mockImplementation(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
+}));
+
 describe('KimiPlugin', () => {
   beforeEach(() => {
     vi.clearAllMocks();

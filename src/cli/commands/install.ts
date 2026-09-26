@@ -22,7 +22,7 @@ export function createInstallCommand(): Command {
     .description('Install an external AI coding agent or development framework')
     .argument('[name]', 'Agent or framework name to install (run without argument to see available)')
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
-    .option('--supported', 'Install the latest supported version tested with CodeMie')
+    .option('--supported', 'Install the version CodeMie is currently tracking')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
     .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {

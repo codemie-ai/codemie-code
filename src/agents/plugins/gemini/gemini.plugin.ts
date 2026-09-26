@@ -8,8 +8,8 @@ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionI
 import { validateGeminiModel } from './gemini.models.js';
 
 /**
- * Supported Gemini CLI version
- * Latest version tested and verified with CodeMie backend
+ * Fallback tracked Gemini CLI version, used only if the live npm lookup fails
+ * (Gemini is live-tracked — see `LIVE_TRACKED_AGENT_NAMES`).
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
@@ -36,7 +36,7 @@ const metadata = {
   cliCommand: 'gemini',
 
   // Version management configuration
-  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Latest version tested with CodeMie backend
+  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Live-tracked from npm; this is only the fallback
   minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   envMapping: {
@@ -166,6 +166,13 @@ export const GeminiPluginMetadata: AgentMetadata = {
           },
           tools: {
             enableHooks: true
+          },
+          // Gemini's own self-updater can silently rewrite the installed binary
+          // mid-launch (even during a bare `--version` probe), which fights
+          // CodeMie's own version tracking. ensureJsonFile only fills this in
+          // when missing, so an explicit user choice here is left untouched.
+          general: {
+            enableAutoUpdate: false
           }
         }
       );
@@ -236,7 +243,11 @@ export class GeminiPlugin extends BaseAgentAdapter {
 
     try {
       const { exec } = await import('../../../utils/processes.js');
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      // On Windows, gemini resolves to an npm .cmd shim — spawn() can only run it
+      // through a shell, the same reason installGlobal/uninstallGlobal set this.
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
 
       // Parse semver from output (handles both '0.29.5' and '0.29.5 (Gemini CLI)' formats)
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);

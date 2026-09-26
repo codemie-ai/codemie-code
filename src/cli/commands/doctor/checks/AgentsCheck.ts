@@ -2,8 +2,8 @@
  * Installed agents health check
  *
  * Reports each installed agent's version against the version CodeMie
- * recommends: a match is `ok`, a mismatch is a `warn` carrying the
- * recommendation, and a version below the minimum supported one is an `error`
+ * is tracking: a match is `ok`, a mismatch is a `warn` naming the
+ * tracked version, and a version below the minimum supported one is an `error`
  * (that is the only version state that actually blocks the agent).
  */
 
@@ -43,7 +43,9 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       return deprecationWarning;
     }
 
-    if (!version || !agent.checkVersionCompatibility) {
+    if (!version || !agent.checkVersionCompatibility || !agent.metadata.supportedVersion) {
+      // No configured version target (e.g. the built-in agent, whose version
+      // ships pinned to the CodeMie CLI release) — nothing to compare against.
       return { status: 'ok', message: `${agent.displayName}${versionStr}` };
     }
 
@@ -60,7 +62,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
     if (version !== compat.supportedVersion) {
       return {
         status: 'warn',
-        message: `${agent.displayName}${versionStr} - CodeMie recommends v${compat.supportedVersion}`,
+        message: `${agent.displayName}${versionStr} - CodeMie is tracking v${compat.supportedVersion}`,
         hint: `codemie install ${agent.name} --supported`
       };
     }

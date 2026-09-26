@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "branch": "feat/agents-live-version-check",
+  "head": "76fe333e32a93fa882e351df3e1e9fe1a7f34326",
+  "runner": "npm",
+  "started_at": "2026-09-23T08:50:05Z",
+  "completed_at": "2026-09-23T09:38:17Z",
+  "status": "PASSED",
+  "drift_detected": true,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6670,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 22176,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10991,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 20505,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 88160,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "287 files, 4182 passed, 2 skipped"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 57780,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 passed | 1 skipped files (38); 279 passed | 10 skipped tests (289)"
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 3807,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script prints \"No staged changes to scan\" — it scans the staged git diff, and nothing is currently staged (all branch changes are already committed). To enable locally: `git add -A` (or stage the diff range) before running, or run gitleaks directly against `origin/main...HEAD`. CI's separate gitleaks-action job scans unconditionally regardless of local staging state."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2004,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run check:pre-commit",
+      "notes": "Chain command (typecheck && lint); both constituent commands already ran and passed individually above — not re-executed to avoid redundant triple-running of the same checks."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run ci",
+      "notes": "Chain command (license-check && lint && build && vitest unit && vitest cli); all constituent gates already ran and passed individually above — not re-executed to avoid redundant triple-running of build/tests."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 54700,
+      "command": "npx vitest related --run <12 changed .ts files> --exclude tests/integration/agent-*.test.ts --exclude tests/integration/cli-commands/models.test.ts",
+      "exit_code": 0,
+      "notes": "From .husky/pre-commit's lint-staged config (\"vitest related --run ...\"), scoped to files changed vs merge_base instead of git-staged files. 122 files passed, 1817 passed | 1 skipped tests."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 3033,
+      "command": "npx commitlint --from 67e1754cf13cdff2ebb9ee072316b6e36dfd8938 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI's validate-commits job lints the full PR commit range (base.sha..HEAD), not just the last commit like the guide's commitlint:last. Guide and CI diverge in scope; ran the union. All 11 commits on the branch pass."
+    },
+    {
+      "id": "secrets-detection-ci",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gitleaks/gitleaks-action@v2 (GitHub Actions job \"secrets-detection\")",
+      "notes": "Same Gitleaks tool/config (.gitleaks.toml) as the guide's local validate:secrets gate, scanning the full PR diff instead of the staged diff; only runs in a `pull_request` GitHub Actions context, unreachable locally. The local gate above self-skipped (no staged changes), so this CI check is still owed and only CI can settle it."
+    },
+    {
+      "id": "pr-title-validation-ci",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gh pr view --json title | npx commitlint (GitHub Actions job \"validate-commits\")",
+      "notes": "No open PR exists yet for this branch; requires a live PR number via `gh pr view`, unreachable before PR creation."
+    }
+  ],
+  "failures": {}
+}

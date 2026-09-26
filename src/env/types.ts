@@ -141,6 +141,9 @@ export interface WorkspaceConfig {
       dryRun?: boolean;   // Dry-run mode: log metrics without sending (default: false)
     };
   };
+
+  // Live agent version check toggle — fail-safe: enabled unless explicitly set to false
+  versionChecks?: { enabled?: boolean };
 }
 
 /**
