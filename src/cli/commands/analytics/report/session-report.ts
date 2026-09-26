@@ -1,6 +1,6 @@
 /**
  * Programmatic, side-effect-free session-scoped analytics report generator.
- * Composes the same building blocks the `analytics --report --report-format json`
+ * Composes the same building blocks the `analytics --export json`
  * CLI path uses, but prints nothing and never calls process.exit — safe to invoke
  * from agent session finalization. Failures propagate to the caller (who logs them).
  */

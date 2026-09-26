@@ -1410,7 +1410,7 @@
   }
   /**
    * Rebuild a single-session ReportPayload matching what
-   * `codemie analytics --report --report-format json --session <id>` writes:
+   * `codemie analytics --export json --session <id>` writes:
    * { meta, sessions: [record] }, with meta.totals/coverage scoped to this one session
    * and userEmail / periodStart / periodEnd populated. Mirrors buildPayload()'s meta
    * assembly (see report/payload-builder.ts) so the exported file is drop-in comparable.
