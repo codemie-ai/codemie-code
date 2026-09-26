@@ -165,6 +165,14 @@ describe('canonicalizeModelId', () => {
   it('strips a trailing -vertex suffix', () => {
     expect(canonicalizeModelId('claude-opus-5-vertex')).toBe('claude-opus-5');
   });
+
+  it('strips the moonshotai. vendor prefix and folds the dotted remainder to dashes', () => {
+    expect(canonicalizeModelId('moonshotai.kimi-k2.5')).toBe('kimi-k2-5');
+  });
+
+  it('strips the qwen. vendor prefix', () => {
+    expect(canonicalizeModelId('qwen.qwen3-coder-480b-a35b-v1')).toBe('qwen3-coder-480b-a35b-v1');
+  });
 });
 
 describe('resolvePrice', () => {
@@ -240,6 +248,41 @@ describe('resolvePrice', () => {
     const resolution = resolvePrice('bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0');
     expect(resolution).not.toBeNull();
     expect(resolution!.key).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it.each([
+    'claude-4-5-sonnet',
+    'claude-4-5-sonnet-vertex',
+    'claude-4.5-sonnet',
+  ])('reorders version-first %s to the family-first claude-sonnet-4-5 row', (model) => {
+    const resolution = resolvePrice(model);
+    expect(resolution).not.toBeNull();
+    expect(resolution!.key).toBe('claude-sonnet-4-5');
+    expect(resolution!.match).toBe('reordered');
+  });
+
+  it.each([
+    'claude-3-5-sonnet',
+    'claude-3-5-haiku',
+    'claude-3-opus',
+    'claude-3-sonnet',
+    'claude-3-haiku',
+    'claude-3-7-sonnet-20250219',
+  ])('still resolves the existing old-style Claude key %s unchanged, without reordering', (model) => {
+    const resolution = resolvePrice(model);
+    expect(resolution).not.toBeNull();
+    expect(resolution!.key).toBe(model);
+    expect(resolution!.match).toBe('exact');
+  });
+
+  it('resolves moonshotai.kimi-k2.5 to the kimi-k2-5 row via vendor-prefix stripping', () => {
+    const resolution = resolvePrice('moonshotai.kimi-k2.5');
+    expect(resolution).not.toBeNull();
+    expect(resolution!.key).toBe('kimi-k2-5');
+  });
+
+  it('leaves qwen.qwen3-coder-480b-a35b-v1 unpriced once the qwen. prefix is stripped (no such row)', () => {
+    expect(resolvePrice('qwen.qwen3-coder-480b-a35b-v1')).toBeNull();
   });
 
   it('still applies the Bedrock regional premium for the combined bedrock/converse/ prefix', () => {

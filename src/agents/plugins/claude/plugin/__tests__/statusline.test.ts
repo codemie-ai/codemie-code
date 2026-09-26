@@ -12,6 +12,7 @@ import {
   ctxBar,
   lookupRate,
   computeSessionCost,
+  canonicalizeModelId,
 } from '../statusline.js';
 
 const YELLOW = '\x1b[0;33m';
@@ -391,6 +392,33 @@ describe('lookupRate', () => {
     // '@' folds to '-' during canonicalization, so 'claude-opus-4-6@20260205' canonicalizes to
     // 'claude-opus-4-6-20260205', which then resolves via the snapshot-suffix-stripped exact match.
     expect(lookupRate(TABLE, 'claude-opus-4-6@20260205')).toEqual(TABLE['claude-opus-4-6']);
+  });
+
+  const REORDER_TABLE = {
+    ...TABLE,
+    'claude-sonnet-4-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+    'claude-3-5-sonnet': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+  };
+
+  it.each([
+    'claude-4-5-sonnet',
+    'claude-4-5-sonnet-vertex',
+  ])('reorders version-first %s to the family-first claude-sonnet-4-5 row', (modelId) => {
+    expect(lookupRate(REORDER_TABLE, modelId)).toEqual(REORDER_TABLE['claude-sonnet-4-5']);
+  });
+
+  it('still resolves the existing old-style claude-3-5-sonnet key unchanged, without reordering', () => {
+    expect(lookupRate(REORDER_TABLE, 'claude-3-5-sonnet')).toEqual(REORDER_TABLE['claude-3-5-sonnet']);
+  });
+});
+
+describe('canonicalizeModelId', () => {
+  it('strips the moonshotai. vendor prefix and folds the dotted remainder to dashes', () => {
+    expect(canonicalizeModelId('moonshotai.kimi-k2.5')).toBe('kimi-k2-5');
+  });
+
+  it('strips the qwen. vendor prefix', () => {
+    expect(canonicalizeModelId('qwen.qwen3-coder-480b-a35b-v1')).toBe('qwen3-coder-480b-a35b-v1');
   });
 });
 

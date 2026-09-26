@@ -157,7 +157,7 @@ const KIMI_PREFIX = 'kimi-code/';
  * src/utils/model-normalizer.ts's VENDOR_PREFIX_PATTERN; duplicated here because this file is
  * bundled standalone and cannot import that module (see the header comment).
  */
-const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/)/i;
+const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/|moonshotai\.|qwen\.)/i;
 
 /**
  * Canonicalizes an observed model id into the same pricing-table-key form as
@@ -407,6 +407,26 @@ function normalizedTable(table) {
 const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
 
 /**
+ * Matches a Claude id given in version-first order — `claude-<ver>-<family>[<rest>]` — so it can
+ * be reordered to the family-first form the table keys newer Claude generations under. Mirrors
+ * src/utils/pricing.ts's CLAUDE_VERSION_FIRST_PATTERN; duplicated here because this file is
+ * bundled standalone and cannot import that module.
+ */
+const CLAUDE_VERSION_FIRST_PATTERN = /^claude-(\d+(?:-\d+)*)-(opus|sonnet|haiku)(-.+)?$/;
+
+/**
+ * Reorders a version-first Claude id (`claude-4-5-sonnet`) to the family-first form
+ * (`claude-sonnet-4-5`) the table keys such rows under, preserving any trailing suffix. Returns
+ * null when `id` isn't in that shape. Mirrors src/utils/pricing.ts's reorderClaudeVersionFamily().
+ */
+function reorderClaudeVersionFamily(id) {
+  const match = id.match(CLAUDE_VERSION_FIRST_PATTERN);
+  if (!match) return null;
+  const [, version, family, rest = ''] = match;
+  return `claude-${family}-${version}${rest}`;
+}
+
+/**
  * Resolves a rate from `table` for `modelId`, mirroring src/utils/pricing.ts's
  * resolvePrice()/lookupPrice() resolution order exactly — a divergence here would silently
  * misprice the transcript relative to the analytics report. Against the {@link canonicalizeModelId}
@@ -415,7 +435,11 @@ const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
  *   2. Exact match after stripping one trailing snapshot suffix (see
  *      {@link SNAPSHOT_SUFFIX_PATTERN}) — e.g. `claude-opus-4-6-20260205` resolves to the
  *      `claude-opus-4-6` row.
- *   3. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
+ *   3. A version-first Claude id reordered to the table's family-first form (see
+ *      {@link reorderClaudeVersionFamily}), tried exact and then with a trailing snapshot suffix
+ *      stripped — only once steps 1-2 have already failed on the as-is id, so every pre-existing
+ *      version-first key keeps resolving unchanged.
+ *   4. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
  */
 export function lookupRate(table, modelId) {
   if (!table) return null;
@@ -430,6 +454,18 @@ export function lookupRate(table, modelId) {
   if (withoutSnapshot !== name) {
     const snapshot = rates.get(withoutSnapshot);
     if (snapshot) return applyBedrockRegionalPremium(snapshot, modelId);
+  }
+
+  const reordered = reorderClaudeVersionFamily(name);
+  if (reordered) {
+    const reorderedExact = rates.get(reordered);
+    if (reorderedExact) return applyBedrockRegionalPremium(reorderedExact, modelId);
+
+    const reorderedWithoutSnapshot = reordered.replace(SNAPSHOT_SUFFIX_PATTERN, '');
+    if (reorderedWithoutSnapshot !== reordered) {
+      const reorderedSnapshot = rates.get(reorderedWithoutSnapshot);
+      if (reorderedSnapshot) return applyBedrockRegionalPremium(reorderedSnapshot, modelId);
+    }
   }
 
   return null;

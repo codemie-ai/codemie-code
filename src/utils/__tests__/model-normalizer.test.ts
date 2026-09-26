@@ -55,4 +55,12 @@ describe('normalizeModelName', () => {
   it('strips the anthropic/ vendor prefix', () => {
     expect(normalizeModelName('anthropic/claude-opus-5')).toBe('claude-opus-5');
   });
+
+  it('strips the moonshotai. vendor prefix', () => {
+    expect(normalizeModelName('moonshotai.kimi-k2.5')).toBe('kimi-k2.5');
+  });
+
+  it('strips the qwen. vendor prefix', () => {
+    expect(normalizeModelName('qwen.qwen3-coder-480b-a35b-v1')).toBe('qwen3-coder-480b-a35b-v1');
+  });
 });

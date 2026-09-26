@@ -5,10 +5,14 @@
 
 /**
  * Vendor path prefixes some proxies/wire logs prepend ahead of the bare model id — `openai.`
- * (dot form) or `openai/` (slash form), and the slash-only `azure/`, `vertex_ai/` and
- * `anthropic/`. Matched case-insensitively and stripped in {@link normalizeModelName}.
+ * (dot form) or `openai/` (slash form), the slash-only `azure/`, `vertex_ai/` and `anthropic/`,
+ * and the dot-only `moonshotai.` (e.g. `moonshotai.kimi-k2.5`) and `qwen.` (e.g.
+ * `qwen.qwen3-coder-480b-a35b-v1`). Matched case-insensitively and stripped in
+ * {@link normalizeModelName}, before {@link canonicalizeModelId}'s later dots-to-dashes pass runs
+ * — stripping here first is what keeps `moonshotai.kimi-k2.5` resolving to `kimi-k2-5` rather than
+ * `moonshotai-kimi-k2-5`.
  */
-const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/)/i;
+const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/|moonshotai\.|qwen\.)/i;
 
 /**
  * Normalize LLM model names from different provider formats
