@@ -128,6 +128,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     const formatter = new AnalyticsFormatter(options.verbose);
     formatter.displayRoot(analytics);
     formatter.displayProjects(analytics.projects);
+    formatter.displayCost(costResult.summary);
 
     // Write the report (--export [format] / -o / --open). costResult is always populated above.
     if (exportFormat) {

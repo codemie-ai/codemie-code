@@ -18,7 +18,7 @@ vi.mock('../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../formatter.js', () => ({
-  AnalyticsFormatter: class { displayRoot = vi.fn(); displayProjects = vi.fn(); },
+  AnalyticsFormatter: class { displayRoot = vi.fn(); displayProjects = vi.fn(); displayCost = vi.fn(); },
 }));
 
 // Dynamic import mocks (hoisted by vitest)

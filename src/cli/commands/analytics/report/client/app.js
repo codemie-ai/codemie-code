@@ -819,6 +819,7 @@
       + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
       + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
     if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Unpriced models: ' + DATA.meta.unpricedModels.join(', ') + '.';
+    if (DATA.meta.estimatedModels && DATA.meta.estimatedModels.length) msg += ' Estimated models: ' + DATA.meta.estimatedModels.join(', ') + '.';
     banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
 
@@ -1418,8 +1419,10 @@
     var perModel = s.perModelCost || [];
     var priced = perModel.length > 0;
     var unpricedModels = [];
+    var estimatedModels = [];
     perModel.forEach(function (m) {
       if (m.unpriced && unpricedModels.indexOf(m.model) === -1) unpricedModels.push(m.model);
+      if (m.estimated && estimatedModels.indexOf(m.model) === -1) estimatedModels.push(m.model);
     });
     var meta = {
       generatedAt: new Date().toISOString(),
@@ -1440,6 +1443,7 @@
         pricedSessions: priced ? 1 : 0
       },
       unpricedModels: unpricedModels,
+      estimatedModels: estimatedModels,
       coverage: [{ agentName: s.agentName, total: 1, priced: priced ? 1 : 0, withLog: s.hadLog ? 1 : 0 }]
     };
     // Same conditional-spread semantics as buildPayload: omit rather than emit null.
