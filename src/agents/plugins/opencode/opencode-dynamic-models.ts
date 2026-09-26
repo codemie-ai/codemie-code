@@ -28,7 +28,8 @@ import { logger } from '../../../utils/logger.js';
 //
 // Naming conventions observed in CodeMie deployments:
 //   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*,
-//                     gpt-5.4-*, gpt-5-4-*, gpt-5.5-*, gpt-5-5-*, gpt-5.6-*, gpt-5-6-*
+//                     gpt-5.4-*, gpt-5-4-*, gpt-5.5-*, gpt-5-5-*, gpt-5.6-*, gpt-5-6-*,
+//                     gpt-6-*, gpt-6.* (e.g. gpt-6-luna, openai.gpt-6-luna)
 //   Chat Completions → gpt-4*, gpt-5-<year>-*, o1/o3/o4*, gemini-*, claude-*, …
 //
 // Update this list whenever new Responses-API-only models are deployed.
@@ -45,6 +46,7 @@ const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
   /^gpt-5\.5-/,       // gpt-5.5-2026-04-24 — same Azure restriction as gpt-5.4
   /^gpt-5-5-/,        // hyphenated variant of gpt-5.5-*
   /gpt-5[.-]6/,       // gpt-5.6-* (e.g. openai.gpt-5.6-luna) — same Azure restriction (tools + reasoning_effort)
+  /gpt-6[.-]/,        // gpt-6-* (e.g. gpt-6-luna, openai.gpt-6-luna) — Responses API for built-in tools
 ];
 
 function isResponsesApiModel(id: string): boolean {
@@ -58,6 +60,7 @@ function detectFamily(id: string): string {
   if (id.startsWith('gemini')) return 'gemini-2';
   if (id.startsWith('gpt-4')) return 'gpt-4';
   if (id.startsWith('gpt-5') || /gpt-5[.-]6/.test(id)) return 'gpt-5';
+  if (id.startsWith('gpt-6') || /gpt-6[.-]/.test(id)) return 'gpt-6';
   if (/^o[134]-/.test(id) || id === 'o1') return 'openai-reasoning';
   if (id.startsWith('qwen')) return 'qwen3';
   if (id.startsWith('deepseek')) return 'deepseek';
@@ -77,6 +80,7 @@ function detectLimits(id: string, family: string): { context: number; output: nu
   if (id.startsWith('gpt-4o')) return { context: 128000, output: 16384 };
   if (id.startsWith('gpt-5.5') || id.startsWith('gpt-5-5')) return { context: 1050000, output: 128000 }; // Azure-published window for gpt-5.5
   if (/gpt-5[.-]6/.test(id)) return { context: 1050000, output: 128000 }; // Azure-published window for gpt-5.6
+  if (id.startsWith('gpt-6') || /gpt-6[.-]/.test(id)) return { context: 1050000, output: 128000 }; // Vendor-published window for gpt-6 (1,050,000 context, 128k output)
   if (id.startsWith('gpt-5')) return { context: 400000, output: 128000 };
   if (/^o[134]-/.test(id) || id === 'o1') return { context: 200000, output: 100000 };
   if (id.startsWith('qwen') || id.startsWith('moonshotai') || id.startsWith('kimi')) return { context: 262144, output: 131072 };
