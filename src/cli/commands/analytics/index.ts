@@ -63,6 +63,29 @@ function applyCommonOptions(command: Command): Command {
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
+    // --export [format] / --open / -o resolution — validated FIRST, before loading any
+    // sessions, so an invalid format (csv included) fails closed even when the source would
+    // return zero sessions (no enrichment, no summary). `--open` with no `--export` implies
+    // html. `-o <path>` with no `--export`/`--open` also implies an export, with the format
+    // inferred from the path: ends with `.json` -> json; anything else (.html, a directory
+    // target, other) -> html.
+    const openFlag = Boolean(options.open);
+    let exportFormat: ExportFormat | undefined;
+    if (options.export !== undefined) {
+      const rawFormat = options.export === true ? 'html' : options.export.toLowerCase();
+      if (rawFormat === 'html' || rawFormat === 'json' || rawFormat === 'both') {
+        exportFormat = rawFormat;
+      } else {
+        console.log(chalk.red('\n✗ Invalid export format. Use "html", "json", or "both".'));
+        process.exitCode = 1;
+        return;
+      }
+    } else if (openFlag) {
+      exportFormat = 'html';
+    } else if (options.output !== undefined) {
+      exportFormat = options.output.toLowerCase().endsWith('.json') ? 'json' : 'html';
+    }
+
     const filter = parseFilterOptions(options);
     const { rawSessions, cost } = await source.load({
       filter,
@@ -76,44 +99,20 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       return;
     }
 
-    // --export [format] / --open resolution. Independent of cost enrichment below; invalid
-    // formats (csv included) set a non-zero exit code but do not abort the run — the analytics
-    // summary still prints. `--open` with no `--export` implies html.
-    const openFlag = Boolean(options.open);
-    let exportFormat: ExportFormat | undefined;
-    if (options.export !== undefined || openFlag) {
-      const rawFormat = options.export === undefined || options.export === true
-        ? 'html'
-        : options.export.toLowerCase();
-      if (rawFormat === 'html' || rawFormat === 'json' || rawFormat === 'both') {
-        exportFormat = rawFormat;
-      } else {
-        console.log(chalk.red('\n✗ Invalid export format. Use "html", "json", or "both".'));
-        process.exitCode = 1;
-      }
-    }
-
     // Cost computed BEFORE aggregation so zero-delta sessions that still carry real usage are
     // retained instead of dropped as "empty". Authoritative from the source (OTEL) when present;
-    // otherwise always enriched from correlated native logs.
-    let costResult = cost;
-    let keepSessionIds: Set<string> | undefined;
+    // otherwise always enriched from correlated native logs. Both branches populate the same
+    // shape, so `costResult` narrows without a throw or a non-null assertion.
+    let costResult: NonNullable<typeof cost>;
     if (cost) {
-      keepSessionIds = new Set(
-        [...cost.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
+      costResult = cost;
     } else {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
       costResult = await enrichCosts(rawSessions, realDeps);
-      keepSessionIds = new Set(
-        [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
     }
-    if (!costResult) {
-      // Unreachable: both branches above always populate costResult. Narrows the type for the
-      // report block below without a non-null assertion.
-      throw new Error('Analytics: cost result missing after enrichment.');
-    }
+    const keepSessionIds = new Set(
+      [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
+    );
 
     // Aggregate data (normalize models unless --verbose flag is set)
     const analytics = AnalyticsAggregator.aggregate(rawSessions, !options.verbose, keepSessionIds);
@@ -130,7 +129,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     formatter.displayProjects(analytics.projects);
     formatter.displayCost(costResult.summary);
 
-    // Write the report (--export [format] / -o / --open). costResult is always populated above.
+    // Write the report (--export [format] / -o / --open).
     if (exportFormat) {
       const { buildPayload } = await import('./report/payload-builder.js');
       const { generateReport, generateReportJson, writeReportWithFallback } = await import('./report/report-generator.js');
