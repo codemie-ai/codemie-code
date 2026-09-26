@@ -1,6 +1,11 @@
 /**
- * Tests that runAnalytics stamps userEmail, periodStart, periodEnd
- * into the buildPayload context and uses email-aware default paths.
+ * Tests that runAnalytics stamps userEmail, periodStart, periodEnd into the buildPayload
+ * context and uses email-aware default paths, and that the CLI contract from spec section A
+ * (docs/superpowers/tasks/2026-09-26-unify-analytics-cost-command/spec.md) holds:
+ *  - `--report`, `--report-format`, `--report-output` are removed (unknown options)
+ *  - `--export <invalid-format>` (csv included) fails closed: non-zero exitCode, no file written
+ *  - a bare `--export` resolves to html
+ *  - cost enrichment always runs, even with no export/report flags at all
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,12 +28,14 @@ vi.mock('../cost/cost-enricher.js', () => ({ enrichCosts: (...a: unknown[]) => e
 const buildPayloadMock = vi.fn();
 vi.mock('../report/payload-builder.js', () => ({ buildPayload: (...a: unknown[]) => buildPayloadMock(...a) }));
 
+const generateReportMock = vi.fn();
+const generateReportJsonMock = vi.fn();
 const writeReportMock = vi.fn();
 const getDefaultReportPathMock = vi.fn().mockReturnValue('/tmp/report.html');
 const getDefaultReportJsonPathMock = vi.fn().mockReturnValue('/tmp/report.report.json');
 vi.mock('../report/report-generator.js', () => ({
-  generateReport: vi.fn(),
-  generateReportJson: vi.fn(),
+  generateReport: (...a: unknown[]) => generateReportMock(...a),
+  generateReportJson: (...a: unknown[]) => generateReportJsonMock(...a),
   getDefaultReportPath: (...a: unknown[]) => getDefaultReportPathMock(...a),
   getDefaultReportJsonPath: (...a: unknown[]) => getDefaultReportJsonPathMock(...a),
   writeReportWithFallback: (...a: unknown[]) => writeReportMock(...a),
@@ -64,7 +71,7 @@ describe('runAnalytics CLI metadata wiring', () => {
   it('passes periodStart and periodEnd from --from/--to into buildPayload', async () => {
     const { runAnalytics } = await import('../index.js');
     await runAnalytics(
-      { report: true, reportFormat: 'json', from: '2026-07-01', to: '2026-07-21' } as never,
+      { export: 'json', from: '2026-07-01', to: '2026-07-21' } as never,
       mockSource() as never
     );
     expect(buildPayloadMock).toHaveBeenCalledWith(
@@ -80,10 +87,7 @@ describe('runAnalytics CLI metadata wiring', () => {
 
   it('passes userEmail from ConfigLoader into buildPayload', async () => {
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'json' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'json' } as never, mockSource() as never);
     expect(buildPayloadMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -94,29 +98,20 @@ describe('runAnalytics CLI metadata wiring', () => {
 
   it('passes userEmail to getDefaultReportPath for the default HTML path', async () => {
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'html' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'html' } as never, mockSource() as never);
     expect(getDefaultReportPathMock).toHaveBeenCalledWith(expect.any(String), 'dev@example.com');
   });
 
   it('passes userEmail to getDefaultReportJsonPath for the default JSON path', async () => {
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'json' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'json' } as never, mockSource() as never);
     expect(getDefaultReportJsonPathMock).toHaveBeenCalledWith(expect.any(String), 'dev@example.com');
   });
 
   it('omits userEmail in buildPayload when ConfigLoader throws', async () => {
     configSpy.mockRejectedValue(new Error('no config'));
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'json' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'json' } as never, mockSource() as never);
     const ctx = buildPayloadMock.mock.calls[0][3];
     expect(ctx.userEmail).toBeUndefined();
   });
@@ -124,10 +119,7 @@ describe('runAnalytics CLI metadata wiring', () => {
   it('passes both periodStart and periodEnd into buildPayload when --last is used', async () => {
     const before = Date.now();
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'json', last: '7d' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'json', last: '7d' } as never, mockSource() as never);
     const after = Date.now();
     const ctx = buildPayloadMock.mock.calls[0][3];
     expect(typeof ctx.periodStart).toBe('string');
@@ -146,7 +138,7 @@ describe('runAnalytics CLI metadata wiring', () => {
   it('invokes buildPayload for --session with no --from/--to', async () => {
     const { runAnalytics } = await import('../index.js');
     await runAnalytics(
-      { report: true, reportFormat: 'json', session: 'abc-123' } as never,
+      { export: 'json', session: 'abc-123' } as never,
       mockSource() as never
     );
     expect(buildPayloadMock).toHaveBeenCalledTimes(1);
@@ -159,7 +151,7 @@ describe('runAnalytics CLI metadata wiring', () => {
   it('invokes buildPayload for --project + --branch with no --from/--to', async () => {
     const { runAnalytics } = await import('../index.js');
     await runAnalytics(
-      { report: true, reportFormat: 'json', project: 'my-proj', branch: 'feature/x' } as never,
+      { export: 'json', project: 'my-proj', branch: 'feature/x' } as never,
       mockSource() as never
     );
     expect(buildPayloadMock).toHaveBeenCalledTimes(1);
@@ -170,13 +162,64 @@ describe('runAnalytics CLI metadata wiring', () => {
 
   it('invokes buildPayload for a bare report (no filters at all)', async () => {
     const { runAnalytics } = await import('../index.js');
-    await runAnalytics(
-      { report: true, reportFormat: 'json' } as never,
-      mockSource() as never
-    );
+    await runAnalytics({ export: 'json' } as never, mockSource() as never);
     expect(buildPayloadMock).toHaveBeenCalledTimes(1);
     const ctx = buildPayloadMock.mock.calls[0][3];
     expect(ctx.periodStart).toBeUndefined();
     expect(ctx.periodEnd).toBeUndefined();
   });
+});
+
+describe('analytics CLI contract (unify-analytics-cost-command T6)', () => {
+  it('rejects the removed --report, --report-format and --report-output flags as unknown options', async () => {
+    const { createAnalyticsCommand } = await import('../index.js');
+    for (const flag of ['--report', '--report-format', '--report-output']) {
+      const command = createAnalyticsCommand();
+      command.exitOverride();
+      command.configureOutput({ writeErr: () => { /* silence commander's own error line */ } });
+      await expect(
+        command.parseAsync(['node', 'codemie', flag])
+      ).rejects.toMatchObject({ code: 'commander.unknownOption' });
+    }
+  });
+
+  it('--export csv sets a non-zero exitCode and writes no file', async () => {
+    const { runAnalytics } = await import('../index.js');
+    const originalExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await runAnalytics({ export: 'csv' } as never, mockSourceForContract() as never);
+      expect(process.exitCode).toBe(1);
+      expect(generateReportMock).not.toHaveBeenCalled();
+      expect(generateReportJsonMock).not.toHaveBeenCalled();
+      expect(writeReportMock).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  });
+
+  it('a bare --export resolves to html', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({ export: true } as never, mockSourceForContract() as never);
+    expect(getDefaultReportPathMock).toHaveBeenCalled();
+    expect(getDefaultReportJsonPathMock).not.toHaveBeenCalled();
+  });
+
+  it('runAnalytics with a stub source and no export flags still calls enrichCosts', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({} as never, mockSourceForContract() as never);
+    expect(enrichCostsMock).toHaveBeenCalled();
+  });
+
+  function mockSourceForContract() {
+    vi.clearAllMocks();
+    enrichCostsMock.mockResolvedValue(enrichResult);
+    aggregateMock.mockReturnValue(analyticsResult);
+    buildPayloadMock.mockReturnValue(payloadResult);
+    writeReportMock.mockReturnValue({ path: '/tmp/out' });
+    getDefaultReportPathMock.mockReturnValue('/tmp/report.html');
+    getDefaultReportJsonPathMock.mockReturnValue('/tmp/report.report.json');
+    vi.spyOn(ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({ userEmail: 'dev@example.com' } as never);
+    return mockSource();
+  }
 });

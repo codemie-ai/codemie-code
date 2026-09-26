@@ -1,7 +1,6 @@
 /**
  * cli-misc coverage — pins today's behavior for a handful of small CLI surfaces:
  *
- *  - analytics/exporter.ts       JSON + CSV export round-trip, incl. CSV escaping & headers
  *  - assistants/chat/conversationIdSafety.ts   path-traversal guard regex
  *  - assistants/chat/historyPersister.ts       JSONL turn append (temp home, index continuity)
  *  - commands/list.ts            agent + framework listing output (registry/frameworks mocked)
@@ -69,13 +68,11 @@ const spinner = {
 };
 vi.mock('ora', () => ({ default: vi.fn(() => spinner) }));
 
-import { AnalyticsExporter } from '../analytics/exporter.js';
 import { isValidConversationId } from '../assistants/chat/conversationIdSafety.js';
 import { appendConversationTurn } from '../assistants/chat/historyPersister.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { createListCommand } from '../list.js';
 import { createUpdateCommand } from '../update.js';
-import type { RootAnalytics } from '../analytics/types.js';
 
 // ---------------------------------------------------------------------------
 // Console capture helper.
@@ -95,117 +92,6 @@ beforeEach(() => {
 afterEach(() => {
   logSpy.mockRestore();
   errSpy.mockRestore();
-});
-
-// ===========================================================================
-// AnalyticsExporter
-// ===========================================================================
-describe('AnalyticsExporter', () => {
-  /** Minimal RootAnalytics with two sessions; one carries a comma and a quote. */
-  function fixture(): RootAnalytics {
-    return {
-      projects: [
-        {
-          projectPath: '/repo/a',
-          branches: [
-            {
-              branchName: 'main',
-              sessions: [
-                {
-                  sessionId: 's1',
-                  agentName: 'claude',
-                  provider: 'ai-run-sso',
-                  startTime: 1704067200000, // 2024-01-01T00:00:00.000Z
-                  duration: 65000,
-                  totalTurns: 3,
-                  models: [{ model: 'sonnet', calls: 2, percentage: 100 }],
-                  files: [
-                    { linesAdded: 10, linesRemoved: 4, netLinesChanged: 6 },
-                    { linesAdded: 5, linesRemoved: 1, netLinesChanged: 4 },
-                  ],
-                } as never,
-                {
-                  sessionId: 's2,x', // comma → must be quoted
-                  agentName: 'co"de', // quote → must be doubled & quoted
-                  provider: 'ai-run-sso',
-                  startTime: 1704067200000,
-                  duration: 500,
-                  totalTurns: 0,
-                  models: [],
-                  files: [],
-                } as never,
-              ],
-            } as never,
-          ],
-        } as never,
-      ],
-    } as unknown as RootAnalytics;
-  }
-
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'exporter-'));
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('exportJSON writes pretty-printed JSON that round-trips exactly', () => {
-    const analytics = fixture();
-    const out = join(dir, 'out.json');
-    AnalyticsExporter.exportJSON(analytics, out);
-
-    const text = readFileSync(out, 'utf-8');
-    // 2-space indentation
-    expect(text).toContain('\n  "projects"');
-    // Deep-equal round trip
-    expect(JSON.parse(text)).toEqual(analytics);
-    // Success line printed
-    expect(captured()).toContain(`Exported to: ${out}`);
-  });
-
-  it('exportCSV produces exact header + rows with correct escaping', () => {
-    const out = join(dir, 'out.csv');
-    AnalyticsExporter.exportCSV(fixture(), out);
-
-    const text = readFileSync(out, 'utf-8');
-    const lines = text.split('\n');
-
-    expect(lines[0]).toBe(
-      'Session ID,Agent,Provider,Project,Branch,Start Time,Duration (s),Turns,Primary Model,Files Modified,Lines Added,Lines Removed,Net Lines'
-    );
-    // Session 1: duration 65000ms -> 65s, 2 files, added 15, removed 5, net 10, model 'sonnet'
-    expect(lines[1]).toBe(
-      's1,claude,ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,65,3,sonnet,2,15,5,10'
-    );
-    // Session 2: comma field quoted, quote field doubled+quoted, no model -> N/A, zeros
-    expect(lines[2]).toBe(
-      '"s2,x","co""de",ai-run-sso,/repo/a,main,2024-01-01T00:00:00.000Z,0,0,N/A,0,0,0,0'
-    );
-    expect(lines).toHaveLength(3);
-  });
-
-  it('exportCSV of an empty analytics still emits the header only', () => {
-    const out = join(dir, 'empty.csv');
-    AnalyticsExporter.exportCSV({ projects: [] } as unknown as RootAnalytics, out);
-    const text = readFileSync(out, 'utf-8');
-    expect(text.split('\n')).toHaveLength(1);
-    expect(text).toContain('Session ID,Agent,Provider');
-  });
-
-  it('exportJSON rethrows and logs when the path is not writable', () => {
-    const badPath = join(dir, 'no-such-dir', 'x.json');
-    expect(() => AnalyticsExporter.exportJSON(fixture(), badPath)).toThrow();
-    expect(errSpy.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('Failed to export JSON');
-  });
-
-  it('getDefaultOutputPath composes cwd + dated filename per format', () => {
-    const j = AnalyticsExporter.getDefaultOutputPath('json', '/x');
-    const c = AnalyticsExporter.getDefaultOutputPath('csv', '/x');
-    // join() uses '\' on Windows; normalize separators before matching.
-    expect(j.replace(/\\/g, '/')).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.json$/);
-    expect(c.replace(/\\/g, '/')).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.csv$/);
-  });
 });
 
 // ===========================================================================
