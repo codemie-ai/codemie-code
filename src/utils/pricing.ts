@@ -10,7 +10,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDirname } from './paths.js';
 import { normalizeModelName } from './model-normalizer.js';
-import { logger } from './logger.js';
 import { applyBedrockRegionalPremium } from './bedrock-pricing.mjs';
 
 /** USD per 1,000,000 tokens. */
@@ -28,15 +27,24 @@ export interface ModelPrice {
    * isBedrockRegionalPremium()'s own doc comment (bedrock-pricing.mjs) for the source.
    */
   bedrockRegionalMultiplier?: number;
+  /**
+   * True when this row is not a directly published rate but an estimate (e.g. a tier-price
+   * carried forward for a model generation with no confirmed pricing yet). Every row's
+   * provenance should be cited in `pricing.json`'s `_meta.sources`/`note`; this flag is what
+   * callers use to surface "estimated" alongside the resolved price rather than presenting it
+   * as authoritative.
+   */
+  estimated?: boolean;
 }
 
-interface RawPrice {
+export interface RawPrice {
   input?: number;
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
   cacheWrite1h?: number;
   bedrockRegionalMultiplier?: number;
+  estimated?: boolean;
 }
 
 /**
@@ -57,113 +65,64 @@ const HERE = getDirname(import.meta.url);
 
 let TABLE: Record<string, ModelPrice> | null = null;
 
+function toModelPrice(p: RawPrice): ModelPrice {
+  return {
+    input: p.input ?? 0,
+    output: p.output ?? 0,
+    cacheRead: p.cacheRead ?? 0,
+    cacheCreation: p.cacheWrite ?? 0,
+    cacheWrite1h: p.cacheWrite1h,
+    bedrockRegionalMultiplier: p.bedrockRegionalMultiplier,
+    estimated: p.estimated,
+  };
+}
+
+function pricesEqual(a: ModelPrice, b: ModelPrice): boolean {
+  return (
+    a.input === b.input
+    && a.output === b.output
+    && a.cacheRead === b.cacheRead
+    && a.cacheCreation === b.cacheCreation
+    && a.cacheWrite1h === b.cacheWrite1h
+    && a.bedrockRegionalMultiplier === b.bedrockRegionalMultiplier
+    && a.estimated === b.estimated
+  );
+}
+
+/**
+ * Builds the rate card from a bag of raw rows (a parsed `pricing.json`, an injected fixture for
+ * tests, or any merge of the two): every key is lowercased and dots are turned to dashes, so
+ * `GLM-4.7` and `glm-4-7` land on the same table entry. When two distinct raw keys normalize to
+ * the same table key, they must carry identical prices — that is the only way the pricing data
+ * itself can declare two spellings of the same model (e.g. `gemini-3.7-flash` / `gemini-3-7-flash`)
+ * — otherwise the table is ambiguous and this throws rather than silently picking one.
+ */
+export function buildPriceTable(rows: Record<string, RawPrice>): Record<string, ModelPrice> {
+  const built: Record<string, ModelPrice> = {};
+  for (const [rawKey, raw] of Object.entries(rows)) {
+    if (rawKey.startsWith('_')) {
+      continue; // skip _meta and similar
+    }
+    const key = rawKey.toLowerCase().replace(/\./g, '-');
+    const price = toModelPrice(raw);
+    const existing = built[key];
+    if (existing && !pricesEqual(existing, price)) {
+      throw new Error(
+        `[pricing] "${rawKey}" normalizes to key "${key}", which already holds a different price`,
+      );
+    }
+    built[key] = price;
+  }
+  return built;
+}
+
 function table(): Record<string, ModelPrice> {
   if (TABLE) {
     return TABLE;
   }
   const raw = JSON.parse(readFileSync(join(HERE, 'pricing.json'), 'utf-8')) as Record<string, RawPrice>;
-  const built: Record<string, ModelPrice> = {};
-  for (const [key, p] of Object.entries({ ...raw, ...CODEMIE_PRICES })) {
-    if (key.startsWith('_')) {
-      continue; // skip _meta and similar
-    }
-    built[key.toLowerCase()] = {
-      input: p.input ?? 0,
-      output: p.output ?? 0,
-      cacheRead: p.cacheRead ?? 0,
-      cacheCreation: p.cacheWrite ?? 0,
-      cacheWrite1h: p.cacheWrite1h,
-      bedrockRegionalMultiplier: p.bedrockRegionalMultiplier,
-    };
-  }
-  TABLE = built;
+  TABLE = buildPriceTable({ ...raw, ...CODEMIE_PRICES });
   return TABLE;
-}
-
-/**
- * True when `key` aligns to a segment boundary within `name` (delimited by `-` or the
- * string edges), so a key is never matched mid-token — e.g. `gpt-4` does not match inside
- * `gpt-4o` (which resolves to its own `gpt-4o` entry), and `gpt-4` does not match `gpt-4.1`
- * (folded to `gpt-4-1`, which has its own entry).
- */
-function isSegmentMatch(name: string, key: string): boolean {
-  for (let from = 0; ; ) {
-    const idx = name.indexOf(key, from);
-    if (idx === -1) {
-      return false;
-    }
-    const before = idx === 0 ? '-' : name[idx - 1];
-    const afterIdx = idx + key.length;
-    const after = afterIdx === name.length ? '-' : name[afterIdx];
-    if (before === '-' && after === '-') {
-      return true;
-    }
-    from = idx + 1;
-  }
-}
-
-/** Claude pricing tiers whose per-tier rate has stayed flat across every `-4-*` version bump seen so far. */
-const CLAUDE_TIERS = ['claude-opus', 'claude-sonnet', 'claude-haiku'];
-
-/**
- * Parse the version segments trailing a tier prefix into a numeric tuple for comparison, e.g.
- * `claude-sonnet-4-8` under tier `claude-sonnet` -> `[4, 8]`. Returns null for keys that don't
- * fit the plain `<tier>(-<digits>)*` shape — non-numeric segments (`-latest`) or a long numeric
- * segment (a pinned date snapshot like `-20250514`, 8 digits) — since those aren't meaningful
- * "is this newer" signals and would otherwise outrank a real version bump by raw magnitude.
- */
-function tierVersionTuple(key: string, tier: string): number[] | null {
-  const rest = key.slice(tier.length);
-  if (!rest) {
-    return [0];
-  }
-  const segments = rest.split('-').filter(Boolean);
-  const nums: number[] = [];
-  for (const segment of segments) {
-    if (!/^\d+$/.test(segment) || segment.length >= 8) {
-      return null;
-    }
-    nums.push(Number(segment));
-  }
-  return nums;
-}
-
-function compareVersionTuples(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) {
-      return diff;
-    }
-  }
-  return 0;
-}
-
-/**
- * Fall back to the latest known price within the same Claude tier (opus/sonnet/haiku) when a
- * model name matches no table entry at all — e.g. a new major-version model (`claude-sonnet-5`)
- * that shares no version segment with any `-4-*` key, so {@link isSegmentMatch} can't find it.
- * Every version bump observed within a tier so far has kept the same per-token rate, so the
- * latest known entry is the best available estimate; callers must still log this as inexact.
- */
-function claudeTierFallback(normalized: string, prices: Record<string, ModelPrice>): { key: string; price: ModelPrice } | null {
-  const tier = CLAUDE_TIERS.find((t) => normalized === t || normalized.startsWith(`${t}-`));
-  if (!tier) {
-    return null;
-  }
-  let best: { key: string; version: number[]; price: ModelPrice } | null = null;
-  for (const [key, price] of Object.entries(prices)) {
-    if (key !== tier && !key.startsWith(`${tier}-`)) {
-      continue;
-    }
-    const version = tierVersionTuple(key, tier);
-    if (version === null) {
-      continue;
-    }
-    if (!best || compareVersionTuples(version, best.version) > 0) {
-      best = { key, version, price };
-    }
-  }
-  return best ? { key: best.key, price: best.price } : null;
 }
 
 /**
@@ -177,43 +136,88 @@ export function priceTable(): Record<string, ModelPrice> {
 }
 
 /**
- * Look up pricing for a model. Returns null when no entry matches (the caller marks the model
- * `unpriced` — never a silent $0). Resolution order:
- *   1. Exact (normalized) match — authoritative.
- *   2. Longest key aligned to a segment boundary — a deliberate family fallback, logged as inexact.
- *   3. Latest same-tier Claude price — for a model newer than every table entry, logged as inexact.
- * Dots are folded to dashes first because the table keys use dashes (e.g. `gpt-4-1`, not `gpt-4.1`).
+ * A trailing snapshot/version suffix stripped once during lookup (never during canonicalization):
+ * an 8-digit date (`-20260205`), a dashed date (`-2026-02-05`), or the `-latest`/`-preview` tags.
+ * Applied at most once, so a key that is itself dated (`gpt-4o-2024-05-13`) is tried as an exact
+ * match first and never has a second suffix stripped from it.
+ */
+const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
+
+/**
+ * Canonicalizes an observed model id into the form used as a pricing-table key. Extends
+ * {@link normalizeModelName} (which strips Bedrock/Kimi/vendor-path prefixes) with:
+ *   1. Lowercasing, dots turned to dashes, and `@` turned to `-` (so Vertex's `claude-x@20260205`
+ *      folds to the same shape as a dated id).
+ *   2. Stripping a trailing `-vertex` suffix.
+ * Used by both the pricing resolver here and by cost reconciliation elsewhere, so every consumer
+ * treats the same observed id the same way.
+ */
+export function canonicalizeModelId(model: string): string {
+  const normalized = normalizeModelName(model);
+  return normalized
+    .toLowerCase()
+    .replace(/\./g, '-')
+    .replace(/@/g, '-')
+    .replace(/-vertex$/, '');
+}
+
+/** How {@link resolvePrice} matched an observed model id to a table row. */
+export interface PriceResolution {
+  price: ModelPrice;
+  key: string;
+  match: 'exact' | 'snapshot';
+  estimated: boolean;
+}
+
+/**
+ * Resolves pricing for a model, reporting how it was matched. Returns null when no entry
+ * matches (the caller marks the model `unpriced` — never a silent $0, and never a guessed
+ * family/tier price). Lookup order, against the {@link canonicalizeModelId} form:
+ *   1. Exact match — keeps distinct dated rows (e.g. `gpt-4o-2024-05-13`) authoritative.
+ *   2. Exact match after stripping one trailing snapshot suffix (see
+ *      {@link SNAPSHOT_SUFFIX_PATTERN}) — e.g. `claude-opus-4-6-20260205` resolves to the
+ *      `claude-opus-4-6` row.
+ *   3. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
  *
  * `model` is also checked, in its original unnormalized form, for a Bedrock region qualifier
  * (see {@link applyBedrockRegionalPremium}) — pass the raw backend id straight through rather
  * than pre-normalizing it, or the premium this exists to detect is invisible by the time it gets
  * here.
  */
-export function lookupPrice(model: string): ModelPrice | null {
-  const normalized = normalizeModelName(model).toLowerCase().replace(/\./g, '-');
+export function resolvePrice(model: string): PriceResolution | null {
+  const canonical = canonicalizeModelId(model);
   const prices = table();
 
-  const exact = prices[normalized];
+  const exact = prices[canonical];
   if (exact) {
-    return applyBedrockRegionalPremium(exact, model);
+    return {
+      price: applyBedrockRegionalPremium(exact, model),
+      key: canonical,
+      match: 'exact',
+      estimated: exact.estimated ?? false,
+    };
   }
 
-  let best: { key: string; price: ModelPrice } | null = null;
-  for (const [key, price] of Object.entries(prices)) {
-    if (isSegmentMatch(normalized, key) && (!best || key.length > best.key.length)) {
-      best = { key, price };
+  const withoutSnapshot = canonical.replace(SNAPSHOT_SUFFIX_PATTERN, '');
+  if (withoutSnapshot !== canonical) {
+    const snapshot = prices[withoutSnapshot];
+    if (snapshot) {
+      return {
+        price: applyBedrockRegionalPremium(snapshot, model),
+        key: withoutSnapshot,
+        match: 'snapshot',
+        estimated: snapshot.estimated ?? false,
+      };
     }
-  }
-  if (best) {
-    logger.debug(`[pricing] no exact entry for "${normalized}"; using family price "${best.key}"`);
-    return applyBedrockRegionalPremium(best.price, model);
-  }
-
-  const tierFallback = claudeTierFallback(normalized, prices);
-  if (tierFallback) {
-    logger.debug(`[pricing] no entry for "${normalized}"; using latest same-tier price "${tierFallback.key}"`);
-    return applyBedrockRegionalPremium(tierFallback.price, model);
   }
 
   return null;
+}
+
+/**
+ * Look up pricing for a model. Returns null when no entry matches. Thin wrapper over
+ * {@link resolvePrice} for callers that only need the price, not its provenance.
+ */
+export function lookupPrice(model: string): ModelPrice | null {
+  return resolvePrice(model)?.price ?? null;
 }

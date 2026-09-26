@@ -1034,7 +1034,8 @@
     "cacheRead": 0.5,
     "cacheWrite": 6.25,
     "cacheWrite1h": 10.0,
-    "bedrockRegionalMultiplier": 1.1
+    "bedrockRegionalMultiplier": 1.1,
+    "estimated": true
   },
   "claude-opus-4-8": {
     "input": 5,
@@ -1042,7 +1043,8 @@
     "cacheRead": 0.5,
     "cacheWrite": 6.25,
     "cacheWrite1h": 10.0,
-    "bedrockRegionalMultiplier": 1.1
+    "bedrockRegionalMultiplier": 1.1,
+    "estimated": true
   },
   "claude-sonnet-4-7": {
     "input": 3,
@@ -1050,7 +1052,8 @@
     "cacheRead": 0.3,
     "cacheWrite": 3.75,
     "cacheWrite1h": 6.0,
-    "bedrockRegionalMultiplier": 1.1
+    "bedrockRegionalMultiplier": 1.1,
+    "estimated": true
   },
   "claude-sonnet-4-8": {
     "input": 3,
@@ -1058,7 +1061,8 @@
     "cacheRead": 0.3,
     "cacheWrite": 3.75,
     "cacheWrite1h": 6.0,
-    "bedrockRegionalMultiplier": 1.1
+    "bedrockRegionalMultiplier": 1.1,
+    "estimated": true
   },
   "claude-haiku-4-6": {
     "input": 1,
@@ -1066,6 +1070,7 @@
     "cacheRead": 0.1,
     "cacheWrite": 1.25,
     "cacheWrite1h": 2.0,
-    "bedrockRegionalMultiplier": 1.1
+    "bedrockRegionalMultiplier": 1.1,
+    "estimated": true
   }
 }

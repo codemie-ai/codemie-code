@@ -29,4 +29,24 @@ describe('normalizeModelName', () => {
     expect(normalizeModelName('kimi-code/kimi-k2')).toBe('kimi-k2');
     expect(normalizeModelName('kimi-code/kimi-k2-5')).toBe('kimi-k2-5');
   });
+
+  it('strips the openai. vendor prefix', () => {
+    expect(normalizeModelName('openai.gpt-4o')).toBe('gpt-4o');
+  });
+
+  it('strips the openai/ vendor prefix', () => {
+    expect(normalizeModelName('openai/gpt-4o')).toBe('gpt-4o');
+  });
+
+  it('strips the azure/ vendor prefix', () => {
+    expect(normalizeModelName('azure/gpt-4o')).toBe('gpt-4o');
+  });
+
+  it('strips the vertex_ai/ vendor prefix', () => {
+    expect(normalizeModelName('vertex_ai/gemini-3-pro')).toBe('gemini-3-pro');
+  });
+
+  it('strips the anthropic/ vendor prefix', () => {
+    expect(normalizeModelName('anthropic/claude-opus-5')).toBe('claude-opus-5');
+  });
 });
