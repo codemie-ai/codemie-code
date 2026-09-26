@@ -46,6 +46,11 @@ const copyConfigs = [
     dest: join(rootDir, 'dist/assets')
   },
   {
+    name: 'Codenotch plugin assets',
+    src: join(rootDir, 'src/cli/commands/codenotch/assets'),
+    dest: join(rootDir, 'dist/cli/commands/codenotch/assets')
+  },
+  {
     name: 'Analytics report assets (CSS + Chart.js)',
     src: join(rootDir, 'src/cli/commands/analytics/report/assets'),
     dest: join(rootDir, 'dist/cli/commands/analytics/report/assets')
