@@ -37,8 +37,7 @@ import type {
 } from './cost/types.js';
 import { MAX_SERIES_POINTS, MAX_DISPATCHES } from './cost/types.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
-import { resolvePrice } from '@/utils/pricing.js';
-import { costBreakdown } from './cost/cost-calculator.js';
+import { priceOtelEvent } from './otel-pricing.js';
 
 /** One flattened OTEL event line (see the contract in codemie-claude-otel/plugin/README.md). */
 export interface OtelEvent {
@@ -134,6 +133,10 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
   const index: SessionCostIndex = new Map();
   const perModelMap = new Map<string, Map<string, { tokens: TokenUsage; costUSD: number; unpriced: boolean; estimated: boolean }>>();
   const seriesPts = new Map<string, Array<{ t: number; cost: number; tokens: number }>>();
+  // Per-session provenance flags, resolved into `priced`/costSource`/`costBasis` once every
+  // event has been seen (see the finalization loop below) — a session's overall labels can only
+  // be known after all of its events are in, not while the first one is being processed.
+  const pricingFlags = new Map<string, { authoritative: boolean; tablePriced: boolean }>();
   const unpricedModels = new Set<string>();
   const estimatedModels = new Set<string>();
 
@@ -141,9 +144,10 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     const sid = sessionOf(e);
     if (!sid) continue;
     if (!index.has(sid)) {
-      index.set(sid, { sessionId: sid, tokens: emptyTokens(), costUSD: 0, perModel: [], priced: true, hadLog: true });
+      index.set(sid, { sessionId: sid, tokens: emptyTokens(), costUSD: 0, perModel: [], priced: false, hadLog: true });
       perModelMap.set(sid, new Map());
       seriesPts.set(sid, []);
+      pricingFlags.set(sid, { authoritative: false, tablePriced: false });
     }
     const sc = index.get(sid)!;
     addTokens(sc.tokens, e);
@@ -159,41 +163,29 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     // Normalize so bedrock/converse spellings collapse onto the canonical model for display.
     const model = normalizeModelName(rawModel);
 
-    let cost: number;
-    let eventUnpriced = false;
-    let eventEstimated = false;
-    if (hasReportedCost) {
-      cost = Number(reportedCost);
-      sc.costSource = 'authoritative';
-      sc.costBasis = 'source-reported';
-    } else {
-      const eventUsage = emptyTokens();
-      addTokens(eventUsage, e);
-      const resolution = resolvePrice(rawModel);
-      if (resolution) {
-        cost = costBreakdown(eventUsage, resolution.price).total;
-        eventEstimated = resolution.estimated;
-      } else {
-        cost = 0;
-        eventUnpriced = true;
-      }
-    }
-    sc.costUSD += cost;
-    if (eventUnpriced) unpricedModels.add(model);
-    if (eventEstimated) estimatedModels.add(model);
+    const eventUsage = emptyTokens();
+    addTokens(eventUsage, e);
+    const priced = priceOtelEvent(hasReportedCost, reportedCost, rawModel, eventUsage);
+
+    sc.costUSD += priced.cost;
+    if (priced.unpriced) unpricedModels.add(model);
+    if (priced.estimated) estimatedModels.add(model);
+    const flags = pricingFlags.get(sid)!;
+    if (hasReportedCost) flags.authoritative = true;
+    if (priced.tablePriced) flags.tablePriced = true;
 
     const mm = perModelMap.get(sid)!;
     if (!mm.has(model)) mm.set(model, { tokens: emptyTokens(), costUSD: 0, unpriced: false, estimated: false });
     const mc = mm.get(model)!;
     addTokens(mc.tokens, e);
-    mc.costUSD += cost;
-    if (eventUnpriced) mc.unpriced = true;
-    if (eventEstimated) mc.estimated = true;
+    mc.costUSD += priced.cost;
+    if (priced.unpriced) mc.unpriced = true;
+    if (priced.estimated) mc.estimated = true;
 
     const ms = Date.parse(e.ts);
     seriesPts.get(sid)!.push({
       t: Number.isFinite(ms) ? ms : 0,
-      cost,
+      cost: priced.cost,
       tokens: num(attr(e, 'input_tokens')) + num(attr(e, 'output_tokens')) + num(attr(e, 'cache_read_tokens')) + num(attr(e, 'cache_creation_tokens')),
     });
   }
@@ -204,6 +196,24 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
       .map(([model, r]): ModelCost => ({ model, tokens: r.tokens, costUSD: r.costUSD, unpriced: r.unpriced, ...(r.estimated && { estimated: true }) }))
       .sort((a, b) => b.costUSD - a.costUSD);
     sc.costSeries = downsampleSeries(seriesPts.get(sid)!);
+
+    // A session is only "priced" once some event actually resolved to a real dollar figure —
+    // either reported by the source or table-priced by the resolver. A session whose only
+    // usage fell through to the resolver and stayed unpriced must not read as priced.
+    const flags = pricingFlags.get(sid)!;
+    sc.priced = flags.authoritative || flags.tablePriced;
+    // cost/types.ts has no "mixed" costSource/costBasis value. A session with ANY table-priced
+    // event is not purely source-reported, so it takes the same 'native-estimate' /
+    // 'standard-api-tokens' pair cost-enricher.ts's priceUsage() uses for table-priced native-log
+    // sessions — the closest existing vocabulary — even when some of its other events did carry
+    // an authoritative cost_usd.
+    if (flags.tablePriced) {
+      sc.costSource = 'native-estimate';
+      sc.costBasis = 'standard-api-tokens';
+    } else if (flags.authoritative) {
+      sc.costSource = 'authoritative';
+      sc.costBasis = 'source-reported';
+    }
   }
 
   const summary: CostSummary = {
