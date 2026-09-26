@@ -44,7 +44,6 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
 import { commandExists, exec } from '../../../utils/processes.js';
@@ -62,7 +61,8 @@ import {
   stopCodexIncrementalSync,
 } from './codex.incremental-sync.js';
 import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
-import { mkdir, realpath as fsRealpath } from 'fs/promises';
+import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation.js';
+import { mkdir } from 'fs/promises';
 
 /**
  * Supported Codex CLI version
@@ -356,41 +356,18 @@ export const CodexPluginMetadata: AgentMetadata = {
         logger.info(`[codex] Processing session metrics (code=${exitCode})`);
 
         const adapter = new CodexSessionAdapter(CodexPluginMetadata);
-        const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 20 });
-
         const startedAt = env.CODEMIE_CODEX_STARTED_AT
           ? Number(env.CODEMIE_CODEX_STARTED_AT)
           : Date.now() - 5 * 60 * 1000;
-        const currentCwd = process.cwd();
-        const cwdReal = await safeRealpath(currentCwd);
-        const recentSessions: SessionDescriptor[] = [];
+        const rollout = await findRolloutForRun(adapter, { sessionId, startedAt, cwd: process.cwd() });
 
-        for (const session of sessions) {
-          if (session.createdAt < startedAt - 10_000) {
-            continue;
-          }
-
-          try {
-            const parsed = await adapter.parseSessionFile(session.filePath, sessionId);
-            const projectPath = parsed.metadata?.projectPath;
-            if (!projectPath) continue;
-            const projectReal = await safeRealpath(projectPath);
-            if (projectReal === cwdReal) {
-              recentSessions.push(session);
-            }
-          } catch (error) {
-            logger.debug('[codex] Skipping unparsable rollout candidate:', error);
-          }
-        }
-
-        if (recentSessions.length === 0) {
+        if (!rollout) {
           logger.warn('[codex] No rollout file matched the current run, skipping metrics');
         } else {
-          const latestSession = recentSessions[0];
-          logger.debug(`[codex] Processing latest rollout: ${latestSession.sessionId}`);
+          logger.debug(`[codex] Processing rollout: ${rollout.sessionId}`);
 
           // Must land before SessionEnd renames the record to completed_{id}.json.
-          await recordRolloutCorrelation(sessionId, latestSession.filePath);
+          await recordRolloutCorrelation(sessionId, rollout.filePath);
 
           const context = {
             sessionId,
@@ -401,7 +378,7 @@ export const CodexPluginMetadata: AgentMetadata = {
             dryRun: false,
           };
 
-          const result = await adapter.processSession(latestSession.filePath, sessionId, context);
+          const result = await adapter.processSession(rollout.filePath, sessionId, context);
 
           if (result.success) {
             logger.info(`[codex] Metrics written to JSONL: ${result.totalRecords} records`);
@@ -435,36 +412,6 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
 };
 
-/**
- * Point the CodeMie session record at the rollout this run produced.
- *
- * Codex has no hook that reports a transcript path, so SessionStart records
- * `correlation.agentSessionFile` as ''. Analytics resolves the native log (and
- * therefore token usage and cost) through that field, so without this every
- * codex session reported hadLog=false and costUSD=0. It also lets the native
- * loader recognise the rollout as CodeMie-owned instead of an untracked session.
- */
-async function recordRolloutCorrelation(sessionId: string, rolloutPath: string): Promise<void> {
-  try {
-    const { SessionStore } = await import('../../core/session/SessionStore.js');
-    const store = new SessionStore();
-    const session = await store.loadSession(sessionId);
-    if (!session) {
-      logger.debug(`[codex] No session record for ${sessionId}; skipping rollout correlation`);
-      return;
-    }
-    session.correlation = {
-      ...session.correlation,
-      status: 'matched',
-      agentSessionFile: rolloutPath,
-    };
-    await store.saveSession(session);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.debug(`[codex] Failed to record rollout correlation (non-blocking): ${msg}`);
-  }
-}
-
 function getExplicitModelArg(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -477,19 +424,6 @@ function getExplicitModelArg(args: string[]): string | undefined {
   }
 
   return undefined;
-}
-
-/**
- * Resolve a path through symlinks, falling back to the original path on error.
- * Used so a `cwd` of `/Users/foo` and a rollout's `projectPath` of
- * `/private/Users/foo` (or vice versa) compare equal.
- */
-async function safeRealpath(p: string): Promise<string> {
-  try {
-    return await fsRealpath(p);
-  } catch {
-    return p;
-  }
 }
 
 /**
