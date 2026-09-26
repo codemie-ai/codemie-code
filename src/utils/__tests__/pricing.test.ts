@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { lookupPrice, resolvePrice, canonicalizeModelId, buildPriceTable } from '../pricing.js';
+import { ConfigurationError } from '../errors.js';
 
 describe('lookupPrice', () => {
   it('returns a price for a known Claude model (per-1M USD)', () => {
@@ -319,12 +320,12 @@ describe('buildPriceTable', () => {
     expect(() => buildPriceTable(raw)).not.toThrow();
   });
 
-  it('throws when two keys collide after normalization with different prices', () => {
+  it('throws a ConfigurationError when two keys collide after normalization with different prices', () => {
     const raw = {
       'gemini-3.7-flash': { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
       'gemini-3-7-flash': { input: 999, output: 3, cacheRead: 0.05, cacheWrite: 0.5 },
     };
-    expect(() => buildPriceTable(raw)).toThrow();
+    expect(() => buildPriceTable(raw)).toThrow(ConfigurationError);
   });
 
   it('carries the estimated flag through', () => {

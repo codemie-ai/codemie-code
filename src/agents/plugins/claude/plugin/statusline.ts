@@ -27,6 +27,9 @@ import { exec } from '@/utils/exec.js';
 import { parseRoutingHeaders } from '@/utils/routing-headers.mjs';
 import { parseBackendModelName, applyBedrockRegionalPremium } from '@/utils/bedrock-pricing.mjs';
 import { deriveMachineEncryptionKey, decryptWithKey, deriveUrlStorageKey, deriveLegacyUrlStorageKey } from '@/utils/credential-crypto.js';
+// Model-id → rate-card-key resolution is the same module src/utils/pricing.ts's resolvePrice() uses,
+// so the live statusline cost and the analytics report cannot price one id differently.
+import { priceTableKey, resolvePriceKey } from '@/utils/price-resolution.js';
 
 const HOME = process.env.CODEMIE_HOME || path.join(os.homedir(), '.codemie');
 const CACHE_FILE = path.join(HOME, 'budget-cache.json');
@@ -149,34 +152,6 @@ export function normalizeModelId(modelId) {
     .replace(/^(?:bedrock\/)?(?:converse\/)?/, '')
     .replace(/^[a-z0-9-]+\.anthropic\./, '')
     .replace(/-v\d+:\d+$/, '');
-}
-
-const KIMI_PREFIX = 'kimi-code/';
-/**
- * Vendor path prefixes some proxies/wire logs prepend ahead of the bare model id — mirrors
- * src/utils/model-normalizer.ts's VENDOR_PREFIX_PATTERN; duplicated here because this file is
- * bundled standalone and cannot import that module (see the header comment).
- */
-const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/|moonshotai\.|qwen\.)/i;
-
-/**
- * Canonicalizes an observed model id into the same pricing-table-key form as
- * src/utils/pricing.ts's canonicalizeModelId(): extends {@link normalizeModelId} (Bedrock
- * prefix/version stripping) with the Kimi and vendor-path prefixes, then lowercases, turns dots
- * and `@` into dashes (so Vertex's `claude-x@20260205` folds to the same shape as a dated id),
- * and strips a trailing `-vertex` suffix. Duplicated here rather than imported because this file
- * is bundled standalone into a single self-contained artifact — see the header comment.
- */
-export function canonicalizeModelId(modelId) {
-  if (!modelId) return '';
-  let stripped = normalizeModelId(modelId);
-  if (stripped.startsWith(KIMI_PREFIX)) stripped = stripped.slice(KIMI_PREFIX.length);
-  const vendorMatch = stripped.match(VENDOR_PREFIX_PATTERN);
-  if (vendorMatch) stripped = stripped.slice(vendorMatch[0].length);
-  return stripped
-    .replace(/\./g, '-')
-    .replace(/@/g, '-')
-    .replace(/-vertex$/, '');
 }
 
 /**
@@ -380,95 +355,42 @@ async function defaultReadPrices() {
   return JSON.parse(await fs.readFile(path.join(here, PRICING_FILENAME), 'utf8'));
 }
 
-// Both sides of the lookup must be folded the same way. The id is lowercased and its dots turned to
-// dashes, so the table keys have to be too — otherwise a dotted key (`gemini-3.7-flash`, `glm-4.7`,
-// `minimax-m2.5`: 14 of them in the shipped card) can never match, and every turn answered by one of
-// those models silently prices at $0. Built once per table object rather than per message.
+// Both sides of the lookup must be folded the same way: the id through canonicalizeModelId(), the
+// table keys through priceTableKey() — exactly as buildPriceTable() folds them for the report —
+// otherwise a dotted key (`gemini-3.7-flash`, `glm-4.7`) can never match and prices at $0. The
+// deployed card is already built, so keys cannot collide there; a hand-made table whose keys fold
+// together with different rates is ambiguous, and that key is left unpriced rather than letting
+// whichever row came last win (buildPriceTable() throws instead — the statusline must never throw).
+// Built once per table object rather than per message.
 const NORMALIZED_TABLES = new WeakMap();
 
 function normalizedTable(table) {
   const cached = NORMALIZED_TABLES.get(table);
   if (cached) return cached;
   const normalized = new Map();
-  for (const [key, rate] of Object.entries(table)) {
-    if (key.startsWith('_')) continue; // _meta and similar
-    normalized.set(canonicalizeModelId(key), rate);
+  const ambiguous = new Set();
+  for (const [rawKey, rate] of Object.entries(table)) {
+    if (rawKey.startsWith('_')) continue; // _meta and similar
+    const key = priceTableKey(rawKey);
+    if (normalized.has(key) && JSON.stringify(normalized.get(key)) !== JSON.stringify(rate)) ambiguous.add(key);
+    normalized.set(key, rate);
   }
+  for (const key of ambiguous) normalized.delete(key);
   NORMALIZED_TABLES.set(table, normalized);
   return normalized;
 }
 
 /**
- * A trailing snapshot/version suffix stripped once during lookup (never during
- * canonicalization): an 8-digit date (`-20260205`), a dashed date (`-2026-02-05`), or the
- * `-latest`/`-preview` tags. Mirrors src/utils/pricing.ts's SNAPSHOT_SUFFIX_PATTERN; duplicated
- * here because this file is bundled standalone and cannot import that module.
- */
-const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
-
-/**
- * Matches a Claude id given in version-first order — `claude-<ver>-<family>[<rest>]` — so it can
- * be reordered to the family-first form the table keys newer Claude generations under. Mirrors
- * src/utils/pricing.ts's CLAUDE_VERSION_FIRST_PATTERN; duplicated here because this file is
- * bundled standalone and cannot import that module.
- */
-const CLAUDE_VERSION_FIRST_PATTERN = /^claude-(\d+(?:-\d+)*)-(opus|sonnet|haiku)(-.+)?$/;
-
-/**
- * Reorders a version-first Claude id (`claude-4-5-sonnet`) to the family-first form
- * (`claude-sonnet-4-5`) the table keys such rows under, preserving any trailing suffix. Returns
- * null when `id` isn't in that shape. Mirrors src/utils/pricing.ts's reorderClaudeVersionFamily().
- */
-function reorderClaudeVersionFamily(id) {
-  const match = id.match(CLAUDE_VERSION_FIRST_PATTERN);
-  if (!match) return null;
-  const [, version, family, rest = ''] = match;
-  return `claude-${family}-${version}${rest}`;
-}
-
-/**
- * Resolves a rate from `table` for `modelId`, mirroring src/utils/pricing.ts's
- * resolvePrice()/lookupPrice() resolution order exactly — a divergence here would silently
- * misprice the transcript relative to the analytics report. Against the {@link canonicalizeModelId}
- * form of `modelId`:
- *   1. Exact match.
- *   2. Exact match after stripping one trailing snapshot suffix (see
- *      {@link SNAPSHOT_SUFFIX_PATTERN}) — e.g. `claude-opus-4-6-20260205` resolves to the
- *      `claude-opus-4-6` row.
- *   3. A version-first Claude id reordered to the table's family-first form (see
- *      {@link reorderClaudeVersionFamily}), tried exact and then with a trailing snapshot suffix
- *      stripped — only once steps 1-2 have already failed on the as-is id, so every pre-existing
- *      version-first key keeps resolving unchanged.
- *   4. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
+ * Resolves a rate from `table` for `modelId` through the shared resolvePriceKey() — the lookup
+ * order src/utils/pricing.ts's resolvePrice() uses (exact, one snapshot suffix stripped, then a
+ * version-first Claude id reordered) — then applies any Bedrock regional premium. Null when
+ * unpriced; there is no family/tier fallback.
  */
 export function lookupRate(table, modelId) {
-  if (!table) return null;
-  const name = canonicalizeModelId(modelId);
-  if (!name) return null;
+  if (!table || !modelId) return null;
   const rates = normalizedTable(table);
-
-  const exact = rates.get(name);
-  if (exact) return applyBedrockRegionalPremium(exact, modelId);
-
-  const withoutSnapshot = name.replace(SNAPSHOT_SUFFIX_PATTERN, '');
-  if (withoutSnapshot !== name) {
-    const snapshot = rates.get(withoutSnapshot);
-    if (snapshot) return applyBedrockRegionalPremium(snapshot, modelId);
-  }
-
-  const reordered = reorderClaudeVersionFamily(name);
-  if (reordered) {
-    const reorderedExact = rates.get(reordered);
-    if (reorderedExact) return applyBedrockRegionalPremium(reorderedExact, modelId);
-
-    const reorderedWithoutSnapshot = reordered.replace(SNAPSHOT_SUFFIX_PATTERN, '');
-    if (reorderedWithoutSnapshot !== reordered) {
-      const reorderedSnapshot = rates.get(reorderedWithoutSnapshot);
-      if (reorderedSnapshot) return applyBedrockRegionalPremium(reorderedSnapshot, modelId);
-    }
-  }
-
-  return null;
+  const hit = resolvePriceKey(modelId, (key) => rates.get(key));
+  return hit ? applyBedrockRegionalPremium(hit.value, modelId) : null;
 }
 
 function messageCost(rate, usage) {
@@ -584,7 +506,7 @@ export async function computeSessionCost(transcriptPath, {
       // Prefer the raw backend id (x-litellm-model-name, falling back to the routed/response
       // model) over the CodeMie-cleaned routedModel: the clean name is what lookupRate wants for
       // the base price, but pricing ALSO needs the region qualifier the clean name strips — see
-      // isBedrockRegionalPremium() below. normalizeModelId() inside lookupRate strips the same
+      // isBedrockRegionalPremium() below. canonicalizeModelId() inside lookupRate strips the same
       // qualifier for the price lookup itself, so using the raw id here changes nothing about
       // which rate is selected.
       const model = parseBackendModelName(message) ?? parseRoutingHeaders(message)?.routedModel ?? message.model ?? '';

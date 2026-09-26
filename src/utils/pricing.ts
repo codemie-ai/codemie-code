@@ -9,8 +9,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDirname } from './paths.js';
-import { normalizeModelName } from './model-normalizer.js';
 import { applyBedrockRegionalPremium } from './bedrock-pricing.mjs';
+import { ConfigurationError } from './errors.js';
+import { priceTableKey, resolvePriceKey, type PriceMatch } from './price-resolution.js';
+
+export { canonicalizeModelId } from './price-resolution.js';
 
 /** USD per 1,000,000 tokens. */
 export interface ModelPrice {
@@ -103,11 +106,11 @@ export function buildPriceTable(rows: Record<string, RawPrice>): Record<string, 
     if (rawKey.startsWith('_')) {
       continue; // skip _meta and similar
     }
-    const key = rawKey.toLowerCase().replace(/\./g, '-');
+    const key = priceTableKey(rawKey);
     const price = toModelPrice(raw);
     const existing = built[key];
     if (existing && !pricesEqual(existing, price)) {
-      throw new Error(
+      throw new ConfigurationError(
         `[pricing] "${rawKey}" normalizes to key "${key}", which already holds a different price`,
       );
     }
@@ -135,79 +138,20 @@ export function priceTable(): Record<string, ModelPrice> {
   return table();
 }
 
-/**
- * A trailing snapshot/version suffix stripped once during lookup (never during canonicalization):
- * an 8-digit date (`-20260205`), a dashed date (`-2026-02-05`), or the `-latest`/`-preview` tags.
- * Applied at most once, so a key that is itself dated (`gpt-4o-2024-05-13`) is tried as an exact
- * match first and never has a second suffix stripped from it.
- */
-const SNAPSHOT_SUFFIX_PATTERN = /-(?:\d{8}|\d{4}-\d{2}-\d{2}|latest|preview)$/;
-
-/**
- * Matches a Claude id given in version-first order — `claude-<ver>-<family>[<rest>]`, where `ver`
- * is one or more dash-separated numeric segments and `family` is `opus`/`sonnet`/`haiku` — so it
- * can be reordered to the family-first form (`claude-<family>-<ver>[<rest>]`) the pricing table
- * keys newer Claude generations under (e.g. `claude-sonnet-4-5`, `claude-opus-4-8`; see
- * pricing.json's own rows). Never applied to a key that is already family-first, since that
- * doesn't match this pattern in the first place.
- */
-const CLAUDE_VERSION_FIRST_PATTERN = /^claude-(\d+(?:-\d+)*)-(opus|sonnet|haiku)(-.+)?$/;
-
-/**
- * Reorders a version-first Claude id (`claude-4-5-sonnet`) to the family-first form
- * (`claude-sonnet-4-5`) the table keys such rows under, preserving any trailing suffix (a
- * snapshot date, `-latest`, ...). Returns null when `id` isn't in that shape.
- */
-function reorderClaudeVersionFamily(id: string): string | null {
-  const match = id.match(CLAUDE_VERSION_FIRST_PATTERN);
-  if (!match) {
-    return null;
-  }
-  const [, version, family, rest = ''] = match;
-  return `claude-${family}-${version}${rest}`;
-}
-
-/**
- * Canonicalizes an observed model id into the form used as a pricing-table key. Extends
- * {@link normalizeModelName} (which strips Bedrock/Kimi/vendor-path prefixes) with:
- *   1. Lowercasing, dots turned to dashes, and `@` turned to `-` (so Vertex's `claude-x@20260205`
- *      folds to the same shape as a dated id).
- *   2. Stripping a trailing `-vertex` suffix.
- * Used by both the pricing resolver here and by cost reconciliation elsewhere, so every consumer
- * treats the same observed id the same way.
- */
-export function canonicalizeModelId(model: string): string {
-  const normalized = normalizeModelName(model);
-  return normalized
-    .toLowerCase()
-    .replace(/\./g, '-')
-    .replace(/@/g, '-')
-    .replace(/-vertex$/, '');
-}
-
 /** How {@link resolvePrice} matched an observed model id to a table row. */
 export interface PriceResolution {
   price: ModelPrice;
   key: string;
-  match: 'exact' | 'snapshot' | 'reordered';
+  match: PriceMatch;
   estimated: boolean;
 }
 
 /**
  * Resolves pricing for a model, reporting how it was matched. Returns null when no entry
  * matches (the caller marks the model `unpriced` — never a silent $0, and never a guessed
- * family/tier price). Lookup order, against the {@link canonicalizeModelId} form:
- *   1. Exact match — keeps distinct dated rows (e.g. `gpt-4o-2024-05-13`) authoritative.
- *   2. Exact match after stripping one trailing snapshot suffix (see
- *      {@link SNAPSHOT_SUFFIX_PATTERN}) — e.g. `claude-opus-4-6-20260205` resolves to the
- *      `claude-opus-4-6` row.
- *   3. A version-first Claude id (`claude-4-5-sonnet`) reordered to the table's family-first form
- *      (`claude-sonnet-4-5`, see {@link reorderClaudeVersionFamily}), tried exact and then with a
- *      trailing snapshot suffix stripped — only as a fallback once steps 1-2 have already failed
- *      on the as-is id. That ordering is what keeps every pre-existing version-first key
- *      (`claude-3-5-sonnet`, `claude-3-7-sonnet-20250219`, ...) resolving unchanged: those rows
- *      match as-is at step 1 and this fallback is never reached for them.
- *   4. Otherwise unpriced (null). There is no segment/family match and no same-tier fallback.
+ * family/tier price). The lookup order (exact, then one snapshot suffix stripped, then a
+ * version-first Claude id reordered to family-first) lives in {@link resolvePriceKey}, shared
+ * with the Claude statusline so the two can never price the same id differently.
  *
  * `model` is also checked, in its original unnormalized form, for a Bedrock region qualifier
  * (see {@link applyBedrockRegionalPremium}) — pass the raw backend id straight through rather
@@ -215,59 +159,17 @@ export interface PriceResolution {
  * here.
  */
 export function resolvePrice(model: string): PriceResolution | null {
-  const canonical = canonicalizeModelId(model);
   const prices = table();
-
-  const exact = prices[canonical];
-  if (exact) {
-    return {
-      price: applyBedrockRegionalPremium(exact, model),
-      key: canonical,
-      match: 'exact',
-      estimated: exact.estimated ?? false,
-    };
+  const hit = resolvePriceKey(model, (key) => (Object.hasOwn(prices, key) ? prices[key] : undefined));
+  if (!hit) {
+    return null;
   }
-
-  const withoutSnapshot = canonical.replace(SNAPSHOT_SUFFIX_PATTERN, '');
-  if (withoutSnapshot !== canonical) {
-    const snapshot = prices[withoutSnapshot];
-    if (snapshot) {
-      return {
-        price: applyBedrockRegionalPremium(snapshot, model),
-        key: withoutSnapshot,
-        match: 'snapshot',
-        estimated: snapshot.estimated ?? false,
-      };
-    }
-  }
-
-  const reordered = reorderClaudeVersionFamily(canonical);
-  if (reordered) {
-    const reorderedExact = prices[reordered];
-    if (reorderedExact) {
-      return {
-        price: applyBedrockRegionalPremium(reorderedExact, model),
-        key: reordered,
-        match: 'reordered',
-        estimated: reorderedExact.estimated ?? false,
-      };
-    }
-
-    const reorderedWithoutSnapshot = reordered.replace(SNAPSHOT_SUFFIX_PATTERN, '');
-    if (reorderedWithoutSnapshot !== reordered) {
-      const reorderedSnapshot = prices[reorderedWithoutSnapshot];
-      if (reorderedSnapshot) {
-        return {
-          price: applyBedrockRegionalPremium(reorderedSnapshot, model),
-          key: reorderedWithoutSnapshot,
-          match: 'reordered',
-          estimated: reorderedSnapshot.estimated ?? false,
-        };
-      }
-    }
-  }
-
-  return null;
+  return {
+    price: applyBedrockRegionalPremium(hit.value, model),
+    key: hit.key,
+    match: hit.match,
+    estimated: hit.value.estimated ?? false,
+  };
 }
 
 /**
