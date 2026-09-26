@@ -38,7 +38,7 @@ const rawSession = { sessionId: 's1' };
 const costEntry = { sessionId: 's1', tokens: { total: 10 }, costUSD: 0.01, priced: true };
 const enrichResult = {
   index: new Map([['s1', costEntry]]),
-  summary: { totalCostUSD: 0.01, pricedSessions: 1, totalSessions: 1, unpricedModels: [] },
+  summary: { totalCostUSD: 0.01, pricedSessions: 1, totalSessions: 1, unpricedModels: [], estimatedModels: [] },
 };
 const analyticsResult = { totalSessions: 1, projects: [] };
 const payloadResult = { meta: { totals: { sessions: 1, pricedSessions: 1 } }, sessions: [] };

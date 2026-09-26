@@ -74,6 +74,7 @@ const summary: CostSummary = {
   pricedSessions: 1,
   totalSessions: 1,
   unpricedModels: [],
+  estimatedModels: [],
 };
 
 // Shared timestamps and cost helpers for period-derivation tests.
@@ -115,6 +116,16 @@ describe('buildPayload', () => {
     expect(payload.meta.agents).toContain('claude');
     expect(payload.meta.generatedAt).toBe('2026-06-08T00:00:00Z');
     expect(payload.meta.coverage).toEqual([{ agentName: 'claude', total: 1, priced: 1, withLog: 1 }]);
+  });
+
+  it('copies summary.estimatedModels onto meta.estimatedModels', () => {
+    const summaryWithEstimated: CostSummary = { ...summary, estimatedModels: ['claude-sonnet-4-7'] };
+    const payload = buildPayload(root, costIndex, summaryWithEstimated, {
+      rangeLabel: 'all',
+      projectFilter: 'all',
+      generatedAt: '2026-06-08T00:00:00Z',
+    });
+    expect(payload.meta.estimatedModels).toEqual(['claude-sonnet-4-7']);
   });
 
   it('builds per-agent coverage over the deduped set (consistent with headline)', () => {

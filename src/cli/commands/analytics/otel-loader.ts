@@ -180,6 +180,7 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     pricedSessions: [...index.values()].filter((c) => c.priced).length,
     totalSessions: index.size,
     unpricedModels: [],
+    estimatedModels: [],
   };
   return { index, summary };
 }

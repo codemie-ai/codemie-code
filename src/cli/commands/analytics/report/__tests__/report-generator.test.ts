@@ -28,7 +28,7 @@ describe('renderReportHtml', () => {
       })),
     };
     const payload = buildPayload({ projects: [{ projectPath: '/repo', branches: [{ branchName: 'main', sessions: [session] }] }] } as never,
-      new Map([['snapshot', cost]]) as never, { totalCostUSD: 2, pricedSessions: 1, totalSessions: 1, unpricedModels: [] },
+      new Map([['snapshot', cost]]) as never, { totalCostUSD: 2, pricedSessions: 1, totalSessions: 1, unpricedModels: [], estimatedModels: [] },
       { rangeLabel: 'all', projectFilter: 'all', generatedAt: new Date(start + 20_000).toISOString() });
     const html = renderReportHtml({ template, css: '', clientJs: '', payload });
     const fromHtml = JSON.parse(html.match(/window\.__ANALYTICS__ = (.*?);<\/script>/s)![1]);
