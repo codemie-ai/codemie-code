@@ -80,6 +80,31 @@ describe('buildCostIndex', () => {
   });
 });
 
+describe('buildCostIndex - pricing fallback (no cost_usd)', () => {
+  const ev = (sessionId: string, ts: string, extra: Record<string, unknown>): OtelEvent => ({
+    _type: 'log',
+    ts,
+    name: 'api_request',
+    attrs: { 'session.id': sessionId, 'event.name': 'api_request', ...extra },
+    resource: {},
+  });
+
+  it('lists a model with no cost_usd that the resolver cannot price as unpriced', () => {
+    const { summary } = buildCostIndex([
+      ev('U1', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.5', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(summary.unpricedModels).toEqual(['gpt-5.5']);
+  });
+
+  it('prices usage through resolvePrice when cost_usd is absent', () => {
+    const { index, summary } = buildCostIndex([
+      ev('U2', '2026-06-19T10:00:00.000Z', { model: 'claude-opus-4-6', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(index.get('U2')!.costUSD).toBeGreaterThan(0);
+    expect(summary.unpricedModels).toEqual([]);
+  });
+});
+
 describe('buildDispatches', () => {
   it('emits agent + skill dispatches (agent spans completion − duration)', () => {
     const mainEvents = parseOtelJsonl(TEXT).filter((e) => (e.attrs['session.id'] as string) === MAIN);

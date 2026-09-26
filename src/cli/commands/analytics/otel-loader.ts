@@ -37,6 +37,8 @@ import type {
 } from './cost/types.js';
 import { MAX_SERIES_POINTS, MAX_DISPATCHES } from './cost/types.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
+import { resolvePrice } from '@/utils/pricing.js';
+import { costBreakdown } from './cost/cost-calculator.js';
 
 /** One flattened OTEL event line (see the contract in codemie-claude-otel/plugin/README.md). */
 export interface OtelEvent {
@@ -130,8 +132,10 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
   summary: CostSummary;
 } {
   const index: SessionCostIndex = new Map();
-  const perModelMap = new Map<string, Map<string, { tokens: TokenUsage; costUSD: number }>>();
+  const perModelMap = new Map<string, Map<string, { tokens: TokenUsage; costUSD: number; unpriced: boolean; estimated: boolean }>>();
   const seriesPts = new Map<string, Array<{ t: number; cost: number; tokens: number }>>();
+  const unpricedModels = new Set<string>();
+  const estimatedModels = new Set<string>();
 
   for (const e of apiRequests) {
     const sid = sessionOf(e);
@@ -143,21 +147,48 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     }
     const sc = index.get(sid)!;
     addTokens(sc.tokens, e);
-    const cost = num(attr(e, 'cost_usd'));
-    sc.costUSD += cost;
+
+    // A present `cost_usd` is authoritative — never repriced. Only when it's absent do we
+    // fall back to the pricing table (section B's resolver), same as cost-enricher's priceUsage.
     const reportedCost = attr(e, 'cost_usd');
-    if ((typeof reportedCost === 'number' || (typeof reportedCost === 'string' && reportedCost.trim() !== '')) && Number.isFinite(Number(reportedCost))) {
+    const hasReportedCost = (typeof reportedCost === 'number' || (typeof reportedCost === 'string' && reportedCost.trim() !== '')) && Number.isFinite(Number(reportedCost));
+
+    // rawModel (unnormalized) is what resolvePrice() needs — it does its own canonicalization
+    // internally, but also needs the raw form to detect a Bedrock regional-endpoint premium.
+    const rawModel = String(attr(e, 'model') || '(unknown)');
+    // Normalize so bedrock/converse spellings collapse onto the canonical model for display.
+    const model = normalizeModelName(rawModel);
+
+    let cost: number;
+    let eventUnpriced = false;
+    let eventEstimated = false;
+    if (hasReportedCost) {
+      cost = Number(reportedCost);
       sc.costSource = 'authoritative';
       sc.costBasis = 'source-reported';
+    } else {
+      const eventUsage = emptyTokens();
+      addTokens(eventUsage, e);
+      const resolution = resolvePrice(rawModel);
+      if (resolution) {
+        cost = costBreakdown(eventUsage, resolution.price).total;
+        eventEstimated = resolution.estimated;
+      } else {
+        cost = 0;
+        eventUnpriced = true;
+      }
     }
+    sc.costUSD += cost;
+    if (eventUnpriced) unpricedModels.add(model);
+    if (eventEstimated) estimatedModels.add(model);
 
-    // Normalize so bedrock/converse spellings collapse onto the canonical model.
-    const model = normalizeModelName(String(attr(e, 'model') || '(unknown)'));
     const mm = perModelMap.get(sid)!;
-    if (!mm.has(model)) mm.set(model, { tokens: emptyTokens(), costUSD: 0 });
+    if (!mm.has(model)) mm.set(model, { tokens: emptyTokens(), costUSD: 0, unpriced: false, estimated: false });
     const mc = mm.get(model)!;
     addTokens(mc.tokens, e);
     mc.costUSD += cost;
+    if (eventUnpriced) mc.unpriced = true;
+    if (eventEstimated) mc.estimated = true;
 
     const ms = Date.parse(e.ts);
     seriesPts.get(sid)!.push({
@@ -170,7 +201,7 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
   for (const [sid, sc] of index) {
     const mm = perModelMap.get(sid)!;
     sc.perModel = [...mm.entries()]
-      .map(([model, r]): ModelCost => ({ model, tokens: r.tokens, costUSD: r.costUSD, unpriced: false }))
+      .map(([model, r]): ModelCost => ({ model, tokens: r.tokens, costUSD: r.costUSD, unpriced: r.unpriced, ...(r.estimated && { estimated: true }) }))
       .sort((a, b) => b.costUSD - a.costUSD);
     sc.costSeries = downsampleSeries(seriesPts.get(sid)!);
   }
@@ -179,8 +210,8 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     totalCostUSD: [...index.values()].reduce((s, c) => s + c.costUSD, 0),
     pricedSessions: [...index.values()].filter((c) => c.priced).length,
     totalSessions: index.size,
-    unpricedModels: [],
-    estimatedModels: [],
+    unpricedModels: [...unpricedModels],
+    estimatedModels: [...estimatedModels],
   };
   return { index, summary };
 }
