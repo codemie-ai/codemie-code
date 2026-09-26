@@ -24,6 +24,12 @@ describe('normalizeModelName', () => {
     );
   });
 
+  it('extracts the model from the combined bedrock/converse/ prefix', () => {
+    expect(normalizeModelName('bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+  });
+
   it('strips the Kimi Code vendor prefix', () => {
     expect(normalizeModelName('kimi-code/kimi-for-coding')).toBe('kimi-for-coding');
     expect(normalizeModelName('kimi-code/kimi-k2')).toBe('kimi-k2');

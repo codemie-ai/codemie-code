@@ -362,6 +362,10 @@ describe('lookupRate', () => {
     expect(lookupRate(TABLE, 'converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0')?.input).toBe(1);
   });
 
+  it('resolves the combined bedrock/converse/ prefix, matching resolvePrice()', () => {
+    expect(lookupRate(TABLE, 'bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0')?.input).toBe(1);
+  });
+
   it('is case-insensitive about the incoming id', () => {
     expect(lookupRate(TABLE, 'Claude-Sonnet-5')?.input).toBe(3);
   });

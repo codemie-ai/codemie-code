@@ -26,6 +26,7 @@ const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/)/i
  *   converse/global.anthropic.claude-haiku-4-5-20251001-v1:0 -> claude-haiku-4-5-20251001
  *   eu.anthropic.claude-haiku-4-5-20251001-v1:0 -> claude-haiku-4-5-20251001
  *   bedrock/us.anthropic.claude-sonnet-5 -> claude-sonnet-5
+ *   bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0 -> claude-haiku-4-5-20251001
  *   kimi-code/kimi-for-coding -> kimi-for-coding
  *   openai.gpt-4o -> gpt-4o
  *   azure/gpt-4o -> gpt-4o
@@ -34,7 +35,8 @@ const VENDOR_PREFIX_PATTERN = /^(?:openai[./]|azure\/|vertex_ai\/|anthropic\/)/i
  */
 export function normalizeModelName(modelName: string): string {
   // Extract model from an AWS Bedrock id, with or without a `converse/`/`bedrock/` path
-  // prefix, and with or without AWS's own `-v1:0` inference-profile version suffix. The
+  // prefix — including both stacked together as `bedrock/converse/` (observed on real usage
+  // data) — and with or without AWS's own `-v1:0` inference-profile version suffix. The
   // suffix is optional because Switchyard's own Bedrock aliases (e.g.
   // `bedrock/us.anthropic.claude-sonnet-5`, seen on a "capable"-tier routed turn) carry no
   // version at all, unlike a native AWS SDK Bedrock id.
@@ -42,7 +44,8 @@ export function normalizeModelName(modelName: string): string {
   // - converse/region.provider.model-v1:0
   // - region.provider.model-v1:0
   // - bedrock/region.provider.model
-  const bedrockMatch = modelName.match(/^(?:converse\/|bedrock\/)?[a-z0-9-]+\.anthropic\.(claude-[a-z0-9-]+?)(?:-v\d+:\d+)?$/);
+  // - bedrock/converse/region.provider.model-v1:0
+  const bedrockMatch = modelName.match(/^(?:bedrock\/)?(?:converse\/)?[a-z0-9-]+\.anthropic\.(claude-[a-z0-9-]+?)(?:-v\d+:\d+)?$/);
   if (bedrockMatch) {
     return bedrockMatch[1]; // Returns: claude-haiku-4-5-20251001
   }

@@ -136,6 +136,12 @@ describe('canonicalizeModelId', () => {
     );
   });
 
+  it('strips the combined bedrock/converse/ prefix', () => {
+    expect(canonicalizeModelId('bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+  });
+
   it('strips the openai. vendor prefix', () => {
     expect(canonicalizeModelId('openai.gpt-4o')).toBe('gpt-4o');
   });
@@ -228,6 +234,22 @@ describe('resolvePrice', () => {
     const resolution = resolvePrice('claude-sonnet-5');
     expect(resolution).not.toBeNull();
     expect(resolution!.estimated).toBe(false);
+  });
+
+  it('resolves the combined bedrock/converse/ prefix to claude-haiku-4-5-20251001', () => {
+    const resolution = resolvePrice('bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0');
+    expect(resolution).not.toBeNull();
+    expect(resolution!.key).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('still applies the Bedrock regional premium for the combined bedrock/converse/ prefix', () => {
+    // us. is a regional endpoint qualifier (not global), so the row's own 1.1x
+    // bedrockRegionalMultiplier must still apply once the double prefix is stripped.
+    const resolution = resolvePrice('bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0');
+    const global = resolvePrice('claude-haiku-4-5-20251001');
+    expect(resolution).not.toBeNull();
+    expect(global).not.toBeNull();
+    expect(resolution!.price.input).toBeCloseTo(global!.price.input * 1.1, 6);
   });
 });
 

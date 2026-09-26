@@ -138,14 +138,15 @@ const ROUTED_MODEL_TAIL_MAX_BYTES = 8 * 1024 * 1024; // 8MB
 
 /**
  * Strips Bedrock region/provider qualifiers (`converse/global.anthropic.` / `eu.anthropic.` /
- * Switchyard's `bedrock/us.anthropic.` alias, which carries no version suffix) and any
- * `-v1:0` inference-profile version suffix.
+ * Switchyard's `bedrock/us.anthropic.` alias, which carries no version suffix — including both
+ * stacked together as `bedrock/converse/`, observed on real usage data) and any `-v1:0`
+ * inference-profile version suffix.
  */
 export function normalizeModelId(modelId) {
   if (!modelId) return '';
   return modelId
     .toLowerCase()
-    .replace(/^(?:converse|bedrock)\//, '')
+    .replace(/^(?:bedrock\/)?(?:converse\/)?/, '')
     .replace(/^[a-z0-9-]+\.anthropic\./, '')
     .replace(/-v\d+:\d+$/, '');
 }
