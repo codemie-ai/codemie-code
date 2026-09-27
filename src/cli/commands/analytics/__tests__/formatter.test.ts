@@ -15,6 +15,7 @@ function baseSummary(overrides: Partial<CostSummary> = {}): CostSummary {
     totalSessions: 2,
     unpricedModels: [],
     estimatedModels: [],
+    localModels: [],
     ...overrides,
   };
 }
@@ -69,6 +70,22 @@ describe('AnalyticsFormatter.displayCost', () => {
     const out = output();
     expect(out).toContain('Estimated models:');
     expect(out).toContain('claude-opus-4-7');
+  });
+
+  it('prints local (free) models when present', () => {
+    const formatter = new AnalyticsFormatter();
+    formatter.displayCost(baseSummary({ localModels: ['gpt-oss:120b', 'qwen3.8:27b'] }));
+
+    const out = output();
+    expect(out).toContain('Local models (free): gpt-oss:120b, qwen3.8:27b');
+    expect(out).not.toContain('Unpriced models:');
+  });
+
+  it('omits the local models line when there are none', () => {
+    const formatter = new AnalyticsFormatter();
+    formatter.displayCost(baseSummary());
+
+    expect(output()).not.toContain('Local models');
   });
 
   it('prints both unpriced and estimated models together', () => {

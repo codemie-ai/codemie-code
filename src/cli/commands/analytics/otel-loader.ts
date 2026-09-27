@@ -222,6 +222,8 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     totalSessions: index.size,
     unpricedModels: [...unpricedModels],
     estimatedModels: [...estimatedModels],
+    // OTEL events carry no launch provider, so no event can be classified as a local model.
+    localModels: [],
   };
   return { index, summary };
 }

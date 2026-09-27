@@ -154,7 +154,7 @@ Key elements:
 - **Cost by agent** — doughnut chart
 - **Cost by model** — horizontal bar chart of USD spend per model
 - **Most expensive sessions** — top 10 ranked by cost, with per-session token breakdown (input, output, cached)
-- **Unpriced models** / **Estimated models** — the same lists shown in the terminal summary (see below)
+- **Unpriced models** / **Estimated models** / **Local models (free)** — the same lists shown in the terminal summary (see below)
 
 ---
 
@@ -176,7 +176,7 @@ The canonical id is then looked up in order:
 
 There is no family or tier fallback: `gpt-5.5` does not fall back to `gpt-5`'s price, and there is no assumption that a Claude tier's price stays flat across dated releases. The `reordered` step above is not a fallback in that sense — it maps an id onto an existing published row under its other, family-first spelling, never onto a different model. A model without its own row, or without a row reachable through the three lookup steps above, always shows as unpriced rather than being silently priced from a nearby model. `CODEMIE_PRICES` still overrides the vendored table, and the Bedrock regional premium still applies on top of the resolved price. A price-table build collision (two raw keys normalizing to the same table key with different prices) throws a `ConfigurationError`.
 
-**`unpricedModels`** (report meta and terminal summary) lists every distinct model that could not be resolved by the rules above. **`estimatedModels`** lists distinct models that *were* priced, but from a `pricing.json` row marked `"estimated": true` — a tier estimate rather than a confirmed published price (cited in the row's own source note) — surfaced so you can see which numbers are estimates without treating them as errors. A model appears in at most one of the two lists.
+**`unpricedModels`** (report meta and terminal summary) lists every distinct model that could not be resolved by the rules above. **`estimatedModels`** lists distinct models that *were* priced, but from a `pricing.json` row marked `"estimated": true` — a tier estimate rather than a confirmed published price (cited in the row's own source note) — surfaced so you can see which numbers are estimates without treating them as errors. **`localModels`** lists distinct models served locally: a session launched with the `ollama` provider whose model tag is not an Ollama cloud tag (one ending in `-cloud` or `:cloud`, e.g. `gpt-oss:120b-cloud`) runs on your own hardware, so its usage is priced at $0, the session counts as priced, and its per-model cost line carries `local: true`. Ollama cloud tags stay unpriced, and the `:tag` check is applied only for the `ollama` provider — never by the general resolver above. A model appears in at most one of the three lists. OTEL-sourced reports carry no launch provider, so their `localModels` is always empty.
 
 ---
 
@@ -354,7 +354,7 @@ The report-generation flags shown above are the complete set. Any other flag nam
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external` and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 
-**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list and an `Estimated models:` list.
+**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
 
 The date filters control which sessions are **embedded** in the report; the client-side range presets (Today / 7d / 30d / 90d) then let the report viewer narrow further within that data.
 

@@ -103,6 +103,7 @@ describe('buildCostIndex - pricing fallback (no cost_usd)', () => {
     ]);
     expect(index.get('U2')!.costUSD).toBeGreaterThan(0);
     expect(summary.unpricedModels).toEqual([]);
+    expect(summary.localModels).toEqual([]);
   });
 
   it('prices a tier-estimate model through the resolver and surfaces it as estimated', () => {

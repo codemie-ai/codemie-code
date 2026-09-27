@@ -118,6 +118,26 @@ describe('buildPayload', () => {
     expect(payload.meta.coverage).toEqual([{ agentName: 'claude', total: 1, priced: 1, withLog: 1 }]);
   });
 
+  it('copies summary.localModels onto meta.localModels', () => {
+    const summaryWithLocal: CostSummary = { ...summary, localModels: ['gpt-oss:120b'] };
+    const payload = buildPayload(root, costIndex, summaryWithLocal, {
+      rangeLabel: 'all',
+      projectFilter: 'all',
+      generatedAt: '2026-06-08T00:00:00Z',
+    });
+    expect(payload.meta.localModels).toEqual(['gpt-oss:120b']);
+  });
+
+  it('defaults meta.localModels to [] when the summary carries none', () => {
+    const { localModels: _omit, ...legacy } = { ...summary, localModels: [] as string[] };
+    const payload = buildPayload(root, costIndex, legacy as CostSummary, {
+      rangeLabel: 'all',
+      projectFilter: 'all',
+      generatedAt: '2026-06-08T00:00:00Z',
+    });
+    expect(payload.meta.localModels).toEqual([]);
+  });
+
   it('copies summary.estimatedModels onto meta.estimatedModels', () => {
     const summaryWithEstimated: CostSummary = { ...summary, estimatedModels: ['claude-sonnet-4-7'] };
     const payload = buildPayload(root, costIndex, summaryWithEstimated, {

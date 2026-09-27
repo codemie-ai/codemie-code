@@ -814,6 +814,7 @@
       + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
     if (meta.unpricedModels && meta.unpricedModels.length) msg += ' Unpriced models: ' + meta.unpricedModels.join(', ') + '.';
     if (meta.estimatedModels && meta.estimatedModels.length) msg += ' Estimated models: ' + meta.estimatedModels.join(', ') + '.';
+    if (meta.localModels && meta.localModels.length) msg += ' Local models (free): ' + meta.localModels.join(', ') + '.';
     return msg;
   }
 
@@ -1430,9 +1431,11 @@
     var priced = perModel.length > 0;
     var unpricedModels = [];
     var estimatedModels = [];
+    var localModels = [];
     perModel.forEach(function (m) {
       if (m.unpriced && unpricedModels.indexOf(m.model) === -1) unpricedModels.push(m.model);
       if (m.estimated && estimatedModels.indexOf(m.model) === -1) estimatedModels.push(m.model);
+      if (m.local && localModels.indexOf(m.model) === -1) localModels.push(m.model);
     });
     var meta = {
       generatedAt: new Date().toISOString(),
@@ -1454,6 +1457,7 @@
       },
       unpricedModels: unpricedModels,
       estimatedModels: estimatedModels,
+      localModels: localModels,
       coverage: [{ agentName: s.agentName, total: 1, priced: priced ? 1 : 0, withLog: s.hadLog ? 1 : 0 }]
     };
     // Same conditional-spread semantics as buildPayload: omit rather than emit null.

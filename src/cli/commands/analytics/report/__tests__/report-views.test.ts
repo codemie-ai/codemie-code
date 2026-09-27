@@ -15,7 +15,7 @@ import { renderReportHtml } from '../report-generator.js';
  * modal-focus.test.ts: slice the function's real source out of app.js and run it in a
  * fresh vm context with just the globals it touches (`DATA`).
  */
-function sessionPayloadHarness(): (s: unknown) => { meta: { estimatedModels: string[]; unpricedModels: string[] } } {
+function sessionPayloadHarness(): (s: unknown) => { meta: { estimatedModels: string[]; unpricedModels: string[]; localModels: string[] } } {
   const appPath = fileURLToPath(new URL('../client/app.js', import.meta.url));
   const source = readFileSync(appPath, 'utf-8');
   const start = source.indexOf('function sessionPayload(s) {');
@@ -94,6 +94,38 @@ describe('cost view surfaces unpriced and estimated models', () => {
     });
 
     expect(msg).toContain('Estimated models: claude-opus-4-7');
+  });
+
+  it('sessionPayload derives meta.localModels from perModelCost[].local', () => {
+    const sessionPayload = sessionPayloadHarness();
+    const result = sessionPayload({
+      agentName: 'codex',
+      perModelCost: [{ model: 'gpt-oss:120b', local: true, unpriced: false }],
+    });
+
+    expect(result.meta.localModels).toEqual(['gpt-oss:120b']);
+    expect(result.meta.unpricedModels).toEqual([]);
+  });
+
+  it('the cost banner text names local (free) models', () => {
+    const costBannerMessage = costBannerHarness();
+
+    const msg = costBannerMessage({
+      totals: { pricedSessions: 1, sessions: 1 },
+      unpricedModels: [],
+      estimatedModels: [],
+      localModels: ['gpt-oss:120b', 'qwen3.8:27b'],
+    });
+
+    expect(msg).toContain('Local models (free): gpt-oss:120b, qwen3.8:27b');
+  });
+
+  it('the cost banner tolerates a payload without meta.localModels', () => {
+    const costBannerMessage = costBannerHarness();
+
+    const msg = costBannerMessage({ totals: { pricedSessions: 1, sessions: 1 }, unpricedModels: [], estimatedModels: [] });
+
+    expect(msg).not.toContain('Local models');
   });
 
   it('rendered HTML embeds meta.estimatedModels so the cost view can read it', () => {

@@ -90,6 +90,11 @@ export class AnalyticsFormatter {
     if (summary.estimatedModels.length > 0) {
       console.log(`${chalk.yellow('Estimated models:')} ${summary.estimatedModels.join(', ')}`);
     }
+
+    const localModels = summary.localModels ?? [];
+    if (localModels.length > 0) {
+      console.log(`${chalk.cyan('Local models (free):')} ${localModels.join(', ')}`);
+    }
   }
 
   /**

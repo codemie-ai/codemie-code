@@ -303,6 +303,40 @@ describe('enrichCosts', () => {
     expect(summary.unpricedModels).toContain('gpt-5.9');
   });
 
+  describe('Ollama local models', () => {
+    const ollamaParsed = (model: string) => async () =>
+      ({
+        sessionId: 's1', agentName: 'claude', metadata: {},
+        messages: [{ message: { model, usage: { input_tokens: 1_000, output_tokens: 50 } } }],
+      }) as never;
+    const ollamaRaw = (provider: string | undefined) =>
+      [{ sessionId: 's1', startEvent: { agentName: 'claude', data: provider ? { provider } : {} }, deltas: [] }] as never[];
+
+    it('prices a non-cloud model on the ollama provider at $0 as local, not unpriced, and counts it priced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      const c = index.get('s1')!;
+      expect(c.priced).toBe(true);
+      expect(c.costUSD).toBe(0);
+      expect(c.perModel[0]).toMatchObject({ model: 'gpt-oss:120b', unpriced: false, local: true, costUSD: 0 });
+      expect(summary.localModels).toEqual(['gpt-oss:120b']);
+      expect(summary.unpricedModels).toEqual([]);
+      expect(summary.pricedSessions).toBe(1);
+    });
+
+    it('keeps an Ollama cloud tag unpriced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b-cloud') });
+      expect(index.get('s1')!.perModel[0].local).toBeUndefined();
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b-cloud']);
+      expect(summary.localModels).toEqual([]);
+    });
+
+    it('keeps an Ollama-style tag unpriced when the provider is not ollama', async () => {
+      const { summary } = await enrichCosts(ollamaRaw(undefined), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b']);
+      expect(summary.localModels).toEqual([]);
+    });
+  });
+
   it('costSeries endpoint equals the session total (same records, same pricing)', async () => {
     const deps: EnricherDeps = {
       ...baseDeps,

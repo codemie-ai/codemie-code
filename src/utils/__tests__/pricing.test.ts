@@ -333,3 +333,21 @@ describe('buildPriceTable', () => {
     expect(built['foo-bar'].estimated).toBe(true);
   });
 });
+
+describe('Kimi K3 / K2.6 rows (platform.kimi.ai/docs/pricing/chat, 2026-09-27)', () => {
+  it('prices kimi-k3 at $3/$15 with $0.30 cache read and $3/$6 cache writes', () => {
+    expect(lookupPrice('kimi-k3')).toEqual({
+      input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3, cacheWrite1h: 6,
+      bedrockRegionalMultiplier: undefined, estimated: undefined,
+    });
+  });
+
+  it('prices the bare k3 id kimi-code logs identically to kimi-k3', () => {
+    expect(lookupPrice('k3')).toEqual(lookupPrice('kimi-k3'));
+  });
+
+  it('prices kimi-k2.6 at $0.95/$4 with $0.16 cache read', () => {
+    const price = lookupPrice('kimi-k2.6');
+    expect(price).toMatchObject({ input: 0.95, output: 4, cacheRead: 0.16, cacheCreation: 0.95 });
+  });
+});
