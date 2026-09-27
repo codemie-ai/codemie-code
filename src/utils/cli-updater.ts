@@ -31,6 +31,10 @@ const UPDATE_CHECK_INTERVAL = parseInt(
 const LAST_CHECK_FILE = path.join(getCodemiePath(), '.last-update-check');
 const UPDATE_LOCK_FILE = path.join(getCodemiePath(), '.update-lock');
 
+// A lock older than this is considered orphaned (holder crashed or was killed
+// mid-update) and is reclaimed. Generous vs. the 60s update install timeout.
+const UPDATE_LOCK_STALE_MS = 10 * 60 * 1000;
+
 /**
  * Get the current CLI version from package.json
  */
@@ -85,20 +89,44 @@ async function recordUpdateCheck(): Promise<void> {
 
 /**
  * Acquire lock file to prevent concurrent updates
+ * Reclaims the lock when it is stale (holder died before releasing it)
  * @returns true if lock acquired, false if another process is updating
  */
 async function acquireUpdateLock(): Promise<boolean> {
-  try {
-    // Try to create lock file with exclusive flag (fails if exists)
-    const fd = await fs.open(UPDATE_LOCK_FILE, 'wx');
-    await fd.close();
+  const tryAcquire = async (): Promise<boolean> => {
+    try {
+      // Try to create lock file with exclusive flag (fails if exists)
+      const fd = await fs.open(UPDATE_LOCK_FILE, 'wx');
+      await fd.close();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (await tryAcquire()) {
     logger.debug('Acquired update lock');
     return true;
-  } catch {
-    // Lock file exists - another process is updating
-    logger.debug('Update lock already held by another process');
-    return false;
   }
+
+  // Lock file exists - either another process is updating, or a previous
+  // process died before releasing it. Reclaim only when provably stale.
+  try {
+    const { mtimeMs } = await fs.stat(UPDATE_LOCK_FILE);
+    const ageMs = Date.now() - mtimeMs;
+    if (ageMs < UPDATE_LOCK_STALE_MS) {
+      logger.debug('Update lock already held by another process');
+      return false;
+    }
+    logger.debug(`Removing stale update lock (${Math.floor(ageMs / 60000)} min old)`);
+    await fs.unlink(UPDATE_LOCK_FILE);
+  } catch {
+    // Lock vanished between attempts (holder released it) - retry below
+  }
+
+  const acquired = await tryAcquire();
+  logger.debug(acquired ? 'Acquired update lock after clearing stale lock' : 'Update lock already held by another process');
+  return acquired;
 }
 
 /**
