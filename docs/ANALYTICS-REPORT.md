@@ -272,7 +272,7 @@ CodeMie merges two sources to give the most complete picture:
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
 2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
 
-Pass `--no-scan-native` to disable native-log discovery and use only CodeMie-tracked sessions.
+Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
 
@@ -300,10 +300,9 @@ codemie analytics --open --include-external
 
 **This is the flag that shows all of your local agent usage.** GitHub Copilot CLI sessions are included in the gate, so they too are absent from the default report.
 
-Two things to know before you rely on the wider number:
+One thing to know before you rely on the wider number:
 
 - **It is broader but less precise.** An external session has no CodeMie run to attribute it to — no profile, no managed provider — and its cost depends entirely on a native log that may already have been rotated away. Expect a lower priced-session ratio in the Cost view's **Coverage** banner than you'd see for CodeMie-launched sessions.
-- **`--include-external` needs native scanning.** External sessions *are* discovered natives, so `--no-scan-native --include-external` adds nothing — the first flag suppresses the very sessions the second one asks for.
 
 `--include-external` applies to the default local-session source only. The `analytics otel` subcommand does not accept it — an OTEL events file has no notion of CodeMie ownership.
 
@@ -344,9 +343,8 @@ Filter flags:
   --session <id>            Filter to a single session
 
 Source flags:
-  --no-scan-native          Skip native-log discovery (CodeMie-tracked sessions only)
   --include-external        Also count local sessions CodeMie did not launch
-                            (see "Session provenance"; requires native scanning)
+                            (see "Session provenance")
 
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
@@ -354,7 +352,7 @@ Other flags:
 
 The report-generation flags shown above are the complete set. Any other flag name is rejected as unknown, and an unsupported `--export` value is reported as an invalid-format error.
 
-**Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external`, `--no-scan-native`, and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
+**Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external` and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 
 **Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list and an `Estimated models:` list.
 
@@ -369,4 +367,4 @@ codemie analytics otel --file <path> [options]
   --user <id>               Scope to one user (native user.email or user.id)
 ```
 
-All filter, report, and export flags from the base command also apply to `analytics otel`. The source flags do not: an OTEL events file is neither scanned for native logs nor gated on CodeMie ownership, so `--no-scan-native` and `--include-external` have no meaning here. Cost is read from each event's native `cost_usd`.
+All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.

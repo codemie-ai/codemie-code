@@ -249,9 +249,7 @@ export interface AnalyticsOptions {
   /** `-o, --output <path>`: target file or directory for the report (see resolveOutputTargets). */
   output?: string;
   open?: boolean;
-  /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
-  scanNative?: boolean;
-  /** When true (via --include-external), include non-CodeMie-owned native sessions in output (matches pre-fix behavior). */
+  /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;
 }
 

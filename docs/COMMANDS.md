@@ -635,7 +635,7 @@ codemie analytics --last 7d                     # Last 7 days
 # Output options
 codemie analytics --verbose                     # Detailed session breakdown
 codemie analytics --export json                 # Write the costed report as JSON
-codemie analytics --no-scan-native              # Only CodeMie-tracked sessions (skip native logs)
+codemie analytics --include-external            # Also count agents run directly (plain claude, codex, …)
 
 # HTML dashboard (self-contained, no server)
 codemie analytics --export                      # Write codemie-analytics-YYYY-MM-DD.html
@@ -684,11 +684,11 @@ tool), so unpriced tools are explicit. Sessions whose native log is absent, or w
 agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
 "priced N of M" and never silently counted as `$0`.
 
-**Native session discovery (on by default).** `codemie analytics` (terminal and `--export`)
-scans native agent logs (`~/.claude/projects/**`) directly, so sessions from the plain
-`claude` command — your Anthropic subscription, not `codemie-claude` — are included even
-though CodeMie never tracked them. Logs already correlated to a tracked session are deduped
-by path. Pass `--no-scan-native` to use only CodeMie-tracked sessions.
+**Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
+scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
+tracked sessions. By default only sessions CodeMie launched are counted; pass
+`--include-external` to also count sessions from agents run directly — e.g. the plain
+`claude` command on your Anthropic subscription.
 
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by

@@ -671,11 +671,11 @@
   {
     "id": "cmd-analytics-native",
     "category": "Insights",
-    "message": "Even plain `claude` sessions show up: analytics scans native agent logs by default, and `codemie analytics --no-scan-native` restricts to CodeMie-tracked runs.",
+    "message": "Analytics counts only sessions CodeMie launched by default; `codemie analytics --include-external` also counts agents you ran directly, like plain `claude`.",
     "command": "analytics",
     "commands": [
       "codemie analytics",
-      "codemie analytics --no-scan-native"
+      "codemie analytics --include-external"
     ]
   },
   {
