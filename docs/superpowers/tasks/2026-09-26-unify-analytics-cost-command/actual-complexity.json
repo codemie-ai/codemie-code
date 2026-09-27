@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated": "2026-09-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 43,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Base XL: the change spans the analytics CLI command (index.ts: --export/-o/--open resolution and format inference), the cost subsystem (cost-enricher, cost types), the report subsystem (report-generator, payload-builder, session-report, report types, HTML client app.js, new output-target resolver), the OTEL path (otel-loader, otel-pricing), shared pricing utilities (new price-resolution.ts resolver, pricing.ts, model-normalizer.ts, pricing.json), the Claude statusline plugin and Codex rollout correlation. New abstractions: price-resolution (a single model-id to price-key resolver shared by the report and the bundled statusline) and output-target. Bumped to XXL because it touches core shared utilities consumed across agents."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Diffstat reports 43 files changed (+2928/-715): about 22 source/data/doc files and 21 unit and integration test files across src/cli/commands/analytics (and its cost/ and report/ subdirs), src/utils, src/agents/plugins/claude, src/agents/plugins/codex, tests/integration, tests/helpers and docs. New files include price-resolution.ts, output-target.ts and several new test suites. This is well past the 16+ threshold, so XXL."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 layers: UI (HTML report client app.js and terminal formatter), API/CLI surface (analytics command options and export semantics), Service (cost enrichment, pricing resolution, OTEL pricing), and External/agent integration (Claude statusline and Codex native-log correlation). Persistence is limited to report file output and reading session metadata, with no schema change or migration, so the score stays at L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Established patterns cover most of the work: the pricing table, the enricher with injected deps and the report generator already existed, and the resolver is pure and side-effect free with deterministic ordered matching (exact, snapshot-stripped, Claude family reorder). There are no security, auth or persistence-migration implications. Edge cases (invalid formats, directory vs file -o targets, snapshot suffixes) are covered by existing Vitest table-style test templates, so no auto-bump applies. The main risk is keeping costs consistent between the statusline and the report, which the reconciliation integration tests address. Stays M."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): touches core shared utilities (src/utils/pricing.ts, model-normalizer.ts, new price-resolution.ts shared by the analytics report and the bundled Claude statusline); the affects-multiple-agents flag (Claude statusline, Codex correlation) also applies but the dimension is capped at 6."
+  ],
+  "split_recommendation": null
+}
