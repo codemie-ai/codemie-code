@@ -234,7 +234,7 @@ describe('resolvePrice', () => {
   });
 
   it('reports estimated:true for an estimated row', () => {
-    const resolution = resolvePrice('claude-opus-4-7');
+    const resolution = resolvePrice('claude-sonnet-4-7');
     expect(resolution).not.toBeNull();
     expect(resolution!.estimated).toBe(true);
   });

@@ -107,9 +107,9 @@ describe('buildCostIndex - pricing fallback (no cost_usd)', () => {
 
   it('prices a tier-estimate model through the resolver and surfaces it as estimated', () => {
     const { index, summary } = buildCostIndex([
-      ev('U3', '2026-06-19T10:00:00.000Z', { model: 'claude-opus-4-7', input_tokens: 1000, output_tokens: 500 }),
+      ev('U3', '2026-06-19T10:00:00.000Z', { model: 'claude-sonnet-4-7', input_tokens: 1000, output_tokens: 500 }),
     ]);
-    expect(summary.estimatedModels).toEqual(['claude-opus-4-7']);
+    expect(summary.estimatedModels).toEqual(['claude-sonnet-4-7']);
     expect(index.get('U3')!.perModel[0].estimated).toBe(true);
   });
 
