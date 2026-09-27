@@ -21,6 +21,7 @@ import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { KimiMetricsProcessor } from './session/processors/kimi.metrics-processor.js';
 import type { KimiWireEvent } from './session/types.js';
+import { KIMI_ENV_MODEL_ALIAS, readKimiEnvModel, resolveKimiModelId } from './kimi.env-model.js';
 
 export class KimiSessionAdapter implements SessionAdapter {
   readonly agentName = 'kimi';
@@ -56,12 +57,14 @@ export class KimiSessionAdapter implements SessionAdapter {
    */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
-      const events = await readJSONLTolerant<KimiWireEvent>(filePath, '[kimi-adapter]');
+      const rawEvents = await readJSONLTolerant<KimiWireEvent>(filePath, '[kimi-adapter]');
 
-      if (events.length === 0) {
+      if (rawEvents.length === 0) {
         logger.debug(`[kimi-adapter] Session file is empty or unreadable: ${filePath}`);
         return this.createMinimalSession(sessionId);
       }
+
+      const events = await this.resolveEnvModelAlias(rawEvents, filePath);
 
       const model = this.extractModel(events);
       const { createdAt, updatedAt } = this.extractTimestamps(events);
@@ -197,6 +200,29 @@ export class KimiSessionAdapter implements SessionAdapter {
       metadata,
       messages: [],
     };
+  }
+
+  /**
+   * Replace kimi-code's `__kimi_env_model__` placeholder with the real model id from the
+   * session's kimi-code.log, so metrics and cost see a priceable id. Leaves events untouched
+   * when the alias is absent or the log cannot supply the real id.
+   */
+  private async resolveEnvModelAlias(events: KimiWireEvent[], filePath: string): Promise<KimiWireEvent[]> {
+    const usesAlias = events.some(
+      (e) => e.modelAlias === KIMI_ENV_MODEL_ALIAS || e.model === KIMI_ENV_MODEL_ALIAS
+    );
+    if (!usesAlias) {
+      return events;
+    }
+    const envModel = await readKimiEnvModel(filePath);
+    if (!envModel) {
+      return events;
+    }
+    return events.map((e) => ({
+      ...e,
+      ...(e.modelAlias !== undefined && { modelAlias: resolveKimiModelId(e.modelAlias, envModel) }),
+      ...(e.model !== undefined && { model: resolveKimiModelId(e.model, envModel) }),
+    }));
   }
 
   private extractModel(events: KimiWireEvent[]): string | undefined {

@@ -152,6 +152,33 @@ describe('readUsageByModel', () => {
     expect(recs[1].usage.total).toBe(300);
     expect(recs[0].key).toBeNull();
   });
+
+  it('resolves the __kimi_env_model__ alias to the session metadata model in both Kimi readers', () => {
+    const kimiParsed = {
+      sessionId: 's4',
+      agentName: 'kimi',
+      metadata: { model: 'moonshotai.kimi-k2.5' },
+      messages: [
+        { type: 'usage.record', model: '__kimi_env_model__', usage: { inputOther: 100, output: 5, inputCacheRead: 0, inputCacheCreation: 0 }, time: 1788258297787 },
+      ],
+    } as never;
+
+    expect([...readUsageByModel('kimi', kimiParsed).keys()]).toEqual(['moonshotai.kimi-k2.5']);
+    expect(extractKimiUsageRecords(kimiParsed).map((r) => r.model)).toEqual(['moonshotai.kimi-k2.5']);
+  });
+
+  it('keeps the __kimi_env_model__ alias when no real model is known', () => {
+    const kimiParsed = {
+      sessionId: 's5',
+      agentName: 'kimi',
+      metadata: { model: '__kimi_env_model__' },
+      messages: [
+        { type: 'usage.record', model: '__kimi_env_model__', usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 } },
+      ],
+    } as never;
+
+    expect([...readUsageByModel('kimi', kimiParsed).keys()]).toEqual(['__kimi_env_model__']);
+  });
 });
 
 describe('extractClaudeUsageRecords — timestamps', () => {

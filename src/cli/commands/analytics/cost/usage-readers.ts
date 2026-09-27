@@ -16,6 +16,7 @@ import { isCodexFamilyAgent } from './codex-agent.js';
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
 import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
 import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
+import { resolveKimiModelId } from '@/agents/plugins/kimi/kimi.env-model.js';
 
 /** model -> usage */
 type UsageMap = Map<string, TokenUsage>;
@@ -571,16 +572,27 @@ interface KimiUsageRecord {
 }
 
 /**
+ * The session-level model the Kimi adapter resolved (from kimi-code.log when the wire only
+ * carries the `__kimi_env_model__` placeholder). Used as a fallback so a usage.record still
+ * holding the placeholder is attributed to the real, priceable model id.
+ */
+function kimiSessionModel(parsed: ParsedSession): string | undefined {
+  const model = (parsed.metadata as { model?: unknown } | undefined)?.model;
+  return typeof model === 'string' ? model : undefined;
+}
+
+/**
  * Read Kimi Code usage.record events.
  * Kimi records one usage event per assistant step with inputOther/output/cache fields.
  */
 function readKimi(parsed: ParsedSession): UsageMap {
   const out: UsageMap = new Map();
+  const envModel = kimiSessionModel(parsed);
   for (const raw of messagesOf(parsed) as KimiUsageRecord[]) {
     if (raw.type !== 'usage.record' || !raw.usage) {
       continue;
     }
-    const model = raw.model ?? 'unknown';
+    const model = resolveKimiModelId(raw.model ?? 'unknown', envModel);
     const input = raw.usage.inputOther ?? 0;
     const output = raw.usage.output ?? 0;
     const cacheRead = raw.usage.inputCacheRead ?? 0;
@@ -604,11 +616,12 @@ function readKimi(parsed: ParsedSession): UsageMap {
  */
 export function extractKimiUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
+  const envModel = kimiSessionModel(parsed);
   for (const raw of messagesOf(parsed) as KimiUsageRecord[]) {
     if (raw.type !== 'usage.record' || !raw.usage) {
       continue;
     }
-    const model = raw.model ?? 'unknown';
+    const model = resolveKimiModelId(raw.model ?? 'unknown', envModel);
     const input = raw.usage.inputOther ?? 0;
     const output = raw.usage.output ?? 0;
     const cacheRead = raw.usage.inputCacheRead ?? 0;
