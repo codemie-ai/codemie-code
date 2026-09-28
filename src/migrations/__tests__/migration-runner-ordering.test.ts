@@ -86,8 +86,13 @@ afterEach(async () => {
   if (originalCodemieHome !== undefined) process.env.CODEMIE_HOME = originalCodemieHome;
   else delete process.env.CODEMIE_HOME;
   // maxRetries absorbs Windows ENOTEMPTY/EBUSY when the OS still holds a handle
-  // on a just-closed log stream under tmpHome/logs.
-  rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  // on a just-closed log stream under tmpHome/logs; try/catch is the final
+  // best-effort fallback if retries are exhausted, so cleanup can't fail the test.
+  try {
+    rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* best-effort */
+  }
   vi.restoreAllMocks();
 });
 
