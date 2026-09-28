@@ -66,7 +66,7 @@ For reproducible installs, replace `main` with a release tag such as `v0.8.0`.
 
 | Parameter | Default | Values / Purpose |
 |---|---|---|
-| `-Mode` | `portable` | `portable` = npm prefix under `-InstallRoot` with shim `.cmd` files in `bin/` and a user PATH update; `npm-global` = plain `npm install -g` into the existing npm prefix |
+| `-Mode` | `auto` | `auto` = `npm-global` when the current npm prefix (`npm config get prefix`) is writable, otherwise `portable`; `npm-global` = plain `npm install -g` into the existing npm prefix; `portable` = npm prefix under `-InstallRoot` with shim `.cmd` files in `bin/` and a user PATH update |
 | `-Version` | *(empty)* | Pin `@codemieai/code` to a specific version |
 | `-RegistryUrl` | `https://registry.npmjs.org/` | npm registry used for resolution and install |
 | `-ScopeRegistryUrl` | *(empty)* | Sets the `@codemieai:registry` npm scope to an enterprise registry |
@@ -89,9 +89,46 @@ Pin a version on macOS/Linux/WSL:
 curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | env CODEMIE_PACKAGE_VERSION=0.8.0 bash
 ```
 
+### What each mode changes
+
+No mode on either installer writes `prefix` to `.npmrc`. Both pass `--prefix` directly to `npm install -g` instead.
+
+| Installer | Mode | What it changes |
+|---|---|---|
+| `install.ps1` | `npm-global` | `npm install -g @codemieai/code` into the existing npm prefix. Nothing else changes. |
+| `install.ps1` | `portable` | Creates `<InstallRoot>\npm-prefix` and installs there via `npm install -g --prefix`; writes `.cmd` shims to `<InstallRoot>\bin`; adds `<InstallRoot>\bin` to the user PATH. |
+| `install.sh` | `npm-global` | `npm install -g @codemieai/code` into the existing npm prefix. Nothing else changes. |
+| `install.sh` | `user-prefix` | Creates `$CODEMIE_NPM_PREFIX/bin` and installs there via `npm install -g --prefix`; prints a PATH hint for `$CODEMIE_NPM_PREFIX/bin` (no shims are generated). |
+
+If `-ScopeRegistryUrl` / `CODEMIE_SCOPE_REGISTRY_URL` is set, both installers set the `@codemieai:registry` npm scope (`--location user`) and print the revert command:
+
+```text
+npm config delete @codemieai:registry --location user
+```
+
+## Upgrading from an older installer
+
+Older versions of both installers ran `npm config set prefix` at the user level, which redirects every future `npm install -g` (for any package, not just CodeMie) into CodeMie's own prefix folder. Rerunning the current installer on an affected machine migrates it automatically:
+
+1. The installer detects the override only when `npm config get prefix --location user` exactly equals the installer's own prefix folder (`<InstallRoot>\npm-prefix` on Windows, `$HOME/.codemie/npm-prefix` on macOS/Linux by default). It never touches any other prefix value, `NPM_CONFIG_PREFIX`, or global/project `.npmrc` values.
+2. It lists the packages stranded in the old prefix (`npm ls -g --prefix <old> --depth=0`).
+3. It runs `npm config delete prefix --location user` and prints that it ran.
+4. It resolves the install mode after the deletion and installs for that mode.
+5. On Windows, if the resolved mode is not `portable`, it removes the stale `CodeMie\bin` shims and their user PATH entry.
+6. It prints reinstall guidance for the stranded packages (for example `npm i -g @anthropic-ai/claude-code@latest`) and the optional cleanup command to delete the old prefix folder (`rm -rf` / `Remove-Item -Recurse`). The folder itself is left in place.
+
+`codemie doctor` also runs a read-only `npm prefix` check that warns when it finds the override, without changing anything, printing the same fix commands.
+
+To fix a machine manually instead of rerunning the installer:
+
+```bash
+npm config delete prefix --location user
+npm i -g @anthropic-ai/claude-code@latest   # repeat for each stranded package
+```
+
 ## Windows Defaults
 
-Windows installs into the current user's local profile by default (`-Mode portable`):
+Windows installers default to `-Mode auto`, which chooses `npm-global` when the current npm prefix is writable, otherwise falls back to `portable` under:
 
 ```text
 %LOCALAPPDATA%\CodeMie
@@ -103,7 +140,7 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
 
 ## macOS/Linux Defaults
 
-macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script configures a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
+macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script installs with `npm install -g --prefix "$HOME/.codemie/npm-prefix"` and prints a PATH hint for `$HOME/.codemie/npm-prefix/bin`; it does not write to `~/.npmrc`.
 
 ## Windows Installation Wizard
 
