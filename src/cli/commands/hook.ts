@@ -221,6 +221,10 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
   await performIncrementalSync(event, 'SessionEnd', sessionId, config);
 
+  // 1b. Downgrade correlation when the reported transcript never materialized (#523),
+  //     before the API sync reads it
+  await reconcileTranscriptCorrelation(event, sessionId);
+
   // 2. Update session status (moved before network sync: marking the session
   //    completed must not depend on the API sync surviving teardown)
   await updateSessionStatus(event, sessionId);
@@ -235,6 +239,54 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
 
   // 5. Rename files LAST (after all operations that need to read session)
   await renameSessionFiles(sessionId);
+}
+
+/**
+ * Reconcile correlation status with the transcript files on disk at SessionEnd.
+ *
+ * This runs at SessionEnd rather than SessionStart because agents (e.g. Claude Code)
+ * report transcript_path at startup but only create the file once the conversation
+ * begins, so a SessionStart existence check misclassifies normal sessions. By
+ * SessionEnd, a reported transcript that is still missing was never persisted
+ * (e.g. PTY-driven interactive Claude sessions, #523): mark it 'file_not_found' so
+ * the sync skips it instead of failing. A transcript that exists restores 'matched'.
+ * Sessions without any reported transcript path are left unchanged.
+ */
+async function reconcileTranscriptCorrelation(event: SessionEndEvent, sessionId: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+    const { existsSync } = await import('node:fs');
+    const sessionStore = new SessionStore();
+    const session = await sessionStore.loadSession(sessionId);
+    const correlation = session?.correlation;
+    if (!session || !correlation) return;
+    if (correlation.status !== 'matched' && correlation.status !== 'file_not_found') return;
+
+    const reportedFiles = event.transcript_paths?.length
+      ? event.transcript_paths
+      : event.transcript_path
+        ? [event.transcript_path]
+        : correlation.agentSessionFile
+          ? [correlation.agentSessionFile]
+          : [];
+    if (reportedFiles.length === 0) return;
+
+    const status = reportedFiles.some((file) => existsSync(file)) ? 'matched' : 'file_not_found';
+    if (status === correlation.status) return;
+
+    if (status === 'file_not_found') {
+      logger.warn(
+        `[hook:SessionEnd] Reported transcript was never persisted: ${reportedFiles.join(', ')}. ` +
+        `Correlation status set to 'file_not_found'; the session will be skipped by sync.`
+      );
+    }
+    session.correlation = { ...correlation, status };
+    await sessionStore.saveSession(session);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`[hook:SessionEnd] Failed to reconcile transcript correlation: ${errorMessage}`);
+    // Don't throw - hook should not block agent execution
+  }
 }
 
 /**
@@ -772,32 +824,6 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
 }
 
 /**
- * Resolves correlation status for a SessionStart event.
- *
- * Several agent plugins (codemie-code, codex, copilot-cli, opencode, pi) fire SessionStart
- * with an empty transcript_path by design, because the path isn't known until later
- * (e.g. SessionEnd). That is not a failure and must stay 'matched'. Only a transcript_path
- * that was actually reported but doesn't exist on disk (e.g. interactive PTY sessions that
- * never persist a transcript) should be downgraded to 'file_not_found'.
- */
-function resolveCorrelationStatus(
-  transcriptPath: string | undefined,
-  existsSync: (path: string) => boolean
-): 'matched' | 'file_not_found' {
-  if (!transcriptPath) {
-    return 'matched';
-  }
-  if (!existsSync(transcriptPath)) {
-    logger.warn(
-      `[hook:SessionStart] Transcript path reported but file does not exist: ${transcriptPath}. ` +
-      `Correlation status set to 'file_not_found' to prevent metrics processing failures.`
-    );
-    return 'file_not_found';
-  }
-  return 'matched';
-}
-
-/**
  * Helper: Create and save session record
  * Uses correlation information from hook event
  *
@@ -866,15 +892,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       existing.status = 'active';
       if (gitBranch) existing.gitBranch = gitBranch;
       if (remoteRepository) existing.repository = remoteRepository;
-
-      // Check if a reported transcript file actually exists on disk before marking correlation
-      // as matched. No transcript_path at all is not a failure - some plugins discover it later.
-      const { existsSync } = await import('node:fs');
-      const correlationStatus = resolveCorrelationStatus(event.transcript_path, existsSync);
-
       existing.correlation = {
         ...existing.correlation,
-        status: correlationStatus,
+        status: 'matched',
         ...(event.session_id && { agentSessionId: event.session_id }),
         ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
       };
@@ -902,17 +922,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
       '../../agents/core/session/session-origin-audit.js'
     );
-    const { existsSync } = await import('node:fs');
     const origin =
       getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME
         ? SESSION_ORIGIN.EXTERNAL_RESUME
         : undefined;
 
-    // Check if a reported transcript file actually exists on disk before marking correlation
-    // as matched. No transcript_path at all is not a failure - some plugins discover it later.
-    const correlationStatus = resolveCorrelationStatus(event.transcript_path, existsSync);
-
-    // Create session record with correlation status based on file existence
+    // Create session record with correlation already matched
     const session = {
       sessionId,
       agentName,
@@ -926,7 +941,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
       correlation: {
-        status: correlationStatus,
+        status: 'matched' as const,
         agentSessionId: event.session_id,
         agentSessionFile: event.transcript_path,
         retryCount: 0

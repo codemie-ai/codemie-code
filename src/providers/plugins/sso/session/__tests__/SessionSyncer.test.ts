@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Session } from '../../../../../agents/core/session/types.js';
 import type { ProcessingContext } from '../../../../../agents/core/session/BaseProcessor.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const mockLoadSession = vi.fn();
 const mockSaveSession = vi.fn().mockResolvedValue(undefined);
@@ -108,5 +111,40 @@ describe('SessionSyncer', () => {
     expect(result.success).toBe(true);
     expect(mockMetricsProcess).toHaveBeenCalledTimes(1);
     expect(mockConvProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips processors and reports success for a file_not_found session whose transcript is missing', async () => {
+    mockLoadSession.mockResolvedValue(
+      makeSession({ correlation: { status: 'file_not_found', agentSessionFile: join(tmpdir(), 'codemie-missing-transcript.jsonl'), retryCount: 0 } })
+    );
+
+    const { SessionSyncer } = await import('../SessionSyncer.js');
+    const syncer = new SessionSyncer();
+    const result = await syncer.sync('session-1', context);
+
+    expect(result.success).toBe(true);
+    expect(mockMetricsProcess).not.toHaveBeenCalled();
+    expect(mockConvProcess).not.toHaveBeenCalled();
+  });
+
+  it('runs processors for a file_not_found session whose transcript exists by now', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codemie-syncer-'));
+    const transcript = join(dir, 'transcript.jsonl');
+    writeFileSync(transcript, '{"type":"user"}\n');
+    mockLoadSession.mockResolvedValue(
+      makeSession({ correlation: { status: 'file_not_found', agentSessionFile: transcript, retryCount: 0 } })
+    );
+
+    try {
+      const { SessionSyncer } = await import('../SessionSyncer.js');
+      const syncer = new SessionSyncer();
+      const result = await syncer.sync('session-1', context);
+
+      expect(result.success).toBe(true);
+      expect(mockMetricsProcess).toHaveBeenCalledTimes(1);
+      expect(mockConvProcess).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
