@@ -49,7 +49,7 @@ import {
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
 import { writeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
+import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -76,12 +76,12 @@ export interface ConnectOptions {
   model?: string;
   /** Gate for the cursor-ide target — analytics-only hook ingestion. */
   analytics?: boolean;
-  /** Settings scope for --claude-code: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
+  /** Settings scope for --claude-code-otlp: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
   scope?: "user" | "project";
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'claude-code' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide' | 'claude-code-otlp';
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide' | 'claude-code-otlp';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -693,12 +693,12 @@ async function runCursorIde(options: CursorIdeRunOptions): Promise<TargetResult>
 /** Test seam - the runner is otherwise only reachable through `connectTargets`. */
 export const runCursorIdeForTest = runCursorIde;
 
-interface ClaudeCodeRunOptions {
+interface ClaudeCodeOtlpRunOptions {
   force?: boolean;
   scope?: "user" | "project";
 }
 
-async function runClaudeCode(options: ClaudeCodeRunOptions): Promise<TargetResult> {
+async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<TargetResult> {
   const label = 'Claude Code Analytics';
   try {
     const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
@@ -840,7 +840,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     }));
   }
   if (targets.cursorIde) results.push(await runCursorIde({ force: Boolean(opts.force) }));
-  if (targets.claudeCodeOtlp) results.push(await runClaudeCode({ force: Boolean(opts.force), scope: opts.scope }));
+  if (targets.claudeCodeOtlp) results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);

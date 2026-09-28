@@ -17,8 +17,8 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import { resolveHomeDir } from '@/utils/paths.js';
-import { readState } from '../../daemon-manager.js';
-import { writeAtomically } from '../vscode.js';
+import { readState } from '../daemon-manager.js';
+import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;

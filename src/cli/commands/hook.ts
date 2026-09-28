@@ -1581,7 +1581,7 @@ export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
     .option('--agent <name>', 'Agent name for hook attribution (overrides CODEMIE_AGENT)')
-    .action(async (opts: { agent?: string; }) => {
+    .action(async (opts: { agent?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
       let agentName: string | undefined;
@@ -1655,7 +1655,7 @@ export function createHookCommand(): Command {
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(agentName);
         if (analyticsAgent) {
-          await ensureOtlpProxy(agentName);
+          await ensureOtlpProxy(analyticsAgent.name);
           await analyticsAgent.processOtlpEvent(input);
           await logger.close();
           process.exitCode = 0;

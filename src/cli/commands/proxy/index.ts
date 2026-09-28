@@ -299,7 +299,7 @@ export function createProxyCommand(): Command {
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--cursor-ide', 'Configure Cursor IDE — writes .cursor/hooks.json (requires --analytics)')
     .option('--analytics', 'Enable analytics-only hook ingestion (applies to --cursor-ide)')
-    .option('--scope <scope>', 'Settings scope for --claude-code: "user" (default) or "project"', 'user')
+    .option('--scope <scope>', 'Settings scope for --claude-code-otlp: "user" (default) or "project"', 'user')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')

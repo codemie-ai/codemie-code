@@ -11,7 +11,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
+import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;

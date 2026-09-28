@@ -760,7 +760,7 @@ export enum AgentAdapterType {
   OTLP,
 }
 
-export interface OTLPAgentAdapter  {
+export interface OtlpAgentAdapter  {
   readonly name: string;
   readonly type: AgentAdapterType.OTLP;
 

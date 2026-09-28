@@ -74,4 +74,4 @@ export function toBaseClaudeCodeHookEvent(raw: RawBaseClaudeCodeHookEvent): Base
 
 export type ForwardDecision =
   | { action: 'forward'; payload: string }
-  | { action: 'block'; reason: string };
+  | { action: 'block'; reason: string, hookSpecificOutput: Record<string, string | boolean> };

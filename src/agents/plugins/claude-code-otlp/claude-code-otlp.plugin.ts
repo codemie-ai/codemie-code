@@ -2,26 +2,24 @@
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
-import { AgentAdapterType, OTLPAgentAdapter } from '@/agents/core/types.js';
+import { AgentAdapterType, OtlpAgentAdapter } from '@/agents/core/types.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { ForwardDecision, toBaseClaudeCodeHookEvent } from './claude-code-otlp.types.js';
 import { forwardOtlpEventToSpool } from '../utils.js';
 
-export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
+export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
   public readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawEvent: string): Promise<void> {
     const decision = await this.evaluate(rawEvent);
     if (decision.action === 'block') {
+      const { reason, hookSpecificOutput } = decision;
       logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${decision.reason}`);
       console.log(JSON.stringify({
         decision: 'block',
-        reason: decision.reason,
-        hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
-          suppressOriginalPrompt: true,
-        }
+        reason,
+        hookSpecificOutput,
       }));
       return;
     }
@@ -32,18 +30,7 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
     const event = toBaseClaudeCodeHookEvent(JSON.parse(rawEvent));
 
     if (event.hookEventName === 'UserPromptSubmit') {
-      const authResult = await this.ensureProxyAuth();
-
-      if (!authResult.ok) {
-        return {
-          action: 'block',
-          reason: [
-            `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
-            "A browser sign-in window has been opened automatically.",
-            "Complete the sign-in, then re-send your prompt.",
-          ].join("\n"),
-        }
-      }
+      return await this.onUserPromptSubmit(rawEvent);
     }
 
     return {
@@ -65,5 +52,29 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
   private forwardToSpool(rawEvent: string): void {
     // Intentionally not awaited: forwardOtlpEventToSpool is fire-and-forget.
     forwardOtlpEventToSpool(rawEvent, CLAUDE_CODE_OTLP_AGENT_NAME);
+  }
+
+  private async onUserPromptSubmit(rawEvent: string): Promise<ForwardDecision> {
+    const authResult = await this.ensureProxyAuth();
+
+    if (authResult.ok) {
+      return {
+        action: 'forward',
+        payload: rawEvent,
+      }
+    }
+
+    return {
+      action: 'block',
+      reason: [
+        `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
+        "A browser sign-in window has been opened automatically.",
+        "Complete the sign-in, then re-send your prompt.",
+      ].join("\n"),
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        suppressOriginalPrompt: true,
+      }
+    }
   }
 }

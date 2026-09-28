@@ -15,9 +15,8 @@ export interface AuthGateResult {
 }
 
 /**
- * Cheap, local-only CodeMie SSO auth check shared by both the direct-Claude-CLI
- * hook path (`claude-code-otlp.plugin.ts`) and the unified `codemie hook` handler
- * (`hook.ts`). Deliberately excludes the live network probe that
+ * Cheap, local-only CodeMie SSO auth check.
+ * Deliberately excludes the live network probe that
  * `validateAuth`/`fetchCodeMieModels` performs, to avoid a network round-trip on
  * every `UserPromptSubmit`.
  */

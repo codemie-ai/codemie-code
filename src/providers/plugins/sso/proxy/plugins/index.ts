@@ -51,7 +51,7 @@ export function registerCorePlugins(): void {
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
-  registry.register(new OtlpIngestPlugin()); // Cursor Leftovers - Priority 10 - OTLP hook event ingestion
+  registry.register(new OtlpIngestPlugin()); // Priority 10 - OTLP hook event ingestion
   registry.register(new OtlpPlugin()); // Priority 10 - OTLP ingestion
 }
 
@@ -79,6 +79,5 @@ export {
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { OtlpIngestPlugin } from './otlp-ingest.plugin.js';
-export { OtlpPlugin } from './otlp.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';
