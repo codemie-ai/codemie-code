@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   getAllFrameworksMock: vi.fn(),
   detectVCSMock: vi.fn(),
   listWorkflowsMock: vi.fn(),
+  getUserNpmPrefixMock: vi.fn(),
 }));
 
 // exec() drives AwsCliCheck and UvCheck.
@@ -82,6 +83,12 @@ vi.mock('@/workflows/index.js', async (importOriginal) => {
   return { ...actual, detectVCSProvider: h.detectVCSMock, listInstalledWorkflows: h.listWorkflowsMock };
 });
 
+// getUserNpmPrefix drives NpmPrefixOverrideCheck; getLegacyPrefixPath/isSamePath stay real (pure).
+vi.mock('@/utils/npm-prefix.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/npm-prefix.js')>();
+  return { ...actual, getUserNpmPrefix: h.getUserNpmPrefixMock };
+});
+
 // Import checks AFTER mocks are registered.
 import { NodeVersionCheck } from '../NodeVersionCheck.js';
 import { AwsCliCheck } from '../AwsCliCheck.js';
@@ -91,6 +98,8 @@ import { AgentsCheck } from '../AgentsCheck.js';
 import { AIConfigCheck } from '../AIConfigCheck.js';
 import { WorkflowsCheck } from '../WorkflowsCheck.js';
 import { FrameworksCheck } from '../FrameworksCheck.js';
+import { NpmPrefixOverrideCheck } from '../NpmPrefixOverrideCheck.js';
+import { getLegacyPrefixPath } from '@/utils/npm-prefix.js';
 
 /** Build a fake JWT whose payload has the given exp (seconds since epoch), or none. */
 function fakeJwt(exp?: number): string {
@@ -488,5 +497,40 @@ describe('FrameworksCheck', () => {
     expect(started).toEqual(['Checking LangGraph...']);
     expect(displayed).toEqual([{ status: 'ok', message: 'LangGraph (1.0.0)' }]);
     expect(result.details).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+describe('NpmPrefixOverrideCheck', () => {
+  it('warns when the user npm prefix matches CodeMie\'s legacy path', async () => {
+    const legacyPath = getLegacyPrefixPath();
+    h.getUserNpmPrefixMock.mockResolvedValue(legacyPath);
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.name).toBe('npm prefix');
+    expect(result.success).toBe(true);
+    expect(result.details.some((d) => d.status === 'warn')).toBe(true);
+    expect(
+      result.details.some((d) => d.message.includes('npm config delete prefix --location user'))
+    ).toBe(true);
+  });
+
+  it('reports ok for a custom prefix', async () => {
+    h.getUserNpmPrefixMock.mockResolvedValue('D:\\npm');
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.success).toBe(true);
+    expect(result.details).toEqual([{ status: 'ok', message: expect.any(String) }]);
+  });
+
+  it('reports ok for a null prefix', async () => {
+    h.getUserNpmPrefixMock.mockResolvedValue(null);
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.success).toBe(true);
+    expect(result.details).toEqual([{ status: 'ok', message: expect.any(String) }]);
   });
 });

@@ -10,6 +10,7 @@ import { HealthCheckFormatter } from './formatter.js';
 import {
   NodeVersionCheck,
   NpmCheck,
+  NpmPrefixOverrideCheck,
   PythonCheck,
   UvCheck,
   AwsCliCheck,
@@ -92,6 +93,7 @@ export function createDoctorCommand(): Command {
       const checks: HealthCheck[] = [
         new NodeVersionCheck(),
         new NpmCheck(),
+        new NpmPrefixOverrideCheck(),
         new PythonCheck(),
         new UvCheck(),
         new AwsCliCheck(),
