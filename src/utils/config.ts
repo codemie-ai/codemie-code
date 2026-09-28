@@ -128,11 +128,11 @@ export class ConfigLoader {
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
-    // Workspace (repo/tooling-context) fields resolve by whole-object override — the
-    // local scope's workspace if defined, else the global scope's — independent of
-    // which profile is active, so switching the active profile never drops workspace
-    // context.
-    const workspace = await this.resolveWorkspace(workingDir);
+    // Workspace fields resolve via resolveProfileWorkspace(): tooling context by
+    // whole-object override (local scope, else global), CodeMie identity from the
+    // scope of the profile in use.
+    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
+    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
     Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
@@ -218,6 +218,48 @@ export class ConfigLoader {
 
     const globalMultiConfig = await this.loadMultiProviderConfig();
     return globalMultiConfig.workspace ?? {};
+  }
+
+  /**
+   * Resolve the workspace for the profile in use. Tooling-context fields follow
+   * resolveWorkspace(). CodeMie identity fields (codeMieUrl, codeMieProject,
+   * codeMieIntegration) come from the scope the profile lives in: a local profile
+   * takes them from resolveWorkspace(), a global profile only from the global
+   * scope's workspace, so a repo's workspace never retargets global profiles.
+   *
+   * @param workingDir - Directory whose local config is considered
+   * @param isLocalProfile - Whether the profile in use is defined in the local config
+   */
+  static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
+    const workspace = await this.resolveWorkspace(workingDir);
+    if (isLocalProfile) {
+      return workspace;
+    }
+
+    const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
+    const result: Record<string, unknown> = { ...workspace };
+    for (const key of this.IDENTITY_KEYS) {
+      delete result[key];
+      if (globalWorkspace[key] !== undefined) {
+        result[key] = globalWorkspace[key];
+      }
+    }
+    return result as WorkspaceConfig;
+  }
+
+  /**
+   * Scope that supplies CodeMie identity fields for the profile in use — the
+   * attribution counterpart of resolveProfileWorkspace().
+   */
+  private static async resolveIdentitySource(
+    workingDir: string,
+    isLocalProfile: boolean
+  ): Promise<'project' | 'global'> {
+    if (!isLocalProfile) {
+      return 'global';
+    }
+    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
+    return localMultiConfig.workspace != null ? 'project' : 'global';
   }
 
   /**
@@ -553,6 +595,16 @@ export class ConfigLoader {
     config.userEmail = email;
     await this.saveMultiProviderConfig(config);
   }
+
+  /**
+   * CodeMie identity keys. Resolved from the workspace of the scope the active
+   * profile lives in — see resolveProfileWorkspace().
+   */
+  private static readonly IDENTITY_KEYS: (keyof WorkspaceConfig)[] = [
+    'codeMieUrl',
+    'codeMieProject',
+    'codeMieIntegration'
+  ];
 
   /**
    * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
@@ -1231,9 +1283,22 @@ export class ConfigLoader {
     // supplied it (mirrors resolveWorkspace()'s own local-else-global rule) rather
     // than hardcoding 'project', so --show-sources doesn't misattribute a
     // global-scope-only workspace value to the local config.
+    // CodeMie identity fields are labelled separately: they come from the scope of
+    // the profile in use (see resolveProfileWorkspace()).
     const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
-    const workspace = await this.resolveWorkspace(workingDir);
+    const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
+    const identitySource = await this.resolveIdentitySource(workingDir, isLocalProfile);
+    const profileWorkspace: Record<string, unknown> = {
+      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile))
+    };
+    const identityWorkspace: Record<string, unknown> = {};
+    for (const key of this.IDENTITY_KEYS) {
+      if (profileWorkspace[key] !== undefined) {
+        identityWorkspace[key] = profileWorkspace[key];
+      }
+      delete profileWorkspace[key];
+    }
 
     const configs: ConfigLayer[] = [
       {
@@ -1252,8 +1317,12 @@ export class ConfigLoader {
         source: 'project'
       },
       {
-        data: workspace,
+        data: profileWorkspace,
         source: workspaceSource
+      },
+      {
+        data: identityWorkspace,
+        source: identitySource
       },
       {
         data: this.loadFromEnv(),

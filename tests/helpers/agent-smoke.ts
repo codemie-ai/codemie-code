@@ -13,7 +13,7 @@
  */
 
 import { spawnSync, execFileSync, type SpawnSyncReturns } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copySsoCredentials, ssoCleanEnv } from './sso-auth.js';
@@ -39,6 +39,14 @@ export interface AgentSmokeOptions {
   extraEnv?: Record<string, string>;
   /** Spawn timeout in ms (default 150s). */
   timeoutMs?: number;
+  /**
+   * Reuse an existing isolated home instead of creating a fresh `mkdtempSync` dir — e.g. to run
+   * several models/agents back-to-back against one shared CODEMIE_HOME so their sessions land
+   * together for a downstream analytics run. The profile is (re)written and credentials
+   * (re)copied on every call (each call may target a different model); `git init` runs only
+   * once per home (skipped when `.git` already exists there).
+   */
+  testHome?: string;
 }
 
 export interface AgentSmokeRun {
@@ -76,11 +84,13 @@ function writeSmokeProfile(home: string, model: string): void {
  * setupSsoAutotestProfile()/teardown and for rm-ing the returned testHome.
  */
 export function runAgentTaskSmoke(opts: AgentSmokeOptions): AgentSmokeRun {
-  const testHome = mkdtempSync(join(getTempDir(), 'codemie-agentsmoke-'));
+  const testHome = opts.testHome ?? mkdtempSync(join(getTempDir(), 'codemie-agentsmoke-'));
   writeSmokeProfile(testHome, opts.model);
   copySsoCredentials(testHome);
   // Codex/Gemini/etc. refuse to run outside a trusted (git) directory.
-  execFileSync('git', ['init', '-q', testHome], { stdio: 'ignore' });
+  if (!existsSync(join(testHome, '.git'))) {
+    execFileSync('git', ['init', '-q', testHome], { stdio: 'ignore' });
+  }
 
   const env: NodeJS.ProcessEnv = {
     ...ssoCleanEnv(),

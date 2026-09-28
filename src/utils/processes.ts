@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import os from 'node:os';
 import { logger } from './logger.js';
 import { exec, type ExecOptions, type ExecResult } from './exec.js';
+import { extractRepository } from './paths.js';
 
 const execAsync = promisify(childProcessExec);
 
@@ -404,6 +405,21 @@ export async function detectGitRemoteRepo(cwd: string): Promise<string | undefin
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Canonical repository name for a working directory.
+ *
+ * Prefers the git `origin` remote (`owner/repo`) and falls back to deriving a name from the
+ * path, which also maps Claude Desktop sandbox directories to `Cowork`. This is the same rule
+ * the metrics client applies via `session.repository ?? extractRepository(workingDirectory)`,
+ * so every client — CLI, Claude Desktop Code tab and Cowork — reports one folder identically.
+ *
+ * @param workingDirectory - Directory to identify
+ * @returns Repository name; never empty
+ */
+export async function resolveRepositoryName(workingDirectory: string): Promise<string> {
+  return (await detectGitRemoteRepo(workingDirectory)) ?? extractRepository(workingDirectory);
 }
 
 /**

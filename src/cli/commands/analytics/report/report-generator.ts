@@ -101,7 +101,7 @@ export interface ReportWriteResult {
  * Writes a report via `write(path)`. If the preferred location is unwritable
  * (drive root, read-only volume) AND `allowFallback` is true, retries the same
  * filename under the user's home dir, then the OS temp dir, and reports where it
- * landed. With `allowFallback` false (an explicit `--report-output`) or for any
+ * landed. With `allowFallback` false (an explicit `-o, --output`) or for any
  * non-permission error, the original error propagates unchanged.
  */
 export function writeReportWithFallback(

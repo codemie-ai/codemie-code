@@ -49,8 +49,14 @@ vi.mock('../../../../utils/security.js', () => ({
 // missing native vars from the live catalog. Returning null means "no change" —
 // the input env values pass through unmodified, which lets each test control the
 // final tier landscape by seeding ANTHROPIC_DEFAULT_* directly in the env.
+// listRouterModelIds/buildModelLabelMap are the router-id-list and label-map build beforeRun
+// runs once after that loop (see CODEMIE_ROUTER_MODEL_IDS/CODEMIE_MODEL_LABELS) — irrelevant to
+// this AC-6 tier-warning suite, so both are stubbed to their real functions' own "nothing to
+// report" defaults.
 vi.mock('../claude.models.js', () => ({
   resolveClaudeModel: vi.fn(async () => null),
+  listRouterModelIds: vi.fn(async () => []),
+  buildModelLabelMap: vi.fn(async () => ({})),
 }));
 
 type HookEnv = NodeJS.ProcessEnv;

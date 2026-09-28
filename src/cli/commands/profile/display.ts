@@ -56,8 +56,12 @@ export class ProfileDisplay {
    * Display list of profiles
    *
    * @param profiles - Array of profile information
+   * @param workspaceCodeMieUrls - Workspace codeMieUrl for local and for global profiles
    */
-  static formatList(profiles: ProfileInfo[], workspaceCodeMieUrl?: string): void {
+  static formatList(
+    profiles: ProfileInfo[],
+    workspaceCodeMieUrls: { local?: string; global?: string } = {}
+  ): void {
     if (profiles.length === 0) {
       console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
       return;
@@ -66,6 +70,9 @@ export class ProfileDisplay {
     console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
     profiles.forEach((profile, index) => {
+      const workspaceCodeMieUrl = profile.source === 'local'
+        ? workspaceCodeMieUrls.local
+        : workspaceCodeMieUrls.global;
       const formatted = this.format(profile, workspaceCodeMieUrl);
       console.log(formatted);
 

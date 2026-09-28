@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "task": "Fix CodeMie CLI so per-profile CodeMie URL and related identity fields (codeMieProject/codeMieIntegration) are stored and updated independently per profile instead of sharing one workspace-level value across all profiles in a storage scope.",
+  "generated": "2026-09-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 3-4 components across 2-3 layers: the CLI setup wizard's 'Update existing profile' branch and profile display (src/cli/commands/setup.ts, src/cli/commands/profile/index.ts), the config-persistence chokepoint (ConfigLoader.saveProfile/initProjectConfig/splitProfileAndWorkspace/resolveWorkspace in src/utils/config.ts), and the migration layer (a new migration likely needed alongside 007). Compared against the project L-band example profile-provider-decoupling.json (component_scope XL/5, 6 areas including the Claude agent plugin's statusline.mjs and assistants-CLI historyLoader/selection paths), this fix's surface is narrower — the technical-analysis identifies no equivalent agent-plugin or assistants-CLI touch points — so it stays at L rather than XL."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for re-scoping already-shared identity fields (codeMieUrl/codeMieProject/codeMieIntegration) back to per-profile storage without breaking the documented local/global 'team project context' overlay behavior; a currently-passing test explicitly asserts today's shared-workspace behavior as correct and must be flipped. Baseline M, bumped to L by the 'requires data migration' red flag: existing users' persisted global/local config files likely need migrating, mirroring the same Migration/MigrationRegistry pattern the profile-provider-decoupling.json example used (which received the identical M-to-L bump for the identical reason)."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "~7 files: modified src/utils/config.ts, src/env/types.ts, src/cli/commands/profile/index.ts, and the existing config-project-override.test.ts (which currently codifies the reported bug and must be updated); new migration file + migration test, and likely a new regression test for the setup wizard's 'Update existing profile' flow (the coverage gap explicitly named in the research, required by AC4). Baseline M, bumped to L by the same data-migration red flag. Substantially smaller than the reference example's XXL(6)/14-files-across-6-dirs, which additionally touched assistants-CLI and agent-plugin files not implicated here."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "3 layers touched: CLI/Workflow (setup wizard update flow + profile display), Service (ConfigLoader resolution/split logic), and DB-Persistence (config file writes plus a likely migration) — matches the L criteria (3-4 layers including persistence, schema change or migration) and the reference example's identical L(4) rating for the same subsystem."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): requires a data migration to move existing users' persisted codeMieUrl/codeMieProject/codeMieIntegration values from shared workspace storage into per-profile storage.",
+    "File Change Estimate bumped from M (3) to L (4): the same data-migration red flag adds a new migration file and its test to the change surface."
+  ],
+  "split_recommendation": null
+}

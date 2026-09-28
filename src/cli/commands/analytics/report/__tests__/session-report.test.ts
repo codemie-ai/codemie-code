@@ -38,7 +38,7 @@ describe('generateSessionReport', () => {
     const { generateSessionReport } = await import('../session-report.js');
     const res = await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/out.json' });
 
-    expect(loadMock).toHaveBeenCalledWith({ filter: { sessionId: 's1' }, scanNative: true });
+    expect(loadMock).toHaveBeenCalledWith({ filter: { sessionId: 's1' } });
     expect(generateReportJsonMock).toHaveBeenCalledWith(expect.anything(), '/tmp/out.json');
     expect(res).toEqual({ written: '/tmp/out.json', sessions: 1 });
   });

@@ -108,35 +108,11 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
           env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
         }
 
-        // Model tier configuration for Bedrock
-        // Maps CodeMie tier models to Claude Code environment variables.
-        // Clear stale values first so haiku-only / opus-only tenants don't inherit
-        // vars from a prior process and show duplicates in /model (EPMCDME-12779).
-        delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-        delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-        delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-        delete env.CLAUDE_CODE_SUBAGENT_MODEL;
-        if (env.CODEMIE_HAIKU_MODEL) {
-          env.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.CODEMIE_HAIKU_MODEL;
-        }
-        if (env.CODEMIE_SONNET_MODEL && env.CODEMIE_SONNET_MODEL !== env.CODEMIE_HAIKU_MODEL) {
-          env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_SONNET_MODEL;
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_SONNET_MODEL;
-        } else if (env.CODEMIE_OPUS_MODEL) {
-          // Opus-only tenant: route subagent to opus; ANTHROPIC_DEFAULT_SONNET_MODEL is
-          // intentionally left unset to prevent duplicate-ID display (EPMCDME-12779 FR-002).
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_OPUS_MODEL;
-        } else if (env.CODEMIE_HAIKU_MODEL) {
-          // Haiku-only tenant: set CLAUDE_CODE_SUBAGENT_MODEL so background tasks use the
-          // provisioned model. ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset.
-          // Routing haiku through the sonnet slot caused a duplicate because Claude Code
-          // shows its built-in haiku default even when ANTHROPIC_DEFAULT_HAIKU_MODEL is not
-          // set (EPMCDME-12779).
-          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_HAIKU_MODEL;
-        }
-        if (env.CODEMIE_OPUS_MODEL) {
-          env.ANTHROPIC_DEFAULT_OPUS_MODEL = env.CODEMIE_OPUS_MODEL;
-        }
+        // Model tier configuration (haiku/sonnet/opus mapping, stale-value clearing, and the
+        // subagent-default pin) is handled generically by BaseAgentAdapter.transformEnvVars,
+        // which runs automatically before this hook and reads claude.plugin.ts's own
+        // `envMapping` (haikuModel/sonnetModel/opusModel/subagentDefaultModel) — the same
+        // tricky conditional this provider hook used to re-implement by hand (EPMCDME-14355).
 
         // Token settings for Bedrock burndown throttling
         // https://code.claude.com/docs/en/amazon-bedrock#output-token-configuration

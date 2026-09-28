@@ -11,7 +11,7 @@ import { BaseModelProxy } from '../../core/base/BaseModelProxy.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
-import { fetchCodeMieModels, fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './sso.http-client.js';
+import { fetchCodeMieLlmModels, fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
 
 /**
@@ -158,27 +158,33 @@ export class SSOModelProxy extends BaseModelProxy {
 
   /**
    * Fetch models from CodeMie API
+   *
+   * Uses fetchCodeMieLlmModels (the full descriptor, not the ID-only fetchCodeMieModels) so
+   * router entries surface their `is_router`/`litellm_router.is_router` flag as
+   * `metadata.isRouter` — the same signal claude.models.ts's `isRouterCatalogEntry` uses to gate
+   * the statusline's routing widget. Without this, `codemie models list` silently dropped every
+   * router alias a user could actually route through (Switchyard virtual routers and LiteLLM
+   * auto-router declarations alike), since fetchCodeMieModels never carried that flag through.
    */
   private async fetchModelsFromAPI(apiUrl: string, cookies: Record<string, string>): Promise<ModelInfo[]> {
     try {
-      // Use the working utility function that handles redirects, SSL, and retry logic
-      const modelIds = await fetchCodeMieModels(apiUrl, cookies);
+      const llmModels = await fetchCodeMieLlmModels(apiUrl, cookies);
 
-      if (modelIds.length === 0) {
-        return [];
-      }
-
-      // Transform model IDs to ModelInfo format
-      // Mark recommended models as popular for highlighting (⭐)
-      const models = modelIds.map(id => {
+      const models: ModelInfo[] = [];
+      for (const model of llmModels) {
+        const id = model.deployment_name || model.base_name || model.label;
+        if (!id) continue;
+        const isRouter = model.is_router === true || model.litellm_router?.is_router === true;
         const isRecommended = SSOTemplate.recommendedModels.includes(id);
 
-        return {
+        models.push({
           id,
-          name: id, // Use label from API
-          popular: isRecommended // Adds ⭐ to recommended models
-        };
-      });
+          name: model.label || id,
+          popular: isRecommended, // Adds ⭐ to recommended models
+          ...(isRouter && { metadata: { isRouter: true } }),
+        });
+      }
+      models.sort((a, b) => a.id.localeCompare(b.id));
 
       return models;
     } catch (error) {

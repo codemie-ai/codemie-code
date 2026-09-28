@@ -60,11 +60,14 @@ function getApiPath(apiType: VsCodeApiType): string {
 
 const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
 
-function mockCatalog(ids: readonly string[]): void {
+/** A bare id string becomes `{ base_name: id }`; an object is served verbatim. */
+type CatalogEntry = string | Record<string, unknown>;
+
+function mockCatalog(entries: readonly CatalogEntry[]): void {
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     headers: mkHeaders('application/json'),
-    json: async () => ids.map((id) => ({ base_name: id })),
+    json: async () => entries.map((entry) => typeof entry === 'string' ? { base_name: entry } : entry),
   }) as unknown as typeof globalThis.fetch;
 }
 
@@ -375,8 +378,8 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       expect(models.some(model => model.id === 'github-copilot-claude-sonnet-4-5')).toBe(false);
     });
 
-    it('AC5: rejects and writes no file when the tenant catalog matches nothing in the capability table', async () => {
-      mockCatalog(['totally-unknown-model']);
+    it('AC5: rejects and writes no file when the catalog has only github-copilot-* or disabled entries', async () => {
+      mockCatalog(['github-copilot-gpt-5-mini', { base_name: 'gpt-6-sol', enabled: false }]);
 
       await expect(writeVsCodeLanguageModelsConfigAtPath(
         configPath,
@@ -386,79 +389,79 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
       expect(existsSync(configPath)).toBe(false);
     });
+
+    it('lists a tenant model that matches no capability-table family', async () => {
+      mockCatalog(['totally-unknown-model']);
+
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models.map(model => model.id)).toEqual(['totally-unknown-model']);
+    });
   });
 
-  describe('profileModel pinning', () => {
-    it('narrows to the single tenant model a profile-pinned canonical name resolves to', async () => {
-      mockCatalog(NON_EPAM_TENANT_FIXTURE);
+  describe('full tenant catalog', () => {
+    const GPT_6_SOL = { base_name: 'gpt-6-sol', label: 'GPT-6 Sol' };
 
-      const result = await writeVsCodeLanguageModelsConfigAtPath(
-        configPath,
-        'http://127.0.0.1:4001',
-        'gw-key',
-        'gpt-5.6-luna'
-      );
+    it('writes every enabled tenant model in catalog order, including unknown families', async () => {
+      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL]);
+
+      const result = await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
       const providers = await readProviders();
       const models = providers[0].models as Array<Record<string, unknown>>;
-      expect(result.modelCount).toBe(1);
-      expect(models).toHaveLength(1);
-      expect(models[0].id).toBe('openai.gpt-5.6-luna');
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length + 1);
+      expect(models.map(model => model.id)).toEqual([...EXPECTED_MODEL_IDS, 'gpt-6-sol']);
+      expect(models.find(model => model.id === 'gpt-6-sol')).toMatchObject({
+        name: 'GPT-6 Sol',
+        apiType: 'responses',
+        zeroDataRetentionEnabled: true,
+        url: 'http://127.0.0.1:4001/v1/responses',
+      });
     });
 
-    it('narrows correctly when the profile is already pinned to the tenant\'s exact id', async () => {
-      mockCatalog(EXPECTED_MODEL_IDS);
+    it('keeps catalog order when an unknown model comes first', async () => {
+      mockCatalog([GPT_6_SOL, 'claude-sonnet-5', 'gpt-4.1']);
 
-      await writeVsCodeLanguageModelsConfigAtPath(
-        configPath,
-        'http://127.0.0.1:4001',
-        'gw-key',
-        'gpt-4.1-mini'
-      );
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
       const providers = await readProviders();
       const models = providers[0].models as Array<Record<string, unknown>>;
-      expect(models).toHaveLength(1);
-      expect(models[0].id).toBe('gpt-4.1-mini');
+      expect(models.map(model => model.id)).toEqual(['gpt-6-sol', 'claude-sonnet-5', 'gpt-4.1']);
     });
 
-    it('falls back to the full tenant-resolved list when the pinned model matches no capability family', async () => {
-      mockCatalog(EXPECTED_MODEL_IDS);
+    it('rebuilds the list from the live catalog on every write, picking up new models', async () => {
+      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL]);
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
-      const result = await writeVsCodeLanguageModelsConfigAtPath(
-        configPath,
-        'http://127.0.0.1:4001',
-        'gw-key',
-        'not-a-real-model'
-      );
+      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL, 'claude-sonnet-6']);
+      const result = await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
-      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length + 2);
+      expect(models.map(model => model.id)).toContain('claude-sonnet-6');
     });
 
-    it('falls back to the full tenant-resolved list when no model is pinned', async () => {
-      mockCatalog(EXPECTED_MODEL_IDS);
+    it('omits an enabled: false entry', async () => {
+      mockCatalog([...EXPECTED_MODEL_IDS, { base_name: 'gpt-6-luna', enabled: false }]);
 
-      const result = await writeVsCodeLanguageModelsConfigAtPath(
-        configPath,
-        'http://127.0.0.1:4001',
-        'gw-key',
-        undefined
-      );
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
-      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models.map(model => model.id)).toEqual(EXPECTED_MODEL_IDS);
     });
 
-    it('treats a blank pinned model the same as unset', async () => {
-      mockCatalog(EXPECTED_MODEL_IDS);
+    it('writes toolCalling: false for an unknown model the catalog marks without tools', async () => {
+      mockCatalog([{ base_name: 'embed-only', features: { tools: false } }]);
 
-      const result = await writeVsCodeLanguageModelsConfigAtPath(
-        configPath,
-        'http://127.0.0.1:4001',
-        'gw-key',
-        '   '
-      );
+      await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
-      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+      const providers = await readProviders();
+      const models = providers[0].models as Array<Record<string, unknown>>;
+      expect(models[0]).toMatchObject({ id: 'embed-only', toolCalling: false, apiType: 'chat-completions' });
     });
   });
 });

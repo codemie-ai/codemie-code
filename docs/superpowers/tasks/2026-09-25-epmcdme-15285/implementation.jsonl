@@ -1,0 +1,5 @@
+{"task_id":"1","status":"done","commit":"8ff65d8","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/tenant-catalog.test.ts"}
+{"task_id":"2","status":"done","commit":"ff4ae81","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/vscode-models.test.ts"}
+{"task_id":"3","status":"done","commit":"67a3594","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/vscode.test.ts tests/integration/vscode-byok.test.ts"}
+{"task_id":"4-code","status":"done","commit":"67a3594","test_command":"npx vitest run src/cli/commands/proxy/__tests__/index.test.ts src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts"}
+{"task_id":"4","status":"done","commit":"4ae1ce3","test_command":"npx vitest run src/cli/commands/proxy/__tests__/index.test.ts src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts"}

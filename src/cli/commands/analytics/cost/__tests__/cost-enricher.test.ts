@@ -277,6 +277,66 @@ describe('enrichCosts', () => {
     expect(summary.unpricedModels).toContain('no-such-model-xyz');
   });
 
+  it('flags a tier-estimate priced model as estimated on both the per-model line and the summary, and leaves an unknown model unpriced', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () =>
+        ({
+          sessionId: 's1',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            { message: { model: 'claude-sonnet-4-7', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+            { message: { model: 'gpt-5.9', usage: { input_tokens: 10, output_tokens: 5 } } },
+          ],
+        }) as never,
+    };
+    const { index, summary } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    const estimatedLine = c.perModel.find((m) => m.model === 'claude-sonnet-4-7')!;
+    expect(estimatedLine.estimated).toBe(true);
+    expect(estimatedLine.costUSD).toBeCloseTo(3, 6); // 1M input @ $3/1M (tier-estimate row)
+    const unknownLine = c.perModel.find((m) => m.model === 'gpt-5.9')!;
+    expect(unknownLine.unpriced).toBe(true);
+    expect(unknownLine.estimated).toBeFalsy();
+    expect(summary.estimatedModels).toContain('claude-sonnet-4-7');
+    expect(summary.unpricedModels).toContain('gpt-5.9');
+  });
+
+  describe('Ollama local models', () => {
+    const ollamaParsed = (model: string) => async () =>
+      ({
+        sessionId: 's1', agentName: 'claude', metadata: {},
+        messages: [{ message: { model, usage: { input_tokens: 1_000, output_tokens: 50 } } }],
+      }) as never;
+    const ollamaRaw = (provider: string | undefined) =>
+      [{ sessionId: 's1', startEvent: { agentName: 'claude', data: provider ? { provider } : {} }, deltas: [] }] as never[];
+
+    it('prices a non-cloud model on the ollama provider at $0 as local, not unpriced, and counts it priced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      const c = index.get('s1')!;
+      expect(c.priced).toBe(true);
+      expect(c.costUSD).toBe(0);
+      expect(c.perModel[0]).toMatchObject({ model: 'gpt-oss:120b', unpriced: false, local: true, costUSD: 0 });
+      expect(summary.localModels).toEqual(['gpt-oss:120b']);
+      expect(summary.unpricedModels).toEqual([]);
+      expect(summary.pricedSessions).toBe(1);
+    });
+
+    it('keeps an Ollama cloud tag unpriced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b-cloud') });
+      expect(index.get('s1')!.perModel[0].local).toBeUndefined();
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b-cloud']);
+      expect(summary.localModels).toEqual([]);
+    });
+
+    it('keeps an Ollama-style tag unpriced when the provider is not ollama', async () => {
+      const { summary } = await enrichCosts(ollamaRaw(undefined), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b']);
+      expect(summary.localModels).toEqual([]);
+    });
+  });
+
   it('costSeries endpoint equals the session total (same records, same pricing)', async () => {
     const deps: EnricherDeps = {
       ...baseDeps,
@@ -761,5 +821,61 @@ describe('buildCostSeries', () => {
     expect(s[0].t).toBe(1);
     expect(s[s.length - 1].t).toBe(200);
     expect(s[s.length - 1].tokens).toBe(200); // last cumulative total preserved
+  });
+});
+
+/**
+ * Session-level rollup of routing classifier cost. Drives the real reader by feeding routing
+ * headers through parseNative, so these also pin the reader→enricher contract.
+ */
+describe('enrichCosts — routing classifier cost', () => {
+  /** One priced assistant turn (1M input @ $3/1M sonnet-4-5 => $3) plus routing headers. */
+  const turn = (routing: Record<string, unknown>) => ({
+    message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 }, ...routing },
+  });
+
+  const depsWith = (turns: unknown[]): EnricherDeps => ({
+    ...baseDeps,
+    parseNative: async () =>
+      ({ sessionId: 's1', agentName: 'claude', metadata: {}, messages: turns }) as never,
+  });
+
+  // The proxy emits one canonical x-codemie-routing-* header set regardless of which backend
+  // mechanism decided — routingFamily is opaque, informational data, not a discriminant here.
+  const ROUTED_BILLED = {
+    'x-codemie-routing-tier': 'complex',
+    'x-codemie-routing-family': 'switchyard',
+    'x-codemie-routing-classifier-cost-usd': '0.0072204',
+  };
+
+  it('sums classifier cost and folds it into the session total', async () => {
+    const { index } = await enrichCosts(raw, depsWith([turn(ROUTED_BILLED)]));
+    const c = index.get('s1')!;
+    expect(c.classifierCostUSD).toBeCloseTo(0.0072204, 8);
+    expect(c.routingCostKnown).toBe(true);
+    expect(c.costUSD).toBeCloseTo(3 + 0.0072204, 6); // base cost + routing overhead
+  });
+
+  it('accumulates classifier cost across turns', async () => {
+    const second = { ...ROUTED_BILLED, 'x-codemie-routing-classifier-cost-usd': '0.0064691' };
+    const { index } = await enrichCosts(raw, depsWith([turn(ROUTED_BILLED), turn(second)]));
+    expect(index.get('s1')!.classifierCostUSD).toBeCloseTo(0.0072204 + 0.0064691, 8);
+  });
+
+  it('reports cost unknown when any routed turn omits classifier headers', async () => {
+    const bare = { 'x-codemie-routing-tier': 'complex', 'x-codemie-routing-family': 'switchyard' };
+    const { index } = await enrichCosts(raw, depsWith([turn(ROUTED_BILLED), turn(bare)]));
+    const c = index.get('s1')!;
+    expect(c.routingCostKnown).toBe(false);
+    // The measured turn still contributes — the total is an understatement, not a blank.
+    expect(c.classifierCostUSD).toBeCloseTo(0.0072204, 8);
+  });
+
+  it('leaves routing fields absent for a session with no routed turns', async () => {
+    const { index } = await enrichCosts(raw, depsWith([turn({})]));
+    const c = index.get('s1')!;
+    expect(c.routingCostKnown).toBeUndefined();
+    expect(c.classifierCostUSD).toBeUndefined();
+    expect(c.costUSD).toBeCloseTo(3, 6);
   });
 });

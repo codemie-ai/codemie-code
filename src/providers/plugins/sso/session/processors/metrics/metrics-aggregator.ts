@@ -59,11 +59,19 @@ export function aggregateDeltas(
 ): SessionMetric[] {
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
 
-  // Group deltas by branch
+  // Group deltas by branch.
+  // Fall back to session.gitBranch when delta.gitBranch is absent — Desktop
+  // telemetry sessions set gitBranch on the session object (via detectGitBranch)
+  // but individual deltas parsed from Claude Desktop session files never carry
+  // a gitBranch field, so without the fallback all Desktop deltas would bucket
+  // under branch="" and create a spurious extra row in the analytics table.
   const deltasByBranch = new Map<string, MetricDelta[]>();
 
   for (const delta of deltas) {
-    const branch = delta.gitBranch || '';
+    const branch = delta.gitBranch || session.gitBranch || '';
+    if (delta.gitBranch === undefined && session.gitBranch) {
+      logger.debug(`[aggregator] delta has no gitBranch — falling back to session.gitBranch="${session.gitBranch}"`);
+    }
 
     if (!deltasByBranch.has(branch)) {
       deltasByBranch.set(branch, []);
@@ -72,6 +80,7 @@ export function aggregateDeltas(
     deltasByBranch.get(branch)!.push(delta);
   }
 
+  logger.info(`[aggregator] Branch buckets for session ${session.sessionId}: [${Array.from(deltasByBranch.keys()).map(b => `"${b || '(empty)'}"`)  .join(', ')}] (session.gitBranch="${session.gitBranch ?? ''}")`);
   logger.debug(`[aggregator] Grouped deltas into ${deltasByBranch.size} branches: ${Array.from(deltasByBranch.keys()).join(', ')}`);
 
   // Create one metric per branch

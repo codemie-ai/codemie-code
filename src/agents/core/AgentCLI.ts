@@ -367,6 +367,16 @@ export class AgentCLI {
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
       providerEnv.CODEMIE_CLI_VERSION = this.version;
 
+      // Record where the model came from. Plugin-side model resolution (e.g. the Claude
+      // plugin's live-catalog refresh) otherwise cannot tell a value the user typed seconds
+      // ago from a profile value that has gone stale, and silently replaces both. Mirrors
+      // the marker bin/codemie-copilot.js already sets for the Copilot plugin.
+      providerEnv.CODEMIE_MODEL_SOURCE = options.model
+        ? 'cli'
+        : process.env.CODEMIE_MODEL
+          ? 'env'
+          : 'default';
+
       // Pass status flag to lifecycle hooks
       if (options.status) {
         providerEnv.CODEMIE_STATUS = '1';

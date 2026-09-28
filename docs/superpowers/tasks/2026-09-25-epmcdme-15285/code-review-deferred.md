@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-09-25-epmcdme-15285 (2026-09-25)
+
+- **Table capabilities override tenant feature flags** — `src/cli/commands/proxy/connectors/vscode.ts:168` — for a model whose family is in the capability table, `resolveManagedModels` uses the table entry as-is and ignores the catalog's `features.tools: false` / `multimodal: false`, so VS Code may send tools or images to a deployment that rejects them. Pre-existing: the previous table-intersection code also built known models purely from table values; the original task only requires unknown models to get conservative defaults, and this change did not alter how known families are enriched.

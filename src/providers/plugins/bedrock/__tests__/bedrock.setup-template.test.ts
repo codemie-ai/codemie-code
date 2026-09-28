@@ -7,9 +7,10 @@
  * `aws configure ...` command strings the module WOULD run and the
  * unique-profile-name suffix logic surfaced through the "create new" default.
  *
- * template: pins exportEnvVars and the claude beforeRun model-tier routing,
- * including the distinct CLAUDE_CODE_SUBAGENT_MODEL behavior on single-tier
- * tenants (EPMCDME-12779), plus the wildcard AWS_* credential transform.
+ * template: pins exportEnvVars and the wildcard AWS_* credential transform. Model-tier routing
+ * (haiku/sonnet/opus mapping, CLAUDE_CODE_SUBAGENT_MODEL pinning) is no longer this hook's job —
+ * BaseAgentAdapter.transformEnvVars now does it generically before this hook ever runs (EPMCDME-14355);
+ * see model-tier-config.test.ts / model-tier-transform-edge.test.ts for that coverage.
  *
  * All expected values were captured by probing the real compiled module first.
  */
@@ -307,45 +308,6 @@ describe('BedrockTemplate claude hook - model-tier routing', () => {
     expect(out.ANTHROPIC_MODEL).toBe('m');
     expect(out.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4096');
     expect(out.MAX_THINKING_TOKENS).toBe('1024');
-  });
-
-  it('multi-tier tenant: all three defaults set, subagent routes to sonnet', async () => {
-    const out = await claude()({ CODEMIE_HAIKU_MODEL: 'h', CODEMIE_SONNET_MODEL: 's', CODEMIE_OPUS_MODEL: 'o' }, cfg());
-    expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('h');
-    expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('s');
-    expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('o');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('s');
-  });
-
-  it('sonnet-only tenant: sonnet default + subagent set, opus/haiku unset', async () => {
-    const out = await claude()({ CODEMIE_SONNET_MODEL: 's' }, cfg());
-    expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('s');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('s');
-    expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
-    expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
-  });
-
-  it('opus-only tenant: subagent routes to opus, sonnet default intentionally unset', async () => {
-    const out = await claude()({ CODEMIE_OPUS_MODEL: 'o' }, cfg());
-    expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('o');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('o');
-    expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined(); // EPMCDME-12779: avoid duplicate-ID
-    expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
-  });
-
-  it('haiku-only tenant: haiku default + subagent routes to haiku, sonnet unset', async () => {
-    const out = await claude()({ CODEMIE_HAIKU_MODEL: 'h' }, cfg());
-    expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('h');
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('h');
-    expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
-    expect(out.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
-  });
-
-  it('sonnet equal to haiku collapses to the haiku-only branch (subagent = haiku)', async () => {
-    const out = await claude()({ CODEMIE_HAIKU_MODEL: 'x', CODEMIE_SONNET_MODEL: 'x' }, cfg());
-    expect(out.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('x');
-    expect(out.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined(); // sonnet !== haiku is false
-    expect(out.CLAUDE_CODE_SUBAGENT_MODEL).toBe('x');
   });
 
   it('respects user-configured token limits over defaults and cleans up intermediates', async () => {

@@ -54,14 +54,18 @@ async function listProfiles(): Promise<void> {
     const workingDir = process.cwd();
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
-    const workspace = await ConfigLoader.resolveWorkspace(workingDir);
+    const localWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, true);
+    const globalWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
 
     // Show context indicator
     if (hasLocal) {
       console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
     }
 
-    ProfileDisplay.formatList(profiles, workspace.codeMieUrl);
+    ProfileDisplay.formatList(profiles, {
+      local: localWorkspace.codeMieUrl,
+      global: globalWorkspace.codeMieUrl
+    });
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);
@@ -150,10 +154,8 @@ async function handleStatus(): Promise<void> {
     ? chalk.yellow('(source: local .codemie/)')
     : chalk.cyan('(source: global ~/.codemie/)');
 
-  const workspace = await ConfigLoader.resolveWorkspace(workingDir);
-
   // Display profile + auth status
-  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, workspace.codeMieUrl);
+  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, config.codeMieUrl);
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
 }

@@ -22,7 +22,12 @@ export interface CodeMieUserInfo {
 export function ensureApiBase(rawUrl: string): string {
   let base = rawUrl.replace(/\/$/, '');
   if (!/\/code-assistant-api(\/|$)/i.test(base)) {
-    base = `${base}/code-assistant-api`;
+    // Local dev backends (localhost / 127.0.0.1) serve directly at /v1/...
+    // without the nginx-stripped /code-assistant-api prefix.
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(base);
+    if (!isLocal) {
+      base = `${base}/code-assistant-api`;
+    }
   }
   return base;
 }

@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "branch": "feat/unify-analytics-cost",
+  "head": "5dd9d62ed4483d0373004de847e2ef61d4a26b62",
+  "runner": "npm",
+  "started_at": "2026-09-26T16:18:33Z",
+  "completed_at": "2026-09-26T16:20:21Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1834,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Guide describes src/ Apache-2.0 header check; script actually reports dependency license summary. CI build job runs same command."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2394,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Guide lists eslint '{src,tests}/**/*.ts'; package.json script also lints src/agents/plugins/pi/extension/*.js. Ran the repo script."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2091,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3818,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "package.json build also runs bundle-statusline (not listed in guide); ran the repo script."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10618,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Also CI test-ubuntu step."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13024,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Also CI test-ubuntu step. 1 test file / 10 tests skipped by suite design."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 781,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" (script scans only staged diff). Enable by staging changes; branch history scanned instead by ci-gitleaks."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 343,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5009,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30494,
+      "command": "npm run ci",
+      "exit_code": 0
+    },
+    {
+      "id": "hook-lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 409,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: \"\u2192 lint-staged could not find any staged files.\" Runs eslint + vitest related on staged *.ts only at commit time; full lint/unit gates cover the same files."
+    },
+    {
+      "id": "ci-commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 402,
+      "command": "npx commitlint --from $(git merge-base origin/main HEAD) --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI validate-commits job equivalent over full branch range."
+    },
+    {
+      "id": "ci-gitleaks",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 830,
+      "command": "docker run --rm -v \"$PWD\":/repo ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --log-opts=\"origin/main..HEAD\" --config=/repo/.gitleaks.toml --verbose --redact",
+      "exit_code": 0,
+      "notes": "Local stand-in for CI gitleaks-action over branch commits (origin/main..HEAD); 21 commits scanned, no leaks. Covers what local secrets gate skipped."
+    },
+    {
+      "id": "hook-commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx --no -- commitlint --edit \"$1\"",
+      "notes": "Requires a commit message file at commit time; equivalent coverage by commitlint-last and ci-commitlint-range."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "echo \"$PR_TITLE\" | npx commitlint --verbose",
+      "notes": "Needs an open PR title via GitHub API; no PR exists. CI will validate the PR title as Conventional Commits once opened."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Requires a Windows runner; only CI can settle. Local CRLF repro per guide possible for shebang files."
+    }
+  ],
+  "failures": {}
+}

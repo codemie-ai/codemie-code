@@ -1035,7 +1035,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       branch: branch || undefined,
       project: env.CODEMIE_PROJECT || undefined,
       syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
-      syncCodeMieUrl: env.CODEMIE_URL || undefined
+      syncCodeMieUrl: env.CODEMIE_URL || undefined,
     };
   }
 
@@ -1159,6 +1159,37 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
+    // Pin the subagent default tier — but only when doing so cannot change what
+    // `model: inherit` resolves to.
+    //
+    // Upstream Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL *before* both the agent's
+    // frontmatter `model` and the Agent tool's `model` parameter, and a value other than the
+    // literal "inherit" short-circuits every later branch. `inherit` is the default for
+    // subagents that declare no model at all, so an unconditional pin silently forces every
+    // subagent onto the pinned tier even when the session runs a completely different model
+    // (a router alias such as `claude-smart-router`, for example).
+    //
+    // Pinning is still needed on tenants with no distinct sonnet tier: an explicit
+    // `model: "sonnet"` would otherwise resolve to the upstream built-in sonnet ID, which
+    // such a tenant cannot serve. So pin when the fallback already *is* the session model —
+    // the common single-tier case, where the pin is a no-op for `inherit` — and skip it
+    // otherwise, letting `inherit` follow the session model as declared (EPMCDME-14355).
+    const pinSubagentDefault = (fallbackModel: string, tierLabel: string): void => {
+      if (!envMapping.subagentDefaultModel?.length) return;
+      if (env.CODEMIE_MODEL && env.CODEMIE_MODEL !== fallbackModel) {
+        logger.debug(
+          `[${this.metadata.name}] Session model differs from the only provisioned subagent tier ` +
+            `(${tierLabel}); leaving the subagent default unpinned so agents declaring ` +
+            `\`model: inherit\` follow the session model. Subagents that explicitly request an ` +
+            `unprovisioned tier may fail.`
+        );
+        return;
+      }
+      for (const envVar of envMapping.subagentDefaultModel) {
+        env[envVar] = fallbackModel;
+      }
+    };
+
     // Transform model tiers (haiku/sonnet/opus)
     // Note: All tier vars were already cleared in Step 1 above
     if (env.CODEMIE_HAIKU_MODEL && envMapping.haikuModel) {
@@ -1175,21 +1206,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
       }
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.subagentDefaultModel?.length) {
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL) {
       // No distinct sonnet tier, opus provisioned: route subagent default to opus so the
       // upstream binary does not try an unavailable sonnet-tier model for subagent tasks.
       // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent duplicate-ID
       // display in /model (EPMCDME-12779).
-      for (const envVar of envMapping.subagentDefaultModel) {
-        env[envVar] = env.CODEMIE_OPUS_MODEL;
-      }
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.subagentDefaultModel?.length) {
+      pinSubagentDefault(env.CODEMIE_OPUS_MODEL, 'opus');
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL) {
       // Haiku-only tenant: route subagent default to haiku so the upstream binary does not
       // try an unavailable sonnet-tier model. ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally
       // left unset to prevent duplicate-ID display in /model (EPMCDME-12779).
-      for (const envVar of envMapping.subagentDefaultModel) {
-        env[envVar] = env.CODEMIE_HAIKU_MODEL;
-      }
+      pinSubagentDefault(env.CODEMIE_HAIKU_MODEL, 'haiku');
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
       for (const envVar of envMapping.opusModel) {

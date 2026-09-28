@@ -18,7 +18,8 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodeMieClient } from 'codemie-sdk';
@@ -50,6 +51,29 @@ const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 const RUN_SUFFIX = randomBytes(3).toString('hex');
 const SKILL_NAME = `auto-skill-random-gen-${RUN_SUFFIX}`;
 const SKILL_DESCRIPTION = 'Integration test skill — auto-created and deleted by the test suite. Returns a random number from 1 to 10.';
+/**
+ * Global-scope registration writes into the real home directory (os.homedir()),
+ * not CODEMIE_HOME, for every detected agent — Claude adds a user/scope suffix to
+ * the directory name, Codex and Gemini do not. Remove every directory this run
+ * created; the random RUN_SUFFIX keeps the prefix match to this run only.
+ */
+function removeRegisteredSkillDirs(): void {
+  for (const agentDir of ['.claude', '.codex', '.gemini']) {
+    const skillsDir = join(homedir(), agentDir, 'skills');
+    let entries: string[];
+    try {
+      entries = readdirSync(skillsDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry === SKILL_NAME || entry.startsWith(`${SKILL_NAME}-`)) {
+        rmSync(join(skillsDir, entry), { recursive: true, force: true });
+      }
+    }
+  }
+}
+
 const SKILL_CONTENT = [
   '# Random Number Generator',
   '',
@@ -102,6 +126,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
   }, 60_000);
 
   afterAll(async () => {
+    removeRegisteredSkillDirs();
     if (createdSkillId && sdkClient) {
       try { await deleteSkill(sdkClient, createdSkillId); } catch { /* best-effort */ }
     }

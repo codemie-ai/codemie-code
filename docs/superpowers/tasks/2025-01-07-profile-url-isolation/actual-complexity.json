@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated": "2026-09-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 9,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 4 components across the config schema (src/env/types.ts — identity fields re-homed onto ProviderProfile, retained on WorkspaceConfig only as fallback), the core ConfigLoader service (src/utils/config.ts — load/saveProfile/resolveWorkspace rewritten plus six new private methods: resolveIdentity, identityWorkspaces, resolveIdentityWorkspace, isSameServer, pickIdentity/hasIdentity/omitIdentity), the CLI profile workflow (profile/index.ts, display.ts), and the Claude agent plugin's statusline.mjs raw-file reader. New abstractions were introduced (per-profile identity resolution with same-server fallback), and config.ts is a core shared utility consumed by every provider and command — red flag bump applied from the L base."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for splitting identity resolution this way; the fix reverses part of a deliberate, documented, and tested architectural decision (migration 007) — one existing test asserted the buggy shared-workspace behavior as correct and had to be rewritten. Multiple independent read paths (ConfigLoader.load/loadWithSources, profile list/status, and statusline.mjs's raw-file reader that bypasses ConfigLoader entirely) all had to be kept consistent with the new resolution order. No new migration file was written (unlike the predecessor task), so the data-migration red flag does not apply here."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "9 files changed (diffstat), all modified, 0 new — falls in the 7-10 band (L). Spans .ai-run/guides/usage, src/agents/plugins/claude/plugin (+ its tests), src/cli/commands/profile (+ its tests), src/env, and src/utils (+ its tests) — 5 distinct directories."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 distinct layers touched: DB-Persistence (config.ts's JSON read/write and the identity field's storage location), Service (ConfigLoader's resolution business logic), Workflow (CLI profile display/status), and Agent-Tool (statusline.mjs's independent raw-file identity read) — matching the predecessor profile-provider-decoupling task's layer footprint but without a formal migration."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities (src/utils/config.ts — the central ConfigLoader persistence utility used by every provider and CLI command)."
+  ],
+  "split_recommendation": null
+}

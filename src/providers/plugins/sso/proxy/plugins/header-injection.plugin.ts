@@ -4,6 +4,10 @@
  *
  * SOLID: Single responsibility = inject CodeMie headers
  * KISS: Straightforward header injection
+ *
+ * Repository and branch attribution for Claude Desktop is derived by
+ * DesktopRepositoryResolver in the telemetry layer. This interceptor only writes the
+ * resolved values into headers — it performs no discovery of its own.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -72,10 +76,31 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       context.headers['X-CodeMie-Client'] = config.clientType;
     }
 
-    // Add repository, branch and project headers
-    if (config.repository) {
+    // Desktop mode: ask the resolver what this session maps to. Claude Desktop sends
+    // x-claude-code-session-id as a plain UUID, which is the key the resolver is keyed by.
+    const resolver = config.desktopRepositoryResolver;
+    if (resolver) {
+      const attribution = await resolver.resolveForRequest(
+        context.headers['x-claude-code-session-id'],
+        { remotePort: context.remotePort, url: context.url }
+      );
+
+      context.headers['X-CodeMie-Repository'] = attribution.repository ?? config.repository ?? 'Cowork';
+
+      if (attribution.branch) {
+        context.headers['X-CodeMie-Branch'] = attribution.branch;
+      }
+
+      // Cowork sessions report as claude-desktop so orchestrator and subprocess metrics
+      // share one (repo, branch, client) bucket instead of splitting into CLI and Desktop rows.
+      if (attribution.isCowork) {
+        context.headers['X-CodeMie-Client'] = 'claude-desktop';
+      }
+    } else if (config.repository) {
+      // Non-Desktop mode: use static config values
       context.headers['X-CodeMie-Repository'] = config.repository;
     }
+
     if (config.branch) {
       context.headers['X-CodeMie-Branch'] = config.branch;
     }
@@ -83,6 +108,12 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       context.headers['X-CodeMie-Project'] = config.project;
     }
 
-    logger.debug(`[${this.name}] Injected CodeMie headers`);
+    logger.info('[header-injection] Request headers', {
+      cliSessionId: context.headers['x-claude-code-session-id'] ?? null,
+      repository: context.headers['X-CodeMie-Repository'] ?? null,
+      branch: context.headers['X-CodeMie-Branch'] ?? null,
+      client: context.headers['X-CodeMie-Client'] ?? null,
+      remotePort: context.remotePort,
+    });
   }
 }

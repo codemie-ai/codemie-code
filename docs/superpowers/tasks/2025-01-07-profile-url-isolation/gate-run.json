@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "branch": "fix/profile-url-isolation",
+  "head": "2031bb837228b59ce741e05664eec030b23e4fee",
+  "runner": "npm",
+  "started_at": "2026-09-23T11:05:00Z",
+  "completed_at": "2026-09-23T11:13:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1200,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3400,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8200,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12400,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 30040,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "287 test files, 4214 passed, 2 skipped"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 33000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "4 tests failed in sso-claude-plugin.test.ts due to ambient ANTHROPIC_MODEL/CODEMIE_MODEL env vars leaking into subprocess; tests pass when env vars stripped (confirmed via rerun). CI runners do not have these vars, so failure is local-only environment artifact."
+    },
+    {
+      "id": "secrets-scan",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 280,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "No staged changes to scan. Requires docker/podman daemon to scan full repo (not available locally). CI runs equivalent gitleaks-action scan on full repository history."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 890,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "HEAD commit matches Conventional Commits format"
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11600,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0,
+      "notes": "Composite gate (typecheck && lint); both passed individually"
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 180000,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Composite gate (license-check && lint && build && vitest unit && vitest cli); failed at integration tests due to same environment artifact as integration gate"
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 620,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "All 7 commits on this branch match Conventional Commits format. CI gate check (full range, not just HEAD); guide covers only HEAD~1..HEAD"
+    }
+  ],
+  "failures": {
+    "integration": "FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Flag Injection (enrichArgs hook) > should inject --plugin-dir flag when plugin is installed\nAssertionError: expected '--model' to be '--plugin-dir' // Object.is equality\n\nExpected: \"--plugin-dir\"\nReceived: \"--model\"\n\n ❯ tests/integration/sso-claude-plugin.test.ts:148:31\n\nFAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Flag Injection (enrichArgs hook) > should skip injection if --plugin-dir already specified\nAssertionError: expected [ '--model', …(5) ] to deeply equal [ Array(4) ]\n\nFAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Flag Injection (enrichArgs hook) > should skip injection if env not set\nAssertionError: expected [ '--model', …(3) ] to deeply equal [ 'test', 'task' ]\n\nFAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install → inject\nAssertionError: expected [ '--model', …(5) ] to deeply equal [ '--plugin-dir', …(3) ]\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  4 failed | 275 passed | 10 skipped (289)",
+    "full-ci": "FAIL  |cli| tests/integration/sso-claude-plugin.test.ts (same 4 failures as integration gate, as noted in failures.integration)"
+  }
+}

@@ -252,9 +252,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.DISABLE_AUTOUPDATER = '1';
       }
 
-      // Disable experimental betas and telemetry for stability
+      // Allow experimental betas (prerequisite for the ENABLE_TOOL_SEARCH default),
+      // and disable telemetry for stability
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
-        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '0';
       }
       if (!env.CLAUDE_CODE_ENABLE_TELEMETRY) {
         env.CLAUDE_CODE_ENABLE_TELEMETRY = '0';

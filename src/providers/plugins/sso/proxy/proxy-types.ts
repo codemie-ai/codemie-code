@@ -6,6 +6,7 @@
 
 import { IncomingHttpHeaders } from 'http';
 import type { CodeMieConfigOptions } from '../../../../env/types.js';
+import type { DesktopRepositoryResolver } from '../../../../telemetry/runtime/DesktopRepositoryResolver.js';
 
 /**
  * Proxy configuration
@@ -34,6 +35,9 @@ export interface ProxyConfig {
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;
+  /** Shared Desktop attribution resolver; its presence enables Desktop repository lookup. */
+  desktopRepositoryResolver?: DesktopRepositoryResolver;
+  triggerPoll?: () => Promise<void>;
   /**
    * When true, the server retries the SAME configured port on EADDRINUSE
    * (with short backoff) instead of falling back to a random port. Used by
@@ -58,6 +62,7 @@ export interface ProxyContext {
   requestBody: Buffer | null; // Changed to Buffer to preserve byte integrity
   requestStartTime: number;
   targetUrl?: string;
+  remotePort?: number;        // TCP source port of the connecting client (used for process CWD lookup)
   metadata: Record<string, unknown>;
 }
 

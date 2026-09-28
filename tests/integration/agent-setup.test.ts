@@ -98,7 +98,11 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       const selectedProject = projectLine.match(/Selected project:\s*(\S+)/i)?.[1];
 
       // ── Step 7: Model selection → first option ──────────────────────────────────
-      await proc.waitFor(/\(Use arrow keys\)/i, 15_000);
+      // Match the model prompt itself: earlier list prompts (storage scope, provider)
+      // also print "(Use arrow keys)", and waitFor scans all prior lines, so a bare
+      // match resolves at once and the Enter lands while the integrations/models
+      // spinners are still discarding stdin.
+      await proc.waitFor(/Choose a model.*\(Use arrow keys\)/i, 30_000);
       await new Promise(r => setTimeout(r, 500));
       proc.write('\r');
 
