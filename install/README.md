@@ -110,7 +110,7 @@ npm config delete @codemieai:registry --location user
 
 Older versions of both installers ran `npm config set prefix` at the user level, which redirects every future `npm install -g` (for any package, not just CodeMie) into CodeMie's own prefix folder. Rerunning the current installer on an affected machine migrates it automatically:
 
-1. The installer detects the override only when `npm config get prefix --location user` exactly equals the installer's own prefix folder (`<InstallRoot>\npm-prefix` on Windows, `$HOME/.codemie/npm-prefix` on macOS/Linux by default). It never touches any other prefix value, `NPM_CONFIG_PREFIX`, or global/project `.npmrc` values.
+1. The installer detects the override only when `npm config get prefix --location user` exactly equals the fixed legacy path (`<InstallRoot>\npm-prefix` on Windows, always `$HOME/.codemie/npm-prefix` on macOS/Linux — not `CODEMIE_NPM_PREFIX`, even if that's overridden). It never touches any other prefix value, `NPM_CONFIG_PREFIX`, or global/project `.npmrc` values.
 2. It lists the packages stranded in the old prefix (`npm ls -g --prefix <old> --depth=0`).
 3. It runs `npm config delete prefix --location user` and prints that it ran.
 4. It resolves the install mode after the deletion and installs for that mode.
