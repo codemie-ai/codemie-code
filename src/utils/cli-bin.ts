@@ -12,6 +12,7 @@ import path from 'path';
 import os from 'os';
 import { exec } from './exec.js';
 import { logger } from './logger.js';
+import { deriveSelfPrefix } from '@/utils/npm-prefix.js';
 
 /**
  * Restore the global 'codemie' binary symlink if it was overwritten by an
@@ -33,10 +34,16 @@ export async function restoreCliBinLink(): Promise<void> {
   }
 
   try {
-    const prefixResult = await exec('npm', ['prefix', '-g']);
-    if (prefixResult.code !== 0) return;
+    const derivedPrefix = deriveSelfPrefix();
+    let npmPrefix: string;
+    if (derivedPrefix) {
+      npmPrefix = derivedPrefix;
+    } else {
+      const prefixResult = await exec('npm', ['prefix', '-g']);
+      if (prefixResult.code !== 0) return;
+      npmPrefix = prefixResult.stdout.trim();
+    }
 
-    const npmPrefix = prefixResult.stdout.trim();
     const globalBinPath = path.join(npmPrefix, 'bin', 'codemie');
 
     // Check if the path is a symlink; if not (e.g., regular file), skip.

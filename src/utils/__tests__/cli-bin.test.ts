@@ -15,6 +15,10 @@ vi.mock('../exec.js', () => ({
   exec: vi.fn()
 }));
 
+vi.mock('@/utils/npm-prefix.js', () => ({
+  deriveSelfPrefix: vi.fn(() => null)
+}));
+
 vi.mock('fs/promises', () => ({
   default: {
     lstat: vi.fn(),
@@ -38,6 +42,7 @@ vi.mock('os', async () => {
 
 import { logger } from '../logger.js';
 import { exec } from '../exec.js';
+import { deriveSelfPrefix } from '@/utils/npm-prefix.js';
 import fs from 'fs/promises';
 import { restoreCliBinLink } from '../cli-bin.js';
 
@@ -59,6 +64,7 @@ describe('restoreCliBinLink', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(os.platform).mockReturnValue('linux');
+    vi.mocked(deriveSelfPrefix).mockReturnValue(null);
   });
 
   it('should skip on Windows platform', async () => {
@@ -116,6 +122,21 @@ describe('restoreCliBinLink', () => {
 
     expect(fs.readlink).not.toHaveBeenCalled();
     expect(fs.symlink).not.toHaveBeenCalled();
+  });
+
+  it('should use the derived self prefix and skip npm prefix -g when available', async () => {
+    vi.mocked(deriveSelfPrefix).mockReturnValue('/home/u/.codemie/npm-prefix');
+    mockSymlink();
+    vi.mocked(fs.readlink).mockResolvedValue(
+      '../lib/node_modules/@codemieai/code/bin/codemie.js'
+    );
+
+    await restoreCliBinLink();
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(fs.lstat).toHaveBeenCalledWith(
+      path.join('/home/u/.codemie/npm-prefix', 'bin', 'codemie')
+    );
   });
 
   it('should return early when npm prefix -g fails', async () => {
