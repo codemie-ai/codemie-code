@@ -14,6 +14,7 @@ import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/ty
 import { CredentialStore } from '../../../utils/security.js';
 import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
+import { logger } from '../../../utils/logger.js';
 
 function escapeHtml(str: string): string {
   return str
@@ -84,14 +85,18 @@ export class CodeMieSSO {
     // Register signal handlers for graceful termination (following agent.ts pattern)
     const sigintHandler = () => {
       if (this.isAuthenticating) {
-        console.log(chalk.yellow('\n⚠️  Authentication cancelled by user'));
+        if (!config.quiet) {
+          console.log(chalk.yellow('\n⚠️  Authentication cancelled by user'));
+        }
         this.abortController?.abort();
       }
     };
 
     const sigtermHandler = () => {
       if (this.isAuthenticating) {
-        console.log(chalk.yellow('\n⚠️  Authentication terminated'));
+        if (!config.quiet) {
+          console.log(chalk.yellow('\n⚠️  Authentication terminated'));
+        }
         this.abortController?.abort();
       }
     };
@@ -108,8 +113,12 @@ export class CodeMieSSO {
       const ssoUrl = `${codeMieBase}/v1/auth/login/${port}`;
 
       // 3. Launch browser
-      console.log(chalk.white(`Opening browser for authentication...`));
-      console.log(chalk.dim(`  If browser does not open, visit: ${ssoUrl}`));
+      if (!config.quiet) {
+        console.log(chalk.white(`Opening browser for authentication...`));
+        console.log(chalk.dim(`  If browser does not open, visit: ${ssoUrl}`));
+      } else {
+        logger.info(`[SSO] Opening browser for authentication: ${ssoUrl}`);
+      }
       if (process.platform === 'win32') {
         // explorer.exe is Windows-native and has no PowerShell dependency,
         // avoiding failures on machines where WDAC/AppLocker blocks Start-Process.

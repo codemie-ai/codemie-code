@@ -413,6 +413,9 @@ export interface AuthStatus {
 export interface SSOAuthConfig {
   codeMieUrl: string;
   timeout?: number;
+  /** Suppress stdout banners (e.g. browser-opening messages). Use when a caller's
+   * own stdout contract (e.g. a hook's JSON response) cannot tolerate extra output. */
+  quiet?: boolean;
 }
 
 /**

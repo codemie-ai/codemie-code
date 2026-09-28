@@ -15,12 +15,18 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
   public async processOtlpEvent(rawEvent: string): Promise<void> {
     const decision = await this.evaluate(rawEvent);
     if (decision.action === 'block') {
-      logger.error(`[Claude Code OTLP plugin] ${decision.reason}`);
-      await logger.close();
-      process.exit(2);
+      logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${decision.reason}`);
+      console.log(JSON.stringify({
+        decision: 'block',
+        reason: decision.reason,
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          suppressOriginalPrompt: true,
+        }
+      }));
+      return;
     }
     this.forwardToSpool(decision.payload);
-    return
   };
 
   private async evaluate(rawEvent: string): Promise<ForwardDecision>  {
@@ -32,7 +38,11 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
       if (!isAuthValid) {
         return {
           action: 'block',
-          reason: 'SSO proxy auth failed. Trying to re-aure-authenticate.',
+          reason: [
+            "CodeMie SSO authentication is invalid - you are blocked until you re-authenticate.",
+            "A browser sign-in window has been opened automatically.",
+            "Complete the sign-in, then re-send your prompt.",
+          ].join("\n"),
         }
       }
     }
@@ -67,18 +77,10 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
     }
 
     try {
-      await new CodeMieSSO().authenticate({ codeMieUrl: ssoUrl, timeout: 120_000 });
+      await new CodeMieSSO().authenticate({ codeMieUrl: ssoUrl, timeout: 120_000, quiet: true });
     } catch (error) {
       logger.error(`[Claude Code OTLP plugin] Failed to re-authenticate: ${(error as Error).message}`);
     }
-
-    console.error(
-      [
-        "CodeMie SSO authentication is invalid - you are blocked until you re-authenticate.",
-        "A browser sign-in window has been opened automatically.",
-        "Complete the sign-in, then re-send your prompt.",
-      ].join("\n")
-    );
 
     return false;
   }
