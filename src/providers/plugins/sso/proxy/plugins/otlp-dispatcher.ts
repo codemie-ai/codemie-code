@@ -19,9 +19,11 @@ const OTLP_POST_TIMEOUT_MS = 1500;
 const OTLP_SEVERITY_NUMBER = 9;
 const OTLP_SEVERITY_TEXT = 'INFO';
 const SPAN_NAME_TOOL = 'cursor.tool';
+const SPAN_NAME_TOOL_EXECUTION = 'cursor.tool.execution';
 const SPAN_NAME_INTERACTION = 'cursor.interaction';
 const SPAN_NAME_SUBAGENT = 'cursor.subagent';
 const METRIC_NAME_LINES = 'cursor.lines_of_code.count';
+const METRIC_NAME_ACTIVE_TIME = 'cursor.active_time.total';
 
 const EVENT_TYPE_MAP: Record<string, string> = {
   sessionStart: 'agent.session.start',
@@ -37,6 +39,11 @@ const EVENT_TYPE_MAP: Record<string, string> = {
 };
 
 export class OtlpDispatcher {
+  /** generation_id values already counted as a turn, so a retried hook does not add another. */
+  private readonly countedGenerations = new Set<string>();
+  /** beforeSubmitPrompt time (ms) per session, closed on stop into active time. */
+  private readonly turnStartedAt = new Map<string, number>();
+
   constructor(
     private readonly credentials?: SSOCredentials | JWTCredentials,
     private readonly baseUrl?: string,
@@ -70,17 +77,22 @@ export class OtlpDispatcher {
       }
     }
 
-    if (hookName === 'postToolUse') {
+    if (hookName === 'postToolUse' || hookName === 'postToolUseFailure') {
+      const succeeded = hookName === 'postToolUse';
       await Promise.all([
         this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)])),
-        this.pushTraces(this.wrapTraces([this.buildToolSpan(event, tsNs)])),
+        this.pushTraces(this.wrapTraces([
+          this.buildToolSpan(event, tsNs),
+          this.buildToolExecutionSpan(event, tsNs, succeeded),
+        ])),
       ]);
       return;
     }
     if (hookName === 'beforeSubmitPrompt') {
+      const spans = this.prepareInteraction(event, tsNs);
       await Promise.all([
         this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)])),
-        this.pushTraces(this.wrapTraces([this.buildInteractionSpan(event, tsNs)])),
+        spans.length > 0 ? this.pushTraces(this.wrapTraces(spans)) : Promise.resolve(),
       ]);
       return;
     }
@@ -97,10 +109,14 @@ export class OtlpDispatcher {
       return;
     }
     if (hookName === 'stop') {
-      await this.pushLogs(this.wrapLogs([
-        this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote),
-        this.buildApiRequestRecord(event, tsNs),
-      ]));
+      const activeTime = this.buildActiveTimeMetric(event, tsNs);
+      await Promise.all([
+        this.pushLogs(this.wrapLogs([
+          this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote),
+          this.buildApiRequestRecord(event, tsNs),
+        ])),
+        activeTime ? this.pushMetrics(this.wrapMetrics([activeTime])) : Promise.resolve(),
+      ]);
       return;
     }
     await this.pushLogs(this.wrapLogs([this.buildLogRecord(event, hookName, tsNs, gitBranch, repoRemote)]));
@@ -116,6 +132,21 @@ export class OtlpDispatcher {
 
   private toSpanId(id: string): string {
     return createHash('sha256').update(String(id || '')).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * Cursor sends `conversation_id` on every hook and `session_id` only on
+   * sessionStart/sessionEnd (same value). Prompt and turn spans are emitted
+   * from beforeSubmitPrompt, which has no `session_id`, so reading only
+   * `session_id` stores them under '' and the session row never joins them
+   * until a later event happens to carry `session_id`.
+   */
+  private resolveSessionId(event: Record<string, unknown>): string {
+    const sessionId = event['session_id'];
+    if (typeof sessionId === 'string' && sessionId) return sessionId;
+    const conversationId = event['conversation_id'];
+    if (typeof conversationId === 'string' && conversationId) return conversationId;
+    return '';
   }
 
   private extractCwd(event: Record<string, unknown>): string {
@@ -229,7 +260,7 @@ export class OtlpDispatcher {
     const userEmail = this.resolveUserEmail(event);
     const attrs: OtlpAttr[] = [
       { key: 'event_type', value: { stringValue: eventType } },
-      { key: 'session_id', value: { stringValue: String(event['session_id'] ?? '') } },
+      { key: 'session_id', value: { stringValue: this.resolveSessionId(event) } },
       { key: 'developer_name', value: { stringValue: userEmail } },
       { key: 'user.email', value: { stringValue: userEmail } },
       { key: 'cwd', value: { stringValue: this.extractCwd(event) } },
@@ -255,7 +286,7 @@ export class OtlpDispatcher {
   }
 
   private buildToolSpan(event: Record<string, unknown>, tsNs: string): object {
-    const sessionId = String(event['session_id'] ?? '');
+    const sessionId = this.resolveSessionId(event);
     const toolUseId = String(event['tool_use_id'] ?? '').replace(/\n/g, '_');
     const startNs = this.startNsFromDurationMs(tsNs, event['duration']);
     const filePath = this.extractFilePath(String(event['tool_name'] ?? ''), event['tool_input']);
@@ -278,8 +309,49 @@ export class OtlpDispatcher {
     };
   }
 
+  /**
+   * Tool Success joins this span to cursor.tool on tool_use_id and counts
+   * success only when the attribute is the string "true".
+   */
+  private buildToolExecutionSpan(event: Record<string, unknown>, tsNs: string, succeeded: boolean): object {
+    const sessionId = this.resolveSessionId(event);
+    const toolUseId = String(event['tool_use_id'] ?? '').replace(/\n/g, '_');
+    const startNs = this.startNsFromDurationMs(tsNs, event['duration']);
+    return {
+      traceId: this.toTraceId(sessionId),
+      spanId: this.toSpanId(toolUseId ? `${toolUseId}:execution` : `${sessionId}${tsNs}:execution`),
+      name: SPAN_NAME_TOOL_EXECUTION,
+      kind: 1,
+      startTimeUnixNano: startNs,
+      endTimeUnixNano: tsNs,
+      status: { code: succeeded ? 1 : 2 },
+      attributes: [
+        { key: 'session.id', value: { stringValue: sessionId } },
+        { key: 'tool_use_id', value: { stringValue: toolUseId } },
+        { key: 'success', value: { stringValue: succeeded ? 'true' : 'false' } },
+      ],
+    };
+  }
+
+  /**
+   * One turn per user prompt. Cursor can deliver beforeSubmitPrompt with an
+   * empty body (session open) or twice for the same generation_id; both used
+   * to increment Turns, so two messages showed up as three.
+   */
+  private prepareInteraction(event: Record<string, unknown>, tsNs: string): object[] {
+    if (!this.extractPromptBody(event).trim()) return [];
+    const sessionId = this.resolveSessionId(event);
+    const generationId = String(event['generation_id'] ?? '');
+    if (generationId) {
+      if (this.countedGenerations.has(generationId)) return [];
+      this.countedGenerations.add(generationId);
+    }
+    if (sessionId) this.turnStartedAt.set(sessionId, Date.now());
+    return [this.buildInteractionSpan(event, tsNs)];
+  }
+
   private buildInteractionSpan(event: Record<string, unknown>, tsNs: string): object {
-    const sessionId = String(event['session_id'] ?? '');
+    const sessionId = this.resolveSessionId(event);
     const genId = String(event['generation_id'] ?? '');
     return {
       traceId: this.toTraceId(sessionId),
@@ -296,7 +368,7 @@ export class OtlpDispatcher {
   }
 
   private buildSubagentSpan(event: Record<string, unknown>, tsNs: string): object {
-    const sessionId = String(event['session_id'] ?? '');
+    const sessionId = this.resolveSessionId(event);
     const subagentId = String(event['subagent_id'] ?? '');
     const startNs = this.startNsFromDurationMs(tsNs, event['duration_ms']);
     return {
@@ -344,7 +416,7 @@ export class OtlpDispatcher {
       linesRemoved += this.countLines(edit['old_string']);
     }
     if (linesAdded === 0 && linesRemoved === 0) return null;
-    const sessionId = String(event['session_id'] ?? '');
+    const sessionId = this.resolveSessionId(event);
     const userEmail = this.resolveUserEmail(event);
     const commonAttrs = [
       { key: 'session.id', value: { stringValue: sessionId } },
@@ -373,8 +445,41 @@ export class OtlpDispatcher {
     };
   }
 
+  /**
+   * Active time is the gap from the user prompt to stop. The rollup only
+   * reads cursor.active_time.total (seconds, type user|cli); nothing else
+   * in this dispatcher emitted it, so the UI stayed empty.
+   */
+  private buildActiveTimeMetric(event: Record<string, unknown>, tsNs: string): object | null {
+    const sessionId = this.resolveSessionId(event);
+    const startedAt = sessionId ? this.turnStartedAt.get(sessionId) : undefined;
+    if (startedAt == null) return null;
+    this.turnStartedAt.delete(sessionId);
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    if (durationMs === 0) return null;
+    const seconds = durationMs / 1000;
+    const userEmail = this.resolveUserEmail(event);
+    return {
+      name: METRIC_NAME_ACTIVE_TIME,
+      sum: {
+        dataPoints: [{
+          attributes: [
+            { key: 'session.id', value: { stringValue: sessionId } },
+            { key: 'user.email', value: { stringValue: userEmail } },
+            { key: 'type', value: { stringValue: 'cli' } },
+          ],
+          startTimeUnixNano: tsNs,
+          timeUnixNano: tsNs,
+          asDouble: seconds,
+        }],
+        aggregationTemporality: 1,
+        isMonotonic: true,
+      },
+    };
+  }
+
   private buildApiRequestRecord(event: Record<string, unknown>, tsNs: string): object {
-    const sessionId = String(event['session_id'] ?? '');
+    const sessionId = this.resolveSessionId(event);
     const userEmail = this.resolveUserEmail(event);
     const model = String(event['model'] ?? '');
     const toInt = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
