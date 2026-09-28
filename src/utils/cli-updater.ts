@@ -17,6 +17,7 @@ import inquirer from 'inquirer';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
 import { getLatestVersion, installGlobal } from './processes.js';
+import { getSelfPrefixArgs } from './npm-prefix.js';
 import { compareVersions, isValidSemanticVersion } from './version-utils.js';
 import { getCodemiePath } from './paths.js';
 import { parseBooleanEnv } from './env.js';
@@ -271,8 +272,14 @@ export async function updateCli(latestVersion: string, silent = false): Promise<
     console.log();
     console.error(chalk.red('✗ Failed to update CodeMie CLI'));
     console.log();
+    const fallbackPrefixArgs = await getSelfPrefixArgs(CLI_PACKAGE_NAME);
+    const fallbackCommand = [
+      'npm install -g',
+      `${CLI_PACKAGE_NAME}@${latestVersion}`,
+      ...fallbackPrefixArgs
+    ].join(' ');
     console.log(chalk.yellow('  You can manually update with:'));
-    console.log(chalk.white(`    npm install -g ${CLI_PACKAGE_NAME}@${latestVersion}`));
+    console.log(chalk.white(`    ${fallbackCommand}`));
     console.log();
     console.log(chalk.dim('  💡 To disable auto-update: export CODEMIE_AUTO_UPDATE=false'));
     console.log();
