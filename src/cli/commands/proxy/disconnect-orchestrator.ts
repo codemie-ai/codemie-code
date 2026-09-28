@@ -10,13 +10,11 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
-import { removeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
 import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
   codexDesktop?: boolean;
-  cursorIde?: boolean;
 }
 
 export interface DisconnectOptions {
@@ -28,7 +26,6 @@ const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
-  '  --cursor-ide           Cursor IDE (removes codemie-authored entries from .cursor/hooks.json)',
   '  --claude-code-otlp     Claude Code OTLP (removes hook/env entries)',
   '',
   'Example:',
@@ -59,29 +56,6 @@ async function disconnectCodexDesktop(): Promise<void> {
   }
 }
 
-async function disconnectCursorIde(): Promise<void> {
-  try {
-    const result = await removeCursorIdeHooksConfig();
-
-    if (!result.removed) {
-      console.log(chalk.dim('Cursor IDE: nothing to disconnect.'));
-      return;
-    }
-
-    console.log(chalk.green(`✓ Cursor IDE hooks removed (${result.path})`));
-    if (result.usedBackup) {
-      console.log(chalk.yellow(
-        "⚠ Restored the pre-connect backup because CodeMie's entries were the file's only content."
-      ));
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[proxy] Cursor IDE disconnect failed', ...sanitizeLogArgs({ error: message }));
-    console.error(chalk.red(`✗ Cursor IDE — ${message}`));
-    process.exitCode = 1;
-  }
-}
-
 async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
     const result = await removeClaudeCodeOtlpConfig({ scope });
@@ -105,17 +79,13 @@ async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<voi
 }
 
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
-  if (!opts.targets.codexDesktop && !opts.targets.cursorIde && !opts.targets.claudeCodeOtlp) {
+  if (!opts.targets.codexDesktop && !opts.targets.claudeCodeOtlp) {
     console.log(DISCONNECT_TARGET_LIST);
     return;
   }
 
   if (opts.targets.codexDesktop) {
     await disconnectCodexDesktop();
-  }
-
-  if (opts.targets.cursorIde) {
-    await disconnectCursorIde();
   }
 
   if (opts.targets.claudeCodeOtlp) {

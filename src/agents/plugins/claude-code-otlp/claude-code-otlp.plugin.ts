@@ -12,18 +12,13 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawEvent: string): Promise<void> {
-    const decision = await this.evaluate(rawEvent);
-    if (decision.action === 'block') {
-      const { reason, hookSpecificOutput } = decision;
-      logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${decision.reason}`);
-      console.log(JSON.stringify({
-        decision: 'block',
-        reason,
-        hookSpecificOutput,
-      }));
+    const evaluation = await this.evaluate(rawEvent);
+    if (evaluation.decision === 'block') {
+      logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${evaluation.reason}`);
+      console.log(JSON.stringify(evaluation));
       return;
     }
-    this.forwardToSpool(decision.payload);
+    this.forwardToSpool(evaluation.payload);
   };
 
   private async evaluate(rawEvent: string): Promise<ForwardDecision>  {
@@ -34,7 +29,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     }
 
     return {
-      action: 'forward',
+      decision: 'forward',
       payload: rawEvent,
     }
   }
@@ -59,13 +54,13 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
 
     if (authResult.ok) {
       return {
-        action: 'forward',
+        decision: 'forward',
         payload: rawEvent,
       }
     }
 
     return {
-      action: 'block',
+      decision: 'block',
       reason: [
         `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
         "A browser sign-in window has been opened automatically.",

@@ -10,7 +10,6 @@ import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
-import { CursorIdePlugin } from './plugins/cursor-ide/cursor-ide.plugin.js';
 import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter, OtlpAgentAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -46,7 +45,6 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
     AgentRegistry.registerPlugin(new OpenWikiPlugin());
     AgentRegistry.registerPlugin(new CopilotCliPlugin());
-    AgentRegistry.registerPlugin(new CursorIdePlugin());
     AgentRegistry.registerPlugin(new ClaudeCodeOtlpPlugin());
 
     AgentRegistry.initialized = true;

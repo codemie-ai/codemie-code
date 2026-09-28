@@ -48,7 +48,6 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import { writeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
 import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
@@ -62,7 +61,6 @@ export interface ConnectTargets {
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
-  cursorIde?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -74,14 +72,12 @@ export interface ConnectOptions {
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
-  /** Gate for the cursor-ide target — analytics-only hook ingestion. */
-  analytics?: boolean;
   /** Settings scope for --claude-code-otlp: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
   scope?: "user" | "project";
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | 'cursor-ide' | 'claude-code-otlp';
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | 'claude-code-otlp';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -96,7 +92,6 @@ export interface DaemonIdentity {
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
-    | { clientType: 'cursor-ide' }
     | { clientType: 'claude-code-otlp' };
 }
 
@@ -115,9 +110,6 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
-  }
-  if (targets.cursorIde) {
-    return { clientType: 'cursor-ide', spawnOptions: { clientType: 'cursor-ide' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }
@@ -292,7 +284,6 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --cursor-ide           Cursor IDE — writes .cursor/hooks.json (requires --analytics)',
   '  --claude-code-otlp     Claude Code (analytics hooks + OTel settings)',
   '',
   'Examples:',
@@ -300,14 +291,13 @@ const TARGET_LIST = [
   '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
-  '  codemie proxy connect --cursor-ide --analytics',
   '  codemie proxy connect --claude-code-otlp',
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.claudeCodeOtlp || t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.cursorIde);
+  return Boolean(t.claudeDesktop || t.claudeCodeOtlp || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -319,7 +309,6 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
-  if (t.cursorIde) { flags.push('--cursor-ide'); labels.push('Cursor IDE'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }
@@ -655,44 +644,6 @@ async function runCodexDesktop(
 /** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
 export const runCodexDesktopForTest = runCodexDesktop;
 
-interface CursorIdeRunOptions {
-  force?: boolean;
-}
-
-/**
- * Writes/merges `.cursor/hooks.json`. cursor-ide now goes through the same
- * daemon lifecycle as every other target (its hooks forward OTLP events to
- * the daemon's `/v1/otlp/hook-events` route) \u2014 this just writes the hooks
- * config file itself, dispatched alongside the other per-target runners
- * after the daemon is ensured.
- */
-async function runCursorIde(options: CursorIdeRunOptions): Promise<TargetResult> {
-  const label = 'Cursor IDE';
-  try {
-    const result = await writeCursorIdeHooksConfig({ force: options.force });
-    console.log(chalk.green(`\u2713 Cursor IDE hooks configured (${result.path})`));
-    console.log(chalk.dim(`  ${result.events.length} event(s) wired to codemie hook --agent cursor-ide`));
-    if (result.backupPath) {
-      console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
-    }
-    console.log(chalk.yellow('  Workspace must be trusted for project hooks to run in Cursor.'));
-    console.log(chalk.dim('  Cursor hot-reloads hooks.json; restart Cursor if hooks do not pick up.'));
-    console.log(chalk.dim('  Enable transcripts in Cursor for transcript_path to be populated.'));
-    console.log(chalk.dim(
-      '  Cloud agents skip sessionStart/sessionEnd, the MCP hooks, the Tab hooks, and workspaceOpen.'
-    ));
-    return { label, ok: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[proxy] Failed to configure Cursor IDE hooks', ...sanitizeLogArgs({ error: message }));
-    console.log(chalk.yellow(`  Could not configure Cursor IDE hooks: ${message}`));
-    return { label, ok: false, error: message };
-  }
-}
-
-/** Test seam - the runner is otherwise only reachable through `connectTargets`. */
-export const runCursorIdeForTest = runCursorIde;
-
 interface ClaudeCodeOtlpRunOptions {
   force?: boolean;
   scope?: "user" | "project";
@@ -720,26 +671,9 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
 
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
-  const analytics = Boolean(opts.analytics);
-
-  // --analytics carries no target flag of its own, so it must be checked
-  // ahead of hasAnyTarget — otherwise "--analytics" alone (or with unrelated
-  // flags but no target) silently falls through to the generic target list
-  // instead of explaining that --analytics only applies to --cursor-ide.
-  if (analytics && !targets.cursorIde) {
-    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide.'));
-    return;
-  }
 
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
-    return;
-  }
-
-  if (targets.cursorIde && !analytics) {
-    console.log(chalk.yellow(
-      'Note: --cursor-ide requires --analytics. Re-run with --cursor-ide --analytics.'
-    ));
     return;
   }
 
@@ -839,7 +773,6 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
-  if (targets.cursorIde) results.push(await runCursorIde({ force: Boolean(opts.force) }));
   if (targets.claudeCodeOtlp) results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
 
   const anyFailed = results.some((r) => !r.ok);

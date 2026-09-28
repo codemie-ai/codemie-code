@@ -28,7 +28,6 @@ class Logger {
   private writeStream: fs.WriteStream | null = null;
   private currentLogDate: string | null = null;
   private isRotating: boolean = false;
-  private stdoutSuppressed = false;
 
   constructor() {}
 
@@ -37,18 +36,6 @@ class Logger {
    */
   setAgentName(name: string): void {
     this.agentName = name;
-  }
-
-  /**
-   * Suppress this logger's own stdout writes (debug()'s CODEMIE_DEBUG console
-   * output, success()'s console output) by redirecting them to stderr
-   * instead. For callers whose process stdout is a data channel a caller
-   * parses (e.g. `codemie hook`'s per-agent stdout response contract) -
-   * mixing log lines into that channel corrupts it. Never suppresses the log
-   * file, only the console mirror.
-   */
-  setStdoutSuppressed(suppressed: boolean): void {
-    this.stdoutSuppressed = suppressed;
   }
 
   /**
@@ -318,8 +305,7 @@ class Logger {
         prefix += ` [${this.profileName}]`;
       }
 
-      const write = this.stdoutSuppressed ? console.error : console.log;
-      write(chalk.dim(`${prefix} ${message}`), ...args);
+      console.log(chalk.dim(`${prefix} ${message}`), ...args);
     }
   }
 
@@ -329,8 +315,7 @@ class Logger {
   }
 
   success(message: string, ...args: unknown[]): void {
-    const write = this.stdoutSuppressed ? console.error : console.log;
-    write(chalk.green(`✓ ${message}`), ...args);
+    console.log(chalk.green(`✓ ${message}`), ...args);
   }
 
   warn(message: string, ...args: unknown[]): void {

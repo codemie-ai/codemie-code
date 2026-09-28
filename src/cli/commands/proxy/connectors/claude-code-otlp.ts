@@ -3,10 +3,6 @@
  * Claude Code's hook surface (8 events) onto `codemie hook --agent claude-code-otlp`
  * and setting OTel environment variables that point Claude Code's telemetry at
  * the local proxy daemon.
- *
- * Mirrors the read-merge-write-atomically shape of `cursor-ide.ts`.
- * Unlike the cursor-ide connector this targets `.claude/settings.json`, not
- * `.cursor/hooks.json`, so the merge shape follows Claude Code's hooks format.
  */
 
 import { existsSync } from 'node:fs';

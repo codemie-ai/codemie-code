@@ -5,7 +5,6 @@ import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } fro
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
-import { forwardOtlpEvent } from '@/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 
@@ -557,9 +556,9 @@ async function accumulateActiveDuration(sessionId: string): Promise<number> {
  * Handle UserPromptSubmit event
  * Starts activity tracking to measure active session time
  */
-async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, config?: HookProcessingConfig, agentName?: string): Promise<void> {
+async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
-  await enforceAnalyticsAuthGate(config, agentName);
+  await enforceAnalyticsAuthGate(config);
   await startActivityTracking(sessionId);
 }
 
@@ -576,7 +575,7 @@ async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, c
  * disappear from metrics. The marker is cleared by `codemie profile login`
  * and by any successful metrics send.
  */
-async function enforceAnalyticsAuthGate(config?: HookProcessingConfig, agentName?: string): Promise<void> {
+async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<void> {
   try {
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
@@ -603,7 +602,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig, agentName
 
     logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
 
-    if (config || agentNeverBlocks(agentName)) {
+    if (config) {
       // Programmatic mode (e.g. VSCode extension), or an agent that declares
       // `hookConfig.neverBlockingExit`: let the caller decide how to surface
       // the failure instead of exiting the process with a blocking code.
@@ -614,7 +613,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig, agentName
     console.error(message);
     process.exit(2); // Blocking: stderr is fed back to the agent
   } catch (error) {
-    if (config || agentNeverBlocks(agentName)) {
+    if (config) {
       throw error;
     }
     // The gate itself must never break the prompt flow
@@ -735,7 +734,7 @@ switch (normalizedEventName) {
         break;
       case 'UserPromptSubmit':
         logger.info(`[hook:router] Calling handleUserPromptSubmit`);
-        await handleUserPromptSubmit(event, sessionId, config, agentName);
+        await handleUserPromptSubmit(event, sessionId, config);
         break;
       case 'SubagentStop':
         logger.info(`[hook:router] Calling handleSubagentStop`);
@@ -1344,85 +1343,6 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 }
 
 /**
- * Look up whether an agent has declared `neverBlockingExit` on its
- * `metadata.hookConfig` — a fully declarative gate (no agent-name literal)
- * that lets a hook path degrade to non-blocking failure instead of exiting
- * non-zero. Set only by agents (e.g. cursor-ide) whose host never tolerates
- * a blocking exit code.
- */
-function agentNeverBlocks(agentName?: string): boolean {
-  if (!agentName) {
-    return false;
-  }
-  try {
-    const agent = AgentRegistry.getAgent(agentName);
-    return Boolean(agent?.metadata?.hookConfig?.neverBlockingExit);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Look up whether an agent has declared `otlpIngestion` on its
- * `metadata.hookConfig` — lets the hook action forward OTLP events
- * directly to the proxy daemon and bypass the shared pipeline.
- */
-function agentOtlpIngestion(agentName?: string): boolean {
-  if (!agentName) {
-    return false;
-  }
-  try {
-    const agent = AgentRegistry.getAgent(agentName);
-    return Boolean(agent?.metadata?.hookConfig?.otlpIngestion);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether an agent has declared a stdout response contract
- * (`metadata.hookConfig.writeStdoutResponse`) - a fully declarative check
- * (no agent-name literal) used to decide whether this logger's own
- * CODEMIE_DEBUG console output must stay off stdout for the rest of this
- * process (see `writeAgentStdoutResponse` below).
- */
-function agentHasStdoutResponseContract(agentName?: string): boolean {
-  if (!agentName) {
-    return false;
-  }
-  try {
-    const agent = AgentRegistry.getAgent(agentName);
-    return typeof agent?.metadata?.hookConfig?.writeStdoutResponse === 'function';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Write an agent's declarative stdout response contract, if it has one
- * (`metadata.hookConfig.writeStdoutResponse` - see cursor-ide.response.ts).
- * A no-op for every agent that doesn't declare one. Never throws: a
- * response-writer failure must not turn a successful hook into a failed one.
- *
- * @param agentName - Resolved agent name
- * @param nativeEventName - The agent-native event name (`event.hook_event_name`)
- */
-function writeAgentStdoutResponse(agentName: string | undefined, nativeEventName: string): void {
-  if (!agentName) {
-    return;
-  }
-  try {
-    const agent = AgentRegistry.getAgent(agentName);
-    const writer = agent?.metadata?.hookConfig?.writeStdoutResponse;
-    if (typeof writer === 'function') {
-      writer(nativeEventName);
-    }
-  } catch (error) {
-    logger.debug('[hook] Failed to write agent stdout response (non-blocking):', error);
-  }
-}
-
-/**
  * Validate hook event required fields
  * @param event - Hook event to validate
  * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
@@ -1431,12 +1351,10 @@ function writeAgentStdoutResponse(agentName: string | undefined, nativeEventName
  * @throws Error if validation fails and config is provided, or the resolved agent
  *   declares `neverBlockingExit`
  */
-function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig, agentName?: string): void {
-  const neverBlocks = agentNeverBlocks(agentName);
-
+function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig): void {
   const fail = (message: string): void => {
     const error = new Error(message);
-    if (config || neverBlocks) {
+    if (config) {
       throw error;
     }
     logger.error(`[hook] ${message}`);
@@ -1553,7 +1471,7 @@ function normalizeAndLogEvent(event: BaseHookEvent, sessionId: string, agentName
  */
 export async function processEvent(event: BaseHookEvent, config?: HookProcessingConfig): Promise<void> {
   // Validate required fields
-  validateHookEvent(event, config, config?.agentName);
+  validateHookEvent(event, config);
   if (process.exitCode === 2) {
     return; // Validation failed in CLI mode
   }
@@ -1608,17 +1526,6 @@ export function createHookCommand(): Command {
         // stdin is read/parsed.
         agentName = resolveAgentName(opts.agent);
 
-        // An agent that declares a stdout response contract (e.g. cursor-ide)
-        // needs stdout to carry only that response - suppress this logger's
-        // own CODEMIE_DEBUG console mirror before the very first AgentRegistry
-        // lookup below (which lazily initializes every plugin and would
-        // otherwise log its own bootstrap to stdout ahead of the check's
-        // answer), then restore normal behavior once we know it wasn't needed.
-        logger.setStdoutSuppressed(true);
-        if (!agentHasStdoutResponseContract(agentName)) {
-          logger.setStdoutSuppressed(false);
-        }
-
         // Read JSON from stdin
         const rawInput = await readStdin();
         // Strip UTF-8 BOM (U+FEFF) that Windows processes may prepend.
@@ -1636,21 +1543,7 @@ export function createHookCommand(): Command {
           logger.error(`[hook] Failed to parse JSON input: ${parseMsg}`);
           logger.debug(`[hook] Invalid JSON: ${input.substring(0, 200)}...`);
           console.error(`codemie hook: failed to parse hook input JSON: ${parseMsg}`);
-          if (agentNeverBlocks(agentName)) {
-            return; // Non-blocking agent: fail without exiting 2
-          }
           process.exit(2); // Blocking error
-        }
-
-        // OTLP ingestion bypass: if agent declares otlpIngestion, forward the
-        // raw event to the local proxy daemon and exit immediately, bypassing
-        // the shared transform/validate/route pipeline and its legacy analytics.
-        if (agentOtlpIngestion(agentName)) {
-          await forwardOtlpEvent(input, agentName);
-          writeAgentStdoutResponse(agentName, event.hook_event_name);
-          await logger.close();
-          process.exitCode = 0;
-          return;
         }
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(agentName);
@@ -1679,7 +1572,7 @@ export function createHookCommand(): Command {
           transformedEvent.session_id
         );
 
-        validateHookEvent(transformedEvent, undefined, resolvedAgentName);
+        validateHookEvent(transformedEvent, undefined);
         if (process.exitCode === 2) {
           return; // Validation failed
         }
@@ -1695,12 +1588,6 @@ export function createHookCommand(): Command {
         logger.info(
           `[hook] Completed ${event.hook_event_name} event successfully (${totalDuration}ms)`
         );
-
-        // Declarative per-agent stdout response contract (e.g. cursor-ide's
-        // {"permission":"allow"}/{"continue":true}) - a no-op for every
-        // agent that doesn't declare one. Uses the agent-native event name,
-        // which transformers leave unmutated on the transformed event.
-        writeAgentStdoutResponse(resolvedAgentName, transformedEvent.hook_event_name);
 
         // Flush logger before exit to ensure write completes
         await logger.close();
@@ -1730,22 +1617,14 @@ export function createHookCommand(): Command {
         // Flush logger before exit
         await logger.close();
 
-        // An agent that declares `hookConfig.neverBlockingExit` (e.g.
-        // cursor-ide) must never see a non-zero exit, even from an internal
-        // failure - still write its stdout response contract so the host
-        // doesn't stall waiting on a response that will never arrive.
-        if (agentNeverBlocks(agentName)) {
-          writeAgentStdoutResponse(agentName, event?.hook_event_name || '');
-          process.exitCode = 0;
-        } else {
-          // Surface a one-line reason on stderr: agents report a bare "Failed with
-          // non-blocking status code: No stderr output" when the hook exits
-          // non-zero silently, leaving the real cause only in the file log.
-          console.error(`codemie hook: ${eventName} failed: ${message}`);
-          // Use process.exitCode instead of process.exit() to allow graceful shutdown
-          // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
-          process.exitCode = 1;
-        }
+
+        // Surface a one-line reason on stderr: agents report a bare "Failed with
+        // non-blocking status code: No stderr output" when the hook exits
+        // non-zero silently, leaving the real cause only in the file log.
+        console.error(`codemie hook: ${eventName} failed: ${message}`);
+        // Use process.exitCode instead of process.exit() to allow graceful shutdown
+        // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
+        process.exitCode = 1;
       } finally {
         // Remove signal handlers registered for this invocation
         process.removeListener('SIGTERM', requestAbort);

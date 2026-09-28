@@ -31,11 +31,9 @@ interface ProxyStartOptions {
 }
 
 interface UnifiedConnectOptions {
-  analytics?: boolean;
   claudeCodeOtlp?: boolean;
   claudeDesktop?: boolean;
   codexDesktop?: boolean;
-  cursorIde?: boolean;
   force?: boolean;
   insiders?: boolean;
   model?: string;
@@ -297,8 +295,6 @@ export function createProxyCommand(): Command {
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
-    .option('--cursor-ide', 'Configure Cursor IDE — writes .cursor/hooks.json (requires --analytics)')
-    .option('--analytics', 'Enable analytics-only hook ingestion (applies to --cursor-ide)')
     .option('--scope <scope>', 'Settings scope for --claude-code-otlp: "user" (default) or "project"', 'user')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
@@ -313,14 +309,12 @@ export function createProxyCommand(): Command {
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
-          cursorIde: Boolean(opts.cursorIde),
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
-        analytics: Boolean(opts.analytics),
         scope: opts.scope,
       });
     });
@@ -329,15 +323,13 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .option('--cursor-ide', 'Remove codemie-authored entries from .cursor/hooks.json')
     .option('--claude-code-otlp', 'Remove CodeMie hook and env entries from .claude/settings.json')
     .option('--scope <scope>', 'Settings scope for --claude-code-otlp: "user" (default) or "project"', 'user')
-    .action(async (opts: { claudeCodeOtlp?: boolean; codexDesktop?: boolean; cursorIde?: boolean; scope?: 'user' | 'project' }) => {
+    .action(async (opts: { claudeCodeOtlp?: boolean; codexDesktop?: boolean; scope?: 'user' | 'project' }) => {
       await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
           codexDesktop: Boolean(opts.codexDesktop),
-          cursorIde: Boolean(opts.cursorIde),
         },
         scope: opts.scope,
       });
