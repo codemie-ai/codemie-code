@@ -53,6 +53,21 @@ fi
 
 if [ -n "$SCOPE_REGISTRY_URL" ]; then
   npm config set '@codemieai:registry' "$SCOPE_REGISTRY_URL" --location user
+  echo "Revert: npm config delete @codemieai:registry --location user"
+fi
+
+LEGACY_OVERRIDE_DETECTED=0
+NPM_USER_PREFIX="$(npm config get prefix --location user 2>/dev/null || true)"
+if [ "$NPM_USER_PREFIX" = "$USER_PREFIX" ]; then
+  LEGACY_OVERRIDE_DETECTED=1
+  echo "Legacy npm prefix override detected at $USER_PREFIX"
+  echo "Packages stranded in the legacy prefix:"
+  npm ls -g --prefix "$USER_PREFIX" --depth=0 || true
+  if ! npm config delete prefix --location user; then
+    echo "Failed to delete the legacy npm prefix override." >&2
+    exit 1
+  fi
+  status "npm config" "ran: npm config delete prefix --location user"
 fi
 
 if [ "$INSTALL_MODE" = "auto" ]; then
@@ -68,7 +83,6 @@ status "Install mode" "$INSTALL_MODE"
 
 if [ "$INSTALL_MODE" = "user-prefix" ]; then
   mkdir -p "$USER_PREFIX/bin"
-  npm config set prefix "$USER_PREFIX" --location user
   case ":$PATH:" in
     *":$USER_PREFIX/bin:"*)
       status "PATH update" "already present"
@@ -94,10 +108,24 @@ fi
 RESOLVED_PACKAGE_VERSION="$(printf '%s\n' "$RESOLVED_PACKAGE_VERSION" | head -n 1)"
 status "Package" "$PACKAGE_SPEC found ($RESOLVED_PACKAGE_VERSION)"
 
-if ! npm install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL"; then
+if [ "$INSTALL_MODE" = "user-prefix" ]; then
+  INSTALL_STATUS=0
+  npm install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL" --prefix "$USER_PREFIX" || INSTALL_STATUS=$?
+else
+  INSTALL_STATUS=0
+  npm install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL" || INSTALL_STATUS=$?
+fi
+
+if [ "$INSTALL_STATUS" -ne 0 ]; then
   echo "Failed to install $PACKAGE_SPEC from registry $REGISTRY_URL." >&2
   exit 1
 fi
 
 status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
+
+if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ]; then
+  echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"
+  echo "Optional cleanup: rm -rf \"$USER_PREFIX\""
+fi
+
 echo "Run `codemie doctor` in a new terminal to verify the installation."
