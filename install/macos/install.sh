@@ -128,6 +128,13 @@ status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
 if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ]; then
   echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"
   echo "Optional cleanup: rm -rf \"$LEGACY_PREFIX\""
+  if [ "$INSTALL_MODE" != "user-prefix" ]; then
+    case ":$PATH:" in
+      *":$LEGACY_PREFIX/bin:"*)
+        status "PATH cleanup" "remove $LEGACY_PREFIX/bin from your shell profile PATH"
+        ;;
+    esac
+  fi
 fi
 
 echo "Run `codemie doctor` in a new terminal to verify the installation."
