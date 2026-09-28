@@ -223,6 +223,8 @@ export function buildPayload(
       pricedSessions,
     },
     unpricedModels: summary.unpricedModels,
+    estimatedModels: summary.estimatedModels,
+    localModels: summary.localModels ?? [],
     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
     ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
     ...(ctx.periodStart !== undefined

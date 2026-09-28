@@ -5,10 +5,12 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { AnalyticsAggregator } from './aggregator.js';
 import { AnalyticsFormatter } from './formatter.js';
-import { AnalyticsExporter } from './exporter.js';
 import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions } from './types.js';
+import type { ExportFormat } from './report/output-target.js';
 import { logger } from '../../../utils/logger.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
@@ -21,8 +23,7 @@ export function createAnalyticsCommand(): Command {
 
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
-    .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
-    .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
+    .option('--include-external', 'Also count native agent sessions CodeMie did not launch (e.g. plain `claude`)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -32,7 +33,7 @@ export function createAnalyticsCommand(): Command {
     .requiredOption('--file <path>', 'Path to the flattened OTEL events file')
     .option('--user <id>', 'Scope to one user (native user.email or user.id)')
     .action((_options: OtelCommandOptions, command: Command) => {
-      // The shared options (--report, --from, …) are registered on BOTH the parent and this
+      // The shared options (--export, --from, …) are registered on BOTH the parent and this
       // subcommand, so commander binds them to the PARENT when they appear after `otel`.
       // optsWithGlobals() merges parent + subcommand options into the full set the runner needs.
       const opts = command.optsWithGlobals() as OtelCommandOptions;
@@ -54,20 +55,39 @@ function applyCommonOptions(command: Command): Command {
     .option('--to <date>', 'Filter sessions to date (YYYY-MM-DD)')
     .option('--last <duration>', 'Filter sessions from last duration (e.g., 7d, 24h)')
     .option('-v, --verbose', 'Show detailed session-level breakdown')
-    .option('--export <format>', 'Export to file (json or csv)')
-    .option('-o, --output <path>', 'Output file path (default: ./codemie-analytics-YYYY-MM-DD.{format})')
-    .option('--report', 'Generate a self-contained HTML dashboard')
-    .option('--open', 'Open the generated HTML report in the default browser')
-    .option('--report-output <path>', 'HTML report output path (default: ./codemie-analytics-YYYY-MM-DD.html)')
-    .option('--report-format <format>', 'Report serialization: html, json, or both (default: html)');
+    .option('--export [format]', 'Write report: html (default), json, or both')
+    .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
+    .option('--open', 'Open the generated HTML report in the default browser');
 }
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
+    // --export [format] / --open / -o resolution — validated FIRST, before loading any
+    // sessions, so an invalid format (csv included) fails closed even when the source would
+    // return zero sessions (no enrichment, no summary). `--open` with no `--export` implies
+    // html. `-o <path>` with no `--export`/`--open` also implies an export, with the format
+    // inferred from the path: ends with `.json` -> json; anything else (.html, a directory
+    // target, other) -> html.
+    const openFlag = Boolean(options.open);
+    let exportFormat: ExportFormat | undefined;
+    if (options.export !== undefined) {
+      const rawFormat = options.export === true ? 'html' : options.export.toLowerCase();
+      if (rawFormat === 'html' || rawFormat === 'json' || rawFormat === 'both') {
+        exportFormat = rawFormat;
+      } else {
+        console.log(chalk.red('\n✗ Invalid export format. Use "html", "json", or "both".'));
+        process.exitCode = 1;
+        return;
+      }
+    } else if (openFlag) {
+      exportFormat = 'html';
+    } else if (options.output !== undefined) {
+      exportFormat = options.output.toLowerCase().endsWith('.json') ? 'json' : 'html';
+    }
+
     const filter = parseFilterOptions(options);
     const { rawSessions, cost } = await source.load({
       filter,
-      scanNative: options.scanNative,
       includeExternal: options.includeExternal
     });
 
@@ -77,30 +97,20 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       return;
     }
 
-    // A report needs cost computed BEFORE aggregation so zero-delta sessions that still carry
-    // real usage are retained instead of dropped as "empty".
-    const wantReport = Boolean(options.report || options.reportOutput || options.open || options.reportFormat);
-    const reportFormat = (options.reportFormat ?? 'html').toLowerCase();
-    if (wantReport && reportFormat !== 'html' && reportFormat !== 'json' && reportFormat !== 'both') {
-      console.log(chalk.red('\n✗ Invalid report format. Use "html", "json", or "both".'));
-      return;
-    }
-
-    // Cost: authoritative from the source (OTEL) when present; otherwise enrich from correlated
-    // logs, but only when a report needs it. Retain zero-delta sessions with real token usage.
-    let costResult = cost;
-    let keepSessionIds: Set<string> | undefined;
+    // Cost computed BEFORE aggregation so zero-delta sessions that still carry real usage are
+    // retained instead of dropped as "empty". Authoritative from the source (OTEL) when present;
+    // otherwise always enriched from correlated native logs. Both branches populate the same
+    // shape, so `costResult` narrows without a throw or a non-null assertion.
+    let costResult: NonNullable<typeof cost>;
     if (cost) {
-      keepSessionIds = new Set(
-        [...cost.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
-    } else if (wantReport) {
+      costResult = cost;
+    } else {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
       costResult = await enrichCosts(rawSessions, realDeps);
-      keepSessionIds = new Set(
-        [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-      );
     }
+    const keepSessionIds = new Set(
+      [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
+    );
 
     // Aggregate data (normalize models unless --verbose flag is set)
     const analytics = AnalyticsAggregator.aggregate(rawSessions, !options.verbose, keepSessionIds);
@@ -115,32 +125,13 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     const formatter = new AnalyticsFormatter(options.verbose);
     formatter.displayRoot(analytics);
     formatter.displayProjects(analytics.projects);
+    formatter.displayCost(costResult.summary);
 
-    // Export if requested
-    if (options.export) {
-      const format = options.export.toLowerCase();
-      if (format !== 'json' && format !== 'csv') {
-        console.log(chalk.red('\n✗ Invalid export format. Use "json" or "csv".'));
-        return;
-      }
-      const outputPath = options.output || AnalyticsExporter.getDefaultOutputPath(format, process.cwd());
-      if (format === 'json') {
-        AnalyticsExporter.exportJSON(analytics, outputPath);
-      } else {
-        AnalyticsExporter.exportCSV(analytics, outputPath);
-      }
-    }
-
-    // Generate the report if requested (--report-output and --open imply --report)
-    if (wantReport && costResult) {
+    // Write the report (--export [format] / -o / --open).
+    if (exportFormat) {
       const { buildPayload } = await import('./report/payload-builder.js');
-      const {
-        generateReport,
-        generateReportJson,
-        getDefaultReportPath,
-        getDefaultReportJsonPath,
-        writeReportWithFallback
-      } = await import('./report/report-generator.js');
+      const { generateReport, generateReportJson, writeReportWithFallback } = await import('./report/report-generator.js');
+      const { resolveOutputTargets } = await import('./report/output-target.js');
 
       // Load user email for report metadata and filename; non-fatal if config is unavailable.
       let userEmail: string | undefined;
@@ -181,42 +172,37 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
 
-      const cwd = process.cwd();
-      let htmlPath: string | undefined;
-      let jsonPath: string | undefined;
-      let htmlIsDefault = false;
-      let jsonIsDefault = false;
-
-      if (reportFormat === 'both') {
-        const base = options.reportOutput?.replace(/\.(html|json)$/i, '');
-        htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd, userEmail);
-        jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd, userEmail);
-        htmlIsDefault = jsonIsDefault = !base;
-      } else if (reportFormat === 'html') {
-        htmlPath = options.reportOutput || getDefaultReportPath(cwd, userEmail);
-        htmlIsDefault = !options.reportOutput;
-      } else {
-        jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd, userEmail);
-        jsonIsDefault = !options.reportOutput;
-      }
+      const targets = resolveOutputTargets(exportFormat, options.output, process.cwd(), userEmail);
+      let htmlPath = targets.html;
+      let jsonPath = targets.json;
 
       if (htmlPath) {
-        const result = writeReportWithFallback((p) => generateReport(payload, p), htmlPath, htmlIsDefault);
-        htmlPath = result.path;
-        if (result.relocatedFrom) {
-          console.log(
-            chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
-          );
+        if (targets.isDefault) {
+          const result = writeReportWithFallback((p) => generateReport(payload, p), htmlPath, true);
+          htmlPath = result.path;
+          if (result.relocatedFrom) {
+            console.log(
+              chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
+            );
+          }
+        } else {
+          mkdirSync(dirname(htmlPath), { recursive: true });
+          generateReport(payload, htmlPath);
         }
         console.log(chalk.green(`\n✓ HTML report written to: ${htmlPath}`));
       }
       if (jsonPath) {
-        const result = writeReportWithFallback((p) => generateReportJson(payload, p), jsonPath, jsonIsDefault);
-        jsonPath = result.path;
-        if (result.relocatedFrom) {
-          console.log(
-            chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
-          );
+        if (targets.isDefault) {
+          const result = writeReportWithFallback((p) => generateReportJson(payload, p), jsonPath, true);
+          jsonPath = result.path;
+          if (result.relocatedFrom) {
+            console.log(
+              chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
+            );
+          }
+        } else {
+          mkdirSync(dirname(jsonPath), { recursive: true });
+          generateReportJson(payload, jsonPath);
         }
         console.log(chalk.green(`\n✓ JSON report written to: ${jsonPath}`));
       }
@@ -230,12 +216,12 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         );
       }
 
-      if (options.open) {
+      if (openFlag) {
         if (htmlPath) {
           const { openUrlInBrowser } = await import('../../../utils/browser.js');
           await openUrlInBrowser(htmlPath);
         } else {
-          console.log(chalk.dim('  --open ignored: no HTML produced (use --report-format html or both).'));
+          console.log(chalk.dim('  --open ignored: no HTML produced (use --export html or both).'));
         }
       }
     }

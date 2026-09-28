@@ -460,7 +460,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
     expect(process.exitCode).toBe(0);
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
-    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false, undefined);
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
   });
 });
 

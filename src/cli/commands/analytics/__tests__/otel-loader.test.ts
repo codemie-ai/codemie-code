@@ -80,6 +80,101 @@ describe('buildCostIndex', () => {
   });
 });
 
+describe('buildCostIndex - pricing fallback (no cost_usd)', () => {
+  const ev = (sessionId: string, ts: string, extra: Record<string, unknown>): OtelEvent => ({
+    _type: 'log',
+    ts,
+    name: 'api_request',
+    attrs: { 'session.id': sessionId, 'event.name': 'api_request', ...extra },
+    resource: {},
+  });
+
+  it('lists a model with no cost_usd that the resolver cannot price as unpriced', () => {
+    const { index, summary } = buildCostIndex([
+      ev('U1', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.9', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(summary.unpricedModels).toEqual(['gpt-5.9']);
+    expect(index.get('U1')!.perModel[0].unpriced).toBe(true);
+  });
+
+  it('prices usage through resolvePrice when cost_usd is absent', () => {
+    const { index, summary } = buildCostIndex([
+      ev('U2', '2026-06-19T10:00:00.000Z', { model: 'claude-opus-4-6', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(index.get('U2')!.costUSD).toBeGreaterThan(0);
+    expect(summary.unpricedModels).toEqual([]);
+    expect(summary.localModels).toEqual([]);
+  });
+
+  it('prices a tier-estimate model through the resolver and surfaces it as estimated', () => {
+    const { index, summary } = buildCostIndex([
+      ev('U3', '2026-06-19T10:00:00.000Z', { model: 'claude-sonnet-4-7', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(summary.estimatedModels).toEqual(['claude-sonnet-4-7']);
+    expect(index.get('U3')!.perModel[0].estimated).toBe(true);
+  });
+
+  it('does not flag a zero-usage event with no model attribute as unpriced noise', () => {
+    const { summary } = buildCostIndex([ev('U4', '2026-06-19T10:00:00.000Z', {})]);
+    expect(summary.unpricedModels).toEqual([]);
+  });
+
+  it('still surfaces a usage-bearing event with no model attribute as (unknown) unpriced', () => {
+    const { summary } = buildCostIndex([
+      ev('U5', '2026-06-19T10:00:00.000Z', { input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(summary.unpricedModels).toEqual(['(unknown)']);
+  });
+});
+
+describe('buildCostIndex - session priced/costSource flags (CR-011)', () => {
+  const ev = (sessionId: string, ts: string, extra: Record<string, unknown>): OtelEvent => ({
+    _type: 'log',
+    ts,
+    name: 'api_request',
+    attrs: { 'session.id': sessionId, 'event.name': 'api_request', ...extra },
+    resource: {},
+  });
+
+  it('does not report priced:true for a session whose resolver-path usage is entirely unpriced', () => {
+    const { index } = buildCostIndex([
+      ev('U1', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.9', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(index.get('U1')!.priced).toBe(false);
+  });
+
+  it('reports priced:true when the resolver successfully table-prices the only event', () => {
+    const { index } = buildCostIndex([
+      ev('U2', '2026-06-19T10:00:00.000Z', { model: 'claude-opus-4-6', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    expect(index.get('U2')!.priced).toBe(true);
+  });
+
+  it('does not label a mixed cost_usd + table-priced session as purely source-reported/authoritative', () => {
+    const { index } = buildCostIndex([
+      ev('MIX', '2026-06-19T10:00:00.000Z', { model: 'gpt-5.9', input_tokens: 100, output_tokens: 50, cost_usd: 0.01 }),
+      ev('MIX', '2026-06-19T10:01:00.000Z', { model: 'claude-opus-4-6', input_tokens: 1000, output_tokens: 500 }),
+    ]);
+    const sc = index.get('MIX')!;
+    expect(sc.priced).toBe(true);
+    // No enum value in cost/types.ts represents "mixed" — 'native-estimate'/'standard-api-tokens'
+    // (the same pair cost-enricher.ts uses for table-priced native-log sessions) is the closest
+    // existing value, and is chosen over 'authoritative'/'source-reported' precisely because this
+    // session is NOT purely source-reported.
+    expect(sc.costSource).toBe('native-estimate');
+    expect(sc.costBasis).toBe('standard-api-tokens');
+  });
+
+  it('keeps a purely cost_usd-reported session labelled authoritative/source-reported', () => {
+    const { index } = buildCostIndex([
+      ev('AUTH', '2026-06-19T10:00:00.000Z', { model: 'claude-opus-4-8', input_tokens: 100, output_tokens: 50, cost_usd: 0.01 }),
+    ]);
+    const sc = index.get('AUTH')!;
+    expect(sc.costSource).toBe('authoritative');
+    expect(sc.costBasis).toBe('source-reported');
+  });
+});
+
 describe('buildDispatches', () => {
   it('emits agent + skill dispatches (agent spans completion − duration)', () => {
     const mainEvents = parseOtelJsonl(TEXT).filter((e) => (e.attrs['session.id'] as string) === MAIN);

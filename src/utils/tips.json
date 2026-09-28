@@ -527,20 +527,20 @@
   {
     "id": "cmd-analytics-report",
     "category": "Insights",
-    "message": "`codemie analytics --report --open` builds a self-contained HTML dashboard of your usage and opens it in the browser.",
+    "message": "`codemie analytics --open` builds a self-contained HTML dashboard of your usage and opens it in the browser.",
     "command": "analytics",
     "commands": [
-      "codemie analytics --report --open"
+      "codemie analytics --open"
     ]
   },
   {
     "id": "cmd-analytics-filter",
     "category": "Insights",
-    "message": "Slice the numbers: `codemie analytics --agent claude --last 7d --branch main`, then `--export csv -o report.csv` to share.",
+    "message": "Slice the numbers: `codemie analytics --agent claude --last 7d --branch main`, then `--export json -o report.json` to share.",
     "command": "analytics",
     "commands": [
       "codemie analytics --agent claude --last 7d --branch main",
-      "codemie analytics --agent claude --last 7d --branch main --export csv -o report.csv"
+      "codemie analytics --agent claude --last 7d --branch main --export json -o report.json"
     ]
   },
   {
@@ -660,22 +660,22 @@
     ]
   },
   {
-    "id": "cmd-analytics-report-format",
+    "id": "cmd-analytics-export-json",
     "category": "Insights",
-    "message": "Feed the numbers to your own tools: `codemie analytics --report --report-format json` writes the exact priced dataset behind the HTML dashboard.",
+    "message": "Feed the numbers to your own tools: `codemie analytics --export json` writes the exact priced dataset behind the HTML dashboard.",
     "command": "analytics",
     "commands": [
-      "codemie analytics --report --report-format json"
+      "codemie analytics --export json"
     ]
   },
   {
     "id": "cmd-analytics-native",
     "category": "Insights",
-    "message": "Even plain `claude` sessions show up: analytics scans native agent logs by default, and `codemie analytics --no-scan-native` restricts to CodeMie-tracked runs.",
+    "message": "Analytics counts only sessions CodeMie launched by default; `codemie analytics --include-external` also counts agents you ran directly, like plain `claude`.",
     "command": "analytics",
     "commands": [
       "codemie analytics",
-      "codemie analytics --no-scan-native"
+      "codemie analytics --include-external"
     ]
   },
   {

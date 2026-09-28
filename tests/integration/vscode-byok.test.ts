@@ -35,6 +35,7 @@ import {
 
 const GATEWAY_KEY = 'test-local-key';
 const PROFILE_MODEL = 'profile-selected-model-that-must-not-be-used';
+const UNKNOWN_MODEL = 'gpt-6-sol';
 
 interface StartedServer {
   server: Server;
@@ -207,10 +208,11 @@ describe('VS Code BYOK model matrix', () => {
       // serve it directly from every family in the capability table so each
       // entry resolves as an exact match — the model matrix below then
       // exercises the request-forwarding behavior, not the resolver itself.
+      // One extra id with no capability family must still be written.
       if (req.url?.startsWith('/v1/llm_models')) {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
-          data: VS_CODE_CAPABILITY_TABLE.map(entry => ({ id: entry.family })),
+          data: [...VS_CODE_CAPABILITY_TABLE.map(entry => ({ id: entry.family })), { id: UNKNOWN_MODEL }],
         }));
         return;
       }
@@ -238,8 +240,13 @@ describe('VS Code BYOK model matrix', () => {
       provider => provider.name === 'CodeMie' && provider.vendor === 'customendpoint'
     );
 
-    expect(codeMieProvider?.models).toHaveLength(VS_CODE_CAPABILITY_TABLE.length);
+    expect(codeMieProvider?.models).toHaveLength(VS_CODE_CAPABILITY_TABLE.length + 1);
     expect(codeMieProvider?.models?.some(model => model.id === PROFILE_MODEL)).toBe(false);
+    expect(codeMieProvider?.models?.find(model => model.id === UNKNOWN_MODEL)).toMatchObject({
+      id: UNKNOWN_MODEL,
+      apiType: 'responses',
+      zeroDataRetentionEnabled: true,
+    });
 
     for (const definition of VS_CODE_CAPABILITY_TABLE) {
       const configuredModel = codeMieProvider?.models?.find(model => model.id === definition.family);

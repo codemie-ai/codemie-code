@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
 import { KimiSessionAdapter } from '../kimi.session.js';
 import { KimiMetricsProcessor } from '../session/processors/kimi.metrics-processor.js';
 import type { MetricDelta } from '../../../core/metrics/types.js';
@@ -165,5 +167,47 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     expect(session.agentName).toBe('Kimi Code');
     expect(session.messages).toEqual([]);
     expect(session.metrics).toBeUndefined();
+  });
+});
+
+describe('KimiSessionAdapter.parseSessionFile — __kimi_env_model__ alias', () => {
+  let sessionDir: string;
+  let wirePath: string;
+
+  const wire = [
+    { type: 'metadata', protocol_version: '1', created_at: 1788258290000 },
+    { type: 'config.update', modelAlias: '__kimi_env_model__', time: 1788258290500 },
+    { type: 'usage.record', agentId: 'main', model: '__kimi_env_model__', usage: { inputOther: 100, output: 2, inputCacheRead: 0, inputCacheCreation: 0 }, usageScope: 'turn', time: 1788258297787 },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n';
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'kimi-session-'));
+    await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+    wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
+    await writeFile(wirePath, wire);
+  });
+
+  afterEach(async () => {
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  it('substitutes the real model from logs/kimi-code.log into metadata and usage records', async () => {
+    await mkdir(join(sessionDir, 'logs'), { recursive: true });
+    await writeFile(
+      join(sessionDir, 'logs', 'kimi-code.log'),
+      '2026-09-01T10:24:55.508Z INFO  llm config  turnStep=0.1 provider=openai model=moonshotai.kimi-k2.5 modelAlias=__kimi_env_model__ thinkingEffort=on\n'
+    );
+
+    const session = await createAdapter().parseSessionFile(wirePath, 'env-alias');
+
+    expect(session.metadata.model).toBe('moonshotai.kimi-k2.5');
+    const usage = (session.messages as Array<{ type: string; model?: string }>).filter((m) => m.type === 'usage.record');
+    expect(usage.map((m) => m.model)).toEqual(['moonshotai.kimi-k2.5']);
+  });
+
+  it('keeps the alias when the session log is missing', async () => {
+    const session = await createAdapter().parseSessionFile(wirePath, 'env-alias-nolog');
+
+    expect(session.metadata.model).toBe('__kimi_env_model__');
   });
 });

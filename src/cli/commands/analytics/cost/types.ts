@@ -21,6 +21,10 @@ export interface ModelCost {
   tokens: TokenUsage;
   costUSD: number; // 0 when unpriced
   unpriced: boolean; // true when no pricing entry matched
+  /** True when the matched pricing.json row is a tier estimate, not a confirmed published price. */
+  estimated?: boolean;
+  /** True when the model runs locally (e.g. a non-cloud Ollama model) — priced at $0, not unpriced. */
+  local?: boolean;
 }
 
 /** One cumulative point in a session's token & cost growth series. */
@@ -205,4 +209,6 @@ export interface CostSummary {
   pricedSessions: number;
   totalSessions: number;
   unpricedModels: string[]; // distinct models seen without a pricing entry
+  estimatedModels: string[]; // distinct models priced from a tier-estimate row (ModelPrice.estimated)
+  localModels: string[]; // distinct locally-served models (e.g. non-cloud Ollama) priced at $0
 }

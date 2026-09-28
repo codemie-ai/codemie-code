@@ -13,6 +13,7 @@ import type {
   ToolStats,
   LanguageStats
 } from './types.js';
+import type { CostSummary } from './cost/types.js';
 
 export class AnalyticsFormatter {
   private verbose: boolean;
@@ -66,6 +67,33 @@ export class AnalyticsFormatter {
 
     for (const project of projects) {
       this.displayProject(project);
+    }
+  }
+
+  /**
+   * Display run-level cost: total cost, priced-session coverage, and any unpriced or
+   * estimated models (spec section A: "the terminal summary always shows total cost,
+   * priced-session coverage, and any unpriced or estimated models").
+   */
+  displayCost(summary: CostSummary): void {
+    console.log(chalk.bold.cyan('\n' + '-'.repeat(60)));
+    console.log(chalk.bold.cyan('COST'));
+    console.log(chalk.bold.cyan('-'.repeat(60)));
+
+    console.log(`${chalk.cyan('Total cost:')} ${chalk.green(this.formatUSD(summary.totalCostUSD))}`);
+    console.log(`${chalk.cyan('Priced sessions:')} ${summary.pricedSessions}/${summary.totalSessions}`);
+
+    if (summary.unpricedModels.length > 0) {
+      console.log(`${chalk.yellow('Unpriced models:')} ${summary.unpricedModels.join(', ')}`);
+    }
+
+    if (summary.estimatedModels.length > 0) {
+      console.log(`${chalk.yellow('Estimated models:')} ${summary.estimatedModels.join(', ')}`);
+    }
+
+    const localModels = summary.localModels ?? [];
+    if (localModels.length > 0) {
+      console.log(`${chalk.cyan('Local models (free):')} ${localModels.join(', ')}`);
     }
   }
 
@@ -375,6 +403,13 @@ export class AnalyticsFormatter {
     if (languages.length > 10) {
       console.log(`${indent}${chalk.dim(`... and ${languages.length - 10} more`)}`);
     }
+  }
+
+  /**
+   * Format a USD amount for terminal display.
+   */
+  private formatUSD(amount: number): string {
+    return `$${amount.toFixed(2)}`;
   }
 
   /**

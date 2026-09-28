@@ -277,6 +277,66 @@ describe('enrichCosts', () => {
     expect(summary.unpricedModels).toContain('no-such-model-xyz');
   });
 
+  it('flags a tier-estimate priced model as estimated on both the per-model line and the summary, and leaves an unknown model unpriced', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () =>
+        ({
+          sessionId: 's1',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            { message: { model: 'claude-sonnet-4-7', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+            { message: { model: 'gpt-5.9', usage: { input_tokens: 10, output_tokens: 5 } } },
+          ],
+        }) as never,
+    };
+    const { index, summary } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    const estimatedLine = c.perModel.find((m) => m.model === 'claude-sonnet-4-7')!;
+    expect(estimatedLine.estimated).toBe(true);
+    expect(estimatedLine.costUSD).toBeCloseTo(3, 6); // 1M input @ $3/1M (tier-estimate row)
+    const unknownLine = c.perModel.find((m) => m.model === 'gpt-5.9')!;
+    expect(unknownLine.unpriced).toBe(true);
+    expect(unknownLine.estimated).toBeFalsy();
+    expect(summary.estimatedModels).toContain('claude-sonnet-4-7');
+    expect(summary.unpricedModels).toContain('gpt-5.9');
+  });
+
+  describe('Ollama local models', () => {
+    const ollamaParsed = (model: string) => async () =>
+      ({
+        sessionId: 's1', agentName: 'claude', metadata: {},
+        messages: [{ message: { model, usage: { input_tokens: 1_000, output_tokens: 50 } } }],
+      }) as never;
+    const ollamaRaw = (provider: string | undefined) =>
+      [{ sessionId: 's1', startEvent: { agentName: 'claude', data: provider ? { provider } : {} }, deltas: [] }] as never[];
+
+    it('prices a non-cloud model on the ollama provider at $0 as local, not unpriced, and counts it priced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      const c = index.get('s1')!;
+      expect(c.priced).toBe(true);
+      expect(c.costUSD).toBe(0);
+      expect(c.perModel[0]).toMatchObject({ model: 'gpt-oss:120b', unpriced: false, local: true, costUSD: 0 });
+      expect(summary.localModels).toEqual(['gpt-oss:120b']);
+      expect(summary.unpricedModels).toEqual([]);
+      expect(summary.pricedSessions).toBe(1);
+    });
+
+    it('keeps an Ollama cloud tag unpriced', async () => {
+      const { index, summary } = await enrichCosts(ollamaRaw('ollama'), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b-cloud') });
+      expect(index.get('s1')!.perModel[0].local).toBeUndefined();
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b-cloud']);
+      expect(summary.localModels).toEqual([]);
+    });
+
+    it('keeps an Ollama-style tag unpriced when the provider is not ollama', async () => {
+      const { summary } = await enrichCosts(ollamaRaw(undefined), { ...baseDeps, parseNative: ollamaParsed('gpt-oss:120b') });
+      expect(summary.unpricedModels).toEqual(['gpt-oss:120b']);
+      expect(summary.localModels).toEqual([]);
+    });
+  });
+
   it('costSeries endpoint equals the session total (same records, same pricing)', async () => {
     const deps: EnricherDeps = {
       ...baseDeps,

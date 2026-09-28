@@ -871,7 +871,7 @@ The persistent daemon **does** receive a configured model: `spawnDaemon()` passe
 
 The command reuses a healthy daemon when its profile, project, provider, target URL, `vscode-byok` client type, **and configured model** all match (`daemonMatchesRequest()` in `connect-orchestrator.ts` also compares model when the request specifies one — a mismatch spawns a fresh daemon rather than silently reusing a stale one).
 
-The connector merges one managed model into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
+The connector writes the full tenant catalog into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
 GPT-5.5 and all three GPT-5.6 entries use `/v1/responses` with
 `zeroDataRetentionEnabled: true`, `thinking: true`, and Responses-format reasoning efforts. VS

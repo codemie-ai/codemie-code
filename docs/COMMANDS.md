@@ -11,7 +11,7 @@ codemie setup                    # Interactive configuration wizard
 codemie setup skills             # Manage CodeMie platform skills (register/unregister)
 codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
 codemie profile <command>        # Manage provider profiles
-codemie analytics [options]      # View usage analytics (add --report for an HTML dashboard)
+codemie analytics [options]      # View usage analytics (add --export for an HTML/JSON report)
 codemie log [options]            # View and manage debug logs and sessions
 codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
@@ -105,7 +105,7 @@ codemie proxy connect vscode --profile work
 codemie proxy connect vscode --insiders
 ```
 
-The connector resolves the selected profile once, synchronizes skills, and writes the managed CodeMie model catalog into VS Code's `User/chatLanguageModels.json`. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
+The connector resolves the selected profile once, synchronizes skills, and writes every enabled tenant model from the live catalog into VS Code's `User/chatLanguageModels.json`, in catalog order. Known families are enriched from the capability table; unknown models get conservative defaults rather than being dropped. The profile's default model does not affect which models are written. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
 
 `--profile <name>` is a one-command override and does not change the active CodeMie profile. Model and project remain independent: the model is written into VS Code configuration, while `codeMieProject` is passed to the daemon and emitted as `X-CodeMie-Project`. When a selected profile has no project of its own, compatible repository-local project context continues to apply through the standard profile merge rules.
 
@@ -199,7 +199,7 @@ and routing coverage runs as part of `npm test`.
 | Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect vscode` |
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
-| Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
+| New tenant models missing | VS Code configuration was written before the tenant catalog grew | Re-run `codemie proxy connect --vscode` |
 | `previous_response_id` appears in a VS Code request | VS Code is older than the stateless Responses implementation or has stale model metadata | Upgrade to a current VS Code release, re-run the connector, reload VS Code, and verify `store: false` plus no `previous_response_id` in Chat Debug logs |
 | `previous_response_not_found` occurs on a follow-up | The client is still using stateful Responses replay | Complete the compatibility check above; do not add proxy-side response caching or deployment affinity |
 | `invalid_encrypted_content` occurs on a follow-up | The affinity pin expired, or `encrypted_content_affinity` is not configured on the gateway | Retry the turn — the proxy strips reasoning state after the first rejection and the session continues. If it recurs on every session, verify the gateway's `optional_pre_call_checks` and `deployment_affinity_ttl_seconds`. Never share encrypted reasoning content in logs |
@@ -634,39 +634,38 @@ codemie analytics --last 7d                     # Last 7 days
 
 # Output options
 codemie analytics --verbose                     # Detailed session breakdown
-codemie analytics --export json                 # Export to JSON
-codemie analytics --export csv -o report.csv    # Export to CSV
-codemie analytics --no-scan-native              # Only CodeMie-tracked sessions (skip native logs)
+codemie analytics --export json                 # Write the costed report as JSON
+codemie analytics --include-external            # Also count agents run directly (plain claude, codex, …)
 
 # HTML dashboard (self-contained, no server)
-codemie analytics --report                      # Write codemie-analytics-YYYY-MM-DD.html
-codemie analytics --report --open               # Write and open in the default browser
-codemie analytics --last 30d --report-output ./team.html   # Custom path (implies --report)
-codemie analytics --report --report-format json # Write the dashboard data as codemie-analytics-YYYY-MM-DD.report.json
-codemie analytics --report --report-format both # Write both .html and .report.json (shared stem)
+codemie analytics --export                      # Write codemie-analytics-YYYY-MM-DD.html
+codemie analytics --open                        # Write and open in the default browser
+codemie analytics --last 30d --export -o ./team.html   # Custom path
+codemie analytics --export both                 # Write both .html and .report.json (shared stem)
 
 # View specific session
 codemie analytics --session abc-123-def         # Single session details
 ```
 
-### HTML Dashboard (`--report`)
+### HTML Dashboard (`--export`)
 
-`--report` generates a single self-contained HTML file styled with the CodeMie design
-system — open it anywhere, **fully offline** (the design-system CSS, the client app, and
-the Chart.js library are all inlined; no server and no CDN required). It composes with
-every filter (`--project`, `--agent`, `--last`, etc.) and with `--export`.
+`--export` (bare, or `--export html`) generates a single self-contained HTML file styled
+with the CodeMie design system — open it anywhere, **fully offline** (the design-system
+CSS, the client app, and the Chart.js library are all inlined; no server and no CDN
+required). It composes with every filter (`--project`, `--agent`, `--last`, etc.).
 
-**Structured export (`--report-format`).** The report can be serialized as `html`
-(default), `json`, or `both`. `--report-format json` writes the exact cost-enriched
-dataset the dashboard renders — flat per-session records plus the meta totals,
-per-agent coverage, and per-model cost — as a `.json` file you can pipe into other
-tools. With `both` and a `--report-output foo.html`, the JSON is written alongside as
-`foo.json` (a shared stem is derived, so `--report-output foo`, `foo.html`, or `foo.json`
-all yield `foo.html` + `foo.json`). This is distinct from `--export json`, which writes
-the raw, **cost-less** project→branch→session analytics tree; use `--report-format json`
-when you want the priced report data. Their default filenames differ on purpose — the
-report writes `codemie-analytics-<date>.report.json` while `--export json` writes
-`codemie-analytics-<date>.json` — so running both in one command never overwrites either.
+**Structured export (`--export [format]`).** The report can be written as `html`
+(default when the flag is bare), `json`, or `both`. `--export json` writes the exact
+costed `ReportPayload` the dashboard renders — flat per-session records plus the meta
+totals, per-agent coverage, per-model cost, `unpricedModels`, and `estimatedModels` — as
+a `.report.json` file you can pipe into other tools. This is the **only** JSON schema
+`codemie analytics` writes; there is no separate cost-less export. With `both` and an
+`-o foo.html`, the JSON is written alongside as `foo.report.json` (a shared stem is
+derived, so `-o foo`, `foo.html`, or `foo.json` all yield `foo.html` + `foo.report.json`).
+The default filename ends in `.report.json` rather than `.json` so a directory holding
+both formats never has one file overwrite the other. Any unsupported `--export` value
+is rejected with an invalid-format error — `html`, `json`, and `both` are the only
+accepted formats.
 
 The dashboard has seven client-side views with instant in-browser filtering:
 **Overview, Agents · Compare, Projects, Tools & Models, Activity** (weekday × hour
@@ -685,11 +684,11 @@ tool), so unpriced tools are explicit. Sessions whose native log is absent, or w
 agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
 "priced N of M" and never silently counted as `$0`.
 
-**Native session discovery (on by default).** `codemie analytics` (terminal and `--report`)
-scans native agent logs (`~/.claude/projects/**`) directly, so sessions from the plain
-`claude` command — your Anthropic subscription, not `codemie-claude` — are included even
-though CodeMie never tracked them. Logs already correlated to a tracked session are deduped
-by path. Pass `--no-scan-native` to use only CodeMie-tracked sessions.
+**Native session discovery (always on).** `codemie analytics` (terminal and `--export`)
+scans native agent logs (`~/.claude/projects/**`) and deduplicates them by path against
+tracked sessions. By default only sessions CodeMie launched are counted; pass
+`--include-external` to also count sessions from agents run directly — e.g. the plain
+`claude` command on your Anthropic subscription.
 
 **De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
 files, so the same API response appears in multiple logs. Cost de-duplicates by
@@ -700,16 +699,27 @@ API value of your usage, not dollars billed.
 
 > **Refreshing prices:** `src/utils/pricing.json` is a vendored table (`{ "<model>":
 > { input, output, cacheRead, cacheWrite } }`, USD per 1M tokens). When new models ship,
-> add or update entries there — unpriced models are surfaced in the Cost view's banner.
+> add or update entries there — unpriced models are surfaced in the Cost view's banner
+> and the terminal's `Unpriced models:` line. A model resolves only through an exact
+> match, an exact match after stripping one trailing snapshot suffix
+> (`-YYYYMMDD`/`-YYYY-MM-DD`/`-latest`/`-preview`), or — for a version-first Claude id —
+> the same two steps tried again after reordering it to the table's family-first form
+> (e.g. `claude-4-5-sonnet` → `claude-sonnet-4-5`) — there is no other family/tier
+> fallback, so an unlisted model always shows as unpriced rather than being guessed from
+> a nearby one. Rows marked `"estimated": true` (a tier estimate, not a confirmed
+> published price) are priced but also listed separately under `Estimated models:` /
+> `meta.estimatedModels`. See
+> [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#model-pricing-resolution) for the full
+> canonicalization and lookup order.
 
 **Analytics Features:**
 - Hierarchical aggregation: Root → Projects → Branches → Sessions
-- Session metrics: Duration, turns, tokens, costs
+- Session metrics: Duration, turns, tokens, costs (cost is always computed, with or without `--export`)
 - Model distribution across all sessions
 - Tool usage breakdown with success/failure rates
 - Language/format statistics (lines added, files created/modified)
 - Cache hit rates and token efficiency metrics
-- Export to JSON/CSV for external analysis
+- Export to a costed JSON `ReportPayload` for external analysis
 - Privacy-first (local storage at `~/.codemie/metrics/`)
 
 **Example Workflows:**
@@ -722,7 +732,7 @@ codemie analytics --last 7d
 codemie analytics --project my-project --verbose
 
 # Cost tracking
-codemie analytics --from 2025-12-01 --to 2025-12-07 --export csv -o weekly-costs.csv
+codemie analytics --from 2025-12-01 --to 2025-12-07 --export json -o weekly-costs.report.json
 
 # Agent comparison
 codemie analytics --agent claude
@@ -1373,13 +1383,14 @@ codemie analytics [options]
 
 **Output Options:**
 - `-v, --verbose` - Show detailed session-level breakdown
-- `--export <format>` - Export to file (json or csv)
-- `-o, --output <path>` - Output file path (default: ./codemie-analytics-YYYY-MM-DD.{format})
+- `--export [format]` - Write a report: `html` (default when bare), `json`, or `both`; any other value is an invalid-format error
+- `-o, --output <path>` - Output file or directory (default: `./codemie-analytics-YYYY-MM-DD.{ext}`); a directory target writes each requested format under its default name inside it; given alone (no `--export`/`--open`) it also implies an export, with the format inferred from the path (`.json` → `json`, otherwise → `html`)
+- `--open` - Open the generated HTML report in the default browser (implies `--export html` when `--export` is not given)
 
 **Metrics Displayed:**
 - Session count and duration
 - Token usage (input/output/total)
-- Cost estimates
+- Cost estimates — always computed, whether or not `--export` is used; the terminal summary also lists any unpriced or estimated models
 - Model distribution
 - Tool usage statistics
 - Cache hit rates
