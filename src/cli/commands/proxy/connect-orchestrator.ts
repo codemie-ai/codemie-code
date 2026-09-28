@@ -382,7 +382,7 @@ async function ensureDaemon(
   if (!running || !state) {
     console.log('Starting proxy...');
     state = await spawnDaemon({
-      targetUrl: 'http://localhost:8080',
+      targetUrl: config.baseUrl as string,
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
       ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
@@ -392,8 +392,8 @@ async function ensureDaemon(
       // config.ssoConfig is never populated anywhere in this codebase - it's a
       // dead field. Fall back to codeMieUrl/baseUrl, the same convention
       // sso.models.ts uses to resolve the CodeMie backend API URL.
-      syncApiUrl: 'http://localhost:8080',
-      syncCodeMieUrl: 'http://localhost:8080',
+      syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
+      syncCodeMieUrl: config.codeMieUrl,
     });
     startedInThisRun = true;
     console.log(verbose
