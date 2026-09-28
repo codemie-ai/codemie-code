@@ -6,9 +6,9 @@
       "provider": "ai-run-sso",
       "apiKey": "sso-provided",
       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-sonnet-5",
       "haikuModel": "claude-haiku-4-5-20251001",
-      "sonnetModel": "claude-sonnet-4-6[1m]",
+      "sonnetModel": "claude-sonnet-5",
       "opusModel": "claude-opus-5",
       "name": "epm-cdme"
     }
