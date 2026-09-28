@@ -14,16 +14,14 @@ export class SessionsSource implements AnalyticsSource {
 
     // Discover native agent logs (not tracked by CodeMie) and merge so analytics reflect
     // ALL usage. Deduped against tracked logs inside the loader.
-    if (opts.scanNative !== false) {
-      try {
-        const { loadNativeSessions } = await import('../native-loader.js');
-        const natives = (await loadNativeSessions(opts.filter))
-          .filter((s) => loader.sessionMatchesFilter(s, opts.filter))
-          .filter((s) => opts.includeExternal || s.startEvent?.data.provider !== 'native-external');
-        rawSessions.push(...natives);
-      } catch (error) {
-        logger.debug('Native session discovery failed (continuing with tracked sessions):', error);
-      }
+    try {
+      const { loadNativeSessions } = await import('../native-loader.js');
+      const natives = (await loadNativeSessions(opts.filter))
+        .filter((s) => loader.sessionMatchesFilter(s, opts.filter))
+        .filter((s) => opts.includeExternal || s.startEvent?.data.provider !== 'native-external');
+      rawSessions.push(...natives);
+    } catch (error) {
+      logger.debug('Native session discovery failed (continuing with tracked sessions):', error);
     }
     return { rawSessions };
   }

@@ -1,6 +1,6 @@
 # Analytics Report
 
-The `codemie analytics --report` command generates a **self-contained HTML dashboard** from your local AI session history. No server required — open the file in any browser and explore your data offline.
+`codemie analytics --export` generates a **self-contained HTML dashboard** from your local AI session history. No server required — open the file in any browser and explore your data offline. Cost is always computed, whether or not you pass `--export`.
 
 ---
 
@@ -8,25 +8,25 @@ The `codemie analytics --report` command generates a **self-contained HTML dashb
 
 ```bash
 # Generate report covering all tracked history and open it immediately
-codemie analytics --report --open
+codemie analytics --open
 
 # Last 7 days
-codemie analytics --report --open --last 7d
+codemie analytics --open --last 7d
 
 # Specific date range
-codemie analytics --report --open --from 2025-01-01 --to 2025-01-31
+codemie analytics --open --from 2025-01-01 --to 2025-01-31
 
 # Filter to one project
-codemie analytics --report --open --project codemie-code
+codemie analytics --open --project codemie-code
 
 # Save to a specific path
-codemie analytics --report --report-output ~/reports/weekly.html
+codemie analytics --export -o ~/reports/weekly.html
 
 # Also export the underlying data as JSON
-codemie analytics --report --report-format both
+codemie analytics --export both
 
 # Include ALL local agent usage — also the sessions you ran outside CodeMie
-codemie analytics --report --open --include-external
+codemie analytics --open --include-external
 ```
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
@@ -154,6 +154,29 @@ Key elements:
 - **Cost by agent** — doughnut chart
 - **Cost by model** — horizontal bar chart of USD spend per model
 - **Most expensive sessions** — top 10 ranked by cost, with per-session token breakdown (input, output, cached)
+- **Unpriced models** / **Estimated models** / **Local models (free)** — the same lists shown in the terminal summary (see below)
+
+---
+
+### Model pricing resolution
+
+Every observed model id is canonicalized before it is looked up in `src/utils/pricing.json`:
+
+1. Strip a Bedrock `bedrock/`/`converse/` prefix (including the stacked `bedrock/converse/` form), the `<region>.anthropic.` prefix, and a trailing `-v<N>:<N>` suffix.
+2. Strip vendor path prefixes: `kimi-code/`, `openai.`, `openai/`, `azure/`, `vertex_ai/`, `anthropic/`, and the dot-form `moonshotai.` and `qwen.` (e.g. `moonshotai.kimi-k2.5`, `qwen.qwen3-coder-480b-a35b-v1`).
+3. Lowercase the id, turn dots into dashes, and turn `@` into `-` (so Vertex's `claude-x@20260205` normalizes the same as a dated id).
+4. Strip a trailing `-vertex` suffix.
+
+The canonical id is then looked up in order:
+
+1. Exact match — this keeps distinct dated rows apart, e.g. `gpt-4o-2024-05-13`.
+2. Exact match after stripping one trailing snapshot suffix — `-YYYYMMDD`, `-YYYY-MM-DD`, `-latest`, or `-preview`.
+3. A version-first Claude id (`claude-<ver>-<family>`, e.g. `claude-4-5-sonnet`) reordered to the table's family-first form (`claude-<family>-<ver>`, e.g. `claude-sonnet-4-5`) and tried the same way — exact, then snapshot-stripped — only once steps 1-2 have failed on the id as observed. Reported as `match: 'reordered'`.
+4. Otherwise the model is **unpriced**.
+
+There is no family or tier fallback: `gpt-5.5` does not fall back to `gpt-5`'s price, and there is no assumption that a Claude tier's price stays flat across dated releases. The `reordered` step above is not a fallback in that sense — it maps an id onto an existing published row under its other, family-first spelling, never onto a different model. A model without its own row, or without a row reachable through the three lookup steps above, always shows as unpriced rather than being silently priced from a nearby model. `CODEMIE_PRICES` still overrides the vendored table, and the Bedrock regional premium still applies on top of the resolved price. A price-table build collision (two raw keys normalizing to the same table key with different prices) throws a `ConfigurationError`.
+
+**`unpricedModels`** (report meta and terminal summary) lists every distinct model that could not be resolved by the rules above. **`estimatedModels`** lists distinct models that *were* priced, but from a `pricing.json` row marked `"estimated": true` — a tier estimate rather than a confirmed published price (cited in the row's own source note) — surfaced so you can see which numbers are estimates without treating them as errors. **`localModels`** lists distinct models served locally: a session launched with the `ollama` provider whose model tag is not an Ollama cloud tag (one ending in `-cloud` or `:cloud`, e.g. `gpt-oss:120b-cloud`) runs on your own hardware, so its usage is priced at $0, the session counts as priced, and its per-model cost line carries `local: true`. Ollama cloud tags stay unpriced, and the `:tag` check is applied only for the `ollama` provider — never by the general resolver above. A model appears in at most one of the three lists. OTEL-sourced reports carry no launch provider, so their `localModels` is always empty.
 
 ---
 
@@ -202,18 +225,31 @@ Filters apply to every view simultaneously. The URL does not update, so share th
 
 ## Output Formats
 
+One flag, `--export [format]`, covers every output. It is optional-valued: bare `--export` means `html`.
+
 | Format | Flag | Output |
 |---|---|---|
-| HTML dashboard | `--report` or `--report-format html` | Self-contained `.html` with all charts and data embedded |
-| JSON data | `--report-format json` | The cost-enriched session payload — useful for further analysis in notebooks or BI tools |
-| Both | `--report-format both` | Writes the `.html` and the `.report.json` side by side with a shared base name |
+| HTML dashboard | `--export` or `--export html` | Self-contained `.html` with all charts and data embedded |
+| JSON data | `--export json` | The costed `ReportPayload` — the same session/meta schema as the dashboard's embedded data and the per-session exit report, useful for further analysis in notebooks or BI tools |
+| Both | `--export both` | Writes the `.html` and the `.report.json` side by side with a shared base name |
 
-Default output paths, in the current directory:
+`ReportPayload` (`{ meta, sessions }`) is the **only** JSON schema `codemie analytics` writes — there is no separate cost-less export format. `html`, `json`, and `both` are the only accepted `--export` values; anything else is rejected with an invalid-format error.
+
+**`-o, --output <path>`** — one flag for choosing where files go:
+
+- **No `-o`.** Files go to the current directory under the default names below, with a home/tmp fallback if the current directory turns out not to be writable (e.g. a read-only volume).
+- **Directory target.** The path ends with a path separator, or names an existing directory. Each requested format is written inside it under its default name, so `--export both` produces the `.html` and the `.report.json` side by side.
+- **File target.** Anything else. For `html` or `json` the path is used exactly as given. For `both`, a trailing `.html`/`.json` is stripped from the path and `<base>.html` plus `<base>.report.json` are written.
+- A missing target directory (or parent directory of a file target) is created recursively. An explicit `-o` never falls back to home/tmp — a write failure there is a hard error naming the path.
+
+Default output paths (no `-o`), in the current directory:
 
 - HTML — `./codemie-analytics-<email-slug>-YYYY-MM-DD.html`
 - JSON — `./codemie-analytics-<email-slug>-YYYY-MM-DD.report.json`
 
-The JSON report deliberately ends in `.report.json` rather than `.json` so it can never collide with the very different file `--export json` writes. Override either with `--report-output <path>`.
+The JSON output deliberately ends in `.report.json` rather than `.json` so a directory holding both formats never has one file overwrite the other.
+
+**`--open`** opens the generated HTML report in the default browser. With no `--export` given, `--open` implies `--export html`. `--open --export json` has no HTML to open, so it prints a "no HTML produced" notice instead.
 
 **Report metadata and your email.** Reports embed the reporting user's email plus the period covered. The address is read from your CodeMie config; if it is missing and you're on an interactive terminal, report generation warns and prompts for it once, then saves it for future runs. Declining the prompt cancels report generation. The `<email-slug>` segment is dropped from the filenames when no email is available.
 
@@ -236,7 +272,7 @@ CodeMie merges two sources to give the most complete picture:
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
 2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
 
-Pass `--no-scan-native` to disable native-log discovery and use only CodeMie-tracked sessions.
+Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
 
@@ -259,15 +295,14 @@ The default exists so that a report titled "CodeMie usage" measures CodeMie usag
 That default is the right one for adoption reporting and the **wrong** one for consumption reporting. If you want total local AI spend across every agent on the machine, ask for it:
 
 ```bash
-codemie analytics --report --open --include-external
+codemie analytics --open --include-external
 ```
 
 **This is the flag that shows all of your local agent usage.** GitHub Copilot CLI sessions are included in the gate, so they too are absent from the default report.
 
-Two things to know before you rely on the wider number:
+One thing to know before you rely on the wider number:
 
 - **It is broader but less precise.** An external session has no CodeMie run to attribute it to — no profile, no managed provider — and its cost depends entirely on a native log that may already have been rotated away. Expect a lower priced-session ratio in the Cost view's **Coverage** banner than you'd see for CodeMie-launched sessions.
-- **`--include-external` needs native scanning.** External sessions *are* discovered natives, so `--no-scan-native --include-external` adds nothing — the first flag suppresses the very sessions the second one asks for.
 
 `--include-external` applies to the default local-session source only. The `analytics otel` subcommand does not accept it — an OTEL events file has no notion of CodeMie ownership.
 
@@ -277,13 +312,13 @@ As an alternative to the local-session sources above, the `analytics otel` subco
 
 ```bash
 # Report from an OTEL events file
-codemie analytics otel --file ./otel-events.jsonl --report --open
+codemie analytics otel --file ./otel-events.jsonl --open
 
 # Scope to a single user (matches native user.email or user.id)
-codemie analytics otel --file ./otel-events.jsonl --user jane@example.com --report
+codemie analytics otel --file ./otel-events.jsonl --user jane@example.com --export json
 ```
 
-With this source, **cost is authoritative**: it is read directly from each event's native `cost_usd`, so no native-log enrichment is needed and every session with token data is priced. All the same filter and report flags apply (`--from`/`--to`, `--project`, `--agent`, `--branch`, `--session`, `--report-format`, etc.); the time window and `--user` are applied to the raw events, and the remaining structural filters narrow the session set so a filtered report is never mislabeled.
+With this source, **cost is authoritative**: it is read directly from each event's native `cost_usd`, so no native-log enrichment is needed and every session with token data is priced. Any event model with usage but no `cost_usd` is priced through the resolver described below; models that still don't resolve are listed in `unpricedModels`. All the same filter and export flags apply (`--from`/`--to`, `--project`, `--agent`, `--branch`, `--session`, `--export`, `-o`, `--open`, etc.); the time window and `--user` are applied to the raw events, and the remaining structural filters narrow the session set so a filtered report is never mislabeled.
 
 ---
 
@@ -292,11 +327,11 @@ With this source, **cost is authoritative**: it is read directly from each event
 ```
 codemie analytics [options]
 
-Report flags:
-  --report                  Generate a self-contained HTML dashboard
-  --open                    Open the report in the default browser after generation
-  --report-output <path>    Output path (default: ./codemie-analytics-YYYY-MM-DD.html)
-  --report-format <fmt>     html | json | both (default: html)
+Export flags:
+  --export [fmt]             Write a report: html (default when bare), json, or both
+  -o, --output <path>        Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})
+  --open                     Open the generated HTML report in the default browser
+                              (implies --export html when --export is not given)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
@@ -308,17 +343,18 @@ Filter flags:
   --session <id>            Filter to a single session
 
 Source flags:
-  --no-scan-native          Skip native-log discovery (CodeMie-tracked sessions only)
   --include-external        Also count local sessions CodeMie did not launch
-                            (see "Session provenance"; requires native scanning)
+                            (see "Session provenance")
 
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
-  --export <fmt>            Export terminal data to json or csv file
-  -o, --output <path>       Output path for --export
 ```
 
-**Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external`, `--no-scan-native`, and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
+The report-generation flags shown above are the complete set. Any other flag name is rejected as unknown, and an unsupported `--export` value is reported as an invalid-format error.
+
+**Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external` and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
+
+**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
 
 The date filters control which sessions are **embedded** in the report; the client-side range presets (Today / 7d / 30d / 90d) then let the report viewer narrow further within that data.
 
@@ -331,4 +367,4 @@ codemie analytics otel --file <path> [options]
   --user <id>               Scope to one user (native user.email or user.id)
 ```
 
-All filter, report, and export flags from the base command also apply to `analytics otel`. The source flags do not: an OTEL events file is neither scanned for native logs nor gated on CodeMie ownership, so `--no-scan-native` and `--include-external` have no meaning here. Cost is read from each event's native `cost_usd`.
+All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.

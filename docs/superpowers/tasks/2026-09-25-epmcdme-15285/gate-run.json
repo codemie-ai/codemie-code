@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15285",
+  "head": "9a9bc03f402bc8a9f252ba7c70d402ab82e3d587",
+  "runner": "npm",
+  "started_at": "2025-01-01T00:00:00Z",
+  "completed_at": "2025-01-01T00:02:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 28090,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "1 test failed: AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation — sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model). Expected 'default', received 'env'."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 23230,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "4 tests failed in sso-claude-plugin.test.ts: Flag injection expects '--plugin-dir' as first arg but received '--model', unexpected '--model' flag prepended to args"
+    },
+    {
+      "id": "validate:secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Skipped: 'No staged changes to scan' — local validation skipped. Docker daemon check and CI secrets scan required for comprehensive coverage."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "validate-commits",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx commitlint --from <base> --to HEAD --verbose",
+      "exit_code": null,
+      "notes": "CI-only gate: runs against full PR commit range in CI context. Local validation covered by 'commitlint' gate."
+    },
+    {
+      "id": "secrets-gitleaks",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gitleaks/gitleaks-action",
+      "exit_code": null,
+      "notes": "CI-only GitHub Actions gate: cannot run locally without GitHub Actions runtime. Local validation covered by 'validate:secrets' gate."
+    }
+  ],
+  "failures": {
+    "unit": "src/agents/core/__tests__/AgentCLI-model-source.test.ts > AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation > sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)\n\nAssertionError: expected 'env' to be 'default' // Object.is equality\n\nExpected: \"default\"\nReceived: \"env\"\n\n ❯ src/agents/core/__tests__/AgentCLI-model-source.test.ts:107:38\n    105|     // rather than the field being merely present-or-absent.\n    106|     const [, env] = run.mock.calls[0] as [string[], Record<string, unknown>];\n    107|     expect(env.CODEMIE_MODEL_SOURCE).toBe('default');\n       |                                      ^\n    108|   });",
+    "integration": "tests/integration/sso-claude-plugin.test.ts\n\nFAIL  Flag Injection (enrichArgs hook) > should inject --plugin-dir flag when plugin is installed\nExpected: \"--plugin-dir\"\nReceived: \"--model\"\n ❯ tests/integration/sso-claude-plugin.test.ts:148:31\n\nFAIL  Flag Injection (enrichArgs hook) > should skip injection if --plugin-dir already specified\nExpected [ Array(6) ] to deeply equal [ Array(4) ] — unexpected '--model' and 'claude-sonnet-4-6' prepended\n ❯ tests/integration/sso-claude-plugin.test.ts:165:28\n\nFAIL  Flag Injection (enrichArgs hook) > should skip injection if env not set\nExpected [ Array(4) ] to deeply equal [ 'test', 'task' ] — unexpected '--model' and 'claude-sonnet-4-6' prepended\n ❯ tests/integration/sso-claude-plugin.test.ts:183:28\n\nFAIL  Full Integration Flow > should complete full flow: install → inject\nExpected [ '--plugin-dir', pluginTargetDir, ... ] but received [ '--model', 'claude-sonnet-4-6', '--plugin-dir', ... ]\n ❯ tests/integration/sso-claude-plugin.test.ts:233:28"
+  }
+}

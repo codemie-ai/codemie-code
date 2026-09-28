@@ -15,7 +15,7 @@ import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage,
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown, costForUsage } from './cost-calculator.js';
-import { lookupPrice } from '@/utils/pricing.js';
+import { lookupPrice, resolvePrice } from '@/utils/pricing.js';
 import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, extractModelIdentityTimeline, type UsageRecord, type ModelIdentityEvent } from './usage-readers.js';
 import { extractDispatchResult } from './dispatch-extractor.js';
 import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
@@ -26,6 +26,7 @@ import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isLocalModel } from './local-models.js';
 import { logger } from '@/utils/logger.js';
 
 export interface EnricherDeps {
@@ -97,6 +98,8 @@ interface ParsedEntry {
   filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
+  /** Provider the session was launched with (start event), used to recognise free local models. */
+  provider?: string;
   capturedAt?: number;
   observedStart?: number;
   observedEnd?: number;
@@ -112,36 +115,58 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
     sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
     ...(capture && Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
   };
 }
 
-/** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
+/**
+ * Phase 3: price an already-gathered (deduped) per-model usage map for one session.
+ * `provider` is the session's launch provider: a model it serves locally (see isLocalModel)
+ * is priced at $0 and reported as local instead of unpriced.
+ */
 function priceUsage(
   sessionId: string,
   hadLog: boolean,
-  usageByModel: Map<string, TokenUsage>
-): { cost: SessionCost; unpriced: string[] } {
+  usageByModel: Map<string, TokenUsage>,
+  provider?: string
+): { cost: SessionCost; unpriced: string[]; estimated: string[]; local: string[] } {
   const perModel: ModelCost[] = [];
   const unpriced: string[] = [];
+  const estimated: string[] = [];
+  const local: string[] = [];
   let sessionTokens = emptyUsage();
   let sessionCost = 0;
   let cacheReadCostUSD = 0;
 
   for (const [rawModel, usage] of usageByModel) {
     const model = normalizeModelName(rawModel);
-    // lookupPrice() takes the raw (region-qualified) id, not the display `model` above — it
+    if (isLocalModel(provider, rawModel)) {
+      local.push(model);
+      perModel.push({ model, tokens: usage, costUSD: 0, unpriced: false, local: true });
+      sessionTokens = addUsage(sessionTokens, usage);
+      continue;
+    }
+    // resolvePrice() takes the raw (region-qualified) id, not the display `model` above — it
     // does its own normalizing internally, but also needs the raw form to detect Amazon
     // Bedrock's regional-endpoint pricing premium before that qualifier is stripped.
-    const price = lookupPrice(rawModel);
-    const breakdown = price ? costBreakdown(usage, price) : null;
+    const resolution = resolvePrice(rawModel);
+    const breakdown = resolution ? costBreakdown(usage, resolution.price) : null;
     const costUSD = breakdown ? breakdown.total : 0;
-    if (!price) {
+    if (!resolution) {
       unpriced.push(model);
+    } else if (resolution.estimated) {
+      estimated.push(model);
     }
-    perModel.push({ model, tokens: usage, costUSD, unpriced: !price });
+    perModel.push({
+      model,
+      tokens: usage,
+      costUSD,
+      unpriced: !resolution,
+      ...(resolution?.estimated && { estimated: true }),
+    });
     sessionTokens = addUsage(sessionTokens, usage);
     sessionCost += costUSD;
     cacheReadCostUSD += breakdown ? breakdown.cacheRead : 0;
@@ -153,6 +178,8 @@ function priceUsage(
   return {
     cost: { sessionId, tokens: sessionTokens, costUSD: sessionCost, cacheReadCostUSD, perModel, priced: perModel.length > 0, hadLog },
     unpriced,
+    estimated,
+    local,
   };
 }
 
@@ -387,6 +414,8 @@ export async function enrichCosts(
 
   const index: SessionCostIndex = new Map();
   const unpriced = new Set<string>();
+  const estimated = new Set<string>();
+  const local = new Set<string>();
   let totalCostUSD = 0;
   let pricedSessions = 0;
 
@@ -424,7 +453,7 @@ export async function enrichCosts(
       series = [];
       records = [];
     }
-    const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    const { cost, unpriced: u, estimated: est, local: loc } = priceUsage(entry.sessionId, entry.hadLog, usageByModel, entry.provider);
     if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
     if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
     if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;
@@ -502,6 +531,8 @@ export async function enrichCosts(
     }
     index.set(cost.sessionId, cost);
     u.forEach((m) => unpriced.add(m));
+    est.forEach((m) => estimated.add(m));
+    loc.forEach((m) => local.add(m));
     if (cost.priced) {
       totalCostUSD += cost.costUSD;
       pricedSessions += 1;
@@ -510,6 +541,6 @@ export async function enrichCosts(
 
   return {
     index,
-    summary: { totalCostUSD, pricedSessions, totalSessions: sessions.length, unpricedModels: [...unpriced] },
+    summary: { totalCostUSD, pricedSessions, totalSessions: sessions.length, unpricedModels: [...unpriced], estimatedModels: [...estimated], localModels: [...local] },
   };
 }

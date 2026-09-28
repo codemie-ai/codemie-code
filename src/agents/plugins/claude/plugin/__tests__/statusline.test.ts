@@ -13,6 +13,7 @@ import {
   lookupRate,
   computeSessionCost,
 } from '../statusline.js';
+import { priceTable, resolvePrice, canonicalizeModelId } from '@/utils/pricing.js';
 
 const YELLOW = '\x1b[0;33m';
 const GREEN = '\x1b[0;32m';
@@ -338,6 +339,7 @@ describe('lookupRate', () => {
   const TABLE = {
     'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
     'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+    'claude-opus-4-6': { input: 20, output: 100, cacheRead: 2, cacheWrite: 25 },
     'claude-smart-router': { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
     'gemini-3.7-flash': { input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
     _meta: { note: 'must never be matched as a model id' },
@@ -361,12 +363,16 @@ describe('lookupRate', () => {
     expect(lookupRate(TABLE, 'converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0')?.input).toBe(1);
   });
 
+  it('resolves the combined bedrock/converse/ prefix, matching resolvePrice()', () => {
+    expect(lookupRate(TABLE, 'bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0')?.input).toBe(1);
+  });
+
   it('is case-insensitive about the incoming id', () => {
     expect(lookupRate(TABLE, 'Claude-Sonnet-5')?.input).toBe(3);
   });
 
-  it('matches only on a segment boundary, never mid-token', () => {
-    expect(lookupRate(TABLE, 'claude-haiku-4-5-20251001')?.input).toBe(1); // suffixed -> family match
+  it('resolves a dated snapshot id to its unsuffixed row, but never matches mid-token', () => {
+    expect(lookupRate(TABLE, 'claude-haiku-4-5-20251001')?.input).toBe(1); // snapshot suffix stripped
     expect(lookupRate(TABLE, 'notclaude-sonnet-5x')).toBeNull();
   });
 
@@ -374,6 +380,96 @@ describe('lookupRate', () => {
     expect(lookupRate(TABLE, '_meta')).toBeNull();
     expect(lookupRate(TABLE, 'some-other-vendor-model')).toBeNull();
     expect(lookupRate(null, 'claude-sonnet-5')).toBeNull();
+  });
+
+  it('returns null for an unpriced model, with no family/tier fallback to a same-tier row', () => {
+    // claude-opus-6 shares no version segment with claude-opus-4-6 and has no snapshot suffix to
+    // strip — the removed claudeTierFallback would have matched it to the opus row anyway.
+    expect(lookupRate(TABLE, 'claude-opus-6')).toBeNull();
+  });
+
+  it('resolves a Vertex `@`-dated id to its snapshot-stripped row, matching resolvePrice()', () => {
+    // '@' folds to '-' during canonicalization, so 'claude-opus-4-6@20260205' canonicalizes to
+    // 'claude-opus-4-6-20260205', which then resolves via the snapshot-suffix-stripped exact match.
+    expect(lookupRate(TABLE, 'claude-opus-4-6@20260205')).toEqual(TABLE['claude-opus-4-6']);
+  });
+
+  it('leaves a key unpriced when two table keys fold together with different rates', () => {
+    const ambiguous = {
+      'gemini-3.7-flash': { input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
+      'gemini-3-7-flash': { input: 999, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
+    };
+    expect(lookupRate(ambiguous, 'gemini-3.7-flash')).toBeNull();
+  });
+
+  const REORDER_TABLE = {
+    ...TABLE,
+    'claude-sonnet-4-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+    'claude-3-5-sonnet': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+  };
+
+  it.each([
+    'claude-4-5-sonnet',
+    'claude-4-5-sonnet-vertex',
+  ])('reorders version-first %s to the family-first claude-sonnet-4-5 row', (modelId) => {
+    expect(lookupRate(REORDER_TABLE, modelId)).toEqual(REORDER_TABLE['claude-sonnet-4-5']);
+  });
+
+  it('still resolves the existing old-style claude-3-5-sonnet key unchanged, without reordering', () => {
+    expect(lookupRate(REORDER_TABLE, 'claude-3-5-sonnet')).toEqual(REORDER_TABLE['claude-3-5-sonnet']);
+  });
+});
+
+// The statusline and the analytics report must price the same observed id identically. The table
+// here is the one statusline-installer.ts actually deploys (priceTable(), JSON round-tripped), and
+// the rates compared are exactly the fields messageCost() reads.
+describe('lookupRate parity with resolvePrice', () => {
+  const DEPLOYED = JSON.parse(JSON.stringify(priceTable()));
+  const ratesOf = (rate) => rate && {
+    input: rate.input,
+    output: rate.output,
+    cacheRead: rate.cacheRead,
+    cacheCreation: rate.cacheCreation,
+    cacheWrite1h: rate.cacheWrite1h,
+  };
+
+  it.each([
+    'converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'bedrock/converse/us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'bedrock/us.anthropic.claude-sonnet-4-5',
+    'global.anthropic.claude-opus-4-6-v1:0',
+    'Converse/EU.Anthropic.Claude-Haiku-4-5-20251001-v1:0',
+    'bedrock/converse/qwen.qwen3-coder-480b-a35b-v1:0',
+    'converse/qwen.qwen3-coder-30b-a3b-v1:0',
+    'claude-opus-4-6@20260205',
+    'claude-4-5-sonnet',
+    'claude-4-5-sonnet-vertex',
+    'claude-3-5-sonnet',
+    'claude-sonnet-4-5-20250929',
+    'moonshotai.kimi-k2.5',
+    'qwen.qwen3-coder-480b-a35b-v1',
+    'openai.gpt-4o',
+    'openai/gpt-4o-mini',
+    'azure/gpt-4o',
+    'gpt-4o-2024-05-13',
+    'kimi-code/kimi-for-coding',
+    'claude-smart-router',
+    'Claude-Sonnet-4-5',
+    'claude-opus-6',
+    'some-other-vendor-model',
+    'gpt-4o-v1:0',
+  ])('prices %s the same as resolvePrice()', (modelId) => {
+    expect(ratesOf(lookupRate(DEPLOYED, modelId))).toEqual(ratesOf(resolvePrice(modelId)?.price ?? null));
+  });
+});
+
+describe('canonicalizeModelId', () => {
+  it('strips the moonshotai. vendor prefix and folds the dotted remainder to dashes', () => {
+    expect(canonicalizeModelId('moonshotai.kimi-k2.5')).toBe('kimi-k2-5');
+  });
+
+  it('strips the qwen. vendor prefix', () => {
+    expect(canonicalizeModelId('qwen.qwen3-coder-480b-a35b-v1')).toBe('qwen3-coder-480b-a35b-v1');
   });
 });
 

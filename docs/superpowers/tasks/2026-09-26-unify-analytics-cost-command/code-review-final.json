@@ -1,0 +1,475 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran (no truncation, no standards coverage gap); 16 blocking findings remain, led by the spec/docs never being amended for the user-approved resolver extensions (acceptance fail on section B/AC5, partial on D/T2/T3), OTEL priced-session overcount, codex rollout misattribution, -o/--export contract holes, CI test gaps and blocking standards rows; two findings (statusline parity, OTEL zero-usage noise) have unconfirmed reachability. 0 deferred; 15 lens claims dismissed as handled, spec-sanctioned or below the floor, including the pricing.json row conventions, whose cited official sources look plausible.",
+  "confidence": "medium",
+  "risk_flags": [
+    "breaking-change",
+    "public-api"
+  ],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "A: --export [format] (html default when bare | json | both) replaces --report/--report-format; --export json writes costed ReportPayload",
+      "status": "pass",
+      "notes": "index.ts applyCommonOptions registers --export [format]; bare/true -> 'html'; payload via buildPayload+generateReportJson"
+    },
+    {
+      "kind": "spec",
+      "item": "A: -o, --output <path> replaces --report-output",
+      "status": "pass",
+      "notes": "index.ts option list; resolveOutputTargets in report/output-target.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "A: --open implies --export html when no --export; --open --export json prints the no-HTML notice",
+      "status": "pass",
+      "notes": "index.ts: openFlag triggers html; '--open ignored: no HTML produced (use --export html or both)'"
+    },
+    {
+      "kind": "spec",
+      "item": "A: --export csv dropped and rejected as invalid format",
+      "status": "pass",
+      "notes": "index.ts invalid-format branch sets exitCode=1, no file; analytics-cli-metadata.test.ts csv case"
+    },
+    {
+      "kind": "spec",
+      "item": "A: no -o -> cwd default names via getDefaultReportPath/getDefaultReportJsonPath with home/tmp fallback",
+      "status": "pass",
+      "notes": "output-target.ts isDefault:true; index.ts uses writeReportWithFallback only when isDefault"
+    },
+    {
+      "kind": "spec",
+      "item": "A: -o directory target (trailing separator or existing dir) writes each format under default name",
+      "status": "pass",
+      "notes": "output-target.ts isDirectoryTarget; covered by output-target.test.ts and T1 run 2"
+    },
+    {
+      "kind": "spec",
+      "item": "A: -o file target: html/json as given; both strips .html/.json and writes <base>.html + <base>.report.json",
+      "status": "pass",
+      "notes": "output-target.ts format==='both' branch; output-target.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "A: missing target/parent dir created recursively; explicit -o never falls back; write failure is hard error with path",
+      "status": "pass",
+      "notes": "index.ts mkdirSync(dirname, {recursive:true}) + direct generateReport; outer catch exits 1 with error message"
+    },
+    {
+      "kind": "spec",
+      "item": "A: filter flags, -v, --no-scan-native, --include-external, otel --file/--user unchanged",
+      "status": "pass",
+      "notes": "only export/report option lines changed in applyCommonOptions"
+    },
+    {
+      "kind": "spec",
+      "item": "A: removed flags deleted outright so commander rejects them as unknown",
+      "status": "pass",
+      "notes": "options removed; analytics-cli-metadata.test.ts asserts commander.unknownOption"
+    },
+    {
+      "kind": "spec",
+      "item": "A: cost enrichment always runs (both wantReport gates removed)",
+      "status": "pass",
+      "notes": "index.ts else-branch now unconditional; report block gated only on exportFormat"
+    },
+    {
+      "kind": "spec",
+      "item": "A: terminal summary always shows total cost, priced coverage, unpriced/estimated models",
+      "status": "pass",
+      "notes": "formatter.ts displayCost called unconditionally in runAnalytics; formatter.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "A: ReportPayload is the only JSON schema; AnalyticsExporter.exportJSON/exportCSV and RootAnalytics file output removed",
+      "status": "pass",
+      "notes": "exporter.ts deleted; import removed from index.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "A: analytics otel under same contract; cost_usd authoritative; no-cost_usd models priced via resolver, else listed in unpricedModels",
+      "status": "pass",
+      "notes": "otel-loader.ts buildCostIndex hasReportedCost/resolvePrice branch; otel-loader.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "A: session-exit report picks up new resolver and metadata fields with no flag change",
+      "status": "pass",
+      "notes": "payload-builder.ts copies summary.estimatedModels; enrichCosts uses resolvePrice"
+    },
+    {
+      "kind": "spec",
+      "item": "B: table build lowercases keys, dots->dashes, collision with differing prices throws; CODEMIE_PRICES merged",
+      "status": "pass",
+      "notes": "pricing.ts buildPriceTable + pricesEqual; table() merges {...raw, ...CODEMIE_PRICES}; pricing.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "B: canonicalization steps 1-4 (Bedrock strip, listed vendor prefixes, lowercase/dots/@ -> dash, strip -vertex) as one exported function",
+      "status": "partial",
+      "notes": "canonicalizeModelId implements steps 1-4 but VENDOR_PREFIX_PATTERN also strips moonshotai. and qwen., which section B does not list (model-normalizer.ts, statusline.ts)"
+    },
+    {
+      "kind": "spec",
+      "item": "B: lookup order exact -> one snapshot suffix strip -> otherwise null; segment/family match and claudeTierFallback removed",
+      "status": "fail",
+      "notes": "pricing.ts resolvePrice adds a third 'reordered' step (reorderClaudeVersionFamily, CLAUDE_VERSION_FIRST_PATTERN) not in the spec's lookup order; family/tier fallbacks are removed"
+    },
+    {
+      "kind": "spec",
+      "item": "B: Bedrock regional premium applied as today",
+      "status": "pass",
+      "notes": "every resolvePrice branch wraps applyBedrockRegionalPremium(price, model)"
+    },
+    {
+      "kind": "spec",
+      "item": "B: PriceResolution { price, key, match: 'exact'|'snapshot', estimated } + resolvePrice export; lookupPrice keeps its signature",
+      "status": "partial",
+      "notes": "pricing.ts PriceResolution.match widened to 'exact'|'snapshot'|'reordered'; lookupPrice is a thin wrapper with unchanged signature"
+    },
+    {
+      "kind": "spec",
+      "item": "B: pricing.json rows accept estimated:true; tier-estimate rows marked; new rows cite source; only verifiable prices added",
+      "status": "pass",
+      "notes": "claude-opus/sonnet-4-7/4-8 and claude-haiku-4-6 marked; 14 new rows cited in _meta notes.t10CatalogReconciliation"
+    },
+    {
+      "kind": "spec",
+      "item": "B: ReportMeta.estimatedModels, ModelCost.estimated, unpricedModels covers former fallbacks, HTML + terminal show both lists",
+      "status": "pass",
+      "notes": "report/types.ts, cost/types.ts, cost-enricher.ts priceUsage, app.js cost banner + sessionPayload, formatter.displayCost"
+    },
+    {
+      "kind": "spec",
+      "item": "B: cost-enricher, dispatch-allocation, pi.models go through the resolver",
+      "status": "pass",
+      "notes": "cost-enricher uses resolvePrice; dispatch-allocation.ts:28,45 and pi.models.ts:165 call lookupPrice, now a wrapper over resolvePrice"
+    },
+    {
+      "kind": "spec",
+      "item": "B: statusline lookupRate adopts the same resolution order",
+      "status": "pass",
+      "notes": "statusline.ts lookupRate mirrors resolvePrice (exact, snapshot, reordered); it therefore also inherits the out-of-spec reorder step"
+    },
+    {
+      "kind": "spec",
+      "item": "C T1: built CLI, no TTY, isolated home, --export json -o out.json against golden Claude fixture; meta/session shape, totalCostUSD>0, unpricedModels empty, no h\u2026",
+      "status": "pending-stage-7",
+      "notes": "tests/integration/agent-analytics-report-shape.test.ts implements every assertion; execution evidence is Stage 7's"
+    },
+    {
+      "kind": "spec",
+      "item": "C T2: live 'hi' per enabled catalog model via compatible agent; only no-compatible-agent models skipped; per run session present, priced costUSD>0, unpricedMod\u2026",
+      "status": "partial",
+      "notes": "agent-analytics-live-models.test.ts adds EXCLUDED_MODEL_IDS, which exempts 16 mapped enabled models from the cost assertion beyond the spec's skip rule; the prompt is a tool-forcing prompt instead of\u2026"
+    },
+    {
+      "kind": "spec",
+      "item": "C T3: every enabled catalog model resolves via exact or snapshot match; failure lists all unresolved ids",
+      "status": "partial",
+      "notes": "agent-analytics-pricing-reconciliation.test.ts accepts any non-null resolvePrice, including 'reordered' matches the spec does not allow"
+    },
+    {
+      "kind": "spec",
+      "item": "C: existing tests updated (pricing, cost-enricher, otel-loader, payload-builder, analytics-cli-metadata, cli-misc-coverage)",
+      "status": "pass",
+      "notes": "all six test files updated in diff; cli-misc-coverage AnalyticsExporter block removed"
+    },
+    {
+      "kind": "spec",
+      "item": "D: ANALYTICS-REPORT.md and COMMANDS.md updated to flag table, -o rules, one JSON schema, always-on cost, resolution rules and estimatedModels meaning",
+      "status": "partial",
+      "notes": "flag/-o/schema/cost docs updated, but the 'Model pricing resolution' section states two lookup steps only and omits the reorder step and moonshotai./qwen. prefixes the code implements"
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: plain run prints total cost and priced coverage; every file output carries cost",
+      "status": "pass",
+      "notes": "displayCost unconditional; only file outputs are costed ReportPayload html/json"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: removed flags rejected as unknown; --export [html|json|both] (bare=html), -o, --open cover all; --export csv invalid",
+      "status": "pass",
+      "notes": "index.ts options + format validation; analytics-cli-metadata.test.ts contract block"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: --export json writes costed ReportPayload, the only JSON schema; no RootAnalytics file, no CSV",
+      "status": "pass",
+      "notes": "exporter.ts deleted; json path goes through generateReportJson(payload)"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: analytics otel accepts same flags; unpricedModels lists no-cost_usd models the resolver cannot price",
+      "status": "pass",
+      "notes": "applyCommonOptions on otel subcommand; otel-loader.ts unpricedModels set"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: resolvePrice resolves only through section B canonicalization and lookup order; gpt-5.5 (no row) null; claude-opus-6 null; claude-opus-4-6-20260205 -> cla\u2026",
+      "status": "fail",
+      "notes": "the three named cases hold (pricing.test.ts), but 'only through section B' is contradicted by the extra 'reordered' lookup step and the unlisted moonshotai./qwen. prefixes in pricing.ts/model-normali\u2026"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: dotted pricing.json keys resolve; colliding keys with different prices throw",
+      "status": "pass",
+      "notes": "buildPriceTable dot folding + throw; pricing.test.ts buildPriceTable cases, glm-4.7"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: estimated:true rows appear in meta.estimatedModels and perModelCost[].estimated",
+      "status": "pass",
+      "notes": "cost-enricher priceUsage + summary; payload-builder meta.estimatedModels; cost-enricher.test.ts and payload-builder.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: statusline lookupRate uses same resolution order as resolvePrice",
+      "status": "pass",
+      "notes": "statusline.ts lookupRate steps match pricing.ts resolvePrice; statusline.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: T1, T2, T3 exist in agent project; each fails on unpriced models; T1 and T2 also fail on sessions with a log but no price",
+      "status": "partial",
+      "notes": "all three exist; T2's EXCLUDED_MODEL_IDS exempts 16 mapped models from the per-run priced/hadLog assertion, and T3 accepts 'reordered' matches"
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: docs describe only the surviving contract (--export [html|json|both], -o, --open)",
+      "status": "pass",
+      "notes": "ANALYTICS-REPORT.md and COMMANDS.md no longer reference --report/--report-format/--report-output/csv; tips.json updated too"
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: -o directory vs file semantics, both -> <base>.html + <base>.report.json, missing dirs created, explicit -o never relocates",
+      "status": "pass",
+      "notes": "output-target.ts + index.ts non-default branch (mkdirSync, no writeReportWithFallback)"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no guessing prices for models with no published price",
+      "status": "pass",
+      "notes": "family/tier fallbacks removed; the reorder step maps onto an existing published row and does not guess a price"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: session-exit report trigger/location/--no-analytics-report unchanged; not affected by -o",
+      "status": "pass",
+      "notes": "session-report.ts diff is a comment-only change"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no change to server-side codemie-analytics skill",
+      "status": "pass",
+      "notes": "no files under claude/plugin/skills/codemie-analytics in diff"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "All 15 subjects use allowed types (feat/fix/docs/test) and scopes (analytics/utils/agents), are imperative and <=97 chars, so commitlint passes; but 14 of 15 subjects append a task tracker key '(unif\u2026"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "New code keeps .js import extensions, explicit return types and JSDoc on new exports (resolveOutputTargets, canonicalizeModelId, resolvePrice, lookupPrice), kebab-case files, logger not console for d\u2026"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Guide resolved at .ai-run/guides/security/security-practices.md (the path AGENTS.md names; development/security-patterns.md does not exist). No hardcoded secrets, no new unsanitized logging of creden\u2026"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "docs/ANALYTICS-REPORT.md",
+      "title": "Written contract omits approved resolver extensions",
+      "problem": "The user-approved resolver extensions (Claude version-first reorder, match:'reordered', moonshotai./qwen. prefix stripping, T3 accepting reordered matches, T2 EXCLUDED_MODEL_IDS) were implemented but never written back: spec.md section B/C and AC5/AC9 still mandate exact->snapshot only and six prefixes; docs/ANALYTICS-REPORT.md 'Model pricing resolution' and docs/COMMANDS.md describe two lookup steps only; pricing.json _meta.note still claims a same-tier fallback exists. Acceptance audit reports fail on B lookup order and AC5, partial on canonicalization, PriceResolution, T2, T3, AC9 and section D.",
+      "impact": "Section D (docs describe resolution rules) is unmet: users and future maintainers read a resolution contract that differs from runtime behaviour, and the spec's fail/partial rows cannot be closed, so the change cannot pass acceptance as recorded.",
+      "recommendation": "Amend spec.md section B (lookup order step 3, prefix list, PriceResolution.match), section C (T2 exclusion rule, T3 accepting 'reordered'); update the 'Model pricing resolution' section of docs/ANALYTICS-REPORT.md and the pricing note in docs/COMMANDS.md to list the reorder step and moonshotai./qwen. prefixes; remove the stale same-tier-fallback sentence from src/utils/pricing.json _meta.note."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/plugin/statusline.ts",
+      "title": "Statusline resolver diverges from pricing.ts",
+      "problem": "statusline.ts carries its own copy of canonicalization/lookupRate documented as mirroring resolvePrice, but it lowercases before stripping and strips bedrock/, converse/ and -vN:N for any id, canonicalizes table keys (strips vendor prefixes and -vertex), and silently overwrites on post-canonicalization key collisions, whereas pricing.ts strips Bedrock prefixes only for *.anthropic.claude-* ids and throws on collisions. statusline.test.ts uses a synthetic table and never compares lookupRate with resolvePrice over priceTable().",
+      "impact": "For ids outside the anthropic Bedrock shape the live statusline cost and the analytics report can disagree for the same transcript, and a future rule change in one copy only will pass CI. Reachability for Claude-agent traffic was unconfirmed (Claude ids go through the shared anthropic path).",
+      "recommendation": "Add a parity test in statusline.test.ts asserting lookupRate(priceTable(), id) equals resolvePrice(id)?.price over a list of observed ids (Bedrock/converse, Vertex @-dated, version-first claude, moonshotai./qwen./openai./azure/ prefixes, -vertex, dated gpt-4o, unpriced), and align the normalization and collision handling of the two copies."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex.plugin.ts",
+      "line": 389,
+      "title": "Codex correlation links newest rollout blindly",
+      "problem": "On exit the plugin takes recentSessions[0] from rollouts created in the same cwd since start-10s and now records it via recordRolloutCorrelation as correlation.agentSessionFile with status 'matched', unconditionally overwriting any existing correlation. Extra matching rollouts from the same run are ignored.",
+      "impact": "Two concurrent codex runs in one cwd both correlate to the same rollout, so analytics double-counts its tokens/cost and loses the other run's; extra rollouts from one run are treated as untracked and dropped from the default cost report. This is new because correlation now drives cost attribution.",
+      "recommendation": "Pick the rollout that belongs to this run (e.g. match rollout session metadata/createdAt against this run's start and exclude rollouts already correlated to another CodeMie session), skip overwriting a different existing agentSessionFile, and warn or record all rollouts when more than one matches."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex.plugin.ts",
+      "title": "Change grows files already over 500 lines",
+      "problem": "code-quality.md requires files under 500 lines; this change grows codex.plugin.ts (594->627), otel-loader.ts (563->595), cost-enricher.ts (515->527) and statusline.ts (826->852).",
+      "impact": "Extends a documented code-structure violation the standards audit treats as blocking, making these modules harder to change.",
+      "recommendation": "Move the new helpers (recordRolloutCorrelation, the OTEL pricing fallback, statusline canonicalization) into sibling modules, or record an explicit accepted-debt decision."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 73,
+      "title": "Invalid --export unreported when no sessions",
+      "problem": "Export-format validation runs after the rawSessions.length === 0 early return, so `--export csv` (or any invalid value) with a filter matching nothing prints 'No sessions found' and exits 0. Separately, a valid-session run with an invalid format still performs full enrichment before the error surfaces.",
+      "impact": "The documented contract that an invalid format is rejected with a non-zero exit is not honoured on empty result sets; scripts get exit 0 for a bad flag.",
+      "recommendation": "Validate options.export (and --open) before source.load / the empty-result return, setting process.exitCode = 1 and returning early on an invalid value."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 84,
+      "title": "--open implies html has no test",
+      "problem": "No test drives runAnalytics with { open: true } or { open: true, export: 'json' }; grep finds no `open: true`, '--open' or openUrlInBrowser in any test. The --open-implies-html rule replaces the removed --report flag.",
+      "impact": "Dropping `|| openFlag` or the undefined->html mapping would make the headline `codemie analytics --open` write and open nothing with CI green.",
+      "recommendation": "In analytics-cli-metadata.test.ts add runAnalytics({ open: true }) asserting generateReport and a mocked openUrlInBrowser are called, and { open: true, export: 'json' } asserting openUrlInBrowser is not called and the notice prints."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 84,
+      "title": "-o without --export silently ignored",
+      "problem": "Export resolution runs only when `options.export !== undefined || openFlag`; `codemie analytics -o out.json` leaves exportFormat undefined, writes nothing and prints no warning. The removed --report-output used to imply a report.",
+      "impact": "Users migrating from --report-output get a successful exit with no file, contradicting the 'clear contract' goal of the task.",
+      "recommendation": "Include options.output in the condition (default format inferred from the extension, else html) or reject -o without --export/--open with an explicit error and non-zero exit."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 115,
+      "title": "Generic Error thrown in new code",
+      "problem": "New code throws plain Error at src/cli/commands/analytics/index.ts:115 ('cost result missing after enrichment') and src/utils/pricing.ts:110 (buildPriceTable key collision). AGENTS.md Common Pitfalls and the git-workflow.md review checklist require specific project error classes.",
+      "impact": "Violates a documented blocking review-checklist standard; callers cannot distinguish a pricing-data configuration error from other failures.",
+      "recommendation": "Throw a class from src/utils/errors.ts (e.g. ConfigurationError for the price-table collision); for the index.ts narrowing, restructure so the type narrows without a throw or use a specific error class."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 131,
+      "title": "Always-on terminal cost wiring untested",
+      "problem": "analytics-cli-metadata.test.ts mocks AnalyticsFormatter with displayCost = vi.fn() but never asserts it; formatter.test.ts calls displayCost directly; T1 checks only the JSON file.",
+      "impact": "Removing the displayCost call or passing the source cost instead of the enriched costResult removes the always-on cost summary (AC1) without failing any test.",
+      "recommendation": "Keep a handle on the mocked formatter and assert displayCost was called with the enrichCosts summary for runAnalytics({}) and runAnalytics({ export: 'json' })."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "title": "Explicit -o write paths not covered in CI",
+      "problem": "The only test driving -o file/directory targets through runAnalytics is T1 in the `agent` vitest project, which `npm run ci` and ci.yml never run (vitest.config.ts excludes tests/integration/agent-*.test.ts from `cli`). output-target.test.ts covers only path computation; analytics-cli-metadata.test.ts never passes `output`.",
+      "impact": "Regressions where options.output stops reaching resolveOutputTargets, mkdirSync is dropped (ENOENT on `-o nested/dir/`), or explicit paths go back through the relocating fallback ship with CI green.",
+      "recommendation": "Add unit/cli-project tests: runAnalytics({ export: 'both', output: '<tmp>/nested/dir/' }) asserting both files exist, and runAnalytics({ export: 'json', output: '<tmp>/x.json' }) asserting generateReportJson got that path and writeReportWithFallback was not called."
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/otel-loader.ts",
+      "line": 165,
+      "title": "OTEL session priced/basis flags not updated",
+      "problem": "buildCostIndex initializes every session with priced: true and never clears it when events fall through to the new resolver path; unpriced events add $0 and leave priced true. costSource/costBasis are set to authoritative/source-reported only on cost_usd events and never marked when events are table-priced, so a mixed session stays labelled source-reported.",
+      "impact": "`Priced sessions: n/m` and meta.totals.pricedSessions overcount for OTEL reports, hiding unpriced coverage, and table-estimated dollars are presented as authoritative in the report.",
+      "recommendation": "Set sc.priced = false when all of a session's usage is unpriced (e.g. derive from perModel after the loop: priced = some model not unpriced), and mark costBasis as mixed/table when any event is priced via resolvePrice."
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/otel-loader.ts",
+      "line": 178,
+      "title": "Zero-usage OTEL events flagged unpriced",
+      "problem": "Any event without cost_usd whose model does not resolve sets eventUnpriced, even when it carries zero tokens; a missing model attribute becomes '(unknown)' and lands in unpricedModels. Docs say only events with usage but no cost_usd are priced through the resolver.",
+      "impact": "unpricedModels can fill with noise such as '(unknown)', and the task makes a non-empty unpricedModels a build-breaking signal, so this can produce false alarms. Reachability unconfirmed: whether real OTEL api_request events arrive with zero usage or no model was not established.",
+      "recommendation": "Only mark unpriced when the event's token total is > 0 (and skip or separately report events with no model attribute)."
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/otel-loader.ts",
+      "line": 183,
+      "title": "OTEL estimated-model path untested",
+      "problem": "otel-loader.test.ts covers the unpriced (gpt-5.9) and plainly-priced (claude-opus-4-6) fallback paths but never reads summary.estimatedModels or perModel[].estimated; the estimated path is only tested in cost-enricher.",
+      "impact": "Dropping `if (eventEstimated) estimatedModels.add(model)` or the estimated spread hides tier-estimate pricing in `codemie analytics otel` reports with CI green.",
+      "recommendation": "Add an otel-loader test: event with model 'claude-opus-4-7', tokens and no cost_usd, asserting summary.estimatedModels equals ['claude-opus-4-7'] and perModel[0].estimated === true; also assert perModel[0].unpriced in the gpt-5.9 case."
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/report/client/app.js",
+      "line": 822,
+      "title": "Dashboard estimated-models logic only regex-tested",
+      "problem": "report-views.test.ts only regex-matches app.js source for DATA.meta.estimatedModels / m.estimated; neither the cost banner builder nor sessionPayload is executed, although modal-focus.test.ts already runs app.js slices via runInNewContext.",
+      "impact": "If the banner appends the wrong list or sessionPayload tests m.unpriced instead of m.estimated, the dashboard and per-session JSON export mislabel estimated models while the test passes.",
+      "recommendation": "Use the vm-slice harness to run sessionPayload on a session with perModelCost [{ model: 'claude-opus-4-7', estimated: true }] and assert meta.estimatedModels, and run the banner builder asserting its text contains 'Estimated models: claude-opus-4-7'."
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/pricing.ts",
+      "line": 217,
+      "title": "resolvePrice exceeds 50-line function limit",
+      "problem": "resolvePrice (src/utils/pricing.ts:217-272) is ~56 lines with four near-identical lookup/return blocks; code-quality.md requires functions under 50 lines.",
+      "impact": "Violates a documented code-structure standard in a newly added exported function; the duplicated blocks also make the lookup order harder to keep in sync with the statusline copy.",
+      "recommendation": "Extract a helper that tries a key and builds the PriceResolution (key, match), collapsing the four blocks into an ordered candidate list."
+    },
+    {
+      "id": "CR-016",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Task key in commit subjects",
+      "problem": "14 of 15 branch commit subjects append '(unify-analytics-cost-command Tn)' or '(Tn)'; git-workflow.md Anti-Patterns forbids a ticket key in the subject when the scope already conveys context.",
+      "impact": "Branch history does not conform to the documented commit format; a squash PR title carrying the key would land it on main.",
+      "recommendation": "Move the task reference to the commit body footer and ensure the squash/PR title is '<type>(<scope>): <subject>' without the task key."
+    }
+  ]
+}

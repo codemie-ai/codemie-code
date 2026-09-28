@@ -111,6 +111,8 @@ export interface ReportMeta {
     pricedSessions: number;
   };
   unpricedModels: string[];
+  estimatedModels: string[]; // distinct models priced from a tier-estimate row, not a confirmed published price
+  localModels: string[]; // distinct locally-served models (non-cloud Ollama) priced at $0 — neither unpriced nor estimated
   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
   userEmail?: string;   // identity of the report owner; absent when not authenticated
   periodStart?: string; // ISO — start of the reported range; always present when the report contains any sessions

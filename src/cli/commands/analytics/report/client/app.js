@@ -802,6 +802,22 @@
     host.appendChild(changeCard);
   };
 
+  /**
+   * Builds the cost-banner text (spec section B: "The HTML report and the terminal summary
+   * show both lists"). Pure string builder kept separate from VIEWS.cost's DOM assembly so it
+   * can be executed directly in a test (see report-views.test.ts CR-014).
+   */
+  function costBannerMessage(meta) {
+    var priced = meta.totals.pricedSessions, totalSessions = meta.totals.sessions;
+    var msg = 'Priced ' + priced + ' of ' + totalSessions + ' sessions with recoverable token usage. '
+      + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
+      + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
+    if (meta.unpricedModels && meta.unpricedModels.length) msg += ' Unpriced models: ' + meta.unpricedModels.join(', ') + '.';
+    if (meta.estimatedModels && meta.estimatedModels.length) msg += ' Estimated models: ' + meta.estimatedModels.join(', ') + '.';
+    if (meta.localModels && meta.localModels.length) msg += ' Local models (free): ' + meta.localModels.join(', ') + '.';
+    return msg;
+  }
+
   VIEWS.cost = function (host, fs) {
     host.appendChild(el('h2', 'view-title', 'Cost'));
     var allEstimated = fs.length && fs.every(function (s) { return s.costSource === 'native-estimate'; });
@@ -815,11 +831,7 @@
     var priced = DATA.meta.totals.pricedSessions, totalSessions = DATA.meta.totals.sessions;
 
     var banner = el('div', 'alert ' + (priced < totalSessions ? 'alert-warning' : 'alert-info'));
-    var msg = 'Priced ' + priced + ' of ' + totalSessions + ' sessions with recoverable token usage. '
-      + 'The rest have no readable native log — coding agents rotate/delete old transcripts, so historical '
-      + 'token data is incomplete (this does not affect the cost of the sessions that are priced). See Coverage by agent below.';
-    if (DATA.meta.unpricedModels && DATA.meta.unpricedModels.length) msg += ' Unpriced models: ' + DATA.meta.unpricedModels.join(', ') + '.';
-    banner.textContent = msg; // textContent is safe — do not pre-escape (would double-escape)
+    banner.textContent = costBannerMessage(DATA.meta); // textContent is safe — do not pre-escape (would double-escape)
     host.appendChild(banner);
 
     var grid = el('div', 'kpi-grid'); grid.style.gridTemplateColumns = 'repeat(3,1fr)';
@@ -1409,7 +1421,7 @@
   }
   /**
    * Rebuild a single-session ReportPayload matching what
-   * `codemie analytics --report --report-format json --session <id>` writes:
+   * `codemie analytics --export json --session <id>` writes:
    * { meta, sessions: [record] }, with meta.totals/coverage scoped to this one session
    * and userEmail / periodStart / periodEnd populated. Mirrors buildPayload()'s meta
    * assembly (see report/payload-builder.ts) so the exported file is drop-in comparable.
@@ -1418,8 +1430,12 @@
     var perModel = s.perModelCost || [];
     var priced = perModel.length > 0;
     var unpricedModels = [];
+    var estimatedModels = [];
+    var localModels = [];
     perModel.forEach(function (m) {
       if (m.unpriced && unpricedModels.indexOf(m.model) === -1) unpricedModels.push(m.model);
+      if (m.estimated && estimatedModels.indexOf(m.model) === -1) estimatedModels.push(m.model);
+      if (m.local && localModels.indexOf(m.model) === -1) localModels.push(m.model);
     });
     var meta = {
       generatedAt: new Date().toISOString(),
@@ -1440,6 +1456,8 @@
         pricedSessions: priced ? 1 : 0
       },
       unpricedModels: unpricedModels,
+      estimatedModels: estimatedModels,
+      localModels: localModels,
       coverage: [{ agentName: s.agentName, total: 1, priced: priced ? 1 : 0, withLog: s.hadLog ? 1 : 0 }]
     };
     // Same conditional-spread semantics as buildPayload: omit rather than emit null.

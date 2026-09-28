@@ -1,6 +1,6 @@
 /**
  * Programmatic, side-effect-free session-scoped analytics report generator.
- * Composes the same building blocks the `analytics --report --report-format json`
+ * Composes the same building blocks the `analytics --export json`
  * CLI path uses, but prints nothing and never calls process.exit — safe to invoke
  * from agent session finalization. Failures propagate to the caller (who logs them).
  */
@@ -17,8 +17,6 @@ export interface SessionReportOptions {
   sessionId: string;
   /** Absolute or cwd-relative output path for the JSON report. Defaults to `docs/codemie/analytics/codemie-analytics-[email-]<sessionId>.json` relative to cwd. */
   outputPath?: string;
-  /** Include native agent-log discovery (default true). */
-  scanNative?: boolean;
   /** User email to embed in report metadata and default filename. */
   userEmail?: string;
 }
@@ -31,10 +29,8 @@ export interface SessionReportResult {
 }
 
 export async function generateSessionReport(options: SessionReportOptions): Promise<SessionReportResult> {
-  const scanNative = options.scanNative ?? true;
   const { rawSessions } = await new SessionsSource().load({
     filter: { sessionId: options.sessionId },
-    scanNative,
   });
   if (rawSessions.length === 0) {
     return { written: null, sessions: 0 };

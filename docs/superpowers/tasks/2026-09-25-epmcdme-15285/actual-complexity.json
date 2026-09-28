@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-09-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 12 files changed, which maps to XL under the actual-mode table (11-15). The count is inflated by tests and docs: 7 test files (connect-orchestrator, index, tenant-catalog, vscode-models, vscode, integration vscode-byok) and 2 docs (ARCHITECTURE-PROXY, COMMANDS). Only 4 production files changed (tenant-catalog.ts, vscode-models.ts, vscode.ts, connect-orchestrator.ts), all under src/cli/commands/proxy/. The fix-up (4 files) touches files already in this set, so it adds no new files." },
+    { "dimension": "component_scope", "reason": "Three to four collaborating components in one subsystem (proxy connectors): the tenant catalog fetch now returns descriptors (label/provider/multimodal/tools), the VS Code capability table becomes an enrichment lookup with a conservative default builder, the VS Code connector rebuilds the model list from the live catalog, and the connect orchestrator no longer pins the list to the profile model. The pattern is clear and no new abstractions cross subsystem boundaries." },
+    { "dimension": "technical_risk", "reason": "The closest precedents are desktop.ts fetchClaudeModels (the catalog read) and opencode-dynamic-models.ts (Responses-family detection), and both are adapted. The new part is the GPT version regex heuristic (codex, gpt-5.5+, gpt-6+, vendor-prefix stripping, date-suffix lookahead) plus default capability synthesis for models not in the table. It needed a follow-up fix for untabled codex/gpt-5.5+ ids and blank catalog ids. There are no new security surfaces: the gateway key is logged through the existing sanitizeLogArgs, and the atomic config write is unchanged. Rollback is trivial because the config is regenerated on each connect." },
+    { "dimension": "affected_layers", "reason": "Three layers: the CLI command (connect orchestrator), the connector/service logic (capability resolution), and an External read of the existing /v1/llm_models gateway endpoint. It also writes the VS Code chatLanguageModels.json config file. There is no schema change and no new external service." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

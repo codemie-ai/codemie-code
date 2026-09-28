@@ -38,11 +38,21 @@
 **Adapter**: `gh` CLI (authenticated; repo remote is GitHub).
 **Instructions**: Check current branch state via `gh pr list --head $(git branch --show-current)` and avoid creating duplicate PRs. Follow Conventional Commits and the project Squash-and-Merge default. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"` using the Body Template below.
 
+## Complexity Scoring
+
+**Status**: configured
+**Field**: Labels
+**Format**: t-shirt
+
 ## Lifecycle Intent Handling
 
 ### record_complexity_score
-Invoke the `codemie-jira-assistant` skill and ask it to update the ticket's complexity score (Total Score) with the value from `data.complexity_total`.
-Ticket ID: extract from the current branch name (pattern `EPMCDME-\d+`) or from the run work item.
+Via the `codemie-jira-assistant` skill, add a complexity label to the ticket with the size from `data.complexity_size` (XS–XXL, as-is):
+`initial` → `sdlc-factory-est-<SIZE>`, `actual` → `sdlc-factory-act-<SIZE>`. Add only — never remove or change existing labels, so an `sdlc-standard` ticket ends with both labels.
+Ticket ID: from the branch name (`EPMCDME-\d+`) or the run work item.
+
+### get_field
+For `Labels`: always return `field_value: null` — complexity labels are additive, there is nothing to overwrite.
 
 ### artifact_published
 Invoke the `codemie-jira-assistant` skill and attach the artifact file using the `--file` flag:
@@ -55,3 +65,4 @@ codemie assistants chat "289d2751-afd9-4c77-a272-90df7cd71702" \
 
 Ticket ID: extract from the current branch name (pattern `EPMCDME-\d+`) or from the run work item.
 `<path-to-artifact>`: use `data.artifact_path`, or the path to `spec.md` / `plan.md` in the run directory.
+For `complexity-assessment.json` (product-owner, `artifact_kind: complexity`), also add `sdlc-factory-est-<size>` from its `size` key via `codemie-jira-assistant`, as in `record_complexity_score`.

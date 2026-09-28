@@ -27,6 +27,9 @@ import { exec } from '@/utils/exec.js';
 import { parseRoutingHeaders } from '@/utils/routing-headers.mjs';
 import { parseBackendModelName, applyBedrockRegionalPremium } from '@/utils/bedrock-pricing.mjs';
 import { deriveMachineEncryptionKey, decryptWithKey, deriveUrlStorageKey, deriveLegacyUrlStorageKey } from '@/utils/credential-crypto.js';
+// Model-id → rate-card-key resolution is the same module src/utils/pricing.ts's resolvePrice() uses,
+// so the live statusline cost and the analytics report cannot price one id differently.
+import { priceTableKey, resolvePriceKey } from '@/utils/price-resolution.js';
 
 const HOME = process.env.CODEMIE_HOME || path.join(os.homedir(), '.codemie');
 const CACHE_FILE = path.join(HOME, 'budget-cache.json');
@@ -138,14 +141,15 @@ const ROUTED_MODEL_TAIL_MAX_BYTES = 8 * 1024 * 1024; // 8MB
 
 /**
  * Strips Bedrock region/provider qualifiers (`converse/global.anthropic.` / `eu.anthropic.` /
- * Switchyard's `bedrock/us.anthropic.` alias, which carries no version suffix) and any
- * `-v1:0` inference-profile version suffix.
+ * Switchyard's `bedrock/us.anthropic.` alias, which carries no version suffix — including both
+ * stacked together as `bedrock/converse/`, observed on real usage data) and any `-v1:0`
+ * inference-profile version suffix.
  */
 export function normalizeModelId(modelId) {
   if (!modelId) return '';
   return modelId
     .toLowerCase()
-    .replace(/^(?:converse|bedrock)\//, '')
+    .replace(/^(?:bedrock\/)?(?:converse\/)?/, '')
     .replace(/^[a-z0-9-]+\.anthropic\./, '')
     .replace(/-v\d+:\d+$/, '');
 }
@@ -351,98 +355,42 @@ async function defaultReadPrices() {
   return JSON.parse(await fs.readFile(path.join(here, PRICING_FILENAME), 'utf8'));
 }
 
-// Both sides of the lookup must be folded the same way. The id is lowercased and its dots turned to
-// dashes, so the table keys have to be too — otherwise a dotted key (`gemini-3.7-flash`, `glm-4.7`,
-// `minimax-m2.5`: 14 of them in the shipped card) can never match, and every turn answered by one of
-// those models silently prices at $0. Built once per table object rather than per message.
+// Both sides of the lookup must be folded the same way: the id through canonicalizeModelId(), the
+// table keys through priceTableKey() — exactly as buildPriceTable() folds them for the report —
+// otherwise a dotted key (`gemini-3.7-flash`, `glm-4.7`) can never match and prices at $0. The
+// deployed card is already built, so keys cannot collide there; a hand-made table whose keys fold
+// together with different rates is ambiguous, and that key is left unpriced rather than letting
+// whichever row came last win (buildPriceTable() throws instead — the statusline must never throw).
+// Built once per table object rather than per message.
 const NORMALIZED_TABLES = new WeakMap();
 
 function normalizedTable(table) {
   const cached = NORMALIZED_TABLES.get(table);
   if (cached) return cached;
   const normalized = new Map();
-  for (const [key, rate] of Object.entries(table)) {
-    if (key.startsWith('_')) continue; // _meta and similar
-    normalized.set(normalizeModelId(key).replace(/\./g, '-'), rate);
+  const ambiguous = new Set();
+  for (const [rawKey, rate] of Object.entries(table)) {
+    if (rawKey.startsWith('_')) continue; // _meta and similar
+    const key = priceTableKey(rawKey);
+    if (normalized.has(key) && JSON.stringify(normalized.get(key)) !== JSON.stringify(rate)) ambiguous.add(key);
+    normalized.set(key, rate);
   }
+  for (const key of ambiguous) normalized.delete(key);
   NORMALIZED_TABLES.set(table, normalized);
   return normalized;
 }
 
-/** Claude pricing tiers whose per-tier rate has stayed flat across every `-4-*` version bump seen so far. */
-const CLAUDE_TIERS = ['claude-opus', 'claude-sonnet', 'claude-haiku'];
-
 /**
- * Parse the version segments trailing a tier prefix into a numeric tuple for comparison, e.g.
- * `claude-sonnet-4-8` under tier `claude-sonnet` -> `[4, 8]`. Returns null for keys that don't
- * fit the plain `<tier>(-<digits>)*` shape — non-numeric segments (`-latest`) or a long numeric
- * segment (a pinned date snapshot like `-20250514`, 8 digits).
- */
-function tierVersionTuple(key: string, tier: string): number[] | null {
-  const rest = key.slice(tier.length);
-  if (!rest) return [0];
-  const segments = rest.split('-').filter(Boolean);
-  const nums: number[] = [];
-  for (const segment of segments) {
-    if (!/^\d+$/.test(segment) || segment.length >= 8) return null;
-    nums.push(Number(segment));
-  }
-  return nums;
-}
-
-function compareVersionTuples(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-
-/**
- * Fall back to the latest known rate within the same Claude tier (opus/sonnet/haiku) when `name`
- * matches no table entry at all — e.g. a brand-new major-version model (`claude-sonnet-5`) that
- * shares no version segment with any `-4-*` key. Mirrors src/utils/pricing.ts's
- * claudeTierFallback(); duplicated here because this file is bundled standalone and cannot import
- * that module.
- */
-function claudeTierFallback(name: string, rates: Map<string, unknown>) {
-  const tier = CLAUDE_TIERS.find((t) => name === t || name.startsWith(`${t}-`));
-  if (!tier) return null;
-  let best: { key: string; version: number[]; rate: unknown } | null = null;
-  for (const [key, rate] of rates.entries()) {
-    if (key !== tier && !key.startsWith(`${tier}-`)) continue;
-    const version = tierVersionTuple(key, tier);
-    if (version === null) continue;
-    if (!best || compareVersionTuples(version, best.version) > 0) best = { key, version, rate };
-  }
-  return best ? best.rate : null;
-}
-
-/**
- * Longest table key that aligns to a `-`-delimited segment boundary, so `claude-haiku` never
- * matches mid-token, falling back to the latest same-tier Claude rate when even that misses —
- * the same three-tier resolution order as src/utils/pricing.ts's lookupPrice().
+ * Resolves a rate from `table` for `modelId` through the shared resolvePriceKey() — the lookup
+ * order src/utils/pricing.ts's resolvePrice() uses (exact, one snapshot suffix stripped, then a
+ * version-first Claude id reordered) — then applies any Bedrock regional premium. Null when
+ * unpriced; there is no family/tier fallback.
  */
 export function lookupRate(table, modelId) {
-  if (!table) return null;
-  const name = normalizeModelId(modelId).replace(/\./g, '-');
-  if (!name) return null;
+  if (!table || !modelId) return null;
   const rates = normalizedTable(table);
-  const exact = rates.get(name);
-  if (exact) return applyBedrockRegionalPremium(exact, modelId);
-  let best: string | null = null;
-  for (const key of rates.keys()) {
-    if (key.length > name.length) continue;
-    const idx = name.indexOf(key);
-    if (idx === -1) continue;
-    const before = idx === 0 ? '-' : name[idx - 1];
-    const after = idx + key.length === name.length ? '-' : name[idx + key.length];
-    if (before === '-' && after === '-' && (!best || key.length > best.length)) best = key;
-  }
-  const rate = best ? rates.get(best) : null;
-  if (rate) return applyBedrockRegionalPremium(rate, modelId);
-  const tierFallback = claudeTierFallback(name, rates);
-  return tierFallback ? applyBedrockRegionalPremium(tierFallback, modelId) : null;
+  const hit = resolvePriceKey(modelId, (key) => rates.get(key));
+  return hit ? applyBedrockRegionalPremium(hit.value, modelId) : null;
 }
 
 function messageCost(rate, usage) {
@@ -558,7 +506,7 @@ export async function computeSessionCost(transcriptPath, {
       // Prefer the raw backend id (x-litellm-model-name, falling back to the routed/response
       // model) over the CodeMie-cleaned routedModel: the clean name is what lookupRate wants for
       // the base price, but pricing ALSO needs the region qualifier the clean name strips — see
-      // isBedrockRegionalPremium() below. normalizeModelId() inside lookupRate strips the same
+      // isBedrockRegionalPremium() below. canonicalizeModelId() inside lookupRate strips the same
       // qualifier for the price lookup itself, so using the raw id here changes nothing about
       // which rate is selected.
       const model = parseBackendModelName(message) ?? parseRoutingHeaders(message)?.routedModel ?? message.model ?? '';

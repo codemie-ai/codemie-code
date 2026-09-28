@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Unify `codemie analytics` into a single always-costed command/output contract (dropping contradictory --export/--report-format/otel paths) and add report-JSON shape tests that fail on unpriced models, live per-model 'hi' smoke tests through the ai-run proxy, and a pricing.json vs /v1/llm_models reconciliation test.",
+  "generated": "2026-09-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 22,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base L: the analytics CLI command (runAnalytics flag contract, exporter/formatter), the cost/report domain (cost-enricher, payload-builder, report types, report-generator, session-report used by BaseAgentAdapter exit hook), the OTEL source path, plus three test harnesses (integration report-shape, agent-project live smoke via agent-smoke helper, SSO catalog reconciliation via fetchCodeMieLlmModels). Bumped to XL because making unpricedModels a trustworthy signal means touching the shared pricing util (lookupPrice family/tier fallbacks)." },
+    { "dimension": "requirements_clarity", "reason": "Intent is clear but several design decisions are open: which output(s) survive (terminal summary, CSV, RootAnalytics vs ReportPayload JSON), the fate of `analytics otel`, whether family/tier fallback prices and zero-usage hadLog sessions count as 'unpriced', how tenant ids (dated, -vertex, openai., routers) map to pricing keys, and how 'build should break' applies when live tests sit outside `npm run ci`. The referenced report.json is 0 bytes." },
+    { "dimension": "technical_risk", "reason": "Closest patterns exist (single buildPayload, AnalyticsSource seam, agent-smoke.ts, vscode-models.live.test.ts per-model loop, fetchCodeMieLlmModels), so base M. Bumped to L: AC enumerate error/variant cases (fail on unpriced models, per-model live runs, catalog mismatches) with no existing test template asserting ReportPayload cost fields or reconciliation. Also breaks the documented public contract in docs/ANALYTICS-REPORT.md, always-cost default may slow plain runs, and live tests depend on network/credentials. Consistent with project L example profile-provider-decoupling (TR L, CS XL)." },
+    { "dimension": "file_change_estimate", "reason": "Roughly 11-15 modified (analytics index.ts, exporter, formatter, payload-builder, report types, report-generator, session-report, cost-enricher, otel source/loader, pricing.ts, docs ANALYTICS-REPORT.md/COMMANDS.md, several existing unit tests and cli-misc-coverage test) plus 3-5 new test files/helpers (report-shape integration test, live per-model analytics smoke, reconciliation test) across src/cli/commands/analytics, src/utils, docs, tests/integration and tests/helpers." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utility src/utils/pricing.ts (lookupPrice fallback signalling) used by all cost paths",
+    "Technical Risk bumped from M (3) to L (4): acceptance criteria enumerate error/variant cases (unpricedModels must fail, per-model live runs, catalog reconciliation) with no existing test template covering ReportPayload cost assertions or reconciliation"
+  ],
+  "split_recommendation": null
+}

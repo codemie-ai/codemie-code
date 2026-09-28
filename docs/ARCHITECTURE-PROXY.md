@@ -708,13 +708,13 @@ The MCP Auth Plugin works in conjunction with the stdio-to-HTTP bridge:
 
 ### 6.6 VS Code BYOK Profile Configuration
 
-`codemie proxy connect vscode` resolves one effective CodeMie profile before configuring the client. The selected profile's `model` is written directly to VS Code's `models[].id`, which is the identifier VS Code sends in inference requests. The profile's `codeMieProject` is passed independently to the daemon for `X-CodeMie-Project` header injection.
+`codemie proxy connect vscode` resolves one effective CodeMie profile before configuring the client. The connector writes every enabled tenant model in catalog order into VS Code's `models[]`; the capability table only enriches known families, unknown models get conservative defaults, and the profile model does not affect the list. The profile's `codeMieProject` is passed independently to the daemon for `X-CodeMie-Project` header injection.
 
 The persistent daemon never receives a configured model and does not rewrite request bodies. It validates the local gateway key, injects SSO authentication and CodeMie context headers, then forwards request and response bodies through the existing streaming path byte-for-byte.
 
 The command reuses a healthy daemon when its profile, project, provider, target URL, and `vscode-byok` client type match. Model changes only rewrite VS Code configuration; they do not restart the daemon.
 
-The connector merges one managed model into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
+The connector writes the full tenant catalog into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
 GPT-5.5 and all three GPT-5.6 entries use `/v1/responses` with
 `zeroDataRetentionEnabled: true`, `thinking: true`, and Responses-format reasoning efforts. VS

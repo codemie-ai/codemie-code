@@ -240,16 +240,16 @@ export interface AnalyticsOptions {
   last?: string;
   branch?: string;
   verbose?: boolean;
-  export?: 'json' | 'csv';
+  /**
+   * `--export [format]`: commander's optional-value option. `undefined` when the flag is
+   * absent, `true` when given bare (resolves to 'html'), or the raw string value otherwise
+   * (validated against 'html' | 'json' | 'both' at runtime; anything else is rejected).
+   */
+  export?: string | true;
+  /** `-o, --output <path>`: target file or directory for the report (see resolveOutputTargets). */
   output?: string;
-  report?: boolean;
   open?: boolean;
-  reportOutput?: string;
-  /** Report serialization selector (default 'html'). 'json' writes the cost-enriched payload; 'both' writes html + json. */
-  reportFormat?: 'html' | 'json' | 'both';
-  /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
-  scanNative?: boolean;
-  /** When true (via --include-external), include non-CodeMie-owned native sessions in output (matches pre-fix behavior). */
+  /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;
 }
 
