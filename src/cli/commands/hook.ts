@@ -7,6 +7,7 @@ import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSu
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { forwardOtlpEvent } from '@/agents/plugins/cursor-ide/cursor-ide.otlp-forwarder.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
+import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -581,44 +582,26 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig, agentName
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
 
-    const analyticsConfigured = provider === 'ai-run-sso' || Boolean(ssoUrl && syncApiUrl);
-    if (!analyticsConfigured) {
+    const authInput: AuthGateInput = {
+      provider,
+      ssoUrl,
+      syncApiUrl,
+      apiKey: getConfigValue('CODEMIE_API_KEY', config),
+    };
+
+    const authResult = await ensureCodeMieSsoAuth(authInput);
+    if (authResult.ok) {
       return;
     }
-
-    let hasValidAuth = Boolean(getConfigValue('CODEMIE_API_KEY', config));
-    if (!hasValidAuth && ssoUrl) {
-      try {
-        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-        const credentials = await new CodeMieSSO().getStoredCredentials(ssoUrl);
-        hasValidAuth = Boolean(credentials?.cookies);
-      } catch (error) {
-        logger.debug('[hook:UserPromptSubmit] Auth gate: failed to load SSO credentials:', error);
-      }
-    }
-
-    const { getAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
-    const authStatus = await getAnalyticsAuthStatus();
-
-    if (hasValidAuth && !authStatus) {
-      return;
-    }
-
-    const reason = !hasValidAuth
-      ? 'no valid CodeMie SSO credentials found'
-      : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
-    const loginCommand = ssoUrl
-      ? `codemie profile login --url ${ssoUrl}`
-      : 'codemie profile login';
 
     const message = [
       'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
-      `Reason: ${reason}.`,
-      `Re-authenticate by running: ${loginCommand}`,
-      'Then re-send your prompt.'
+      `Reason: ${authResult.reason}.`,
+      'A browser sign-in window has been opened automatically.',
+      'Complete the sign-in, then re-send your prompt.',
     ].join('\n');
 
-    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${reason}`);
+    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
 
     if (config || agentNeverBlocks(agentName)) {
       // Programmatic mode (e.g. VSCode extension), or an agent that declares

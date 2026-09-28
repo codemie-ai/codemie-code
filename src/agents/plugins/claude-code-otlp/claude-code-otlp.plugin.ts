@@ -1,12 +1,11 @@
 
+import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { logger } from '@/utils/logger.js';
+import { ConfigLoader } from '@/utils/config.js';
 import { AgentAdapterType, OTLPAgentAdapter } from '@/agents/core/types.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { ForwardDecision, toBaseClaudeCodeHookEvent } from './claude-code-otlp.types.js';
 import { forwardOtlpEventToSpool } from '../utils.js';
-import { ConfigLoader } from '@/utils/config.js';
-import { ProviderRegistry } from '@/providers/index.js';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 
 export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
@@ -33,13 +32,13 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
     const event = toBaseClaudeCodeHookEvent(JSON.parse(rawEvent));
 
     if (event.hookEventName === 'UserPromptSubmit') {
-      const isAuthValid = await this.ensureProxyAuth();
+      const authResult = await this.ensureProxyAuth();
 
-      if (!isAuthValid) {
+      if (!authResult.ok) {
         return {
           action: 'block',
           reason: [
-            "CodeMie SSO authentication is invalid - you are blocked until you re-authenticate.",
+            `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
             "A browser sign-in window has been opened automatically.",
             "Complete the sign-in, then re-send your prompt.",
           ].join("\n"),
@@ -53,36 +52,14 @@ export class ClaudeCodeOtlpPlugin implements OTLPAgentAdapter {
     }
   }
 
-  private async ensureProxyAuth(): Promise<boolean> {
+  private async ensureProxyAuth(): Promise<AuthGateResult> {
     const workingDir = process.cwd();
     const config = await ConfigLoader.load(workingDir);
 
-    if (!config.provider || config.provider !== "ai-run-sso") {
-      logger.error(`[Claude Code OTLP plugin] Only "ai-run-sso" auth provider is available.`);
-      return false;
-    }
-
-    const { validateAuth } = ProviderRegistry.getSetupSteps(config.provider)!;
-    const result = await validateAuth!(config);
-
-    if (result.valid) {
-      return true;
-    }
-
-    const ssoUrl = config.codeMieUrl || config.baseUrl;
-
-    if (!ssoUrl) {
-      logger.error(`[Claude Code OTLP plugin] SSO URL is missing.`);
-      return false;
-    }
-
-    try {
-      await new CodeMieSSO().authenticate({ codeMieUrl: ssoUrl, timeout: 120_000, quiet: true });
-    } catch (error) {
-      logger.error(`[Claude Code OTLP plugin] Failed to re-authenticate: ${(error as Error).message}`);
-    }
-
-    return false;
+    return await ensureCodeMieSsoAuth({
+      provider: config.provider,
+      ssoUrl: config.codeMieUrl || config.baseUrl,
+    });
   }
 
   private forwardToSpool(rawEvent: string): void {
