@@ -202,6 +202,31 @@ function isRouterCatalogEntry(model: LlmModel): boolean {
   return model.is_router === true || model.litellm_router?.is_router === true;
 }
 
+// Claude Code's own opt-in suffix for the 1M-context beta (case-insensitive, trailing).
+const ONE_MILLION_SUFFIX = '[1m]';
+const ONE_MILLION_SUFFIX_PATTERN = /\[1m\]$/i;
+
+/**
+ * Splits Claude Code's trailing `[1m]` opt-in suffix off a configured model id, so catalog
+ * matching always runs against the bare id the backend actually knows about.
+ */
+function splitOneMillionSuffix(id: string): { bareId: string; wantsOneMillion: boolean } {
+  const wantsOneMillion = ONE_MILLION_SUFFIX_PATTERN.test(id);
+  return { bareId: wantsOneMillion ? id.replace(ONE_MILLION_SUFFIX_PATTERN, '') : id, wantsOneMillion };
+}
+
+/**
+ * Whether a catalog entry is a router/alias rather than a concrete deployment — either the
+ * structured `isRouterCatalogEntry` signal, or (for a router whose catalog record omits it) any
+ * of its own ids reading as a router by name. Routers dispatch to whichever backend model they
+ * currently resolve to, so `supportsOneMillionContext`'s literal-id table cannot judge them —
+ * this is the gate that keeps the `[1m]`-preservation logic from ever running the capability
+ * table against a router id.
+ */
+function isRouterLikeEntry(model: LlmModel): boolean {
+  return isRouterCatalogEntry(model) || modelIdentifiers(model).some((id) => /router/i.test(id));
+}
+
 /**
  * Every id the live catalog addresses a router by — a Switchyard virtual router (`is_router` on
  * the catalog entry) or a declared LiteLLM auto-router (`litellm_router.is_router`) — rather than
@@ -437,6 +462,26 @@ export async function resolveClaudeModel(
     return null;
   }
 
+  // A configured `<id>[1m]` never matches the checks above verbatim — the live catalog only ever
+  // carries bare ids. Match the bare id instead so re-matching never silently drops the suffix:
+  // keep it whenever the live entry is a router (which `supportsOneMillionContext` cannot judge)
+  // or the table says the bare id is 1M-capable; otherwise fall back to the bare id without it.
+  const oneMillion = currentModel ? splitOneMillionSuffix(currentModel) : null;
+  if (oneMillion?.wantsOneMillion) {
+    const catalogEntry = catalog.find(
+      (model) => isServableModel(model) && modelIdentifiers(model).includes(oneMillion.bareId)
+    );
+    if (catalogEntry) {
+      if (isRouterLikeEntry(catalogEntry) || supportsOneMillionContext(oneMillion.bareId)) {
+        return null;
+      }
+      logger.notice(
+        `[claude-models] Model "${currentModel}" for tier "${tier}" is not 1M-context capable; using "${oneMillion.bareId}"`
+      );
+      return { selectedModel: oneMillion.bareId, availableModels };
+    }
+  }
+
   if (ranked.length === 0) {
     if (currentModel) {
       logger.debug(`[claude-models] No compatible CodeMie models found for tier "${tier}"; keeping configured model`);
@@ -445,9 +490,22 @@ export async function resolveClaudeModel(
     throw new ConfigurationError(`No CodeMie model compatible with Claude tier "${tier}" is available.`);
   }
 
+  // Carry a retired model's `[1m]` over to its replacement only when that replacement can honor
+  // it: never onto a router (whose backend the table cannot see), never onto a model the table
+  // says is not 1M-capable. Otherwise the plain replacement is used — losing 1M context is
+  // preferable to failing the launch.
+  const replacementEntry = catalog.find(
+    (model) => isServableModel(model) && modelIdentifiers(model).includes(ranked[0].id)
+  );
+  const keepOneMillion =
+    oneMillion?.wantsOneMillion === true &&
+    !(replacementEntry && isRouterLikeEntry(replacementEntry)) &&
+    supportsOneMillionContext(ranked[0].id);
+  const selectedModel = keepOneMillion ? `${ranked[0].id}${ONE_MILLION_SUFFIX}` : ranked[0].id;
+
   if (currentModel) {
-    logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${ranked[0].id}`);
+    logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${selectedModel}`);
   }
 
-  return { selectedModel: ranked[0].id, availableModels };
+  return { selectedModel, availableModels };
 }
