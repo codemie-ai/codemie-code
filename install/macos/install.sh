@@ -7,6 +7,7 @@ REGISTRY_URL="${CODEMIE_REGISTRY_URL:-https://registry.npmjs.org/}"
 SCOPE_REGISTRY_URL="${CODEMIE_SCOPE_REGISTRY_URL:-}"
 INSTALL_MODE="${CODEMIE_INSTALL_MODE:-auto}"
 USER_PREFIX="${CODEMIE_NPM_PREFIX:-$HOME/.codemie/npm-prefix}"
+LEGACY_PREFIX="$HOME/.codemie/npm-prefix"
 PACKAGE_VERSION="${CODEMIE_PACKAGE_VERSION:-}"
 
 status() {
@@ -58,16 +59,17 @@ fi
 
 LEGACY_OVERRIDE_DETECTED=0
 NPM_USER_PREFIX="$(npm config get prefix --location user 2>/dev/null || true)"
-if [ "$NPM_USER_PREFIX" = "$USER_PREFIX" ]; then
+if [ "$NPM_USER_PREFIX" = "$LEGACY_PREFIX" ]; then
   LEGACY_OVERRIDE_DETECTED=1
-  echo "Legacy npm prefix override detected at $USER_PREFIX"
+  echo "Legacy npm prefix override detected at $LEGACY_PREFIX"
   echo "Packages stranded in the legacy prefix:"
-  npm ls -g --prefix "$USER_PREFIX" --depth=0 || true
+  npm ls -g --prefix "$LEGACY_PREFIX" --depth=0 || true
   if ! npm config delete prefix --location user; then
     echo "Failed to delete the legacy npm prefix override." >&2
     exit 1
   fi
   status "npm config" "ran: npm config delete prefix --location user"
+  echo "Revert: npm config set prefix \"$LEGACY_PREFIX\" --location user"
 fi
 
 if [ "$INSTALL_MODE" = "auto" ]; then
@@ -125,7 +127,7 @@ status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
 
 if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ]; then
   echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"
-  echo "Optional cleanup: rm -rf \"$USER_PREFIX\""
+  echo "Optional cleanup: rm -rf \"$LEGACY_PREFIX\""
 fi
 
 echo "Run `codemie doctor` in a new terminal to verify the installation."
