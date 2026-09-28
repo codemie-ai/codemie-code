@@ -166,9 +166,18 @@ function Test-DirWritable {
 }
 
 function Resolve-InstallMode {
-  param([string]$NpmPath)
+  param(
+    [string]$NpmPath,
+    [string[]]$LocationArgs = @()
+  )
 
-  $prefix = ((& $NpmPath @('config', 'get', 'prefix')) | Select-Object -First 1).ToString().Trim()
+  $prefixArgs = @('config', 'get', 'prefix') + $LocationArgs
+  $prefixRaw = (& $NpmPath $prefixArgs) | Select-Object -First 1
+  if ($null -eq $prefixRaw -or [string]::IsNullOrWhiteSpace($prefixRaw.ToString())) {
+    return 'portable'
+  }
+
+  $prefix = $prefixRaw.ToString().Trim()
   if (Test-DirWritable $prefix) {
     return 'npm-global'
   }
@@ -234,12 +243,22 @@ if ($LegacyOverrideDetected) {
   Write-Host 'Packages stranded in the legacy prefix:'
   & $NpmPath @('ls', '-g', '--prefix', $PrefixDir, '--depth=0')
   Invoke-Checked $NpmPath @('config', 'delete', 'prefix', '--location', 'user') 'Failed to delete the legacy npm prefix override.'
-  Write-Status 'npm config' 'ran: npm config delete prefix --location user'
+  if ($DryRun) {
+    Write-Status 'npm config' 'DRY RUN: would run npm config delete prefix --location user'
+  } else {
+    Write-Status 'npm config' 'ran: npm config delete prefix --location user'
+  }
   Write-Host "Revert: npm config set prefix `"$PrefixDir`" --location user"
 }
 
 if ($Mode -eq 'auto') {
-  $ResolvedMode = Resolve-InstallMode $NpmPath
+  if ($DryRun -and $LegacyOverrideDetected) {
+    # DryRun never deletes the override, so resolve against the global prefix to
+    # preview the mode a real run would compute after that deletion.
+    $ResolvedMode = Resolve-InstallMode $NpmPath @('--location', 'global')
+  } else {
+    $ResolvedMode = Resolve-InstallMode $NpmPath
+  }
 } else {
   $ResolvedMode = $Mode
 }
