@@ -226,7 +226,26 @@ export function parseRouterModelIds(env) {
  * naming) rather than an actual routing decision, and this is the only thing telling those apart.
  */
 export function isRoutingConfigured(env, modelId) {
-  return parseRouterModelIds(env).has(modelId);
+  const routerIds = parseRouterModelIds(env);
+  return routerIds.has(modelId) || routerIds.has(stripOneMillionSuffix(modelId));
+}
+
+/**
+ * Drops Claude Code's trailing `[1m]` 1M-context opt-in (case-insensitive). The catalog lists —
+ * router ids and labels alike — carry bare ids, while a session kept on `<id>[1m]` reports the
+ * suffixed form in `model.id`, so lookups must fall back to the bare id.
+ */
+function stripOneMillionSuffix(modelId) {
+  return (modelId ?? '').replace(/\[1m\]$/i, '');
+}
+
+/**
+ * The catalog's display label for the model Claude Code reports, or undefined when there is none.
+ * Tries the exact id first (a catalog may expose a literal `<id>[1m]` entry), then the bare id.
+ */
+export function lookupNominalLabel(labels, modelId) {
+  if (!modelId) return undefined;
+  return labels[modelId] ?? labels[stripOneMillionSuffix(modelId)];
 }
 
 /**
@@ -789,7 +808,7 @@ export async function main() {
   // Prefer the CodeMie catalog's own label over Claude Code's guessed display_name whenever
   // one is configured for this id — see parseModelLabels().
   const labels = parseModelLabels(process.env);
-  const nominalLabel = labels[basic.modelId];
+  const nominalLabel = lookupNominalLabel(labels, basic.modelId);
   if (nominalLabel) basic.model = nominalLabel;
 
   // resolveBudget() is deliberately not called: the budget segment is not rendered, and it was the

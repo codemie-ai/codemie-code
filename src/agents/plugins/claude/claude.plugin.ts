@@ -403,12 +403,22 @@ export const ClaudePluginMetadata: AgentMetadata = {
             // that one on stderr; the haiku/sonnet/opus tiers stay quiet in the log.
             const previousModel = env[generic];
             if (tier === 'model' && previousModel && previousModel !== resolution.selectedModel) {
-              console.error(
-                chalk.yellow(
-                  `⚠ Model "${safeTerminalValue(previousModel)}" is not available in this CodeMie catalog — using ${safeTerminalValue(resolution.selectedModel)} instead.`
-                )
-              );
-              console.error(chalk.yellow('  Run "codemie models list" to see the available model IDs.'));
+              // The same model is still live — only its `[1m]` opt-in was dropped. Saying it "is
+              // not available" would hide the real reason, so name the 1M context instead.
+              if (resolution.reason === 'one-million-unsupported') {
+                console.error(
+                  chalk.yellow(
+                    `⚠ Model "${safeTerminalValue(previousModel)}" does not support 1M context — using ${safeTerminalValue(resolution.selectedModel)} instead.`
+                  )
+                );
+              } else {
+                console.error(
+                  chalk.yellow(
+                    `⚠ Model "${safeTerminalValue(previousModel)}" is not available in this CodeMie catalog — using ${safeTerminalValue(resolution.selectedModel)} instead.`
+                  )
+                );
+                console.error(chalk.yellow('  Run "codemie models list" to see the available model IDs.'));
+              }
             }
             env[generic] = resolution.selectedModel;
             for (const nativeVar of native) {

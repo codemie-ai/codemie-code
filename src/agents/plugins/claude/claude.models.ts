@@ -6,9 +6,17 @@ import { logger } from '../../../utils/logger.js';
 
 export type ClaudeModelTier = 'model' | 'haiku' | 'sonnet' | 'opus';
 
+/**
+ * Why a configured model was replaced: `unavailable` — it is gone from the live catalog, so a
+ * different model now answers; `one-million-unsupported` — the same model is still live, only its
+ * `[1m]` opt-in was dropped because the bare id is not 1M-context capable.
+ */
+export type ClaudeModelResolutionReason = 'unavailable' | 'one-million-unsupported';
+
 export interface ClaudeModelResolution {
   selectedModel: string;
   availableModels: string[];
+  reason: ClaudeModelResolutionReason;
 }
 
 interface RankedClaudeModel {
@@ -61,7 +69,7 @@ const ONE_MILLION_CONTEXT_TABLE: Array<{ pattern: RegExp; supported: boolean }> 
   { pattern: /haiku/i, supported: false },                                           // no Haiku generation
   { pattern: /(?:sonnet|opus|fable)[-_.]?(?:[5-9]|[1-9]\d)(?!\d)/i, supported: true }, // gen 5+
   { pattern: /(?:sonnet|opus)[-_.]?4[-_.](?:[6-9]|[1-9]\d)(?!\d)/i, supported: true }, // 4.6+
-  { pattern: /claude[-_.]?(?:[5-9]|4[-_.][6-9])[-_.](?:sonnet|opus|fable)/i, supported: true }, // version-first ids
+  { pattern: /claude[-_.]?(?:[5-9]|[1-9]\d|4[-_.](?:[6-9]|[1-9]\d))(?!\d)[-_.](?:sonnet|opus|fable)/i, supported: true }, // version-first ids
 ];
 // Fallback: unknown ids (incl. routers/aliases) are not 1M-capable — never add [1m] speculatively.
 const ONE_MILLION_CONTEXT_DEFAULT = false;
@@ -373,8 +381,10 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
 
       // Synthesize a 1M-context option after each 1M-capable, non-router base model.
       const modelId1m = `${rankedModel.id}${ONE_MILLION_SUFFIX}`;
+      // An id the catalog already exposes with the suffix is its own row — never suffix it twice.
       if (
         !isRouterLikeEntry(model) &&
+        !ONE_MILLION_SUFFIX_PATTERN.test(rankedModel.id) &&
         supportsOneMillionContext(rankedModel.id) &&
         !seen.has(modelId1m)
       ) {
@@ -493,7 +503,7 @@ export async function resolveClaudeModel(
       logger.notice(
         `[claude-models] Model "${currentModel}" for tier "${tier}" is not 1M-context capable; using "${oneMillion.bareId}"`
       );
-      return { selectedModel: oneMillion.bareId, availableModels };
+      return { selectedModel: oneMillion.bareId, availableModels, reason: 'one-million-unsupported' };
     }
   }
 
@@ -508,7 +518,8 @@ export async function resolveClaudeModel(
   // Carry a retired model's `[1m]` over to its replacement only when that replacement can honor
   // it: never onto a router (whose backend the table cannot see), never onto a model the table
   // says is not 1M-capable. Otherwise the plain replacement is used — losing 1M context is
-  // preferable to failing the launch.
+  // preferable to failing the launch. A replacement the catalog already exposes as `<id>[1m]` is
+  // stripped before re-appending, so it can never come out double-suffixed.
   const replacementEntry = catalog.find(
     (model) => isServableModel(model) && modelIdentifiers(model).includes(ranked[0].id)
   );
@@ -516,11 +527,13 @@ export async function resolveClaudeModel(
     oneMillion?.wantsOneMillion === true &&
     !(replacementEntry && isRouterLikeEntry(replacementEntry)) &&
     supportsOneMillionContext(ranked[0].id);
-  const selectedModel = keepOneMillion ? `${ranked[0].id}${ONE_MILLION_SUFFIX}` : ranked[0].id;
+  const selectedModel = keepOneMillion
+    ? `${splitOneMillionSuffix(ranked[0].id).bareId}${ONE_MILLION_SUFFIX}`
+    : ranked[0].id;
 
   if (currentModel) {
     logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${selectedModel}`);
   }
 
-  return { selectedModel, availableModels };
+  return { selectedModel, availableModels, reason: 'unavailable' };
 }

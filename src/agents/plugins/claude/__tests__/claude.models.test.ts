@@ -165,6 +165,7 @@ describe('resolveClaudeModel — [1m] preservation', () => {
     const result = await resolveClaudeModel(env, 'model');
 
     expect(result?.selectedModel).toBe('claude-opus-4-5');
+    expect(result?.reason).toBe('one-million-unsupported');
   });
 
   it.each([
@@ -220,6 +221,17 @@ describe('resolveClaudeModel — [1m] preservation', () => {
     const result = await resolveClaudeModel(env, 'model');
 
     expect(result?.selectedModel).toBe('claude-opus-5');
+    expect(result?.reason).toBe('unavailable');
+  });
+
+  it('never double-suffixes a replacement whose catalog id already carries "[1m]"', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-opus-5[1m]' })]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-4-1[1m]' });
+    const result = await resolveClaudeModel(env, 'model');
+
+    expect(result?.selectedModel).toBe('claude-opus-5[1m]');
   });
 });
 
@@ -239,6 +251,8 @@ describe('supportsOneMillionContext', () => {
     ['claude-3-5-sonnet', false],
     ['claude-4-5-sonnet', false],
     ['claude-4-6-sonnet', true],
+    ['claude-4-10-sonnet', true],
+    ['claude-4-10-opus', true],
     ['us.anthropic.claude-sonnet-4-6-v1:0', true],
     ['claude-router-premium', false],
   ])('supportsOneMillionContext(%s) is %s', async (id, expected) => {
@@ -292,5 +306,16 @@ describe('buildModelPickerOptions', () => {
     expect(options.filter((o) => o.model === 'claude-sonnet-4-6').length).toBe(1);
     expect(options.filter((o) => o.model === 'claude-haiku-4-5').length).toBe(1);
     expect(options.filter((o) => o.model === 'claude-router-premium').length).toBe(1);
+  });
+
+  it('never synthesizes a second [1m] onto a catalog id that already ends in [1m]', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-5[1m]', label: 'Sonnet 5 1M' }),
+    ]);
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    expect(options.map((o) => o.model)).toEqual(['claude-sonnet-5[1m]']);
   });
 });

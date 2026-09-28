@@ -12,6 +12,8 @@ import {
   ctxBar,
   lookupRate,
   computeSessionCost,
+  isRoutingConfigured,
+  lookupNominalLabel,
 } from '../statusline.js';
 
 const YELLOW = '\x1b[0;33m';
@@ -90,6 +92,42 @@ describe('extractBasicInfo', () => {
     expect(info.ctxPct).toBeNull();
     expect(info.cost).toBeNull();
     expect(info.durationMs).toBeNull();
+  });
+});
+
+describe('isRoutingConfigured', () => {
+  const env = { CODEMIE_ROUTER_MODEL_IDS: JSON.stringify(['sy-smart-router']) };
+
+  it('matches a bare router id', () => {
+    expect(isRoutingConfigured(env, 'sy-smart-router')).toBe(true);
+  });
+
+  it('matches a router id carrying the [1m] context suffix', () => {
+    expect(isRoutingConfigured(env, 'sy-smart-router[1m]')).toBe(true);
+    expect(isRoutingConfigured(env, 'sy-smart-router[1M]')).toBe(true);
+  });
+
+  it('does not match a non-router id with or without the suffix', () => {
+    expect(isRoutingConfigured(env, 'claude-sonnet-4-6')).toBe(false);
+    expect(isRoutingConfigured(env, 'claude-sonnet-4-6[1m]')).toBe(false);
+  });
+});
+
+describe('lookupNominalLabel', () => {
+  const labels = { 'sy-smart-router': 'Smart Router', 'claude-sonnet-5[1m]': 'Sonnet 5 (1M)' };
+
+  it('returns the label for an exact id', () => {
+    expect(lookupNominalLabel(labels, 'sy-smart-router')).toBe('Smart Router');
+    expect(lookupNominalLabel(labels, 'claude-sonnet-5[1m]')).toBe('Sonnet 5 (1M)');
+  });
+
+  it('falls back to the bare id when the reported id carries the [1m] suffix', () => {
+    expect(lookupNominalLabel(labels, 'sy-smart-router[1m]')).toBe('Smart Router');
+  });
+
+  it('returns undefined when neither form is labelled', () => {
+    expect(lookupNominalLabel(labels, 'claude-opus-5[1m]')).toBeUndefined();
+    expect(lookupNominalLabel(labels, '')).toBeUndefined();
   });
 });
 
