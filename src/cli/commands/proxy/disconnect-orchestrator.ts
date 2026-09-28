@@ -11,7 +11,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { removeClaudeCodeAnalyticsConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
+import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
@@ -84,7 +84,7 @@ async function disconnectCursorIde(): Promise<void> {
 
 async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<void> {
   try {
-    const result = await removeClaudeCodeAnalyticsConfig({ scope });
+    const result = await removeClaudeCodeOtlpConfig({ scope });
 
     if (!result.removed) {
       console.log(chalk.dim('Claude Code OTLP: nothing to disconnect.'));

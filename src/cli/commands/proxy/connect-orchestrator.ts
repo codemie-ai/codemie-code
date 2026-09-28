@@ -49,7 +49,7 @@ import {
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
 import { writeCursorIdeHooksConfig } from './connectors/cursor-ide.js';
-import { writeClaudeCodeAnalyticsConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
+import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp/claude-code-otlp.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -289,11 +289,11 @@ const TARGET_LIST = [
   'Select at least one target to configure:',
   '',
   '  --claude-desktop       Claude Desktop app (MCP servers)',
-  '  --claude-code [--analytics]   Claude Code (analytics hooks + OTel settings)',
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
   '  --cursor-ide           Cursor IDE — writes .cursor/hooks.json (requires --analytics)',
+  '  --claude-code-otlp     Claude Code (analytics hooks + OTel settings)',
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -301,7 +301,7 @@ const TARGET_LIST = [
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   '  codemie proxy connect --cursor-ide --analytics',
-  '  codemie proxy connect --claude-code --analytics',
+  '  codemie proxy connect --claude-code-otlp',
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -315,7 +315,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   const flags: string[] = [];
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
-  if (t.claudeCodeOtlp) { flags.push('--claude-code-otlp'); labels.push('Claude Code'); }
+  if (t.claudeCodeOtlp) { flags.push('--claude-code-otlp'); labels.push('Claude Code OTLP'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
@@ -701,9 +701,9 @@ interface ClaudeCodeRunOptions {
 async function runClaudeCode(options: ClaudeCodeRunOptions): Promise<TargetResult> {
   const label = 'Claude Code Analytics';
   try {
-    const result = await writeClaudeCodeAnalyticsConfig({ force: options.force , scope:options.scope });
+    const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
     console.log(chalk.green(`\u2713 Claude Code analytics configured`));
-    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent claude --analytics`));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent claude-code-otlp`));
     console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in .claude/settings.json`));
     if (result.backupPath) {
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
@@ -725,9 +725,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   // --analytics carries no target flag of its own, so it must be checked
   // ahead of hasAnyTarget — otherwise "--analytics" alone (or with unrelated
   // flags but no target) silently falls through to the generic target list
-  // instead of explaining that --analytics only applies to --cursor-ide / --claude-code.
-  if (analytics && !targets.cursorIde && !targets.claudeCodeOtlp) {
-    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide or --claude-code-otlp.'));
+  // instead of explaining that --analytics only applies to --cursor-ide.
+  if (analytics && !targets.cursorIde) {
+    console.log(chalk.yellow('Note: --analytics has no effect without --cursor-ide.'));
     return;
   }
 
@@ -740,11 +740,6 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow(
       'Note: --cursor-ide requires --analytics. Re-run with --cursor-ide --analytics.'
     ));
-    return;
-  }
-
-  if (targets.claudeCodeOtlp && !analytics) {
-    console.log(chalk.yellow('Note: --claude-code requires --analytics. Re-run with --claude-code --analytics.'));
     return;
   }
 

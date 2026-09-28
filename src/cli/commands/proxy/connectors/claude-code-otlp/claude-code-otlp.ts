@@ -1,6 +1,6 @@
 /**
  * Writes and merges `.claude/settings.json` at the project root, wiring
- * Claude Code's hook surface (8 events) onto `codemie hook --agent claude-code --analytics`
+ * Claude Code's hook surface (8 events) onto `codemie hook --agent claude-code-otlp`
  * and setting OTel environment variables that point Claude Code's telemetry at
  * the local proxy daemon.
  *
@@ -21,7 +21,7 @@ import { readState } from '../../daemon-manager.js';
 import { writeAtomically } from '../vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
-const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME} --analytics`;
+const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 
 const HOOK_EVENTS = [
@@ -65,12 +65,12 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
-interface WriteClaudeCodeAnalyticsOptions {
+interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
   scope?: "user" | "project";
 }
 
-interface WriteClaudeCodeAnalyticsResult {
+interface WriteClaudeCodeOtlpResult {
   written: boolean;
   path: string;
   backupPath: string | null;
@@ -78,11 +78,11 @@ interface WriteClaudeCodeAnalyticsResult {
   envVars: number;
 }
 
-interface RemoveClaudeCodeAnalyticsOptions {
+interface RemoveClaudeCodeOtlpOptions {
   scope?: 'user' | 'project';
 }
 
-interface RemoveClaudeCodeAnalyticsResult {
+interface RemoveClaudeCodeOtlpResult {
   removed: boolean;
   usedBackup: boolean;
   path: string | null;
@@ -132,9 +132,9 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
 /**
  * Write the Claude Code analytics config at an explicit path (test seam).
  */
-export async function writeClaudeCodeAnalyticsConfig(
-  opts: WriteClaudeCodeAnalyticsOptions = {}
-): Promise<WriteClaudeCodeAnalyticsResult> {
+export async function writeClaudeCodeOtlpConfig(
+  opts: WriteClaudeCodeOtlpOptions = {}
+): Promise<WriteClaudeCodeOtlpResult> {
   const state = await readState();
   if (!state) {
     throw new ConfigurationError('No live proxy daemon. Run: codemie proxy start');
@@ -246,9 +246,9 @@ export async function writeClaudeCodeAnalyticsConfig(
  * Remove CodeMie-authored analytics hooks and env entries from
  * `.claude/settings.json` at the given project root.
  */
-export async function removeClaudeCodeAnalyticsConfig(
-  opts: RemoveClaudeCodeAnalyticsOptions = {}
-): Promise<RemoveClaudeCodeAnalyticsResult> {
+export async function removeClaudeCodeOtlpConfig(
+  opts: RemoveClaudeCodeOtlpOptions = {}
+): Promise<RemoveClaudeCodeOtlpResult> {
   const basePath = opts.scope === 'project' ? resolveProjectRoot() : resolveHomeDir();
   const settingsPath = join(basePath, '.claude', 'settings.json');
 
