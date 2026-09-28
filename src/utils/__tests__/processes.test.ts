@@ -12,13 +12,19 @@ vi.mock('../logger.js', () => ({
   }
 }));
 
+vi.mock('@/utils/npm-prefix.js', () => ({
+  getSelfPrefixArgs: vi.fn().mockResolvedValue([])
+}));
+
 import { logger } from '../logger.js';
+import { getSelfPrefixArgs } from '@/utils/npm-prefix.js';
 
 describe('npm utility', () => {
   let execSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     execSpy = vi.spyOn(exec, 'exec');
+    vi.mocked(getSelfPrefixArgs).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -529,6 +535,53 @@ describe('npm utility', () => {
       const result = await commandExists('test');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('self prefix args for @codemieai/code', () => {
+    beforeEach(() => {
+      vi.mocked(getSelfPrefixArgs).mockImplementation(async (packageName: string) =>
+        packageName === '@codemieai/code' ? ['--prefix', 'C:\\X'] : []
+      );
+    });
+
+    it('installGlobal splices the self prefix before --force', async () => {
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+      const { installGlobal } = await import('../processes.js');
+      await installGlobal('@codemieai/code', { version: '1.2.3' });
+
+      expect(execSpy).toHaveBeenCalledWith(
+        'npm',
+        ['install', '-g', '--prefix', 'C:\\X', '@codemieai/code@1.2.3'],
+        expect.objectContaining({ timeout: 300000 })
+      );
+    });
+
+    it('uninstallGlobal splices the self prefix', async () => {
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+      const { uninstallGlobal } = await import('../processes.js');
+      await uninstallGlobal('@codemieai/code');
+
+      expect(execSpy).toHaveBeenCalledWith(
+        'npm',
+        ['uninstall', '-g', '--prefix', 'C:\\X', '@codemieai/code'],
+        expect.objectContaining({ timeout: 30000 })
+      );
+    });
+
+    it('listGlobal splices the self prefix', async () => {
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+      const { listGlobal } = await import('../processes.js');
+      await listGlobal('@codemieai/code');
+
+      expect(execSpy).toHaveBeenCalledWith(
+        'npm',
+        ['list', '-g', '--prefix', 'C:\\X', '@codemieai/code'],
+        expect.objectContaining({ timeout: 5000 })
+      );
     });
   });
 });
