@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14763",
+  "head": "3c6f34d000702037bd1b02170bc31a1a145bc33e",
+  "runner": "npm",
+  "started_at": "2026-09-28T14:42:25Z",
+  "completed_at": "2026-09-28T15:16:11Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3964,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Guide describes this as an Apache-2.0 source-header check; scripts/license-check.js actually prints a dependency-license summary. Guide text is stale."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5372,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Guide documents eslint '{src,tests}/**/*.ts'; package.json lint also covers src/agents/plugins/pi/extension/*.js. Ran the package.json script (repository is source of truth). No auto-fix needed."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5827,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8808,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Guide documents tsc && tsc-alias && copy-plugin; package.json build also runs bundle-statusline. Ran the package.json script."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 26533,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "1 failed / 4280: src/agents/core/__tests__/AgentCLI-model-source.test.ts \"sets CODEMIE_MODEL_SOURCE=default when --model is not passed\" expected 'default', received 'env'. Test file is not in the branch diff. Host shell exports CODEMIE_MODEL, CODEMIE_MODEL_SOURCE, ANTHROPIC_MODEL and other CODEMIE_* vars (run launched from inside a CodeMie session); caller should decide whether the failure is env leakage or a code regression."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 22289,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "4 failed / 289, all in tests/integration/sso-claude-plugin.test.ts (enrichArgs hook): args start with '--model' where '--plugin-dir' is expected. src/agents/plugins/claude/claude.plugin.ts is in the branch diff. Host shell exports CODEMIE_MODEL, CODEMIE_MODEL_SOURCE, ANTHROPIC_MODEL and other CODEMIE_* vars (run launched from inside a CodeMie session); caller should decide whether the failure is env leakage or a code regression."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 770,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" (exit 0). validate-secrets.js only scans git diff --staged and nothing is staged. Branch commits were scanned instead by the gitleaks-ci gate."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 645,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Covers HEAD~1..HEAD only; full branch range covered by commitlint-range."
+    },
+    {
+      "id": "check-pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7617,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 42024,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Aggregate: license-check, lint, build passed; stopped at vitest --project unit (same failure as unit gate). Integration stage did not run inside this aggregate; see integration gate."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "FAIL",
+      "duration_ms": 22365,
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude tests/integration/cli-commands/models.test.ts src/agents/plugins/claude/__tests__/claude.models.test.ts src/agents/plugins/claude/__tests__/claude.plugin.model-swap-warning.test.ts src/agents/plugins/claude/claude.models.ts src/agents/plugins/claude/claude.plugin.ts src/agents/plugins/claude/plugin/__tests__/statusline.test.ts src/agents/plugins/claude/plugin/statusline.ts",
+      "exit_code": 1,
+      "notes": "From lint-staged config (*.ts -> vitest related) in .husky/pre-commit, applied to the branch-changed .ts files because nothing is staged. 5 failed: the same unit and integration failures above."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 864,
+      "command": "npx commitlint --from 954f015515a784f3c37c8af36b0d42a8f6435418 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI validate-commits job equivalent over merge_base..HEAD; 4 commits, 0 problems."
+    },
+    {
+      "id": "gitleaks-ci",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 2052,
+      "command": "docker run --rm -v /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code:/repo ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --log-opts=954f015515a784f3c37c8af36b0d42a8f6435418..HEAD --config=/repo/.gitleaks.toml --verbose",
+      "exit_code": 0,
+      "notes": "Local equivalent of the CI gitleaks-action job over merge_base..HEAD using .gitleaks.toml: \"4 commits scanned\", \"no leaks found\"."
+    },
+    {
+      "id": "hook-lint-staged-eslint",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "eslint --max-warnings=0 --no-warn-ignored <staged *.ts>",
+      "exit_code": null,
+      "notes": "Covered by the lint gate (same eslint --max-warnings=0 over all src/tests .ts files)."
+    },
+    {
+      "id": "hook-typecheck",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run typecheck",
+      "exit_code": null,
+      "notes": ".husky/pre-commit step 2; covered by the typecheck gate."
+    },
+    {
+      "id": "hook-commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx --no -- commitlint --edit \"$1\"",
+      "exit_code": null,
+      "notes": "Needs a commit message file at commit time; existing commits covered by commitlint-range."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view <PR> --json title | npx commitlint --verbose",
+      "exit_code": null,
+      "notes": "No PR exists yet; needs a GitHub PR. CI will validate the PR title against Conventional Commits once the PR is opened. Still owed."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Needs a Windows runner. Local CRLF repro is documented in the guide (perl CRLF conversion + npx vitest run <test>). Only CI can settle this. Still owed."
+    }
+  ],
+  "failures": {
+    "unit": "RUN  v4.1.5 /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code\n\n ❯ |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts (4 tests | 1 failed) 13ms\n     × sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model) 5ms\n(node:91142) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts > AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation > sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)\nAssertionError: expected 'env' to be 'default' // Object.is equality\n\nExpected: \"default\"\nReceived: \"env\"\n\n ❯ src/agents/core/__tests__/AgentCLI-model-source.test.ts:107:38\n    105|     // rather than the field being merely present-or-absent.\n    106|     const [, env] = run.mock.calls[0] as [string[], Record<string, unk…\n    107|     expect(env.CODEMIE_MODEL_SOURCE).toBe('default');\n       |                                      ^\n    108|   });\n    109|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 289 passed (290)\n      Tests  1 failed | 4279 passed (4280)\n   Start at  17:51:58\n   Duration  25.20s (transform 16.61s, setup 0ms, import 70.41s, tests 43.29s, environment 28ms)",
+    "integration": "+ Received\n\n  [\n+   \"--model\",\n+   \"claude-router-standard[1m]\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:183:28\n    181|\n    182|       // Verify args unchanged\n    183|       expect(enrichedArgs).toEqual(args);\n       |                            ^\n    184|\n    185|       // Verify --plugin-dir NOT injected\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install → inject\nAssertionError: expected [ '--model', …(5) ] to deeply equal [ '--plugin-dir', …(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--model\",\n+   \"claude-router-standard[1m]\",\n    \"--plugin-dir\",\n    \"/var/folders/v_/bhncj9t54m92qzz5f8zmshv80000gn/T/codemie-test-claude-plugin/claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '…\n       |                            ^\n    234|     });\n    235|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  4 failed | 275 passed | 10 skipped (289)\n   Start at  17:56:50\n   Duration  20.94s (transform 10.17s, setup 0ms, import 19.74s, tests 115.95s, environment 2ms)",
+    "ci": "✓ Model pricing table copied successfully\n\nProcessing Routing headers domain module:\n  ✓ Routing headers domain module copied successfully\n\nProcessing Bedrock pricing domain module:\n  ✓ Bedrock pricing domain module copied successfully\n\nPlugin assets copied successfully!\n\n> @codemieai/code@0.15.3 bundle-statusline\n> node scripts/bundle-statusline.mjs\n\n\n  dist/agents/plugins/claude/plugin/statusline.bundle.mjs  25.6kb\n\n⚡ Done in 38ms\nStatusline bundled successfully!\n\n RUN  v4.1.5 /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code\n\n ❯ |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts (4 tests | 1 failed) 14ms\n     × sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model) 5ms\n(node:2876) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts > AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation > sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)\nAssertionError: expected 'env' to be 'default' // Object.is equality\n\nExpected: \"default\"\nReceived: \"env\"\n\n ❯ src/agents/core/__tests__/AgentCLI-model-source.test.ts:107:38\n    105|     // rather than the field being merely present-or-absent.\n    106|     const [, env] = run.mock.calls[0] as [string[], Record<string, unk…\n    107|     expect(env.CODEMIE_MODEL_SOURCE).toBe('default');\n       |                                      ^\n    108|   });\n    109|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 289 passed (290)\n      Tests  1 failed | 4279 passed (4280)\n   Start at  18:07:52\n   Duration  27.39s (transform 22.34s, setup 0ms, import 76.47s, tests 50.07s, environment 24ms)",
+    "affected": "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install → inject\nAssertionError: expected [ '--model', …(5) ] to deeply equal [ '--plugin-dir', …(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--model\",\n+   \"claude-router-standard[1m]\",\n    \"--plugin-dir\",\n    \"/var/folders/v_/bhncj9t54m92qzz5f8zmshv80000gn/T/codemie-test-claude-plugin/claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '…\n       |                            ^\n    234|     });\n    235|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯\n\n FAIL  |unit| src/agents/core/__tests__/AgentCLI-model-source.test.ts > AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation > sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)\nAssertionError: expected 'env' to be 'default' // Object.is equality\n\nExpected: \"default\"\nReceived: \"env\"\n\n ❯ src/agents/core/__tests__/AgentCLI-model-source.test.ts:107:38\n    105|     // rather than the field being merely present-or-absent.\n    106|     const [, env] = run.mock.calls[0] as [string[], Record<string, unk…\n    107|     expect(env.CODEMIE_MODEL_SOURCE).toBe('default');\n       |                                      ^\n    108|   });\n    109|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯\n\n\n Test Files  2 failed | 120 passed (122)\n      Tests  5 failed | 1780 passed (1785)\n   Start at  18:11:19\n   Duration  18.74s (transform 6.43s, setup 0ms, import 63.22s, tests 38.86s, environment 9ms)"
+  }
+}

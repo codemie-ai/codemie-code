@@ -1,0 +1,3 @@
+{"task_id":"task-1-supports-one-million-context","status":"done","commit":"41b979c","test_command":"npx vitest run src/agents/plugins/claude/__tests__/claude.models.test.ts"}
+{"task_id":"task-2-resolve-claude-model-1m-preservation","status":"done","commit":"cb5b858","test_command":"npx vitest run src/agents/plugins/claude/__tests__/claude.models.test.ts"}
+{"task_id":"task-3-build-model-picker-1m-synthesis","status":"done","commit":"fb7ff48","test_command":"npx vitest run src/agents/plugins/claude/__tests__/claude.models.test.ts"}
