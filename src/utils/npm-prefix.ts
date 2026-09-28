@@ -38,7 +38,9 @@ function defaultPackageDir(): string {
 /**
  * Derive the npm global prefix implied by `packageDir`'s install layout:
  * `<prefix>\node_modules\@codemieai\code` on win32, `<prefix>/lib/node_modules/@codemieai/code`
- * on POSIX. Returns `null` when `packageDir` does not match that layout (dev checkout, `npm link`).
+ * on POSIX. Returns `null` when `packageDir` does not match that layout (dev checkout, `npm link`),
+ * or, on win32 only, when the layout matches but `<prefix>\codemie.cmd` does not exist (project-local
+ * dependency, npx cache).
  *
  * @param packageDir - Package root to inspect; defaults to the running package's own root.
  * @param platform - Platform whose path rules and layout to use; defaults to `process.platform`.
@@ -66,7 +68,13 @@ export function deriveSelfPrefix(
   }
 
   const prefixParts = parts.slice(0, -layout.length);
-  return prefixParts.join(p.sep) || p.sep;
+  const prefix = prefixParts.join(p.sep) || p.sep;
+
+  if (platform === 'win32' && !existsSync(p.join(prefix, 'codemie.cmd'))) {
+    return null;
+  }
+
+  return prefix;
 }
 
 /**

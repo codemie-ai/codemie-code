@@ -16,10 +16,25 @@ vi.mock('fs');
 
 describe('npm-prefix', () => {
   describe('deriveSelfPrefix', () => {
-    it('derives the prefix from the win32 node_modules layout', async () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('derives the prefix from the win32 node_modules layout when codemie.cmd exists at the prefix', async () => {
+      const { existsSync } = await import('fs');
+      vi.mocked(existsSync).mockReturnValue(true);
       const { deriveSelfPrefix } = await import('../npm-prefix.js');
       const dir = path.win32.join('C:\\Users\\codemie', 'node_modules', '@codemieai', 'code');
       expect(deriveSelfPrefix(dir, 'win32')).toBe('C:\\Users\\codemie');
+      expect(existsSync).toHaveBeenCalledWith(path.win32.join('C:\\Users\\codemie', 'codemie.cmd'));
+    });
+
+    it('returns null on win32 when codemie.cmd is missing at the derived prefix (local dependency or npx cache)', async () => {
+      const { existsSync } = await import('fs');
+      vi.mocked(existsSync).mockReturnValue(false);
+      const { deriveSelfPrefix } = await import('../npm-prefix.js');
+      const dir = path.win32.join('C:\\project', 'node_modules', '@codemieai', 'code');
+      expect(deriveSelfPrefix(dir, 'win32')).toBeNull();
     });
 
     it('derives the prefix from the POSIX lib/node_modules layout', async () => {
@@ -29,6 +44,8 @@ describe('npm-prefix', () => {
     });
 
     it('returns null for a dev checkout that does not match the install layout', async () => {
+      const { existsSync } = await import('fs');
+      vi.mocked(existsSync).mockReturnValue(true);
       const { deriveSelfPrefix } = await import('../npm-prefix.js');
       expect(deriveSelfPrefix('/Users/dev/codemie-code', 'linux')).toBeNull();
       expect(deriveSelfPrefix('C:\\Users\\dev\\codemie-code', 'win32')).toBeNull();
