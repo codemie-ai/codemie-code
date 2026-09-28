@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('portable', 'npm-global')]
-  [string]$Mode = 'portable',
+  [ValidateSet('auto', 'npm-global', 'portable')]
+  [string]$Mode = 'auto',
   [string]$Version = '',
   [string]$RegistryUrl = 'https://registry.npmjs.org/',
   [string]$ScopeRegistryUrl = '',
@@ -117,6 +117,64 @@ function Add-UserPath {
   Write-Status 'PATH update' 'user PATH updated; open a new terminal'
 }
 
+function Remove-UserPath {
+  param([string]$PathToRemove)
+
+  $currentUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if ([string]::IsNullOrWhiteSpace($currentUserPath)) {
+    Write-Status 'PATH update' 'already absent'
+    return
+  }
+
+  $pathEntries = $currentUserPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  if ($pathEntries -inotcontains $PathToRemove) {
+    Write-Status 'PATH update' 'already absent'
+    return
+  }
+
+  if ($DryRun) {
+    Write-Status 'PATH update' "DRY RUN: would remove $PathToRemove from user PATH"
+    return
+  }
+
+  $remainingEntries = $pathEntries | Where-Object { $_ -ine $PathToRemove }
+  $newPath = $remainingEntries -join ';'
+  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+  Write-Status 'PATH update' 'removed from user PATH; open a new terminal'
+}
+
+function Test-DirWritable {
+  param([string]$Path)
+
+  $probePath = $Path
+  while (-not (Test-Path -LiteralPath $probePath)) {
+    $parent = Split-Path -Path $probePath -Parent
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $probePath) {
+      return $false
+    }
+    $probePath = $parent
+  }
+
+  $testFile = Join-Path $probePath ([System.IO.Path]::GetRandomFileName())
+  try {
+    [System.IO.File]::WriteAllText($testFile, '')
+    Remove-Item -LiteralPath $testFile -Force -ErrorAction Stop
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Resolve-InstallMode {
+  param([string]$NpmPath)
+
+  $prefix = ((& $NpmPath @('config', 'get', 'prefix')) | Select-Object -First 1).ToString().Trim()
+  if (Test-DirWritable $prefix) {
+    return 'npm-global'
+  }
+  return 'portable'
+}
+
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
   $InstallRoot = Join-Path $env:LOCALAPPDATA 'CodeMie'
 }
@@ -166,17 +224,38 @@ if (-not $NpmPath) {
   throw 'npm.cmd was not found. Reinstall Node.js with npm enabled, then rerun this installer.'
 }
 
-if ($Mode -eq 'portable') {
+$PrefixDirNormalized = $PrefixDir.TrimEnd('\')
+$UserPrefixRaw = ((& $NpmPath @('config', 'get', 'prefix', '--location', 'user')) | Select-Object -First 1)
+$UserPrefixNormalized = if ($null -eq $UserPrefixRaw) { '' } else { $UserPrefixRaw.ToString().Trim().TrimEnd('\') }
+$LegacyOverrideDetected = (-not [string]::IsNullOrWhiteSpace($UserPrefixNormalized)) -and ($UserPrefixNormalized -ieq $PrefixDirNormalized)
+
+if ($LegacyOverrideDetected) {
+  Write-Host "Legacy npm prefix override detected at $PrefixDir"
+  Write-Host 'Packages stranded in the legacy prefix:'
+  & $NpmPath @('ls', '-g', '--prefix', $PrefixDir, '--depth=0')
+  Invoke-Checked $NpmPath @('config', 'delete', 'prefix', '--location', 'user') 'Failed to delete the legacy npm prefix override.'
+  Write-Status 'npm config' 'ran: npm config delete prefix --location user'
+  Write-Host "Revert: npm config set prefix `"$PrefixDir`" --location user"
+}
+
+if ($Mode -eq 'auto') {
+  $ResolvedMode = Resolve-InstallMode $NpmPath
+} else {
+  $ResolvedMode = $Mode
+}
+Write-Status 'Mode' $ResolvedMode
+
+if ($ResolvedMode -eq 'portable') {
   if ($DryRun) {
     Write-Host "DRY RUN: would create $BinDir and $PrefixDir"
   } else {
     New-Item -ItemType Directory -Force -Path $BinDir, $PrefixDir | Out-Null
   }
-  Invoke-Checked $NpmPath @('config', 'set', 'prefix', $PrefixDir, '--location', 'user') 'Failed to configure npm prefix.'
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ScopeRegistryUrl)) {
   Invoke-Checked $NpmPath @('config', 'set', '@codemieai:registry', $ScopeRegistryUrl, '--location', 'user') 'Failed to configure @codemieai registry.'
+  Write-Host 'Revert: npm config delete @codemieai:registry --location user'
 }
 
 $PackageSpec = $PackageName
@@ -186,9 +265,14 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 
 $ResolvedPackageVersion = Get-PackageVersion $NpmPath $PackageSpec $RegistryUrl
 Write-Status 'Package' "$PackageSpec found ($ResolvedPackageVersion)"
-Invoke-Checked $NpmPath @('install', '-g', $PackageSpec, '--registry', $RegistryUrl) "Failed to install $PackageSpec."
 
-if ($Mode -eq 'portable') {
+$InstallArgs = @('install', '-g', $PackageSpec, '--registry', $RegistryUrl)
+if ($ResolvedMode -eq 'portable') {
+  $InstallArgs += @('--prefix', $PrefixDir)
+}
+Invoke-Checked $NpmPath $InstallArgs "Failed to install $PackageSpec."
+
+if ($ResolvedMode -eq 'portable') {
   foreach ($CommandName in $Commands) {
     $shimPath = Join-Path $BinDir "$CommandName.cmd"
     $targetPath = Join-Path $PrefixDir "$CommandName.cmd"
@@ -215,6 +299,22 @@ if ($Mode -eq 'portable') {
   }
 
   Add-UserPath $BinDir
+} elseif ($LegacyOverrideDetected) {
+  foreach ($CommandName in $Commands) {
+    $shimPath = Join-Path $BinDir "$CommandName.cmd"
+    if ($DryRun) {
+      Write-Host "DRY RUN: would remove $shimPath"
+    } elseif (Test-Path -LiteralPath $shimPath) {
+      Remove-Item -LiteralPath $shimPath -Force
+    }
+  }
+
+  Remove-UserPath $BinDir
+}
+
+if ($LegacyOverrideDetected) {
+  Write-Host 'Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest'
+  Write-Host "Optional cleanup: Remove-Item -Recurse `"$PrefixDir`""
 }
 
 Write-Status 'CodeMie' "installed $ResolvedPackageVersion"
