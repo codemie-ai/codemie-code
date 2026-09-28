@@ -246,3 +246,51 @@ describe('supportsOneMillionContext', () => {
     expect(supportsOneMillionContext(id)).toBe(expected);
   });
 });
+
+describe('buildModelPickerOptions', () => {
+  beforeEach(() => {
+    fetchCodeMieLlmModelsMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('synthesizes [1m] rows for 1M-capable base models, positioned right after each base id', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', label: 'Sonnet 4.6' }),
+      model({ deployment_name: 'claude-haiku-4-5', label: 'Haiku 4.5' }),
+      { ...model({ deployment_name: 'claude-router-premium' }), is_router: true },
+    ]);
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    // Find indices of base models
+    const sonnet46Idx = options.findIndex((o) => o.model === 'claude-sonnet-4-6');
+    const haiku45Idx = options.findIndex((o) => o.model === 'claude-haiku-4-5');
+    const routerIdx = options.findIndex((o) => o.model === 'claude-router-premium');
+
+    expect(sonnet46Idx).toBeGreaterThanOrEqual(0);
+    expect(haiku45Idx).toBeGreaterThanOrEqual(0);
+    expect(routerIdx).toBeGreaterThanOrEqual(0);
+
+    // 1M row must come right after base Sonnet
+    const sonnet1mIdx = options.findIndex((o) => o.model === 'claude-sonnet-4-6[1m]');
+    expect(sonnet1mIdx).toBe(sonnet46Idx + 1);
+    expect(options[sonnet1mIdx].label).toBe('Sonnet 4.6 (1M context)');
+
+    // No 1M row for non-capable Haiku
+    const haiku1mIdx = options.findIndex((o) => o.model === 'claude-haiku-4-5[1m]');
+    expect(haiku1mIdx).toBe(-1);
+
+    // No 1M row for router
+    const router1mIdx = options.findIndex((o) => o.model === 'claude-router-premium[1m]');
+    expect(router1mIdx).toBe(-1);
+
+    // Each base id appears exactly once
+    expect(options.filter((o) => o.model === 'claude-sonnet-4-6').length).toBe(1);
+    expect(options.filter((o) => o.model === 'claude-haiku-4-5').length).toBe(1);
+    expect(options.filter((o) => o.model === 'claude-router-premium').length).toBe(1);
+  });
+});

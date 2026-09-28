@@ -335,6 +335,9 @@ function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
  * Ranked with the same `rankModel`/`compareRankedModels` ordering already used for tier
  * auto-resolution, so the picker's top rows match what auto-resolution would have picked.
  *
+ * Synthesizes a `<id>[1m]` option (labeled `<label> (1M context)`) immediately after each
+ * 1M-capable, non-router base model, so users can opt into the 1M-context beta per-model.
+ *
  * Returns `[]` — never throws — when the catalog is unavailable; the caller must treat an
  * empty result as "leave the picker alone" rather than writing an empty lineup.
  */
@@ -364,8 +367,20 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
     for (const { ranked: rankedModel, model } of ranked) {
       if (seen.has(rankedModel.id)) continue; // a model may rank under >1 identifier
       seen.add(rankedModel.id);
+      const baseLabel = model.label || rankedModel.id;
       const description = describeRouter(model, labelIndex) || undefined;
-      options.push({ model: rankedModel.id, label: model.label || rankedModel.id, description });
+      options.push({ model: rankedModel.id, label: baseLabel, description });
+
+      // Synthesize a 1M-context option after each 1M-capable, non-router base model.
+      const modelId1m = `${rankedModel.id}${ONE_MILLION_SUFFIX}`;
+      if (
+        !isRouterLikeEntry(model) &&
+        supportsOneMillionContext(rankedModel.id) &&
+        !seen.has(modelId1m)
+      ) {
+        seen.add(modelId1m);
+        options.push({ model: modelId1m, label: `${baseLabel} (1M context)`, description });
+      }
     }
     return options;
   } catch (error) {
