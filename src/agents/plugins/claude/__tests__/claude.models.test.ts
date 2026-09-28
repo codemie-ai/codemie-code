@@ -136,3 +136,27 @@ describe('resolveClaudeModel — explicit --model override', () => {
     expect(env.CODEMIE_MODEL).toBe('claude-sonnet-5[1m]');
   });
 });
+
+describe('supportsOneMillionContext', () => {
+  it.each([
+    ['claude-sonnet-4-6', true],
+    ['claude-sonnet-4-5-20250929', false],
+    ['claude-sonnet-4-20250514', false],
+    ['claude-opus-4-6', true],
+    ['claude-opus-4-7', true],
+    ['claude-opus-4-5-20251101', false],
+    ['claude-sonnet-5', true],
+    ['claude-opus-5', true],
+    ['claude-fable-5', true],
+    ['claude-haiku-4-5-20251001', false],
+    ['claude-haiku-5', false],
+    ['claude-3-5-sonnet', false],
+    ['claude-4-5-sonnet', false],
+    ['claude-4-6-sonnet', true],
+    ['us.anthropic.claude-sonnet-4-6-v1:0', true],
+    ['claude-router-premium', false],
+  ])('supportsOneMillionContext(%s) is %s', async (id, expected) => {
+    const { supportsOneMillionContext } = await import('../claude.models.js');
+    expect(supportsOneMillionContext(id)).toBe(expected);
+  });
+});

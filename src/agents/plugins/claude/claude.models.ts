@@ -54,6 +54,23 @@ const TIER_PATTERN: Record<ClaudeModelTier, RegExp | null> = {
   opus: /opus/i,
 };
 
+// Claude Code's 1M-context opt-in (`[1m]`) by model version. CodeMie's /v1/llm_models carries
+// no context-window field, so this table is the ONLY place the boundary lives — swap this
+// function's body for a catalog field once the backend exposes one. First match wins.
+const ONE_MILLION_CONTEXT_TABLE: Array<{ pattern: RegExp; supported: boolean }> = [
+  { pattern: /haiku/i, supported: false },                                           // no Haiku generation
+  { pattern: /(?:sonnet|opus|fable)[-_.]?(?:[5-9]|[1-9]\d)(?!\d)/i, supported: true }, // gen 5+
+  { pattern: /(?:sonnet|opus)[-_.]?4[-_.](?:[6-9]|[1-9]\d)(?!\d)/i, supported: true }, // 4.6+
+  { pattern: /claude[-_.]?(?:[5-9]|4[-_.][6-9])[-_.](?:sonnet|opus|fable)/i, supported: true }, // version-first ids
+];
+// Fallback: unknown ids (incl. routers/aliases) are not 1M-capable — never add [1m] speculatively.
+const ONE_MILLION_CONTEXT_DEFAULT = false;
+
+export function supportsOneMillionContext(modelId: string): boolean {
+  const row = ONE_MILLION_CONTEXT_TABLE.find(({ pattern }) => pattern.test(modelId));
+  return row ? row.supported : ONE_MILLION_CONTEXT_DEFAULT;
+}
+
 function getModelId(model: LlmModel): string | undefined {
   return model.deployment_name || model.base_name || model.label;
 }
