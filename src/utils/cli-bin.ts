@@ -11,7 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { logger } from './logger.js';
-import { getSelfOrGlobalNpmPrefix } from '@/utils/npm-prefix.js';
+import { getCodemieOrGlobalNpmPrefix } from '@/utils/npm-prefix.js';
 
 /**
  * Restore the global 'codemie' binary symlink if it was overwritten by an
@@ -33,7 +33,7 @@ export async function restoreCliBinLink(): Promise<void> {
   }
 
   try {
-    const npmPrefix = await getSelfOrGlobalNpmPrefix();
+    const npmPrefix = await getCodemieOrGlobalNpmPrefix();
     if (!npmPrefix) return;
 
     const globalBinPath = path.join(npmPrefix, 'bin', 'codemie');

@@ -1,8 +1,7 @@
 /**
  * npm Prefix Utilities
  *
- * Resolves the npm prefix CodeMie runs from, so global installs made by CodeMie
- * land next to the running copy, and detects the per-user prefix override that
+ * Resolves the npm prefix CodeMie runs from and detects the per-user prefix override that
  * older CodeMie installers wrote to `.npmrc`.
  */
 
@@ -32,8 +31,8 @@ function findPackageRoot(startDir: string): string {
 }
 
 /**
- * Get the npm global prefix the running CodeMie copy is installed under, derived from its
- * install layout: `<prefix>\node_modules\@codemieai\code` on win32,
+ * Get the npm prefix the running CodeMie package was installed into, derived from its
+ * location: `<prefix>\node_modules\@codemieai\code` on win32,
  * `<prefix>/lib/node_modules/@codemieai/code` on POSIX.
  *
  * @param packageDir - Package root to inspect; defaults to the running package's own root.
@@ -42,7 +41,7 @@ function findPackageRoot(startDir: string): string {
  *   `npm link`) or, on win32, when `<prefix>\codemie.cmd` is missing (project-local dependency,
  *   npx cache).
  */
-export function getSelfNpmPrefix(
+export function getCodemieNpmPrefix(
   packageDir: string = findPackageRoot(getDirname(import.meta.url)),
   platform: NodeJS.Platform = process.platform
 ): string | null {
@@ -139,26 +138,26 @@ export async function getUserNpmrcPrefix(): Promise<string | null> {
 /**
  * The prefix of the running CodeMie copy, or npm's global prefix when it cannot be derived.
  */
-export async function getSelfOrGlobalNpmPrefix(): Promise<string | null> {
-  return getSelfNpmPrefix() ?? getGlobalNpmPrefix();
+export async function getCodemieOrGlobalNpmPrefix(): Promise<string | null> {
+  return getCodemieNpmPrefix() ?? getGlobalNpmPrefix();
 }
 
 /**
  * `--prefix` args that keep an npm global install/uninstall/list next to the running CodeMie copy.
  *
  * @returns `[]` when CodeMie runs from npm's global prefix, from a dev checkout, or when either
- *   prefix cannot be resolved; otherwise `['--prefix', <self prefix>]`.
+ *   prefix cannot be resolved; otherwise `['--prefix', <CodeMie prefix>]`.
  */
 export async function getNpmPrefixArgs(): Promise<string[]> {
-  const selfPrefix = getSelfNpmPrefix();
-  if (!selfPrefix) {
+  const codemiePrefix = getCodemieNpmPrefix();
+  if (!codemiePrefix) {
     return [];
   }
 
   const globalPrefix = await getGlobalNpmPrefix();
-  if (!globalPrefix || isSamePath(selfPrefix, globalPrefix)) {
+  if (!globalPrefix || isSamePath(codemiePrefix, globalPrefix)) {
     return [];
   }
 
-  return ['--prefix', selfPrefix];
+  return ['--prefix', codemiePrefix];
 }

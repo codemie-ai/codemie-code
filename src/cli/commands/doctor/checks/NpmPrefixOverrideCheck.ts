@@ -2,7 +2,7 @@
  * Legacy CodeMie npm prefix override health check
  */
 
-import { getSelfNpmPrefix, getUserNpmrcPrefix, getLegacyNpmPrefixPath } from '@/utils/npm-prefix.js';
+import { getCodemieNpmPrefix, getUserNpmrcPrefix, getLegacyNpmPrefixPath } from '@/utils/npm-prefix.js';
 import { isSamePath } from '@/utils/paths.js';
 import { HealthCheck, HealthCheckDetail, HealthCheckResult } from '../types.js';
 
@@ -21,8 +21,8 @@ export class NpmPrefixOverrideCheck implements HealthCheck {
       };
     }
 
-    const selfPrefix = getSelfNpmPrefix();
-    const runsFromLegacyPath = selfPrefix !== null && isSamePath(selfPrefix, legacyPath);
+    const codemiePrefix = getCodemieNpmPrefix();
+    const runsFromLegacyPath = codemiePrefix !== null && isSamePath(codemiePrefix, legacyPath);
 
     const details: HealthCheckDetail[] = [
       {

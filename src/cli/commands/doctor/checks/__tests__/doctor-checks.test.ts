@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
   detectVCSMock: vi.fn(),
   listWorkflowsMock: vi.fn(),
   getUserNpmrcPrefixMock: vi.fn(),
-  getSelfNpmPrefixMock: vi.fn(),
+  getCodemieNpmPrefixMock: vi.fn(),
 }));
 
 // exec() drives AwsCliCheck and UvCheck.
@@ -84,13 +84,13 @@ vi.mock('@/workflows/index.js', async (importOriginal) => {
   return { ...actual, detectVCSProvider: h.detectVCSMock, listInstalledWorkflows: h.listWorkflowsMock };
 });
 
-// getUserNpmrcPrefix / getSelfNpmPrefix drive NpmPrefixOverrideCheck; getLegacyNpmPrefixPath stays real (pure).
+// getUserNpmrcPrefix / getCodemieNpmPrefix drive NpmPrefixOverrideCheck; getLegacyNpmPrefixPath stays real (pure).
 vi.mock('@/utils/npm-prefix.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/npm-prefix.js')>();
   return {
     ...actual,
     getUserNpmrcPrefix: h.getUserNpmrcPrefixMock,
-    getSelfNpmPrefix: h.getSelfNpmPrefixMock
+    getCodemieNpmPrefix: h.getCodemieNpmPrefixMock
   };
 });
 
@@ -508,7 +508,7 @@ describe('FrameworksCheck', () => {
 // ────────────────────────────────────────────────────────────────────────────────────
 describe('NpmPrefixOverrideCheck', () => {
   beforeEach(() => {
-    h.getSelfNpmPrefixMock.mockReturnValue(null);
+    h.getCodemieNpmPrefixMock.mockReturnValue(null);
   });
 
   it('fails with fix steps when the user .npmrc prefix is the legacy CodeMie path', async () => {
@@ -526,7 +526,7 @@ describe('NpmPrefixOverrideCheck', () => {
 
   it('omits the delete step when CodeMie itself runs from the legacy path', async () => {
     h.getUserNpmrcPrefixMock.mockResolvedValue(getLegacyNpmPrefixPath());
-    h.getSelfNpmPrefixMock.mockReturnValue(getLegacyNpmPrefixPath());
+    h.getCodemieNpmPrefixMock.mockReturnValue(getLegacyNpmPrefixPath());
 
     const result = await new NpmPrefixOverrideCheck().run();
 

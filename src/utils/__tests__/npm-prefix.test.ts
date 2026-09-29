@@ -17,7 +17,7 @@ vi.mock('fs');
 vi.mock('fs/promises');
 
 describe('npm-prefix', () => {
-  describe('getSelfNpmPrefix', () => {
+  describe('getCodemieNpmPrefix', () => {
     beforeEach(() => {
       vi.clearAllMocks();
     });
@@ -25,32 +25,32 @@ describe('npm-prefix', () => {
     it('derives the prefix from the win32 node_modules layout when codemie.cmd exists at the prefix', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(true);
-      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
+      const { getCodemieNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.win32.join('C:\\Users\\codemie', 'node_modules', '@codemieai', 'code');
-      expect(getSelfNpmPrefix(dir, 'win32')).toBe('C:\\Users\\codemie');
+      expect(getCodemieNpmPrefix(dir, 'win32')).toBe('C:\\Users\\codemie');
       expect(existsSync).toHaveBeenCalledWith(path.win32.join('C:\\Users\\codemie', 'codemie.cmd'));
     });
 
     it('returns null on win32 when codemie.cmd is missing at the derived prefix (local dependency or npx cache)', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(false);
-      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
+      const { getCodemieNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.win32.join('C:\\project', 'node_modules', '@codemieai', 'code');
-      expect(getSelfNpmPrefix(dir, 'win32')).toBeNull();
+      expect(getCodemieNpmPrefix(dir, 'win32')).toBeNull();
     });
 
     it('derives the prefix from the POSIX lib/node_modules layout', async () => {
-      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
+      const { getCodemieNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.posix.join('/usr/local', 'lib', 'node_modules', '@codemieai', 'code');
-      expect(getSelfNpmPrefix(dir, 'linux')).toBe('/usr/local');
+      expect(getCodemieNpmPrefix(dir, 'linux')).toBe('/usr/local');
     });
 
     it('returns null for a dev checkout that does not match the install layout', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(true);
-      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
-      expect(getSelfNpmPrefix('/Users/dev/codemie-code', 'linux')).toBeNull();
-      expect(getSelfNpmPrefix('C:\\Users\\dev\\codemie-code', 'win32')).toBeNull();
+      const { getCodemieNpmPrefix } = await import('../npm-prefix.js');
+      expect(getCodemieNpmPrefix('/Users/dev/codemie-code', 'linux')).toBeNull();
+      expect(getCodemieNpmPrefix('C:\\Users\\dev\\codemie-code', 'win32')).toBeNull();
     });
   });
 
