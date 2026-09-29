@@ -11,6 +11,8 @@ const COWORK_OUTPUTS =
   '/Users/test/Library/Application Support/Claude-3p/local-agent-mode-sessions/abc/000/a1e0220c/outputs';
 const REMOTE_PORT = 55_555;
 const PID = 4242;
+const CLAUDE_APP_PID = 100;
+const CODE_TAB_PID = 500;
 
 /** What the fake `ps`/`lsof` report for the process behind the proxied connection. */
 let processArgs: string;
@@ -24,6 +26,19 @@ function runCommand(command: string): string {
   }
   if (command.startsWith(`ps -p ${PID} -o args=`)) return `${processArgs}\n`;
   if (command.startsWith(`lsof -a -d cwd -p ${PID}`)) return `p${PID}\nfcwd\nn${processCwd}\n`;
+  // Process tree for the descent strategy: Claude.app with the connecting process and an
+  // unrelated Code tab subprocess running in another project.
+  if (command.startsWith('ps -axww')) {
+    return [
+      '  PID  PPID ARGS',
+      `  ${CLAUDE_APP_PID}     1 /Applications/Claude.app/Contents/MacOS/Claude`,
+      `  ${PID}   ${CLAUDE_APP_PID} ${processArgs}`,
+      `  ${CODE_TAB_PID}   ${CLAUDE_APP_PID} /Applications/Claude.app/Contents/Resources/claude --output-format stream-json`,
+    ].join('\n');
+  }
+  if (command.startsWith(`lsof -a -d cwd -p ${CODE_TAB_PID}`)) {
+    return `p${CODE_TAB_PID}\nfcwd\nn/Users/test/WebstormProjects/codemie-sdk\n`;
+  }
   throw new Error(`unexpected command: ${command}`);
 }
 
@@ -109,6 +124,33 @@ describe('DesktopRepositoryResolver', () => {
       });
 
       expect(attribution.repository).toBe('Cowork');
+    });
+
+    it('attributes the first message to Cowork before Desktop writes the session file', async () => {
+      processCwd = '/private/var/empty';
+      sessionFiles = {};
+
+      const attribution = await new DesktopRepositoryResolver().resolveForRequest('cowork-session', {
+        remotePort: REMOTE_PORT,
+        url: '/v1/messages?beta=true'
+      });
+
+      // Not the unrelated Code tab project the process-tree descent would find.
+      expect(attribution).toEqual({ repository: 'Cowork', branch: null, isCowork: true });
+    });
+
+    it('confirms Cowork from the session file on the next message', async () => {
+      processCwd = '/private/var/empty';
+      const coworkSession = sessionFiles[`${LOCAL_ROOT}/local_cowork.json`];
+      sessionFiles = {};
+      const resolver = new DesktopRepositoryResolver();
+      const hints = { remotePort: REMOTE_PORT, url: '/v1/messages?beta=true' };
+      await resolver.resolveForRequest('cowork-session', hints);
+
+      sessionFiles[`${LOCAL_ROOT}/local_cowork.json`] = coworkSession;
+      const attribution = await resolver.resolveForRequest('cowork-session', hints);
+
+      expect(attribution).toEqual({ repository: 'Cowork', branch: null, isCowork: true });
     });
 
     it.each(['/var/empty', '/tmp', '/usr/local/bin', '/'])('never reports %s as a repository', async (cwd) => {
