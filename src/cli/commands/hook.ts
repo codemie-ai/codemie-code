@@ -136,9 +136,7 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
  * Resolve the agent name for this hook invocation.
  *
  * Precedence: explicit `--agent <name>` flag beats `CODEMIE_AGENT` env; when
- * neither is present the current throwing behavior is unchanged (a hook
- * process CodeMie did not spawn, e.g. Cursor's `hooks.json` has no `env` key
- * to inherit `CODEMIE_AGENT` through, so it must self-identify via the flag).
+ * neither is present the current throwing behavior is unchanged.
  */
 function resolveAgentName(agentFlag?: string): string {
   const agentName = agentFlag || process.env.CODEMIE_AGENT;
@@ -168,11 +166,22 @@ function resolveAgentName(agentFlag?: string): string {
  * @returns The CodeMie session ID from environment
  * @throws Error if required environment variables are missing
  */
-function initializeLoggerContext(agentName: string, fallbackSessionId?: string): string {
-  // Use CODEMIE_SESSION_ID from environment, falling back to a payload-derived
-  // session id (e.g. cursor-ide's transformed conversation_id) when a hook
-  // process CodeMie did not spawn has no CODEMIE_SESSION_ID to inherit.
-  const sessionId = process.env.CODEMIE_SESSION_ID || fallbackSessionId;
+function initializeLoggerContext(): string {
+  const agentName = process.env.CODEMIE_AGENT;
+  if (!agentName) {
+      // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
+      // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
+      // and stderr is surfaced by agent UIs and transcripts.
+      const codemieEnvVars = Object.keys(process.env)
+        .filter(key => key.startsWith('CODEMIE_'))
+        .join(', ');
+      console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+      throw new Error('CODEMIE_AGENT environment variable is required');
+  }
+
+  // Use CODEMIE_SESSION_ID from environment
+  const sessionId = process.env.CODEMIE_SESSION_ID;
+
   if (!sessionId) {
     throw new Error('CODEMIE_SESSION_ID environment variable is required');
   }
@@ -603,9 +612,8 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
     logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
 
     if (config) {
-      // Programmatic mode (e.g. VSCode extension), or an agent that declares
-      // `hookConfig.neverBlockingExit`: let the caller decide how to surface
-      // the failure instead of exiting the process with a blocking code.
+      // Programmatic mode (e.g. VSCode extension): let the host decide how to
+      // surface the failure instead of exiting its process
       throw new Error(message);
     }
 
@@ -715,7 +723,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     const normalizedEventName = normalizeEventName(originalEventName, agentName);
     logger.info(`[hook:router] Normalized event name: "${normalizedEventName}"`);
 
-switch (normalizedEventName) {
+    switch (normalizedEventName) {
       case 'SessionStart':
         logger.info(`[hook:router] Calling handleSessionStart`);
         await handleSessionStart(event as SessionStartEvent, rawInput, sessionId, config);
@@ -744,7 +752,7 @@ switch (normalizedEventName) {
         logger.info(`[hook:router] Calling handlePreCompact`);
         await handlePreCompact(event);
         break;
-default:
+    default:
         logger.info(`[hook:router] Unsupported event: ${normalizedEventName} (silently ignored)`);
         return;
     }
@@ -1346,10 +1354,8 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
  * Validate hook event required fields
  * @param event - Hook event to validate
  * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
- * @param agentName - Resolved agent name (CLI mode only); used to look up the declarative
- *   `neverBlockingExit` hook-config flag via AgentRegistry
- * @throws Error if validation fails and config is provided, or the resolved agent
- *   declares `neverBlockingExit`
+ * @param agentName - Resolved agent name (CLI mode only)
+ * @throws Error if validation fails and config is provided
  */
 function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig): void {
   const fail = (message: string): void => {
@@ -1390,9 +1396,7 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
  * @returns Object with sessionId and agentName
  */
 function initializeHookContext(
-  config?: HookProcessingConfig,
-  agentFlag?: string,
-  fallbackSessionId?: string
+  config?: HookProcessingConfig
 ): { sessionId: string; agentName: string } {
   let sessionId: string;
   let agentName: string;
@@ -1409,9 +1413,9 @@ function initializeHookContext(
       logger.setProfileName(config.profileName);
     }
   } else {
-    // Use environment variables (CLI mode), with the --agent flag taking precedence
-    agentName = resolveAgentName(agentFlag);
-    sessionId = initializeLoggerContext(agentName, fallbackSessionId);
+    // Use environment variables (CLI mode)
+    agentName = process.env.CODEMIE_AGENT || 'unknown';
+    sessionId = initializeLoggerContext();
   }
 
   return { sessionId, agentName };
@@ -1555,24 +1559,35 @@ export function createHookCommand(): Command {
           return;
         }
 
-        // Apply hook transformation if agent provides a transformer, before
-        // initializing logger/session context. Some agents (e.g. Kimi) do
-        // not emit a transcript_path in their raw hook payload; others (e.g.
-        // cursor-ide) send conversation_id instead of session_id. The
-        // transformer computes/maps these fields before we resolve the
-        // CodeMie session id or validate the internal event shape.
+        // Validate required fields from hook input schema
+        if (!event.session_id) {
+          logger.error('[hook] Missing required field: session_id');
+          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: session_id');
+          process.exit(2); // Blocking error
+        }
+
+        if (!event.hook_event_name) {
+          logger.error('[hook] Missing required field: hook_event_name');
+          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+          console.error('codemie hook: missing required field in hook input: hook_event_name');
+          process.exit(2); // Blocking error
+        }
+
+        // Initialize logger context using CODEMIE_SESSION_ID from environment
+        // This ensures consistent session ID across all hooks
+        const { sessionId, agentName: resolvedAgentName } = initializeHookContext();
+
+        // Apply hook transformation if agent provides a transformer.
+        // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
+        // hook payload; the transformer computes it from agent-specific session
+        // layout before we validate the internal event shape.
         const transformedEvent = applyHookTransformation(event, agentName);
 
-        // Initialize logger context using CODEMIE_SESSION_ID from environment,
-        // falling back to the transform-derived session id when a hook
-        // process CodeMie did not spawn has nothing to inherit it from.
-        const { sessionId, agentName: resolvedAgentName } = initializeHookContext(
-          undefined,
-          agentName,
-          transformedEvent.session_id
-        );
+        // Validate required fields after transformation so agent-specific
+        // transformers can populate fields such as transcript_path.
+        validateHookEvent(transformedEvent);
 
-        validateHookEvent(transformedEvent, undefined);
         if (process.exitCode === 2) {
           return; // Validation failed
         }
@@ -1616,8 +1631,6 @@ export function createHookCommand(): Command {
 
         // Flush logger before exit
         await logger.close();
-
-
         // Surface a one-line reason on stderr: agents report a bare "Failed with
         // non-blocking status code: No stderr output" when the hook exits
         // non-zero silently, leaving the real cause only in the file log.
