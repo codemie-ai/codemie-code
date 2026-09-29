@@ -36,6 +36,7 @@ const CACHE_FILE = path.join(HOME, 'budget-cache.json');
 const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
+const BUDGET_FETCH_TIMEOUT_MS = 2_000; // an unreachable API must not stall every render
 const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
 
 const ENCRYPTION_KEY = deriveMachineEncryptionKey();
@@ -541,6 +542,7 @@ export async function computeSessionCost(transcriptPath, {
   // a fresh session `~$0.0000`, implying an estimate where there is simply no spend.
   let cost = 0;
   let exact = true;
+  let pricedTurns = 0;
   for (const { model, usage, classifierCost } of byMessage.values()) {
     // The router's classifier hop is billed on top of the generation and reported per turn in a
     // routing header; the analytics report adds it to the session total, so this must too. It counts
@@ -549,7 +551,14 @@ export async function computeSessionCost(transcriptPath, {
     const rate = lookupRate(table, model);
     if (!rate) { exact = false; continue; }
     cost += messageCost(rate, usage);
+    pricedTurns++;
   }
+
+  // Turns exist but none could be priced (every model is missing from the rate card): the sum is
+  // just the classifier hop or zero, and showing `~$0.0000` reads as "free". Hand the caller back
+  // to Claude Code's own figure, which main() marks as an estimate. Not cached — a rate card that
+  // gains the model later must be picked up on the next render.
+  if (pricedTurns === 0 && byMessage.size > 0) return null;
 
   const result = { cost, exact };
   try {
@@ -594,13 +603,16 @@ export function ctxBar(pct) {
   return `${c(color, bar)} ${pct}%`;
 }
 
-// The CLI budget segment is intentionally not rendered. resolveBudget() and its helpers are kept
-// (and still covered by __tests__/statusline.test.ts) so the segment can be restored by calling it
-// from main() again, but main() no longer does, so no HTTP request is made per render.
-export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs }) {
+function budgetColor(pct) {
+  return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
+}
+
+export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
   const parts: string[] = [];
 
   if (projectName) parts.push(c(C.purple, `[${projectName}]`));
+  if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
+  else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
   if (branch) parts.push(c(C.blue, `(${branch})`));
   if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
 
@@ -718,6 +730,7 @@ export async function resolveBudget({
   try {
     const res = await fetchImpl(`${baseUrl}/v1/analytics/budget_usage`, {
       headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
+      signal: AbortSignal.timeout(BUDGET_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -767,21 +780,22 @@ export async function main() {
   const nominalLabel = lookupNominalLabel(labels, basic.modelId);
   if (nominalLabel) basic.model = nominalLabel;
 
-  // resolveBudget() is deliberately not called: the budget segment is not rendered, and it was the
-  // only network request the statusline made — one HTTP round trip on every single render.
+  // resolveBudget() only goes to the network when its 60s cache is stale, so this is not one HTTP
+  // round trip per render.
   const branchPromise = basic.cwd ? gitBranch(basic.cwd) : Promise.resolve('');
-  const [branch, actualModel, priced] = await Promise.all([
+  const [budgetResult, branch, actualModel, priced] = await Promise.all([
+    resolveBudget(),
     branchPromise,
     isRoutingConfigured(process.env, basic.modelId) ? resolveActualModel(basic.transcriptPath, { labels }) : Promise.resolve(null),
     computeSessionCost(basic.transcriptPath),
   ]);
 
   // Prefer our own per-model figure; fall back to Claude Code's (marked `~`) when the transcript
-  // or the rate card could not be read.
+  // or the rate card could not be read, or no model in it had a rate.
   const cost = priced ? priced.cost : basic.cost;
   const costExact = priced ? priced.exact : false;
 
-  process.stdout.write(buildStatusLine({ ...basic, branch, actualModel, cost, costExact }));
+  process.stdout.write(buildStatusLine({ ...basic, ...budgetResult, branch, actualModel, cost, costExact }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the

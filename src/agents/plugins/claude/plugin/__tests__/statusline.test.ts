@@ -198,14 +198,17 @@ describe('buildStatusLine', () => {
     expect(buildStatusLine({ ...basic, costExact: false })).toContain(`${YELLOW}~$1.5000`);
   });
 
-  it('never renders a budget segment, even when budget fields are passed', () => {
-    const line = buildStatusLine({
-      ...basic,
-      budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 },
-      budgetError: 'reauthenticate',
-    } as never);
-    expect(line).not.toContain('$12.34');
-    expect(line).not.toContain('⚠');
+  it('renders the budget segment right after the project name, colored by usage', () => {
+    const line = buildStatusLine({ ...basic, budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 } });
+    expect(line).toContain(`${YELLOW}$12.34 (41%) resets 7/15/2026`);
+    expect(line.indexOf('[my-project]')).toBeLessThan(line.indexOf('$12.34'));
+    expect(line.indexOf('$12.34')).toBeLessThan(line.indexOf('(main)'));
+  });
+
+  it('shows the budget error only when there is no budget', () => {
+    expect(buildStatusLine({ ...basic, budgetError: 'reauthenticate' })).toContain('⚠ reauthenticate');
+    const both = buildStatusLine({ ...basic, budget: { text: '$1.00 (5%) resets 7/15/2026', pct: 5 }, budgetError: 'reauthenticate' });
+    expect(both).not.toContain('⚠');
   });
 
   it('does not throw and omits the cost segment when cost is non-numeric', () => {
