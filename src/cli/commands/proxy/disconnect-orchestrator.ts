@@ -84,6 +84,12 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
     return;
   }
 
+
+  if (opts.targets.claudeCodeOtlp && !!opts.scope && !['user', 'project'].includes(opts.scope)) {
+    console.error(`error: option '--scope <scope>' argument '${opts.scope}' is invalid. Allowed choices are user, project.`);
+    return;
+  }
+
   if (opts.targets.codexDesktop) {
     await disconnectCodexDesktop();
   }

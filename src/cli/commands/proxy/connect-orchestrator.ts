@@ -701,6 +701,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     ));
   }
 
+  if (targets.claudeCodeOtlp && !!opts.scope && !['user', 'project'].includes(opts.scope)) {
+    console.error(`error: option '--scope <scope>' argument '${opts.scope}' is invalid. Allowed choices are user, project.`);
+    return;
+  }
+
   const { label, commandExample } = describeTargets(targets);
 
   let startedInThisRun = false;
