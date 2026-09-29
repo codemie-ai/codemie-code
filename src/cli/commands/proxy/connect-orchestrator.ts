@@ -49,6 +49,7 @@ import {
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
 import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -72,12 +73,12 @@ export interface ConnectOptions {
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
-  /** Settings scope for --claude-code-otlp: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
+  /** Settings scope for Claude Code OTLP plugin: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
   scope?: "user" | "project";
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | 'claude-code-otlp';
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | typeof CLAUDE_CODE_OTLP_AGENT_NAME;
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -92,7 +93,7 @@ export interface DaemonIdentity {
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
-    | { clientType: 'claude-code-otlp' };
+    | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME };
 }
 
 /**
@@ -106,7 +107,7 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
     return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
   }
   if (targets.claudeCodeOtlp) {
-    return { clientType: 'claude-code-otlp', spawnOptions: { clientType: 'claude-code-otlp' } };
+    return { clientType: CLAUDE_CODE_OTLP_AGENT_NAME, spawnOptions: { clientType: CLAUDE_CODE_OTLP_AGENT_NAME } };
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
@@ -284,14 +285,14 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --claude-code-otlp     Claude Code (analytics hooks + OTel settings)',
+  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
-  '  codemie proxy connect --claude-code-otlp',
+  `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -305,7 +306,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   const flags: string[] = [];
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
-  if (t.claudeCodeOtlp) { flags.push('--claude-code-otlp'); labels.push('Claude Code OTLP'); }
+  if (t.claudeCodeOtlp) { flags.push(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`); labels.push('Claude Code OTLP'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
@@ -654,7 +655,7 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
   try {
     const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
     console.log(chalk.green(`\u2713 Claude Code analytics configured`));
-    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent claude-code-otlp`));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`));
     console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in .claude/settings.json`));
     if (result.backupPath) {
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));

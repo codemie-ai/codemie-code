@@ -11,6 +11,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
@@ -26,7 +27,7 @@ const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
-  '  --claude-code-otlp     Claude Code OTLP (removes hook/env entries)',
+  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
   '',
   'Example:',
   '  codemie proxy disconnect --codex-desktop',

@@ -22,6 +22,7 @@ import {
   connectTargets,
   type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
@@ -299,11 +300,11 @@ export function createProxyCommand(): Command {
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
-    .option('--claude-code-otlp', 'Configure Claude Code analytics hooks and OTLP settings')
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
     .addOption(
       new Option(
         '--scope <scope>',
-        'Settings scope for --claude-code-otlp: "user" (default) or "project"',
+        `Settings scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) or "project"`,
       )
       .default('user')
       .choices(['user', 'project']),
@@ -330,11 +331,11 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .option('--claude-code-otlp', 'Configure Claude Code analytics hooks and OTLP settings')
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
     .addOption(
       new Option(
         '--scope <scope>',
-        'Settings scope for --claude-code-otlp: "user" (default) or "project"',
+        `Settings scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) or "project"`,
       )
       .default('user')
       .choices(['user', 'project']),
