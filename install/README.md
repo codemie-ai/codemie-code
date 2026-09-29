@@ -105,8 +105,6 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
 
 macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script installs into a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
 
-Neither installer changes the npm `prefix` in `.npmrc`. The only npm setting they write is the `@codemieai:registry` scope when a scope registry is given; revert it with `npm config delete @codemieai:registry --location user`.
-
 ## Upgrading from an Older Installer
 
 Older installers set the npm `prefix` in the user `.npmrc` to `%LOCALAPPDATA%\CodeMie\npm-prefix` (Windows) or `$HOME/.codemie/npm-prefix` (macOS/Linux), which redirected every `npm install -g` into that folder and could break npm-installed tools such as Claude Code. Rerun the installer to remove the override; it lists the packages left in the old folder so you can reinstall them. `codemie doctor` reports the override and prints the manual fix:
