@@ -254,3 +254,26 @@ codemie sdk assistants list --projects Engineering --json | jq -r '.[].id' | whi
   codemie sdk assistants update "$id" --data '{"shared":true}'
 done
 ```
+
+## Chatting and testing
+
+
+```bash
+# One stateless message; --json returns { user, assistant, tool_calls[], tokens, latency_ms, agent_error, tool_errors }
+codemie sdk assistants chat <id> "Summarize ticket ABC-1" --json
+
+# Multi-turn context
+echo '[{"role":"User","message":"File a bug"},{"role":"Assistant","message":"Which project?"}]' > h.json
+codemie sdk assistants chat <id> "ABC" --history h.json
+
+# Batch scenarios (see codemie-assistant-builder for the scenarios.json format)
+codemie sdk assistants test <id> --scenarios scenarios.json --out ./run-1 --concurrency 3
+
+# Versions
+codemie sdk assistants versions <id> --json
+codemie sdk assistants rollback <id> 3
+
+# Past conversations: newest of an assistant, or specific ones by ID or chat link
+codemie sdk assistants conversations <id> --limit 5
+codemie sdk assistants conversations --ids https://<host>/chats/<conversation-id>,<conversation-id> --json
+```
