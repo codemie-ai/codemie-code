@@ -656,7 +656,7 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
     const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
     console.log(chalk.green(`\u2713 Claude Code analytics configured`));
     console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`));
-    console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in .claude/settings.json`));
+    console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in ${result.path}`));
     if (result.backupPath) {
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
     }
