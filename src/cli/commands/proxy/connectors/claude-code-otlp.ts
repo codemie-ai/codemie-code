@@ -1,8 +1,8 @@
 /**
- * Writes and merges `.claude/settings.json` at the project root, wiring
- * Claude Code's hook surface (8 events) onto `codemie hook --agent claude-code-otlp`
- * and setting OTel environment variables that point Claude Code's telemetry at
- * the local proxy daemon.
+ * Writes/merges (`connect`) and strips/removes (`disconnect`) codemie's
+ * OTel wiring in `.claude/settings.json`: the hook surface (8 events) pointed
+ * at `codemie hook --agent claude-code-otlp`, and the OTel environment
+ * variables pointing Claude Code's telemetry at the local proxy daemon.
  */
 
 import { existsSync } from 'node:fs';
@@ -17,53 +17,9 @@ import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
-export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
-export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
-
-export const HOOK_EVENTS = [
-  'SessionStart',
-  'UserPromptSubmit',
-  'PreToolUse',
-  'PostToolUse',
-  'Stop',
-  'SubagentStop',
-  'PreCompact',
-  'SessionEnd',
-] as const;
-
-export const CODEMIE_ENV_KEYS = [
-  'CLAUDE_CODE_ENABLE_TELEMETRY',
-  'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA',
-  'OTEL_EXPORTER_OTLP_ENDPOINT',
-  'OTEL_EXPORTER_OTLP_HEADERS',
-  'OTEL_EXPORTER_OTLP_PROTOCOL',
-  'OTEL_LOGS_EXPORTER',
-  'OTEL_METRICS_EXPORTER',
-  'OTEL_TRACES_EXPORTER',
-  'OTEL_LOG_TOOL_DETAILS',
-] as const;
-
-interface HookEntry {
-  type: string;
-  command: string;
-  [key: string]: unknown;
-}
-
-interface HookGroup {
-  matcher: string;
-  hooks: HookEntry[];
-  [key: string]: unknown;
-}
-
-interface ClaudeSettings {
-  hooks?: Record<string, unknown[]>;
-  env?: Record<string, string>;
-  [key: string]: unknown;
-}
-
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
-  scope?: "user" | "project";
+  scope?: 'user' | 'project';
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -84,20 +40,49 @@ interface RemoveClaudeCodeOtlpResult {
   path: string | null;
 }
 
-function isCodemieEntry(entry: unknown): boolean {
-  if (typeof entry !== 'object' || entry === null) {
-    return false;
-  }
-
-  const obj = entry as Record<string, unknown>;
-  return (obj.hooks as unknown[]).some(
-    (h) =>
-      typeof h === 'object' &&
-      h !== null &&
-      typeof (h as HookEntry).command === 'string' &&
-      (h as HookEntry).command.includes(CODEMIE_COMMAND_MARKER)
-  );
+interface HookEntry {
+  type: string;
+  command: string;
+  [key: string]: unknown;
 }
+
+interface HookGroup {
+  matcher: string;
+  hooks: HookEntry[];
+  [key: string]: unknown;
+}
+
+interface ClaudeSettings {
+  hooks?: Record<string, unknown[]>;
+  env?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+export const CODEMIE_ENV_KEYS = [
+  'CLAUDE_CODE_ENABLE_TELEMETRY',
+  'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA',
+  'OTEL_EXPORTER_OTLP_ENDPOINT',
+  'OTEL_EXPORTER_OTLP_HEADERS',
+  'OTEL_EXPORTER_OTLP_PROTOCOL',
+  'OTEL_LOGS_EXPORTER',
+  'OTEL_METRICS_EXPORTER',
+  'OTEL_TRACES_EXPORTER',
+  'OTEL_LOG_TOOL_DETAILS',
+] as const;
+
+export const HOOK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'Stop',
+  'SubagentStop',
+  'PreCompact',
+  'SessionEnd',
+] as const;
+
+export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
+export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) return {};
@@ -125,6 +110,65 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   }
 }
 
+/**
+ * True if a single hook entry (`{ type: 'command', command: '...' }`) is one
+ * that codemie itself would write, identified by the command marker.
+ *
+ * This is intentionally the finest granularity we ever check at for
+ * destructive operations (add/replace/remove) — never classify a whole hook
+ * GROUP as "ours" for that purpose, since a group's `hooks[]` array may mix
+ * our command with a user's own command(s).
+ */
+function isCodemieCommand(h: unknown): boolean {
+  return (
+    typeof h === 'object' &&
+    h !== null &&
+    typeof (h as HookEntry).command === 'string' &&
+    (h as HookEntry).command.includes(CODEMIE_COMMAND_MARKER)
+  );
+}
+
+/**
+ * True if a hook GROUP contains at least one codemie-owned command. Used only
+ * for the "have we already touched this file before" backup heuristic in the
+ * connect path — safe at group granularity since it's purely informational
+ * (whether to snapshot a backup), never destructive.
+ */
+function groupContainsCodemieCommand(group: unknown): boolean {
+  return (
+    typeof group === 'object' &&
+    group !== null &&
+    Array.isArray((group as HookGroup).hooks) &&
+    (group as HookGroup).hooks.some(isCodemieCommand)
+  );
+}
+
+/**
+ * Given an existing array of hook groups for one event, returns a new array
+ * with our own command(s) stripped out at the COMMAND level:
+ *  - a group that still has foreign command(s) left is kept, with our
+ *    command(s) removed and everything else (matcher, extra fields) intact;
+ *  - a group that contained ONLY our command(s) is dropped entirely;
+ *  - malformed/unrecognized entries are preserved as-is.
+ *
+ * Shared by both the connect (write) and disconnect (remove) paths.
+ */
+function stripCodemieCommandsFromGroups(existingGroups: unknown[]): unknown[] {
+  const result: unknown[] = [];
+  for (const group of existingGroups) {
+    if (typeof group !== 'object' || group === null || !Array.isArray((group as HookGroup).hooks)) {
+      result.push(group);
+      continue;
+    }
+    const g = group as HookGroup;
+    const remainingCommands = g.hooks.filter((h) => !isCodemieCommand(h));
+    if (remainingCommands.length > 0) {
+      result.push({ ...g, hooks: remainingCommands });
+    }
+  }
+  return result;
+}
+
 export async function writeClaudeCodeOtlpConfig(
   opts: WriteClaudeCodeOtlpOptions = {}
 ): Promise<WriteClaudeCodeOtlpResult> {
@@ -137,6 +181,7 @@ export async function writeClaudeCodeOtlpConfig(
   const settingsPath = join(basePath, '.claude', 'settings.json');
 
   const existing = await readSettingsFile(settingsPath);
+  const existingHooksBlock = existing.hooks ?? {};
 
   const codemieEnv: Record<(typeof CODEMIE_ENV_KEYS)[number], string> = {
     CLAUDE_CODE_ENABLE_TELEMETRY: '1',
@@ -150,30 +195,47 @@ export async function writeClaudeCodeOtlpConfig(
     OTEL_LOG_TOOL_DETAILS: '1',
   };
 
+  // --- Conflict detection: env values AND malformed (non-array) hooks entries ---
   const existingEnv = existing.env ?? {};
-  const conflicts: string[] = [];
+  const envConflicts: string[] = [];
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
     if (currentVal !== undefined && currentVal !== desiredVal) {
-      conflicts.push(key);
+      envConflicts.push(key);
     }
   }
-  if (conflicts.length > 0 && !opts.force) {
+
+  // A non-array value under ANY existing hooks event key (not just the ones we
+  // currently manage) can't be safely merged with — silently discarding it
+  // would be the same class of data loss this fix is about, just rarer.
+  const malformedHookEvents: string[] = [];
+  for (const [eventName, value] of Object.entries(existingHooksBlock)) {
+    if (!Array.isArray(value)) {
+      malformedHookEvents.push(eventName);
+    }
+  }
+
+  if ((envConflicts.length > 0 || malformedHookEvents.length > 0) && !opts.force) {
+    const parts: string[] = [];
+    if (envConflicts.length > 0) {
+      parts.push(`conflicting env values for: ${envConflicts.join(', ')}`);
+    }
+    if (malformedHookEvents.length > 0) {
+      parts.push(`non-array hooks entries for: ${malformedHookEvents.join(', ')}`);
+    }
     throw new ConfigurationError(
-      `Claude Code settings already contain conflicting values for: ${conflicts.join(', ')}. ` +
-      `Re-run with --force to overwrite.`
+      `Claude Code settings already contain ${parts.join('; ')}. Re-run with --force to overwrite.`
     );
   }
 
-  // Backup on first modification (no existing codemie entry, no existing backup)
+  // --- Backup on first modification (no existing codemie entry, no existing backup) ---
   let backupPath: string | null = null;
   if (existsSync(settingsPath)) {
     const backupPathCandidate = settingsPath + SETTINGS_BACKUP_SUFFIX;
     const backupCandidateExists = existsSync(backupPathCandidate);
-    const hooks = existing.hooks ?? {};
-    const alreadyManaged = Object.values(hooks).some(
-      (entries) => Array.isArray(entries) && entries.some(isCodemieEntry)
+    const alreadyManaged = Object.values(existingHooksBlock).some(
+      (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
     );
     if (!alreadyManaged && !backupCandidateExists) {
       await copyFile(settingsPath, backupPathCandidate);
@@ -183,19 +245,39 @@ export async function writeClaudeCodeOtlpConfig(
     }
   }
 
-  // Merge hooks block
+  // --- Merge hooks block ---
   const codemieEntry: HookGroup = {
     matcher: '',
     hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
   };
-  const hooks: Record<string, unknown[]> = { ...(existing.hooks ?? {}) };
-  for (const eventName of HOOK_EVENTS) {
-    const existingEntries: unknown[] = Array.isArray(hooks[eventName]) ? (hooks[eventName] as unknown[]) : [];
-    const foreignEntries = existingEntries.filter((e) => !isCodemieEntry(e));
-    hooks[eventName] = [...foreignEntries, codemieEntry];
+
+  // Phase 1: strip our own command from EVERY existing event key, not just the
+  // ones we currently manage. This prevents orphaned commands if HOOK_EVENTS
+  // ever shrinks between versions — an event this tool no longer manages
+  // would otherwise keep a stale codemie command in it forever.
+  const hooks: Record<string, unknown[]> = {};
+  for (const [eventName, entries] of Object.entries(existingHooksBlock)) {
+    if (!Array.isArray(entries)) {
+      // Only reachable here when `force` is set (validated above) — an
+      // explicit, consented overwrite. Drop the malformed value rather than
+      // propagate it further.
+      continue;
+    }
+    const strippedGroups = stripCodemieCommandsFromGroups(entries);
+    if (strippedGroups.length > 0) {
+      hooks[eventName] = strippedGroups;
+    }
+    // else: this event had ONLY our command(s) — drop the now-empty key
+    // (this is also what cleans up orphans from a shrunk HOOK_EVENTS list).
   }
 
-  // Merge env block
+  // Phase 2: (re-)add our dedicated entry for every event we currently manage.
+  for (const eventName of HOOK_EVENTS) {
+    const existingGroups: unknown[] = Array.isArray(hooks[eventName]) ? (hooks[eventName] as unknown[]) : [];
+    hooks[eventName] = [...existingGroups, codemieEntry];
+  }
+
+  // --- Merge env block ---
   const mergedEnv: Record<string, string> = { ...(existing.env ?? {}), ...codemieEnv };
 
   const merged: ClaudeSettings = {
@@ -224,10 +306,6 @@ export async function writeClaudeCodeOtlpConfig(
   };
 }
 
-/**
- * Remove CodeMie-authored analytics hooks and env entries from
- * `.claude/settings.json` at the given project root.
- */
 export async function removeClaudeCodeOtlpConfig(
   opts: RemoveClaudeCodeOtlpOptions = {}
 ): Promise<RemoveClaudeCodeOtlpResult> {
@@ -240,20 +318,18 @@ export async function removeClaudeCodeOtlpConfig(
 
   const existing = await readSettingsFile(settingsPath);
 
-  // Strip codemie hook entries
   const hooks: Record<string, unknown[]> = {};
   for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
     if (!Array.isArray(entries)) {
       hooks[eventName] = entries as unknown[];
       continue;
     }
-    const remaining = entries.filter((e) => !isCodemieEntry(e));
-    if (remaining.length > 0) {
-      hooks[eventName] = remaining;
+    const remainingGroups = stripCodemieCommandsFromGroups(entries);
+    if (remainingGroups.length > 0) {
+      hooks[eventName] = remainingGroups;
     }
   }
 
-  // Remove codemie env keys
   const env: Record<string, string> = { ...(existing.env ?? {}) };
   for (const key of CODEMIE_ENV_KEYS) {
     delete env[key];
