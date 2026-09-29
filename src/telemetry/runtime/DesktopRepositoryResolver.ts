@@ -346,7 +346,7 @@ async function findWorkingDirViaProcess(pid: number): Promise<string | null> {
     const match = stdout.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
     const dir = match?.[1]?.trim();
     // Reject relative paths — the Desktop renderer uses --add-dir for plugin loading.
-    if (dir?.startsWith('/')) return dir;
+    if (dir?.startsWith('/') && !isSystemPath(dir)) return dir;
 
     // Code tab subprocesses launch from the project directory but carry no --add-dir flag.
     // Reject launcher paths (home, Library, app bundles) so Cowork sessions with a
@@ -408,7 +408,7 @@ async function findWorkingDirForDesktopDirectRequest(connectingPid: number): Pro
       if (proc?.args.includes('--add-dir')) {
         const m = proc.args.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
         const dir = m?.[1]?.trim();
-        if (dir?.startsWith('/')) return dir;
+        if (dir?.startsWith('/') && !isSystemPath(dir)) return dir;
       } else if (proc?.args.includes('--output-format stream-json')) {
         try {
           const { stdout: cwdOut } = await execAsync(`lsof -a -d cwd -p ${cur} -Fn`, { timeout: 1000 });
@@ -430,9 +430,20 @@ async function findWorkingDirForDesktopDirectRequest(connectingPid: number): Pro
   }
 }
 
+/**
+ * OS locations that are never a user project. Claude Desktop runs Cowork sessions without a
+ * folder in a sandbox whose cwd is `/private/var/empty`; accepting it reported `var/empty` as
+ * the repository instead of falling through to the session file, which resolves to Cowork.
+ */
+const SYSTEM_PATH_PREFIXES = ['/private/', '/var/', '/tmp/', '/System/', '/usr/', '/bin/', '/sbin/', '/etc/', '/dev/'];
+
+function isSystemPath(path: string): boolean {
+  return path === '/' || SYSTEM_PATH_PREFIXES.some(prefix => path.startsWith(prefix) || path === prefix.slice(0, -1));
+}
+
 /** Rejects launcher directories that would misattribute a session to a non-project path. */
 function isProjectCwd(cwd: string | undefined): boolean {
   if (!cwd?.startsWith('/')) return false;
   const home = process.env.HOME ?? '';
-  return cwd !== home && !cwd.includes('/Library/') && !cwd.includes('.app/Contents');
+  return cwd !== home && !cwd.includes('/Library/') && !cwd.includes('.app/Contents') && !isSystemPath(cwd);
 }
