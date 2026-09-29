@@ -129,39 +129,6 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
  * - Metrics files (~/.codemie/sessions/{sessionId}_metrics.jsonl)
  * - Conversation files (~/.codemie/sessions/{sessionId}_conversation.jsonl)
  *
- * @returns The CodeMie session ID from environment
- * @throws Error if required environment variables are missing
- */
-/**
- * Resolve the agent name for this hook invocation.
- *
- * Precedence: explicit `--agent <name>` flag beats `CODEMIE_AGENT` env; when
- * neither is present the current throwing behavior is unchanged.
- */
-function resolveAgentName(agentFlag?: string): string {
-  const agentName = agentFlag || process.env.CODEMIE_AGENT;
-  if (!agentName) {
-    // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
-    // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
-    // and stderr is surfaced by agent UIs and transcripts.
-    const codemieEnvVars = Object.keys(process.env)
-      .filter(key => key.startsWith('CODEMIE_'))
-      .join(', ');
-    console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
-    throw new Error('CODEMIE_AGENT environment variable is required');
-  }
-  return agentName;
-}
-
-/**
- * Initialize logger context using CODEMIE_SESSION_ID
- *
- * Uses CODEMIE_SESSION_ID from environment for:
- * - Logging (logger.setSessionId)
- * - Session files (~/.codemie/sessions/{sessionId}.json)
- * - Metrics files (~/.codemie/sessions/{sessionId}_metrics.jsonl)
- * - Conversation files (~/.codemie/sessions/{sessionId}_conversation.jsonl)
- *
  * @param agentName - Resolved agent name (flag, then CODEMIE_AGENT env)
  * @returns The CodeMie session ID from environment
  * @throws Error if required environment variables are missing
@@ -1506,7 +1473,6 @@ export function createHookCommand(): Command {
     .action(async (opts: { agent?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
-      let agentName: string | undefined;
 
       // Graceful teardown: Claude Code may SIGTERM/SIGINT this hook while the
       // SessionEnd sync is still running. The FIRST signal only aborts the sync
@@ -1525,11 +1491,6 @@ export function createHookCommand(): Command {
       process.once('SIGINT', requestAbort);
 
       try {
-        // Resolve the agent name up front (flag beats CODEMIE_AGENT env) so
-        // agent-specific gating (e.g. non-blocking exit) is known even before
-        // stdin is read/parsed.
-        agentName = resolveAgentName(opts.agent);
-
         // Read JSON from stdin
         const rawInput = await readStdin();
         // Strip UTF-8 BOM (U+FEFF) that Windows processes may prepend.
@@ -1550,7 +1511,7 @@ export function createHookCommand(): Command {
           process.exit(2); // Blocking error
         }
 
-        const analyticsAgent = AgentRegistry.getAnalyticsAgent(agentName);
+        const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
           await ensureOtlpProxy(analyticsAgent.name);
           await analyticsAgent.processOtlpEvent(input);
@@ -1576,7 +1537,7 @@ export function createHookCommand(): Command {
 
         // Initialize logger context using CODEMIE_SESSION_ID from environment
         // This ensures consistent session ID across all hooks
-        const { sessionId, agentName: resolvedAgentName } = initializeHookContext();
+        const { sessionId, agentName } = initializeHookContext();
 
         // Apply hook transformation if agent provides a transformer.
         // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
@@ -1593,10 +1554,10 @@ export function createHookCommand(): Command {
         }
 
         // Normalize event name and log processing info
-        normalizeAndLogEvent(transformedEvent, sessionId, resolvedAgentName);
+        normalizeAndLogEvent(transformedEvent, sessionId, agentName);
 
         // Route to appropriate handler with transformed event and session ID
-        await routeHookEvent(transformedEvent, input, sessionId, resolvedAgentName, undefined, abortController.signal);
+        await routeHookEvent(transformedEvent, input, sessionId, agentName, undefined, abortController.signal);
 
         // Log successful completion
         const totalDuration = Date.now() - hookStartTime;
