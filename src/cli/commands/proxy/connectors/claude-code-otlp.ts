@@ -17,10 +17,10 @@ import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
-const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
-const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
+export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
+export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 
-const HOOK_EVENTS = [
+export const HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
   'PreToolUse',
@@ -31,7 +31,7 @@ const HOOK_EVENTS = [
   'SessionEnd',
 ] as const;
 
-const CODEMIE_ENV_KEYS = [
+export const CODEMIE_ENV_KEYS = [
   'CLAUDE_CODE_ENABLE_TELEMETRY',
   'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA',
   'OTEL_EXPORTER_OTLP_ENDPOINT',
@@ -125,9 +125,6 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   }
 }
 
-/**
- * Write the Claude Code analytics config at an explicit path (test seam).
- */
 export async function writeClaudeCodeOtlpConfig(
   opts: WriteClaudeCodeOtlpOptions = {}
 ): Promise<WriteClaudeCodeOtlpResult> {
@@ -137,18 +134,11 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   const basePath = opts.scope === 'project' ? resolveProjectRoot() : resolveHomeDir();
-
-  const settingsPath = join(
-    basePath,
-    '.claude',
-    'settings.json'
-  );
+  const settingsPath = join(basePath, '.claude', 'settings.json');
 
   const existing = await readSettingsFile(settingsPath);
 
-  // Inline conflict-detection: check if env block already contains any of the
-  // env keys with a different (non-codemie-authored) value.
-  const codemieEnv: Record<string, string> = {
+  const codemieEnv: Record<(typeof CODEMIE_ENV_KEYS)[number], string> = {
     CLAUDE_CODE_ENABLE_TELEMETRY: '1',
     CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
     OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/otlp`,
@@ -165,13 +155,8 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    // Conflict: key exists with a different value that doesn't look like we wrote it
     if (currentVal !== undefined && currentVal !== desiredVal) {
-      const isOurValue = CODEMIE_ENV_KEYS.includes(key as typeof CODEMIE_ENV_KEYS[number]) &&
-        currentVal === desiredVal;
-      if (!isOurValue) {
-        conflicts.push(key);
-      }
+      conflicts.push(key);
     }
   }
   if (conflicts.length > 0 && !opts.force) {
@@ -185,27 +170,28 @@ export async function writeClaudeCodeOtlpConfig(
   let backupPath: string | null = null;
   if (existsSync(settingsPath)) {
     const backupPathCandidate = settingsPath + SETTINGS_BACKUP_SUFFIX;
+    const backupCandidateExists = existsSync(backupPathCandidate);
     const hooks = existing.hooks ?? {};
     const alreadyManaged = Object.values(hooks).some(
       (entries) => Array.isArray(entries) && entries.some(isCodemieEntry)
     );
-    if (!alreadyManaged && !existsSync(backupPathCandidate)) {
+    if (!alreadyManaged && !backupCandidateExists) {
       await copyFile(settingsPath, backupPathCandidate);
       backupPath = backupPathCandidate;
-    } else if (existsSync(backupPathCandidate)) {
+    } else if (backupCandidateExists) {
       backupPath = backupPathCandidate;
     }
   }
 
   // Merge hooks block
+  const codemieEntry: HookGroup = {
+    matcher: '',
+    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+  };
   const hooks: Record<string, unknown[]> = { ...(existing.hooks ?? {}) };
   for (const eventName of HOOK_EVENTS) {
     const existingEntries: unknown[] = Array.isArray(hooks[eventName]) ? (hooks[eventName] as unknown[]) : [];
     const foreignEntries = existingEntries.filter((e) => !isCodemieEntry(e));
-    const codemieEntry: HookGroup = {
-      matcher: '',
-      hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
-    };
     hooks[eventName] = [...foreignEntries, codemieEntry];
   }
 
@@ -218,23 +204,23 @@ export async function writeClaudeCodeOtlpConfig(
     env: mergedEnv,
   };
 
-  // Ensure .claude directory exists
-  const { mkdir } = await import('node:fs/promises');
-  await mkdir(join(basePath, '.claude'), { recursive: true });
-
+  // `writeAtomically` creates the parent (`.claude`) directory itself.
   await writeAtomically(settingsPath, JSON.stringify(merged, null, 2) + '\n');
+
+  const hookEventsCount = HOOK_EVENTS.length;
+  const envVarsCount = CODEMIE_ENV_KEYS.length;
 
   logger.info(
     '[proxy] Configured Claude Code analytics',
-    ...sanitizeLogArgs({ settingsPath, backupPath, hookEvents: HOOK_EVENTS.length, envVars: CODEMIE_ENV_KEYS.length })
+    ...sanitizeLogArgs({ settingsPath, backupPath, hookEvents: hookEventsCount, envVars: envVarsCount })
   );
 
   return {
     written: true,
     path: settingsPath,
     backupPath,
-    hookEvents: HOOK_EVENTS.length,
-    envVars: CODEMIE_ENV_KEYS.length,
+    hookEvents: hookEventsCount,
+    envVars: envVarsCount,
   };
 }
 
