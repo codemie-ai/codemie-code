@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
@@ -291,16 +291,23 @@ export function createProxyCommand(): Command {
 
   connect
     .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
-    .option('--claude-code-otlp', 'Configure Claude Code analytics hooks and OTLP settings')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
-    .option('--scope <scope>', 'Settings scope for --claude-code-otlp: "user" (default) or "project"', 'user')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
+    .option('--claude-code-otlp', 'Configure Claude Code analytics hooks and OTLP settings')
+    .addOption(
+      new Option(
+        '--scope <scope>',
+        'Settings scope for --claude-code-otlp: "user" (default) or "project"',
+      )
+      .default('user')
+      .choices(['user', 'project']),
+    )
     .action(async (opts: UnifiedConnectOptions) => {
       await connectTargets({
         targets: {
@@ -323,8 +330,15 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .option('--claude-code-otlp', 'Remove CodeMie hook and env entries from .claude/settings.json')
-    .option('--scope <scope>', 'Settings scope for --claude-code-otlp: "user" (default) or "project"', 'user')
+    .option('--claude-code-otlp', 'Configure Claude Code analytics hooks and OTLP settings')
+    .addOption(
+      new Option(
+        '--scope <scope>',
+        'Settings scope for --claude-code-otlp: "user" (default) or "project"',
+      )
+      .default('user')
+      .choices(['user', 'project']),
+    )
     .action(async (opts: { claudeCodeOtlp?: boolean; codexDesktop?: boolean; scope?: 'user' | 'project' }) => {
       await disconnectTargets({
         targets: {
