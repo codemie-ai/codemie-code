@@ -129,7 +129,6 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
  * - Metrics files (~/.codemie/sessions/{sessionId}_metrics.jsonl)
  * - Conversation files (~/.codemie/sessions/{sessionId}_conversation.jsonl)
  *
- * @param agentName - Resolved agent name (flag, then CODEMIE_AGENT env)
  * @returns The CodeMie session ID from environment
  * @throws Error if required environment variables are missing
  */
@@ -1368,9 +1367,7 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
  * @param config - Optional configuration object (if not provided, reads from environment variables)
  * @returns Object with sessionId and agentName
  */
-function initializeHookContext(
-  config?: HookProcessingConfig
-): { sessionId: string; agentName: string } {
+function initializeHookContext(config?: HookProcessingConfig): { sessionId: string; agentName: string } {
   let sessionId: string;
   let agentName: string;
 
@@ -1475,7 +1472,7 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
-    .option('--agent <name>', 'Agent name for hook attribution (overrides CODEMIE_AGENT)')
+    .option('--agent <name>', 'Agent name for hook attribution')
     .action(async (opts: { agent?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
@@ -1498,10 +1495,7 @@ export function createHookCommand(): Command {
 
       try {
         // Read JSON from stdin
-        const rawInput = await readStdin();
-        // Strip UTF-8 BOM (U+FEFF) that Windows processes may prepend.
-        // JSON.parse rejects BOM; stripping here fixes the issue on Windows.
-        const input = rawInput.charCodeAt(0) === 0xFEFF ? rawInput.slice(1) : rawInput;
+        const input = await readStdin();
 
         // Log raw input at debug level (may contain sensitive data)
         logger.debug(`[hook] Received input (${input.length} bytes)`);
@@ -1554,7 +1548,6 @@ export function createHookCommand(): Command {
         // Validate required fields after transformation so agent-specific
         // transformers can populate fields such as transcript_path.
         validateHookEvent(transformedEvent);
-
         if (process.exitCode === 2) {
           return; // Validation failed
         }
