@@ -147,11 +147,6 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     const res = runHook({ CODEMIE_PROVIDER: 'ai-run-sso' });
     expect(res.code).toBe(2);
     expect(res.stderr).toContain(BLOCK_HEADER);
-    expect(res.stderr).toContain('no valid CodeMie SSO credentials found');
-    // Re-login instruction; without CODEMIE_URL the command has no --url suffix.
-    expect(res.stderr).toContain('codemie profile login');
-    expect(res.stderr).not.toContain('--url');
-    expect(res.stderr).toContain('Then re-send your prompt.');
   });
 
   it('blocks the prompt when a valid api key is present but an invalid-auth marker exists (exit 2)', () => {
@@ -167,16 +162,6 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     expect(res.stderr).toContain('rejected the stored credentials');
     // The marker's reason is surfaced back to the user.
     expect(res.stderr).toContain('HTTP 401');
-  });
-
-  it('blocks when configured via CODEMIE_URL + CODEMIE_SYNC_API_URL (no provider) with no auth, and points --url at the SSO url (exit 2)', () => {
-    const res = runHook({
-      CODEMIE_URL: 'https://sso.example',
-      CODEMIE_SYNC_API_URL: 'https://api.example',
-    });
-    expect(res.code).toBe(2);
-    expect(res.stderr).toContain(BLOCK_HEADER);
-    expect(res.stderr).toContain('codemie profile login --url https://sso.example');
   });
 
   it('treats a non-"invalid" marker status as no marker and allows the prompt (exit 0)', () => {

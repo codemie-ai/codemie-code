@@ -27,20 +27,15 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
       return { ok: true };
     }
 
-    if (input.apiKey) {
-      return { ok: true };
-    }
+    let hasValidAuth = Boolean(input.apiKey);
 
-    if (!input.ssoUrl) {
-      return { ok: false, reason: 'SSO URL is missing' };
-    }
-
-    let hasValidAuth = false;
-    try {
-      const credentials = await new CodeMieSSO().getStoredCredentials(input.ssoUrl);
-      hasValidAuth = Boolean(credentials?.cookies);
-    } catch (error) {
-      logger.debug('[sso-auth-gate] Failed to load SSO credentials:', error);
+    if (!hasValidAuth && input.ssoUrl) {
+      try {
+        const credentials = await new CodeMieSSO().getStoredCredentials(input.ssoUrl);
+        hasValidAuth = Boolean(credentials?.cookies);
+      } catch (error) {
+        logger.debug('[sso-auth-gate] Failed to load SSO credentials:', error);
+      }
     }
 
     const authStatus = await getAnalyticsAuthStatus();
@@ -53,10 +48,12 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
       ? 'no valid CodeMie SSO credentials found'
       : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
 
-    try {
-      await new CodeMieSSO().authenticate({ codeMieUrl: input.ssoUrl, timeout: 120_000, quiet: true });
-    } catch (error) {
-      logger.error(`[sso-auth-gate] Failed to re-authenticate: ${(error as Error).message}`);
+    if (!input.apiKey && input.ssoUrl) {
+      try {
+        await new CodeMieSSO().authenticate({ codeMieUrl: input.ssoUrl, timeout: 120_000, quiet: true });
+      } catch (error) {
+        logger.error(`[sso-auth-gate] Failed to re-authenticate: ${(error as Error).message}`);
+      }
     }
 
     return { ok: false, reason };
