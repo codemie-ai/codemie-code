@@ -136,19 +136,18 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
 function initializeLoggerContext(): string {
   const agentName = process.env.CODEMIE_AGENT;
   if (!agentName) {
-      // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
-      // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
-      // and stderr is surfaced by agent UIs and transcripts.
-      const codemieEnvVars = Object.keys(process.env)
-        .filter(key => key.startsWith('CODEMIE_'))
-        .join(', ');
-      console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
-      throw new Error('CODEMIE_AGENT environment variable is required');
+    // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
+    // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
+    // and stderr is surfaced by agent UIs and transcripts.
+    const codemieEnvVars = Object.keys(process.env)
+      .filter(key => key.startsWith('CODEMIE_'))
+      .join(', ');
+    console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+    throw new Error('CODEMIE_AGENT environment variable is required');
   }
 
   // Use CODEMIE_SESSION_ID from environment
   const sessionId = process.env.CODEMIE_SESSION_ID;
-
   if (!sessionId) {
     throw new Error('CODEMIE_SESSION_ID environment variable is required');
   }
@@ -719,7 +718,7 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         logger.info(`[hook:router] Calling handlePreCompact`);
         await handlePreCompact(event);
         break;
-    default:
+      default:
         logger.info(`[hook:router] Unsupported event: ${normalizedEventName} (silently ignored)`);
         return;
     }
@@ -1321,28 +1320,28 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
  * Validate hook event required fields
  * @param event - Hook event to validate
  * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
- * @param agentName - Resolved agent name (CLI mode only)
  * @throws Error if validation fails and config is provided
  */
 function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig): void {
-  const fail = (message: string): void => {
-    const error = new Error(message);
+  if (!event.session_id) {
+    const error = new Error('Missing required field: session_id');
     if (config) {
       throw error;
     }
-    logger.error(`[hook] ${message}`);
+    logger.error('[hook] Missing required field: session_id');
     logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-    console.error(`codemie hook: missing required field in hook input: ${message.replace(/^Missing required field: /, '')}`);
     process.exitCode = 2;
-  };
-
-  if (!event.session_id) {
-    fail('Missing required field: session_id');
     return;
   }
 
   if (!event.hook_event_name) {
-    fail('Missing required field: hook_event_name');
+    const error = new Error('Missing required field: hook_event_name');
+    if (config) {
+      throw error;
+    }
+    logger.error('[hook] Missing required field: hook_event_name');
+    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    process.exitCode = 2;
     return;
   }
 
@@ -1352,14 +1351,21 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
   const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
   const hasTranscriptPath = Boolean(event.transcript_path) || (event.transcript_paths && event.transcript_paths.length > 0);
   if (!hasTranscriptPath && !transcriptOptionalEvents.includes(event.hook_event_name)) {
-    fail('Missing required field: transcript_path');
+    const error = new Error('Missing required field: transcript_path');
+    if (config) {
+      throw error;
+    }
+    logger.error('[hook] Missing required field: transcript_path');
+    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    console.error('codemie hook: missing required field in hook input: transcript_path');
+    process.exitCode = 2;
+    return;
   }
 }
 
 /**
  * Initialize hook context (logger and session/agent info)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
- * @param agentFlag - Optional `--agent <name>` CLI flag value (CLI mode only); beats `CODEMIE_AGENT` env
  * @returns Object with sessionId and agentName
  */
 function initializeHookContext(
@@ -1381,8 +1387,8 @@ function initializeHookContext(
     }
   } else {
     // Use environment variables (CLI mode)
-    agentName = process.env.CODEMIE_AGENT || 'unknown';
     sessionId = initializeLoggerContext();
+    agentName = process.env.CODEMIE_AGENT || 'unknown';
   }
 
   return { sessionId, agentName };
