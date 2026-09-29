@@ -163,6 +163,11 @@ export interface LlmModel {
   };
   forbidden_for_web?: boolean;
   /**
+   * The model's maximum input context window in tokens (LiteLLM `model_info.max_input_tokens`).
+   * Absent on routers and on catalogs served from static config rather than the LiteLLM proxy.
+   */
+  max_input_tokens?: number;
+  /**
    * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
    * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself
    * dispatches to a capable/efficient pair rather than naming a concrete deployment.

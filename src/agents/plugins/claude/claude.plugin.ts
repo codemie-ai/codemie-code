@@ -402,7 +402,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
             // session tier is the one a person selects (`--model`, `codemie setup`), so surface
             // that one on stderr; the haiku/sonnet/opus tiers stay quiet in the log.
             const previousModel = env[generic];
-            if (tier === 'model' && previousModel && previousModel !== resolution.selectedModel) {
+            // Gaining `[1m]` is the intended max-context default, not a swap worth a warning.
+            if (
+              tier === 'model' &&
+              previousModel &&
+              previousModel !== resolution.selectedModel &&
+              resolution.reason !== 'one-million-enabled'
+            ) {
               // The same model is still live — only its `[1m]` opt-in was dropped. Saying it "is
               // not available" would hide the real reason, so name the 1M context instead.
               if (resolution.reason === 'one-million-unsupported') {
@@ -422,7 +428,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
             }
             env[generic] = resolution.selectedModel;
             for (const nativeVar of native) {
-              // resolution is non-null only when the model was stale/absent — always
+              // resolution is non-null when the model was stale/absent or only its [1m] window changed — always
               // propagate so transformEnvVars()'s pre-population of ANTHROPIC_MODEL
               // from the old CODEMIE_MODEL value does not silently survive here.
               env[nativeVar] = resolution.selectedModel;
