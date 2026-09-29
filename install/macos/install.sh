@@ -18,6 +18,13 @@ command_path() {
   command -v "$1" 2>/dev/null || true
 }
 
+user_npmrc_prefix() {
+  local user_config
+  user_config="$(npm config get userconfig 2>/dev/null || true)"
+  [ -f "$user_config" ] || return 0
+  sed -n -E 's/^[[:space:]]*prefix[[:space:]]*=[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/p' "$user_config" | tail -n 1
+}
+
 node_major() {
   local version
   version="$(node --version 2>/dev/null || true)"
@@ -58,17 +65,18 @@ if [ -n "$SCOPE_REGISTRY_URL" ]; then
 fi
 
 LEGACY_OVERRIDE_DETECTED=0
-NPM_USER_PREFIX="$(npm config get prefix --location user 2>/dev/null || true)"
-if [ "$NPM_USER_PREFIX" = "$LEGACY_PREFIX" ]; then
+if [ "$(user_npmrc_prefix)" = "$LEGACY_PREFIX" ]; then
   LEGACY_OVERRIDE_DETECTED=1
   echo "Legacy npm prefix override detected at $LEGACY_PREFIX"
-  echo "Packages stranded in the legacy prefix:"
-  npm ls -g --prefix "$LEGACY_PREFIX" --depth=0 || true
+  if [ -d "$LEGACY_PREFIX" ]; then
+    echo "Packages stranded in the legacy prefix:"
+    npm ls -g --prefix "$LEGACY_PREFIX" --depth=0 || true
+  fi
   if ! npm config delete prefix --location user; then
     echo "Failed to delete the legacy npm prefix override." >&2
     exit 1
   fi
-  status "npm config" "ran: npm config delete prefix --location user"
+  status "npm config" "removed the user prefix override"
   echo "Revert: npm config set prefix \"$LEGACY_PREFIX\" --location user"
 fi
 
@@ -110,31 +118,28 @@ fi
 RESOLVED_PACKAGE_VERSION="$(printf '%s\n' "$RESOLVED_PACKAGE_VERSION" | head -n 1)"
 status "Package" "$PACKAGE_SPEC found ($RESOLVED_PACKAGE_VERSION)"
 
+INSTALL_ARGS=(install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL")
+INSTALL_PREFIX=""
 if [ "$INSTALL_MODE" = "user-prefix" ]; then
-  INSTALL_STATUS=0
-  npm install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL" --prefix "$USER_PREFIX" || INSTALL_STATUS=$?
-else
-  INSTALL_STATUS=0
-  npm install -g "$PACKAGE_SPEC" --registry "$REGISTRY_URL" || INSTALL_STATUS=$?
+  INSTALL_PREFIX="$USER_PREFIX"
+  INSTALL_ARGS+=(--prefix "$INSTALL_PREFIX")
 fi
 
-if [ "$INSTALL_STATUS" -ne 0 ]; then
+if ! npm "${INSTALL_ARGS[@]}"; then
   echo "Failed to install $PACKAGE_SPEC from registry $REGISTRY_URL." >&2
   exit 1
 fi
 
 status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
 
-if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ]; then
+if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ] && [ "$INSTALL_PREFIX" != "$LEGACY_PREFIX" ]; then
   echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"
   echo "Optional cleanup: rm -rf \"$LEGACY_PREFIX\""
-  if [ "$INSTALL_MODE" != "user-prefix" ]; then
-    case ":$PATH:" in
-      *":$LEGACY_PREFIX/bin:"*)
-        status "PATH cleanup" "remove $LEGACY_PREFIX/bin from your shell profile PATH"
-        ;;
-    esac
-  fi
+  case ":$PATH:" in
+    *":$LEGACY_PREFIX/bin:"*)
+      status "PATH cleanup" "remove $LEGACY_PREFIX/bin from your shell profile PATH"
+      ;;
+  esac
 fi
 
 echo "Run `codemie doctor` in a new terminal to verify the installation."

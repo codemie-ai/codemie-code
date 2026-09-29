@@ -15,6 +15,7 @@ import {
   validatePathDepth,
   getDirname,
   extractRepository,
+  isSamePath,
 } from '../paths.js';
 
 // Test-only helper functions
@@ -359,5 +360,23 @@ describe('Path Utilities - Cross-Platform', () => {
 
       expect(typeof result).toBe('string');
     });
+  });
+});
+
+describe('isSamePath', () => {
+  it('is case-insensitive and ignores a trailing separator on win32', () => {
+    expect(isSamePath('C:/Users/Foo/', 'c:/users/foo', 'win32')).toBe(true);
+  });
+
+  it('is case-sensitive on POSIX', () => {
+    expect(isSamePath('/usr/local', '/usr/Local', 'linux')).toBe(false);
+  });
+
+  it('ignores a trailing separator on POSIX', () => {
+    expect(isSamePath('/usr/local/', '/usr/local', 'linux')).toBe(true);
+  });
+
+  it('returns false for different paths', () => {
+    expect(isSamePath('/usr/local', '/opt/codemie', 'linux')).toBe(false);
   });
 });

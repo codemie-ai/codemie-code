@@ -165,23 +165,92 @@ function Test-DirWritable {
   }
 }
 
-function Resolve-InstallMode {
-  param(
-    [string]$NpmPath,
-    [string[]]$LocationArgs = @()
-  )
+function Get-NpmPrefix {
+  param([switch]$IgnoreUserConfig)
 
-  $prefixArgs = @('config', 'get', 'prefix') + $LocationArgs
-  $prefixRaw = (& $NpmPath $prefixArgs) | Select-Object -First 1
-  if ($null -eq $prefixRaw -or [string]::IsNullOrWhiteSpace($prefixRaw.ToString())) {
-    return 'portable'
+  $savedUserConfig = $env:npm_config_userconfig
+  if ($IgnoreUserConfig) {
+    $env:npm_config_userconfig = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+  }
+  try {
+    $prefix = & $NpmPath @('config', 'get', 'prefix') | Select-Object -First 1
+  } finally {
+    $env:npm_config_userconfig = $savedUserConfig
   }
 
-  $prefix = $prefixRaw.ToString().Trim()
-  if (Test-DirWritable $prefix) {
+  if ($null -eq $prefix) {
+    return ''
+  }
+  return $prefix.ToString().Trim()
+}
+
+function Get-UserNpmrcPrefix {
+  $userConfig = "$(& $NpmPath @('config', 'get', 'userconfig') | Select-Object -First 1)".Trim()
+  if (-not $userConfig -or -not (Test-Path -LiteralPath $userConfig)) {
+    return ''
+  }
+
+  $prefix = ''
+  foreach ($line in Get-Content -LiteralPath $userConfig) {
+    if ($line -match '^\s*prefix\s*=\s*(.*?)\s*$') {
+      $prefix = $Matches[1].Trim('"')
+    }
+  }
+  return $prefix
+}
+
+function Test-SamePath {
+  param([string]$Left, [string]$Right)
+  if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+    return $false
+  }
+  return $Left.TrimEnd('\') -ieq $Right.TrimEnd('\')
+}
+
+function Resolve-InstallMode {
+  param([string]$NpmPrefix)
+  if (-not [string]::IsNullOrWhiteSpace($NpmPrefix) -and (Test-DirWritable $NpmPrefix)) {
     return 'npm-global'
   }
   return 'portable'
+}
+
+function Write-CommandShims {
+  foreach ($CommandName in $Commands) {
+    $shimPath = Join-Path $BinDir "$CommandName.cmd"
+    $targetPath = Join-Path $PrefixDir "$CommandName.cmd"
+    $fallbackTargetPath = Join-Path $PrefixDir "node_modules\.bin\$CommandName.cmd"
+    $shim = @(
+      '@echo off',
+      "if exist `"$targetPath`" (",
+      "  call `"$targetPath`" %*",
+      '  exit /b %ERRORLEVEL%',
+      ')',
+      "if exist `"$fallbackTargetPath`" (",
+      "  call `"$fallbackTargetPath`" %*",
+      '  exit /b %ERRORLEVEL%',
+      ')',
+      "echo CodeMie command shim could not find $CommandName.cmd in $PrefixDir",
+      'exit /b 1'
+    ) -join "`r`n"
+
+    if ($DryRun) {
+      Write-Host "DRY RUN: would write $shimPath"
+    } else {
+      $shim | Set-Content -Path $shimPath -Encoding ASCII
+    }
+  }
+}
+
+function Remove-CommandShims {
+  foreach ($CommandName in $Commands) {
+    $shimPath = Join-Path $BinDir "$CommandName.cmd"
+    if ($DryRun) {
+      Write-Host "DRY RUN: would remove $shimPath"
+    } elseif (Test-Path -LiteralPath $shimPath) {
+      Remove-Item -LiteralPath $shimPath -Force
+    }
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
@@ -233,32 +302,24 @@ if (-not $NpmPath) {
   throw 'npm.cmd was not found. Reinstall Node.js with npm enabled, then rerun this installer.'
 }
 
-$PrefixDirNormalized = $PrefixDir.TrimEnd('\')
-$UserPrefixRaw = ((& $NpmPath @('config', 'get', 'prefix', '--location', 'user')) | Select-Object -First 1)
-$UserPrefixNormalized = if ($null -eq $UserPrefixRaw) { '' } else { $UserPrefixRaw.ToString().Trim().TrimEnd('\') }
-$LegacyOverrideDetected = (-not [string]::IsNullOrWhiteSpace($UserPrefixNormalized)) -and ($UserPrefixNormalized -ieq $PrefixDirNormalized)
+$LegacyOverrideDetected = Test-SamePath (Get-UserNpmrcPrefix) $PrefixDir
 
 if ($LegacyOverrideDetected) {
   Write-Host "Legacy npm prefix override detected at $PrefixDir"
-  Write-Host 'Packages stranded in the legacy prefix:'
-  & $NpmPath @('ls', '-g', '--prefix', $PrefixDir, '--depth=0')
+  if (Test-Path -LiteralPath $PrefixDir) {
+    Write-Host 'Packages stranded in the legacy prefix:'
+    & $NpmPath @('ls', '-g', '--prefix', $PrefixDir, '--depth=0')
+  }
   Invoke-Checked $NpmPath @('config', 'delete', 'prefix', '--location', 'user') 'Failed to delete the legacy npm prefix override.'
-  if ($DryRun) {
-    Write-Status 'npm config' 'DRY RUN: would run npm config delete prefix --location user'
-  } else {
-    Write-Status 'npm config' 'ran: npm config delete prefix --location user'
+  if (-not $DryRun) {
+    Write-Status 'npm config' 'removed the user prefix override'
   }
   Write-Host "Revert: npm config set prefix `"$PrefixDir`" --location user"
 }
 
 if ($Mode -eq 'auto') {
-  if ($DryRun -and $LegacyOverrideDetected) {
-    # DryRun never deletes the override, so resolve against the global prefix to
-    # preview the mode a real run would compute after that deletion.
-    $ResolvedMode = Resolve-InstallMode $NpmPath @('--location', 'global')
-  } else {
-    $ResolvedMode = Resolve-InstallMode $NpmPath
-  }
+  # A dry run keeps the override, so preview the prefix a real run would see after deleting it.
+  $ResolvedMode = Resolve-InstallMode (Get-NpmPrefix -IgnoreUserConfig:($DryRun -and $LegacyOverrideDetected))
 } else {
   $ResolvedMode = $Mode
 }
@@ -292,46 +353,13 @@ if ($ResolvedMode -eq 'portable') {
 Invoke-Checked $NpmPath $InstallArgs "Failed to install $PackageSpec."
 
 if ($ResolvedMode -eq 'portable') {
-  foreach ($CommandName in $Commands) {
-    $shimPath = Join-Path $BinDir "$CommandName.cmd"
-    $targetPath = Join-Path $PrefixDir "$CommandName.cmd"
-    $fallbackTargetPath = Join-Path $PrefixDir "node_modules\.bin\$CommandName.cmd"
-    $shim = @(
-      '@echo off',
-      "if exist `"$targetPath`" (",
-      "  call `"$targetPath`" %*",
-      '  exit /b %ERRORLEVEL%',
-      ')',
-      "if exist `"$fallbackTargetPath`" (",
-      "  call `"$fallbackTargetPath`" %*",
-      '  exit /b %ERRORLEVEL%',
-      ')',
-      "echo CodeMie command shim could not find $CommandName.cmd in $PrefixDir",
-      'exit /b 1'
-    ) -join "`r`n"
-
-    if ($DryRun) {
-      Write-Host "DRY RUN: would write $shimPath"
-    } else {
-      $shim | Set-Content -Path $shimPath -Encoding ASCII
-    }
-  }
-
+  Write-CommandShims
   Add-UserPath $BinDir
+  # Agents that CodeMie installs land in the prefix itself.
+  Add-UserPath $PrefixDir
 } elseif ($LegacyOverrideDetected) {
-  foreach ($CommandName in $Commands) {
-    $shimPath = Join-Path $BinDir "$CommandName.cmd"
-    if ($DryRun) {
-      Write-Host "DRY RUN: would remove $shimPath"
-    } elseif (Test-Path -LiteralPath $shimPath) {
-      Remove-Item -LiteralPath $shimPath -Force
-    }
-  }
-
+  Remove-CommandShims
   Remove-UserPath $BinDir
-}
-
-if ($LegacyOverrideDetected) {
   Write-Host 'Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest'
   Write-Host "Optional cleanup: Remove-Item -Recurse `"$PrefixDir`""
 }

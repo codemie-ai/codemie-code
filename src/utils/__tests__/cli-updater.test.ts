@@ -19,11 +19,11 @@ vi.mock('../processes.js', () => ({
 }));
 
 vi.mock('../npm-prefix.js', () => ({
-  getSelfPrefixArgs: vi.fn()
+  getNpmPrefixArgs: vi.fn()
 }));
 
 import { installGlobal } from '../processes.js';
-import { getSelfPrefixArgs } from '../npm-prefix.js';
+import { getNpmPrefixArgs } from '../npm-prefix.js';
 import { updateCli } from '../cli-updater.js';
 
 describe('updateCli', () => {
@@ -33,19 +33,19 @@ describe('updateCli', () => {
 
   it('includes the derived --prefix in the manual fallback command on failure', async () => {
     vi.mocked(installGlobal).mockRejectedValue(new Error('EACCES'));
-    vi.mocked(getSelfPrefixArgs).mockResolvedValue(['--prefix', 'C:\\FakePrefix']);
+    vi.mocked(getNpmPrefixArgs).mockResolvedValue(['--prefix', 'C:\\Users\\John Doe\\npm-prefix']);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(updateCli('1.2.3', true)).rejects.toThrow('EACCES');
 
     const printed = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(printed).toContain('npm install -g @codemieai/code@1.2.3 --prefix C:\\FakePrefix');
+    expect(printed).toContain('npm install -g @codemieai/code@1.2.3 --prefix "C:\\Users\\John Doe\\npm-prefix"');
   });
 
   it('omits --prefix from the manual fallback command when no derived prefix applies', async () => {
     vi.mocked(installGlobal).mockRejectedValue(new Error('EACCES'));
-    vi.mocked(getSelfPrefixArgs).mockResolvedValue([]);
+    vi.mocked(getNpmPrefixArgs).mockResolvedValue([]);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 

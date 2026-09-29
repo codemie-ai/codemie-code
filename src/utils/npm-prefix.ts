@@ -1,18 +1,18 @@
 /**
  * npm Prefix Utilities
  *
- * Derives the npm global prefix implied by CodeMie's own running install
- * location, so self-update installs, uninstalls and version checks target
- * the running copy instead of npm's own global prefix.
+ * Resolves the npm prefix CodeMie runs from, so global installs made by CodeMie
+ * land next to the running copy, and detects the per-user prefix override that
+ * older CodeMie installers wrote to `.npmrc`.
  */
 
 import path from 'path';
 import { existsSync } from 'fs';
-import os, { homedir } from 'os';
-import { getDirname } from '@/utils/paths.js';
+import { readFile } from 'fs/promises';
+import { homedir } from 'os';
+import { getDirname, isSamePath } from '@/utils/paths.js';
+import { getPathModule, isWindows } from '@/utils/platform.js';
 import { exec } from '@/utils/exec.js';
-
-export const CODEMIE_PACKAGE = '@codemieai/code';
 
 const WIN32_LAYOUT = ['node_modules', '@codemieai', 'code'];
 const POSIX_LAYOUT = ['lib', 'node_modules', '@codemieai', 'code'];
@@ -31,46 +31,40 @@ function findPackageRoot(startDir: string): string {
   }
 }
 
-function defaultPackageDir(): string {
-  return findPackageRoot(getDirname(import.meta.url));
-}
-
 /**
- * Derive the npm global prefix implied by `packageDir`'s install layout:
- * `<prefix>\node_modules\@codemieai\code` on win32, `<prefix>/lib/node_modules/@codemieai/code`
- * on POSIX. Returns `null` when `packageDir` does not match that layout (dev checkout, `npm link`),
- * or, on win32 only, when the layout matches but `<prefix>\codemie.cmd` does not exist (project-local
- * dependency, npx cache).
+ * Get the npm global prefix the running CodeMie copy is installed under, derived from its
+ * install layout: `<prefix>\node_modules\@codemieai\code` on win32,
+ * `<prefix>/lib/node_modules/@codemieai/code` on POSIX.
  *
  * @param packageDir - Package root to inspect; defaults to the running package's own root.
  * @param platform - Platform whose path rules and layout to use; defaults to `process.platform`.
+ * @returns The prefix, or `null` when `packageDir` does not match the layout (dev checkout,
+ *   `npm link`) or, on win32, when `<prefix>\codemie.cmd` is missing (project-local dependency,
+ *   npx cache).
  */
-export function deriveSelfPrefix(
-  packageDir: string = defaultPackageDir(),
+export function getSelfNpmPrefix(
+  packageDir: string = findPackageRoot(getDirname(import.meta.url)),
   platform: NodeJS.Platform = process.platform
 ): string | null {
-  const p = platform === 'win32' ? path.win32 : path.posix;
-  const layout = platform === 'win32' ? WIN32_LAYOUT : POSIX_LAYOUT;
+  const p = getPathModule(platform);
+  const windows = isWindows(platform);
+  const layout = windows ? WIN32_LAYOUT : POSIX_LAYOUT;
 
-  const resolved = p.resolve(packageDir);
-  const parts = resolved.split(p.sep);
+  const parts = p.resolve(packageDir).split(p.sep);
   if (parts.length <= layout.length) {
     return null;
   }
 
   const tail = parts.slice(-layout.length);
-  const matchesLayout =
-    platform === 'win32'
-      ? tail.every((part, i) => part.toLowerCase() === layout[i].toLowerCase())
-      : tail.every((part, i) => part === layout[i]);
+  const matchesLayout = tail.every((part, i) =>
+    windows ? part.toLowerCase() === layout[i].toLowerCase() : part === layout[i]
+  );
   if (!matchesLayout) {
     return null;
   }
 
-  const prefixParts = parts.slice(0, -layout.length);
-  const prefix = prefixParts.join(p.sep) || p.sep;
-
-  if (platform === 'win32' && !existsSync(p.join(prefix, 'codemie.cmd'))) {
+  const prefix = parts.slice(0, -layout.length).join(p.sep) || p.sep;
+  if (windows && !existsSync(p.join(prefix, 'codemie.cmd'))) {
     return null;
   }
 
@@ -78,48 +72,20 @@ export function deriveSelfPrefix(
 }
 
 /**
- * Path of the legacy per-user npm prefix override that older CodeMie installers wrote.
+ * Path of the per-user npm prefix that older CodeMie installers wrote to `.npmrc`.
  *
  * @param platform - Platform to resolve the path for; defaults to `process.platform`.
  */
-export function getLegacyPrefixPath(platform: NodeJS.Platform = process.platform): string {
-  if (platform === 'win32') {
+export function getLegacyNpmPrefixPath(platform: NodeJS.Platform = process.platform): string {
+  if (isWindows(platform)) {
     return path.join(process.env.LOCALAPPDATA ?? '', 'CodeMie', 'npm-prefix');
   }
   return path.join(homedir(), '.codemie', 'npm-prefix');
 }
 
-/**
- * Compare two filesystem paths for equality, ignoring a trailing separator and,
- * on win32 only, letter case.
- *
- * @param platform - Platform whose path rules to use; defaults to `process.platform`.
- */
-export function isSamePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
-  const p = platform === 'win32' ? path.win32 : path.posix;
-
-  const normalize = (input: string): string => {
-    const resolved = p.resolve(input);
-    const trimmed =
-      resolved.length > p.sep.length && resolved.endsWith(p.sep)
-        ? resolved.slice(0, -p.sep.length)
-        : resolved;
-    return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
-  };
-
-  return normalize(a) === normalize(b);
-}
-
-/**
- * Read npm's user-level global prefix via `npm config get prefix --location user`.
- *
- * @returns The trimmed prefix, or `null` on a nonzero exit code, empty output, or exec failure.
- */
-export async function getUserNpmPrefix(): Promise<string | null> {
+async function readNpmValue(args: string[]): Promise<string | null> {
   try {
-    const result = await exec('npm', ['config', 'get', 'prefix', '--location', 'user'], {
-      shell: os.platform() === 'win32'
-    });
+    const result = await exec('npm', args, { shell: isWindows() });
     if (result.code !== 0) {
       return null;
     }
@@ -129,47 +95,70 @@ export async function getUserNpmPrefix(): Promise<string | null> {
   }
 }
 
-let cachedGlobalPrefix: Promise<string | null> | undefined;
+let globalNpmPrefix: Promise<string | null> | undefined;
 
-async function getGlobalNpmPrefix(): Promise<string | null> {
-  if (!cachedGlobalPrefix) {
-    cachedGlobalPrefix = (async () => {
-      const result = await exec('npm', ['prefix', '-g'], { shell: os.platform() === 'win32' });
-      if (result.code !== 0) {
-        return null;
-      }
-      return result.stdout.trim() || null;
-    })();
-  }
-  return cachedGlobalPrefix;
+function getGlobalNpmPrefix(): Promise<string | null> {
+  globalNpmPrefix ??= readNpmValue(['prefix', '-g']);
+  return globalNpmPrefix;
 }
 
 /**
- * `--prefix` argv to append to an npm install/uninstall/view invocation for `packageName`,
- * so it targets the running CodeMie copy instead of npm's own global prefix.
- *
- * Returns `[]` for every package other than `@codemieai/code`, when the running copy is not
- * at the fixed install layout, when the derived prefix already matches npm's global prefix
- * (`npm prefix -g`, memoized across calls), or on any lookup failure.
+ * Extract the last `prefix=` value from `.npmrc` content, with surrounding quotes removed.
  */
-export async function getSelfPrefixArgs(packageName: string): Promise<string[]> {
-  if (packageName !== CODEMIE_PACKAGE) {
-    return [];
+export function parseNpmrcPrefix(content: string): string | null {
+  let prefix: string | null = null;
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^\s*prefix\s*=\s*(.*?)\s*$/.exec(line);
+    if (match) {
+      prefix = match[1].replace(/^"(.*)"$/, '$1') || null;
+    }
+  }
+  return prefix;
+}
+
+/**
+ * Read the `prefix` set in the user-level `.npmrc` (the file `npm config get userconfig` points to).
+ *
+ * Unlike `npm config get prefix`, this ignores `NPM_CONFIG_PREFIX` and global/project config.
+ *
+ * @returns The prefix, or `null` when it is not set or the file cannot be read.
+ */
+export async function getUserNpmrcPrefix(): Promise<string | null> {
+  const userConfigPath = await readNpmValue(['config', 'get', 'userconfig']);
+  if (!userConfigPath) {
+    return null;
   }
 
   try {
-    const derived = deriveSelfPrefix();
-    if (!derived) {
-      return [];
-    }
-
-    const globalPrefix = await getGlobalNpmPrefix();
-    if (!globalPrefix || isSamePath(derived, globalPrefix)) {
-      return [];
-    }
-
-    return ['--prefix', derived];
+    return parseNpmrcPrefix(await readFile(userConfigPath, 'utf8'));
   } catch {
+    return null;
+  }
+}
+
+/**
+ * The prefix of the running CodeMie copy, or npm's global prefix when it cannot be derived.
+ */
+export async function getSelfOrGlobalNpmPrefix(): Promise<string | null> {
+  return getSelfNpmPrefix() ?? getGlobalNpmPrefix();
+}
+
+/**
+ * `--prefix` args that keep an npm global install/uninstall/list next to the running CodeMie copy.
+ *
+ * @returns `[]` when CodeMie runs from npm's global prefix, from a dev checkout, or when either
+ *   prefix cannot be resolved; otherwise `['--prefix', <self prefix>]`.
+ */
+export async function getNpmPrefixArgs(): Promise<string[]> {
+  const selfPrefix = getSelfNpmPrefix();
+  if (!selfPrefix) {
     return [];
   }
+
+  const globalPrefix = await getGlobalNpmPrefix();
+  if (!globalPrefix || isSamePath(selfPrefix, globalPrefix)) {
+    return [];
+  }
+
+  return ['--prefix', selfPrefix];
 }

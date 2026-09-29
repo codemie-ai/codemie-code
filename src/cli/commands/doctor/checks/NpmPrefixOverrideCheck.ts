@@ -1,33 +1,43 @@
 /**
- * npm legacy prefix override health check
+ * Legacy CodeMie npm prefix override health check
  */
 
-import { getUserNpmPrefix, getLegacyPrefixPath, isSamePath } from '@/utils/npm-prefix.js';
-import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
+import { getSelfNpmPrefix, getUserNpmrcPrefix, getLegacyNpmPrefixPath } from '@/utils/npm-prefix.js';
+import { isSamePath } from '@/utils/paths.js';
+import { HealthCheck, HealthCheckDetail, HealthCheckResult } from '../types.js';
 
 export class NpmPrefixOverrideCheck implements HealthCheck {
   name = 'npm prefix';
 
   async run(): Promise<HealthCheckResult> {
-    const userPrefix = await getUserNpmPrefix();
-    const legacyPath = getLegacyPrefixPath();
+    const userPrefix = await getUserNpmrcPrefix();
+    const legacyPath = getLegacyNpmPrefixPath();
 
     if (userPrefix === null || !isSamePath(userPrefix, legacyPath)) {
       return {
         name: this.name,
         success: true,
-        details: [{ status: 'ok', message: 'npm prefix is not overridden' }]
+        details: [{ status: 'ok', message: 'User .npmrc does not override the global npm prefix' }]
       };
     }
 
-    const details: HealthCheckDetail[] = [
-      { status: 'warn', message: `User npm prefix is set to CodeMie's legacy path ${legacyPath}` },
-      { status: 'info', message: 'npm config delete prefix --location user' },
-      { status: 'info', message: `npm ls -g --prefix "${legacyPath}" --depth=0 to see stranded packages` },
-      { status: 'info', message: 'reinstall them, for example npm i -g @anthropic-ai/claude-code@latest' },
-      { status: 'info', message: 'the old folder can be deleted afterwards' }
-    ];
+    const selfPrefix = getSelfNpmPrefix();
+    const runsFromLegacyPath = selfPrefix !== null && isSamePath(selfPrefix, legacyPath);
 
-    return { name: this.name, success: true, details };
+    const details: HealthCheckDetail[] = [
+      {
+        status: 'warn',
+        message: `User .npmrc redirects every global npm install to ${legacyPath}`,
+        hint: 'Rerun the CodeMie installer, or fix it manually with the steps below'
+      },
+      { status: 'info', message: `1. List affected packages: npm ls -g --prefix "${legacyPath}" --depth=0` },
+      { status: 'info', message: '2. Remove the override: npm config delete prefix --location user' },
+      { status: 'info', message: '3. Reinstall each listed package, e.g. npm i -g @anthropic-ai/claude-code@latest' }
+    ];
+    if (!runsFromLegacyPath) {
+      details.push({ status: 'info', message: `4. Optionally delete ${legacyPath}` });
+    }
+
+    return { name: this.name, success: false, details };
   }
 }

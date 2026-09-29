@@ -13,18 +13,18 @@ vi.mock('../logger.js', () => ({
 }));
 
 vi.mock('@/utils/npm-prefix.js', () => ({
-  getSelfPrefixArgs: vi.fn().mockResolvedValue([])
+  getNpmPrefixArgs: vi.fn().mockResolvedValue([])
 }));
 
 import { logger } from '../logger.js';
-import { getSelfPrefixArgs } from '@/utils/npm-prefix.js';
+import { getNpmPrefixArgs } from '@/utils/npm-prefix.js';
 
 describe('npm utility', () => {
   let execSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     execSpy = vi.spyOn(exec, 'exec');
-    vi.mocked(getSelfPrefixArgs).mockResolvedValue([]);
+    vi.mocked(getNpmPrefixArgs).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -538,14 +538,12 @@ describe('npm utility', () => {
     });
   });
 
-  describe('self prefix args for @codemieai/code', () => {
+  describe('install prefix args', () => {
     beforeEach(() => {
-      vi.mocked(getSelfPrefixArgs).mockImplementation(async (packageName: string) =>
-        packageName === '@codemieai/code' ? ['--prefix', 'C:\\X'] : []
-      );
+      vi.mocked(getNpmPrefixArgs).mockResolvedValue(['--prefix', 'C:\\X']);
     });
 
-    it('installGlobal splices the self prefix before --force', async () => {
+    it('installGlobal splices the install prefix', async () => {
       execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
       const { installGlobal } = await import('../processes.js');
@@ -558,7 +556,20 @@ describe('npm utility', () => {
       );
     });
 
-    it('uninstallGlobal splices the self prefix', async () => {
+    it('installGlobal applies the install prefix to agent packages too', async () => {
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+      const { installGlobal } = await import('../processes.js');
+      await installGlobal('opencode-ai');
+
+      expect(execSpy).toHaveBeenCalledWith(
+        'npm',
+        ['install', '-g', '--prefix', 'C:\\X', 'opencode-ai'],
+        expect.anything()
+      );
+    });
+
+    it('uninstallGlobal splices the install prefix', async () => {
       execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
       const { uninstallGlobal } = await import('../processes.js');
@@ -571,7 +582,7 @@ describe('npm utility', () => {
       );
     });
 
-    it('listGlobal splices the self prefix', async () => {
+    it('listGlobal splices the install prefix', async () => {
       execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
       const { listGlobal } = await import('../processes.js');

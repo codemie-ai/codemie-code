@@ -10,9 +10,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { exec } from './exec.js';
 import { logger } from './logger.js';
-import { deriveSelfPrefix } from '@/utils/npm-prefix.js';
+import { getSelfOrGlobalNpmPrefix } from '@/utils/npm-prefix.js';
 
 /**
  * Restore the global 'codemie' binary symlink if it was overwritten by an
@@ -34,15 +33,8 @@ export async function restoreCliBinLink(): Promise<void> {
   }
 
   try {
-    const derivedPrefix = deriveSelfPrefix();
-    let npmPrefix: string;
-    if (derivedPrefix) {
-      npmPrefix = derivedPrefix;
-    } else {
-      const prefixResult = await exec('npm', ['prefix', '-g']);
-      if (prefixResult.code !== 0) return;
-      npmPrefix = prefixResult.stdout.trim();
-    }
+    const npmPrefix = await getSelfOrGlobalNpmPrefix();
+    if (!npmPrefix) return;
 
     const globalBinPath = path.join(npmPrefix, 'bin', 'codemie');
 

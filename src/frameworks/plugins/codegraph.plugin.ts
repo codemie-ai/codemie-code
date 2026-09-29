@@ -6,7 +6,7 @@
  * no model access required, so it is a documentation tool, not an agent.
  */
 
-import { exec, installGlobal } from '../../utils/processes.js';
+import { exec, installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { BaseFrameworkAdapter } from '../core/BaseFrameworkAdapter.js';
 import type { FrameworkInitOptions, FrameworkMetadata } from '../core/types.js';
@@ -50,7 +50,7 @@ export class CodegraphPlugin extends BaseFrameworkAdapter {
     this.logUninstallStart();
 
     try {
-      await exec('npm', ['uninstall', '-g', NPM_PACKAGE], { timeout: 120000 });
+      await uninstallGlobal(NPM_PACKAGE, { timeout: 120000 });
       this.logUninstallSuccess();
     } catch (error) {
       this.logUninstallError(error);

@@ -8,14 +8,16 @@ vi.mock('@/utils/exec.js', () => ({
   exec: vi.fn()
 }));
 
-vi.mock('@/utils/paths.js', () => ({
+vi.mock('@/utils/paths.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/paths.js')>()),
   getDirname: vi.fn()
 }));
 
 vi.mock('fs');
+vi.mock('fs/promises');
 
 describe('npm-prefix', () => {
-  describe('deriveSelfPrefix', () => {
+  describe('getSelfNpmPrefix', () => {
     beforeEach(() => {
       vi.clearAllMocks();
     });
@@ -23,116 +25,113 @@ describe('npm-prefix', () => {
     it('derives the prefix from the win32 node_modules layout when codemie.cmd exists at the prefix', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(true);
-      const { deriveSelfPrefix } = await import('../npm-prefix.js');
+      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.win32.join('C:\\Users\\codemie', 'node_modules', '@codemieai', 'code');
-      expect(deriveSelfPrefix(dir, 'win32')).toBe('C:\\Users\\codemie');
+      expect(getSelfNpmPrefix(dir, 'win32')).toBe('C:\\Users\\codemie');
       expect(existsSync).toHaveBeenCalledWith(path.win32.join('C:\\Users\\codemie', 'codemie.cmd'));
     });
 
     it('returns null on win32 when codemie.cmd is missing at the derived prefix (local dependency or npx cache)', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(false);
-      const { deriveSelfPrefix } = await import('../npm-prefix.js');
+      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.win32.join('C:\\project', 'node_modules', '@codemieai', 'code');
-      expect(deriveSelfPrefix(dir, 'win32')).toBeNull();
+      expect(getSelfNpmPrefix(dir, 'win32')).toBeNull();
     });
 
     it('derives the prefix from the POSIX lib/node_modules layout', async () => {
-      const { deriveSelfPrefix } = await import('../npm-prefix.js');
+      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
       const dir = path.posix.join('/usr/local', 'lib', 'node_modules', '@codemieai', 'code');
-      expect(deriveSelfPrefix(dir, 'linux')).toBe('/usr/local');
+      expect(getSelfNpmPrefix(dir, 'linux')).toBe('/usr/local');
     });
 
     it('returns null for a dev checkout that does not match the install layout', async () => {
       const { existsSync } = await import('fs');
       vi.mocked(existsSync).mockReturnValue(true);
-      const { deriveSelfPrefix } = await import('../npm-prefix.js');
-      expect(deriveSelfPrefix('/Users/dev/codemie-code', 'linux')).toBeNull();
-      expect(deriveSelfPrefix('C:\\Users\\dev\\codemie-code', 'win32')).toBeNull();
+      const { getSelfNpmPrefix } = await import('../npm-prefix.js');
+      expect(getSelfNpmPrefix('/Users/dev/codemie-code', 'linux')).toBeNull();
+      expect(getSelfNpmPrefix('C:\\Users\\dev\\codemie-code', 'win32')).toBeNull();
     });
   });
 
-  describe('getLegacyPrefixPath', () => {
+  describe('getLegacyNpmPrefixPath', () => {
     it('uses LOCALAPPDATA\\CodeMie\\npm-prefix on win32', async () => {
       const original = process.env.LOCALAPPDATA;
       process.env.LOCALAPPDATA = 'C:\\Users\\codemie\\AppData\\Local';
-      const { getLegacyPrefixPath } = await import('../npm-prefix.js');
-      expect(getLegacyPrefixPath('win32')).toBe(
+      const { getLegacyNpmPrefixPath } = await import('../npm-prefix.js');
+      expect(getLegacyNpmPrefixPath('win32')).toBe(
         path.join('C:\\Users\\codemie\\AppData\\Local', 'CodeMie', 'npm-prefix')
       );
       process.env.LOCALAPPDATA = original;
     });
 
     it('uses ~/.codemie/npm-prefix on non-win32 platforms', async () => {
-      const { getLegacyPrefixPath } = await import('../npm-prefix.js');
+      const { getLegacyNpmPrefixPath } = await import('../npm-prefix.js');
       const { homedir } = await import('os');
-      expect(getLegacyPrefixPath('linux')).toBe(path.join(homedir(), '.codemie', 'npm-prefix'));
+      expect(getLegacyNpmPrefixPath('linux')).toBe(path.join(homedir(), '.codemie', 'npm-prefix'));
     });
   });
 
-  describe('isSamePath', () => {
-    it('is case-insensitive and ignores a trailing separator on win32', async () => {
-      const { isSamePath } = await import('../npm-prefix.js');
-      expect(isSamePath('C:\\Users\\Foo\\', 'c:\\users\\foo', 'win32')).toBe(true);
+  describe('parseNpmrcPrefix', () => {
+    it('returns the last prefix value without quotes', async () => {
+      const { parseNpmrcPrefix } = await import('../npm-prefix.js');
+      const content = 'registry=https://r/\r\nprefix=/first\nprefix = "/Users/a/.codemie/npm-prefix"  \n';
+      expect(parseNpmrcPrefix(content)).toBe('/Users/a/.codemie/npm-prefix');
     });
 
-    it('is case-sensitive on POSIX', async () => {
-      const { isSamePath } = await import('../npm-prefix.js');
-      expect(isSamePath('/usr/local', '/usr/Local', 'linux')).toBe(false);
-    });
-
-    it('ignores a trailing separator on POSIX', async () => {
-      const { isSamePath } = await import('../npm-prefix.js');
-      expect(isSamePath('/usr/local/', '/usr/local', 'linux')).toBe(true);
-    });
-
-    it('returns false for genuinely different paths', async () => {
-      const { isSamePath } = await import('../npm-prefix.js');
-      expect(isSamePath('/usr/local', '/opt/codemie', 'linux')).toBe(false);
+    it('returns null when no prefix is set', async () => {
+      const { parseNpmrcPrefix } = await import('../npm-prefix.js');
+      expect(parseNpmrcPrefix('registry=https://r/\n@codemieai:prefix=/x\n')).toBeNull();
     });
   });
 
-  describe('getUserNpmPrefix', () => {
+  describe('getUserNpmrcPrefix', () => {
     beforeEach(() => {
       vi.resetModules();
       vi.clearAllMocks();
     });
 
-    it('returns the trimmed prefix on success', async () => {
+    it('reads prefix from the file npm reports as userconfig', async () => {
       const { exec } = await import('@/utils/exec.js');
-      vi.mocked(exec).mockResolvedValue({ code: 0, stdout: '/usr/local\n', stderr: '' });
-      const { getUserNpmPrefix } = await import('../npm-prefix.js');
-      await expect(getUserNpmPrefix()).resolves.toBe('/usr/local');
+      vi.mocked(exec).mockResolvedValue({ code: 0, stdout: '/home/u/.npmrc\n', stderr: '' });
+      const { readFile } = await import('fs/promises');
+      vi.mocked(readFile).mockResolvedValue('prefix=/home/u/.codemie/npm-prefix\n');
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+
+      await expect(getUserNpmrcPrefix()).resolves.toBe('/home/u/.codemie/npm-prefix');
       expect(exec).toHaveBeenCalledWith(
         'npm',
-        ['config', 'get', 'prefix', '--location', 'user'],
+        ['config', 'get', 'userconfig'],
         expect.objectContaining({ shell: isWin })
       );
+      expect(readFile).toHaveBeenCalledWith('/home/u/.npmrc', 'utf8');
     });
 
-    it('returns null on a nonzero exit code', async () => {
+    it('returns null when npm cannot report the userconfig path', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockResolvedValue({ code: 1, stdout: '', stderr: 'boom' });
-      const { getUserNpmPrefix } = await import('../npm-prefix.js');
-      await expect(getUserNpmPrefix()).resolves.toBeNull();
-    });
-
-    it('returns null on empty output', async () => {
-      const { exec } = await import('@/utils/exec.js');
-      vi.mocked(exec).mockResolvedValue({ code: 0, stdout: '   ', stderr: '' });
-      const { getUserNpmPrefix } = await import('../npm-prefix.js');
-      await expect(getUserNpmPrefix()).resolves.toBeNull();
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+      await expect(getUserNpmrcPrefix()).resolves.toBeNull();
     });
 
     it('returns null when exec throws', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockRejectedValue(new Error('spawn failed'));
-      const { getUserNpmPrefix } = await import('../npm-prefix.js');
-      await expect(getUserNpmPrefix()).resolves.toBeNull();
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+      await expect(getUserNpmrcPrefix()).resolves.toBeNull();
+    });
+
+    it('returns null when the userconfig file does not exist', async () => {
+      const { exec } = await import('@/utils/exec.js');
+      vi.mocked(exec).mockResolvedValue({ code: 0, stdout: '/home/u/.npmrc\n', stderr: '' });
+      const { readFile } = await import('fs/promises');
+      vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+      await expect(getUserNpmrcPrefix()).resolves.toBeNull();
     });
   });
 
-  describe('getSelfPrefixArgs', () => {
+  describe('getNpmPrefixArgs', () => {
     const fakePrefix = isWin ? 'C:\\FakePrefix' : '/fake/prefix';
     const fakePackageDir = isWin
       ? nativePath.join(fakePrefix, 'node_modules', '@codemieai', 'code')
@@ -150,44 +149,46 @@ describe('npm-prefix', () => {
     it('returns the --prefix args when the derived prefix differs from the global prefix', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockResolvedValue({ code: 0, stdout: `${nativePath.join(fakePrefix, '..', 'other')}\n`, stderr: '' });
-      const { getSelfPrefixArgs, CODEMIE_PACKAGE } = await import('../npm-prefix.js');
-      await expect(getSelfPrefixArgs(CODEMIE_PACKAGE)).resolves.toEqual(['--prefix', fakePrefix]);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await expect(getNpmPrefixArgs()).resolves.toEqual(['--prefix', fakePrefix]);
     });
 
     it('returns [] when the derived prefix matches the global prefix', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockResolvedValue({ code: 0, stdout: `${fakePrefix}\n`, stderr: '' });
-      const { getSelfPrefixArgs, CODEMIE_PACKAGE } = await import('../npm-prefix.js');
-      await expect(getSelfPrefixArgs(CODEMIE_PACKAGE)).resolves.toEqual([]);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await expect(getNpmPrefixArgs()).resolves.toEqual([]);
     });
 
-    it('returns [] for any package other than @codemieai/code', async () => {
+    it('returns [] without calling npm when running from a dev checkout', async () => {
+      const { getDirname } = await import('@/utils/paths.js');
+      vi.mocked(getDirname).mockReturnValue(nativePath.join(fakePrefix, 'codemie-code'));
       const { exec } = await import('@/utils/exec.js');
-      const { getSelfPrefixArgs } = await import('../npm-prefix.js');
-      await expect(getSelfPrefixArgs('@anthropic-ai/claude-code')).resolves.toEqual([]);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await expect(getNpmPrefixArgs()).resolves.toEqual([]);
       expect(exec).not.toHaveBeenCalled();
     });
 
     it('returns [] when npm prefix -g fails', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockResolvedValue({ code: 1, stdout: '', stderr: 'boom' });
-      const { getSelfPrefixArgs, CODEMIE_PACKAGE } = await import('../npm-prefix.js');
-      await expect(getSelfPrefixArgs(CODEMIE_PACKAGE)).resolves.toEqual([]);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await expect(getNpmPrefixArgs()).resolves.toEqual([]);
     });
 
     it('returns [] when exec throws', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockRejectedValue(new Error('spawn failed'));
-      const { getSelfPrefixArgs, CODEMIE_PACKAGE } = await import('../npm-prefix.js');
-      await expect(getSelfPrefixArgs(CODEMIE_PACKAGE)).resolves.toEqual([]);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await expect(getNpmPrefixArgs()).resolves.toEqual([]);
     });
 
     it('memoizes the npm prefix -g lookup across calls', async () => {
       const { exec } = await import('@/utils/exec.js');
       vi.mocked(exec).mockResolvedValue({ code: 0, stdout: `${fakePrefix}\n`, stderr: '' });
-      const { getSelfPrefixArgs, CODEMIE_PACKAGE } = await import('../npm-prefix.js');
-      await getSelfPrefixArgs(CODEMIE_PACKAGE);
-      await getSelfPrefixArgs(CODEMIE_PACKAGE);
+      const { getNpmPrefixArgs } = await import('../npm-prefix.js');
+      await getNpmPrefixArgs();
+      await getNpmPrefixArgs();
       const prefixCalls = vi
         .mocked(exec)
         .mock.calls.filter(([, args]) => Array.isArray(args) && args.includes('-g'));
