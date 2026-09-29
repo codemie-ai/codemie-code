@@ -3,7 +3,7 @@
  * @group unit
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { join } from 'path';
+import { basename, join } from 'path';
 
 const SESSIONS_DIR = '/home/test/.codemie/sessions';
 
@@ -46,7 +46,7 @@ describe('SessionStore.indexSessionsByExternalId', () => {
     };
     vi.mocked(readdir).mockResolvedValue(Object.keys(files) as never);
     vi.mocked(readFile).mockImplementation((async (path: string) =>
-      files[path.replace(`${SESSIONS_DIR}/`, '')]) as never);
+      files[basename(path)]) as never);
 
     const { SessionStore } = await import('../SessionStore.js');
     const index = await new SessionStore().indexSessionsByExternalId('claude-desktop');
