@@ -717,6 +717,17 @@ export async function resolveBudget({
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }
 
+  // The stored credentials belong to `codeMieUrl`; send them nowhere else. A profile on another
+  // backend (an Anthropic subscription, a LiteLLM gateway, a local stack) has no CodeMie budget API,
+  // and posting the CodeMie cookie/JWT to its baseUrl would hand it to a third party.
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(baseUrl).origin === new URL(codeMieUrl).origin;
+  } catch {
+    // malformed URL → not the same origin
+  }
+  if (!sameOrigin) return { budget: null, budgetError: null };
+
   let headers;
   try {
     headers = await getAuthHeadersImpl(codeMieUrl);
@@ -795,7 +806,12 @@ export async function main() {
   const cost = priced ? priced.cost : basic.cost;
   const costExact = priced ? priced.exact : false;
 
-  process.stdout.write(buildStatusLine({ ...basic, ...budgetResult, branch, actualModel, cost, costExact }));
+  // Only "reauthenticate" is rendered: it is the one budget failure the user can act on (log in
+  // again), and it fires only for a profile on the CodeMie origin. Every other failure (HTTP error,
+  // unreachable API, no such endpoint) is not worth a permanent warning slot — the segment simply
+  // disappears until a lookup succeeds.
+  const budgetError = budgetResult.budgetError === 'reauthenticate' ? budgetResult.budgetError : null;
+  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the
