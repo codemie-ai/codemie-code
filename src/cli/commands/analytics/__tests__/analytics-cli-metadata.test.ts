@@ -2,8 +2,9 @@
  * Tests that runAnalytics stamps userEmail, periodStart, periodEnd into the buildPayload
  * context and uses email-aware default paths, and that the CLI contract from spec section A
  * (docs/superpowers/tasks/2026-09-26-unify-analytics-cost-command/spec.md) holds:
- *  - `--report` and `--report-format` are removed (unknown options); `--report-output` is
- *    kept as a deprecated alias for -o/--output
+ *  - `--report`, `--report-format`, `--report-output` are kept as deprecated aliases for
+ *    `--export`, `--export [format]`, and `-o/--output` respectively (removed in 1144b247d,
+ *    restored for backward compatibility)
  *  - `--export <invalid-format>` (csv included) fails closed: non-zero exitCode, no file written
  *  - a bare `--export` resolves to html
  *  - cost enrichment always runs, even with no export/report flags at all
@@ -185,15 +186,12 @@ describe('runAnalytics CLI metadata wiring', () => {
 });
 
 describe('analytics CLI contract (unify-analytics-cost-command T6)', () => {
-  it('rejects the removed --report and --report-format flags as unknown options', async () => {
+  it('accepts the legacy --report, --report-format and --report-output flags as deprecated aliases', async () => {
     const { createAnalyticsCommand } = await import('../index.js');
-    for (const flag of ['--report', '--report-format']) {
-      const command = createAnalyticsCommand();
-      command.exitOverride();
-      command.configureOutput({ writeErr: () => { /* silence commander's own error line */ } });
-      await expect(
-        command.parseAsync(['node', 'codemie', flag])
-      ).rejects.toMatchObject({ code: 'commander.unknownOption' });
+    const command = createAnalyticsCommand();
+    const longFlags = command.options.map((o) => o.long);
+    for (const flag of ['--report', '--report-format', '--report-output']) {
+      expect(longFlags).toContain(flag);
     }
   });
 

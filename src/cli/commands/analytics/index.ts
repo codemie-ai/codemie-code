@@ -58,13 +58,19 @@ function applyCommonOptions(command: Command): Command {
     .option('--export [format]', 'Write report: html (default), json, or both')
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
     .option('--open', 'Open the generated HTML report in the default browser')
+    .option('--report', 'Deprecated: use --export instead')
+    .option('--report-format <format>', 'Deprecated: use --export [format] instead')
     .option('--report-output <path>', 'Deprecated: use -o/--output instead');
 }
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
-    // Deprecated `--report-output <path>` aliases to -o/--output (removed in 1144b247d,
-    // restored as an alias so existing scripts keep working). Explicit -o/--output wins.
+    // Deprecated flags removed in 1144b247d, restored as aliases so existing scripts keep
+    // working. Each prints a warning pointing at its replacement; the new flag wins when both
+    // are set:
+    //   --report              -> bare --export (html)
+    //   --report-format <fmt> -> --export [format]
+    //   --report-output <p>   -> -o/--output <p>
     let output = options.output;
     if (options.reportOutput !== undefined) {
       if (output === undefined) {
@@ -72,6 +78,22 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         output = options.reportOutput;
       } else {
         console.log(chalk.yellow('\n! --report-output is deprecated and ignored; -o/--output takes precedence.'));
+      }
+    }
+
+    let exportOpt = options.export;
+    if (options.reportFormat !== undefined) {
+      if (exportOpt === undefined) {
+        console.log(chalk.yellow('\n! --report-format is deprecated; use --export [format] instead.'));
+        exportOpt = options.reportFormat;
+      } else {
+        console.log(chalk.yellow('\n! --report-format is deprecated and ignored; --export takes precedence.'));
+      }
+    }
+    if (options.report) {
+      console.log(chalk.yellow('\n! --report is deprecated; use --export instead (html is the default format).'));
+      if (exportOpt === undefined) {
+        exportOpt = true;
       }
     }
 
@@ -83,8 +105,8 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     // target, other) -> html.
     const openFlag = Boolean(options.open);
     let exportFormat: ExportFormat | undefined;
-    if (options.export !== undefined) {
-      const rawFormat = options.export === true ? 'html' : options.export.toLowerCase();
+    if (exportOpt !== undefined) {
+      const rawFormat = exportOpt === true ? 'html' : exportOpt.toLowerCase();
       if (rawFormat === 'html' || rawFormat === 'json' || rawFormat === 'both') {
         exportFormat = rawFormat;
       } else {

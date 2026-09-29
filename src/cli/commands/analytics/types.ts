@@ -248,6 +248,10 @@ export interface AnalyticsOptions {
   export?: string | true;
   /** `-o, --output <path>`: target file or directory for the report (see resolveOutputTargets). */
   output?: string;
+  /** @deprecated Alias for a bare `--export` (html report); kept for backward compatibility. */
+  report?: boolean;
+  /** @deprecated Alias for {@link export}; kept for backward compatibility. `--export` wins when both are set. */
+  reportFormat?: string;
   /** @deprecated Alias for {@link output}; kept for backward compatibility. `-o/--output` wins when both are set. */
   reportOutput?: string;
   open?: boolean;
