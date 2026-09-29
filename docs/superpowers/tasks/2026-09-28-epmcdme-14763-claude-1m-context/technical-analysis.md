@@ -1,175 +1,199 @@
 # Technical Analysis — EPMCDME-14763: 1M context window for Claude Code models
 
+**Generated**: 2026-09-29 | **Research path**: filesystem | **Basis**: working tree on branch EPMCDME-14763 (uncommitted changes are authoritative). The previous version of this file described the retired regex-table design and is superseded.
+
 ## Overview
 
-CodeMie CLI requires users to hand-edit `~/.codemie/codemie-cli.config.json`, appending `[1m]` to
-a Claude model id, to get the 1M context window in Claude Code. The ticket asks CodeMie to detect
-1M-capable Claude models and apply the `[1m]` variant automatically, for any Claude model that
-supports it (not hardcoded to Sonnet), without breaking models that don't support 1M.
+CodeMie CLI used to require users to hand-edit their profile, appending `[1m]` to a Claude model id, to get
+Claude Code's 1M-context window. The ticket asks CodeMie to apply `[1m]` automatically for any model that
+supports it, without breaking models that do not.
 
-Claude Code itself is the only thing that understands `[1m]`: it strips the suffix from the model
-id before the request goes out and adds the header `anthropic-beta: context-1m-2025-08-07` instead
-(confirmed against `code.claude.com` docs in a prior research pass this session). CodeMie's job is
-narrower than "implement 1M" — it is to stop stripping/never-adding the suffix CodeMie itself
-controls (profile config, tier env vars, the `/model` picker).
+The design is now **catalog-driven, not table-driven**. The CodeMie backend (separate repo, already updated)
+returns `max_input_tokens` on each model in `GET /v1/llm_models?include_all=true`; routers and static-YAML
+catalogs omit it. The CLI reads that number and decides the id form. There is no hard-coded capability table,
+no synthesized second picker row, and no `[1m]` carry-over logic. Claude Code owns `[1m]` semantics: it strips
+the suffix from the id and adds the `context-1m` beta header itself. No `[1m]` handling exists in proxy or core
+code (grep of `src/providers`, `src/agents/core`, `src/utils` found none), so the proxy sees the bare id.
+
+External references: none named by the task.
 
 ## Codebase Findings
 
-### 1. Where `[1m]` is lost today (`src/agents/plugins/claude/claude.models.ts`)
+### 1. Files changed in the working tree (6 modified, none committed)
 
-`resolveClaudeModel(env, tier)` re-matches whatever model is configured against the live CodeMie
-catalog (`fetchCatalog`). Catalog ids never carry `[1m]` (verified empirically — see "Live catalog
-verification" below), so an exact-string match against `availableModels`/`modelIdentifiers()` always
-fails for a `[1m]` id, and the model is treated as stale:
+- `src/providers/plugins/sso/sso.http-client.ts` — `LlmModel.max_input_tokens?: number` (+5 lines, doc comment
+  says "absent on routers and static-config catalogs"). `fetchCodeMieLlmModels` (line 238) is untouched: it
+  `JSON.parse`s and casts the array, so the field arrives with no validation. `CODEMIE_ENDPOINTS.MODELS` is
+  `/v1/llm_models?include_all=true` (line 20).
+- `src/agents/plugins/claude/claude.models.ts` — the core change (500 lines now; -179/+ net smaller).
+- `src/agents/plugins/claude/claude.plugin.ts` — warning gate only (+7/-1 around line 405).
+- `src/agents/plugins/claude/__tests__/claude.models.test.ts` (rewritten) and
+  `claude.plugin.model-swap-warning.test.ts` (+1 case).
+- `.codemie/codemie-cli.config.json` — **unrelated local edit** (profile renamed `epm-cdme` -> `codemie-sso`,
+  `opusModel` `claude-opus-5-5`, `codemieAssistants`/`codemieSkills` removed). Not part of the feature.
+- Unchanged and already committed from the first implementation: `plugin/statusline.ts` (see finding 6).
 
-- **Main tier (`CODEMIE_MODEL`)**: survives only when `CODEMIE_MODEL_SOURCE` is `cli` or `env`
-  (`EXPLICIT_MODEL_SOURCES`, line 21) — i.e. only when the user passed `--model X[1m]` or set the
-  env var directly this run. A value with `[1m]` saved in a profile (`CODEMIE_MODEL_SOURCE` unset or
-  `default`) is NOT explicit and gets re-resolved, at which point the suffix-less catalog match wins
-  and 1M is lost (line 352, confirmed by the existing test at `claude.models.test.ts:93-105`).
-- **Haiku/sonnet/opus tiers**: `EXPLICIT_MODEL_SOURCES` only ever gates the `model` tier
-  (`tier === 'model'` check, line 352) — there is no `--haiku-model` flag, so these three tiers are
-  *always* re-resolved against the catalog on every run, regardless of source. `[1m]` is stripped
-  unconditionally (confirmed by `claude.models.test.ts:107-123`, which currently asserts this as
-  correct "no regression" behavior for a plain suffix-less swap — it will need updating once tiers
-  learn to preserve `[1m]`).
+### 2. `claude.models.ts` — the context-window helpers
 
-`modelIdentifiers(model)` (line 73) returns exactly `[deployment_name, base_name, label]` — a
-catalog entry never has `[1m]` baked into any of these three fields (see verification below), so
-matching a `[1m]`-suffixed `currentModel` against it will never succeed as-is. The suffix must be
-stripped before comparison and reattached to the result afterward.
+- `applyContextWindow(id, maxInputTokens)` (line 213) is the single decision point. `typeof maxInputTokens !==
+  'number'` -> id returned untouched (never guess, never strip). `>= 1_000_000` -> `<bareId>[1m]`. Smaller ->
+  bare id (strips an existing `[1m]`). `null`, numeric strings and `NaN` all fall in the "untouched" branch or
+  the "smaller" branch of the comparison; there is no runtime validation of the backend value.
+- `stripOneMillionSuffix` / `ONE_MILLION_SUFFIX_PATTERN` (`/\[1m\]$/i`, case-insensitive, trailing) are the only
+  suffix helpers. `ONE_MILLION_TOKENS = 1_000_000` is the only threshold.
+- `findServableEntry(catalog, id)` (line 219) — first catalog entry that `isServableModel` (enabled,
+  tools/streaming not `false`, not embedding/rerank/etc.) and whose `modelIdentifiers()` (deployment_name,
+  base_name, label) includes `id`. A disabled or non-servable entry yields no window, so the id stays untouched.
+- Removed: the regex capability table, `supportsOneMillionContext`, `isRouterLikeEntry`,
+  `splitOneMillionSuffix`, and the strip/carry-over logic. Confirmed by grep: none of these symbols remain
+  anywhere in `src/`, `tests/`, `docs/` (outside old task artifacts) or `openwiki/`.
+- `ClaudeModelResolutionReason = 'unavailable' | 'one-million-enabled' | 'one-million-unsupported'` (line 15).
 
-### 2. No context-window signal in the CodeMie catalog — verified against the live endpoint
+### 3. `resolveClaudeModel(env, tier)` — decision flow (line 389)
 
-The ticket assumes CodeMie can "detect when a selected Claude model supports 1m context." I fetched
-the real `/v1/llm_models?include_all=true` response from a live CodeMie tenant (`codemie.lab.epam.com`)
-using this machine's already-stored SSO credentials, via `fetchCodeMieLlmModels()` directly (no
-mocks). The `LlmModel` shape returned (44 models) has **no context-window field whatsoever** — no
-`context_window`, `max_input_tokens`, `max_tokens` (the `features.max_tokens` field is a boolean
-"supports the max_tokens param" flag, not a token count), and no per-model `[1m]` variant exists as
-a separate `deployment_name`/`base_name`. Every current Claude entry (`claude-sonnet-5`,
-`claude-opus-4-7`, `claude-opus-5`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, etc.) has the
-exact same `features` block regardless of generation. **`src/providers/core/types.ts`'s
-`contextWindow?: number` field is unrelated** — it belongs to a different, generic provider-metadata
-type (`ProviderModel`), not `LlmModel`, and nothing populates it for Claude.
+1. Read the tier var (`CODEMIE_MODEL` / `CODEMIE_HAIKU_MODEL` / `CODEMIE_SONNET_MODEL` / `CODEMIE_OPUS_MODEL`).
+2. `fetchCatalog(env)`; on failure: configured model -> return `null` (kept as-is); nothing configured ->
+   `ConfigurationError`.
+3. Rank Claude-compatible candidates for the tier (`isClaudeCompatibleModel`, `rankModel`, default bonus +
+   version parts) -> `availableModels`.
+4. `keepWithContextWindow()` closure: look up `currentBareId` via `findServableEntry`, run `applyContextWindow`
+   on `currentModel`; if unchanged return `null`, else return `one-million-enabled` (result has `[1m]`) or
+   `one-million-unsupported` (result lost it).
+5. **Explicit source** (`tier === 'model'` and `CODEMIE_MODEL_SOURCE` in `cli`/`env`): no longer returns early
+   with `null`; it returns `keepWithContextWindow()`. The catalog is fetched first, so a fetch failure keeps the
+   model as-is and an id absent from the catalog stays untouched (no window known).
+6. Model (bare or `[1m]` form) is in `availableModels` -> `keepWithContextWindow()`.
+7. Model is outside the Claude family but live and servable in the catalog (router alias pinned to a tier) ->
+   `keepWithContextWindow()`.
+8. Otherwise model is retired: top-ranked replacement gets its own window via
+   `applyContextWindow(ranked[0].id, findServableEntry(catalog, ranked[0].id)?.max_input_tokens)`; reason
+   `unavailable`; a `logger.notice` names the swap. Nothing carries over from the retired model.
 
-**This rules out a purely data-driven capability check via the catalog CodeMie already fetches.**
-Whatever decides "is this Claude model 1M-capable" has to be either (a) a version-pattern heuristic
-in the CLI, mirroring the one that already exists for a related purpose, or (b) a backend/API change
-to add a real field — out of scope for a CLI-only ticket in this repo.
+Consequences: `[1m]` is now applied to a bare configured id automatically (profile, `--model`, env, tier vars),
+and removed from a configured `[1m]` id whose live entry reports a smaller window. Routers and any entry
+without the field are never touched in either direction. The stale-looking log line at line 449-451 still says
+"skipping catalog resolution" although the catalog is now consulted for the window.
 
-I also queried the LiteLLM proxy's own `/v1/model/info` endpoint directly (the litellm-preview
-tenant this session is configured against) — LiteLLM **does** carry accurate `max_input_tokens` per
-deployment (e.g. `claude-sonnet-5` → `1000000`, `claude-sonnet-4-6` → `1000000`,
-`claude-opus-4-5-20251101` → `200000`, `claude-haiku-4-5-20251001` → `200000`,
-`claude-4-5-sonnet` → `200000`). That confirms a real signal *exists* upstream, but it is not
-surfaced through CodeMie's own `/v1/llm_models` endpoint that `claude.models.ts` actually calls, and
-a router alias (`claude-router-standard`, `claude-router-premium`) reports `max_input_tokens: null`
-even on LiteLLM's own endpoint — a router can't declare 1M support up front because it dispatches to
-whichever concrete deployment it picks per request. **Surfacing this properly is a backend change
-(CodeMie's `/v1/llm_models` would need to forward LiteLLM's `max_input_tokens` per entry); this ticket,
-scoped to "CodeMie CLI" per its Affected Areas, cannot do that.** The CLI-only remediation is a
-version-pattern table.
+### 4. `buildModelPickerOptions(env)` (line 338)
 
-### 3. A version-pattern table already exists for a sibling problem — reuse its shape
+Filters `isServableModel && isClaudeFamilyPickerEntry`, sorts by `rankModel`/`compareRankedModels`, dedupes on
+the ranked id, and emits **one row per model**: `model = applyContextWindow(id, model.max_input_tokens)`,
+`label = model.label || id` (unchanged, no "(1M context)" text), `description = describeRouter(...)`. Returns
+`[]` on any error. Because the label is unchanged, the picker gives no visual cue which rows run at 1M; the
+only difference is the `model` value.
 
-`src/providers/plugins/sso/proxy/plugins/claude-request-normalizer.plugin.ts` already solves a
-structurally identical problem: deciding a Claude model's *capabilities* (thinking mode, effort,
-sampling) from its id string, because the backend doesn't expose that either. Its
-`MODEL_CAPABILITY_TABLE` is a `{pattern: RegExp, capabilities: ...}[]`, first-match-wins, with a
-`DEFAULT_CAPABILITIES` fallback — and its comment block explicitly says "Every model-specific
-decision reads from MODEL_CAPABILITY_TABLE; add/edit a row to change support." This is the
-established, precedented pattern in this codebase for "the backend has no field for X, so the CLI
-maintains a small version table" — anything new for 1M-capability detection should follow this same
-shape (a table `claude.models.ts` owns, not a hardcoded `sonnet`-only check) to satisfy the ticket's
-explicit "not hardcoded only to Sonnet" acceptance criterion and to avoid a third parallel place
-capability logic lives.
+### 5. Data flow (catalog -> env / `--settings` -> Claude Code -> statusline)
 
-The live LiteLLM data confirms the version boundary is real and consistent: **Opus 4.6+, Sonnet 4.6+
-support 1M** (with the `[1m]` suffix — this is the "suffix-only" tier per the doc research done
-earlier this session); **Opus 4.5 and Sonnet 4.5 and all Haiku do not** (200k only, no `[1m]`
-variant). `claude-request-normalizer.plugin.ts`'s existing `MODEL_CAPABILITY_TABLE` regex boundaries
-(`claude-opus-4-[7-9]`, `claude-sonnet-5`, `claude-haiku-(3-5|4-5)`) are *close* to this line but not
-identical — it draws its line at "adaptive thinking," a different Anthropic-side capability, one
-version later than the 1M line for Opus. A 1M table needs its own boundary, not reuse of that exact
-table (which is also proxy-side code, wrong side of the process for `claude.models.ts` to import).
+1. `claude.plugin.ts` `beforeRun` (line ~382), skipped for `anthropic-subscription`: loops the four tiers
+   calling `resolveClaudeModel`. On a non-null result it writes `env[CODEMIE_*]` and the native vars
+   (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`). Each tier is try/caught independently.
+2. Stderr warning (tier `model` only, when `previousModel !== selectedModel`): skipped for
+   `one-million-enabled`; `one-million-unsupported` prints "does not support 1M context"; `unavailable` prints
+   "not available in this CodeMie catalog" plus the `codemie models list` hint.
+3. Same `beforeRun` then exports `CODEMIE_ROUTER_MODEL_IDS` (`listRouterModelIds`) and `CODEMIE_MODEL_LABELS`
+   (`buildModelLabelMap`) for the detached statusline, and calls `buildModelPickerOptions`; a non-empty result is
+   written as `{modelPicker:{options, replaceBuiltInOptions:true}}` to a temp file and exported as
+   `CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS`.
+4. `src/providers/core/default-agent-hooks.ts` `enrichArgs` (lines ~73-90) prepends `--model $CODEMIE_MODEL`
+   (unless `--model` present) and `--settings <picker file>` (unless `--settings` present). So the `[1m]` id
+   reaches Claude Code through `--model`, which outranks `settings.json`.
+5. All four calls share one `fetchCatalog` result (module-level 5-minute TTL cache keyed
+   `jwt:<baseUrl>` or `sso:<CODEMIE_URL>`), so there is one network call per run.
+6. `plugin/statusline.ts` (committed, unchanged in the working tree): `isRoutingConfigured` and
+   `lookupNominalLabel` strip a trailing `[1m]` before router-id and label lookups, because Claude Code reports
+   `<id>[1m]` in `model.id` while the catalog lists carry bare ids. `statusline.test.ts` covers this
+   (lines ~105-125) and is unchanged.
+7. Auth path for local runs: `--jwt-token` sets `CODEMIE_AUTH_METHOD=jwt` in `AgentCLI.ts` (~line 359); provider
+   stays `ai-run-sso`; `fetchCatalog` takes the JWT branch (`CODEMIE_JWT_TOKEN` + `CODEMIE_BASE_URL`) before the
+   SSO branch.
 
-### 4. `buildModelPickerOptions()` (lines 299–335) offers no 1M rows
+### 6. Model source marker
 
-Built straight from the catalog via `isClaudeFamilyPickerEntry` + `rankModel`, one option per
-catalog entry, `replaceBuiltInOptions: true` (set at `claude.plugin.ts:460`) — so Claude Code's own
-built-in `[1m]` rows for native models are hidden too. Today there is no way to reach a 1M variant
-from `/model` except typing `/model <id>[1m]` by hand. Any fix here needs to synthesize an
-additional option per 1M-capable catalog entry (id + `[1m]`, distinct `label`), using the same
-capability table from finding 3.
+`AgentCLI.ts` sets `CODEMIE_MODEL_SOURCE` to `cli` (`--model`), `env` (`CODEMIE_MODEL` already in process env) or
+`default` (profile) at ~line 374; `bin/codemie-copilot.js` sets it for Copilot. `EXPLICIT_MODEL_SOURCES` is now
+consumed only to choose between two branches that both call `keepWithContextWindow`, so its practical effect for
+the `model` tier is reduced to "skip the retired-model swap and the family-outside checks".
+`codex/codex-models.ts` has its own copy of the marker set and is unaffected.
 
-### 5. `default-agent-hooks.ts` and `claude.plugin.ts` — where the resolved value actually lands
+### 7. Other consumers of `LlmModel` / the catalog
 
-`resolveClaudeModel`'s result is written to `env.CODEMIE_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL`
-(`claude.plugin.ts:404-419`). `default-agent-hooks.ts`'s `enrichArgs` then injects
-`--model <CODEMIE_MODEL>` unconditionally when no `--model` flag is already present
-(`default-agent-hooks.ts:73-77`) — so whatever suffix survives resolution reaches the Claude Code
-CLI invocation via `--model`, which does take priority over `~/.claude/settings.json`. There is no
-second place downstream that could re-strip a preserved suffix.
+`fetchCodeMieLlmModels` is also used by `sso.models.ts`, the gemini/codex/pi/kimi/opencode/copilot-cli model
+modules and two proxy normalizer plugins. The new field is optional and read only by `claude.models.ts`, so
+those are unaffected. `anthropic-subscription` bypasses all of this (its template still carries a literal
+`claude-opus-4-6[1m]` in a test fixture).
 
-### 6. Test coverage already in place / needing extension
+### 8. Test surface
 
-`src/agents/plugins/claude/__tests__/claude.models.test.ts` already has 5 tests around this exact
-seam (`describe('resolveClaudeModel — explicit --model override')`):
-- explicit `--model X[1m]` survives when absent from catalog (line 68) — proves the CLI-override
-  short-circuit already protects this one path.
-- same, no `[1m]` (line 81) — regression guard.
-- **implicit (profile-sourced) `[1m]` gets silently healed away to a different model** (line 93) —
-  this is the exact bug, currently asserted as today's (undesired) behavior; will need to flip once
-  fixed, asserting the healed result keeps `[1m]` (or gets it re-derived) instead of losing it
-  outright.
-- tier vars (sonnet) are always re-resolved regardless of `CODEMIE_MODEL_SOURCE=cli` (line 107) —
-  same, needs a parallel `[1m]`-preserving variant.
-- a model present verbatim in the catalog is left untouched, `[1m]` or not (line 125) — this test's
-  catalog entry (`model({ deployment_name: 'claude-sonnet-5[1m]' })`) is itself unrealistic per the
-  live-catalog verification above (no real catalog entry carries `[1m]`); it is exercising a case
-  that cannot occur in production and should not be relied on as coverage for the real fix.
+Framework: Vitest. `.ai-run/guides/testing/testing-patterns.md` is the convention source (dynamic imports after
+mocks). I did not run the suite (repo policy: tests only on explicit request); the brief reports tsc, eslint (0
+warnings) and 219 passing tests under `src/agents/plugins/claude`.
 
-### 7. Unverified risk carried over from earlier investigation (not resolved this pass)
-
-`claude.plugin.ts:237-239` sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` for every provider except
-`ai-run-sso`/`litellm` (`TOOL_SEARCH_VERIFIED_PROVIDERS`). Whether that variable also suppresses the
-`anthropic-beta: context-1m-2025-08-07` header (as opposed to only the tool-search beta it's
-documented against) is still unconfirmed — flagged as a risk to check while implementing, not
-something this analysis pass had budget to verify against a live Bedrock/JWT/subscription session.
+- `claude.models.test.ts` mocks `fetchCodeMieLlmModels`, uses a unique `CODEMIE_BASE_URL` per test to defeat the
+  TTL cache, and builds entries with a `model()` factory that carries `max_input_tokens`. Groups: explicit
+  `--model` override (7 cases, including fetch-failure keeps model and explicit model gaining `[1m]`);
+  "catalog context window" (add `[1m]`, keep `[1m]`, drop `[1m]` on smaller window, leave bare, no-window
+  `it.each` on both forms, router untouched, tier vars sized regardless of source, replacement gets its own
+  window, no double suffix); `buildModelPickerOptions` (one row per model, no "(1M context)" row, no window ->
+  bare, no double suffix).
+- `claude.plugin.model-swap-warning.test.ts` — new case: `one-million-enabled` yields empty stderr and
+  `env.CODEMIE_MODEL === 'claude-opus-5[1m]'`; existing cases keep the "not available" + hint and "does not
+  support 1M context" messages.
+- Other Claude tests that mock `claude.models.js` (`claude.plugin.subagent-warning.test.ts`) return `null` from
+  `resolveClaudeModel` and are unaffected. `AgentCLI-model-source.test.ts` covers the source marker with a `[1m]`
+  id.
+- Gaps: no test for a non-numeric `max_input_tokens` (string/`null`/`NaN`); no test for the exact 1_000_000
+  boundary vs 999_999; no test that a disabled/non-servable entry with a window is ignored; no test of
+  `CODEMIE_SONNET_MODEL`-style tier var interacting with the subagent pin (finding under Risk Indicators); no
+  automated test of the end-to-end `--settings` picker file content (only the brief's manual run).
 
 ## Risk Indicators
 
-- **No dynamic capability signal available from the CLI's own data source** (finding 2) — any fix is
-  necessarily a maintained version table, which drifts as new Claude generations ship. This is an
-  accepted, precedented cost in this codebase (finding 3), not a blocker.
-- **Routers can't be resolved to a capability up front** (finding 2) — `claude-router-premium[1m]`-
-  style aliases must be handled by policy (e.g. always allow `[1m]` to pass through for a router,
-  since the underlying deployment decision happens per-request and CodeMie can't know it in advance)
-  rather than by table lookup.
-- **Two independent code paths need the same table** (tier resolution in `claude.models.ts`, picker
-  building in the same file) — must share one source, not duplicate the pattern list.
-- **One existing test (finding 6, line 125) encodes an unrealistic catalog shape** and should not be
-  treated as a spec for the real fix.
-- Ticket explicitly requires **not hardcoding to Sonnet only** — the fix must be a table over the
-  Claude family, not a single regex.
+- **Hard dependency on a backend deploy.** Everything hinges on `max_input_tokens` being present in
+  `/v1/llm_models`. There is no fallback: when the field is absent (older backend, static-YAML catalog, routers)
+  `applyContextWindow` returns the id untouched, so 1M-capable models silently stay at 200k with no warning or
+  log at info level. Against an un-updated tenant the feature is a no-op, not an error.
+- **Behavior change: every 1M-capable model now always runs at 1M.** Bare ids in profiles, `--model`, env and
+  tier vars all gain `[1m]`, including subagent tiers. That means long-context pricing/rate-limits apply on
+  every session with no per-run opt-out short of an id the catalog does not list (an unlisted id is untouched).
+  The stderr warning is deliberately suppressed for `one-million-enabled`, so users are not told.
+- **Explicit `--model` no longer skips the catalog.** It now costs a catalog fetch and can be rewritten (`[1m]`
+  added or dropped). Fetch failure falls back to keeping it as-is. A user who passes `--model X[1m]` for a model
+  the catalog reports smaller gets `X` plus the "does not support 1M context" warning.
+- **Routers get no `[1m]`.** A router entry carries no window, so a router-backed session never opts in, even if
+  its target model would support 1M. The user can still type `/model <router>[1m]`, and the statusline handles
+  the suffix.
+- **Untrusted backend value.** `LlmModel` is a cast over `JSON.parse`; a wrong type (string) is treated as
+  "absent", and any number `< 1_000_000` strips an existing `[1m]`. A backend reporting a wrong small number
+  would silently downgrade a model a user had deliberately pinned to `[1m]`.
+- **Id collision in `findServableEntry`.** It matches deployment_name, base_name or label, first match wins, so
+  a label equal to another model's id could pick the wrong entry's window. Same first-match caveat in the picker
+  dedupe (`seen` set keyed by ranked id).
+- **Picker gives no 1M signal.** Label is unchanged and there is only one row, so users cannot choose the
+  smaller window from `/model` (it is intentionally max-window only).
+- **Speculative:** `CLAUDE_CODE_SUBAGENT_MODEL` is pinned in `BaseAgentAdapter.transformEnvVars` (runs before
+  `beforeRun`) from the bare tier ids, while `beforeRun` only rewrites `ANTHROPIC_*` vars. A pinned subagent
+  model could therefore stay bare while the session model gains `[1m]`; it would also be compared against
+  `CODEMIE_MODEL` before it changed. Not verified against Claude Code.
+- **Speculative:** `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` (set for every provider except `ai-run-sso` and
+  `litellm`, `claude.plugin.ts` ~line 237) may also suppress the `context-1m` beta header on Bedrock/JWT-only
+  providers. Carried over from the earlier analysis; still unverified.
+- **Stale text left behind.** The log at `claude.models.ts:449-451` ("skipping catalog resolution"), and the
+  comment at `claude.plugin.ts:431-433` ("non-null only when the model was stale/absent") no longer describe the
+  code. Also `.codemie/codemie-cli.config.json` has an unrelated local edit that must not ship with this change.
+- **No documentation.** Neither `.ai-run/guides/` nor `openwiki/` nor `docs/` mentions `[1m]` or
+  `max_input_tokens`, so the behavior is undocumented for users and for the next reader.
 
 ## Summary
 
-- CodeMie's own model catalog carries zero context-window metadata for any model (verified against
-  a live tenant) — there is no field to read; a version-pattern capability table is the only
-  CLI-only path, and one already exists in this codebase for a sibling problem
-  (`claude-request-normalizer.plugin.ts`'s `MODEL_CAPABILITY_TABLE`) to follow the shape of.
-- The bug is in `claude.models.ts`: `[1m]` never survives catalog re-matching because
-  `modelIdentifiers()`/`availableModels` never contain the suffix; fix = strip `[1m]` before matching,
-  decide 1M support from a new capability table, reattach if eligible.
-- Three seams need the fix: `resolveClaudeModel`'s main-tier auto-heal path, the haiku/sonnet/opus
-  tier paths (currently unconditional), and `buildModelPickerOptions()` (currently offers no 1M rows
-  at all).
-- LiteLLM itself already has accurate `max_input_tokens` per deployment, but CodeMie's own
-  `/v1/llm_models` doesn't forward it — a real fix at the data layer is a backend change, out of
-  scope here; note it as a follow-up, not something to attempt in this CLI-only ticket.
-- Router aliases (`claude-router-premium[1m]`) can't be capability-checked by table; treat them as
-  always-eligible to keep `[1m]` rather than trying to resolve their underlying deployment.
-- `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` interaction with the 1M header remains unverified; flag,
-  don't block on it.
+- The feature is a small, catalog-driven change touching three source files: one optional field on `LlmModel`
+  (`sso.http-client.ts`), one helper plus rewritten resolution and picker logic (`claude.models.ts`), and a
+  warning gate (`claude.plugin.ts`). The statusline already strips `[1m]` for lookups and is unchanged. Layers
+  affected: provider HTTP client, agent plugin model resolution, plugin `beforeRun` lifecycle, and Claude Code's
+  launch args and env. Net code shrank (~-244/+230 including tests), and the earlier regex table is gone.
+- `resolveClaudeModel` now normalizes every model that stays to its catalog window and gives a retired model's
+  replacement its own window. `buildModelPickerOptions` lists one row per model at max window. A catalog without
+  `max_input_tokens` is a no-op by design (routers, static catalogs, older backends).
+- Test coverage is solid for the resolution, picker and warning paths (Vitest, mocked catalog). Gaps are edge
+  values of the backend field and the subagent pin interaction. The main non-code risks are the backend
+  deployment dependency and the always-on 1M behavior change (pricing), plus the two unverified interactions
+  with `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`.

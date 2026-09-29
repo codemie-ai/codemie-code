@@ -1,13 +1,13 @@
 {
   "decision": "request-changes",
-  "rationale": "Compact profile: only the edge-case lens ran (blind and verification-gap not dispatched, acceptance skipped with no spec, standards not expected), so confidence is low and decision_needed was unavailable. Five blocking [1m]-handling defects survive: the double-suffix, statusline and version-first findings have unconfirmed reachability (whether the catalog carries literal [1m] ids, whether Claude Code reports [1m] in model.id), so they are capped at major; the misleading warning was confirmed. 0 deferred, 0 dismissed.",
+  "rationale": "One blocking code-quality structure finding: resolveClaudeModel (~112 lines) and claude.models.ts (exactly 500 lines) exceed the documented 50/500 limits. Confidence is low because no spec/story existed (acceptance skipped); blind and verification-gap lenses were not part of the balanced profile. 7 edge-case candidates dismissed as noise or by-design (non-finite windows cannot come from JSON, catalog fetch is cached and has a timeout, case-only [1M] rewrite is harmless, router/non-Claude/id-collision cases are speculative); 0 deferred.",
   "confidence": "low",
-  "risk_flags": ["breaking-change"],
+  "risk_flags": [],
   "business_review": [],
   "standards_review": [
-    { "kind": "commit-format", "status": "na", "notes": "Not audited: compact profile, standards not expected this round." },
-    { "kind": "code-quality", "status": "na", "notes": "Not audited: compact profile, standards not expected this round." },
-    { "kind": "security", "status": "na", "notes": "Not audited: compact profile, standards not expected this round." }
+    { "kind": "commit-format", "status": "pass", "notes": "7 subjects in diff_base..HEAD all match <type>(<scope>): <subject>; scope agents is in the commitlint scope-enum; under 100 chars, imperative mood" },
+    { "kind": "code-quality", "status": "partial", "notes": "resolveClaudeModel in claude.models.ts spans ~112 lines (limit 50) and the file is exactly 500 lines (limit under 500). Imports, return types, no any, no console.log are fine." },
+    { "kind": "security", "status": "pass", "notes": "Adjudicated against .ai-run/guides/security/security-practices.md; no secrets, path handling or header changes; model ids pass through safeTerminalValue." }
   ],
   "findings": [
     {
@@ -16,59 +16,11 @@
       "severity": "major",
       "triage": "patch",
       "file": "src/agents/plugins/claude/claude.models.ts",
-      "line": 64,
-      "title": "Version-first 1M row rejects two-digit minors",
-      "problem": "The version-first row of ONE_MILLION_CONTEXT_TABLE matches `4[-_.][6-9]` followed by a separator, so an id like `claude-4-10-sonnet` fails it. The family-first 4.6+ row accepts `[1-9]\\d`. That id then falls through to the default `false`.",
-      "impact": "A 1M-capable version-first id is judged not capable: a configured `[1m]` gets stripped to the bare id and the picker offers no 1M row. Reachability is unconfirmed because no such id is known in the live catalog today.",
-      "recommendation": "Align the row with the family-first rows, e.g. `/claude[-_.]?(?:[5-9]|[1-9]\\d|4[-_.](?:[6-9]|[1-9]\\d))(?!\\d)[-_.](?:sonnet|opus|fable)/i`, and add a table test for a two-digit minor."
-    },
-    {
-      "id": "CR-002",
-      "kind": "code",
-      "severity": "major",
-      "triage": "patch",
-      "file": "src/agents/plugins/claude/claude.models.ts",
-      "line": 375,
-      "title": "Picker double-suffixes literal [1m] catalog ids",
-      "problem": "buildModelPickerOptions appends `[1m]` to any 1M-capable non-router rankedModel.id without checking whether the id already ends in `[1m]`. The existing test suite already models a catalog entry with deployment_name `claude-sonnet-5[1m]`, and supportsOneMillionContext returns true for it, so the picker would add `claude-sonnet-5[1m][1m]`.",
-      "impact": "The /model picker shows a row Claude Code cannot resolve, and choosing it breaks the session's model. Reachability is unconfirmed because it depends on whether the backend catalog exposes suffixed ids.",
-      "recommendation": "Skip the synthesis when the id is already suffixed: add `!ONE_MILLION_SUFFIX_PATTERN.test(rankedModel.id)` to the condition at line 376."
-    },
-    {
-      "id": "CR-003",
-      "kind": "code",
-      "severity": "major",
-      "triage": "patch",
-      "file": "src/agents/plugins/claude/claude.models.ts",
-      "line": 515,
-      "title": "Healing appends [1m] to already-suffixed replacement",
-      "problem": "When a retired `[1m]` model is replaced, keepOneMillion checks only the router gate and supportsOneMillionContext(ranked[0].id). It never checks whether ranked[0].id already ends in `[1m]`, so `${ranked[0].id}[1m]` can become `x[1m][1m]`.",
-      "impact": "The invalid id is written to CODEMIE_MODEL and the ANTHROPIC_* env vars by claude.plugin.ts, so the launch uses a model id the backend cannot resolve (broken runtime path). Reachability is unconfirmed because it depends on the catalog carrying a literal `[1m]` id.",
-      "recommendation": "Add `!ONE_MILLION_SUFFIX_PATTERN.test(ranked[0].id)` to keepOneMillion (or strip then re-append), and add a test with a suffixed replacement in the catalog."
-    },
-    {
-      "id": "CR-004",
-      "kind": "code",
-      "severity": "major",
-      "triage": "patch",
-      "file": "src/agents/plugins/claude/claude.plugin.ts",
-      "line": 405,
-      "title": "Misleading warning when [1m] is stripped",
-      "problem": "resolveClaudeModel (claude.models.ts:493-496) returns the bare id when a configured `<id>[1m]` is live but not 1M-capable. The plugin warning at line 405 fires on any previousModel !== selectedModel and says the model \"is not available in this CodeMie catalog\", followed by a `codemie models list` hint.",
-      "impact": "On the model tier, a user whose model is live is told on stderr that it is unavailable, which hides the real reason: the 1M context opt-in was dropped. This path was confirmed reachable and is exercised by the new test at line 160.",
-      "recommendation": "Return a distinguishing signal from resolveClaudeModel (e.g. a `reason` field on ClaudeModelResolution, or compare the bare ids in the plugin) and print a dedicated message such as \"<id> does not support 1M context — using <bare id>\"."
-    },
-    {
-      "id": "CR-005",
-      "kind": "code",
-      "severity": "major",
-      "triage": "patch",
-      "file": "src/agents/plugins/claude/plugin/statusline.ts",
-      "line": 229,
-      "title": "Routed-to widget misses [1m] router ids",
-      "problem": "This change always preserves a `[1m]` suffix on a live router id (claude.models.ts:489-492). isRoutingConfigured compares the statusline's reported model.id verbatim against the bare router ids from listRouterModelIds. `<router>[1m]` is therefore never matched, and the labels[modelId] lookup at line 792 misses the same way.",
-      "impact": "For a router session kept with `[1m]`, the statusline's routed-to widget never fires, so the user loses visibility into which backend model answered. Reachability is unconfirmed because it depends on Claude Code reporting the `[1m]` suffix in the statusline model.id.",
-      "recommendation": "Normalize before lookup: `parseRouterModelIds(env).has(modelId.replace(/\\[1m\\]$/i, ''))`, and apply the same strip to the nominal label lookup."
+      "line": 389,
+      "title": "resolveClaudeModel exceeds function and file size limits",
+      "problem": "code-quality.md Code Structure Guidelines require functions under 50 lines and files under 500 lines. resolveClaudeModel spans lines 389-500 (~112 lines); this change added the keepWithContextWindow closure and further branches to an already long function, and the file now totals exactly 500 lines.",
+      "impact": "A documented code-quality standard is unmet by code this change grew, and it blocks the workflow; the function is also harder to reason about for future context-window changes.",
+      "recommendation": "Extract keepWithContextWindow and the catalog-ranking block into small module-level helpers so resolveClaudeModel drops under 50 lines and the file drops under 500."
     }
   ]
 }

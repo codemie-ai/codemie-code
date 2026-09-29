@@ -1,126 +1,106 @@
-# EPMCDME-14763 Claude `[1m]` Context Preservation — Implementation Plan
+# EPMCDME-14763 Catalog-Driven Claude `[1m]` Context Window — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop CodeMie CLI from stripping Claude Code's `[1m]` suffix during catalog re-matching, and offer `[1m]` rows in the `/model` picker, for every 1M-capable Claude generation.
+**Goal:** Launch Claude Code with `[1m]` automatically for every model whose CodeMie catalog entry reports a 1M-token input window, without breaking models that do not.
 
-**Architecture:** One exported `supportsOneMillionContext(modelId)` backed by a first-match-wins regex table (shape of `MODEL_CAPABILITY_TABLE` in the proxy's request normalizer, but its own table, owned by `claude.models.ts`). `resolveClaudeModel` strips a trailing `[1m]` before catalog matching and re-applies it by table/router policy; `buildModelPickerOptions` emits a synthesized `[1m]` row after each capable base row.
+**Architecture:** The backend returns `max_input_tokens` per model on `/v1/llm_models`; the CLI reads it and picks the id form through one helper, `applyContextWindow`. No capability table, no second picker row, no `[1m]` carry-over. Claude Code owns `[1m]` semantics (strips it, adds the `context-1m` beta header); proxy and core code never see the suffix.
 
 **Tech Stack:** TypeScript (ESM), Vitest.
 
+**State of the tree:** Tasks 1-5 are ALREADY IMPLEMENTED (uncommitted) in the working tree. Verify them against the tree and record them done; do NOT re-implement or rewrite them. Only Tasks 6-8 change files.
+
 ## Global Constraints
 
-- Only `src/agents/plugins/claude/claude.models.ts` and `src/agents/plugins/claude/__tests__/claude.models.test.ts` change.
-- Suffix is the exact literal `[1m]`, trailing, matched case-insensitively.
-- ES modules with `.js` import extensions, explicit return types on exports, no `any`, `logger.debug`/`logger.notice` only.
-- Run one test file with: `npx vitest run src/agents/plugins/claude/__tests__/claude.models.test.ts`
+- ES modules with `.js` import extensions, explicit return types on exports, no `any`, `logger.debug`/`logger.notice` only, no placeholder TODOs.
+- Tests are in scope only because the user asked for them for this ticket.
+- `.codemie/codemie-cli.config.json` has an unrelated local edit: never touch or stage it. Stage only the files a task names.
+- Run Claude tests with: `npx vitest run src/agents/plugins/claude`
 - Commit per task using the repository's existing convention.
 
 ## Acceptance criteria
 
-- [ ] Profile-saved `X[1m]` with 1M-capable `X` in the catalog stays `X[1m]` at launch.
-- [ ] `CODEMIE_SONNET_MODEL` / `CODEMIE_OPUS_MODEL` / `CODEMIE_HAIKU_MODEL` values keep `[1m]` under the same rule, with no source gating.
-- [ ] A retired `X[1m]` is replaced by an available model, keeping `[1m]` only if the replacement is 1M-capable (and not a router); never throws for that reason.
-- [ ] A router/alias id carrying `[1m]` that is live in the catalog is never stripped.
-- [ ] `/model` picker shows a `<id>[1m]` row labeled `(1M context)` right after each 1M-capable, non-router base row; base rows are neither hidden nor duplicated.
-- [ ] A model not 1M-capable per the table never gets `[1m]` added (picker or auto-heal).
-- [ ] Explicit `CODEMIE_MODEL_SOURCE=cli|env` short-circuit for the main tier is unchanged.
-- [ ] `supportsOneMillionContext` is the single place the version boundary lives.
+- [ ] `LlmModel` carries optional `max_input_tokens`; absent on routers and static catalogs.
+- [ ] A servable catalog entry with `max_input_tokens >= 1_000_000` yields `<bareId>[1m]`; a smaller number yields the bare id (stripping an existing `[1m]`); an absent or non-numeric value leaves the id untouched.
+- [ ] Bare configured ids (profile, `--model`, env, tier vars) gain `[1m]` when the catalog reports 1M; a `[1m]` id whose entry reports less loses it.
+- [ ] Explicit `--model` still consults the catalog for window sizing but is never auto-healed or replaced; catalog fetch failure or an unlisted id keeps it as-is.
+- [ ] A retired model's replacement gets its own window; nothing carries over from the retired id.
+- [ ] `/model` picker lists one row per model (`[1m]` id at 1M, bare otherwise), label unchanged, no "(1M context)" row.
+- [ ] Reason enum is `unavailable | one-million-enabled | one-million-unsupported`; the stderr warning is silent for `one-million-enabled`, says "does not support 1M context" for `one-million-unsupported`, and "not available in this CodeMie catalog" for `unavailable`.
+- [ ] Statusline still strips a trailing `[1m]` before router-id and label lookups.
+- [ ] Local-auth run (`codemie-claude --jwt-token <local JWT> --base-url http://localhost:8080`) launches with the `[1m]` id (already confirmed; the calling flow owns re-verification).
+- [ ] The explicit-source debug log and the `beforeRun` propagation comment describe current behavior.
 
 ---
 
-### Task 1: `supportsOneMillionContext()` capability table
+### Task 1: `max_input_tokens` data field — already implemented, verify only
 
-**Files:**
-- Modify: `src/agents/plugins/claude/claude.models.ts` (add after `TIER_PATTERN`, ~line 55)
-- Test: `src/agents/plugins/claude/__tests__/claude.models.test.ts` (new `describe` block)
+**Files:** `src/providers/plugins/sso/sso.http-client.ts` (`LlmModel`)
 
-**Interfaces:**
-- Produces: `export function supportsOneMillionContext(modelId: string): boolean`
+Test-first: no — already implemented, verify only.
 
-Test-first: yes — `supportsOneMillionContext` returns the expected boolean for one id per generation; fails because the export does not exist.
+- [ ] Confirm `LlmModel.max_input_tokens?: number` exists with its "absent on routers and static-config catalogs" doc comment, and that `fetchCodeMieLlmModels` is untouched. Record done.
 
-- [ ] **Step 1: Write the failing test.** New `describe('supportsOneMillionContext')` with `it.each` over `[id, expected]`, importing via `await import('../claude.models.js')`:
-  `claude-sonnet-4-6` true, `claude-sonnet-4-5-20250929` false, `claude-sonnet-4-20250514` false, `claude-opus-4-6` true, `claude-opus-4-7` true, `claude-opus-4-5-20251101` false, `claude-sonnet-5` true, `claude-opus-5` true, `claude-fable-5` true, `claude-haiku-4-5-20251001` false, `claude-haiku-5` false, `claude-3-5-sonnet` false, `claude-4-5-sonnet` false, `claude-4-6-sonnet` true, `us.anthropic.claude-sonnet-4-6-v1:0` true, `claude-router-premium` false.
-- [ ] **Step 2: Run it — expect FAIL** (`supportsOneMillionContext is not a function`).
-- [ ] **Step 3: Implement.** Add the table and function. Minor-version alternation `[1-9]\d` plus `(?!\d)` keeps date stamps like `-20250514` from reading as a minor version.
+### Task 2: Context-window helper and resolution — already implemented, verify only
 
-```ts
-// Claude Code's 1M-context opt-in (`[1m]`) by model version. CodeMie's /v1/llm_models carries
-// no context-window field, so this table is the ONLY place the boundary lives — swap this
-// function's body for a catalog field once the backend exposes one. First match wins.
-const ONE_MILLION_CONTEXT_TABLE: Array<{ pattern: RegExp; supported: boolean }> = [
-  { pattern: /haiku/i, supported: false },                                           // no Haiku generation
-  { pattern: /(?:sonnet|opus|fable)[-_.]?(?:[5-9]|[1-9]\d)(?!\d)/i, supported: true }, // gen 5+
-  { pattern: /(?:sonnet|opus)[-_.]?4[-_.](?:[6-9]|[1-9]\d)(?!\d)/i, supported: true }, // 4.6+
-  { pattern: /claude[-_.]?(?:[5-9]|4[-_.][6-9])[-_.](?:sonnet|opus|fable)/i, supported: true }, // version-first ids
-];
-// Fallback: unknown ids (incl. routers/aliases) are not 1M-capable — never add [1m] speculatively.
-const ONE_MILLION_CONTEXT_DEFAULT = false;
+**Files:** `src/agents/plugins/claude/claude.models.ts`, `src/agents/plugins/claude/__tests__/claude.models.test.ts`
 
-export function supportsOneMillionContext(modelId: string): boolean {
-  const row = ONE_MILLION_CONTEXT_TABLE.find(({ pattern }) => pattern.test(modelId));
-  return row ? row.supported : ONE_MILLION_CONTEXT_DEFAULT;
-}
-```
+Test-first: no — already implemented, verify only.
 
-- [ ] **Step 4: Run it — expect PASS.**
+- [ ] Confirm `applyContextWindow` (~line 213: non-number untouched, `>= ONE_MILLION_TOKENS` adds `[1m]`, else bare), `findServableEntry` (~219), `ClaudeModelResolutionReason` (line 15) and `resolveClaudeModel` (~389) with its `keepWithContextWindow()` closure covering the explicit-source, in-family, live-outside-family branches, and the replacement branch using `applyContextWindow(ranked[0].id, findServableEntry(...)?.max_input_tokens)`.
+- [ ] Confirm no `supportsOneMillionContext`, `isRouterLikeEntry` or `splitOneMillionSuffix` remains in `src/`.
+- [ ] Confirm `describe('resolveClaudeModel — explicit --model override')` and `describe('resolveClaudeModel — catalog context window')` pass.
 
-### Task 2: Preserve `[1m]` in `resolveClaudeModel` (main and tier vars)
+### Task 3: Single-row model picker — already implemented, verify only
 
-**Files:**
-- Modify: `src/agents/plugins/claude/claude.models.ts:184-186` (router helper next to `isRouterCatalogEntry`), `:376-435`
-- Test: `src/agents/plugins/claude/__tests__/claude.models.test.ts:93-123` plus a new `describe`
+**Files:** `src/agents/plugins/claude/claude.models.ts` (`buildModelPickerOptions`, ~line 338), same test file
 
-**Interfaces:**
-- Consumes: `supportsOneMillionContext(modelId: string): boolean` (Task 1)
-- Produces (module-private, used by Task 3): `const ONE_MILLION_SUFFIX = '[1m]'`; `function splitOneMillionSuffix(id: string): { bareId: string; wantsOneMillion: boolean }` (strips `/\[1m\]$/i`); `function isRouterLikeEntry(model: LlmModel): boolean`, which is `isRouterCatalogEntry(model)` or any `modelIdentifiers(model)` matching `/router/i`.
+Test-first: no — already implemented, verify only.
 
-Test-first: yes — a profile/tier `[1m]` value whose bare id is live and 1M-capable resolves to `null` (kept); today it heals to the bare id.
+- [ ] Confirm one row per model with `model = applyContextWindow(id, model.max_input_tokens)` and unchanged `label`; confirm the `describe('buildModelPickerOptions')` cases (one row per model, no "(1M context)" row, no window stays bare, no double suffix) pass.
 
-- [ ] **Step 1: Write the failing tests** in a new `describe('resolveClaudeModel — [1m] preservation')`, reusing `model()`/`freshEnv()`:
-  - main tier `CODEMIE_MODEL: 'claude-sonnet-4-6[1m]'`, no source, catalog has `claude-sonnet-4-6`: expect `null` and env unchanged.
-  - main tier `'claude-opus-4-5[1m]'`, catalog has `claude-opus-4-5`: expect `selectedModel` `'claude-opus-4-5'` (suffix dropped, same model).
-  - `it.each` over tiers: `CODEMIE_SONNET_MODEL='claude-sonnet-4-6[1m]'` → `null`; `CODEMIE_OPUS_MODEL='claude-opus-5[1m]'` → `null`; `CODEMIE_HAIKU_MODEL='claude-haiku-4-5[1m]'` → `'claude-haiku-4-5'`. Each has its bare id in the catalog and `CODEMIE_MODEL_SOURCE: 'cli'` set, to show no source gating.
-  - router: `CODEMIE_MODEL: 'sy-signal-claude-sonnet-haiku[1m]'`, catalog entry `{ ...model({ deployment_name: 'sy-signal-claude-sonnet-haiku' }), is_router: true }`: expect `null`. The name contains "haiku", so this proves the table is bypassed.
-  - retired without a capable replacement: `'claude-opus-4-1[1m]'`, catalog `[claude-haiku-4-5]`: expect `'claude-haiku-4-5'` and no throw.
-  - regression: retired `'claude-opus-4-1'` (no suffix), catalog `[claude-opus-5]`: expect `'claude-opus-5'` (no suffix added).
-  - Update `:93-105`: expect `selectedModel` `'claude-opus-5[1m]'`.
-  - Update `:107-123`: set `CODEMIE_SONNET_MODEL` to the retired `'claude-sonnet-4-5[1m]'` and expect `'claude-sonnet-5[1m]'`. The fixture still has a real heal decision, so the test's intent (tiers ignore `CODEMIE_MODEL_SOURCE=cli`) survives.
-- [ ] **Step 2: Run — expect FAIL** on the new and updated cases.
-- [ ] **Step 3: Implement.**
-  - Add the three helpers.
-  - In `resolveClaudeModel`, leave `:346-357` (explicit short-circuit) and both verbatim-match checks (`:391-397`, `:413-421`) as they are. The `:125` test depends on them.
-  - After `:421`, when `currentModel` has the suffix, find `catalog.find(m => isServableModel(m) && modelIdentifiers(m).includes(bareId))`. If an entry is found and it is router-like or `supportsOneMillionContext(bareId)`, return `null`. If it is found but neither holds, `logger.notice` and return `{ selectedModel: bareId, availableModels }`.
-  - At `:431-435`, append `ONE_MILLION_SUFFIX` to `ranked[0].id` only when the original value wanted 1M, the replacement's catalog entry is not router-like, and `supportsOneMillionContext(ranked[0].id)`.
-  - `availableModels` stays bare catalog ids.
-- [ ] **Step 4: Run — expect PASS** (the whole file, including `:68-91` and `:125-137`).
+### Task 4: Plugin warning matrix — already implemented, verify only
 
-### Task 3: Synthesize `[1m]` rows in `buildModelPickerOptions`
+**Files:** `src/agents/plugins/claude/claude.plugin.ts` (~line 405), `src/agents/plugins/claude/__tests__/claude.plugin.model-swap-warning.test.ts`
 
-**Files:**
-- Modify: `src/agents/plugins/claude/claude.models.ts:320-327`
-- Test: `src/agents/plugins/claude/__tests__/claude.models.test.ts` (new `describe`)
+Test-first: no — already implemented, verify only.
 
-**Interfaces:**
-- Consumes: `supportsOneMillionContext` (Task 1), `ONE_MILLION_SUFFIX` and `isRouterLikeEntry` (Task 2)
+- [ ] Confirm the warning is skipped for `one-million-enabled` and the added case asserts empty stderr with `env.CODEMIE_MODEL === 'claude-opus-5[1m]'`; existing "not available" + hint and "does not support 1M context" cases pass.
 
-Test-first: yes — the picker for a catalog `[claude-sonnet-4-6, claude-haiku-4-5, router]` includes a `claude-sonnet-4-6[1m]` row; today it has only base rows.
+### Task 5: Statusline suffix stripping kept — already implemented, verify only
 
-- [ ] **Step 1: Write the failing test.** Use catalog `[model({deployment_name:'claude-sonnet-4-6'}), model({deployment_name:'claude-haiku-4-5'}), { ...model({deployment_name:'claude-router-premium'}), is_router: true }]`. Expect the `claude-sonnet-4-6[1m]` option (label `'claude-sonnet-4-6 (1M context)'`) to sit at index `indexOf('claude-sonnet-4-6') + 1`. Expect no `claude-haiku-4-5[1m]` or `claude-router-premium[1m]`, and each base id to appear exactly once.
-- [ ] **Step 2: Run — expect FAIL.**
-- [ ] **Step 3: Implement.** In the loop at `:322-327`, after pushing the base option, check that the entry is not `isRouterLikeEntry(model)`, that `supportsOneMillionContext(rankedModel.id)` holds, and that `${id}[1m]` is not already in `seen`. When all three hold, add the 1M id to `seen` and push `{ model: \`${id}${ONE_MILLION_SUFFIX}\`, label: \`${baseLabel} (1M context)\`, description }`. Update the function's doc comment to mention the synthesized rows.
-- [ ] **Step 4: Run — expect PASS.**
+**Files:** `src/agents/plugins/claude/plugin/statusline.ts` (`isRoutingConfigured`, `lookupNominalLabel`), its `statusline.test.ts`
 
-## Negative-constraint pass
+Test-first: no — already implemented, verify only.
 
-- No backend, `/v1/llm_models` or LiteLLM change: no task touches them.
-- `claude-request-normalizer.plugin.ts` stays untouched: Task 1's table is new, in `claude.models.ts`, and imports nothing from the proxy.
-- `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`: not addressed by any task.
-- `default-agent-hooks.ts` and `--model` injection: not modified.
-- Never add `[1m]` speculatively to a router: Task 2 (replacement guard) and Task 3 (no router row).
-- Don't swap models only to keep `[1m]`: Task 2 returns the same bare id when it is not capable.
-- Don't throw when 1M can't be kept: Task 2 falls back to the plain replacement.
-- Not Sonnet-only, and version logic not scattered: Task 1 is the single table covering Sonnet, Opus and Fable.
-- No hidden or duplicated base picker row: Task 3.
-- Explicit-source short-circuit unchanged: Task 2 leaves `:346-357` as is.
+- [ ] Confirm both helpers strip a trailing `[1m]` before lookup and the existing statusline tests (~lines 105-125) pass. No edit.
+
+### Task 6: Correct the stale explicit-source debug log
+
+**Files:** Modify `src/agents/plugins/claude/claude.models.ts:449-451`
+
+Test-first: no — log text only, no behavior change.
+
+- [ ] Replace the tail of the `logger.debug` message `...; skipping catalog resolution` with `...; skipping auto-heal, sizing context window only`. Keep the rest of the string and the `return keepWithContextWindow();` untouched.
+
+### Task 7: Correct the stale `beforeRun` comment
+
+**Files:** Modify `src/agents/plugins/claude/claude.plugin.ts:431`
+
+Test-first: no — comment only.
+
+- [ ] Change the first comment line to: `// resolution is non-null when the model was stale/absent or only its [1m] window changed — always` (keep the following two lines as they are).
+
+### Task 8: Boundary and non-numeric window tests
+
+**Files:** Modify `src/agents/plugins/claude/__tests__/claude.models.test.ts` (extend `describe('resolveClaudeModel — catalog context window')` after the `it.each` at ~line 223, and `describe('buildModelPickerOptions')`)
+
+Test-first: no — characterization tests over already-implemented `applyContextWindow` behavior; they pass on first run. Prove they bite by temporarily changing `>=` to `>` in `applyContextWindow` and confirming the 1_000_000 case fails, then revert.
+
+- [ ] Add cases reusing the existing `model()` factory, `freshEnv()` and `ONE_MILLION` (no new helpers):
+  - `max_input_tokens: 1_000_000` on a bare `claude-sonnet-4-6` resolves to `claude-sonnet-4-6[1m]`, reason `one-million-enabled`.
+  - `max_input_tokens: 999_999` on `claude-sonnet-4-6[1m]` resolves to `claude-sonnet-4-6`, reason `one-million-unsupported`; on bare `claude-sonnet-4-6` returns `null`.
+  - `it.each` of a numeric string (`'1000000'`) and `null`, injected via `max_input_tokens: value as unknown as number`, leaves both `claude-sonnet-4-6` and `claude-sonnet-4-6[1m]` untouched (`null` result, env unchanged).
+  - Picker: entry with `max_input_tokens: 1_000_000` yields `[1m]` id and `999_999` yields the bare id.
+- [ ] NaN is deliberately not covered: JSON cannot carry it, and `typeof NaN === 'number'` currently falls in the "smaller" branch, so it is not "absent". Do not change `applyContextWindow` for it.
+- [ ] Run `npx vitest run src/agents/plugins/claude` and expect all pass.
