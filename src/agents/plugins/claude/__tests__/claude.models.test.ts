@@ -5,6 +5,9 @@
  * AgentCLI.ts marks this by setting `CODEMIE_MODEL_SOURCE=cli` on the env;
  * resolveClaudeModel treats that as an unconditional override for the
  * `model` tier and skips the live-catalog auto-heal entirely.
+ *
+ * Every model that stays is still sized to its catalog context window: `[1m]` is
+ * added when `max_input_tokens` reaches 1M and dropped when it is smaller.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -20,6 +23,9 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   };
 });
 
+const ONE_MILLION = 1_000_000;
+const TWO_HUNDRED_K = 200_000;
+
 function model(overrides: Partial<LlmModel>): LlmModel {
   return {
     base_name: overrides.base_name ?? overrides.deployment_name ?? overrides.label ?? 'unknown',
@@ -28,6 +34,7 @@ function model(overrides: Partial<LlmModel>): LlmModel {
     enabled: overrides.enabled ?? true,
     provider: overrides.provider,
     default: overrides.default,
+    max_input_tokens: overrides.max_input_tokens,
     features: {
       tools: true,
       streaming: true,
@@ -40,8 +47,8 @@ function model(overrides: Partial<LlmModel>): LlmModel {
 // simulates a tenant/service-account not entitled to the requested variant, the
 // exact scenario that used to trigger the silent opus substitution.
 const catalogWithoutSonnet = [
-  model({ deployment_name: 'claude-opus-5', default: true }),
-  model({ deployment_name: 'claude-haiku-4-5' }),
+  model({ deployment_name: 'claude-opus-5', default: true, max_input_tokens: ONE_MILLION }),
+  model({ deployment_name: 'claude-haiku-4-5', max_input_tokens: TWO_HUNDRED_K }),
 ];
 
 // Each test uses a distinct CODEMIE_BASE_URL so the module-level catalog TTL
@@ -74,8 +81,6 @@ describe('resolveClaudeModel — explicit --model override', () => {
 
     expect(result).toBeNull();
     expect(env.CODEMIE_MODEL).toBe('claude-sonnet-5[1m]');
-    // The override short-circuits before any catalog fetch is needed.
-    expect(fetchCodeMieLlmModelsMock).not.toHaveBeenCalled();
   });
 
   it('preserves an explicit --model "claude-sonnet-5" (no [1m] suffix) the same way — no regression', async () => {
@@ -87,7 +92,26 @@ describe('resolveClaudeModel — explicit --model override', () => {
 
     expect(result).toBeNull();
     expect(env.CODEMIE_MODEL).toBe('claude-sonnet-5');
-    expect(fetchCodeMieLlmModelsMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit --model but sizes its window: a live 1M model gains "[1m]"', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue(catalogWithoutSonnet);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-5', CODEMIE_MODEL_SOURCE: 'cli' });
+    const result = await resolveClaudeModel(env, 'model');
+
+    expect(result?.selectedModel).toBe('claude-opus-5[1m]');
+    expect(result?.reason).toBe('one-million-enabled');
+  });
+
+  it('keeps the explicit model when the catalog fetch fails', async () => {
+    fetchCodeMieLlmModelsMock.mockRejectedValue(new Error('network down'));
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-5', CODEMIE_MODEL_SOURCE: 'cli' });
+
+    expect(await resolveClaudeModel(env, 'model')).toBeNull();
   });
 
   it('still auto-heals an implicit (non-CLI) stale model when CODEMIE_MODEL_SOURCE is absent', async () => {
@@ -101,6 +125,7 @@ describe('resolveClaudeModel — explicit --model override', () => {
 
     expect(result).not.toBeNull();
     expect(result?.selectedModel).toBe('claude-opus-5[1m]');
+    expect(result?.reason).toBe('unavailable');
     expect(fetchCodeMieLlmModelsMock).toHaveBeenCalled();
   });
 
@@ -110,7 +135,7 @@ describe('resolveClaudeModel — explicit --model override', () => {
     // suppressed by a CODEMIE_MODEL_SOURCE=cli that only ever describes --model.
     fetchCodeMieLlmModelsMock.mockResolvedValue([
       ...catalogWithoutSonnet,
-      model({ deployment_name: 'claude-sonnet-5' }),
+      model({ deployment_name: 'claude-sonnet-5', max_input_tokens: ONE_MILLION }),
     ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
@@ -137,7 +162,7 @@ describe('resolveClaudeModel — explicit --model override', () => {
   });
 });
 
-describe('resolveClaudeModel — [1m] preservation', () => {
+describe('resolveClaudeModel — catalog context window', () => {
   beforeEach(() => {
     fetchCodeMieLlmModelsMock.mockReset();
   });
@@ -146,19 +171,35 @@ describe('resolveClaudeModel — [1m] preservation', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps a profile-saved "[1m]" model whose 1M-capable bare id is live in the catalog', async () => {
-    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-sonnet-4-6' })]);
+  it('adds "[1m]" to a bare configured id when the catalog reports a 1M window', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', max_input_tokens: ONE_MILLION }),
+    ]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const env = freshEnv({ CODEMIE_MODEL: 'claude-sonnet-4-6' });
+    const result = await resolveClaudeModel(env, 'model');
+
+    expect(result?.selectedModel).toBe('claude-sonnet-4-6[1m]');
+    expect(result?.reason).toBe('one-million-enabled');
+  });
+
+  it('keeps a configured "[1m]" model whose live entry reports a 1M window', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', max_input_tokens: ONE_MILLION }),
+    ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'claude-sonnet-4-6[1m]' });
-    const result = await resolveClaudeModel(env, 'model');
 
-    expect(result).toBeNull();
+    expect(await resolveClaudeModel(env, 'model')).toBeNull();
     expect(env.CODEMIE_MODEL).toBe('claude-sonnet-4-6[1m]');
   });
 
-  it('drops "[1m]" but keeps the same model when the live bare id is not 1M-capable', async () => {
-    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-opus-4-5' })]);
+  it('drops "[1m]" but keeps the same model when the live entry reports a smaller window', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-opus-4-5', max_input_tokens: TWO_HUNDRED_K }),
+    ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-4-5[1m]' });
@@ -168,96 +209,138 @@ describe('resolveClaudeModel — [1m] preservation', () => {
     expect(result?.reason).toBe('one-million-unsupported');
   });
 
-  it.each([
-    ['sonnet', 'CODEMIE_SONNET_MODEL', 'claude-sonnet-4-6', null],
-    ['opus', 'CODEMIE_OPUS_MODEL', 'claude-opus-5', null],
-    ['haiku', 'CODEMIE_HAIKU_MODEL', 'claude-haiku-4-5', 'claude-haiku-4-5'],
-  ] as const)(
-    'applies the same rule to the %s tier var regardless of CODEMIE_MODEL_SOURCE',
-    async (tier, envVar, bareId, expectedSelected) => {
-      fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: bareId })]);
+  it('leaves a bare id bare when the live entry reports a smaller window', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-haiku-4-5', max_input_tokens: TWO_HUNDRED_K }),
+    ]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const env = freshEnv({ CODEMIE_MODEL: 'claude-haiku-4-5' });
+
+    expect(await resolveClaudeModel(env, 'model')).toBeNull();
+  });
+
+  it.each(['claude-sonnet-4-6', 'claude-sonnet-4-6[1m]'])(
+    'decides nothing when the entry reports no window — "%s" is left exactly as configured',
+    async (configured) => {
+      fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-sonnet-4-6' })]);
       const { resolveClaudeModel } = await import('../claude.models.js');
 
-      const env = freshEnv({ [envVar]: `${bareId}[1m]`, CODEMIE_MODEL_SOURCE: 'cli' });
-      const result = await resolveClaudeModel(env, tier);
+      const env = freshEnv({ CODEMIE_MODEL: configured });
 
-      if (expectedSelected === null) {
-        expect(result).toBeNull();
-        expect(env[envVar]).toBe(`${bareId}[1m]`);
-      } else {
-        expect(result?.selectedModel).toBe(expectedSelected);
-      }
+      expect(await resolveClaudeModel(env, 'model')).toBeNull();
+      expect(env.CODEMIE_MODEL).toBe(configured);
     }
   );
 
-  it('never strips "[1m]" from a live router id, even one whose name reads as Haiku', async () => {
+  it('treats exactly 1_000_000 as a 1M window and adds "[1m]" to a bare id', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', max_input_tokens: 1_000_000 }),
+    ]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const result = await resolveClaudeModel(freshEnv({ CODEMIE_MODEL: 'claude-sonnet-4-6' }), 'model');
+
+    expect(result?.selectedModel).toBe('claude-sonnet-4-6[1m]');
+    expect(result?.reason).toBe('one-million-enabled');
+  });
+
+  it('treats 999_999 as below 1M: strips "[1m]" from a suffixed id and leaves a bare id bare', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', max_input_tokens: 999_999 }),
+    ]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    const stripped = await resolveClaudeModel(freshEnv({ CODEMIE_MODEL: 'claude-sonnet-4-6[1m]' }), 'model');
+    const bare = await resolveClaudeModel(freshEnv({ CODEMIE_MODEL: 'claude-sonnet-4-6' }), 'model');
+
+    expect(stripped?.selectedModel).toBe('claude-sonnet-4-6');
+    expect(stripped?.reason).toBe('one-million-unsupported');
+    expect(bare).toBeNull();
+  });
+
+  it.each([
+    ['a numeric string', '1000000'],
+    ['null', null],
+  ])('treats %s as an absent window and leaves the id untouched', async (_label, value) => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-4-6', max_input_tokens: value as unknown as number }),
+    ]);
+    const { resolveClaudeModel } = await import('../claude.models.js');
+
+    for (const configured of ['claude-sonnet-4-6', 'claude-sonnet-4-6[1m]']) {
+      const env = freshEnv({ CODEMIE_MODEL: configured });
+
+      expect(await resolveClaudeModel(env, 'model')).toBeNull();
+      expect(env.CODEMIE_MODEL).toBe(configured);
+    }
+  });
+
+  it('never touches "[1m]" on a router, which carries no window', async () => {
     fetchCodeMieLlmModelsMock.mockResolvedValue([
       { ...model({ deployment_name: 'sy-signal-claude-sonnet-haiku' }), is_router: true },
     ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'sy-signal-claude-sonnet-haiku[1m]' });
-    const result = await resolveClaudeModel(env, 'model');
 
-    expect(result).toBeNull();
+    expect(await resolveClaudeModel(env, 'model')).toBeNull();
     expect(env.CODEMIE_MODEL).toBe('sy-signal-claude-sonnet-haiku[1m]');
   });
 
-  it('replaces a retired "[1m]" model with a plain id when the replacement is not 1M-capable', async () => {
-    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-haiku-4-5' })]);
+  it.each([
+    ['sonnet', 'CODEMIE_SONNET_MODEL', 'claude-sonnet-4-6', ONE_MILLION, 'claude-sonnet-4-6[1m]'],
+    ['opus', 'CODEMIE_OPUS_MODEL', 'claude-opus-5', ONE_MILLION, 'claude-opus-5[1m]'],
+    ['haiku', 'CODEMIE_HAIKU_MODEL', 'claude-haiku-4-5', TWO_HUNDRED_K, null],
+  ] as const)(
+    'sizes the %s tier var from the catalog regardless of CODEMIE_MODEL_SOURCE',
+    async (tier, envVar, bareId, window, expectedSelected) => {
+      fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: bareId, max_input_tokens: window })]);
+      const { resolveClaudeModel } = await import('../claude.models.js');
+
+      const env = freshEnv({ [envVar]: bareId, CODEMIE_MODEL_SOURCE: 'cli' });
+      const result = await resolveClaudeModel(env, tier);
+
+      expect(result?.selectedModel ?? null).toBe(expectedSelected);
+    }
+  );
+
+  it('gives the replacement of a retired model its own window, not the retired model\'s', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-haiku-4-5', max_input_tokens: TWO_HUNDRED_K }),
+    ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-4-1[1m]' });
     const result = await resolveClaudeModel(env, 'model');
 
     expect(result?.selectedModel).toBe('claude-haiku-4-5');
+    expect(result?.reason).toBe('unavailable');
   });
 
-  it('does not add "[1m]" when healing a retired model that never asked for it', async () => {
-    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-opus-5' })]);
+  it('gives a 1M replacement "[1m]" even when the retired model never asked for it', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-opus-5', max_input_tokens: ONE_MILLION }),
+    ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-4-1' });
     const result = await resolveClaudeModel(env, 'model');
 
-    expect(result?.selectedModel).toBe('claude-opus-5');
+    expect(result?.selectedModel).toBe('claude-opus-5[1m]');
     expect(result?.reason).toBe('unavailable');
   });
 
   it('never double-suffixes a replacement whose catalog id already carries "[1m]"', async () => {
-    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-opus-5[1m]' })]);
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-opus-5[1m]', max_input_tokens: ONE_MILLION }),
+    ]);
     const { resolveClaudeModel } = await import('../claude.models.js');
 
     const env = freshEnv({ CODEMIE_MODEL: 'claude-opus-4-1[1m]' });
     const result = await resolveClaudeModel(env, 'model');
 
     expect(result?.selectedModel).toBe('claude-opus-5[1m]');
-  });
-});
-
-describe('supportsOneMillionContext', () => {
-  it.each([
-    ['claude-sonnet-4-6', true],
-    ['claude-sonnet-4-5-20250929', false],
-    ['claude-sonnet-4-20250514', false],
-    ['claude-opus-4-6', true],
-    ['claude-opus-4-7', true],
-    ['claude-opus-4-5-20251101', false],
-    ['claude-sonnet-5', true],
-    ['claude-opus-5', true],
-    ['claude-fable-5', true],
-    ['claude-haiku-4-5-20251001', false],
-    ['claude-haiku-5', false],
-    ['claude-3-5-sonnet', false],
-    ['claude-4-5-sonnet', false],
-    ['claude-4-6-sonnet', true],
-    ['claude-4-10-sonnet', true],
-    ['claude-4-10-opus', true],
-    ['us.anthropic.claude-sonnet-4-6-v1:0', true],
-    ['claude-router-premium', false],
-  ])('supportsOneMillionContext(%s) is %s', async (id, expected) => {
-    const { supportsOneMillionContext } = await import('../claude.models.js');
-    expect(supportsOneMillionContext(id)).toBe(expected);
   });
 });
 
@@ -270,47 +353,59 @@ describe('buildModelPickerOptions', () => {
     vi.restoreAllMocks();
   });
 
-  it('synthesizes [1m] rows for 1M-capable base models, positioned right after each base id', async () => {
+  it('lists each model once, at its max window: "[1m]" id for 1M models, bare id otherwise', async () => {
     fetchCodeMieLlmModelsMock.mockResolvedValue([
-      model({ deployment_name: 'claude-sonnet-4-6', label: 'Sonnet 4.6' }),
-      model({ deployment_name: 'claude-haiku-4-5', label: 'Haiku 4.5' }),
-      { ...model({ deployment_name: 'claude-router-premium' }), is_router: true },
+      model({ deployment_name: 'claude-sonnet-4-6', label: 'Sonnet 4.6', max_input_tokens: ONE_MILLION }),
+      model({ deployment_name: 'claude-haiku-4-5', label: 'Haiku 4.5', max_input_tokens: TWO_HUNDRED_K }),
+      { ...model({ deployment_name: 'claude-router-premium', label: 'Premium Router' }), is_router: true },
     ]);
     const { buildModelPickerOptions } = await import('../claude.models.js');
 
     const options = await buildModelPickerOptions(freshEnv());
 
-    // Find indices of base models
-    const sonnet46Idx = options.findIndex((o) => o.model === 'claude-sonnet-4-6');
-    const haiku45Idx = options.findIndex((o) => o.model === 'claude-haiku-4-5');
-    const routerIdx = options.findIndex((o) => o.model === 'claude-router-premium');
-
-    expect(sonnet46Idx).toBeGreaterThanOrEqual(0);
-    expect(haiku45Idx).toBeGreaterThanOrEqual(0);
-    expect(routerIdx).toBeGreaterThanOrEqual(0);
-
-    // 1M row must come right after base Sonnet
-    const sonnet1mIdx = options.findIndex((o) => o.model === 'claude-sonnet-4-6[1m]');
-    expect(sonnet1mIdx).toBe(sonnet46Idx + 1);
-    expect(options[sonnet1mIdx].label).toBe('Sonnet 4.6 (1M context)');
-
-    // No 1M row for non-capable Haiku
-    const haiku1mIdx = options.findIndex((o) => o.model === 'claude-haiku-4-5[1m]');
-    expect(haiku1mIdx).toBe(-1);
-
-    // No 1M row for router
-    const router1mIdx = options.findIndex((o) => o.model === 'claude-router-premium[1m]');
-    expect(router1mIdx).toBe(-1);
-
-    // Each base id appears exactly once
-    expect(options.filter((o) => o.model === 'claude-sonnet-4-6').length).toBe(1);
-    expect(options.filter((o) => o.model === 'claude-haiku-4-5').length).toBe(1);
-    expect(options.filter((o) => o.model === 'claude-router-premium').length).toBe(1);
+    expect(options).toHaveLength(3);
+    expect(options.find((o) => o.label === 'Sonnet 4.6')?.model).toBe('claude-sonnet-4-6[1m]');
+    expect(options.find((o) => o.label === 'Haiku 4.5')?.model).toBe('claude-haiku-4-5');
+    expect(options.find((o) => o.label === 'Premium Router')?.model).toBe('claude-router-premium');
   });
 
-  it('never synthesizes a second [1m] onto a catalog id that already ends in [1m]', async () => {
+  it('never adds a second "(1M context)" row for a 1M model', async () => {
     fetchCodeMieLlmModelsMock.mockResolvedValue([
-      model({ deployment_name: 'claude-sonnet-5[1m]', label: 'Sonnet 5 1M' }),
+      model({ deployment_name: 'claude-sonnet-5', label: 'Sonnet 5', max_input_tokens: ONE_MILLION }),
+    ]);
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    expect(options.map((o) => o.model)).toEqual(['claude-sonnet-5[1m]']);
+    expect(options.some((o) => o.label.includes('1M context'))).toBe(false);
+  });
+
+  it('leaves a model with no reported window as its bare id', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([model({ deployment_name: 'claude-sonnet-5', label: 'Sonnet 5' })]);
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    expect(options.map((o) => o.model)).toEqual(['claude-sonnet-5']);
+  });
+
+  it('picks the "[1m]" id at exactly 1_000_000 and the bare id at 999_999', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-5', label: 'Sonnet 5', max_input_tokens: 1_000_000 }),
+      model({ deployment_name: 'claude-haiku-5', label: 'Haiku 5', max_input_tokens: 999_999 }),
+    ]);
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    expect(options.find((o) => o.label === 'Sonnet 5')?.model).toBe('claude-sonnet-5[1m]');
+    expect(options.find((o) => o.label === 'Haiku 5')?.model).toBe('claude-haiku-5');
+  });
+
+  it('never double-suffixes a catalog id that already ends in [1m]', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-5[1m]', label: 'Sonnet 5 1M', max_input_tokens: ONE_MILLION }),
     ]);
     const { buildModelPickerOptions } = await import('../claude.models.js');
 

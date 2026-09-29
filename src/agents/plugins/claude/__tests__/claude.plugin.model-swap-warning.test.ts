@@ -95,6 +95,20 @@ describe('Claude Plugin – model swap warning', () => {
     expect(env.CODEMIE_MODEL).toBe('claude-opus-4-5');
   });
 
+  it('applies "[1m]" silently when the catalog reports a 1M window for the configured model', async () => {
+    resolveModelTierTo({
+      selectedModel: 'claude-opus-5[1m]',
+      availableModels: ['claude-opus-5'],
+      reason: 'one-million-enabled',
+    });
+    const env: HookEnv = { CODEMIE_MODEL: 'claude-opus-5' };
+
+    await beforeRun(env, {});
+
+    expect(stderr).toEqual([]);
+    expect(env.CODEMIE_MODEL).toBe('claude-opus-5[1m]');
+  });
+
   it('keeps the "not available" warning and models-list hint for a retired model', async () => {
     resolveModelTierTo({
       selectedModel: 'claude-opus-5',
