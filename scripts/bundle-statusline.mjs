@@ -17,11 +17,23 @@
  */
 
 import * as esbuild from 'esbuild';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
+
+// The rate card is built by the same code the analytics report prices with (priceTable() merges
+// pricing.json with CodeMie-only rows such as `claude-smart-router`) and inlined into the bundle,
+// so the statusline has no runtime dependency on a sibling file that can be missing or stale.
+// Runs after `tsc`, which is where dist/utils/pricing.js comes from (see the `build` script).
+const pricingModule = join(rootDir, 'dist/utils/pricing.js');
+let priceTable;
+try {
+  ({ priceTable } = await import(pathToFileURL(pricingModule).href));
+} catch (error) {
+  throw new Error(`Cannot embed the rate card: ${pricingModule} is missing — run \`tsc\` (npm run build) first. ${error.message}`);
+}
 
 await esbuild.build({
   entryPoints: [join(rootDir, 'src/agents/plugins/claude/plugin/statusline.ts')],
@@ -31,6 +43,7 @@ await esbuild.build({
   format: 'esm',
   target: 'node20',
   tsconfig: join(rootDir, 'tsconfig.json'),
+  define: { __CODEMIE_PRICE_TABLE__: JSON.stringify(JSON.stringify(priceTable())) },
   logLevel: 'info',
 });
 

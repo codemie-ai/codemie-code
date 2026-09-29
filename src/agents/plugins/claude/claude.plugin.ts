@@ -306,6 +306,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
       }
 
+      // Keep an already-installed statusline in step with this CLI version: the deployed script is
+      // a copy, so without this an upgrade (e.g. a corrected rate card) never reaches it.
+      // Best-effort and a no-op when the statusline is not installed.
+      try {
+        const { refreshStatuslineIfStale } = await import('./statusline-installer.js');
+        await refreshStatuslineIfStale();
+      } catch {
+        // the statusline must never block a launch
+      }
+
       // Statusline setup: when --status is passed, ensure the CodeMie statusline is
       // installed — the same installer `codemie install statusline` uses, so there is
       // exactly one statusline implementation instead of a separate duplicated one here.

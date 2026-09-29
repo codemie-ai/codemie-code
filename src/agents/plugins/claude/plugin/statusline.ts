@@ -344,12 +344,15 @@ export async function resolveActualModel(transcriptPath, { readTail = defaultRea
 //      upstream populates it, split into 5m/1h buckets that bill at different rates. Prefer the
 //      split when it is non-zero, since 1h writes cost more than the flat rate assumes.
 //
-// The rate card is `pricing.json`, deployed next to this script by the statusline installer so
-// there is one source of truth for rates. Without it we fall back to Claude Code's figure.
+// The rate card is inlined into the bundle at build time by scripts/bundle-statusline.mjs (the same
+// priceTable() the analytics report prices with), so there is no sibling file to go missing or stale.
+// Run unbundled (unit tests, ts sources) there is no embedded card and callers inject `readPrices`.
 
-const PRICING_FILENAME = 'codemie-pricing.json';
+// Replaced by esbuild `define` with the serialized rate card; absent outside the bundle.
+declare const __CODEMIE_PRICE_TABLE__: string | undefined;
+
 const COST_CACHE_FILE = path.join(HOME, 'statusline-cost-cache.json');
-const COST_CACHE_SCHEMA = 1; // bump when the cached shape changes, to discard pre-upgrade entries
+const COST_CACHE_SCHEMA = 2; // bump when the cached shape changes, to discard pre-upgrade entries
 
 /**
  * Identity of the transcript set as it is on disk right now: path, size and mtime of each file.
@@ -370,8 +373,8 @@ async function sourceSignature(paths, stat) {
 }
 
 async function defaultReadPrices() {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  return JSON.parse(await fs.readFile(path.join(here, PRICING_FILENAME), 'utf8'));
+  if (typeof __CODEMIE_PRICE_TABLE__ === 'undefined') throw new Error('no embedded rate card');
+  return JSON.parse(__CODEMIE_PRICE_TABLE__);
 }
 
 // Both sides of the lookup must be folded the same way: the id through canonicalizeModelId(), the
@@ -413,8 +416,8 @@ export function lookupRate(table, modelId) {
 }
 
 function messageCost(rate, usage) {
-  // The deployed card is the built table, whose cache-write field is `cacheCreation`. Accept the raw
-  // `cacheWrite` spelling too, so a card deployed by an older install still prices cache writes
+  // The embedded card is the built table, whose cache-write field is `cacheCreation`. Accept the raw
+  // `cacheWrite` spelling too, so a hand-made or raw pricing.json still prices cache writes
   // instead of silently charging zero for them.
   const cacheWriteRate = rate.cacheCreation ?? rate.cacheWrite ?? 0;
   const split = usage.cache_creation;
@@ -528,8 +531,9 @@ export async function computeSessionCost(transcriptPath, {
       // isBedrockRegionalPremium() below. canonicalizeModelId() inside lookupRate strips the same
       // qualifier for the price lookup itself, so using the raw id here changes nothing about
       // which rate is selected.
-      const model = parseBackendModelName(message) ?? parseRoutingHeaders(message)?.routedModel ?? message.model ?? '';
-      byMessage.set(id, { model, usage: message.usage });
+      const routing = parseRoutingHeaders(message);
+      const model = parseBackendModelName(message) ?? routing?.routedModel ?? message.model ?? '';
+      byMessage.set(id, { model, usage: message.usage, classifierCost: routing?.classifierCostUSD ?? 0 });
     }
   }
   // A readable transcript with no priced turns yet is a session that has genuinely spent nothing
@@ -537,7 +541,11 @@ export async function computeSessionCost(transcriptPath, {
   // a fresh session `~$0.0000`, implying an estimate where there is simply no spend.
   let cost = 0;
   let exact = true;
-  for (const { model, usage } of byMessage.values()) {
+  for (const { model, usage, classifierCost } of byMessage.values()) {
+    // The router's classifier hop is billed on top of the generation and reported per turn in a
+    // routing header; the analytics report adds it to the session total, so this must too. It counts
+    // even when the generation model has no rate card entry.
+    cost += classifierCost;
     const rate = lookupRate(table, model);
     if (!rate) { exact = false; continue; }
     cost += messageCost(rate, usage);

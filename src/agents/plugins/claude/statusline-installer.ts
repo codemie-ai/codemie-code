@@ -3,7 +3,6 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getDirname, resolveHomeDir } from '@/utils/paths.js';
-import { priceTable } from '@/utils/pricing.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { ConfigurationError } from '@/utils/errors.js';
@@ -17,8 +16,6 @@ export const STATUSLINE_DESCRIPTION = 'Project, branch, model, context usage, se
 
 const SCRIPT_FILENAME = 'codemie-budget-status.js';
 const LEGACY_SCRIPT_FILENAME = 'codemie-statusline.mjs';
-// Must match PRICING_FILENAME in plugin/statusline.ts — the script resolves it beside itself.
-const PRICING_FILENAME = 'codemie-pricing.json';
 // scripts/bundle-statusline.mjs's esbuild `outfile` — a single self-contained ESM artifact with
 // zero sibling dependencies (statusline.ts's own project imports are resolved and inlined at
 // build time). Keep this in sync with that script's `outfile` basename.
@@ -39,50 +36,63 @@ export interface InstallStatuslineResult {
   alreadyConfigured: boolean;
 }
 
+// scripts/bundle-statusline.mjs (esbuild) bundles statusline.ts's project imports into this
+// single self-contained file at build time — no sibling files to deploy alongside it, the rate
+// card included. A missing bundle means the statusline can't run at all, so callers that need it
+// let this throw.
+function readPackagedBundle(): Promise<string> {
+  return readFile(join(getDirname(import.meta.url), 'plugin', BUNDLE_FILENAME), 'utf-8');
+}
+
+async function writeScript(scriptPath: string, content: string): Promise<void> {
+  await writeFile(scriptPath, content, 'utf-8');
+  if (process.platform !== 'win32') {
+    await chmod(scriptPath, 0o755);
+  }
+}
+
+/**
+ * Brings an already-installed statusline script up to date with the bundle shipped in this CLI
+ * version. The deployed script is a copy, so a CLI upgrade (new rate card, pricing fix) leaves it
+ * frozen until the user reinstalls — this closes that gap. Compares content rather than a version
+ * string, so it also catches a rebuilt dev bundle. Only rewrites the script: an absent statusline
+ * stays absent (installing is the user's choice) and settings.json is never touched.
+ * Best-effort: never throws, since it runs on the launch path.
+ */
+export async function refreshStatuslineIfStale(): Promise<boolean> {
+  try {
+    const scriptPath = join(resolveHomeDir('.claude'), SCRIPT_FILENAME);
+    if (!existsSync(scriptPath)) {
+      return false;
+    }
+    const packaged = await readPackagedBundle();
+    if ((await readFile(scriptPath, 'utf-8')) === packaged) {
+      return false;
+    }
+    await writeScript(scriptPath, packaged);
+    logger.debug('[Statusline] Refreshed deployed script to match the installed CLI version');
+    return true;
+  } catch (error) {
+    logger.debug(
+      '[Statusline] Could not refresh deployed script',
+      ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
+    );
+    return false;
+  }
+}
+
 export async function installStatusline(): Promise<InstallStatuslineResult> {
   const claudeHome = resolveHomeDir('.claude');
   const scriptPath = join(claudeHome, SCRIPT_FILENAME);
   const settingsPath = join(claudeHome, 'settings.json');
 
-  // scripts/bundle-statusline.mjs (esbuild) bundles statusline.ts's project imports into this
-  // single self-contained file at build time — no sibling files to deploy alongside it. Unlike
-  // codemie-pricing.json below, a missing bundle means the statusline can't run at all, so this
-  // is intentionally not wrapped in a best-effort try/catch — let it throw.
-  const scriptContent = await readFile(
-    join(getDirname(import.meta.url), 'plugin', BUNDLE_FILENAME),
-    'utf-8'
-  );
+  const scriptContent = await readPackagedBundle();
 
   if (!existsSync(claudeHome)) {
     await mkdir(claudeHome, { recursive: true });
   }
 
-  await writeFile(scriptPath, scriptContent, 'utf-8');
-  if (process.platform !== 'win32') {
-    await chmod(scriptPath, 0o755);
-  }
-
-  // The statusline prices each session from the transcript itself, so it needs the rate card at
-  // runtime. It runs standalone (`node <path>` after this process exits) and cannot import from
-  // the project, so deploy the table beside it rather than duplicating rates into the script.
-  //
-  // Serialize priceTable(), NOT the raw pricing.json: the vendored file has no `claude-smart-router`
-  // row — that rate lives in CODEMIE_PRICES and is merged in only when the table is built. Copying
-  // the raw file left the statusline unable to price exactly the router sessions this feature exists
-  // for, scoring them $0 and degrading the total to an estimate.
-  // Best-effort: without it the statusline falls back to Claude Code's own cost figure.
-  try {
-    await writeFile(
-      join(claudeHome, PRICING_FILENAME),
-      JSON.stringify(priceTable()),
-      'utf-8'
-    );
-  } catch (error) {
-    logger.warn(
-      '[Statusline] Could not deploy pricing.json; session cost will fall back to Claude Code\'s estimate',
-      ...sanitizeLogArgs({ error: error instanceof Error ? error.message : String(error) })
-    );
-  }
+  await writeScript(scriptPath, scriptContent);
 
   let settings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
