@@ -377,6 +377,63 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
   }
 }
 
+/** Catalog entries usable for a tier, best first; a malformed entry (no usable id) is skipped, not fatal. */
+function rankClaudeCandidates(catalog: LlmModel[], tier: ClaudeModelTier): RankedClaudeModel[] {
+  return catalog
+    .filter((model) => isClaudeCompatibleModel(model, tier))
+    .map((model) => {
+      try {
+        return rankModel(model);
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is RankedClaudeModel => entry !== null)
+    .sort(compareRankedModels);
+}
+
+/** Keeps `currentModel` in place, only re-sizing its context window against the catalog. */
+function keepConfiguredModel(catalog: LlmModel[], tier: ClaudeModelTier, currentModel: string | undefined, availableModels: string[]): ClaudeModelResolution | null {
+  if (!currentModel) return null;
+  const currentBareId = stripOneMillionSuffix(currentModel);
+  const selectedModel = applyContextWindow(currentModel, findServableEntry(catalog, currentBareId)?.max_input_tokens);
+  if (selectedModel === currentModel) return null;
+  const enabled = ONE_MILLION_SUFFIX_PATTERN.test(selectedModel);
+  logger.debug(
+    `[claude-models] Model "${currentModel}" for tier "${tier}" ${enabled ? 'has a 1M' : 'has no 1M'} context window in the catalog; using "${selectedModel}"`
+  );
+  return { selectedModel, availableModels, reason: enabled ? 'one-million-enabled' : 'one-million-unsupported' };
+}
+
+/** A failed catalog fetch keeps the configured model; with none configured, guessing a static id would go stale, so throw. */
+function handleCatalogFetchFailure(error: unknown, tier: ClaudeModelTier, currentModel: string | undefined): null {
+  logger.debug(`[claude-models] Catalog fetch failed for tier "${tier}"; keeping configured model`, {
+    error: error instanceof Error ? error.message : String(error),
+  });
+  if (currentModel) return null;
+  throw new ConfigurationError(
+    `Could not resolve a CodeMie model for Claude tier "${tier}": the model catalog is unavailable and no model is configured. Run "codemie setup" or set the ${TIER_ENV_VAR[tier]} environment variable explicitly.`
+  );
+}
+
+/** Nothing live matches `currentModel` (or none is set): pick the best-ranked candidate, or keep/throw when there is none. */
+function replaceRetiredModel(catalog: LlmModel[], tier: ClaudeModelTier, currentModel: string | undefined, ranked: RankedClaudeModel[]): ClaudeModelResolution | null {
+  if (ranked.length === 0) {
+    if (currentModel) {
+      logger.debug(`[claude-models] No compatible CodeMie models found for tier "${tier}"; keeping configured model`);
+      return null;
+    }
+    throw new ConfigurationError(`No CodeMie model compatible with Claude tier "${tier}" is available.`);
+  }
+
+  // The replacement gets its own maximum window; nothing carries over from the retired model.
+  const selectedModel = applyContextWindow(ranked[0].id, findServableEntry(catalog, ranked[0].id)?.max_input_tokens);
+  if (currentModel) {
+    logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${selectedModel}`);
+  }
+  return { selectedModel, availableModels: ranked.map((entry) => entry.id), reason: 'unavailable' };
+}
+
 /**
  * Resolves the live CodeMie model id for a Claude tier, or `null` when the
  * currently configured model is still present in the live catalog and already in the form
@@ -396,55 +453,22 @@ export async function resolveClaudeModel(
   try {
     catalog = await fetchCatalog(env);
   } catch (error) {
-    logger.debug(`[claude-models] Catalog fetch failed for tier "${tier}"; keeping configured model`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (currentModel) return null;
-
-    // No live catalog and nothing currently configured — guessing a static
-    // model id here would just be another hardcoded value that goes stale.
-    // Fail clearly instead and tell the user how to set one explicitly.
-    throw new ConfigurationError(
-      `Could not resolve a CodeMie model for Claude tier "${tier}": the model catalog is unavailable and no model is configured. Run "codemie setup" or set the ${TIER_ENV_VAR[tier]} environment variable explicitly.`
-    );
+    return handleCatalogFetchFailure(error, tier, currentModel);
   }
 
-  const ranked = catalog
-    .filter((model) => isClaudeCompatibleModel(model, tier))
-    .map((model) => {
-      try {
-        return rankModel(model);
-      } catch {
-        // A malformed catalog entry (no usable id) must not abort ranking for
-        // every other otherwise-valid candidate in this tier.
-        return null;
-      }
-    })
-    .filter((entry): entry is RankedClaudeModel => entry !== null)
-    .sort(compareRankedModels);
+  const ranked = rankClaudeCandidates(catalog, tier);
   const availableModels = ranked.map((entry) => entry.id);
 
   // A configured `<id>[1m]` is looked up by its bare id: the live catalog only carries bare ids
   // (a literal `<id>[1m]` catalog id is still honored, hence both forms are tried).
-  const currentBareId = currentModel ? stripOneMillionSuffix(currentModel) : undefined;
-  const lookupIds = currentModel ? [currentModel, currentBareId as string] : [];
+  const lookupIds = currentModel ? [currentModel, stripOneMillionSuffix(currentModel)] : [];
 
-  // Keeps `currentModel` in place, only re-sizing its context window against the catalog.
-  const keepWithContextWindow = (): ClaudeModelResolution | null => {
-    if (!currentModel || !currentBareId) return null;
-    const selectedModel = applyContextWindow(currentModel, findServableEntry(catalog, currentBareId)?.max_input_tokens);
-    if (selectedModel === currentModel) return null;
-    const enabled = ONE_MILLION_SUFFIX_PATTERN.test(selectedModel);
-    logger.debug(
-      `[claude-models] Model "${currentModel}" for tier "${tier}" ${enabled ? 'has a 1M' : 'has no 1M'} context window in the catalog; using "${selectedModel}"`
-    );
-    return { selectedModel, availableModels, reason: enabled ? 'one-million-enabled' : 'one-million-unsupported' };
-  };
+  const keepWithContextWindow = (): ClaudeModelResolution | null =>
+    keepConfiguredModel(catalog, tier, currentModel, availableModels);
 
-  // A model the user just chose is never stale. CODEMIE_MODEL_SOURCE (set by AgentCLI, and by
-  // bin/codemie-copilot.js before it) marks a value that arrived from `--model` or the
-  // environment rather than from a saved profile. Only the default `model` tier is reachable
-  // that way, so haiku/sonnet/opus keep resolving against the live catalog as before.
+  // A model the user just chose is never stale. CODEMIE_MODEL_SOURCE (set by AgentCLI and
+  // bin/codemie-copilot.js) marks a `--model`/environment value, reachable only on the default
+  // `model` tier, so haiku/sonnet/opus keep resolving against the live catalog.
   if (currentModel && tier === 'model' && EXPLICIT_MODEL_SOURCES.has(env.CODEMIE_MODEL_SOURCE ?? '')) {
     logger.debug(
       `[claude-models] Model "${currentModel}" was set explicitly (source: ${env.CODEMIE_MODEL_SOURCE}); skipping auto-heal, sizing context window only`
@@ -453,27 +477,17 @@ export async function resolveClaudeModel(
   }
 
   if (lookupIds.some((id) => availableModels.includes(id))) {
-    // Beyond the explicit CLI-flag override above, there's no signal that an
-    // implicit (profile-sourced) value was deliberately chosen. So it's left
-    // untouched as long as it's still in the catalog, even if a better-ranked
-    // model now exists — it only gets re-resolved once fully retired.
+    // No signal says an implicit (profile-sourced) value was deliberately chosen, so it is kept
+    // while still in the catalog, even if a better-ranked model exists — re-resolved only once retired.
     return keepWithContextWindow();
   }
 
-  // CLAUDE_FAMILY_PATTERNS is a heuristic over the model id whose job is picking a sensible
-  // Claude model automatically. It cannot see through a gateway or router alias whose id says
-  // nothing about the family behind it (`gpt-smart-router`, an internal deployment name), so
-  // using it to *validate* an already-configured id silently replaces working models. Check
-  // the unfiltered catalog first: if the deployment is still there and can serve a session,
-  // keep what is configured.
-  //
-  // Deliberately NOT narrowed to `tier === 'model'` the way the explicit-source skip above is.
-  // A tier var legitimately holds an out-of-family id: pinning a router alias as the haiku tier
-  // (`CODEMIE_HAIKU_MODEL=claude-smart-router`) matches CLAUDE_FAMILY_PATTERNS but not TIER_PATTERN
-  // /haiku/i, so it is filtered out of `ranked` and reaches here. Re-resolving it would replace the
-  // router with a literal haiku model and defeat the routing it was configured for. The cost is the
-  // same tradeoff already accepted above for in-family ids: a stale or mis-tiered value survives
-  // until it is fully retired from the catalog, rather than being silently swapped.
+  // CLAUDE_FAMILY_PATTERNS only picks a sensible Claude model automatically; it cannot see through
+  // a gateway or router alias (`gpt-smart-router`), so using it to *validate* a configured id would
+  // silently replace working models. If the deployment is live in the unfiltered catalog, keep it.
+  // Deliberately NOT narrowed to `tier === 'model'`: a tier var may pin a router alias
+  // (`CODEMIE_HAIKU_MODEL=claude-smart-router`) that is filtered out of `ranked`; re-resolving it
+  // would defeat the routing. Same accepted tradeoff as above: a stale value survives until retired.
   if (lookupIds.some((id) => findServableEntry(catalog, id))) {
     logger.debug(
       `[claude-models] Model "${currentModel}" for tier "${tier}" is outside the Claude family but live in the catalog; keeping it`
@@ -481,20 +495,5 @@ export async function resolveClaudeModel(
     return keepWithContextWindow();
   }
 
-  if (ranked.length === 0) {
-    if (currentModel) {
-      logger.debug(`[claude-models] No compatible CodeMie models found for tier "${tier}"; keeping configured model`);
-      return null;
-    }
-    throw new ConfigurationError(`No CodeMie model compatible with Claude tier "${tier}" is available.`);
-  }
-
-  // The replacement gets its own maximum window; nothing carries over from the retired model.
-  const selectedModel = applyContextWindow(ranked[0].id, findServableEntry(catalog, ranked[0].id)?.max_input_tokens);
-
-  if (currentModel) {
-    logger.notice(`[claude-models] Model "${currentModel}" for tier "${tier}" is no longer available; switching to ${selectedModel}`);
-  }
-
-  return { selectedModel, availableModels, reason: 'unavailable' };
+  return replaceRetiredModel(catalog, tier, currentModel, ranked);
 }
