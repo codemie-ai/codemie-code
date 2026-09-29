@@ -524,13 +524,15 @@ describe('NpmPrefixOverrideCheck', () => {
     expect(messages.some((m) => m.startsWith('4. Optionally delete'))).toBe(true);
   });
 
-  it('omits the delete step when CodeMie itself runs from the legacy path', async () => {
+  it('keeps CodeMie and its agents in place when CodeMie itself runs from the legacy path', async () => {
     h.getUserNpmrcPrefixMock.mockResolvedValue(getLegacyNpmPrefixPath());
     h.getCodemieNpmPrefixMock.mockReturnValue(getLegacyNpmPrefixPath());
 
     const result = await new NpmPrefixOverrideCheck().run();
 
     expect(result.success).toBe(false);
+    const reinstallStep = result.details.find((d) => d.message.startsWith('3.'));
+    expect(reinstallStep?.message).toContain('leave @codemieai/code and agents installed by CodeMie');
     expect(result.details.some((d) => d.message.startsWith('4. Optionally delete'))).toBe(false);
   });
 
