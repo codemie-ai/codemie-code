@@ -12,10 +12,12 @@ export class ClaudeDesktopTelemetryAdapter implements LocalTelemetryAdapter {
   readonly clientType = 'claude-desktop';
   private readonly processors: SessionProcessor[] = [];
   private readonly sessionStore = new SessionStore();
+  private readonly metricsProcessor = new MetricsProcessor();
+  private readonly conversationsProcessor = new ConversationsProcessor();
 
   constructor() {
-    this.registerProcessor(new MetricsProcessor());
-    this.registerProcessor(new ConversationsProcessor());
+    this.registerProcessor(this.metricsProcessor);
+    this.registerProcessor(this.conversationsProcessor);
   }
 
   async discoverSessions(sinceMs: number): Promise<LocalTelemetryDiscoveredSession[]> {
@@ -27,6 +29,64 @@ export class ClaudeDesktopTelemetryAdapter implements LocalTelemetryAdapter {
     codemieSessionId: string
   ): Promise<ParsedSession> {
     return parseClaudeDesktopSession(discovered, codemieSessionId);
+  }
+
+  async applyBaseline(
+    parsedSession: ParsedSession,
+    cutoffMs: number,
+    context: ProcessingContext
+  ): Promise<void> {
+    const session = await this.sessionStore.loadSession(parsedSession.sessionId);
+    if (!session) {
+      logger.warn(`[claude-desktop-adapter] Session not found for baseline: ${parsedSession.sessionId}`);
+      return;
+    }
+
+    const pointer = await this.conversationsProcessor.computeBaselinePointer(
+      parsedSession,
+      cutoffMs,
+      context.agentSessionFile
+    );
+    const processedRecordIds = this.metricsProcessor.computeBaselineRecordIds(
+      parsedSession,
+      session.sync?.metrics?.processedRecordIds ?? [],
+      cutoffMs
+    );
+
+    session.sync ??= {};
+    session.sync.metrics = {
+      lastProcessedTimestamp: Date.now(),
+      totalDeltas: 0,
+      totalSynced: 0,
+      totalFailed: 0,
+      ...session.sync.metrics,
+      processedRecordIds
+    };
+    if (pointer.lastSyncedMessageUuid) {
+      session.sync.conversations = {
+        totalMessagesSynced: 0,
+        totalSyncAttempts: 0,
+        ...session.sync.conversations,
+        lastSyncedMessageUuid: pointer.lastSyncedMessageUuid,
+        lastSyncedHistoryIndex: Math.max(
+          session.sync.conversations?.lastSyncedHistoryIndex ?? -1,
+          pointer.lastSyncedHistoryIndex
+        )
+      };
+    }
+    if (session.runtimeCheckpoint) {
+      delete session.runtimeCheckpoint.baselineCutoffMs;
+    }
+
+    // One write: the pointers and the cleared marker land together, so a crash either
+    // replays the whole baseline or none of it.
+    await this.sessionStore.saveSession(session);
+    logger.info('[claude-desktop-adapter] Applied pre-daemon baseline', {
+      sessionId: parsedSession.sessionId,
+      cutoff: new Date(cutoffMs).toISOString(),
+      lastSyncedHistoryIndex: pointer.lastSyncedHistoryIndex,
+      skippedMetricRecords: processedRecordIds.length
+    });
   }
 
   private registerProcessor(processor: SessionProcessor): void {

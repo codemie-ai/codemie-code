@@ -201,6 +201,8 @@ export class DesktopTelemetryRuntime {
       }
 
       setRuntimeCheckpoint(existing, {
+        // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
+        ...existing.runtimeCheckpoint,
         externalSessionId: discovered.externalSessionId,
         transcriptPath: discovered.transcriptPath,
         lastDiscoveredAt: Date.now(),
@@ -230,11 +232,16 @@ export class DesktopTelemetryRuntime {
     // tentative TTL-window guess.
     this.config.repositoryResolver?.recordDiscoveredSession(discovered.agentSessionId, repository);
 
+    // A chat CodeMie has never synced that already existed when the daemon started: sync only
+    // what is written from now on. Backfilling its whole history for every such chat at once
+    // after an upgrade is what spiked backend load; the tracked session starts at the cutoff.
+    const baselineCutoffMs = discovered.createdAt < this.startedAt ? this.startedAt : undefined;
+
     const session: Session = {
       sessionId: randomUUID(),
       agentName: this.config.clientType,
       provider: this.config.provider,
-      startTime: discovered.createdAt,
+      startTime: baselineCutoffMs ?? discovered.createdAt,
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
@@ -251,7 +258,8 @@ export class DesktopTelemetryRuntime {
         externalSessionId: discovered.externalSessionId,
         transcriptPath: discovered.transcriptPath,
         lastDiscoveredAt: Date.now(),
-        lastSeenActivityAt: discovered.updatedAt
+        lastSeenActivityAt: discovered.updatedAt,
+        ...(baselineCutoffMs !== undefined && { baselineCutoffMs })
       }
     };
 
@@ -263,6 +271,14 @@ export class DesktopTelemetryRuntime {
   private async processSession(session: Session, discovered: LocalTelemetryDiscoveredSession): Promise<void> {
     const parsedSession = await this.adapter.parseSession(discovered, session.sessionId);
     const context = await this.buildProcessingContext(session, discovered);
+
+    // Persisted with the session, so a crash before this point still applies it next time.
+    const baselineCutoffMs = session.runtimeCheckpoint?.baselineCutoffMs;
+    if (baselineCutoffMs !== undefined && this.adapter.applyBaseline) {
+      await this.adapter.applyBaseline(parsedSession, baselineCutoffMs, context);
+      delete session.runtimeCheckpoint!.baselineCutoffMs;
+    }
+
     const result = await this.adapter.processParsedSession(parsedSession, context);
 
     if (result.totalRecords > 0) {

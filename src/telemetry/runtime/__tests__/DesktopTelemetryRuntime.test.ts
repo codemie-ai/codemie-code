@@ -14,6 +14,8 @@ const persistedSessions = new Map<string, Session>();
 // Simulated Claude Desktop transcripts: message count plus the stat() fingerprint.
 interface FakeTranscript {
   messages: number;
+  /** Write time of each message, so a baseline cutoff can tell old content from new. */
+  messageTimes: number[];
   mtimeMs: number;
   size: number;
 }
@@ -107,7 +109,12 @@ function transcriptPathFor(externalSessionId: string): string {
 /** Claude Desktop creates a chat with `messages` messages already in it. */
 function openDesktopChat(externalSessionId: string, messages: number, createdAt: number): void {
   const transcriptPath = transcriptPathFor(externalSessionId);
-  transcripts.set(transcriptPath, { messages, mtimeMs: createdAt, size: messages * 100 });
+  transcripts.set(transcriptPath, {
+    messages,
+    messageTimes: Array.from({ length: messages }, () => createdAt),
+    mtimeMs: createdAt,
+    size: messages * 100
+  });
   desktopSessions.set(externalSessionId, {
     externalSessionId,
     agentSessionId: `agent-${externalSessionId}`,
@@ -124,6 +131,7 @@ function openDesktopChat(externalSessionId: string, messages: number, createdAt:
 function appendMessages(externalSessionId: string, count: number): void {
   const transcript = transcripts.get(transcriptPathFor(externalSessionId))!;
   transcript.messages += count;
+  transcript.messageTimes.push(...Array.from({ length: count }, () => Date.now()));
   transcript.mtimeMs = Date.now();
   transcript.size += count * 100;
   touchDesktopChat(externalSessionId);
@@ -170,6 +178,18 @@ function createAdapter(): LocalTelemetryAdapter {
       }
 
       return { success: true, processors: {}, totalRecords: historyIndices.length, failedProcessors: [] };
+    }) as never,
+    // Mirrors the real baseline: messages written before the cutoff count as synced.
+    applyBaseline: vi.fn(async (parsed: { sessionId: string; metadata: { externalSessionId: string } }, cutoffMs: number) => {
+      const session = persistedSessions.get(parsed.sessionId)!;
+      const transcript = transcripts.get(transcriptPathFor(parsed.metadata.externalSessionId))!;
+      const before = transcript.messageTimes.filter(time => time < cutoffMs).length;
+      session.sync = {
+        ...session.sync,
+        conversations: { ...session.sync?.conversations, lastSyncedHistoryIndex: before - 1 }
+      };
+      delete session.runtimeCheckpoint!.baselineCutoffMs;
+      persistedSessions.set(session.sessionId, session);
     }) as never
   };
 }
@@ -340,7 +360,8 @@ describe('DesktopTelemetryRuntime', () => {
 
   describe('new session discovery', () => {
     it('adopts a session created after the daemon started and syncs its full history', async () => {
-      const daemon = await startDaemon(createAdapter());
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
       vi.setSystemTime(Date.now() + 5_000);
       openDesktopChat('ext-new', 3, Date.now());
 
@@ -348,13 +369,16 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSendSessionStart).toHaveBeenCalledOnce();
       expect(mockSync).toHaveBeenCalledOnce();
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
       expect(sentDeltas).toEqual([{ externalSessionId: 'ext-new', historyIndices: [0, 1, 2] }]);
     });
 
-    it('backfills a pre-existing chat never seen before exactly once when it becomes active', async () => {
+    it('does not backfill a pre-existing chat never seen before, but syncs what is written after start', async () => {
       openDesktopChat('ext-old', 4, T0 - 3_600_000);
-      const daemon = await startDaemon(createAdapter());
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
 
+      vi.setSystemTime(Date.now() + 1_000);
       appendMessages('ext-old', 1);
       await pollTicks(daemon, 1);
       for (let tick = 0; tick < 5; tick++) {
@@ -362,8 +386,43 @@ describe('DesktopTelemetryRuntime', () => {
         await pollTicks(daemon, 1);
       }
 
+      expect(adapter.applyBaseline).toHaveBeenCalledOnce();
+      expect(vi.mocked(adapter.applyBaseline!).mock.calls[0][1]).toBe(T0);
       expect(mockSync).toHaveBeenCalledOnce();
-      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-old', historyIndices: [0, 1, 2, 3, 4] }]);
+      // Only the message written after the daemon started; the four older ones stay local.
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-old', historyIndices: [4] }]);
+    });
+
+    it('starts the tracked session at the daemon start for a chat adopted without backfill', async () => {
+      openDesktopChat('ext-old', 4, T0 - 3_600_000);
+      const daemon = await startDaemon(createAdapter());
+
+      appendMessages('ext-old', 1);
+      await pollTicks(daemon, 1);
+
+      expect(persistedSessions.get(sessionIdFor('ext-old')!)!.startTime).toBe(T0);
+      const [startMetric] = mockSendSessionStart.mock.calls[0];
+      expect(startMetric).toMatchObject({ startTime: T0 });
+    });
+
+    it('applies a pending baseline after a crash instead of backfilling', async () => {
+      openDesktopChat('ext-old', 4, T0 - 3_600_000);
+      const firstAdapter = createAdapter();
+      const firstDaemon = await startDaemon(firstAdapter);
+      appendMessages('ext-old', 1);
+      // The daemon dies after persisting the new session but before the baseline lands.
+      vi.mocked(firstAdapter.applyBaseline!).mockRejectedValueOnce(new Error('killed'));
+      vi.setSystemTime(Date.now() + POLL_INTERVAL_MS);
+      await expect(firstDaemon.triggerPoll()).rejects.toThrow('killed');
+      expect(persistedSessions.get(sessionIdFor('ext-old')!)!.runtimeCheckpoint!.baselineCutoffMs).toBe(T0);
+
+      vi.setSystemTime(Date.now() + 60_000);
+      touchDesktopChat('ext-old');
+      const restartedAdapter = createAdapter();
+      await startDaemon(restartedAdapter);
+
+      expect(restartedAdapter.applyBaseline).toHaveBeenCalledOnce();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-old', historyIndices: [4] }]);
     });
   });
 
