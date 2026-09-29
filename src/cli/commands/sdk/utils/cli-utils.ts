@@ -90,7 +90,7 @@ export function handleSdkError(error: unknown, operation: string): never {
   logger.error("SDK operation failed", ...sanitizeLogArgs({ operation, error: msg }));
 
   if (error instanceof ApiError) {
-    const status = (error as ApiError & { status?: number }).status;
+    const status = error.statusCode ?? (error as ApiError & { status?: number }).status;
     if (status === 401 || status === 403) {
       console.error(
         chalk.red(
