@@ -57,11 +57,24 @@ function applyCommonOptions(command: Command): Command {
     .option('-v, --verbose', 'Show detailed session-level breakdown')
     .option('--export [format]', 'Write report: html (default), json, or both')
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
-    .option('--open', 'Open the generated HTML report in the default browser');
+    .option('--open', 'Open the generated HTML report in the default browser')
+    .option('--report-output <path>', 'Deprecated: use -o/--output instead');
 }
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
+    // Deprecated `--report-output <path>` aliases to -o/--output (removed in 1144b247d,
+    // restored as an alias so existing scripts keep working). Explicit -o/--output wins.
+    let output = options.output;
+    if (options.reportOutput !== undefined) {
+      if (output === undefined) {
+        console.log(chalk.yellow('\n! --report-output is deprecated; use -o/--output instead.'));
+        output = options.reportOutput;
+      } else {
+        console.log(chalk.yellow('\n! --report-output is deprecated and ignored; -o/--output takes precedence.'));
+      }
+    }
+
     // --export [format] / --open / -o resolution — validated FIRST, before loading any
     // sessions, so an invalid format (csv included) fails closed even when the source would
     // return zero sessions (no enrichment, no summary). `--open` with no `--export` implies
@@ -81,8 +94,8 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       }
     } else if (openFlag) {
       exportFormat = 'html';
-    } else if (options.output !== undefined) {
-      exportFormat = options.output.toLowerCase().endsWith('.json') ? 'json' : 'html';
+    } else if (output !== undefined) {
+      exportFormat = output.toLowerCase().endsWith('.json') ? 'json' : 'html';
     }
 
     const filter = parseFilterOptions(options);
@@ -172,7 +185,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
 
-      const targets = resolveOutputTargets(exportFormat, options.output, process.cwd(), userEmail);
+      const targets = resolveOutputTargets(exportFormat, output, process.cwd(), userEmail);
       let htmlPath = targets.html;
       let jsonPath = targets.json;
 
