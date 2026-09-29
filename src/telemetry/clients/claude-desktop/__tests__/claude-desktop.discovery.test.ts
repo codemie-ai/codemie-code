@@ -88,6 +88,55 @@ describe('discoverClaudeDesktopSessions — traversal resilience', () => {
     expect(sessions[0]?.agentSessionId).toBe('cli-abc');
   });
 
+  it('filters idle sessions by sinceMs before resolving companion metadata or transcripts', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockImplementation((async (dir: string) => {
+      if (dir === LOCAL_ROOT) return [fileEntry('local_idle.json')] as never;
+      return [] as never;
+    }) as unknown as typeof readdir);
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({
+        sessionId: 'local_idle',
+        cliSessionId: 'cli-idle',
+        cwd: '/repo',
+        createdAt: 1_000,
+        lastActivityAt: 2_000,
+      })
+    );
+
+    const { discoverClaudeDesktopSessions } = await import('../claude-desktop.discovery.js');
+    const sessions = await discoverClaudeDesktopSessions(5_000);
+
+    expect(sessions).toEqual([]);
+    // Only the metadata file itself: no companion read, no ~/.claude/projects scan.
+    expect(readFile).toHaveBeenCalledOnce();
+    expect(readFile).toHaveBeenCalledWith(join(LOCAL_ROOT, 'local_idle.json'), 'utf-8');
+    expect(readdir).not.toHaveBeenCalledWith(expect.stringContaining('projects'), expect.anything());
+  });
+
+  it('still discovers sessions active since sinceMs', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockImplementation((async (dir: string) => {
+      if (dir === LOCAL_ROOT) return [fileEntry('local_idle.json'), fileEntry('local_active.json')] as never;
+      return [] as never;
+    }) as unknown as typeof readdir);
+    vi.mocked(readFile).mockImplementation((async (path: string) => {
+      const isActive = path.includes('local_active');
+      return JSON.stringify({
+        sessionId: isActive ? 'local_active' : 'local_idle',
+        cliSessionId: isActive ? 'cli-active' : 'cli-idle',
+        cwd: '/repo',
+        createdAt: 1_000,
+        lastActivityAt: isActive ? 6_000 : 2_000,
+      });
+    }) as unknown as typeof readFile);
+
+    const { discoverClaudeDesktopSessions } = await import('../claude-desktop.discovery.js');
+    const sessions = await discoverClaudeDesktopSessions(5_000);
+
+    expect(sessions.map(session => session.externalSessionId)).toEqual(['local_active']);
+  });
+
   it('survives an unreadable sessions root itself', async () => {
     const { readdir } = await import('fs/promises');
     vi.mocked(readdir).mockImplementation((async (dir: string) => {

@@ -169,6 +169,18 @@ export async function discoverClaudeDesktopSessions(
   for (const metadataPath of metadataFiles) {
     try {
       const metadata = JSON.parse(await readFile(metadataPath, 'utf-8')) as DesktopMetadata;
+
+      // Cheap metadata-only filters run first: companion lookup and transcript resolution
+      // (which may scan ~/.claude/projects) are skipped for every idle session on each poll.
+      if (!metadata.sessionId.startsWith('local_')) continue;
+      // Skip until the inner Claude session id exists. Until then agentSessionId
+      // (the conversation id) falls back to the external `local_<id>`, and an early
+      // poll syncs an empty stub conversation under it - a duplicate of the real
+      // conversation that later syncs under the inner uuid.
+      if (!metadata.cliSessionId) continue;
+      if (metadata.lastActivityAt < sinceMs && metadata.createdAt < sinceMs) continue;
+      if (seenSessionIds.has(metadata.sessionId)) continue;
+
       const companionMetadata = await loadCompanionMetadata(metadataPath);
       const transcriptDir = metadataPath.replace(/\.json$/, '');
       const auditTranscriptPath = resolveAuditTranscriptPath(metadataPath, metadata.sessionId);
@@ -178,15 +190,7 @@ export async function discoverClaudeDesktopSessions(
       });
       const transcriptPath = auditTranscriptPath ?? claudeTranscriptPath;
 
-      if (!metadata.sessionId.startsWith('local_')) continue;
-      // Skip until the inner Claude session id exists. Until then agentSessionId
-      // (the conversation id) falls back to the external `local_<id>`, and an early
-      // poll syncs an empty stub conversation under it - a duplicate of the real
-      // conversation that later syncs under the inner uuid.
-      if (!metadata.cliSessionId) continue;
       if (!transcriptPath || !existsSync(transcriptPath)) continue;
-      if (metadata.lastActivityAt < sinceMs && metadata.createdAt < sinceMs) continue;
-      if (seenSessionIds.has(metadata.sessionId)) continue;
 
       seenSessionIds.add(metadata.sessionId);
 

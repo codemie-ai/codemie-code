@@ -117,6 +117,44 @@ export class SessionStore {
     return null;
   }
 
+  /**
+   * Map external/local-client session identifiers to CodeMie session ids in one directory scan.
+   * Lets long-running pollers resolve known sessions with loadSession() instead of rescanning
+   * every session file per lookup.
+   */
+  async indexSessionsByExternalId(agentName: string): Promise<Map<string, string>> {
+    const index = new Map<string, string>();
+    const sessionsDir = getCodemiePath('sessions');
+    if (!existsSync(sessionsDir)) {
+      return index;
+    }
+
+    try {
+      const files = await readdir(sessionsDir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+
+        const filePath = join(sessionsDir, file);
+        try {
+          const session = JSON.parse(await readFile(filePath, 'utf-8')) as Session;
+          const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
+          if (session.agentName === agentName && externalSessionId && !index.has(externalSessionId)) {
+            index.set(externalSessionId, session.sessionId);
+          }
+        } catch (error) {
+          logger.debug('[SessionStore] Skipping unreadable session file during external ID indexing', {
+            filePath,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      const errorContext = createErrorContext(error, { agent: agentName });
+      logger.error('[SessionStore] Failed external session indexing', formatErrorForLog(errorContext));
+    }
+
+    return index;
+  }
 
   /**
    * Update session status and reason
