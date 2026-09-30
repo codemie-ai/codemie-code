@@ -58,8 +58,12 @@ class OtlpInterceptor implements ProxyInterceptor {
 
   async onProxyStop(): Promise<void> {
     this.stopped = true;
-    if (this.tickHandle) clearInterval(this.tickHandle);
-    if (this.sweepHandle) clearInterval(this.sweepHandle);
+    if (this.tickHandle) {
+      clearInterval(this.tickHandle);
+    }
+    if (this.sweepHandle) {
+      clearInterval(this.sweepHandle);
+    }
     this.tickHandle = undefined;
     this.sweepHandle = undefined;
 

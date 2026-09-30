@@ -6,6 +6,7 @@ import { readStatus, writeStatus } from './session-status.js';
 import { hasPendingData, readSpoolState } from './spool-state.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
+import { areCredentialsStale } from './auth-state.js';
 
 const currentlyForwarding = new Set<string>();
 
@@ -27,8 +28,12 @@ export async function processSessionTick(
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
-    if (!status) return;
-    if (status.authExpired) return;
+    if (!status) {
+      return;
+    }
+    if (areCredentialsStale()) {
+      return;
+    }
 
     const spool = await readSpoolState(sessionId, status);
     const decision = gateDecision(spool, status);

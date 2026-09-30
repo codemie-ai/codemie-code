@@ -13,8 +13,6 @@ export interface SessionStatus {
   cursors: SessionCursors;
   /** Consecutive ticks a hooks-only session has waited for OTEL data. */
   waitTicks: number;
-  /** Set when authorization failed twice; forwarding is paused for the session. */
-  authExpired?: boolean;
   /**
    * Time when a successfully forwarded hooks batch contained `SessionEnd`.
    * Marks *normal completion*, not *delivery completion*: forwarding continues
@@ -45,7 +43,6 @@ function normalizeStatus(raw: unknown): SessionStatus {
     status.cursors[stream] = toOffset(cursors[stream]);
   }
   status.waitTicks = toOffset(source['waitTicks']);
-  if (source['authExpired'] === true) status.authExpired = true;
   const endedAt = toOffset(source['endedAt']);
   if (endedAt > 0) status.endedAt = endedAt;
 
@@ -82,12 +79,6 @@ export async function updateStatus(
     if (!status) return; // session was swept — nothing to acknowledge
     mutate(status);
     await writeStatus(sessionId, status);
-  });
-}
-
-export async function markAuthExpired(sessionId: string): Promise<void> {
-  await updateStatus(sessionId, (status) => {
-    status.authExpired = true;
   });
 }
 

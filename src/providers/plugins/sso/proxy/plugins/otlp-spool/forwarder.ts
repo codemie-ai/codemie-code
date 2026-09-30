@@ -7,12 +7,11 @@ import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { OTEL_STREAMS, type OtelStream } from './spool-paths.js';
 import {
   advanceCursor,
-  markAuthExpired,
   markSessionEnded,
-  readStatus,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
+import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -125,6 +124,10 @@ async function send(
   contentType: string,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<SendResult> {
+  if (areCredentialsStale()) {
+    return 'failed';
+  }
+
   try {
     let response = await postToBackend(url, body, contentType, credentials);
     if (isAuthFailure(response)) {
@@ -353,14 +356,11 @@ export async function forwardSession(
   hooksOnly: boolean,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<void> {
-  const status = await readStatus(sessionId);
-  if (!status || status.authExpired) return; // status read is only a gate check now
-
   const ctx = await buildForwardContext(credentials);
 
   const hooksResult = await forwardHooks(sessionId, ctx);
   if (hooksResult === 'auth-expired') {
-    await markAuthExpired(sessionId);
+    markCredentialsStale()
     return;
   }
 
@@ -369,7 +369,7 @@ export async function forwardSession(
   for (const stream of OTEL_STREAMS) {
     const result = await forwardOtelStream(sessionId, stream, ctx);
     if (result === 'auth-expired') {
-      await markAuthExpired(sessionId);
+      markCredentialsStale();
       return;
     }
   }

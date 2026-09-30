@@ -29,9 +29,6 @@ import { abandonedSessionTimeoutMs, endedSessionGraceMs } from './spool-config.j
  * Consequence: a live session that stays quiet (and fully drained) for longer
  * than the abandonment timeout may have its spool removed. That is safe — the
  * next producer write recreates the status and spool files from scratch.
- *
- * Sessions paused by `authExpired` keep pending bytes and are therefore never
- * swept until authorization recovers and those bytes drain.
  */
 export async function sweepSpool(): Promise<void> {
   for (const sessionId of await listSessionIds()) {
