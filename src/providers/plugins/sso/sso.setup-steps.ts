@@ -28,7 +28,9 @@ import {
   DEFAULT_CODEMIE_BASE_URL,
   authenticateWithCodeMie,
   promptForCodeMieUrl,
-  selectCodeMieProject
+  selectCodeMieProject,
+  getPlatformUrl,
+  getStoredPlatformCredentials
 } from '../../core/codemie-auth-helpers.js';
 
 /**
@@ -200,7 +202,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async validateAuth(config: CodeMieConfigOptions): Promise<AuthValidationResult> {
     try {
-      const baseUrl = config.codeMieUrl || config.baseUrl;
+      const baseUrl = getPlatformUrl(config);
       if (!baseUrl) {
         return {
           valid: false,
@@ -208,15 +210,15 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         };
       }
 
-      const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials(baseUrl);
+      const found = await getStoredPlatformCredentials(config);
 
-      if (!credentials) {
+      if (!found) {
         return {
           valid: false,
           error: `No SSO credentials found for ${baseUrl}. Please run: codemie profile login --url ${baseUrl}`
         };
       }
+      const { credentials } = found;
 
       // Test API access
       try {
@@ -265,7 +267,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       }
 
       // Run authentication
-      const codeMieUrl = config.codeMieUrl;
+      const codeMieUrl = getPlatformUrl(config);
       if (!codeMieUrl) {
         console.log(chalk.red('\n✗ No CodeMie URL configured\n'));
         return false;
@@ -297,13 +299,12 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async getAuthStatus(config: CodeMieConfigOptions): Promise<AuthStatus> {
     try {
-      const baseUrl = config.codeMieUrl || config.baseUrl;
-      const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials(baseUrl);
+      const found = await getStoredPlatformCredentials(config);
 
-      if (!credentials) {
+      if (!found) {
         return { authenticated: false };
       }
+      const { credentials } = found;
 
       return {
         authenticated: true,
