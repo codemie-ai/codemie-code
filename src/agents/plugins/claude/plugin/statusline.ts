@@ -607,13 +607,23 @@ function budgetColor(pct) {
   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
 }
 
+const MAX_PROJECT_CHARS = 10;
+const MAX_BRANCH_CHARS = 20;
+
+// Ellipsis-truncate to at most `max` visible characters (code points, so surrogate pairs are not split).
+export function truncate(text, max) {
+  if (typeof text !== 'string') return '';
+  const chars = Array.from(text);
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+}
+
 export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
   const parts: string[] = [];
 
-  if (projectName) parts.push(c(C.purple, `[${projectName}]`));
+  if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
   else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
-  if (branch) parts.push(c(C.blue, `(${branch})`));
+  if (branch) parts.push(c(C.blue, `(${truncate(branch, MAX_BRANCH_CHARS)})`));
   if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
 
   const bar = ctxBar(ctxPct);
