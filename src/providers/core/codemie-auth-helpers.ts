@@ -1,7 +1,8 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { HTTPClient } from './base/http-client.js';
-import type { SSOAuthResult } from './types.js';
+import type { SSOAuthResult, SSOCredentials } from './types.js';
+import { ProviderName } from './types.js';
 import { ConfigurationError } from '../../utils/errors.js';
 
 export const DEFAULT_CODEMIE_BASE_URL = 'https://codemie.lab.epam.com';
@@ -87,6 +88,110 @@ export async function authenticateWithCodeMie(
     codeMieUrl,
     timeout
   });
+}
+
+/**
+ * Minimal profile shape needed to resolve the CodeMie platform URL.
+ * `baseUrl` is the profile URL (P); `codeMieUrl` is the workspace URL (W).
+ */
+export interface PlatformUrlSource {
+  provider?: string;
+  baseUrl?: string;
+  codeMieUrl?: string;
+}
+
+export interface PlatformCredentials {
+  credentials: SSOCredentials;
+  url: string;
+}
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Ordered platform URL candidates: profile baseUrl (P) first, workspace
+ * codeMieUrl (W) as fallback. Only CodeMie providers (ai-run-sso, bearer-auth)
+ * treat baseUrl as the platform; every other provider uses W only, since its
+ * baseUrl is a vendor endpoint. Deduped by origin because the credential key is
+ * host-only, so a same-origin retry would return the identical result.
+ */
+export function getPlatformUrlCandidates(src: PlatformUrlSource): string[] {
+  const isCodeMieProvider =
+    src.provider === ProviderName.AI_RUN_SSO || src.provider === ProviderName.BEARER_AUTH;
+  const raw = isCodeMieProvider ? [src.baseUrl, src.codeMieUrl] : [src.codeMieUrl];
+
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  for (const url of raw) {
+    if (!url) continue;
+    const origin = originOf(url);
+    if (seen.has(origin)) continue;
+    seen.add(origin);
+    candidates.push(url);
+  }
+  return candidates;
+}
+
+export function getPlatformUrl(src: PlatformUrlSource): string | undefined {
+  return getPlatformUrlCandidates(src)[0];
+}
+
+function platformSourceFromEnv(env: NodeJS.ProcessEnv): PlatformUrlSource {
+  // CODEMIE_BASE_URL is intentionally never read: the proxy rewrites it to a
+  // localhost URL before the agent starts. CODEMIE_PROFILE_CONFIG keeps the original.
+  let provider: string | undefined;
+  let baseUrl: string | undefined;
+  if (env.CODEMIE_PROFILE_CONFIG) {
+    try {
+      const parsed = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { provider?: unknown; baseUrl?: unknown };
+      provider = typeof parsed.provider === 'string' ? parsed.provider : undefined;
+      baseUrl = typeof parsed.baseUrl === 'string' ? parsed.baseUrl : undefined;
+    } catch {
+      // Malformed profile config: fall back to CODEMIE_URL only
+    }
+  }
+  return { provider, baseUrl, codeMieUrl: env.CODEMIE_URL };
+}
+
+export function getPlatformUrlCandidatesFromEnv(env: NodeJS.ProcessEnv): string[] {
+  return getPlatformUrlCandidates(platformSourceFromEnv(env));
+}
+
+export function getPlatformUrlFromEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return getPlatformUrlCandidatesFromEnv(env)[0];
+}
+
+async function lookupStoredCredentials(candidates: string[]): Promise<PlatformCredentials | null> {
+  if (candidates.length === 0) return null;
+  const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
+  const sso = new CodeMieSSO();
+  for (const url of candidates) {
+    const credentials = await sso.getStoredCredentials(url);
+    if (credentials) return { credentials, url };
+  }
+  return null;
+}
+
+/**
+ * Look up stored SSO credentials trying each platform URL candidate in order.
+ * Note: an expired credential is deleted by getStoredCredentials, so a miss on
+ * one candidate removes only that host's key.
+ */
+export async function getStoredPlatformCredentials(
+  src: PlatformUrlSource
+): Promise<PlatformCredentials | null> {
+  return lookupStoredCredentials(getPlatformUrlCandidates(src));
+}
+
+export async function getStoredPlatformCredentialsFromEnv(
+  env: NodeJS.ProcessEnv
+): Promise<PlatformCredentials | null> {
+  return lookupStoredCredentials(getPlatformUrlCandidatesFromEnv(env));
 }
 
 /* eslint-disable no-redeclare */
