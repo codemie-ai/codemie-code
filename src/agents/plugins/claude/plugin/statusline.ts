@@ -607,7 +607,7 @@ function budgetColor(pct) {
   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
 }
 
-const MAX_PROJECT_CHARS = 10;
+const MAX_PROJECT_CHARS = 20;
 const MAX_BRANCH_CHARS = 20;
 
 // Ellipsis-truncate to at most `max` visible characters (code points, so surrogate pairs are not split).

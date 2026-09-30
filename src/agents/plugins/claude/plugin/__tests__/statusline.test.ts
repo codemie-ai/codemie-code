@@ -210,10 +210,10 @@ describe('buildStatusLine', () => {
     expect(plain).toContain('$1.5000');
   });
 
-  it('truncates a long project name to 10 characters inside the brackets and keeps the cost visible', () => {
+  it('truncates a long project name to 20 characters inside the brackets and keeps the cost visible', () => {
     const plain = stripAnsi(buildStatusLine({ ...basic, projectName: 'p'.repeat(27) }));
     const inner = plain.match(/^\[([^\]]*)\]/)![1];
-    expect(Array.from(inner)).toHaveLength(10);
+    expect(Array.from(inner)).toHaveLength(20);
     expect(inner.endsWith('…')).toBe(true);
     expect(plain).toContain('$1.5000');
   });
@@ -250,7 +250,7 @@ describe('buildStatusLine', () => {
     expect(line.indexOf('$1.5000')).toBeLessThan(line.indexOf('████░░░░░░'));
   });
 
-  it('keeps the session cost within the first 100 columns in the worst case', () => {
+  it('keeps the session cost within the first 110 columns in the worst case', () => {
     const line = buildStatusLine({
       ...basic,
       projectName: 'p'.repeat(60),
@@ -260,7 +260,7 @@ describe('buildStatusLine', () => {
       tokOut: 56,
     });
     const plain = stripAnsi(line);
-    expect(plain.indexOf('$1.5000') + '$1.5000'.length).toBeLessThanOrEqual(100);
+    expect(plain.indexOf('$1.5000') + '$1.5000'.length).toBeLessThanOrEqual(110);
     const costAt = line.indexOf('$1.5000');
     expect(costAt).toBeLessThan(line.indexOf('████░░░░░░'));
     expect(costAt).toBeLessThan(line.indexOf('in:'));
