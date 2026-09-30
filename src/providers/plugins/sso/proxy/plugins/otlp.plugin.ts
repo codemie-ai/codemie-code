@@ -15,6 +15,12 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 
 const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
+export interface OtlpHookSpoolData {
+  agentName: string;
+  raw: string;
+  timestamp: number;
+}
+
 async function readStatusFile(sessionId: string): Promise<SessionStatus | null> {
   try {
     const raw = await readFile(sessionFile(sessionId, 'status'), 'utf-8');
@@ -156,35 +162,31 @@ class OtlpInterceptor implements ProxyInterceptor {
       return sendError(res, 400, 'invalid_request_error', 'Empty body');
     }
 
-    let parsed: { agentName?: unknown; raw?: unknown; timestamp?: unknown };
+    const rawOtlpHookSpoolData = ctx.requestBody.toString('utf-8');
+
+    let otlpHookSpoolData: OtlpHookSpoolData;
+
     try {
-      parsed = JSON.parse(ctx.requestBody.toString('utf-8')) as typeof parsed;
+      otlpHookSpoolData = JSON.parse(rawOtlpHookSpoolData) as OtlpHookSpoolData;
     } catch {
       return sendError(res, 400, 'invalid_request_error', 'Invalid JSON');
-    }
-
-    const agentName = typeof parsed.agentName === 'string' ? parsed.agentName : '';
-    if (!agentName) {
-      return sendError(res, 400, 'invalid_request_error', 'Missing agentName');
     }
 
     // Validate agentName - dynamic import avoids circular dependency
     try {
       const { AgentRegistry } = await import('../../../../../agents/registry.js');
-      if (!AgentRegistry.getAnalyticsAgent(agentName)) {
+      if (!AgentRegistry.getAnalyticsAgent(otlpHookSpoolData.agentName)) {
         return sendError(res, 400, 'invalid_request_error', 'Unrecognized agentName');
       }
     } catch {
       return sendError(res, 400, 'invalid_request_error', 'Agent validation failed');
     }
 
-    const rawStr = typeof parsed.raw === 'string' ? parsed.raw : JSON.stringify(parsed.raw ?? {});
-
     // Extract session_id from raw hook JSON
     let sessionId = '';
     try {
-      const rawObj = JSON.parse(rawStr) as Record<string, unknown>;
-      sessionId = String(rawObj['session_id'] ?? '');
+      const hookEvent = JSON.parse(otlpHookSpoolData.raw) as Record<string, unknown>;
+      sessionId = String(hookEvent['session_id'] ?? '');
     } catch { /* ignore */ }
 
     if (!sessionId) {
@@ -196,7 +198,7 @@ class OtlpInterceptor implements ProxyInterceptor {
       return true;
     }
 
-    const line = JSON.stringify(parsed) + '\n';
+    const line = rawOtlpHookSpoolData + '\n';
     try {
       await withSessionLock(sessionId, async () => {
         await mkdir(spoolRoot(), { recursive: true });

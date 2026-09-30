@@ -1,3 +1,4 @@
+import { OtlpHookSpoolData } from '@/providers/plugins/sso/proxy/plugins/otlp.plugin.js';
 import { readState } from '../../cli/commands/proxy/daemon-manager.js';
 import { logger } from '../../utils/logger.js';
 
@@ -22,6 +23,12 @@ export async function forwardOtlpEventToSpool(rawEvent: string, agentName: strin
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1_000);
 
+    const body: OtlpHookSpoolData = {
+      agentName,
+      timestamp: Date.now(),
+      raw: rawEvent
+    }
+
     try {
       await fetch(`${state.url}/v1/analytics/hooks`, {
         method: 'POST',
@@ -29,7 +36,7 @@ export async function forwardOtlpEventToSpool(rawEvent: string, agentName: strin
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${state.gatewayKey}`,
         },
-        body: JSON.stringify({ agentName, timestamp: Date.now(), raw: rawEvent }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
     } finally {

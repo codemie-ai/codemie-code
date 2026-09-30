@@ -8,6 +8,7 @@ import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { sessionFile, spoolRoot } from './spool-paths.js';
 import type { SessionStatus } from './completeness-gate.js';
 import { withSessionLock } from './session-lock.js';
+import { OtlpHookSpoolData } from '../otlp.plugin.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -58,9 +59,9 @@ function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string 
   return '';
 }
 
-function hookEventType(hookName: string, rawEvent: Record<string, unknown>): string {
+function hookEventType(hookName: string, event: Record<string, unknown>): string {
   if (hookName === 'PreToolUse') {
-    return rawEvent['input'] && (rawEvent['input'] as Record<string, unknown>)['denied']
+    return event['input'] && (event['input'] as Record<string, unknown>)['denied']
       ? 'agent.tool.denied'
       : 'agent.tool.start';
   }
@@ -165,17 +166,14 @@ export async function forwardSession(
       const mapped: string[] = [];
       for (const line of lines) {
         try {
-          const wrapper = JSON.parse(line) as Record<string, unknown>;
-          // Spool lines are stored as { agentName, raw: "<hook-json>", timestamp }.
-          // Parse the inner field to get hook_event_name, session_id, cwd, etc.
-          const rawField = wrapper['raw'];
-          let hookEvent: Record<string, unknown>;
+          const otlpHookSpoolData = JSON.parse(line) as OtlpHookSpoolData;
+
+          let hookEvent: Record<string, unknown> = {};
+
           try {
-            hookEvent = typeof rawField === 'string'
-              ? (JSON.parse(rawField) as Record<string, unknown>)
-              : (rawField as Record<string, unknown> ?? wrapper);
+            hookEvent = JSON.parse(otlpHookSpoolData['raw']) as Record<string, unknown>;
           } catch {
-            hookEvent = wrapper;
+            logger.error('[otlp-forwarder] failed to parse raw hook event');
           }
           const hookName = String(hookEvent['hook_event_name'] ?? '');
           const eventType = hookEventType(hookName, hookEvent);
@@ -199,7 +197,7 @@ export async function forwardSession(
             ...limitedHookEvent,
             type: eventType,
             session_id: String(hookEvent['session_id'] ?? ''),
-            timestamp: new Date().toISOString(),
+            timestamp: new Date(otlpHookSpoolData.timestamp).toISOString(),
             user_email: userEmail,
             developer_name: userEmail,
             git_branch: gitCache.branch ?? '',
