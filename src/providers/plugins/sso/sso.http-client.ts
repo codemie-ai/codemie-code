@@ -22,7 +22,11 @@ export const CODEMIE_ENDPOINTS = {
   USER: '/v1/user',
   ADMIN_APPLICATIONS: '/v1/admin/applications',
   METRICS: '/v1/metrics',
-  AUTH_LOGIN: '/v1/auth/login'
+  AUTH_LOGIN: '/v1/auth/login',
+  CLI_ANALYTICS_EVENT_HOOKS: '/v1/analytics/cli-analytics/event-hooks',
+  CLI_ANALYTICS_METRICS: '/v1/analytics/cli-analytics/metrics',
+  CLI_ANALYTICS_LOGS: '/v1/analytics/cli-analytics/logs',
+  CLI_ANALYTICS_TRACES: '/v1/analytics/cli-analytics/traces'
 } as const;
 
 

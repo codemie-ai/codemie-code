@@ -281,7 +281,7 @@ describe('proxy connect desktop', () => {
 
     await createProxyCommand().parseAsync(['connect', 'desktop'], { from: 'user' });
 
-    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd());
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
     expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
       profile: 'selected-profile',
     }));

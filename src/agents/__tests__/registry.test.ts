@@ -19,6 +19,7 @@ describe('AgentRegistry', () => {
           'codemie-code',
           'claude',
           'claude-acp',
+          'cursor-ide',
           'gemini',
           'opencode',
           'codex',
