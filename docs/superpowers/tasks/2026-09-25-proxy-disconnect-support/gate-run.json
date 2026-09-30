@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "branch": "feature/EPMCDME-15246_proxy-disconnect-support",
+  "head": "6ee08d08b76a7c5ff7f80c4b80eef33bea9d22d9",
+  "runner": "npm",
+  "started_at": "2026-09-25T14:51:33Z",
+  "completed_at": "2026-09-25T16:15:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1107,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2142,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1964,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3615,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8666,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "289 test files, 4271 tests passed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7360,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Sandboxed qa-gates subagent run stalled on tests/integration/cli-commands/doctor.test.ts and list.test.ts — both spawn the real 'codemie doctor'/'codemie list' CLI hitting live network/plugin-catalog endpoints, and the subagent's sandbox has no reachable network egress, so the calls hang rather than fail. Neither file is touched by this branch's diff. The user re-ran the identical command directly in their own (networked) shell: 37 passed | 1 skipped (38 files), 279 passed | 10 skipped (289 tests), 0 failures, including both doctor.test.ts and list.test.ts passing cleanly. Recorded as PASS on that evidence rather than re-running the full gate sequence a third time."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1038,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' — Gitleaks-backed scan only inspects staged files and nothing was staged at run time. To enable locally, stage the branch diff (git add) before rerunning; CI runs gitleaks-action unconditionally against the full PR diff regardless of local staging."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 257,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Command only validates HEAD~1..HEAD (last commit) per its literal guide definition; the branch has 6 commits total off main, all of which already passed the commit-msg husky hook (commitlint --edit) individually at commit time."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "CI 'validate-commits' job also lints the PR title itself via commitlint (gh pr view). No open PR exists yet for this branch, so there is no title to fetch; not runnable locally."
+    }
+  ]
+}

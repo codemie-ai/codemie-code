@@ -246,3 +246,65 @@ export async function writeVsCodeClaudeCodeConfig(
     gatewayKey
   );
 }
+
+/**
+ * Remove the two CodeMie-managed `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`
+ * entries from `claudeCode.environmentVariables`, at both the stable and
+ * Insiders `settings.json` locations. A missing product dir (edition not
+ * installed) is treated as nothing-to-do for that location, not propagated —
+ * mirrors `removeVsCodeLanguageModelsConfig`'s per-path catch. A genuinely
+ * corrupt/unparseable settings.json at a resolved path still throws, via
+ * `readSettings`'s own `ConfigurationError`.
+ */
+export async function removeVsCodeClaudeCodeConfig(): Promise<{ removed: boolean; error?: string }> {
+  let removedAny = false;
+  const failures: string[] = [];
+
+  for (const insiders of [false, true]) {
+    let configPath: string;
+    try {
+      configPath = getVsCodeClaudeCodeSettingsPath(insiders);
+    } catch (error) {
+      if (error instanceof ConfigurationError) continue;
+      throw error;
+    }
+
+    const { settings, raw } = await readSettings(configPath);
+    if (raw.trim().length === 0) continue;
+
+    const existing = settings['claudeCode.environmentVariables'];
+    const sourceEntries: unknown[] = Array.isArray(existing) ? existing : [];
+    const isManagedEntry = (entry: unknown): boolean =>
+      isEnvVarEntry(entry) && typeof entry.name === 'string' && MANAGED_ENV_VAR_NAMES.has(entry.name);
+    if (!sourceEntries.some(isManagedEntry)) continue;
+
+    const filtered = sourceEntries.filter((entry) => !isManagedEntry(entry));
+    const formattingOptions = detectFormattingOptions(raw);
+    const nextText = applyEdits(
+      raw,
+      modify(raw, ['claudeCode.environmentVariables'], filtered, { formattingOptions })
+    );
+
+    // Isolated per-location: an Insiders write failure must not discard an
+    // already-successful stable write (mirrors removeVsCodeLanguageModelsConfig).
+    try {
+      await writeAtomically(configPath, nextText);
+      removedAny = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        '[proxy] Failed to write VS Code Claude Code settings at one location during disconnect',
+        ...sanitizeLogArgs({ configPath, insiders, error: message })
+      );
+      failures.push(`${insiders ? 'Insiders' : 'stable'} (${configPath}): ${message}`);
+    }
+  }
+
+  if (failures.length > 0 && !removedAny) {
+    throw new ConfigurationError(
+      `Failed to update VS Code Claude Code settings: ${failures.join('; ')}`
+    );
+  }
+
+  return failures.length > 0 ? { removed: removedAny, error: failures.join('; ') } : { removed: removedAny };
+}
