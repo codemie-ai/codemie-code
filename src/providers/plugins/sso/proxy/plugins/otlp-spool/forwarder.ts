@@ -24,6 +24,8 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   Notification: 'agent.notification',
 };
 
+const MAX_PROMPT_CHARS = 200;
+const MAX_TOOL_FIELD_CHARS = 300;
 const FORWARD_TIMEOUT_MS = 10_000;
 
 function decodeJwtClaims(token: string): Record<string, unknown> {
@@ -191,8 +193,10 @@ export async function forwardSession(
             } catch { /* best-effort */ }
           }
 
+          const limitedHookEvent = limitHookPayload(hookEvent);
+
           const mappedEvent = {
-            ...hookEvent,
+            ...limitedHookEvent,
             type: eventType,
             session_id: String(hookEvent['session_id'] ?? ''),
             timestamp: new Date().toISOString(),
@@ -202,9 +206,13 @@ export async function forwardSession(
             repo_remote: gitCache.remote ?? '',
             codemie_project_name: projectName,
             cwd,
-            prompt_body: String(hookEvent['prompt'] ?? ''),
-            raw: hookEvent,
+            prompt_body: boundedText(
+              hookEvent['prompt'],
+              MAX_PROMPT_CHARS
+            ),
+            raw: limitedHookEvent,
           };
+
           mapped.push(JSON.stringify(mappedEvent));
         } catch {
           // Skip malformed lines
@@ -366,6 +374,50 @@ export async function forwardSession(
       }
     });
   }
+}
+
+function boundedText(value: unknown, maxChars: number): string {
+  if (value === undefined || value === null) return '';
+
+  const text = typeof value === 'string'
+    ? value
+    : (() => {
+        try {
+          return JSON.stringify(value) ?? String(value);
+        } catch {
+          return String(value);
+        }
+      })();
+
+  return text.slice(0, maxChars);
+}
+
+function limitHookPayload(
+  hookEvent: Record<string, unknown>
+): Record<string, unknown> {
+  const limited: Record<string, unknown> = { ...hookEvent };
+
+  if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
+    limited.prompt = boundedText(
+      hookEvent.prompt,
+      MAX_PROMPT_CHARS
+    );
+  }
+
+  for (const field of ['tool_input', 'tool_response', 'error']) {
+    if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
+      limited[field] = boundedText(
+        hookEvent[field],
+        MAX_TOOL_FIELD_CHARS
+      );
+    }
+  }
+
+  // Prevent a nested/raw copy from bypassing the limits if the wrapper was
+  // used as the fallback hookEvent.
+  delete limited.raw;
+
+  return limited;
 }
 
 // Re-export helpers needed by tick-processor
