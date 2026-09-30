@@ -6,47 +6,27 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { spoolRoot, sessionFile } from './otlp-spool/spool-paths.js';
-import { withSessionLock } from './otlp-spool/session-lock.js';
+import { listSessionIds, spoolRoot } from './otlp-spool/spool-paths.js';
+import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
-import { sweepExpired } from './otlp-spool/ttl-sweep.js';
-import type { SessionStatus } from './otlp-spool/completeness-gate.js';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { appendSpool } from './otlp-spool/spool-io.js';
+import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 
+/**
+ * Upper bound on the best-effort flush during proxy shutdown.
+ *
+ * Deliberately well below FORWARD_TIMEOUT_MS (10s) so a hung backend can never
+ * be the reason a proxy stop is slow. Cutting the flush short loses nothing:
+ * cursors are only advanced on success, so anything undelivered stays spooled
+ * and is sent by the next proxy start.
+ */
+const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
 const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
 export interface OtlpHookSpoolData {
   agentName: string;
   raw: string;
   timestamp: number;
-}
-
-async function readStatusFile(sessionId: string): Promise<SessionStatus | null> {
-  try {
-    const raw = await readFile(sessionFile(sessionId, 'status'), 'utf-8');
-    return JSON.parse(raw) as SessionStatus;
-  } catch {
-    return null;
-  }
-}
-
-async function writeStatusFile(sessionId: string, status: SessionStatus): Promise<void> {
-  await mkdir(spoolRoot(), { recursive: true });
-  await writeFile(sessionFile(sessionId, 'status'), JSON.stringify(status), 'utf-8');
-}
-
-function defaultStatus(): SessionStatus {
-  return {
-    hooksWritten: false,
-    otelLogsWritten: false,
-    otelMetricsWritten: false,
-    otelTracesWritten: false,
-    waitTicks: 0,
-    cursor: 0,
-    otelLogsCursor: 0,
-    otelMetricsCursor: 0,
-    otelTracesCursor: 0,
-  };
 }
 
 function sendError(res: ServerResponse, status: number, type: string, message: string): true {
@@ -58,71 +38,89 @@ function sendError(res: ServerResponse, status: number, type: string, message: s
 
 class OtlpInterceptor implements ProxyInterceptor {
   name = 'otlp-ingest';
-  private tickHandle?: ReturnType<typeof setInterval>;
-  private sweepHandle?: ReturnType<typeof setInterval>;
+
+  private tickHandle?: NodeJS.Timeout;
+  private sweepHandle?: NodeJS.Timeout;
+  private ticking = false;
+  private stopped = false;
 
   constructor(private readonly credentials?: SSOCredentials | JWTCredentials) {}
 
   async onProxyStart(): Promise<void> {
-    // Eager tick on startup for crash recovery
-    await this.tick().catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[otlp-ingest] startup tick error', ...sanitizeLogArgs({ err: msg }));
-    });
+    // Recovery pass for anything a previous process left on disk (crash, or a
+    // stale-credential window that this restart just ended). Intentionally not
+    // awaited: the backlog may be large and proxy start must not block on network I/O.
+    void this.runTick('startup');
 
-    const sendInterval = Number(process.env['OTLP_SEND_INTERVAL_MS'] ?? '5000');
-    this.tickHandle = setInterval(() => {
-      void this.tick().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[otlp-ingest] tick error', ...sanitizeLogArgs({ err: msg }));
-      });
-    }, sendInterval);
-
-    this.sweepHandle = setInterval(() => {
-      void this.sweep().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[otlp-ingest] sweep error', ...sanitizeLogArgs({ err: msg }));
-      });
-    }, 5 * 60 * 1_000);
+    this.tickHandle = setInterval(() => void this.runTick('tick'), sendIntervalMs());
+    this.sweepHandle = setInterval(() => void this.runSweep(), sweepIntervalMs());
   }
 
   async onProxyStop(): Promise<void> {
+    this.stopped = true;
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.sweepHandle) clearInterval(this.sweepHandle);
-    await this.tick().catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[otlp-ingest] final tick error', ...sanitizeLogArgs({ err: msg }));
-    });
+    this.tickHandle = undefined;
+    this.sweepHandle = undefined;
+
+    // Bounded final flush: better delivery latency, but shutdown must never hang.
+    await Promise.race([
+      this.tick().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
+    ]);
   }
+
+  /** Serialize ticks: a slow backlog drain must not stack up concurrent passes. */
+  private async runTick(label: string): Promise<void> {
+    if (this.stopped || this.ticking) {
+      return;
+    }
+    this.ticking = true;
+    try {
+      await this.tick();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(`[otlp-ingest] ${label} error`, ...sanitizeLogArgs({ err: msg }));
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private async runSweep(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+
+    try {
+      await sweepSpool();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[otlp-ingest] sweep error', ...sanitizeLogArgs({ err: msg }));
+    }
+  }
+
 
   private async tick(): Promise<void> {
-    const root = spoolRoot();
-    let entries: string[];
-    try {
-      entries = await readdir(root);
-    } catch {
-      return;
-    }
-    const statusFiles = entries.filter((f) => f.endsWith('.status'));
-    if (!this.credentials) {
-      return;
-    }
     const creds = this.credentials;
-    for (const fileName of statusFiles) {
-      const sessionId = fileName.slice(0, -'.status'.length);
-      await processSessionTick(sessionId, creds).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.debug('[otlp-ingest] session tick error', ...sanitizeLogArgs({ sessionId, err: msg }));
-      });
-    }
-  }
-
-  private async sweep(): Promise<void> {
-    if (!this.credentials) {
+    if (!creds) {
       return;
     }
 
-    await sweepExpired(this.credentials);
+    const sessionIds = await listSessionIds();
+
+    // Different sessions are independent (per-session locking happens inside
+    // processSessionTick), so they are processed concurrently.
+    await Promise.all(
+      sessionIds.map((sessionId) =>
+        processSessionTick(sessionId, creds).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.debug(
+            '[otlp-ingest] session tick error',
+            ...sanitizeLogArgs({ sessionId, err: msg })
+          );
+        })
+      )
+    );
   }
 
   async handleRequest(
@@ -140,13 +138,13 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     // Route: POST /v1/analytics/otlp/logs|metrics|traces
     if (method === 'POST' && url === '/v1/analytics/otlp/v1/logs') {
-      return this.handleOtlp(ctx, res, 'otel_logs');
+      return this.handleOtlp(ctx, res, 'logs');
     }
     if (method === 'POST' && url === '/v1/analytics/otlp/v1/metrics') {
-      return this.handleOtlp(ctx, res, 'otel_metrics');
+      return this.handleOtlp(ctx, res, 'metrics');
     }
     if (method === 'POST' && url === '/v1/analytics/otlp/v1/traces') {
-      return this.handleOtlp(ctx, res, 'otel_traces');
+      return this.handleOtlp(ctx, res, 'traces');
     }
 
     return false;
@@ -200,13 +198,7 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     const line = rawOtlpHookSpoolData + '\n';
     try {
-      await withSessionLock(sessionId, async () => {
-        await mkdir(spoolRoot(), { recursive: true });
-        await appendFile(sessionFile(sessionId, 'hooks'), line);
-        const existing = await readStatusFile(sessionId) ?? defaultStatus();
-        existing.hooksWritten = true;
-        await writeStatusFile(sessionId, existing);
-      });
+      await appendSpool(sessionId, 'hooks', line);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
@@ -222,7 +214,7 @@ class OtlpInterceptor implements ProxyInterceptor {
   private async handleOtlp(
     ctx: ProxyContext,
     res: ServerResponse,
-    signal: 'otel_logs' | 'otel_metrics' | 'otel_traces'
+    signal: 'logs' | 'metrics' | 'traces'
   ): Promise<true> {
     if (!ctx.metadata.gatewayKeyValidated) {
       logger.warn(`[otlp-ingest] Rejected ${signal} request: gateway key not validated`);
@@ -254,15 +246,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await withSessionLock(sessionId, async () => {
-        await mkdir(spoolRoot(), { recursive: true });
-        await appendFile(sessionFile(sessionId, signal), bytes);
-        const existing = await readStatusFile(sessionId) ?? defaultStatus();
-        if (signal === 'otel_logs') existing.otelLogsWritten = true;
-        else if (signal === 'otel_metrics') existing.otelMetricsWritten = true;
-        else existing.otelTracesWritten = true;
-        await writeStatusFile(sessionId, existing);
-      });
+      await appendSpool(sessionId, signal, bytes);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[otlp-ingest] ${signal} disk write error`, ...sanitizeLogArgs({ sessionId, err: msg }));

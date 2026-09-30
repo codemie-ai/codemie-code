@@ -1,31 +1,22 @@
-import { readFile, writeFile } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
-import { sessionFile } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
+import { readStatus, writeStatus } from './session-status.js';
+import { hasPendingData, readSpoolState } from './spool-state.js';
 import { gateDecision } from './completeness-gate.js';
-import type { SessionStatus } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 
 const currentlyForwarding = new Set<string>();
 
-async function readStatusFile(sessionId: string): Promise<SessionStatus | null> {
-  try {
-    const raw = await readFile(sessionFile(sessionId, 'status'), 'utf-8');
-    return JSON.parse(raw) as SessionStatus;
-  } catch {
-    return null;
-  }
-}
-
-async function writeStatusFile(sessionId: string, status: SessionStatus): Promise<void> {
-  await writeFile(sessionFile(sessionId, 'status'), JSON.stringify(status), 'utf-8');
-}
-
 /**
- * Process one tick for a single session.
- * Reads status, evaluates the completeness gate, and dispatches forward or wait.
+ * Process one tick for a single session: evaluate the completeness gate and,
+ * when it permits forwarding, dispatch a forward pass for the streams that
+ * actually have bytes after their cursor.
+ *
+ * A session stays gate-eligible for as long as its spool files are non-empty,
+ * so the pending-data check is what keeps a fully drained tick from issuing
+ * any HTTP requests.
  */
 export async function processSessionTick(
   sessionId: string,
@@ -35,34 +26,35 @@ export async function processSessionTick(
   let hooksOnly = false;
 
   await withSessionLock(sessionId, async () => {
-    const status = await readStatusFile(sessionId);
+    const status = await readStatus(sessionId);
     if (!status) return;
-
-    if (status.forwarded) return;
     if (status.authExpired) return;
 
-    const decision = gateDecision(status);
+    const spool = await readSpoolState(sessionId, status);
+    const decision = gateDecision(spool, status);
+    const pending = hasPendingData(spool);
+
     logger.debug(
       '[otlp-tick] gate decision',
-      ...sanitizeLogArgs({ sessionId, decision, waitTicks: status.waitTicks })
+      ...sanitizeLogArgs({ sessionId, decision, pending, waitTicks: status.waitTicks })
     );
 
     if (decision === 'send' || decision === 'hooks-only-force') {
-      shouldForward = true;
+      shouldForward = pending;
       hooksOnly = decision === 'hooks-only-force';
     } else if (decision === 'wait') {
-      status.waitTicks = (status.waitTicks ?? 0) + 1;
-      await writeStatusFile(sessionId, status);
+      status.waitTicks += 1;
+      await writeStatus(sessionId, status);
     }
-    // 'noop': nothing to do
+    // 'noop': nothing written yet
   });
 
-  if (shouldForward && !currentlyForwarding.has(sessionId)) {
-    currentlyForwarding.add(sessionId);
-    try {
-      await forwardSession(sessionId, hooksOnly, credentials);
-    } finally {
-      currentlyForwarding.delete(sessionId);
-    }
+  if (!shouldForward || currentlyForwarding.has(sessionId)) return;
+
+  currentlyForwarding.add(sessionId);
+  try {
+    await forwardSession(sessionId, hooksOnly, credentials);
+  } finally {
+    currentlyForwarding.delete(sessionId);
   }
 }

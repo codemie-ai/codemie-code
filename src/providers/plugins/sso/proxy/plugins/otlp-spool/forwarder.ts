@@ -1,14 +1,18 @@
-import { readFile, appendFile } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
-import { sessionFile, spoolRoot } from './spool-paths.js';
-import type { SessionStatus } from './completeness-gate.js';
-import { withSessionLock } from './session-lock.js';
+import { OTEL_STREAMS, type OtelStream } from './spool-paths.js';
+import {
+  advanceCursor,
+  markAuthExpired,
+  markSessionEnded,
+  readStatus,
+} from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
+import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -25,15 +29,37 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   Notification: 'agent.notification',
 };
 
+const OTEL_ENDPOINTS: Record<OtelStream, string> = {
+  logs: CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS,
+  metrics: CODEMIE_ENDPOINTS.CLI_ANALYTICS_METRICS,
+  traces: CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES,
+};
+
 const MAX_PROMPT_CHARS = 200;
 const MAX_TOOL_FIELD_CHARS = 300;
 const FORWARD_TIMEOUT_MS = 10_000;
+
+type SendResult = 'ok' | 'failed' | 'auth-expired';
+
+interface ForwardContext {
+  credentials: SSOCredentials | JWTCredentials;
+  baseUrl: string;
+  projectName: string;
+  userEmail: string;
+  /** Per-session git info cache, resolved lazily from the first hook `cwd`. */
+  git: { branch?: string; remote?: string };
+}
+
+/* ------------------------------------------------------------------ auth --- */
 
 function decodeJwtClaims(token: string): Record<string, unknown> {
   const parts = token.split('.');
   if (parts.length < 2) return {};
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<string, unknown>;
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
+      string,
+      unknown
+    >;
   } catch {
     return {};
   }
@@ -41,42 +67,29 @@ function decodeJwtClaims(token: string): Record<string, unknown> {
 
 function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string {
   if (isJWTCredentials(credentials)) {
-    try {
-      const claims = decodeJwtClaims(credentials.token);
-      if (typeof claims['email'] === 'string' && claims['email']) return claims['email'];
-    } catch { /* ignore */ }
+    const claims = decodeJwtClaims(credentials.token);
+    if (typeof claims['email'] === 'string' && claims['email']) return claims['email'];
   }
   if (isSSOCredentials(credentials)) {
     const accessToken = credentials.cookies['codemie_access_token'];
     if (accessToken) {
-      try {
-        const claims = decodeJwtClaims(accessToken);
-        const email = claims['email'] ?? claims['preferred_username'];
-        if (typeof email === 'string' && email) return email;
-      } catch { /* ignore */ }
+      const claims = decodeJwtClaims(accessToken);
+      const email = claims['email'] ?? claims['preferred_username'];
+      if (typeof email === 'string' && email) return email;
     }
   }
   return '';
 }
 
-function hookEventType(hookName: string, event: Record<string, unknown>): string {
-  if (hookName === 'PreToolUse') {
-    return event['input'] && (event['input'] as Record<string, unknown>)['denied']
-      ? 'agent.tool.denied'
-      : 'agent.tool.start';
-  }
-  return HOOK_EVENT_TYPE_MAP[hookName] ?? 'agent.event';
-}
-
-function buildAuthHeadersFromCreds(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
-  if (isSSOCredentials(credentials)) {
-    return buildAuthHeaders(credentials.cookies);
-  }
-  if (isJWTCredentials(credentials)) {
-    return buildAuthHeaders(credentials.token);
-  }
+function buildAuthHeadersFromCreds(
+  credentials: SSOCredentials | JWTCredentials
+): Record<string, string> | null {
+  if (isSSOCredentials(credentials)) return buildAuthHeaders(credentials.cookies);
+  if (isJWTCredentials(credentials)) return buildAuthHeaders(credentials.token);
   return null;
 }
+
+/* ------------------------------------------------------------------ http --- */
 
 async function postToBackend(
   url: string,
@@ -87,336 +100,277 @@ async function postToBackend(
   const headers = buildAuthHeadersFromCreds(credentials);
   if (!headers) throw new Error('Unsupported credential type');
   headers['Content-Type'] = contentType;
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);
   try {
-    return await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-      signal: controller.signal,
-    });
+    return await fetch(url, { method: 'POST', headers, body, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function readStatusFile(sessionId: string): Promise<SessionStatus | null> {
+const isAuthFailure = (response: Response): boolean =>
+  response.status === 401 || response.status === 403;
+
+/**
+ * POST a batch, retrying once on 401/403. Anything other than `'ok'` leaves the
+ * bytes on disk with the cursor untouched, so the next tick retries them.
+ */
+async function send(
+  sessionId: string,
+  stream: string,
+  url: string,
+  body: string | Buffer,
+  contentType: string,
+  credentials: SSOCredentials | JWTCredentials
+): Promise<SendResult> {
   try {
-    const raw = await readFile(sessionFile(sessionId, 'status'), 'utf-8');
-    return JSON.parse(raw) as SessionStatus;
-  } catch {
-    return null;
+    let response = await postToBackend(url, body, contentType, credentials);
+    if (isAuthFailure(response)) {
+      response = await postToBackend(url, body, contentType, credentials);
+      if (isAuthFailure(response)) return 'auth-expired';
+    }
+    if (response.ok) {
+      return 'ok';
+    }
+
+    logger.debug(
+      '[otlp-forwarder] non-success response',
+      ...sanitizeLogArgs({ sessionId, stream, status: response.status })
+    );
+
+    return 'failed';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug(
+      '[otlp-forwarder] request error',
+      ...sanitizeLogArgs({ sessionId, stream, err: msg })
+    );
+    return 'failed';
   }
 }
 
-async function writeStatusFile(sessionId: string, status: SessionStatus): Promise<void> {
-  const { writeFile, mkdir } = await import('node:fs/promises');
-  await mkdir(spoolRoot(), { recursive: true });
-  await writeFile(sessionFile(sessionId, 'status'), JSON.stringify(status), 'utf-8');
+/* --------------------------------------------------------------- mapping --- */
+
+function hookEventType(hookName: string, event: Record<string, unknown>): string {
+  if (hookName === 'PreToolUse') {
+    return event['input'] && (event['input'] as Record<string, unknown>)['denied']
+      ? 'agent.tool.denied'
+      : 'agent.tool.start';
+  }
+  return HOOK_EVENT_TYPE_MAP[hookName] ?? 'agent.event';
+}
+
+function boundedText(value: unknown, maxChars: number): string {
+  if (value === undefined || value === null) return '';
+  const text =
+    typeof value === 'string'
+      ? value
+      : (() => {
+          try {
+            return JSON.stringify(value) ?? String(value);
+          } catch {
+            return String(value);
+          }
+        })();
+  return text.slice(0, maxChars);
+}
+
+function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
+  const limited: Record<string, unknown> = { ...hookEvent };
+
+  if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
+    limited.prompt = boundedText(hookEvent.prompt, MAX_PROMPT_CHARS);
+  }
+  for (const field of ['tool_input', 'tool_response', 'error']) {
+    if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
+      limited[field] = boundedText(hookEvent[field], MAX_TOOL_FIELD_CHARS);
+    }
+  }
+  // Prevent a nested/raw copy from bypassing the limits.
+  delete limited.raw;
+
+  return limited;
+}
+
+async function resolveGitInfo(ctx: ForwardContext, cwd: string): Promise<void> {
+  if (!cwd || ctx.git.branch !== undefined) return;
+  try {
+    const { detectGitBranch, detectGitRemoteRepo } = await import('@/utils/processes.js');
+    const [branch, remote] = await Promise.all([
+      detectGitBranch(cwd).then((v) => v ?? ''),
+      detectGitRemoteRepo(cwd).then((v) => v ?? ''),
+    ]);
+    ctx.git.branch = branch;
+    ctx.git.remote = remote;
+  } catch {
+    /* best-effort */
+  }
+}
+
+interface HookPayload {
+  ndjson: string;
+  containsSessionEnd: boolean;
+  malformed: number;
+}
+
+async function mapHookRecords(records: string[], ctx: ForwardContext): Promise<HookPayload> {
+  const mapped: string[] = [];
+  let containsSessionEnd = false;
+  let malformed = 0;
+
+  for (const record of records) {
+    let spoolData: OtlpHookSpoolData;
+    let hookEvent: Record<string, unknown>;
+    try {
+      spoolData = JSON.parse(record) as OtlpHookSpoolData;
+      hookEvent = JSON.parse(spoolData.raw) as Record<string, unknown>;
+    } catch {
+      // Complete but unusable record: dropped deliberately. Its bytes are still
+      // acknowledged with the batch so the cursor can never get stuck on it.
+      malformed += 1;
+      continue;
+    }
+
+    const hookName = String(hookEvent['hook_event_name'] ?? '');
+    if (hookName === 'SessionEnd') containsSessionEnd = true;
+
+    const cwd = String(hookEvent['cwd'] ?? '');
+    await resolveGitInfo(ctx, cwd);
+
+    const limited = limitHookPayload(hookEvent);
+    mapped.push(
+      JSON.stringify({
+        ...limited,
+        type: hookEventType(hookName, hookEvent),
+        session_id: String(hookEvent['session_id'] ?? ''),
+        timestamp: new Date(spoolData.timestamp).toISOString(),
+        user_email: ctx.userEmail,
+        developer_name: ctx.userEmail,
+        git_branch: ctx.git.branch ?? '',
+        repo_remote: ctx.git.remote ?? '',
+        codemie_project_name: ctx.projectName,
+        cwd,
+        prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
+        raw: limited,
+      })
+    );
+  }
+
+  return {
+    ndjson: mapped.length > 0 ? `${mapped.join('\n')}\n` : '',
+    containsSessionEnd,
+    malformed,
+  };
+}
+
+/* ------------------------------------------------------------ forwarding --- */
+
+async function buildForwardContext(
+  credentials: SSOCredentials | JWTCredentials
+): Promise<ForwardContext> {
+  const { readState } = await import(
+    '../../../../../../cli/commands/proxy/daemon-manager.js'
+  );
+  const state = await readState();
+
+  return {
+    credentials,
+    baseUrl: state?.syncApiUrl ?? state?.url ?? '',
+    projectName: state?.project ?? '',
+    userEmail: resolveUserEmail(credentials),
+    git: {},
+  };
+}
+
+/** Forward the complete hook records after the hooks cursor. */
+async function forwardHooks(
+  sessionId: string,
+  ctx: ForwardContext
+): Promise<SendResult | 'idle'> {
+  const batch = await snapshotPendingHookRecords(sessionId);
+  if (!batch) return 'idle';
+
+  const payload = await mapHookRecords(batch.records, ctx);
+  if (payload.malformed > 0) {
+    logger.debug(
+      '[otlp-forwarder] skipped malformed hook records',
+      ...sanitizeLogArgs({ sessionId, count: payload.malformed })
+    );
+  }
+
+  if (payload.ndjson.length === 0) {
+    // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
+    await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+    return 'idle';
+  }
+
+  const url = `${ctx.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
+  const result = await send(
+    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', ctx.credentials
+  );
+  if (result !== 'ok') return result;
+
+  await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+  if (payload.containsSessionEnd) await markSessionEnded(sessionId);
+
+  return 'ok';
+}
+
+/** Forward the raw protobuf bytes after an OTEL stream's cursor. */
+async function forwardOtelStream(
+  sessionId: string,
+  stream: OtelStream,
+  ctx: ForwardContext
+): Promise<SendResult | 'idle'> {
+  const pending = await snapshotPendingBytes(sessionId, stream);
+  if (!pending) return 'idle';
+
+  const url = `${ctx.baseUrl}${OTEL_ENDPOINTS[stream]}`;
+  const result = await send(
+    sessionId, stream, url, pending.bytes, 'application/x-protobuf', ctx.credentials
+  );
+  if (result !== 'ok') return result;
+
+  await advanceCursor(sessionId, stream, pending.cursor + pending.bytes.length);
+  return 'ok';
 }
 
 /**
- * Forward a session's spool data to the CodeMie analytics backend.
- * On 401/403: retry once with a fresh credential refresh; on second failure set authExpired.
- * On other failures: leave data on disk, retry next tick.
+ * Forward everything a session has pending to the CodeMie analytics backend.
+ *
+ * Each stream is read from its own cursor and acknowledged independently, so a
+ * failure on one stream never blocks or rewinds another. Cursors only advance
+ * after a successful response, which yields at-least-once delivery: a crash
+ * between backend success and cursor persistence re-sends that batch.
+ *
+ * A forwarded `SessionEnd` only records `endedAt`; it never stops later ticks
+ * from delivering bytes that failed or were appended afterwards.
  */
 export async function forwardSession(
   sessionId: string,
   hooksOnly: boolean,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<void> {
-  const status = await readStatusFile(sessionId);
-  if (!status) return;
+  const status = await readStatus(sessionId);
+  if (!status || status.authExpired) return; // status read is only a gate check now
 
-  // True once a successfully forwarded batch contains a SessionEnd event.
-  // OTEL data and the final forwarded=true marker are deferred until then
-  // so that all hook events produced during the session reach the backend.
-  let sessionEnded = false;
+  const ctx = await buildForwardContext(credentials);
 
-  // Resolve syncApiUrl from daemon state for the backend base URL
-  const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
-  const state = await readState();
-  const baseUrl = state?.syncApiUrl ?? state?.url ?? '';
-
-  // Resolve project name
-  const projectName = state?.project ?? '';
-
-  // Resolve user email
-  const userEmail = resolveUserEmail(credentials);
-
-  // Per-session git info cache
-  const gitCache: { branch?: string; remote?: string } = {};
-
-  // Forward hooks NDJSON
-  if (status.hooksWritten) {
-    const hooksPath = sessionFile(sessionId, 'hooks');
-    let hooksContent = '';
-    try {
-      hooksContent = await readFile(hooksPath, 'utf-8');
-    } catch {
-      // File may not exist yet
-    }
-
-    const cursor = status.cursor ?? 0;
-    const slice = hooksContent.slice(cursor);
-    const lines = slice.split('\n').filter((l) => l.trim().length > 0);
-
-    if (lines.length > 0) {
-      const mapped: string[] = [];
-      for (const line of lines) {
-        try {
-          const otlpHookSpoolData = JSON.parse(line) as OtlpHookSpoolData;
-
-          let hookEvent: Record<string, unknown> = {};
-
-          try {
-            hookEvent = JSON.parse(otlpHookSpoolData['raw']) as Record<string, unknown>;
-          } catch {
-            logger.error('[otlp-forwarder] failed to parse raw hook event');
-          }
-          const hookName = String(hookEvent['hook_event_name'] ?? '');
-          const eventType = hookEventType(hookName, hookEvent);
-          const cwd = String(hookEvent['cwd'] ?? '');
-
-          if (cwd && !gitCache.branch) {
-            try {
-              const { detectGitBranch, detectGitRemoteRepo } = await import('@/utils/processes.js');
-              const [branch, remote] = await Promise.all([
-                detectGitBranch(cwd).then((v) => v ?? ''),
-                detectGitRemoteRepo(cwd).then((v) => v ?? ''),
-              ]);
-              gitCache.branch = branch;
-              gitCache.remote = remote;
-            } catch { /* best-effort */ }
-          }
-
-          const limitedHookEvent = limitHookPayload(hookEvent);
-
-          const mappedEvent = {
-            ...limitedHookEvent,
-            type: eventType,
-            session_id: String(hookEvent['session_id'] ?? ''),
-            timestamp: new Date(otlpHookSpoolData.timestamp).toISOString(),
-            user_email: userEmail,
-            developer_name: userEmail,
-            git_branch: gitCache.branch ?? '',
-            repo_remote: gitCache.remote ?? '',
-            codemie_project_name: projectName,
-            cwd,
-            prompt_body: boundedText(
-              hookEvent['prompt'],
-              MAX_PROMPT_CHARS
-            ),
-            raw: limitedHookEvent,
-          };
-
-          mapped.push(JSON.stringify(mappedEvent));
-        } catch {
-          // Skip malformed lines
-        }
-      }
-
-      if (mapped.length > 0) {
-        const ndjsonBody = mapped.join('\n') + '\n';
-        const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
-        try {
-          let response = await postToBackend(url, ndjsonBody, 'application/x-ndjson', credentials);
-          if (response.status === 401 || response.status === 403) {
-            // Retry once — in practice credentials refresh is opaque here, so just retry
-            response = await postToBackend(url, ndjsonBody, 'application/x-ndjson', credentials);
-            if (response.status === 401 || response.status === 403) {
-              await withSessionLock(sessionId, async () => {
-                const s = await readStatusFile(sessionId);
-                if (s) {
-                  s.authExpired = true;
-                  await writeStatusFile(sessionId, s);
-                }
-              });
-              return;
-            }
-          }
-          if (response.ok) {
-            // Advance cursor
-            await withSessionLock(sessionId, async () => {
-              const s = await readStatusFile(sessionId);
-              if (s) {
-                s.cursor = (s.cursor ?? 0) + Buffer.byteLength(slice.slice(0, mapped.length ? slice.lastIndexOf('\n') + 1 : 0), 'utf-8');
-                // Recalculate: cursor = cursor + bytes consumed
-                const consumed = Buffer.byteLength(lines.join('\n') + '\n', 'utf-8');
-                s.cursor = cursor + consumed;
-                await writeStatusFile(sessionId, s);
-              }
-            });
-            // Detect SessionEnd among the successfully forwarded lines
-            sessionEnded = lines.some((line) => {
-              try {
-                const wrapper = JSON.parse(line) as Record<string, unknown>;
-                const rawField = wrapper['raw'];
-                const hookEvent: Record<string, unknown> = typeof rawField === 'string'
-                  ? (JSON.parse(rawField) as Record<string, unknown>)
-                  : (rawField as Record<string, unknown> ?? wrapper);
-                return String(hookEvent['hook_event_name'] ?? '') === 'SessionEnd';
-              } catch {
-                return false;
-              }
-            });
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.debug('[otlp-forwarder] hooks forward error', ...sanitizeLogArgs({ sessionId, err: msg }));
-          return;
-        }
-      }
-    }
-  }
-
-  if (hooksOnly) {
-    // Only mark the session done once SessionEnd has been forwarded; until
-    // then keep the cursor advancing on subsequent ticks.
-    if (sessionEnded) {
-      await withSessionLock(sessionId, async () => {
-        const s = await readStatusFile(sessionId);
-        if (s) {
-          s.forwarded = true;
-          await writeStatusFile(sessionId, s);
-        }
-      });
-    }
+  const hooksResult = await forwardHooks(sessionId, ctx);
+  if (hooksResult === 'auth-expired') {
+    await markAuthExpired(sessionId);
     return;
   }
 
-  // Forward OTLP bins — cursor-based so each tick only sends bytes appended
-  // since the previous tick, not the whole accumulated file.
-  const otlpSignals: Array<{
-    signal: 'otel_logs' | 'otel_metrics' | 'otel_traces';
-    endpoint: string;
-    writtenFlag: 'otelLogsWritten' | 'otelMetricsWritten' | 'otelTracesWritten';
-    getCursor: (s: SessionStatus) => number;
-    setCursor: (s: SessionStatus, v: number) => void;
-  }> = [
-    {
-      signal: 'otel_logs',
-      endpoint: CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS,
-      writtenFlag: 'otelLogsWritten',
-      getCursor: (s) => s.otelLogsCursor ?? 0,
-      setCursor: (s, v) => { s.otelLogsCursor = v; },
-    },
-    {
-      signal: 'otel_metrics',
-      endpoint: CODEMIE_ENDPOINTS.CLI_ANALYTICS_METRICS,
-      writtenFlag: 'otelMetricsWritten',
-      getCursor: (s) => s.otelMetricsCursor ?? 0,
-      setCursor: (s, v) => { s.otelMetricsCursor = v; },
-    },
-    {
-      signal: 'otel_traces',
-      endpoint: CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES,
-      writtenFlag: 'otelTracesWritten',
-      getCursor: (s) => s.otelTracesCursor ?? 0,
-      setCursor: (s, v) => { s.otelTracesCursor = v; },
-    },
-  ];
+  if (hooksOnly) return;
 
-  for (const { signal, endpoint, writtenFlag, getCursor, setCursor } of otlpSignals) {
-    if (!status[writtenFlag]) continue;
-    const binPath = sessionFile(sessionId, signal);
-    let fullBinData: Buffer;
-    try {
-      fullBinData = await readFile(binPath);
-    } catch {
-      continue;
-    }
-    const otelCursor = getCursor(status);
-    const slice = fullBinData.subarray(otelCursor);
-    if (slice.length === 0) continue; // Nothing new since last tick
-
-    const url = `${baseUrl}${endpoint}`;
-    try {
-      let response = await postToBackend(url, slice, 'application/x-protobuf', credentials);
-      if (response.status === 401 || response.status === 403) {
-        response = await postToBackend(url, slice, 'application/x-protobuf', credentials);
-        if (response.status === 401 || response.status === 403) {
-          await withSessionLock(sessionId, async () => {
-            const s = await readStatusFile(sessionId);
-            if (s) {
-              s.authExpired = true;
-              await writeStatusFile(sessionId, s);
-            }
-          });
-          return;
-        }
-      }
-      if (response.ok) {
-        await withSessionLock(sessionId, async () => {
-          const s = await readStatusFile(sessionId);
-          if (s) {
-            setCursor(s, otelCursor + slice.length);
-            await writeStatusFile(sessionId, s);
-          }
-        });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.debug(`[otlp-forwarder] ${signal} forward error`, ...sanitizeLogArgs({ sessionId, err: msg }));
+  for (const stream of OTEL_STREAMS) {
+    const result = await forwardOtelStream(sessionId, stream, ctx);
+    if (result === 'auth-expired') {
+      await markAuthExpired(sessionId);
+      return;
     }
   }
-
-  // Mark the session done once SessionEnd has been forwarded in the hooks batch
-  if (sessionEnded) {
-    await withSessionLock(sessionId, async () => {
-      const s = await readStatusFile(sessionId);
-      if (s) {
-        s.forwarded = true;
-        await writeStatusFile(sessionId, s);
-      }
-    });
-  }
 }
-
-function boundedText(value: unknown, maxChars: number): string {
-  if (value === undefined || value === null) return '';
-
-  const text = typeof value === 'string'
-    ? value
-    : (() => {
-        try {
-          return JSON.stringify(value) ?? String(value);
-        } catch {
-          return String(value);
-        }
-      })();
-
-  return text.slice(0, maxChars);
-}
-
-function limitHookPayload(
-  hookEvent: Record<string, unknown>
-): Record<string, unknown> {
-  const limited: Record<string, unknown> = { ...hookEvent };
-
-  if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
-    limited.prompt = boundedText(
-      hookEvent.prompt,
-      MAX_PROMPT_CHARS
-    );
-  }
-
-  for (const field of ['tool_input', 'tool_response', 'error']) {
-    if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
-      limited[field] = boundedText(
-        hookEvent[field],
-        MAX_TOOL_FIELD_CHARS
-      );
-    }
-  }
-
-  // Prevent a nested/raw copy from bypassing the limits if the wrapper was
-  // used as the fallback hookEvent.
-  delete limited.raw;
-
-  return limited;
-}
-
-// Re-export helpers needed by tick-processor
-export { readStatusFile, writeStatusFile, appendFile };

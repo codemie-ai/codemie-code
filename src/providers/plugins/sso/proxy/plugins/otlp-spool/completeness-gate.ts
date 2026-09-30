@@ -1,58 +1,36 @@
 /**
  * Hold & Gate completeness logic for a spool session.
+ *
+ * Stream presence is derived from the spool files themselves (a non-empty file
+ * means the stream was written, even once its cursor reached EOF), so the gate
+ * decision is sticky in the same way the old `*Written` flags were.
  */
 
-export interface SessionStatus {
-  hooksWritten: boolean;
-  otelLogsWritten: boolean;
-  otelMetricsWritten: boolean;
-  otelTracesWritten: boolean;
-  waitTicks: number;
-  forwarded?: boolean;
-  authExpired?: boolean;
-  /** Byte offset into hooks.ndjson, advanced after each successful forward */
-  cursor?: number;
-  /** Byte offsets into each OTEL bin file, advanced after each successful forward */
-  otelLogsCursor?: number;
-  otelMetricsCursor?: number;
-  otelTracesCursor?: number;
-}
+import { hooksOnlyForwardAllowed, hooksOnlyWaitTicks } from './spool-config.js';
+import { hooksGroupPresent, otelGroupPresent, type SpoolState } from './spool-state.js';
+import type { SessionStatus } from './session-status.js';
 
 export type GateDecision = 'send' | 'hooks-only-force' | 'wait' | 'noop';
 
 /**
- * Decide what to do with a session based on its current completeness status.
- *
- * Case A (both HOOKS and OTEL groups touched) -> 'send'
- * Case B (exactly one group, hooks-only, waited long enough) -> 'hooks-only-force'
- *        (exactly one group, not hooks-only or not waited enough) -> 'wait'
- * Case C (neither group) -> 'noop'
+ * Case A (HOOKS and OTEL groups both present) -> 'send'
+ * Case B (hooks only, waited long enough)     -> 'hooks-only-force'
+ *        (hooks only, not waited enough)      -> 'wait'
+ *        (OTEL only)                          -> 'wait'
+ * Case C (neither group)                      -> 'noop'
  */
-export function gateDecision(status: SessionStatus): GateDecision {
-  const maxAttempts = Number(process.env['OTLP_SEND_MAX_ATTEMPTS'] ?? '4');
-  const allowHooksOnly = (process.env['OTLP_ALLOW_HOOKS_ONLY_FORWARD'] ?? 'true') === 'true';
+export function gateDecision(spool: SpoolState, status: SessionStatus): GateDecision {
+  const hooks = hooksGroupPresent(spool);
+  const otel = otelGroupPresent(spool);
 
-  const hooksGroup = status.hooksWritten;
-  const otelGroup = status.otelLogsWritten || status.otelMetricsWritten || status.otelTracesWritten;
+  if (hooks && otel) return 'send';
+  if (!hooks && !otel) return 'noop';
 
-  // Case A: both groups present
-  if (hooksGroup && otelGroup) {
-    return 'send';
+  if (hooks) {
+    return status.waitTicks >= hooksOnlyWaitTicks() && hooksOnlyForwardAllowed()
+      ? 'hooks-only-force'
+      : 'wait';
   }
 
-  // Case C: neither group
-  if (!hooksGroup && !otelGroup) {
-    return 'noop';
-  }
-
-  // Case B: exactly one group
-  if (hooksGroup && !otelGroup) {
-    if (status.waitTicks >= maxAttempts && allowHooksOnly) {
-      return 'hooks-only-force';
-    }
-    return 'wait';
-  }
-
-  // otelGroup only — wait for hooks
-  return 'wait';
+  return 'wait'; // OTEL only — wait for hooks
 }
