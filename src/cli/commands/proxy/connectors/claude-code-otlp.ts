@@ -72,13 +72,17 @@ export const CODEMIE_ENV_KEYS = [
 
 export const HOOK_EVENTS = [
   'SessionStart',
+  'Stop',
+  'StopFailure',
+  'SessionEnd',
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
-  'Stop',
+  'PostToolUseFailure',
+  'SubagentStart',
   'SubagentStop',
   'PreCompact',
-  'SessionEnd',
+  'Notification',
 ] as const;
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';

@@ -11,12 +11,16 @@ import { withSessionLock } from './session-lock.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
+  Stop: 'agent.session.stop',
+  StopFailure: 'agent.turn.error',
   SessionEnd: 'agent.session.end',
   UserPromptSubmit: 'agent.prompt.submit',
+  PreToolUse: 'agent.tool.start',
   PostToolUse: 'agent.tool.end',
-  Stop: 'agent.stop',
+  PostToolUseFailure: 'agent.tool.error',
+  SubagentStart: 'agent.subagent.start',
   SubagentStop: 'agent.subagent.stop',
-  PreCompact: 'agent.compact.pre',
+  PreCompact: 'agent.session.compact',
   Notification: 'agent.notification',
 };
 
@@ -191,7 +195,7 @@ export async function forwardSession(
             ...hookEvent,
             type: eventType,
             session_id: String(hookEvent['session_id'] ?? ''),
-            timestamp: Date.now(),
+            timestamp: new Date().toISOString(),
             user_email: userEmail,
             developer_name: userEmail,
             git_branch: gitCache.branch ?? '',
