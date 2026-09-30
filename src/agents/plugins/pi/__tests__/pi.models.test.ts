@@ -18,15 +18,30 @@
  * @group unit
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { LlmModel } from '../../../../providers/plugins/sso/sso.http-client.js';
 
 vi.mock('../../../../utils/pricing.js', () => ({
   lookupPrice: vi.fn(),
 }));
 
+const fetchMock = vi.hoisted(() => vi.fn<() => Promise<unknown[]>>());
+vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../providers/plugins/sso/sso.http-client.js')>();
+  return { ...actual, fetchCodeMieLlmModels: fetchMock };
+});
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 import { lookupPrice } from '../../../../utils/pricing.js';
-import { convertLlmModelToPiEntry } from '../pi.models.js';
+import { convertLlmModelToPiEntry, fetchAndBuildPiModels } from '../pi.models.js';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 /** What `lookupPrice` returns for a Claude model: already USD per million, with a 1h write rate Pi has no field for. */
 const VENDORED_CLAUDE = {
@@ -251,5 +266,44 @@ describe('convertLlmModelToPiEntry — cost', () => {
     expect(entry.input).toEqual(['text', 'image']);
     expect(entry.reasoning).toBe(true);
     expect(entry.compat).toEqual({ forceAdaptiveThinking: true });
+  });
+});
+
+describe('fetchAndBuildPiModels SSO lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const profile = JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' });
+  let cwd: string;
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+    vi.mocked(lookupPrice).mockReturnValue(undefined as never);
+    cwd = mkdtempSync(join(tmpdir(), 'pi-models-'));
+  });
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([llmModel()]);
+
+    await fetchAndBuildPiModels({ CODEMIE_PROFILE_CONFIG: profile }, cwd);
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([llmModel()]);
+
+    await fetchAndBuildPiModels(
+      { CODEMIE_PROFILE_CONFIG: profile, CODEMIE_BASE_URL: 'http://localhost:4321' },
+      cwd,
+    );
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
   });
 });
