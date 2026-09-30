@@ -36,7 +36,7 @@ const OTEL_ENDPOINTS: Record<OtelStream, string> = {
 
 const MAX_PROMPT_CHARS = 200;
 const MAX_TOOL_FIELD_CHARS = 300;
-const FORWARD_TIMEOUT_MS = 10_000;
+const FORWARD_TIMEOUT_MS = 20_000;
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
 

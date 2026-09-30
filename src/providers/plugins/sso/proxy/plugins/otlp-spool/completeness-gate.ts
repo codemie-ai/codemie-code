@@ -23,8 +23,13 @@ export function gateDecision(spool: SpoolState, status: SessionStatus): GateDeci
   const hooks = hooksGroupPresent(spool);
   const otel = otelGroupPresent(spool);
 
-  if (hooks && otel) return 'send';
-  if (!hooks && !otel) return 'noop';
+  if (hooks && otel) {
+    return 'send';
+  }
+
+  if (!hooks && !otel) {
+    return 'noop';
+  }
 
   if (hooks) {
     return status.waitTicks >= hooksOnlyWaitTicks() && hooksOnlyForwardAllowed()

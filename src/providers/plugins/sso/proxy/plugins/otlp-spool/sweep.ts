@@ -10,7 +10,7 @@ import {
 import { withSessionLock } from './session-lock.js';
 import { createStatus, readStatus } from './session-status.js';
 import { isSessionDrained, lastActivityMs, readSpoolState } from './spool-state.js';
-import { abandonedSessionTimeoutMs, endedSessionGraceMs } from './spool-config.js';
+import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js';
 
 /**
  * Lightweight garbage collection for the OTLP spool.
@@ -66,7 +66,7 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;
   const timeoutMs =
-    status.endedAt !== undefined ? endedSessionGraceMs() : abandonedSessionTimeoutMs();
+    status.endedAt !== undefined ? endedSessionGraceMs() : abandonedSessionGraceMs();
 
   console.log({ idleSince, timeoutMs });
 

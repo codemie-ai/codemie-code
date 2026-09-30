@@ -20,7 +20,7 @@ import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
  * cursors are only advanced on success, so anything undelivered stays spooled
  * and is sent by the next proxy start.
  */
-const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
+const SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000;
 const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
 export interface OtlpHookSpoolData {
