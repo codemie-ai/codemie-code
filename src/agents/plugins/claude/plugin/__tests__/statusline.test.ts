@@ -245,6 +245,26 @@ describe('buildStatusLine', () => {
     expect(line).toContain(`${YELLOW}$12.34 (41%) resets 7/15/2026`);
     expect(line.indexOf('[my-project]')).toBeLessThan(line.indexOf('$12.34'));
     expect(line.indexOf('$12.34')).toBeLessThan(line.indexOf('(main)'));
+    expect(line.indexOf('(main)')).toBeLessThan(line.indexOf('$1.5000'));
+    expect(line.indexOf('[Claude Sonnet 5]')).toBeLessThan(line.indexOf('$1.5000'));
+    expect(line.indexOf('$1.5000')).toBeLessThan(line.indexOf('████░░░░░░'));
+  });
+
+  it('keeps the session cost within the first 100 columns in the worst case', () => {
+    const line = buildStatusLine({
+      ...basic,
+      projectName: 'p'.repeat(60),
+      branch: 'b'.repeat(80),
+      budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 },
+      tokIn: 1234,
+      tokOut: 56,
+    });
+    const plain = stripAnsi(line);
+    expect(plain.indexOf('$1.5000') + '$1.5000'.length).toBeLessThanOrEqual(100);
+    const costAt = line.indexOf('$1.5000');
+    expect(costAt).toBeLessThan(line.indexOf('████░░░░░░'));
+    expect(costAt).toBeLessThan(line.indexOf('in:'));
+    expect(costAt).toBeLessThan(line.indexOf('1m 5s'));
   });
 
   it('shows the budget error only when there is no budget', () => {

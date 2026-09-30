@@ -626,14 +626,6 @@ export function buildStatusLine({ projectName, branch, model, actualModel, ctxPc
   if (branch) parts.push(c(C.blue, `(${truncate(branch, MAX_BRANCH_CHARS)})`));
   if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
 
-  const bar = ctxBar(ctxPct);
-  if (bar) parts.push(bar);
-
-  const stats: string[] = [];
-  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
-  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
-  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
-
   // `costExact` is set when the figure was priced from the transcript by computeSessionCost()
   // — every message attributed to the model that actually answered it. It is false when we fell
   // back to Claude Code's own `total_cost_usd`, which prices the whole session against the model
@@ -642,6 +634,14 @@ export function buildStatusLine({ projectName, branch, model, actualModel, ctxPc
   if (typeof cost === 'number' && !Number.isNaN(cost)) {
     parts.push(c(C.yellow, `${costExact ? '' : '~'}$${cost.toFixed(4)}`));
   }
+
+  const bar = ctxBar(ctxPct);
+  if (bar) parts.push(bar);
+
+  const stats: string[] = [];
+  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
+  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
+  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
 
   const dur = formatDuration(durationMs);
   if (dur) parts.push(c(C.gray, dur));
