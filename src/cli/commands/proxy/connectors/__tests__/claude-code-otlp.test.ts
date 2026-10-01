@@ -659,7 +659,10 @@ describe('claude-code-otlp connector', () => {
       it('logs a sanitized info message describing the removal', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
         await mkdir(join(homeDir, '.claude'), { recursive: true });
-        await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }, null, 2));
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ theme: 'dark', hooks: { PreToolUse: [codemieHookGroup()] } }, null, 2)
+        );
 
         await removeClaudeCodeOtlpConfig();
 
@@ -741,6 +744,70 @@ describe('claude-code-otlp connector', () => {
         // NOT treated as "fully empty" — the backup-restore branch must not fire.
         expect(result.usedBackup).toBe(false);
         expect(existsSync(backupPath)).toBe(true);
+      });
+    });
+
+    describe('nothing codemie-owned to remove', () => {
+      async function seedSettings(content: string): Promise<string> {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(settingsPath, content);
+        return settingsPath;
+      }
+
+      it('returns removed:false and leaves a foreign-only file byte-identical without logging', async () => {
+        const raw = JSON.stringify(
+          {
+            theme: 'dark',
+            env: { FOO: 'bar' },
+            hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] }] },
+          }
+        );
+        const settingsPath = await seedSettings(raw);
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ removed: false, usedBackup: false, path: settingsPath });
+        expect(await readRaw(settingsPath)).toBe(raw);
+        expect(logger.info).not.toHaveBeenCalled();
+      });
+
+      it('does not delete or restore from backup when the file is an empty object', async () => {
+        const settingsPath = await seedSettings('{}');
+        const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
+        await writeFile(backupPath, JSON.stringify({ theme: 'from-backup' }));
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ removed: false, usedBackup: false, path: settingsPath });
+        expect(await readRaw(settingsPath)).toBe('{}');
+        expect(existsSync(backupPath)).toBe(true);
+      });
+
+      it('returns removed:true when only codemie env keys are present (no hooks)', async () => {
+        const settingsPath = await seedSettings(
+          JSON.stringify({ theme: 'dark', env: { FOO: 'bar', OTEL_LOGS_EXPORTER: 'otlp' } })
+        );
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        const final = await readJson(settingsPath);
+        expect(final.env).toEqual({ FOO: 'bar' });
+        expect(final.theme).toBe('dark');
+      });
+
+      it('returns removed:true when only a codemie hook is present (no env keys)', async () => {
+        const settingsPath = await seedSettings(
+          JSON.stringify({ theme: 'dark', hooks: { Stop: [codemieHookGroup()] } })
+        );
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        const final = await readJson(settingsPath);
+        expect(final.hooks).toBeUndefined();
+        expect(final.theme).toBe('dark');
       });
     });
   });

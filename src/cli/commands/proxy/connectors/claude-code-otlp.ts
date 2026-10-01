@@ -47,13 +47,14 @@ interface HookEntry {
 }
 
 interface HookGroup {
-  matcher: string;
-  hooks: HookEntry[];
+  matcher?: string;
+  hooks: unknown[];
   [key: string]: unknown;
 }
 
 interface ClaudeSettings {
-  hooks?: Record<string, unknown[]>;
+  // Parsed from user-edited JSON, so an event's value is not guaranteed to be an array.
+  hooks?: Record<string, unknown>;
   env?: Record<string, string>;
   [key: string]: unknown;
 }
@@ -123,13 +124,16 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
  * GROUP as "ours" for that purpose, since a group's `hooks[]` array may mix
  * our command with a user's own command(s).
  */
+function isHookEntry(h: unknown): h is HookEntry {
+  return typeof h === 'object' && h !== null && typeof (h as HookEntry).command === 'string';
+}
+
+function isHookGroup(group: unknown): group is HookGroup {
+  return typeof group === 'object' && group !== null && Array.isArray((group as HookGroup).hooks);
+}
+
 function isCodemieCommand(h: unknown): boolean {
-  return (
-    typeof h === 'object' &&
-    h !== null &&
-    typeof (h as HookEntry).command === 'string' &&
-    (h as HookEntry).command.includes(CODEMIE_COMMAND_MARKER)
-  );
+  return isHookEntry(h) && h.command.includes(CODEMIE_COMMAND_MARKER);
 }
 
 /**
@@ -139,12 +143,7 @@ function isCodemieCommand(h: unknown): boolean {
  * (whether to snapshot a backup), never destructive.
  */
 function groupContainsCodemieCommand(group: unknown): boolean {
-  return (
-    typeof group === 'object' &&
-    group !== null &&
-    Array.isArray((group as HookGroup).hooks) &&
-    (group as HookGroup).hooks.some(isCodemieCommand)
-  );
+  return isHookGroup(group) && group.hooks.some(isCodemieCommand);
 }
 
 /**
@@ -160,14 +159,13 @@ function groupContainsCodemieCommand(group: unknown): boolean {
 function stripCodemieCommandsFromGroups(existingGroups: unknown[]): unknown[] {
   const result: unknown[] = [];
   for (const group of existingGroups) {
-    if (typeof group !== 'object' || group === null || !Array.isArray((group as HookGroup).hooks)) {
+    if (!isHookGroup(group)) {
       result.push(group);
       continue;
     }
-    const g = group as HookGroup;
-    const remainingCommands = g.hooks.filter((h) => !isCodemieCommand(h));
+    const remainingCommands = group.hooks.filter((h) => !isCodemieCommand(h));
     if (remainingCommands.length > 0) {
-      result.push({ ...g, hooks: remainingCommands });
+      result.push({ ...group, hooks: remainingCommands });
     }
   }
   return result;
@@ -277,8 +275,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    const existingGroups: unknown[] = Array.isArray(hooks[eventName]) ? (hooks[eventName] as unknown[]) : [];
-    hooks[eventName] = [...existingGroups, codemieEntry];
+    hooks[eventName] = [...(hooks[eventName] ?? []), codemieEntry];
   }
 
   // --- Merge env block ---
@@ -322,11 +319,15 @@ export async function removeClaudeCodeOtlpConfig(
 
   const existing = await readSettingsFile(settingsPath);
 
-  const hooks: Record<string, unknown[]> = {};
+  let removedHookCommands = false;
+  const hooks: Record<string, unknown> = {};
   for (const [eventName, entries] of Object.entries(existing.hooks ?? {})) {
     if (!Array.isArray(entries)) {
-      hooks[eventName] = entries as unknown[];
+      hooks[eventName] = entries;
       continue;
+    }
+    if (entries.some(groupContainsCodemieCommand)) {
+      removedHookCommands = true;
     }
     const remainingGroups = stripCodemieCommandsFromGroups(entries);
     if (remainingGroups.length > 0) {
@@ -335,8 +336,16 @@ export async function removeClaudeCodeOtlpConfig(
   }
 
   const env: Record<string, string> = { ...(existing.env ?? {}) };
+  let removedEnvKeys = false;
   for (const key of CODEMIE_ENV_KEYS) {
-    delete env[key];
+    if (key in env) {
+      removedEnvKeys = true;
+      delete env[key];
+    }
+  }
+
+  if (!removedHookCommands && !removedEnvKeys) {
+    return { removed: false, usedBackup: false, path: settingsPath };
   }
 
   const stripped: ClaudeSettings = { ...existing };
