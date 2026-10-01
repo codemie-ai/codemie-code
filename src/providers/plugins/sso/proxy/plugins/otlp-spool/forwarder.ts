@@ -280,7 +280,7 @@ async function buildForwardContext(
 
   return {
     credentials,
-    baseUrl: state?.syncApiUrl ?? state?.url ?? '',
+    baseUrl: state?.targetUrl ?? state?.url ?? '',
     projectName: state?.project ?? '',
     userEmail: resolveUserEmail(credentials),
     git: {},
@@ -293,7 +293,9 @@ async function forwardHooks(
   ctx: ForwardContext
 ): Promise<SendResult | 'idle'> {
   const batch = await snapshotPendingHookRecords(sessionId);
-  if (!batch) return 'idle';
+  if (!batch) {
+    return 'idle';
+  }
 
   const payload = await mapHookRecords(batch.records, ctx);
   if (payload.malformed > 0) {
@@ -316,7 +318,10 @@ async function forwardHooks(
   if (result !== 'ok') return result;
 
   await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
-  if (payload.containsSessionEnd) await markSessionEnded(sessionId);
+
+  if (payload.containsSessionEnd) {
+    await markSessionEnded(sessionId);
+  }
 
   return 'ok';
 }
@@ -364,7 +369,9 @@ export async function forwardSession(
     return;
   }
 
-  if (hooksOnly) return;
+  if (hooksOnly) {
+    return;
+  }
 
   for (const stream of OTEL_STREAMS) {
     const result = await forwardOtelStream(sessionId, stream, ctx);

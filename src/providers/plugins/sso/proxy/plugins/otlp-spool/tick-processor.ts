@@ -54,9 +54,12 @@ export async function processSessionTick(
     // 'noop': nothing written yet
   });
 
-  if (!shouldForward || currentlyForwarding.has(sessionId)) return;
+  if (!shouldForward || currentlyForwarding.has(sessionId)) {
+    return;
+  }
 
   currentlyForwarding.add(sessionId);
+
   try {
     await forwardSession(sessionId, hooksOnly, credentials);
   } finally {

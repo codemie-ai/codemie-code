@@ -18,7 +18,6 @@ import {
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
-import { ensureApiBase } from '../../../providers/core/codemie-auth-helpers.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
@@ -379,10 +378,7 @@ async function ensureDaemon(
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
       ...identity.spawnOptions,
-      // config.ssoConfig is never populated anywhere in this codebase - it's a
-      // dead field. Fall back to codeMieUrl/baseUrl, the same convention
-      // sso.models.ts uses to resolve the CodeMie backend API URL.
-      syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
+      syncApiUrl: config.ssoConfig?.apiUrl,
       syncCodeMieUrl: config.codeMieUrl,
     });
     startedInThisRun = true;
@@ -416,7 +412,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     profile: config.name ?? 'default',
     project: config.codeMieProject,
     provider: config.provider ?? 'ai-run-sso',
-    syncApiUrl: config.codeMieUrl ? ensureApiBase(config.codeMieUrl) : config.baseUrl,
+    syncApiUrl: config.ssoConfig?.apiUrl,
     syncCodeMieUrl: config.codeMieUrl,
     targetUrl: config.baseUrl,
     model: normalizeDaemonModel(config.model)
@@ -427,7 +423,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     spawnOptions: { clientType: agentName },
   } as DaemonIdentity;
 
-  await ensureDaemon(daemonConfig, daemonIdentity, config)
+  await ensureDaemon(daemonConfig, daemonIdentity, config);
 }
 
 /** One per-target write outcome, collected for the summary (spec §3.4). */
