@@ -32,7 +32,6 @@ import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js'
  */
 export async function sweepSpool(): Promise<void> {
   for (const sessionId of await listSessionIds()) {
-    console.log({ sessionId });
     try {
       await sweepSession(sessionId);
     } catch (err) {
@@ -60,15 +59,12 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   if (!isSessionDrained(spool)) return false;
 
   const activityMs = await lastActivityMs(spool);
-  console.log({ activityMs });
   if (activityMs === null) return false; // nothing on disk to clean up
 
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;
   const timeoutMs =
     status.endedAt !== undefined ? endedSessionGraceMs() : abandonedSessionGraceMs();
-
-  console.log({ idleSince, timeoutMs });
 
   return Date.now() - idleSince >= timeoutMs;
 }
