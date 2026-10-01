@@ -22,7 +22,7 @@ export function createInstallCommand(): Command {
     .description('Install an external AI coding agent or development framework')
     .argument('[name]', 'Agent or framework name to install (run without argument to see available)')
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
-    .option('--supported', 'Install the latest supported version tested with CodeMie')
+    .option('--supported', 'Install the version CodeMie is currently tracking')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
     .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {
@@ -105,6 +105,7 @@ export function createInstallCommand(): Command {
           // Determine which version to install
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
+          let trackedVersionUnknown = false;
 
           // Priority: --supported flag > version argument > 'supported' (default for Claude) > undefined (latest)
           if (options?.supported) {
@@ -112,16 +113,24 @@ export function createInstallCommand(): Command {
             // Resolve 'supported' to actual version for display and comparison
             if (agent.checkVersionCompatibility) {
               const compat = await agent.checkVersionCompatibility();
-              actualVersionToInstall = compat.supportedVersion;
+              if (compat.versionKnown === false) {
+                // installVersion('supported') then installs the latest release, not the stale fallback
+                trackedVersionUnknown = true;
+              } else {
+                actualVersionToInstall = compat.supportedVersion;
+              }
             }
           } else if (version) {
             versionToInstall = version;
             actualVersionToInstall = version;
           } else if ((agent.name === 'claude' || agent.name === 'codex') && agent.checkVersionCompatibility) {
-            // Default to supported version for agents whose backend compatibility is version-sensitive
-            versionToInstall = 'supported';
+            // Default to supported version for agents whose backend compatibility is version-sensitive;
+            // with the tracked version unknown this stays a plain install of the latest release.
             const compat = await agent.checkVersionCompatibility();
-            actualVersionToInstall = compat.supportedVersion;
+            if (compat.versionKnown !== false) {
+              versionToInstall = 'supported';
+              actualVersionToInstall = compat.supportedVersion;
+            }
           }
 
           // Check if already installed with matching version
@@ -141,7 +150,7 @@ export function createInstallCommand(): Command {
                 return;
               } else {
                 // Different version installed, ask to reinstall
-                const versionDisplay = options?.supported ? `${actualVersionToInstall} (supported)` : actualVersionToInstall;
+                const versionDisplay = options?.supported ? `${actualVersionToInstall} (tracked)` : actualVersionToInstall;
                 console.log(chalk.yellow(`${agent.displayName} v${installedVersion} is already installed (requested: ${versionDisplay})`));
                 const inquirer = (await import('inquirer')).default;
                 const { confirm } = await inquirer.prompt([
@@ -158,7 +167,7 @@ export function createInstallCommand(): Command {
                   return;
                 }
               }
-            } else if (!actualVersionToInstall) {
+            } else if (!versionToInstall) {
               // No specific version requested, already installed
               console.log(chalk.blueBright(`${agent.displayName} is already installed`));
 
@@ -168,16 +177,46 @@ export function createInstallCommand(): Command {
               }
 
               return;
+            } else if (trackedVersionUnknown) {
+              // --supported with no known target: ask, as for any other version change
+              const installedDisplay = installedVersion ? ` v${installedVersion}` : '';
+              console.log(
+                chalk.yellow(
+                  `${agent.displayName}${installedDisplay} is already installed; the tracked version is unavailable (version checks disabled or npm unreachable).`
+                )
+              );
+              const inquirer = (await import('inquirer')).default;
+              const { confirm } = await inquirer.prompt([
+                {
+                  type: 'confirm',
+                  name: 'confirm',
+                  message: 'Reinstall with the latest release?',
+                  default: false,
+                },
+              ]);
+
+              if (!confirm) {
+                console.log(chalk.gray('Installation cancelled'));
+                return;
+              }
             }
           }
 
           // Build installation message
           const isUsingSupported = versionToInstall === 'supported';
           const versionMessage = isUsingSupported && actualVersionToInstall
-            ? ` v${actualVersionToInstall} (supported version)`
+            ? ` v${actualVersionToInstall} (tracked version)`
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`
             : '';
+
+          if (trackedVersionUnknown) {
+            console.log(
+              chalk.dim(
+                'Tracked version unavailable (version checks disabled or npm unreachable) — installing the latest release.'
+              )
+            );
+          }
 
           const spinner = ora(`Installing ${agent.displayName}${versionMessage}...`).start();
 

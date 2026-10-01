@@ -295,6 +295,60 @@ describe('AgentsCheck', () => {
     ]);
   });
 
+  it('warns when the installed version differs from a known tracked version', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        name: 'claude',
+        displayName: 'Claude Code',
+        metadata: { supportedVersion: '2.1.0' },
+        getVersion: async () => '2.0.0',
+        checkVersionCompatibility: async () => ({
+          compatible: true, installedVersion: '2.0.0', supportedVersion: '2.1.0',
+          isNewer: false, hasUpdate: true, isBelowMinimum: false, versionKnown: true,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details[0]).toMatchObject({ status: 'warn' });
+    expect(result.details[0].message).toContain('tracking v2.1.0');
+  });
+
+  it('stays ok, never "tracking vlatest", when the tracked version is unknown', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        name: 'claude',
+        displayName: 'Claude Code',
+        metadata: { supportedVersion: '2.1.0' },
+        getVersion: async () => '2.0.0',
+        checkVersionCompatibility: async () => ({
+          compatible: true, installedVersion: '2.0.0', supportedVersion: 'latest',
+          isNewer: false, hasUpdate: false, isBelowMinimum: false, versionKnown: false,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toEqual([{ status: 'ok', message: 'Claude Code (2.0.0)' }]);
+  });
+
+  it('still reports a below-minimum version when the tracked version is unknown', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        name: 'claude',
+        displayName: 'Claude Code',
+        metadata: { supportedVersion: '2.1.0' },
+        getVersion: async () => '1.0.0',
+        checkVersionCompatibility: async () => ({
+          compatible: true, installedVersion: '1.0.0', supportedVersion: 'latest',
+          isNewer: false, hasUpdate: false, isBelowMinimum: true,
+          minimumSupportedVersion: '2.0.0', versionKnown: false,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details[0].status).toBe('error');
+    expect(result.details[0].message).toContain('below minimum supported v2.0.0');
+  });
+
   it('warns for agents installed via the deprecated npm method', async () => {
     h.getInstalledAgentsMock.mockResolvedValue([
       {

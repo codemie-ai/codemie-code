@@ -4,6 +4,7 @@ import type {
   ResumeOwnershipResult,
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { resolveSupportedInstallVersion } from '../../core/version-resolution.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
@@ -32,22 +33,17 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Recommended Claude Code version — the one CodeMie verifies against.
- * A different installed version produces one non-blocking notice, never a block.
- *
- * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ * Marks Claude Code as version-checked. The tracked version is resolved live
+ * from npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 export const CLAUDE_SUPPORTED_VERSION = '2.1.281';
 
 /**
  * Minimum supported Claude Code version — the only hard gate; below it the
- * agent refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * CLAUDE_SUPPORTED_VERSION, move its old value down to here — users stay
- * supported for one full recommendation cycle before they are cut off.
- *
- * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ * agent refuses to launch. Maintained by hand: raise it when an older Claude
+ * Code version stops working with CodeMie.
  */
 const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
 
@@ -128,7 +124,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   sessionAnalyticsReport: true,
 
   // Version management configuration
-  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
+  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: CLAUDE_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   // Native installer URLs (used by installNativeAgent utility)
@@ -670,9 +666,12 @@ export class ClaudePlugin extends BaseAgentAdapter {
       return versionMatch ? versionMatch[1] : fullPathOutput;
     }
 
-    // Fall back to command in PATH (works for npm installations, Windows, etc.)
+    // Fall back to command in PATH (works for npm installations, Windows, etc.). On Windows an
+    // npm install is a .cmd shim, which spawn() can only run through a shell.
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
 
       // Parse version from output like '2.1.23 (Claude Code)'
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
@@ -747,16 +746,14 @@ export class ClaudePlugin extends BaseAgentAdapter {
   async installVersion(version?: string): Promise<string | null> {
     const metadata = this.metadata;
 
-    // Resolve 'supported' to actual version from metadata
+    // Resolve 'supported' to the live tracked version ('latest' when unknown)
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!metadata.supportedVersion) {
-        throw new AgentInstallationError(
-          metadata.name,
-          'No supported version defined in metadata',
-        );
-      }
-      resolvedVersion = metadata.supportedVersion;
+      resolvedVersion = await resolveSupportedInstallVersion({
+        agentName: metadata.name,
+        npmPackage: metadata.npmPackage,
+        fallbackSupportedVersion: metadata.supportedVersion,
+      });
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,

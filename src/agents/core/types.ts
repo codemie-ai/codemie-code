@@ -203,6 +203,9 @@ export interface VersionCompatibilityResult {
   hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
   minimumSupportedVersion?: string; // minimum version required to run (from metadata)
+  // false when checks are off or the live lookup failed: supportedVersion is then 'latest'
+  // and no "tracking vX" notice may be shown. Optional so older mocks/callers stay valid.
+  versionKnown?: boolean;
 }
 
 /**
@@ -219,8 +222,11 @@ export interface AgentMetadata {
   cliCommand: string | null;       // 'claude' or null for built-in
 
   /**
-   * Latest version tested with the CodeMie backend — a recommendation, not a
-   * requirement. A mismatch produces one non-blocking notice per version.
+   * The version CodeMie tracks as current — not a requirement. For
+   * live-tracked agents (see `LIVE_TRACKED_AGENT_NAMES`) this is resolved from
+   * the package's live npm `latest` tag rather than backend-tested; for other
+   * agents it is this maintainer-pinned fallback. A mismatch produces one
+   * non-blocking notice per version.
    *
    * Format: Semantic version string (e.g., '2.0.30')
    * Special values: 'latest', 'stable' (channels)
@@ -853,9 +859,10 @@ export interface AgentAdapter {
   /**
    * Emit a one-time notice when the installed version differs from the
    * recommended one, and record it so later launches stay silent. Never
-   * prompts, never blocks, never throws.
+   * prompts, never blocks, never throws. Pass an already-computed result to
+   * avoid a second version lookup.
    */
-  warnOnceIfUntested(): Promise<void>;
+  warnOnceIfUntested(precomputed?: VersionCompatibilityResult): Promise<void>;
 
   /**
    * Detect installation method (optional, for installation-aware agents)

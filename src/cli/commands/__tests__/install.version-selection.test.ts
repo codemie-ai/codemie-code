@@ -24,6 +24,9 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
+const promptMock = vi.hoisted(() => vi.fn());
+vi.mock('inquirer', () => ({ default: { prompt: promptMock } }));
+
 vi.mock('ora', () => ({
   default: vi.fn(() => ({
     start: vi.fn(() => ({
@@ -76,6 +79,105 @@ describe('install command version selection', () => {
     expect(spinnerSucceedMock).toHaveBeenCalledWith(
       'OpenAI Codex CLI v0.129.0 installed successfully'
     );
+  });
+
+  function codexWithUnknownTrackedVersion(installed: boolean, installVersion = vi.fn().mockResolvedValue('0.170.0')) {
+    return {
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
+      metadata: {},
+      isInstalled: vi.fn().mockResolvedValue(installed),
+      install: vi.fn().mockResolvedValue(undefined),
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: installed ? '0.150.0' : null,
+        compatible: true,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        versionKnown: false,
+      }),
+      getVersion: vi.fn().mockResolvedValue(installed ? '0.150.0' : '0.170.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it('--supported asks before reinstalling the latest release when the tracked version is unknown', async () => {
+    const agent = codexWithUnknownTrackedVersion(true);
+    getAgentMock.mockReturnValue(agent);
+    promptMock.mockResolvedValue({ confirm: true });
+
+    const { createInstallCommand } = await import('../install.js');
+    await createInstallCommand().parseAsync(['node', 'codemie', 'codex', '--supported']);
+
+    expect(promptMock).toHaveBeenCalledWith([
+      expect.objectContaining({ message: 'Reinstall with the latest release?', default: false }),
+    ]);
+    expect(agent.installVersion).toHaveBeenCalledWith('supported');
+  });
+
+  it('--supported leaves the installed agent alone when the reinstall is declined', async () => {
+    const agent = codexWithUnknownTrackedVersion(true);
+    getAgentMock.mockReturnValue(agent);
+    promptMock.mockResolvedValue({ confirm: false });
+
+    const { createInstallCommand } = await import('../install.js');
+    await createInstallCommand().parseAsync(['node', 'codemie', 'codex', '--supported']);
+
+    expect(agent.installVersion).not.toHaveBeenCalled();
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('Installation cancelled');
+  });
+
+  it('--supported installs the latest release without asking when the agent is not installed', async () => {
+    const agent = codexWithUnknownTrackedVersion(false);
+    getAgentMock.mockReturnValue(agent);
+
+    const { createInstallCommand } = await import('../install.js');
+    await createInstallCommand().parseAsync(['node', 'codemie', 'codex', '--supported']);
+
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(agent.installVersion).toHaveBeenCalledWith('supported');
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('Tracked version unavailable');
+  });
+
+  it('a plain install of an installed agent stays a no-op when the tracked version is unknown', async () => {
+    const installVersion = vi.fn();
+    const install = vi.fn();
+
+    getAgentMock.mockReturnValue({
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
+      metadata: {},
+      isInstalled: vi.fn().mockResolvedValue(true),
+      install,
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: '0.150.0',
+        compatible: true,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        versionKnown: false,
+      }),
+      getVersion: vi.fn().mockResolvedValue('0.150.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'codex']);
+
+    expect(installVersion).not.toHaveBeenCalled();
+    expect(install).not.toHaveBeenCalled();
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('is already installed');
   });
 
   it('uses the version returned by installVersion() for the success message', async () => {

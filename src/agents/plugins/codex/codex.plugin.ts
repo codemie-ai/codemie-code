@@ -65,21 +65,17 @@ import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation
 import { mkdir } from 'fs/promises';
 
 /**
- * Supported Codex CLI version
- * Latest version tested and verified with CodeMie backend
- *
- * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ * Marks Codex CLI as version-checked. The tracked version is resolved live from
+ * npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 const CODEX_SUPPORTED_VERSION = '0.154.0';
 
 /**
  * Minimum supported Codex CLI version — the only hard gate; below it the agent
- * refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * CODEX_SUPPORTED_VERSION, move its old value down to here.
- *
- * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ * refuses to launch. Maintained by hand: raise it when an older Codex CLI
+ * version stops working with CodeMie.
  */
 const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
 
@@ -113,7 +109,7 @@ export const CodexPluginMetadata: AgentMetadata = {
   sessionAnalyticsReport: true,
 
   // Version management configuration
-  supportedVersion: CODEX_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
+  supportedVersion: CODEX_SUPPORTED_VERSION,       // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   dataPaths: {
@@ -473,7 +469,11 @@ export class CodexPlugin extends BaseAgentAdapter {
     }
 
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      // On Windows, codex resolves to an npm .cmd shim — spawn() can only run it
+      // through a shell, the same reason installGlobal/uninstallGlobal set this.
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
       const output = result.stdout.trim();
       const versionMatch = output.match(/(\d+\.\d+\.\d+)/);
       return versionMatch ? versionMatch[1] : output;

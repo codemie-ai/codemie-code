@@ -2,13 +2,14 @@
  * Installed agents health check
  *
  * Reports each installed agent's version against the version CodeMie
- * recommends: a match is `ok`, a mismatch is a `warn` carrying the
- * recommendation, and a version below the minimum supported one is an `error`
+ * is tracking: a match is `ok`, a mismatch is a `warn` naming the
+ * tracked version, and a version below the minimum supported one is an `error`
  * (that is the only version state that actually blocks the agent).
  */
 
 import { AgentRegistry } from '../../../../agents/registry.js';
 import { AgentAdapter } from '../../../../agents/core/types.js';
+import { isAheadOfLiveTracking } from '../../../../agents/core/version-resolution.js';
 import { ItemWiseHealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class AgentsCheck implements ItemWiseHealthCheck {
@@ -57,10 +58,14 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       };
     }
 
-    if (version !== compat.supportedVersion) {
+    if (
+      compat.versionKnown !== false &&
+      !isAheadOfLiveTracking(agent.name, compat) &&
+      version !== compat.supportedVersion
+    ) {
       return {
         status: 'warn',
-        message: `${agent.displayName}${versionStr} - CodeMie recommends v${compat.supportedVersion}`,
+        message: `${agent.displayName}${versionStr} - CodeMie is tracking v${compat.supportedVersion}`,
         hint: `codemie install ${agent.name} --supported`
       };
     }

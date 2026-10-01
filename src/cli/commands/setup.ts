@@ -14,6 +14,7 @@ import {
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
+import { FETCH_TIMEOUT_MS } from '../../utils/version-cache.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
 
@@ -699,9 +700,14 @@ export async function autoSelectModelTiers(
   return result;
 }
 
+// The version check reads the config and then runs its own FETCH_TIMEOUT_MS-bounded registry
+// lookup, so its worst case ends later than FETCH_TIMEOUT_MS; the margin keeps this outer race
+// from losing to that inner timeout on a cold cache.
+const CLAUDE_VERSION_CHECK_TIMEOUT_MS = FETCH_TIMEOUT_MS + 2000;
+
 /**
  * Check and install Claude Code if needed
- * Called during first-time setup to ensure Claude is installed with supported version
+ * Called during first-time setup; installs the tracked version (the latest release when unknown)
  */
 async function checkAndInstallClaude(): Promise<void> {
   try {
@@ -729,10 +735,10 @@ async function checkAndInstallClaude(): Promise<void> {
       ]);
 
       if (installClaude) {
-        const spinner = ora('Installing Claude Code (supported version)...').start();
+        const spinner = ora('Installing Claude Code...').start();
 
         try {
-          // Install supported version
+          // Installs the tracked version, or the latest release when that is unknown
           if (claude.installVersion) {
             await claude.installVersion('supported');
           } else {
@@ -772,21 +778,13 @@ async function checkAndInstallClaude(): Promise<void> {
           const compat = await Promise.race([
             claude.checkVersionCompatibility(),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Version check timeout')), 3000)
+              setTimeout(() => reject(new Error('Version check timeout')), CLAUDE_VERSION_CHECK_TIMEOUT_MS)
             )
           ]) as VersionCompatibilityResult;
 
-          if (compat.isNewer) {
-            // Installed version is newer than supported
-            console.log();
-            console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
-            console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
-            console.log();
-            console.log(chalk.white('   To install the supported version:'));
-            console.log(chalk.blueBright('   codemie install claude --supported'));
-            console.log();
-          } else if (compat.compatible) {
-            // Version is compatible (same or older than supported)
+          // Claude is live-tracked: being ahead of the tracked version usually means it
+          // self-updated since the cached lookup, so there is nothing to advise.
+          if (compat.compatible || compat.isNewer) {
             console.log();
             console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
             console.log();

@@ -33,6 +33,11 @@ import { extractGeneratedConfig } from './print-config.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
+import {
+  isAheadOfLiveTracking,
+  resolveSupportedInstallVersion,
+  resolveSupportedVersionDetailed,
+} from './version-resolution.js';
 
 /**
  * Base class for all agent adapters
@@ -186,10 +191,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Resolve 'supported' to actual version from metadata
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!this.metadata.supportedVersion) {
-        throw new Error(`${this.displayName}: No supported version defined in metadata`);
-      }
-      resolvedVersion = this.metadata.supportedVersion;
+      resolvedVersion = await resolveSupportedInstallVersion({
+        agentName: this.metadata.name,
+        npmPackage: this.metadata.npmPackage,
+        fallbackSupportedVersion: this.metadata.supportedVersion,
+      });
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,
@@ -283,7 +289,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * @returns Version compatibility result with status and version info
    */
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
-    const supportedVersion = this.metadata.supportedVersion || 'latest';
+    const { version: resolved, isCurrent } = await resolveSupportedVersionDetailed({
+      agentName: this.metadata.name,
+      npmPackage: this.metadata.npmPackage,
+      fallbackSupportedVersion: this.metadata.supportedVersion,
+    });
+    const versionKnown = Boolean(isCurrent && resolved);
+    const supportedVersion = isCurrent && resolved ? resolved : 'latest';
     const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
 
     const installedVersion = await this.getVersion();
@@ -304,30 +316,37 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         hasUpdate: false,
         isBelowMinimum: false,
         minimumSupportedVersion,
+        versionKnown,
       };
     }
 
-    if (!this.metadata.supportedVersion) {
+    // The minimum is a maintainer-pinned hard gate, so it must hold even when
+    // the tracked version is unknown (checks off, offline).
+    let isBelowMinimum = false;
+    if (minimumSupportedVersion) {
+      try {
+        isBelowMinimum = compareVersions(installedVersion, minimumSupportedVersion) < 0;
+      } catch {
+        isBelowMinimum = false;
+      }
+    }
+
+    if (!versionKnown) {
       return {
         compatible: true,
         installedVersion,
         supportedVersion: 'latest',
         isNewer: false,
         hasUpdate: false,
-        isBelowMinimum: false,
+        isBelowMinimum,
         minimumSupportedVersion,
+        versionKnown,
       };
     }
 
     try {
       const comparison = compareVersions(installedVersion, supportedVersion);
       const hasUpdate = comparison < 0;
-
-      let isBelowMinimum = false;
-      if (minimumSupportedVersion) {
-        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
-        isBelowMinimum = minimumComparison < 0;
-      }
 
       logger.debug('Version comparison result', {
         agent: this.metadata.name,
@@ -349,6 +368,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         hasUpdate,
         isBelowMinimum,
         minimumSupportedVersion,
+        versionKnown,
       };
     } catch (error) {
       const errorContext = createErrorContext(error, { agent: this.metadata.name });
@@ -379,29 +399,37 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         supportedVersion,
         isNewer: false,
         hasUpdate: false,
-        isBelowMinimum: false,
+        isBelowMinimum,
         minimumSupportedVersion,
+        versionKnown,
       };
     }
   }
 
   /**
    * Emit a one-time notice when the installed version differs from the
-   * recommended `metadata.supportedVersion`, then record the marker so later
-   * launches stay silent until the recommendation itself moves.
+   * latest tracked `metadata.supportedVersion`, then record the marker so later
+   * launches stay silent until the tracked version itself moves.
    *
    * Never prompts, never blocks, never throws — a failure to read or write the
    * marker store must not stop the agent from launching.
    */
-  async warnOnceIfUntested(): Promise<void> {
+  async warnOnceIfUntested(precomputed?: VersionCompatibilityResult): Promise<void> {
     try {
       if (!this.metadata.supportedVersion) {
         return;
       }
 
-      const compat = await this.checkVersionCompatibility();
+      const compat = precomputed ?? await this.checkVersionCompatibility();
+      // Checks off or lookup failed: behave as if no version were configured.
+      if (compat.versionKnown === false) {
+        return;
+      }
       const { installedVersion, supportedVersion } = compat;
       if (!installedVersion || installedVersion === supportedVersion) {
+        return;
+      }
+      if (isAheadOfLiveTracking(this.metadata.name, compat)) {
         return;
       }
 
@@ -424,7 +452,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       const codemieVersion = (await getCurrentCliVersion()) ?? 'unknown';
       const notice =
-        `CodeMie recommends ${this.displayName} v${supportedVersion}; ` +
+        `CodeMie is tracking ${this.displayName} v${supportedVersion}; ` +
         `you are running v${installedVersion} (CodeMie v${codemieVersion}).`;
 
       logger.warn(notice, {
@@ -439,7 +467,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (!this.metadata.silentMode && !isNonInteractiveEnvironment()) {
         console.error();
         console.error(chalk.yellow(`⚠  ${notice}`));
-        console.error(chalk.white('   Continuing. To switch to the recommended version, run:'));
+        console.error(chalk.white('   Continuing. To switch to the tracked version, run:'));
         console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
         console.error();
       }
@@ -468,14 +496,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * This is the only remaining hard gate: `minimumSupportedVersion` marks
    * versions with known protocol breaks, where launching produces corrupted
    * output rather than a degraded experience. Everything above the minimum is
-   * a recommendation handled by {@link warnOnceIfUntested}.
+   * tracked, non-blocking guidance handled by {@link warnOnceIfUntested}.
    */
-  private async blockIfBelowMinimum(): Promise<void> {
+  private async blockIfBelowMinimum(precomputed?: VersionCompatibilityResult): Promise<void> {
     if (!this.metadata.supportedVersion || !this.metadata.minimumSupportedVersion) {
       return;
     }
 
-    const compat = await this.checkVersionCompatibility();
+    const compat = precomputed ?? await this.checkVersionCompatibility();
     if (!compat.isBelowMinimum) {
       return;
     }
@@ -501,10 +529,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.error();
     console.error(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
     console.error(chalk.red(`  Minimum required version: v${minimumDisplay}`));
-    console.error(
-      chalk.white(`  Recommended version:      v${compat.supportedVersion} `) +
-      chalk.green('(recommended)')
-    );
+    if (compat.versionKnown !== false) {
+      console.error(chalk.white(`  Latest tracked version:   v${compat.supportedVersion}`));
+    }
     console.error();
     console.error(chalk.white('  This version is known to be incompatible with CodeMie.'));
     console.error(chalk.white('  Upgrade with:'));
@@ -522,9 +549,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
     // Version handling (EPMCDME-13734): known-broken versions are refused,
-    // everything else is a one-time recommendation — no prompts, no re-nagging.
-    await this.blockIfBelowMinimum();
-    await this.warnOnceIfUntested();
+    // everything else gets a one-time notice — no prompts, no re-nagging.
+    // Resolve once and share: each check would otherwise do its own live lookup,
+    // doubling the wait on every offline launch.
+    const compat = this.metadata.supportedVersion ? await this.checkVersionCompatibility() : undefined;
+    await this.blockIfBelowMinimum(compat);
+    await this.warnOnceIfUntested(compat);
 
     // Generate session ID at the very start - this is the source of truth
     // All components (logger, metrics, proxy) will use this same session ID
