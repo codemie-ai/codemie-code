@@ -16,6 +16,7 @@
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../agents/core/session/BaseProcessor.js';
 import { shouldStopSync } from '../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
+import { existsSync } from 'fs';
 import { open, stat, unlink } from 'fs/promises';
 import { logger } from '../../../../utils/logger.js';
 import { getCodemiePath } from '../../../../utils/paths.js';
@@ -197,7 +198,27 @@ export class SessionSyncer {
         };
       }
 
-      if (!sessionMetadata.correlation || sessionMetadata.correlation.status !== 'matched') {
+      // A 'file_not_found' session whose transcript exists by now (the file appeared after
+      // the status was recorded) is correlated after all: sync it normally.
+      const transcriptRecovered =
+        sessionMetadata.correlation?.status === 'file_not_found' &&
+        !!sessionMetadata.correlation.agentSessionFile &&
+        existsSync(sessionMetadata.correlation.agentSessionFile);
+
+      if (!transcriptRecovered && (!sessionMetadata.correlation || sessionMetadata.correlation.status !== 'matched')) {
+        // Handle 'file_not_found' status specially - this is expected for some interactive sessions
+        if (sessionMetadata.correlation?.status === 'file_not_found') {
+          logger.info(
+            `[SessionSyncer] Skipping session ${sessionId} - transcript file not found (status: file_not_found). ` +
+            `This is expected for some interactive PTY sessions where the transcript is not persisted.`
+          );
+          return {
+            success: true,
+            message: 'Session skipped - transcript file not found (expected for some interactive sessions)',
+            processorResults: {},
+            failedProcessors: []
+          };
+        }
         return {
           success: false,
           message: `Session not correlated (status: ${sessionMetadata.correlation?.status || 'unknown'})`,
