@@ -6,6 +6,7 @@ import { ConfigLoader, loadRegisteredAssistants } from '@/utils/config.js';
 import { StorageScope } from '@/env/types.js';
 import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
+import { SHARED_MESSAGES } from '@/cli/commands/shared/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
 import { determineChanges, registerAssistant, resolveMissingAssistants, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
@@ -105,7 +106,7 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   const fetcher = createDataFetcher({ config, client, options });
   const { found: selectedAssistants, missing } = await fetcher.fetchAssistantsByIds(selectedIds, []);
   const staleAssistants = resolveMissingAssistants(missing, registeredAssistants);
-  const staleWarnings = staleAssistants.map(entry => MESSAGES.SETUP.WARNING_STALE_ASSISTANT(entry.name, entry.id));
+  const staleWarnings = staleAssistants.map(entry => SHARED_MESSAGES.WARNING_STALE_REGISTRATION('assistant', entry.name, entry.id));
   // The prompts below clear the screen on every render, so the warnings are
   // drawn inside the next prompt and repeated once the wizard has finished.
   const printStaleWarnings = (): void => {

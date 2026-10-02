@@ -15,6 +15,7 @@ import {
   registerAllOrAbort,
 } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
+import { SHARED_MESSAGES } from '@/cli/commands/shared/constants.js';
 import {
   resolveAgentSetupTargets,
   formatAgentSetupTarget,
@@ -156,7 +157,7 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   const { found: selectedSkills, missing } = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
   const staleSkills = resolveMissingSkills(missing, registeredSkills);
   for (const entry of staleSkills) {
-    console.log(chalk.yellow(`${entry.name} (${entry.id}) no longer exists on the server; its registration was left unchanged. Deselect it to unregister.`));
+    console.log(chalk.yellow(SHARED_MESSAGES.WARNING_STALE_REGISTRATION('skill', entry.name, entry.id)));
   }
 
   const { toRegister, toUnregister } = determineChanges(selectedIds, selectedSkills, registeredSkills);
