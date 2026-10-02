@@ -4,7 +4,7 @@
  * Handles all data fetching for assistant selection
  */
 
-import type { Assistant, AssistantBase, AssistantListParams, CodeMieClient } from 'codemie-sdk';
+import { NotFoundError, type Assistant, type AssistantBase, type AssistantListParams, type CodeMieClient } from 'codemie-sdk';
 import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from './index.js';
 import { PANEL_ID, API_SCOPE, CONFIG, type PanelId } from './selection/constants.js';
@@ -20,6 +20,11 @@ function isAssistantListResponse(response: unknown): response is AssistantListRe
   const r = response as Partial<AssistantListResponse> | null | undefined;
   return !!r && typeof r === 'object' && Array.isArray(r.data) && !!r.pagination
     && typeof r.pagination.total === 'number' && typeof r.pagination.pages === 'number';
+}
+
+export interface FetchByIdsResult {
+  found: (Assistant | AssistantBase)[];
+  missing: string[];
 }
 
 export interface DataFetcherDependencies {
@@ -45,7 +50,7 @@ export interface DataFetcher {
   fetchAssistantsByIds: (
     selectedIds: string[],
     existingAssistants: (Assistant | AssistantBase)[]
-  ) => Promise<(Assistant | AssistantBase)[]>;
+  ) => Promise<FetchByIdsResult>;
   fetchAllVisibleAssistants: () => Promise<AssistantBase[]>;
 }
 
@@ -153,7 +158,7 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
   async function fetchAssistantsByIds(
     selectedIds: string[],
     existingAssistants: (Assistant | AssistantBase)[]
-  ): Promise<(Assistant | AssistantBase)[]> {
+  ): Promise<FetchByIdsResult> {
     const existingMap = new Map(existingAssistants.map(a => [a.id, a]));
     const idsToFetch: string[] = [];
 
@@ -164,10 +169,10 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       }
     }
 
-    // Fetch missing assistants. A rejection here (e.g. the caller cannot
-    // access this assistant) must propagate rather than being swallowed,
-    // otherwise a run that can only reach some requested items reports
-    // success for all of them.
+    // A 404 is reported in `missing` for the caller to decide on. Any other
+    // rejection (e.g. the caller cannot access this assistant) must propagate
+    // rather than being swallowed, otherwise a run that can only reach some
+    // requested items reports success for all of them (#568).
     if (idsToFetch.length > 0) {
       logger.debug('[AssistantSetup] Fetching missing assistant details', {
         count: idsToFetch.length,
@@ -175,22 +180,34 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       });
 
       for (const id of idsToFetch) {
-        const assistant = await deps.client.assistants.get(id);
+        let assistant: Assistant;
+        try {
+          assistant = await deps.client.assistants.get(id);
+        } catch (error) {
+          if (error instanceof NotFoundError) {
+            logger.debug('[AssistantSetup] Assistant not found', { id });
+            continue;
+          }
+          throw error;
+        }
         existingMap.set(id, assistant);
         logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
       }
     }
 
     // Build result in requested order
-    const result: (Assistant | AssistantBase)[] = [];
+    const found: (Assistant | AssistantBase)[] = [];
+    const missing: string[] = [];
     for (const id of selectedIds) {
       const assistant = existingMap.get(id);
       if (assistant) {
-        result.push(assistant);
+        found.push(assistant);
+      } else {
+        missing.push(id);
       }
     }
 
-    return result;
+    return { found, missing };
   }
 
   async function fetchAllPagesForScope(scope: ApiScope): Promise<(Assistant | AssistantBase)[]> {

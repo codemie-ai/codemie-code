@@ -8,7 +8,7 @@ import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
-import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
+import { determineChanges, registerAssistant, resolveMissingAssistants, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
 import { createDataFetcher } from '@/cli/commands/assistants/setup/data.js';
 import { promptModeSelection, CONFIGURATION_CHOICE } from '@/cli/commands/assistants/setup/configuration/index.js';
 import { promptManualConfiguration } from '@/cli/commands/assistants/setup/manualConfiguration/index.js';
@@ -103,7 +103,13 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   }
 
   const fetcher = createDataFetcher({ config, client, options });
-  const selectedAssistants = await fetcher.fetchAssistantsByIds(selectedIds, []);
+  const { found: selectedAssistants, missing } = await fetcher.fetchAssistantsByIds(selectedIds, []);
+  const staleAssistants = resolveMissingAssistants(missing, registeredAssistants);
+  for (const entry of staleAssistants) {
+    console.log(chalk.yellow(MESSAGES.SETUP.WARNING_STALE_ASSISTANT(entry.name, entry.id)));
+  }
+  const staleIds = new Set(staleAssistants.map(a => a.id));
+  const activeIds = selectedIds.filter(id => !staleIds.has(id));
 
   let registrationModes = new Map<string, RegistrationMode>();
 
@@ -164,10 +170,10 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
 
   // The wizard drops every assistant the user deselected, so only the selected
   // ones are carried over alongside whatever the write batch produced.
-  const selectedRegistered = registeredAssistants.filter(a => selectedIds.includes(a.id));
+  const selectedRegistered = registeredAssistants.filter(a => activeIds.includes(a.id));
 
   const { registered, unregistered, saved } = await applyChangesAndSave({
-    selectedIds,
+    selectedIds: activeIds,
     allAssistants: selectedAssistants,
     registeredInScope: registeredAssistants,
     carryOver: (written) => withoutWritten(selectedRegistered, written),
