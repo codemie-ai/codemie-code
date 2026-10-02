@@ -70,8 +70,11 @@ npx @codemieai/code install claude --supported
 
 For Windows and macOS, CodeMie ships two installer options:
 
-- **GUI installers** — a signed `.dmg` (macOS) and a `.exe` wizard (Windows) that guide you through installation with no terminal required. Download [CodeMie Connect 2.0.1 (macOS aarch64)](https://github.com/codemie-ai/codemie-code/raw/main/install/macos/CodeMie%20Connect_2.0.1_aarch64_signed.dmg) or browse the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos) / [Windows install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/windows) and run the file.
-- **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when the GUI installer is unavailable.
+- **CodeMie Connect** — a desktop app for macOS and Windows that bundles Node.js, npm and the CodeMie CLI, so there is nothing to install first. It runs a guided setup (sign in, pick a model, install a tool) and then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+
+  [![Download for macOS](install/assets/download-macos.svg)](https://github.com/codemie-ai/codemie-code/raw/main/install/macos/CodeMie%20Connect_2.1.0_aarch64.dmg)
+  [![Download for Windows](install/assets/download-windows.svg)](https://github.com/codemie-ai/codemie-code/raw/main/install/windows/CodeMie%20Connect_2.1.0_x64-setup.exe)
+- **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
 
