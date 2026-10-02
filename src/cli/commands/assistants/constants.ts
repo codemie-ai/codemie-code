@@ -79,7 +79,7 @@ export const MESSAGES = {
     SUCCESS_UNREGISTERED: (name: string, slug: string) => `Unregistered ${name} (${slug})`,
     ERROR_REGISTER_FAILED: (name: string) => `Failed to register ${name}`,
     ERROR_UNREGISTER_FAILED: (name: string) => `Failed to unregister ${name}`,
-    WARNING_STALE_ASSISTANT: (name: string, id: string) => `${name} (${id}) no longer exists on the server and will be unregistered.`,
+    WARNING_STALE_ASSISTANT: (name: string, id: string) => `${name} (${id}) no longer exists on the server; its registration was left unchanged. Deselect it to unregister.`,
     SUMMARY_UPDATED: (count: number) => `\n✓ Updated ${count} assistant${count === 1 ? '' : 's'}`,
     SUMMARY_REGISTERED: (count: number) => `  Registered: ${count}`,
     SUMMARY_UNREGISTERED: (count: number) => `  Unregistered: ${count}`,

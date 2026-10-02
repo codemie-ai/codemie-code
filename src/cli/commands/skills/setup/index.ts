@@ -156,12 +156,10 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   const { found: selectedSkills, missing } = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
   const staleSkills = resolveMissingSkills(missing, registeredSkills);
   for (const entry of staleSkills) {
-    console.log(chalk.yellow(`${entry.name} (${entry.id}) no longer exists on the server and will be unregistered.`));
+    console.log(chalk.yellow(`${entry.name} (${entry.id}) no longer exists on the server; its registration was left unchanged. Deselect it to unregister.`));
   }
-  const staleIds = new Set(staleSkills.map(s => s.id));
-  const activeIds = selectedIds.filter(id => !staleIds.has(id));
 
-  const { toRegister, toUnregister } = determineChanges(activeIds, selectedSkills, registeredSkills);
+  const { toRegister, toUnregister } = determineChanges(selectedIds, selectedSkills, registeredSkills);
 
   if (toRegister.length === 0 && toUnregister.length === 0) {
     console.log(chalk.yellow('\nNo changes to apply.\n'));
@@ -179,7 +177,7 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   await registerAndSaveSkills({
     toRegister,
     details,
-    carriedOver: registeredSkills.filter(s => activeIds.includes(s.id)),
+    carriedOver: registeredSkills.filter(s => selectedIds.includes(s.id)),
     unregisteredCount: toUnregister.length,
     scope: storageScope,
     workingDir,

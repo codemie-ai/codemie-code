@@ -110,6 +110,7 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   }
   const staleIds = new Set(staleAssistants.map(a => a.id));
   const activeIds = selectedIds.filter(id => !staleIds.has(id));
+  const activeRegistered = registeredAssistants.filter(a => !staleIds.has(a.id));
 
   let registrationModes = new Map<string, RegistrationMode>();
 
@@ -170,12 +171,12 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
 
   // The wizard drops every assistant the user deselected, so only the selected
   // ones are carried over alongside whatever the write batch produced.
-  const selectedRegistered = registeredAssistants.filter(a => activeIds.includes(a.id));
+  const selectedRegistered = registeredAssistants.filter(a => selectedIds.includes(a.id));
 
   const { registered, unregistered, saved } = await applyChangesAndSave({
     selectedIds: activeIds,
     allAssistants: selectedAssistants,
-    registeredInScope: registeredAssistants,
+    registeredInScope: activeRegistered,
     carryOver: (written) => withoutWritten(selectedRegistered, written),
     registrationModes,
     scope: storageScope,
