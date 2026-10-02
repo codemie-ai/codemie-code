@@ -1,5 +1,5 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -326,7 +326,7 @@ function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
  * drive it anyway, so listing it would just be catalog noise.
  *
  * Ranked with the same `rankModel`/`compareRankedModels` ordering already used for tier
- * auto-resolution, so the picker's top rows match what auto-resolution would have picked.
+ * auto-resolution, then the selected model, routers and the rest are grouped in that order (stable, so each group keeps that ranking).
  *
  * Each model gets exactly one row at its maximum context window: the row's `model` is
  * `<id>[1m]` when the catalog reports a 1M-token `max_input_tokens`, the bare id otherwise
@@ -338,7 +338,7 @@ function isClaudeFamilyPickerEntry(model: LlmModel): boolean {
 export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<ModelPickerOption[]> {
   try {
     const catalog = await fetchCatalog(env);
-    const ranked = catalog
+    const rankedByScore = catalog
       .filter((model) => isServableModel(model) && isClaudeFamilyPickerEntry(model))
       .map((model) => {
         try {
@@ -350,6 +350,15 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
       })
       .filter((entry): entry is { ranked: RankedClaudeModel; model: LlmModel } => entry !== null)
       .sort((a, b) => compareRankedModels(a.ranked, b.ranked));
+
+    // Selected model first (the picker then opens on it instead of scrolled to it), then routers,
+    // then the rest; within each group the ranking order above is kept.
+    const selectedId = env.CODEMIE_MODEL ? stripOneMillionSuffix(env.CODEMIE_MODEL) : undefined;
+    const ranked = orderModelsForPicker(
+      rankedByScore,
+      (entry) => entry.model,
+      (entry) => selectedId !== undefined && modelIdentifiers(entry.model).includes(selectedId),
+    );
 
     // Built from the FULL catalog, not just `ranked` — a router's classifier model can
     // belong to a family this picker otherwise filters out (a Claude classifier gating a

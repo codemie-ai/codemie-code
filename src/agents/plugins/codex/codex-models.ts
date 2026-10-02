@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -474,7 +474,13 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     currentModel && rankedIds.includes(currentModel)
       ? currentModel
       : catalogModels[0].id;
-  const catalogPath = await writeCatalogFile(buildCodexCatalog(catalogModels, buildModelLabelIndex(rawModels)));
+  const catalogPath = await writeCatalogFile(
+    // Codex marks the first row as its default, so the selected model leads (keeping the marker
+    // on the model actually in use), then routers, then the rest; `priority` is the position.
+    buildCodexCatalog(
+      orderModelsForPicker(catalogModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
+      buildModelLabelIndex(rawModels))
+  );
 
   if (isCodexCompatibleModelName(currentModel) && currentModel !== selectedModel) {
     console.error(`[codemie-codex] Requested model "${currentModel}" is not available; using ${selectedModel} instead.`);

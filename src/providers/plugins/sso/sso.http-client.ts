@@ -105,6 +105,32 @@ export function buildModelLabelIndex(models: LlmModel[]): Map<string, string> {
   return labels;
 }
 
+/** Whether a catalog entry is a router: a Switchyard virtual router or a declared LiteLLM auto-router. */
+export function isRouterModel(model: LlmModel): boolean {
+  return model.is_router === true || model.litellm_router?.is_router === true;
+}
+
+/**
+ * Picker order: the selected entry, then routers, then everything else. Stable, so each group
+ * keeps its incoming order. Putting the selected entry first also keeps a "first row is the
+ * default" picker (Codex) marking the model that is actually in use.
+ */
+export function orderModelsForPicker<T>(
+  items: T[],
+  getModel: (item: T) => LlmModel,
+  isSelected: (item: T) => boolean = () => false,
+): T[] {
+  const selected: T[] = [];
+  const routers: T[] = [];
+  const others: T[] = [];
+  for (const item of items) {
+    if (isSelected(item)) selected.push(item);
+    else if (isRouterModel(getModel(item))) routers.push(item);
+    else others.push(item);
+  }
+  return [...selected, ...routers, ...others];
+}
+
 /**
  * Full router description for a model/agent picker, e.g. `"LiteLLM (classifier -> Claude
  * Haiku 4.5): simple/medium: GPT-5.6 Luna · complex/reasoning: GPT-5.6 Terra"`, or
