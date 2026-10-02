@@ -24,6 +24,7 @@ const RESPONSES_API_PATTERNS: RegExp[] = [
   /^gpt-5\.5-/,
   /^gpt-5-5-/,
   /gpt-5[.-]6/,
+  /gpt-6/, // gpt-6.1, gpt-6-sol and other GPT-6 variants
 ];
 
 export function classifyPiModel(modelId: string): PiModelClassification {
@@ -67,6 +68,7 @@ function detectLimits(id: string): { contextWindow: number; maxTokens: number } 
   if (id.startsWith('claude')) return { contextWindow: 200000, maxTokens: 64000 };
   if (id.startsWith('gemini')) return { contextWindow: 1048576, maxTokens: 65536 };
   if (id.startsWith('gpt-4.1')) return { contextWindow: 1048576, maxTokens: 32768 };
+  if (/gpt-6/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
   if (/^gpt-5\.5-/.test(id) || /^gpt-5-5-/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
   if (/gpt-5[.-]6/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
   if (id.startsWith('gpt-5')) return { contextWindow: 400000, maxTokens: 128000 };
@@ -95,6 +97,7 @@ function isReasoningModel(id: string): boolean {
     id.startsWith('claude') ||
     id.startsWith('gemini') ||
     id.startsWith('gpt-5') ||
+    /gpt-6/.test(id) ||
     /gpt-5[.-]6/.test(id) ||
     /^o[134]-/.test(id) ||
     id === 'o1' ||
