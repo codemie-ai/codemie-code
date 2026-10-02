@@ -9,6 +9,7 @@ vi.mock('../../../../utils/config.js', () => ({
     resolveProfileWorkspace: vi.fn(),
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
+    findProfileNameConflicts: vi.fn(async () => []),
   },
 }));
 
