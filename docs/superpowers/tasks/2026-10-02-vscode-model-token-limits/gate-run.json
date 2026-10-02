@@ -1,0 +1,10 @@
+{"schema":1,"branch":"feat/vscode-model-token-limits","head":"ba300299eb892874f2c5dff92da7fc8ee2fba1a3","runner":"npm","started_at":"2026-10-02T00:00:00Z","completed_at":"2026-10-02T00:01:00Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":2000,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":4000,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":4000,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":7000,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npx vitest run --project unit","exit_code":null,"notes":"AGENTS.md forbids running tests unless the user explicitly asks. CI will run it."},
+{"id":"integration","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npx vitest run --project cli","exit_code":null,"notes":"AGENTS.md forbids running tests unless the user explicitly asks. CI will run it."},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":0,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Stage changes with Docker running to scan locally; CI runs it unconditionally."}
+],"failures":{}}
