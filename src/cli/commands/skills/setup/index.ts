@@ -6,7 +6,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { createSkillDataFetcher } from './data.js';
 import { promptSkillSelection } from './selection/index.js';
-import { determineChanges, registerSkill, unregisterSkill } from './helpers.js';
+import { determineChanges, registerSkill, resolveMissingSkills, unregisterSkill } from './helpers.js';
 import { ACTION_TYPE } from './constants.js';
 import {
   enableVerboseLogging,
@@ -153,9 +153,15 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   }
 
   const fetcher = createSkillDataFetcher({ client, registeredSkills });
-  const selectedSkills = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
+  const { found: selectedSkills, missing } = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
+  const staleSkills = resolveMissingSkills(missing, registeredSkills);
+  for (const entry of staleSkills) {
+    console.log(chalk.yellow(`${entry.name} (${entry.id}) no longer exists on the server and will be unregistered.`));
+  }
+  const staleIds = new Set(staleSkills.map(s => s.id));
+  const activeIds = selectedIds.filter(id => !staleIds.has(id));
 
-  const { toRegister, toUnregister } = determineChanges(selectedIds, selectedSkills, registeredSkills);
+  const { toRegister, toUnregister } = determineChanges(activeIds, selectedSkills, registeredSkills);
 
   if (toRegister.length === 0 && toUnregister.length === 0) {
     console.log(chalk.yellow('\nNo changes to apply.\n'));
@@ -173,7 +179,7 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   await registerAndSaveSkills({
     toRegister,
     details,
-    carriedOver: registeredSkills.filter(s => selectedIds.includes(s.id)),
+    carriedOver: registeredSkills.filter(s => activeIds.includes(s.id)),
     unregisteredCount: toUnregister.length,
     scope: storageScope,
     workingDir,
