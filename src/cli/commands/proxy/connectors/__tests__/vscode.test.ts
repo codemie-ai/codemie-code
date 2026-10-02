@@ -25,6 +25,8 @@ const EXPECTED_MODEL_IDS = [
   'gpt-5.6-luna-2026-07-09',
   'gpt-5.6-sol-2026-07-09',
   'gpt-5.6-terra-2026-07-09',
+  'gpt-6-luna',
+  'gpt-6-sol',
   'gemini-3-flash',
   'gemini-3.1-pro',
   'gemini-3.5-flash',
@@ -170,7 +172,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     }
   });
 
-  it('renders stateless Responses reasoning capabilities for GPT-5.5 and GPT-5.6', async () => {
+  it('renders stateless Responses reasoning capabilities for GPT-5.5, GPT-5.6 and GPT-6', async () => {
     await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
     const providers = await readProviders();
@@ -180,6 +182,8 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       ['gpt-5.6-luna-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
       ['gpt-5.6-sol-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
       ['gpt-5.6-terra-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+      ['gpt-6-luna', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+      ['gpt-6-sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
     ]);
 
     for (const [id, efforts] of expectedEfforts) {
@@ -404,24 +408,26 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   describe('full tenant catalog', () => {
     const GPT_6_SOL = { base_name: 'gpt-6-sol', label: 'GPT-6 Sol' };
 
-    it('writes every enabled tenant model in catalog order, including unknown families', async () => {
-      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL]);
+    it('writes every enabled tenant model in catalog order, including table-backed GPT-6 models', async () => {
+      mockCatalog(EXPECTED_MODEL_IDS);
 
       const result = await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
       const providers = await readProviders();
       const models = providers[0].models as Array<Record<string, unknown>>;
-      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length + 1);
-      expect(models.map(model => model.id)).toEqual([...EXPECTED_MODEL_IDS, 'gpt-6-sol']);
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length);
+      expect(models.map(model => model.id)).toEqual(EXPECTED_MODEL_IDS);
       expect(models.find(model => model.id === 'gpt-6-sol')).toMatchObject({
-        name: 'GPT-6 Sol',
+        name: 'gpt-6-sol',
         apiType: 'responses',
         zeroDataRetentionEnabled: true,
         url: 'http://127.0.0.1:4001/v1/responses',
+        maxInputTokens: 922000,
+        maxOutputTokens: 128000,
       });
     });
 
-    it('keeps catalog order when an unknown model comes first', async () => {
+    it('keeps catalog order when a GPT-6 model comes first', async () => {
       mockCatalog([GPT_6_SOL, 'claude-sonnet-5', 'gpt-4.1']);
 
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
@@ -432,15 +438,15 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     });
 
     it('rebuilds the list from the live catalog on every write, picking up new models', async () => {
-      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL]);
+      mockCatalog(EXPECTED_MODEL_IDS);
       await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
-      mockCatalog([...EXPECTED_MODEL_IDS, GPT_6_SOL, 'claude-sonnet-6']);
+      mockCatalog([...EXPECTED_MODEL_IDS, 'claude-sonnet-6']);
       const result = await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
 
       const providers = await readProviders();
       const models = providers[0].models as Array<Record<string, unknown>>;
-      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length + 2);
+      expect(result.modelCount).toBe(EXPECTED_MODEL_IDS.length + 1);
       expect(models.map(model => model.id)).toContain('claude-sonnet-6');
     });
 

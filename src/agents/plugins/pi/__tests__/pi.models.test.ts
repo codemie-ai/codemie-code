@@ -253,3 +253,35 @@ describe('convertLlmModelToPiEntry — cost', () => {
     expect(entry.compat).toEqual({ forceAdaptiveThinking: true });
   });
 });
+
+describe('convertLlmModelToPiEntry — GPT-6 limits and routing', () => {
+  beforeEach(() => {
+    vi.mocked(lookupPrice).mockReset();
+    vi.mocked(lookupPrice).mockReturnValue(null);
+  });
+
+  function gpt6Model(id: string): LlmModel {
+    return llmModel({ base_name: id, deployment_name: id, label: id });
+  }
+
+  it('should report a 1050000-token window for gpt-6-luna', () => {
+    const entry = convertLlmModelToPiEntry(gpt6Model('gpt-6-luna'));
+
+    expect(entry.contextWindow).toBe(1050000);
+    expect(entry.maxTokens).toBe(128000);
+  });
+
+  it('should report a 1050000-token window for a vendor-prefixed id', () => {
+    const entry = convertLlmModelToPiEntry(gpt6Model('openai.gpt-6-sol'));
+
+    expect(entry.contextWindow).toBe(1050000);
+    expect(entry.maxTokens).toBe(128000);
+  });
+
+  it('should route gpt-6-luna via openai-responses with reasoning', () => {
+    const entry = convertLlmModelToPiEntry(gpt6Model('gpt-6-luna'));
+
+    expect(entry.api).toBe('openai-responses');
+    expect(entry.reasoning).toBe(true);
+  });
+});

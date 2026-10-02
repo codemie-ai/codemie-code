@@ -164,3 +164,66 @@ describe('GPT-5.6 → Responses API routing', () => {
     expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.limit.context).toBe(1050000);
   });
 });
+
+describe('GPT-6 → Responses API routing', () => {
+  let convertApiModelToOpenCodeConfig: typeof import('../opencode/opencode-dynamic-models.js').convertApiModelToOpenCodeConfig;
+  let OPENCODE_MODEL_CONFIGS: typeof import('../opencode/opencode-model-configs.js').OPENCODE_MODEL_CONFIGS;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ({ convertApiModelToOpenCodeConfig } = await import('../opencode/opencode-dynamic-models.js'));
+    ({ OPENCODE_MODEL_CONFIGS } = await import('../opencode/opencode-model-configs.js'));
+  });
+
+  // ── Dynamic path (live catalogue) ──────────────────────────────────────────
+
+  it('routes gpt-6-luna to Responses API via dynamic model conversion', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-6-luna'));
+    expect(config.use_responses_api).toBe(true);
+  });
+
+  it('routes openai.gpt-6-luna (vendor-prefixed) to Responses API via dynamic conversion', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('openai.gpt-6-luna'));
+    expect(config.use_responses_api).toBe(true);
+  });
+
+  it('routes gpt-6-sol-2026-09-22 (dated) to Responses API via dynamic conversion', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-6-sol-2026-09-22'));
+    expect(config.use_responses_api).toBe(true);
+  });
+
+  it('detects the gpt-6 family for vendor-prefixed ids', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('openai.gpt-6-sol'));
+    expect(config.family).toBe('gpt-6');
+  });
+
+  it('dynamic gpt-6-luna reports context limit of 1050000', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-6-luna'));
+    expect(config.limit.context).toBe(1050000);
+    expect(config.limit.output).toBe(128000);
+  });
+
+  it('dynamic openai.gpt-6-luna reports context limit of 1050000', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('openai.gpt-6-luna'));
+    expect(config.limit.context).toBe(1050000);
+  });
+
+  // ── Static fallback path (OPENCODE_MODEL_CONFIGS) ──────────────────────────
+
+  it('static config has gpt-6-luna with use_responses_api: true', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-6-luna']).toBeDefined();
+    expect(OPENCODE_MODEL_CONFIGS['gpt-6-luna']!.use_responses_api).toBe(true);
+  });
+
+  it('static config gpt-6-sol supports tool_call', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-6-sol']!.tool_call).toBe(true);
+  });
+
+  it('static config gpt-6-luna reports context limit of 1050000', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-6-luna']!.limit.context).toBe(1050000);
+  });
+
+  it('static config gpt-6-sol reports context limit of 1050000', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-6-sol']!.limit.context).toBe(1050000);
+  });
+});
