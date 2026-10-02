@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Make interactive `codemie setup assistants` warn about and unregister stale registered assistants that 404, keeping strict failure for new selections and headless mode and naming the failing assistant id in errors.",
+  "generated": "2026-10-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Data fetcher (fetchAssistantsByIds) and interactive setupAssistants orchestration, plus MESSAGES constants; downstream determineChanges/applyChanges unregister machinery is reused unchanged." },
+    { "dimension": "requirements_clarity", "reason": "Core behaviour is defined, but 'unregister (or offer to)' is an open UX choice, the 'pass loaded assistants instead of []' goal is largely infeasible per analysis (config-derived AssistantBase rows), and cross-scope merged registrations leave stale-entry persistence in the other scope unresolved." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is skills fetchSkillsByIds mapping NotFoundError to RegistrationItemNotFoundError(kind, id) — direct precedent, so base S. Bumped to M: AC enumerates variant cases (registered-stale vs new selection vs headless) and the interactive setupAssistants flow has no test template; one existing test is coupled to the raw error message." },
+    { "dimension": "file_change_estimate", "reason": "About 4 modified (data.ts, index.ts, constants.ts, data.test.ts) plus 0-1 new interactive test file; skills parallel fix is out of scope (note only)." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

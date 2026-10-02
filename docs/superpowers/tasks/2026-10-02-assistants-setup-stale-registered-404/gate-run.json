@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "branch": "fix/assistants-setup-stale-registered-404",
+  "head": "b0f925abf75ab1cfa5483333e1444035443728eb",
+  "runner": "npm",
+  "started_at": "2026-10-02T10:19:45Z",
+  "completed_at": "2026-10-02T10:24:10Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 5133, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 18423, "command": "npm run lint", "exit_code": 0, "notes": "Also covers .husky/pre-commit lint-staged eslint step (nothing staged locally)."},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 9380, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 13821, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 43904, "command": "npx vitest run --project unit", "exit_code": 0, "notes": "316 files; 4707 passed, 2 skipped. Supersets lint-staged adjacent-test step."},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 33483, "command": "npx vitest run --project cli", "exit_code": 0, "notes": "37 files passed, 1 skipped; 278 passed, 10 skipped."},
+    {"id": "secrets", "source": "guide", "status": "SKIPPED", "duration_ms": 3295, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Self-skip: 'No staged changes to scan'. Script scans only the staged diff and no Docker/Podman is installed; enable by installing a container engine and staging changes. CI Gitleaks still owed."},
+    {"id": "commitlint-last", "source": "guide", "status": "PASS", "duration_ms": 2015, "command": "npm run commitlint:last", "exit_code": 0, "notes": "Guide checks only HEAD~1..HEAD; CI checks base..HEAD, see commitlint-range."},
+    {"id": "check-pre-commit", "source": "guide", "status": "PASS", "duration_ms": 25703, "command": "npm run check:pre-commit", "exit_code": 0},
+    {"id": "full-ci", "source": "guide", "status": "PASS", "duration_ms": 96819, "command": "npm run ci", "exit_code": 0},
+    {"id": "commitlint-range", "source": "ci", "status": "PASS", "duration_ms": 2426, "command": "npx commitlint --from origin/main --to HEAD --verbose", "exit_code": 0, "notes": "Mirrors CI validate-commits (5 commits); guide's commitlint:last covers only the last commit."},
+    {"id": "pr-title", "source": "ci", "status": "N/A", "command": "gh pr view <PR> --json title -q .title | npx commitlint --verbose", "notes": "No PR exists yet; CI validates the PR title with commitlint. Run 'echo \"<title>\" | npx commitlint' locally before opening the PR."},
+    {"id": "gitleaks-ci", "source": "ci", "status": "N/A", "command": "gitleaks/gitleaks-action@v2 (full branch history)", "notes": "Requires a container engine or gitleaks binary (neither available). Still owed to CI."}
+  ],
+  "failures": {}
+}

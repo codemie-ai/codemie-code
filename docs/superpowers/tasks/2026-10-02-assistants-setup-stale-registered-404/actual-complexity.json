@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-10-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the data fetcher (fetchAssistantsByIds/skills equivalent returning found/missing on 404), registration helpers (resolveMissingAssistants/resolveMissingSkills), the setup command orchestration (stale-entry warning and filtering of selected IDs) and message constants, mirrored across two parallel workflows: assistants setup and skills setup. Base M, bumped to L for affecting multiple workflows." },
+    { "dimension": "file_change_estimate", "reason": "11 files changed per diffstat (5 assistants source + 4 skills source, 4 test files modified/extended) across src/cli/commands/assistants and src/cli/commands/skills; 11 maps to XL in the actual-mode file-count table, though each change is small (323 insertions, 57 deletions)." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the existing NotFoundError/#568 handling in the fetchers; the change narrows swallowing to 404 only and propagates other rejections, plus auto-unregisters stale registrations (removes on-disk artifacts). Error-path assertions (404 vs other errors, unknown-id RegistrationItemNotFoundError) were added to existing test suites. Scored M rather than S for the error-propagation semantics and destructive unregister path." },
+    { "dimension": "affected_layers", "reason": "CLI command layer, service-level data fetching against the external CodeMie API via the SDK, and config persistence through the existing ConfigLoader save path; no schema change or migration." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: change is replicated across two workflows (assistants setup and skills setup)."
+  ],
+  "split_recommendation": null
+}
