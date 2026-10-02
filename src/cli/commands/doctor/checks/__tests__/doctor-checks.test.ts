@@ -378,6 +378,38 @@ describe('AIConfigCheck', () => {
     expect(messages.some((m) => m.startsWith('API Key'))).toBe(false);
   });
 
+  it('shows the profile baseUrl as CodeMie URL for a baseUrl-only SSO profile', async () => {
+    h.listProfilesMock.mockResolvedValue([{ name: 'sso', active: true }]);
+    h.getActiveProfileNameMock.mockResolvedValue('sso');
+    h.loadMock.mockResolvedValue({
+      provider: 'ai-run-sso',
+      baseUrl: 'https://profile.example.com',
+      model: 'claude-sonnet',
+    });
+    h.getProviderMock.mockReturnValue({ requiresAuth: true, authType: 'sso' });
+
+    const result = await new AIConfigCheck().run();
+    expect(result.success).toBe(true);
+    const messages = result.details.map((d) => d.message);
+    expect(messages).toContain('CodeMie URL: https://profile.example.com');
+  });
+
+  it('prefers the profile baseUrl over codeMieUrl for SSO providers', async () => {
+    h.listProfilesMock.mockResolvedValue([{ name: 'sso', active: true }]);
+    h.getActiveProfileNameMock.mockResolvedValue('sso');
+    h.loadMock.mockResolvedValue({
+      provider: 'ai-run-sso',
+      baseUrl: 'https://profile.example.com',
+      codeMieUrl: 'https://workspace.example.com',
+      model: 'claude-sonnet',
+    });
+    h.getProviderMock.mockReturnValue({ requiresAuth: true, authType: 'sso' });
+
+    const result = await new AIConfigCheck().run();
+    const messages = result.details.map((d) => d.message);
+    expect(messages).toContain('CodeMie URL: https://profile.example.com');
+  });
+
   it('produces a consolidated error listing missing fields', async () => {
     h.listProfilesMock.mockResolvedValue([{ name: 'partial', active: true }]);
     h.getActiveProfileNameMock.mockResolvedValue('partial');

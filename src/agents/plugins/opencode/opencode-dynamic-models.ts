@@ -17,7 +17,7 @@ import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
 import type { OpenCodeModelConfig } from './opencode-model-configs.js';
 import { OPENCODE_MODEL_CONFIGS } from './opencode-model-configs.js';
-import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
+import { getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 
 // ── Responses-API detection ──────────────────────────────────────────────────
@@ -142,34 +142,31 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelC
  * Fetch the live model catalogue from the CodeMie API and convert it to
  * OpenCodeModelConfig format.
  *
- * @param baseUrl    - CODEMIE_BASE_URL (authenticated proxy endpoint)
- * @param codeMieUrl - CODEMIE_URL (CodeMie org URL used for SSO credential lookup)
- * @param jwtToken   - CODEMIE_JWT_TOKEN (optional Bearer token, preferred over SSO)
+ * @param baseUrl - CODEMIE_BASE_URL (authenticated proxy endpoint, used for JWT auth only)
+ * @param env     - Agent environment. CODEMIE_JWT_TOKEN (Bearer, preferred) is read from it;
+ *                  otherwise SSO credentials are looked up from the profile baseUrl in
+ *                  CODEMIE_PROFILE_CONFIG, falling back to CODEMIE_URL.
  * @returns Map of modelId → OpenCodeModelConfig (dynamic) or OPENCODE_MODEL_CONFIGS (fallback)
  */
 export async function fetchDynamicModelConfigs(
   baseUrl: string,
-  codeMieUrl: string | undefined,
-  jwtToken?: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<Record<string, OpenCodeModelConfig>> {
   try {
     let rawModels: LlmModel[];
+    const jwtToken = env.CODEMIE_JWT_TOKEN;
 
     if (jwtToken) {
       rawModels = await fetchCodeMieLlmModels(baseUrl, jwtToken);
       logger.debug('[dynamic-models] Fetched model list via JWT auth');
-    } else if (codeMieUrl) {
-      const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials(codeMieUrl);
-      if (!credentials) {
+    } else {
+      const found = await getStoredPlatformCredentialsFromEnv(env);
+      if (!found) {
         logger.debug('[dynamic-models] No SSO credentials found, using static model configs');
         return OPENCODE_MODEL_CONFIGS;
       }
-      rawModels = await fetchCodeMieLlmModels(credentials.apiUrl, credentials.cookies);
+      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
       logger.debug('[dynamic-models] Fetched model list via SSO auth');
-    } else {
-      logger.debug('[dynamic-models] No auth info in environment, using static model configs');
-      return OPENCODE_MODEL_CONFIGS;
     }
 
     const result: Record<string, OpenCodeModelConfig> = {};

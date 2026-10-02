@@ -124,6 +124,7 @@ const { installGlobal, uninstallGlobal } = await import('../../../utils/processe
 const { logger } = await import('../../../utils/logger.js');
 const { OpenCodeSessionAdapter } = await import('../opencode/opencode.session.js');
 const { CodeMieCodePlugin, CodeMieCodePluginMetadata, BUILTIN_AGENT_NAME } = await import('../codemie-code.plugin.js');
+const { fetchDynamicModelConfigs } = await import('../opencode/opencode-dynamic-models.js');
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockResolve = vi.mocked(resolveCodemieOpenCodeBinary);
@@ -150,6 +151,22 @@ describe('CodeMieCodePluginMetadata', () => {
   it('has onSessionEnd defined', () => {
     expect(CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBeDefined();
     expect(typeof CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBe('function');
+  });
+});
+
+describe('CodeMieCodePluginMetadata beforeRun model catalogue', () => {
+  it('passes the agent env through to fetchDynamicModelConfigs', async () => {
+    vi.mocked(fetchDynamicModelConfigs).mockClear();
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_BASE_URL: 'http://localhost:3000',
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' }),
+    };
+
+    // Later steps of beforeRun need a fuller environment than this unit test builds;
+    // only the catalogue call matters here.
+    await CodeMieCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never).catch(() => undefined);
+
+    expect(fetchDynamicModelConfigs).toHaveBeenCalledWith('http://localhost:3000', env);
   });
 });
 

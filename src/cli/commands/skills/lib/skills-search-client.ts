@@ -22,6 +22,8 @@
  */
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
+import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import type { PlatformUrlSource } from '@/providers/core/codemie-auth-helpers.js';
 import { stripControlChars } from './sanitize.js';
 
 const PUBLIC_API_URL = 'https://skills.sh/api/search';
@@ -111,7 +113,7 @@ export async function resolveInternalContext(): Promise<InternalSearchContext | 
     }
     return {
       url: fromConfig.trim(),
-      headers: await buildInternalHeaders(config.codeMieUrl || config.baseUrl),
+      headers: await buildInternalHeaders(config),
     };
   } catch (error) {
     logger.debug('[skills] Failed to resolve internal search context', error);
@@ -119,27 +121,24 @@ export async function resolveInternalContext(): Promise<InternalSearchContext | 
   }
 }
 
-async function buildInternalHeaders(ssoUrl?: string): Promise<Record<string, string>> {
+async function buildInternalHeaders(source?: PlatformUrlSource): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'X-CodeMie-Client': 'codemie-cli',
   };
 
-  let resolvedSsoUrl = ssoUrl;
-  if (!resolvedSsoUrl) {
+  let resolvedSource = source;
+  if (!resolvedSource) {
     try {
-      const config = await ConfigLoader.load();
-      resolvedSsoUrl = config.codeMieUrl || config.baseUrl;
+      resolvedSource = await ConfigLoader.load();
     } catch {
       // fall through; we just won't have cookies
     }
   }
-  if (!resolvedSsoUrl) return headers;
+  if (!resolvedSource) return headers;
 
   try {
-    const { CodeMieSSO } = await import('@/providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(resolvedSsoUrl);
+    const credentials = (await getStoredPlatformCredentials(resolvedSource))?.credentials;
     if (credentials?.cookies) {
       const cookieHeader = Object.entries(credentials.cookies)
         .map(([key, value]) => `${key}=${value}`)

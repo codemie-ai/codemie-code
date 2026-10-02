@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "generated": "2026-09-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 36,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "A shared credential-lookup helper in src/providers/core/codemie-auth-helpers.ts (getPlatformUrlCandidates, getStoredPlatformCredentials and env variants) is adopted across many consumers: SSO provider (health, models, setup-steps), agent model-list resolvers (claude, gemini, codex, pi, kimi, copilot-cli, opencode-dynamic-models), codemie-code and opencode plugins, doctor AIConfigCheck, profile auth, skills require-auth and search client, and utils/sdk-client. Touching a core shared utility across several subsystems bumped this to XL."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest pattern is the existing single-URL SSO credential lookup (getStoredCredentials(codeMieUrl)). It does not cover the new multi-candidate profile-first then workspace fallback. That fallback is security-adjacent: an expired credential is deleted on a miss, candidates are deduped by origin, and only CodeMie providers treat baseUrl as the platform. CODEMIE_BASE_URL is deliberately not read because the proxy rewrites it to localhost. It is authentication-adjacent and has many edge cases (malformed CODEMIE_PROFILE_CONFIG, same-origin duplicates, non-CodeMie providers). Rollback is trivial and no schema or persistence change is involved."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "36 files changed (1370 insertions, 130 deletions), about 18 source/docs files and 18 test files, across src/agents, src/providers, src/cli, src/utils and .ai-run/guides. The 16+ band maps to XXL."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Behaviour is uniform and consistent across all consumers: try profile URL first, then workspace URL. Implementation shows no open design questions. Scored S rather than XS because the provider-specific rule (only ai-run-sso/bearer-auth treat baseUrl as the platform) is a detail to confirm."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped to XL: touches core shared utility (codemie-auth-helpers) consumed by multiple subsystems.",
+    "Technical Risk L: authentication/credential lookup behaviour changed (auth-adjacent), no exact precedent for the multi-candidate fallback. Floor not otherwise bumped."
+  ],
+  "split_recommendation": null
+}

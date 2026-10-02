@@ -207,4 +207,40 @@ describe('searchInternal', () => {
     const section = await searchInternal('q', 10);
     expect(section).toEqual({ available: false, results: [] });
   });
+
+  it('attaches cookies for a baseUrl-only SSO profile by looking up via the profile URL', async () => {
+    mockConfigLoad.mockResolvedValue({
+      provider: 'ai-run-sso',
+      baseUrl: 'https://profile.example.com',
+      skillsSearchUrl: 'https://from-config.example.com/search',
+    });
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
+
+    const { searchInternal } = await importClient();
+    await searchInternal('q', 10);
+
+    expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init.headers.Cookie).toMatch(/session=abc/);
+  });
+
+  it('falls back to codeMieUrl when the profile URL lookup misses', async () => {
+    process.env.CODEMIE_SKILLS_SEARCH_URL = 'https://internal.example.com/search';
+    mockConfigLoad.mockResolvedValue({
+      provider: 'ai-run-sso',
+      baseUrl: 'https://profile.example.com',
+      codeMieUrl: 'https://workspace.example.com',
+    });
+    mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce({ cookies: { session: 'w' } });
+
+    const { searchInternal } = await importClient();
+    await searchInternal('q', 10);
+
+    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([
+      'https://profile.example.com',
+      'https://workspace.example.com',
+    ]);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init.headers.Cookie).toMatch(/session=w/);
+  });
 });

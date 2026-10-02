@@ -17,7 +17,25 @@ vi.mock('inquirer', () => ({
   default: { prompt: vi.fn() },
 }));
 
-import { ensureApiBase, buildAuthHeaders, fetchCodeMieUserInfo, selectCodeMieProject } from '../codemie-auth-helpers.js';
+const mockGetStoredCredentials = vi.fn();
+vi.mock('../../plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = mockGetStoredCredentials;
+  },
+}));
+
+import {
+  ensureApiBase,
+  buildAuthHeaders,
+  fetchCodeMieUserInfo,
+  selectCodeMieProject,
+  getPlatformUrl,
+  getPlatformUrlCandidates,
+  getPlatformUrlFromEnv,
+  getPlatformUrlCandidatesFromEnv,
+  getStoredPlatformCredentials,
+  getStoredPlatformCredentialsFromEnv,
+} from '../codemie-auth-helpers.js';
 
 describe('ensureApiBase', () => {
   it('appends /code-assistant-api when missing', () => {
@@ -287,5 +305,153 @@ describe('selectCodeMieProject', () => {
 
     // Only one project after dedup → auto-selected
     expect(result).toEqual({ project: 'shared-project', userEmail: 'test' });
+  });
+});
+
+describe('platform URL resolution', () => {
+  const P = 'https://profile.example.com';
+  const W = 'https://workspace.example.com';
+
+  it('returns the profile baseUrl first for ai-run-sso', () => {
+    expect(getPlatformUrl({ provider: 'ai-run-sso', baseUrl: P })).toBe(P);
+  });
+
+  it('returns [P, W] when both are set on different origins', () => {
+    expect(getPlatformUrlCandidates({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W })).toEqual([P, W]);
+  });
+
+  it('returns only W when baseUrl is missing', () => {
+    expect(getPlatformUrlCandidates({ provider: 'ai-run-sso', codeMieUrl: W })).toEqual([W]);
+  });
+
+  it('returns no candidates when neither is set', () => {
+    expect(getPlatformUrlCandidates({ provider: 'ai-run-sso' })).toEqual([]);
+    expect(getPlatformUrl({ provider: 'ai-run-sso' })).toBeUndefined();
+  });
+
+  it('treats bearer-auth like ai-run-sso', () => {
+    expect(getPlatformUrlCandidates({ provider: 'bearer-auth', baseUrl: P, codeMieUrl: W })).toEqual([P, W]);
+  });
+
+  it.each(['anthropic-subscription', 'moonshot-subscription', 'litellm', undefined])(
+    'uses only W for provider %s and ignores baseUrl',
+    (provider) => {
+      expect(getPlatformUrlCandidates({ provider, baseUrl: 'https://vendor.example.com', codeMieUrl: W })).toEqual([W]);
+      expect(getPlatformUrlCandidates({ provider, baseUrl: 'https://vendor.example.com' })).toEqual([]);
+    }
+  );
+
+  it('dedupes P and W that share an origin', () => {
+    expect(
+      getPlatformUrlCandidates({
+        provider: 'ai-run-sso',
+        baseUrl: `${P}/code-assistant-api`,
+        codeMieUrl: `${P}/`,
+      })
+    ).toEqual([`${P}/code-assistant-api`]);
+  });
+});
+
+describe('platform URL resolution from env', () => {
+  const P = 'https://profile.example.com';
+  const W = 'https://workspace.example.com';
+
+  it('reads baseUrl from CODEMIE_PROFILE_CONFIG', () => {
+    const env = { CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: P }) } as NodeJS.ProcessEnv;
+    expect(getPlatformUrlFromEnv(env)).toBe(P);
+  });
+
+  it('combines profile baseUrl with CODEMIE_URL as fallback', () => {
+    const env = {
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: P }),
+      CODEMIE_URL: W,
+    } as NodeJS.ProcessEnv;
+    expect(getPlatformUrlCandidatesFromEnv(env)).toEqual([P, W]);
+  });
+
+  it('falls back to CODEMIE_URL on malformed JSON', () => {
+    const env = { CODEMIE_PROFILE_CONFIG: '{not json', CODEMIE_URL: W } as NodeJS.ProcessEnv;
+    expect(getPlatformUrlCandidatesFromEnv(env)).toEqual([W]);
+  });
+
+  it('falls back to CODEMIE_URL when the profile config is absent', () => {
+    expect(getPlatformUrlFromEnv({ CODEMIE_URL: W } as NodeJS.ProcessEnv)).toBe(W);
+  });
+
+  it('returns nothing when neither source is present', () => {
+    expect(getPlatformUrlFromEnv({} as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', () => {
+    const env = { CODEMIE_BASE_URL: 'http://localhost:4321' } as NodeJS.ProcessEnv;
+    expect(getPlatformUrlCandidatesFromEnv(env)).toEqual([]);
+  });
+
+  it('ignores baseUrl of a non-CodeMie provider in the profile config', () => {
+    const env = {
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'anthropic-subscription', baseUrl: 'https://api.anthropic.com' }),
+      CODEMIE_URL: W,
+    } as NodeJS.ProcessEnv;
+    expect(getPlatformUrlCandidatesFromEnv(env)).toEqual([W]);
+  });
+});
+
+describe('getStoredPlatformCredentials', () => {
+  const P = 'https://profile.example.com';
+  const W = 'https://workspace.example.com';
+  const creds = { cookies: { a: 'b' }, apiUrl: `${P}/code-assistant-api` };
+
+  beforeEach(() => {
+    mockGetStoredCredentials.mockReset();
+  });
+
+  it('returns credentials found under P with the URL used', async () => {
+    mockGetStoredCredentials.mockResolvedValueOnce(creds);
+    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P });
+    expect(result).toEqual({ credentials: creds, url: P });
+    expect(mockGetStoredCredentials).toHaveBeenCalledWith(P);
+  });
+
+  it('falls back to W when P misses (split host)', async () => {
+    mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce(creds);
+    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+    expect(result).toEqual({ credentials: creds, url: W });
+    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([P, W]);
+  });
+
+  it('does not probe W when P hits', async () => {
+    mockGetStoredCredentials.mockResolvedValueOnce(creds);
+    await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+    expect(mockGetStoredCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it('looks up a shared origin only once', async () => {
+    mockGetStoredCredentials.mockResolvedValue(null);
+    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: `${P}/` });
+    expect(result).toBeNull();
+    expect(mockGetStoredCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null without lookup when there are no candidates', async () => {
+    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso' });
+    expect(result).toBeNull();
+    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+  });
+
+  it('never probes the vendor baseUrl for subscription providers', async () => {
+    mockGetStoredCredentials.mockResolvedValue(null);
+    await getStoredPlatformCredentials({
+      provider: 'anthropic-subscription',
+      baseUrl: 'https://api.anthropic.com',
+      codeMieUrl: W,
+    });
+    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([W]);
+  });
+
+  it('resolves from env using the profile baseUrl', async () => {
+    mockGetStoredCredentials.mockResolvedValueOnce(creds);
+    const env = { CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: P }) } as NodeJS.ProcessEnv;
+    const result = await getStoredPlatformCredentialsFromEnv(env);
+    expect(result).toEqual({ credentials: creds, url: P });
   });
 });
