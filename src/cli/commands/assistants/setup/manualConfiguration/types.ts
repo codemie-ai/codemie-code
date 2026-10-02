@@ -30,6 +30,8 @@ export interface ConfigurationState {
 	cursorIndex: number;
 	areNavigationButtonsFocused: boolean; // false = list, true = buttons
 	focusedButton: typeof ACTION_TYPE.APPLY | typeof ACTION_TYPE.CANCEL;
+	/** Warnings shown below the instructions on every render */
+	notices?: string[];
 }
 
 /**

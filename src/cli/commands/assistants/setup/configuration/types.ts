@@ -11,6 +11,8 @@ export type ConfigurationChoice = 'subagents' | 'skills' | 'manual';
  */
 export interface ModeSelectionState {
 	selectedChoice: ConfigurationChoice;
+	/** Warnings shown below the instructions on every render */
+	notices?: string[];
 }
 
 /**

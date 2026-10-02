@@ -13,18 +13,21 @@ import { createModeSelectionActions } from './actions.js';
  * Initialize mode selection state
  * Default selection is 'subagents'
  */
-function initializeModeSelectionState(): ModeSelectionState {
+function initializeModeSelectionState(notices: string[]): ModeSelectionState {
 	return {
 		selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS, // Default to Subagents
+		notices,
 	};
 }
 
 /**
  * Prompt user to select configuration mode
  * Returns the selected choice and whether it was cancelled
+ *
+ * @param notices - Warnings rendered below the instructions while the prompt is open
  */
-export async function promptModeSelection(): Promise<ModeSelectionResult> {
-	const state = initializeModeSelectionState();
+export async function promptModeSelection(notices: string[] = []): Promise<ModeSelectionResult> {
+	const state = initializeModeSelectionState(notices);
 
 	return new Promise((resolve) => {
 		let keepAliveTimer: NodeJS.Timeout | null = null;

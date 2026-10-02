@@ -11,7 +11,8 @@ import { ACTION_TYPE } from '../constants.js';
 function initializeState(
 	assistants: Assistant[],
 	registeredIds: Set<string>,
-	savedModes: Map<string, RegistrationMode>
+	savedModes: Map<string, RegistrationMode>,
+	notices: string[]
 ): ConfigurationState {
 	return {
 		registrations: assistants.map((assistant) => ({
@@ -22,6 +23,7 @@ function initializeState(
 		cursorIndex: 0,
 		areNavigationButtonsFocused: true,
 		focusedButton: ACTION_TYPE.APPLY,
+		notices,
 	};
 }
 
@@ -31,11 +33,13 @@ function initializeState(
  * @param assistants - All selected assistants (both new and already registered)
  * @param registeredIds - Set of IDs of already registered assistants
  * @param registeredAssistants - Array of registered assistants with saved modes
+ * @param notices - Warnings rendered below the instructions while the prompt is open
  */
 export async function promptManualConfiguration(
 	assistants: Assistant[],
 	registeredIds: Set<string>,
-	registeredAssistants: CodemieAssistant[]
+	registeredAssistants: CodemieAssistant[],
+	notices: string[] = []
 ): Promise<ConfigurationResult> {
 	const savedModes = new Map<string, RegistrationMode>();
 	for (const registered of registeredAssistants) {
@@ -48,7 +52,7 @@ export async function promptManualConfiguration(
 		}
 	}
 
-	const state = initializeState(assistants, registeredIds, savedModes);
+	const state = initializeState(assistants, registeredIds, savedModes, notices);
 
 	const action = await createInteractivePrompt(state);
 

@@ -105,9 +105,14 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   const fetcher = createDataFetcher({ config, client, options });
   const { found: selectedAssistants, missing } = await fetcher.fetchAssistantsByIds(selectedIds, []);
   const staleAssistants = resolveMissingAssistants(missing, registeredAssistants);
-  for (const entry of staleAssistants) {
-    console.log(chalk.yellow(MESSAGES.SETUP.WARNING_STALE_ASSISTANT(entry.name, entry.id)));
-  }
+  const staleWarnings = staleAssistants.map(entry => MESSAGES.SETUP.WARNING_STALE_ASSISTANT(entry.name, entry.id));
+  // The prompts below clear the screen on every render, so the warnings are
+  // drawn inside the next prompt and repeated once the wizard has finished.
+  const printStaleWarnings = (): void => {
+    for (const warning of staleWarnings) {
+      console.log(chalk.yellow(warning));
+    }
+  };
   const staleIds = new Set(staleAssistants.map(a => a.id));
   const activeIds = selectedIds.filter(id => !staleIds.has(id));
   const activeRegistered = registeredAssistants.filter(a => !staleIds.has(a.id));
@@ -118,10 +123,11 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
     let configurationComplete = false;
 
     while (!configurationComplete) {
-      const { choice, cancelled, back } = await promptModeSelection();
+      const { choice, cancelled, back } = await promptModeSelection(staleWarnings);
 
       if (cancelled) {
         console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+        printStaleWarnings();
         return;
       }
 
@@ -145,11 +151,13 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
         const { registrationModes: modes, action: configAction } = await promptManualConfiguration(
           selectedAssistants as Assistant[],
           registeredIds,
-          registeredAssistants
+          registeredAssistants,
+          staleWarnings
         );
 
         if (configAction === ACTION_TYPE.CANCEL) {
           console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+          printStaleWarnings();
           return;
         }
 
@@ -166,6 +174,7 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
   const storageScope = await promptStorageScope({
     title: MESSAGES.SETUP.PROMPT_STORAGE_SCOPE,
     localNote: MESSAGES.SETUP.STORAGE_LOCAL_NOTE,
+    notices: selectedAssistants.length > 0 ? [] : staleWarnings,
   });
   const target = await resolveAgentSetupTargets(options.agent, hostAgent);
 
@@ -186,10 +195,12 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
 
   if (saved === null) {
     displaySummary(registered, unregistered, profileName, registeredAssistants);
+    printStaleWarnings();
     return;
   }
 
   displaySummary(registered, unregistered, profileName, saved, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
+  printStaleWarnings();
 }
 
 interface HeadlessAssistantFlags {
