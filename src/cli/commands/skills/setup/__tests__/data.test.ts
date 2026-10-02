@@ -166,6 +166,20 @@ describe('Skill Data Fetcher', () => {
       await expect(fetcher.fetchSkillsByIds(['skill-1'], [])).rejects.toBe(serverError);
     });
 
+    it('rejects when a skill-details payload fails the shape check instead of reporting it missing', async () => {
+      // Arrange
+      vi.mocked(mockClient.skills.get).mockImplementation(async (id: string) =>
+        (id === 'skill-bad' ? { name: 'No id' } : { id, name: `Skill ${id}` }) as any
+      );
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      // Act & Assert
+      await expect(
+        fetcher.fetchSkillsByIds(['skill-1', 'skill-bad'], [])
+      ).rejects.toThrow(/unexpected response fetching skill details/i);
+    });
+
     it('surfaces a clear re-auth error on a stale session when fetching by IDs', async () => {
       const keycloakLoginHtml = '<!DOCTYPE html><html>keycloak</html>';
       vi.mocked(mockClient.skills.get).mockResolvedValue(keycloakLoginHtml as any);
