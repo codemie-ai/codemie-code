@@ -36,7 +36,8 @@ vi.mock('ora', () => ({
 	})),
 }));
 
-import { determineChanges, registerAssistant, unregisterAssistant } from '../helpers.js';
+import { determineChanges, registerAssistant, resolveMissingAssistants, unregisterAssistant } from '../helpers.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
@@ -508,5 +509,40 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 
 			expect(result?.registrationMode).toBe('agent'); // Default
 		});
+	});
+});
+
+describe('resolveMissingAssistants', () => {
+	const registered: CodemieAssistant[] = [
+		{ id: 'stale-1', name: 'Stale One', slug: 'stale-one', registeredAt: '2026-01-01T00:00:00.000Z' },
+		{ id: 'stale-2', name: 'Stale Two', slug: 'stale-two', registeredAt: '2026-01-01T00:00:00.000Z' },
+	];
+
+	it('returns an empty list when nothing is missing', () => {
+		// Act
+		const result = resolveMissingAssistants([], registered);
+
+		// Assert
+		expect(result).toEqual([]);
+	});
+
+	it('returns the registered entries for missing registered ids, in missing order', () => {
+		// Act
+		const result = resolveMissingAssistants(['stale-2', 'stale-1'], registered);
+
+		// Assert
+		expect(result).toEqual([registered[1], registered[0]]);
+	});
+
+	it('throws RegistrationItemNotFoundError naming a missing id that is not registered', () => {
+		// Act & Assert
+		expect(() => resolveMissingAssistants(['new-id'], registered)).toThrow(RegistrationItemNotFoundError);
+		expect(() => resolveMissingAssistants(['new-id'], registered)).toThrow('new-id');
+	});
+
+	it('throws for an unregistered missing id even when a stale registered id precedes it', () => {
+		// Act & Assert
+		expect(() => resolveMissingAssistants(['stale-1', 'new-id'], registered)).toThrow(RegistrationItemNotFoundError);
+		expect(() => resolveMissingAssistants(['stale-1', 'new-id'], registered)).toThrow('new-id');
 	});
 });

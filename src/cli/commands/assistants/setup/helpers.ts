@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import type { CodemieAssistant } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { StorageScope } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
@@ -33,6 +34,20 @@ export function determineChanges(
   registeredAssistants: CodemieAssistant[]
 ): RegistrationChanges {
   return _determineChanges(selectedIds, allAssistants as Assistant[], registeredAssistants) as RegistrationChanges;
+}
+
+export function resolveMissingAssistants(
+  missing: string[],
+  registered: CodemieAssistant[]
+): CodemieAssistant[] {
+  const registeredById = new Map(registered.map(a => [a.id, a]));
+  return missing.map(id => {
+    const entry = registeredById.get(id);
+    if (!entry) {
+      throw new RegistrationItemNotFoundError('assistant', id);
+    }
+    return entry;
+  });
 }
 
 export async function unregisterAssistant(
