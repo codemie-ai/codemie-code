@@ -199,6 +199,11 @@ export interface LlmModel {
    */
   max_input_tokens?: number;
   /**
+   * The model's maximum output tokens (LiteLLM `model_info.max_output_tokens`).
+   * Not returned by the backend yet.
+   */
+  max_output_tokens?: number;
+  /**
    * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
    * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself
    * dispatches to a capable/efficient pair rather than naming a concrete deployment.
