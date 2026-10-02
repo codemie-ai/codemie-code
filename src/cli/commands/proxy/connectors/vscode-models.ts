@@ -45,6 +45,10 @@ const MESSAGE_AUTH_HEADERS = {
   Authorization: 'Bearer ${apiKey}',
 } as const;
 
+/**
+ * Token limits here are fallbacks: they apply only when the tenant catalog
+ * does not report a limit for the model (see {@link resolveVsCodeTokenLimits}).
+ */
 export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
   {
     family: 'claude-sonnet-4-5',
@@ -375,5 +379,25 @@ export function buildDefaultVsCodeCapability(descriptor: TenantModelDescriptor):
     ...(responses ? { zeroDataRetentionEnabled: true } : {}),
     maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+  };
+}
+
+function pickTokenLimit(catalogValue: number | undefined, fallback: number): number {
+  return typeof catalogValue === 'number' && Number.isFinite(catalogValue) && catalogValue > 0
+    ? catalogValue
+    : fallback;
+}
+
+/**
+ * Resolve each token limit independently: tenant catalog value when it is a
+ * finite number > 0, else the capability entry (table entry or default).
+ */
+export function resolveVsCodeTokenLimits(
+  entry: VsCodeCapabilityEntry,
+  descriptor: TenantModelDescriptor
+): { maxInputTokens: number; maxOutputTokens: number } {
+  return {
+    maxInputTokens: pickTokenLimit(descriptor.maxInputTokens, entry.maxInputTokens),
+    maxOutputTokens: pickTokenLimit(descriptor.maxOutputTokens, entry.maxOutputTokens),
   };
 }

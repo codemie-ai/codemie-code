@@ -3,10 +3,11 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
-import { fetchTenantModelDescriptors } from './tenant-catalog.js';
+import { fetchTenantModelDescriptors, type TenantModelDescriptor } from './tenant-catalog.js';
 import {
   buildDefaultVsCodeCapability,
   findVsCodeCapabilityEntry,
+  resolveVsCodeTokenLimits,
   type VsCodeApiType,
   type VsCodeCapabilityEntry,
   type VsCodeReasoningEffort,
@@ -110,10 +111,12 @@ function getApiPath(apiType: VsCodeApiType): string {
 
 function buildManagedModel(
   entry: VsCodeCapabilityEntry,
+  descriptor: TenantModelDescriptor,
   tenantId: string,
   name: string,
   proxyUrl: string
 ): VsCodeManagedModel {
+  const { maxInputTokens, maxOutputTokens } = resolveVsCodeTokenLimits(entry, descriptor);
   const model: VsCodeManagedModel = {
     id: tenantId,
     name,
@@ -123,8 +126,8 @@ function buildManagedModel(
     vision: entry.vision,
     streaming: true,
     thinking: entry.thinking,
-    maxInputTokens: entry.maxInputTokens,
-    maxOutputTokens: entry.maxOutputTokens,
+    maxInputTokens,
+    maxOutputTokens,
   };
 
   if (entry.adaptiveThinking) model.adaptiveThinking = true;
@@ -167,7 +170,7 @@ async function resolveManagedModels(
     const known = findVsCodeCapabilityEntry(descriptor.id);
     const entry = known ?? buildDefaultVsCodeCapability(descriptor);
     const name = known ? descriptor.id : (descriptor.label?.trim() || descriptor.id);
-    models.push(buildManagedModel(entry, descriptor.id, name, proxyUrl));
+    models.push(buildManagedModel(entry, descriptor, descriptor.id, name, proxyUrl));
   }
   if (models.length === 0) {
     throw new ConfigurationError(
