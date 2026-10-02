@@ -680,7 +680,7 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       await writeGlobal('preview', {
         preview: {
           provider: 'ai-run-sso',
-          baseUrl: 'https://preview.example.com/code-assistant-api',
+          baseUrl: 'https://global-workspace.example.com/code-assistant-api',
           model: 'claude-sonnet-4-6',
           name: 'preview'
         }
@@ -704,7 +704,7 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       await writeGlobal('preview', {
         preview: {
           provider: 'ai-run-sso',
-          baseUrl: 'https://preview.example.com/code-assistant-api',
+          baseUrl: 'https://global-workspace.example.com/code-assistant-api',
           model: 'claude-sonnet-4-6',
           name: 'preview'
         }
@@ -716,7 +716,7 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       await writeLocal('preview', {
         preview: {
           provider: 'ai-run-sso',
-          baseUrl: 'https://preview.example.com/code-assistant-api',
+          baseUrl: 'https://local-workspace.example.com/code-assistant-api',
           model: 'claude-sonnet-4-6',
           name: 'preview'
         }

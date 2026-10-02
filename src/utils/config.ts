@@ -20,6 +20,7 @@ import {
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
+import { alignIdentityWithProfile } from './codemie-identity.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
@@ -132,7 +133,7 @@ export class ConfigLoader {
     // whole-object override (local scope, else global), CodeMie identity from the
     // scope of the profile in use.
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
-    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
+    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile, config);
     Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
@@ -227,13 +228,21 @@ export class ConfigLoader {
    * takes them from resolveWorkspace(), a global profile only from the global
    * scope's workspace, so a repo's workspace never retargets global profiles.
    *
+   * When `profile` is given, the identity is also aligned with the CodeMie
+   * instance the profile talks to — see alignIdentityWithProfile().
+   *
    * @param workingDir - Directory whose local config is considered
    * @param isLocalProfile - Whether the profile in use is defined in the local config
+   * @param profile - Provider identity (provider + baseUrl) of the profile in use
    */
-  static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
+  static async resolveProfileWorkspace(
+    workingDir: string,
+    isLocalProfile: boolean,
+    profile?: Pick<ProviderProfile, 'provider' | 'baseUrl'>
+  ): Promise<WorkspaceConfig> {
     const workspace = await this.resolveWorkspace(workingDir);
     if (isLocalProfile) {
-      return workspace;
+      return profile ? alignIdentityWithProfile(workspace, profile) : workspace;
     }
 
     const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
@@ -244,7 +253,9 @@ export class ConfigLoader {
         result[key] = globalWorkspace[key];
       }
     }
-    return result as WorkspaceConfig;
+    return profile
+      ? alignIdentityWithProfile(result as WorkspaceConfig, profile)
+      : result as WorkspaceConfig;
   }
 
   /**
@@ -1290,7 +1301,10 @@ export class ConfigLoader {
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
     const identitySource = await this.resolveIdentitySource(workingDir, isLocalProfile);
     const profileWorkspace: Record<string, unknown> = {
-      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile))
+      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile, {
+        ...this.removeUndefined(globalConfig),
+        ...this.removeUndefined(effectiveLocalConfig)
+      }))
     };
     const identityWorkspace: Record<string, unknown> = {};
     for (const key of this.IDENTITY_KEYS) {
