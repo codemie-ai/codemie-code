@@ -16,7 +16,7 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieLlmModels, isRouterModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import type { OpenCodeModelConfig } from './opencode-model-configs.js';
-import { OPENCODE_MODEL_CONFIGS } from './opencode-model-configs.js';
+import { getExtendedReasoningVariants, OPENCODE_MODEL_CONFIGS } from './opencode-model-configs.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -105,6 +105,7 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel, isSelected = fa
   const family = detectFamily(id);
   const limit = detectLimits(id, family);
   const responsesApi = isResponsesApiModel(id);
+  const extendedVariants = responsesApi ? getExtendedReasoningVariants(id) : undefined;
 
   const toPerMillion = (v: number | undefined) => (v ?? 0) * 1_000_000;
 
@@ -127,6 +128,7 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel, isSelected = fa
     temperature: model.features?.temperature ?? true,
     structured_output: model.features?.tools ? true : undefined,
     ...(responsesApi && { use_responses_api: true }),
+    ...(extendedVariants && { variants: extendedVariants }),
     modalities: {
       input: model.multimodal ? ['text', 'image'] : ['text'],
       output: ['text'],

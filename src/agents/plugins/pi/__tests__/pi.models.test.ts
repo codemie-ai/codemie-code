@@ -253,3 +253,14 @@ describe('convertLlmModelToPiEntry — cost', () => {
     expect(entry.compat).toEqual({ forceAdaptiveThinking: true });
   });
 });
+
+describe('convertLlmModelToPiEntry — reasoning levels', () => {
+  it('preserves xhigh and max instead of downgrading them to high', () => {
+    const entry = convertLlmModelToPiEntry(
+      llmModel({ deployment_name: 'gpt-5.6-luna' }),
+    );
+
+    expect(entry.thinkingLevelMap?.xhigh).toBe('xhigh');
+    expect(entry.thinkingLevelMap?.max).toBe('max');
+  });
+});

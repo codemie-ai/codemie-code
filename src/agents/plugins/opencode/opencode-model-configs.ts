@@ -52,6 +52,33 @@ export interface OpenCodeModelConfig {
     headers?: Record<string, string>;
     timeout?: number;
   };
+  /** Named model variants used by OpenCode's --variant flag. */
+  variants?: Record<string, Record<string, unknown>>;
+}
+
+const EXTENDED_REASONING_MODEL_PATTERN = /gpt-5[.-]6|gpt-6/;
+const EXTENDED_REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Return explicit OpenAI Responses variants for models that support CodeMie's
+ * complete reasoning-effort vocabulary. OpenCode's provider defaults do not
+ * define `max`, so it must be present in the injected model configuration.
+ */
+export function getExtendedReasoningVariants(
+  modelId: string,
+): Record<string, Record<string, unknown>> | undefined {
+  if (!EXTENDED_REASONING_MODEL_PATTERN.test(modelId)) return undefined;
+
+  return Object.fromEntries(
+    EXTENDED_REASONING_LEVELS.map(level => [
+      level,
+      {
+        reasoningEffort: level,
+        reasoningSummary: 'auto',
+        include: ['reasoning.encrypted_content'],
+      },
+    ]),
+  );
 }
 
 export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
@@ -269,6 +296,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     temperature: false,
     structured_output: true,
     use_responses_api: true,
+    variants: getExtendedReasoningVariants('gpt-5.6-sol-2026-07-09'),
     modalities: {
       input: ['text', 'image'],
       output: ['text']

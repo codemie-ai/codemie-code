@@ -85,8 +85,8 @@ function defaultThinkingLevelMap(): Record<string, string | null> {
     low: 'low',
     medium: 'medium',
     high: 'high',
-    xhigh: 'high',
-    max: 'high',
+    xhigh: 'xhigh',
+    max: 'max',
   };
 }
 

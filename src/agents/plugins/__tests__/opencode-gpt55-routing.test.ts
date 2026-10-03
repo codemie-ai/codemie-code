@@ -150,6 +150,13 @@ describe('GPT-5.6 → Responses API routing', () => {
     expect(config.limit.context).toBe(1050000);
   });
 
+  it('dynamic GPT-5.6 config preserves the complete effort-level map', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('openai.gpt-5.6-luna'));
+    expect(Object.keys(config.variants ?? {})).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(config.variants?.xhigh?.reasoningEffort).toBe('xhigh');
+    expect(config.variants?.max?.reasoningEffort).toBe('max');
+  });
+
   // ── Static fallback path (OPENCODE_MODEL_CONFIGS) ──────────────────────────
 
   it('static config has gpt-5.6-sol-2026-07-09 with use_responses_api: true', () => {
@@ -163,5 +170,11 @@ describe('GPT-5.6 → Responses API routing', () => {
 
   it('static config gpt-5.6-sol-2026-07-09 reports context limit of 1050000', () => {
     expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.limit.context).toBe(1050000);
+  });
+
+  it('static GPT-5.6 config preserves xhigh and max', () => {
+    const variants = OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.variants;
+    expect(variants?.xhigh?.reasoningEffort).toBe('xhigh');
+    expect(variants?.max?.reasoningEffort).toBe('max');
   });
 });
