@@ -21,6 +21,7 @@ import {
   resolvePromptStory,
   resolveStoryOnce,
 } from './forward-context.js';
+import { AgentRegistry } from '@/agents/registry.js';
 
 const CODEMIE_CLI_VERSION = loadCodemieCliVersion();
 
@@ -278,11 +279,10 @@ export async function mapHookRecords(
         ? resolvePromptStory(ctx, rawPrompt)
         : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
 
-    const { AgentRegistry } = await import('../../../../../../agents/registry.js');
     const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
-    let commonFields: Record<string, unknown> = {};
+    let agentSpecificFields: Record<string, unknown> = {};
     try {
-      commonFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
+      agentSpecificFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
     } catch (err) {
       // OtlpAgentAdapter.prepareAnalyticsFields's "must never throw" contract is only a doc
       // comment — a future/alternate adapter implementation that violates it must not abort
@@ -314,7 +314,7 @@ export async function mapHookRecords(
         cwd,
         prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
         raw: limited,
-        ...commonFields,
+        ...agentSpecificFields,
         schema_version: 2,
         event_id: computeEventId(type, sessionId, { ...hookEvent, byteOffset }),
         codemie_cli_version: CODEMIE_CLI_VERSION,

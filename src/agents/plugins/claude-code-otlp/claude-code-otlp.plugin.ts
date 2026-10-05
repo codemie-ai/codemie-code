@@ -10,6 +10,7 @@ import { forwardOtlpEventToSpool } from '../utils.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import { runMainTranscriptParse, runSubagentTranscriptParse, type SubagentFile } from './transcript/orchestrator.js';
 import { findSubagentFiles } from './transcript/subagent-usage.js';
+import { exec } from '@/utils/exec.js';
 
 export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
@@ -145,7 +146,6 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     }
 
     try {
-      const { exec } = await import('@/utils/exec.js');
       const result = await exec('claude', ['--version']);
       const trimmed = result.stdout.trim();
       const versionMatch = trimmed.match(/^(\d+\.\d+\.\d+)/);
