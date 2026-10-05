@@ -16,8 +16,8 @@
  * not itself check that two records it is asked to merge actually share that identity.
  */
 
-import { parseRoutingHeaders, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
-import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
+import { parseRoutingHeaders, type RoutingHeaderSource } from '../../../../utils/routing-headers.mjs';
+import { parseBackendModelName } from '../../../../utils/bedrock-pricing.mjs';
 import type { OpenUsageRequest } from './parse-state.js';
 
 /**
