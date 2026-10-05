@@ -326,6 +326,22 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     expect(await readFile(configPath, 'utf-8')).toBe(original);
   });
 
+  it('applies catalog token limits to both table and default entries', async () => {
+    mockCatalog([
+      { base_name: 'claude-4-5-sonnet', max_input_tokens: 200000 },
+      { base_name: 'gpt-6-sol', max_input_tokens: 922000 },
+    ]);
+
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001', 'gw-key');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+    expect(models.find(m => m.id === 'claude-4-5-sonnet'))
+      .toMatchObject({ maxInputTokens: 136000, maxOutputTokens: 64000 });
+    expect(models.find(m => m.id === 'gpt-6-sol'))
+      .toMatchObject({ maxInputTokens: 913808, maxOutputTokens: 8192 });
+  });
+
   describe('tenant-aware resolution against a non-EPAM-shaped catalog', () => {
     it('AC1: omits a capability-table family with no match in a sparse tenant catalog', async () => {
       mockCatalog(NON_EPAM_TENANT_FIXTURE);

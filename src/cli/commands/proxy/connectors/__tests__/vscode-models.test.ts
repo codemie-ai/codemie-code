@@ -3,6 +3,7 @@ import {
   VS_CODE_CAPABILITY_TABLE,
   buildDefaultVsCodeCapability,
   findVsCodeCapabilityEntry,
+  resolveVsCodeTokenLimits,
 } from '../vscode-models.js';
 
 describe('VS_CODE_CAPABILITY_TABLE', () => {
@@ -87,5 +88,45 @@ describe('buildDefaultVsCodeCapability', () => {
     const entry = buildDefaultVsCodeCapability({ id });
     expect(entry.apiType).toBe('chat-completions');
     expect(entry.zeroDataRetentionEnabled).toBeUndefined();
+  });
+});
+
+describe('resolveVsCodeTokenLimits', () => {
+  const claude45 = findVsCodeCapabilityEntry('claude-4-5-sonnet')!;
+  const untabled = buildDefaultVsCodeCapability({ id: 'gpt-6-sol' });
+
+  it('subtracts the table output limit from catalog input', () => {
+    expect(resolveVsCodeTokenLimits(claude45, { id: 'claude-4-5-sonnet', maxInputTokens: 200000 }))
+      .toEqual({ maxInputTokens: 136000, maxOutputTokens: 64000 });
+  });
+
+  it('subtracts the default output limit when the model is untabled', () => {
+    expect(resolveVsCodeTokenLimits(untabled, { id: 'gpt-6-sol', maxInputTokens: 922000 }))
+      .toEqual({ maxInputTokens: 913808, maxOutputTokens: 8192 });
+  });
+
+  it('subtracts the catalog output limit when both are reported', () => {
+    expect(resolveVsCodeTokenLimits(untabled, { id: 'gpt-6-sol', maxInputTokens: 200000, maxOutputTokens: 16000 }))
+      .toEqual({ maxInputTokens: 184000, maxOutputTokens: 16000 });
+  });
+
+  it('lets a catalog output limit override the table value', () => {
+    expect(resolveVsCodeTokenLimits(claude45, { id: 'claude-4-5-sonnet', maxInputTokens: 200000, maxOutputTokens: 32000 }))
+      .toEqual({ maxInputTokens: 168000, maxOutputTokens: 32000 });
+  });
+
+  it('falls back to the entry input when the subtraction is not positive', () => {
+    expect(resolveVsCodeTokenLimits(claude45, { id: 'claude-4-5-sonnet', maxInputTokens: 64000 }))
+      .toEqual({ maxInputTokens: claude45.maxInputTokens, maxOutputTokens: 64000 });
+  });
+
+  it('returns the entry unchanged when the catalog reports no limits', () => {
+    expect(resolveVsCodeTokenLimits(claude45, { id: 'claude-4-5-sonnet' }))
+      .toEqual({ maxInputTokens: claude45.maxInputTokens, maxOutputTokens: claude45.maxOutputTokens });
+  });
+
+  it('keeps the entry input when only the catalog output is reported', () => {
+    expect(resolveVsCodeTokenLimits(claude45, { id: 'claude-4-5-sonnet', maxOutputTokens: 32000 }))
+      .toEqual({ maxInputTokens: claude45.maxInputTokens, maxOutputTokens: 32000 });
   });
 });
