@@ -40,13 +40,14 @@ VS Code uses the configured input limit as its prompt budget. Newer models (larg
 ## Acceptance Criteria
 
 - [ ] Given the tenant catalog reports an input limit for a model, when VS Code models are generated, then the input limit is that value minus the resolved output limit, even if the built-in table has a different one.
-- [ ] Given the tenant catalog reports an output limit for a model, when VS Code models are generated, then that value is used as the model's output limit.
+- [ ] Given the tenant catalog reports an output limit for a model, when VS Code models are generated, then that value is used as the model's output limit, and the input limit subtracts that value.
+- [ ] Given the catalog input limit minus the resolved output limit is zero or negative, when VS Code models are generated, then the built-in table value (or the default) is used for the input limit.
 - [ ] Given the catalog has no usable input limit for a model that exists in the built-in table, when VS Code models are generated, then the table value is used.
 - [ ] Given the catalog has no usable input limit for a model that is not in the table, when VS Code models are generated, then the default value is used.
 - [ ] Given the catalog value for a limit is missing, zero, negative or not a number, when VS Code models are generated, then it is ignored and the next source is used.
-- [ ] Given the input and output limits come from different sources, when a model is generated, then each limit is resolved independently.
+- [ ] Given the input and output limits come from different sources, when a model is generated, then the output limit is resolved from catalog, table, then default, and the input limit depends on the resolved output limit but falls back to the table or default independently when the catalog gives no usable input value.
 - [ ] Given a tenant that reports no token limits at all, when VS Code models are generated, then results are identical to today's.
-- [ ] Given the change is released, when a user reads the VS Code section of the command documentation, then it states the order: tenant catalog, built-in table, defaults.
+- [ ] Given the change is released, when a user reads the VS Code section of the command documentation, then it states the order (tenant catalog, built-in table, defaults) and that the output limit is subtracted from the catalog input limit.
 
 ---
 
