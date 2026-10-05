@@ -1,3 +1,0 @@
-{"task_id":"1","status":"done","commit":"15a8ed04","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/"}
-{"task_id":"2","status":"done","commit":"0b81ff69","test_command":"n/a (docs only)"}
-{"task_id":"3","status":"done","commit":"3c979c3a","test_command":"npx vitest run src/cli/commands/proxy/connectors/__tests__/"}

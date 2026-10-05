@@ -112,13 +112,12 @@ function getApiPath(apiType: VsCodeApiType): string {
 function buildManagedModel(
   entry: VsCodeCapabilityEntry,
   descriptor: TenantModelDescriptor,
-  tenantId: string,
   name: string,
   proxyUrl: string
 ): VsCodeManagedModel {
   const { maxInputTokens, maxOutputTokens } = resolveVsCodeTokenLimits(entry, descriptor);
   const model: VsCodeManagedModel = {
-    id: tenantId,
+    id: descriptor.id,
     name,
     url: new URL(getApiPath(entry.apiType), proxyUrl).toString(),
     apiType: entry.apiType,
@@ -170,7 +169,7 @@ async function resolveManagedModels(
     const known = findVsCodeCapabilityEntry(descriptor.id);
     const entry = known ?? buildDefaultVsCodeCapability(descriptor);
     const name = known ? descriptor.id : (descriptor.label?.trim() || descriptor.id);
-    models.push(buildManagedModel(entry, descriptor, descriptor.id, name, proxyUrl));
+    models.push(buildManagedModel(entry, descriptor, name, proxyUrl));
   }
   if (models.length === 0) {
     throw new ConfigurationError(
