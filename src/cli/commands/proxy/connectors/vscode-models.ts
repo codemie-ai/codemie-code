@@ -48,6 +48,8 @@ const MESSAGE_AUTH_HEADERS = {
 /**
  * Token limits here are fallbacks: they apply only when the tenant catalog
  * does not report a limit for the model (see {@link resolveVsCodeTokenLimits}).
+ * The table's `maxInputTokens` is a prompt budget (window minus output), while
+ * the catalog value is not, hence the catalog input has the output subtracted.
  */
 export const VS_CODE_CAPABILITY_TABLE: readonly VsCodeCapabilityEntry[] = [
   {
@@ -389,15 +391,22 @@ function pickTokenLimit(catalogValue: number | undefined, fallback: number): num
 }
 
 /**
- * Resolve each token limit independently: tenant catalog value when it is a
- * finite number > 0, else the capability entry (table entry or default).
+ * Resolve the token limits for a model entry. The output limit is the tenant
+ * catalog value when it is a finite number > 0, else the capability entry
+ * (table entry or default). The API input value is treated as the whole
+ * context window, so the resolved output limit is subtracted from it to make
+ * input plus output fit. When the catalog input is missing, or the
+ * subtraction is not positive, the entry's `maxInputTokens` is used.
  */
 export function resolveVsCodeTokenLimits(
   entry: VsCodeCapabilityEntry,
   descriptor: TenantModelDescriptor
 ): { maxInputTokens: number; maxOutputTokens: number } {
+  const maxOutputTokens = pickTokenLimit(descriptor.maxOutputTokens, entry.maxOutputTokens);
+  const catalogInput = pickTokenLimit(descriptor.maxInputTokens, 0);
+  const promptBudget = catalogInput - maxOutputTokens;
   return {
-    maxInputTokens: pickTokenLimit(descriptor.maxInputTokens, entry.maxInputTokens),
-    maxOutputTokens: pickTokenLimit(descriptor.maxOutputTokens, entry.maxOutputTokens),
+    maxInputTokens: promptBudget > 0 ? promptBudget : entry.maxInputTokens,
+    maxOutputTokens,
   };
 }
