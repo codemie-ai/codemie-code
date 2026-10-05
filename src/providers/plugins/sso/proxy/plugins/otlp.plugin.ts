@@ -1,4 +1,3 @@
-import { appendFile, mkdir } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext } from '../proxy-types.js';
@@ -6,7 +5,7 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { listSessionIds, spoolRoot } from './otlp-spool/spool-paths.js';
+import { listSessionIds } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
@@ -239,11 +238,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     const sessionId = match ? match[0] : '';
 
     if (!sessionId) {
-      // Append to _unresolved.alert for debugging
-      try {
-        await mkdir(spoolRoot(), { recursive: true });
-        await appendFile(`${spoolRoot()}/_unresolved.alert`, bytes);
-      } catch { /* best-effort */ }
+      logger.debug('[otlp-ingest] no session id in payload, dropping', ...sanitizeLogArgs({ signal, bytes: bytes.length }));
       res.statusCode = 200;
       res.end();
       return true;

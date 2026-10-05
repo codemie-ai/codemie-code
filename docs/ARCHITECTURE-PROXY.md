@@ -917,6 +917,24 @@ sequenceDiagram
     PX-->>VS: Byte-preserved SSE stream
 ```
 
+### 6.14 Claude Code OTLP Per-Project Allowlist
+
+The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook events into a disk spool (`otlp-spool/`). Which projects are tracked is decided by the allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER` (JSON array of absolute paths, stored as a string in `env` of `~/.claude/settings.json`). An absent or empty list tracks every project; a `cwd` inside any entry (nested directories included) is tracked; an invalid value tracks nothing. `codemie proxy connect --claude-code-otlp` writes it (default `--scope user` resets it to `[]`; `--scope project` adds the current project root). See [COMMANDS.md](COMMANDS.md#claude-code-otlp-analytics).
+
+**Filtering is hook-side only.** The daemon has no allowlist logic because OTLP carries no `cwd`. The Claude Code OTLP plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`) reads the allowlist on every hook event. For an untracked project it returns early: no daemon start (`ensureOtlpProxy` is not called), no SSO check, no forward to the spool.
+
+**OTEL-only invariant.** The OTel environment is global, so untracked sessions still export OTEL data to the daemon, but they never receive hooks data. The completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data; an OTEL-only session gets `wait` and, once `waitTicks >= OTLP_SEND_MAX_ATTEMPTS` (limit resolved by `hooksOnlyWaitTicks()` in `otlp-spool/spool-config.ts`), `skip`. On `skip` the tick processor advances the OTEL cursors to EOF without sending. No code path may send OTEL-only data without first adding daemon-side project filtering.
+
+**Deletion timeline for untracked data**
+
+| Stage   | When                                                                                            | Result                                         |
+| ------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Spooled | OTEL data arrives                                                                               | Held on disk, never sent                       |
+| Skipped | After `OTLP_SEND_MAX_ATTEMPTS` ticks (`wait` counted per send tick)                             | Cursors advanced to EOF, session counts as drained |
+| Swept   | Drained and idle longer than `OTLP_ABANDONED_SESSION_GRACE_MINUTES` (measured from last write)  | Spool deleted by the sweeper                   |
+
+The decision is per hook event: a session that starts outside and later enters a tracked project becomes sendable from then on, but a tracked session whose first hook arrives after the wait limit loses the OTEL bytes received before that.
+
 ---
 
 ## 7. Quality Attributes

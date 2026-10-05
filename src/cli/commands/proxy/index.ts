@@ -101,8 +101,12 @@ function formatDaemonConflict(
     `  port: ${state.port}`,
   ];
 
-  if (state.clientType) details.push(`  client: ${state.clientType}`);
-  if (state.project) details.push(`  project: ${state.project}`);
+  if (state.clientType) {
+    details.push(`  client: ${state.clientType}`);
+  }
+  if (state.project) {
+    details.push(`  project: ${state.project}`);
+  }
 
   details.push('', 'Stop it first:', '  codemie proxy stop');
   return details.join('\n');
@@ -231,9 +235,15 @@ export function createProxyCommand(): Command {
           uptimeSec,
           level: health.level,
         };
-        if (state.clientType) payload.clientType = state.clientType;
-        if (state.project) payload.project = state.project;
-        if (!health.healthy) payload.reason = health.reason ?? state.healthReason ?? 'unknown';
+        if (state.clientType) {
+          payload.clientType = state.clientType;
+        }
+        if (state.project) {
+          payload.project = state.project;
+        }
+        if (!health.healthy) {
+          payload.reason = health.reason ?? state.healthReason ?? 'unknown';
+        }
         if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
           payload.lastRecordedIssue = state.healthReason;
         }
@@ -304,7 +314,7 @@ export function createProxyCommand(): Command {
     .addOption(
       new Option(
         '--scope <scope>',
-        `Settings scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) or "project"`,
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds only the current project`,
       )
       .default('user')
       .choices(['user', 'project']),
@@ -331,11 +341,11 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
-    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
     .addOption(
       new Option(
         '--scope <scope>',
-        `Settings scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) or "project"`,
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
       )
       .default('user')
       .choices(['user', 'project']),

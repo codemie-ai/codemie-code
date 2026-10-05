@@ -72,7 +72,10 @@ export interface ConnectOptions {
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
-  /** Settings scope for Claude Code OTLP plugin: writes to ~/.claude (user) or .claude (project). Defaults to "user". */
+  /**
+   * Claude Code OTLP tracking scope. Settings always live in ~/.claude/settings.json.
+   * "user" (default) tracks all projects and resets the allowlist; "project" adds only the current project root to it.
+   */
   scope?: "user" | "project";
 }
 
@@ -656,7 +659,17 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
     if (result.backupPath) {
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
     }
-    console.log(chalk.yellow('  Restart Claude Code to apply changes.'));
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  OTel env is user-level: every Claude Code session exports telemetry to the daemon while it runs;'));
+    console.log(chalk.dim('  data from untracked projects is skipped and swept, never sent.'));
+    console.log(chalk.yellow('  First-time setup needs a Claude Code restart; allowlist changes apply immediately.'));
     return { label, ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -759,9 +772,15 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   const results: TargetResult[] = [];
-  if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
-  if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
-  if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
+  if (targets.claudeDesktop) {
+    results.push(await runClaudeDesktop(state, verbose));
+  }
+  if (targets.vscode) {
+    results.push(await runVscodeByok(state, insiders, config, verbose));
+  }
+  if (targets.vscodeClaudeCode) {
+    results.push(await runVscodeClaudeCode(state, insiders));
+  }
   if (targets.codexDesktop) {
     results.push(await runCodexDesktop(state, {
       force: Boolean(opts.force),
@@ -770,7 +789,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       verbose,
     }));
   }
-  if (targets.claudeCodeOtlp) results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
+  if (targets.claudeCodeOtlp) {
+    results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
+  }
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);

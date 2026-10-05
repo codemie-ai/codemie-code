@@ -53,7 +53,9 @@ interface ForwardContext {
 
 function decodeJwtClaims(token: string): Record<string, unknown> {
   const parts = token.split('.');
-  if (parts.length < 2) return {};
+  if (parts.length < 2) {
+    return {};
+  }
   try {
     return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
       string,
@@ -67,14 +69,18 @@ function decodeJwtClaims(token: string): Record<string, unknown> {
 function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string {
   if (isJWTCredentials(credentials)) {
     const claims = decodeJwtClaims(credentials.token);
-    if (typeof claims['email'] === 'string' && claims['email']) return claims['email'];
+    if (typeof claims['email'] === 'string' && claims['email']) {
+      return claims['email'];
+    }
   }
   if (isSSOCredentials(credentials)) {
     const accessToken = credentials.cookies['codemie_access_token'];
     if (accessToken) {
       const claims = decodeJwtClaims(accessToken);
       const email = claims['email'] ?? claims['preferred_username'];
-      if (typeof email === 'string' && email) return email;
+      if (typeof email === 'string' && email) {
+        return email;
+      }
     }
   }
   return '';
@@ -83,8 +89,12 @@ function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string 
 function buildAuthHeadersFromCreds(
   credentials: SSOCredentials | JWTCredentials
 ): Record<string, string> | null {
-  if (isSSOCredentials(credentials)) return buildAuthHeaders(credentials.cookies);
-  if (isJWTCredentials(credentials)) return buildAuthHeaders(credentials.token);
+  if (isSSOCredentials(credentials)) {
+    return buildAuthHeaders(credentials.cookies);
+  }
+  if (isJWTCredentials(credentials)) {
+    return buildAuthHeaders(credentials.token);
+  }
   return null;
 }
 
@@ -97,7 +107,9 @@ async function postToBackend(
   credentials: SSOCredentials | JWTCredentials
 ): Promise<Response> {
   const headers = buildAuthHeadersFromCreds(credentials);
-  if (!headers) throw new Error('Unsupported credential type');
+  if (!headers) {
+    throw new Error('Unsupported credential type');
+  }
   headers['Content-Type'] = contentType;
 
   const controller = new AbortController();
@@ -132,7 +144,9 @@ async function send(
     let response = await postToBackend(url, body, contentType, credentials);
     if (isAuthFailure(response)) {
       response = await postToBackend(url, body, contentType, credentials);
-      if (isAuthFailure(response)) return 'auth-expired';
+      if (isAuthFailure(response)) {
+        return 'auth-expired';
+      }
     }
     if (response.ok) {
       return 'ok';
@@ -166,7 +180,9 @@ function hookEventType(hookName: string, event: Record<string, unknown>): string
 }
 
 function boundedText(value: unknown, maxChars: number): string {
-  if (value === undefined || value === null) return '';
+  if (value === undefined || value === null) {
+    return '';
+  }
   const text =
     typeof value === 'string'
       ? value
@@ -198,7 +214,9 @@ function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, un
 }
 
 async function resolveGitInfo(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!cwd || ctx.git.branch !== undefined) return;
+  if (!cwd || ctx.git.branch !== undefined) {
+    return;
+  }
   try {
     const { detectGitBranch, detectGitRemoteRepo } = await import('@/utils/processes.js');
     const [branch, remote] = await Promise.all([
@@ -237,7 +255,9 @@ async function mapHookRecords(records: string[], ctx: ForwardContext): Promise<H
     }
 
     const hookName = String(hookEvent['hook_event_name'] ?? '');
-    if (hookName === 'SessionEnd') containsSessionEnd = true;
+    if (hookName === 'SessionEnd') {
+      containsSessionEnd = true;
+    }
 
     const cwd = String(hookEvent['cwd'] ?? '');
     await resolveGitInfo(ctx, cwd);
@@ -315,7 +335,9 @@ async function forwardHooks(
   const result = await send(
     sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', ctx.credentials
   );
-  if (result !== 'ok') return result;
+  if (result !== 'ok') {
+    return result;
+  }
 
   await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
 
@@ -333,13 +355,17 @@ async function forwardOtelStream(
   ctx: ForwardContext
 ): Promise<SendResult | 'idle'> {
   const pending = await snapshotPendingBytes(sessionId, stream);
-  if (!pending) return 'idle';
+  if (!pending) {
+    return 'idle';
+  }
 
   const url = `${ctx.baseUrl}${OTEL_ENDPOINTS[stream]}`;
   const result = await send(
     sessionId, stream, url, pending.bytes, 'application/x-protobuf', ctx.credentials
   );
-  if (result !== 'ok') return result;
+  if (result !== 'ok') {
+    return result;
+  }
 
   await advanceCursor(sessionId, stream, pending.cursor + pending.bytes.length);
   return 'ok';

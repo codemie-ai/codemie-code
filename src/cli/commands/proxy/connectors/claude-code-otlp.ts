@@ -7,15 +7,21 @@
 
 import { existsSync } from 'node:fs';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
-import { resolveHomeDir } from '@/utils/paths.js';
 import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import {
+  CODEMIE_ANALYTICS_PROJECT_FILTER_ENV,
+  addProjectPath,
+  canonicalizePath,
+  getClaudeSettingsPath,
+  parseAllowlist,
+  removeProjectPath,
+} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
@@ -28,6 +34,8 @@ interface WriteClaudeCodeOtlpResult {
   backupPath: string | null;
   hookEvents: number;
   envVars: number;
+  /** Tracked project roots; empty means all projects. */
+  allowlist: string[];
 }
 
 interface RemoveClaudeCodeOtlpOptions {
@@ -38,6 +46,12 @@ interface RemoveClaudeCodeOtlpResult {
   removed: boolean;
   usedBackup: boolean;
   path: string | null;
+  /** 'entry-removed': only this project's allowlist entry was dropped; 'full': all codemie wiring removed. */
+  mode: 'entry-removed' | 'full' | 'noop';
+  /** Human-readable reason when `removed` is false. */
+  reason?: string;
+  /** Remaining tracked project roots after an 'entry-removed' operation. */
+  allowlist?: string[];
 }
 
 interface HookEntry {
@@ -59,6 +73,7 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
+// CODEMIE_ANALYTICS_PROJECT_FILTER_ENV is deliberately not listed here: its value is managed per scope, not fixed.
 export const CODEMIE_ENV_KEYS = [
   'CLAUDE_CODE_ENABLE_TELEMETRY',
   'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA',
@@ -90,7 +105,10 @@ export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
-  if (!existsSync(settingsPath)) return {};
+  if (!existsSync(settingsPath)) {
+    return {};
+  }
+
   let raw: string;
   try {
     raw = await readFile(settingsPath, 'utf-8');
@@ -100,7 +118,11 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
       `${error instanceof Error ? error.message : String(error)}`
     );
   }
-  if (raw.trim().length === 0) return {};
+
+  if (raw.trim().length === 0) {
+    return {};
+  }
+
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -108,7 +130,9 @@ async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
     }
     return parsed as ClaudeSettings;
   } catch (error) {
-    if (error instanceof ConfigurationError) throw error;
+    if (error instanceof ConfigurationError) {
+      throw error;
+    }
     throw new ConfigurationError(
       `Claude Code settings at ${settingsPath} is not valid JSON and was not changed.`
     );
@@ -179,8 +203,8 @@ export async function writeClaudeCodeOtlpConfig(
     throw new ConfigurationError('No live proxy daemon. Run: codemie proxy start');
   }
 
-  const basePath = opts.scope === 'project' ? resolveProjectRoot() : resolveHomeDir();
-  const settingsPath = join(basePath, '.claude', 'settings.json');
+  // Always user-level: the allowlist (not the settings location) decides which projects are tracked.
+  const settingsPath = getClaudeSettingsPath();
 
   const existing = await readSettingsFile(settingsPath);
   const existingHooksBlock = existing.hooks ?? {};
@@ -231,6 +255,22 @@ export async function writeClaudeCodeOtlpConfig(
     );
   }
 
+  // --- Allowlist pre-check (before anything is written) ---
+  const rawAllowlist: unknown = existingEnv[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV];
+  const existingAllowlist = parseAllowlist(rawAllowlist);
+  if (existingAllowlist.kind === 'invalid' && !opts.force) {
+    throw new ConfigurationError(
+      `Claude Code settings contain an invalid ${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} value: ${JSON.stringify(rawAllowlist)}. ` +
+      `Fix it manually (expected a JSON array of absolute paths, e.g. '["/path/to/project"]') or re-run with --force to discard it.`
+    );
+  }
+
+  let allowlist: string[] = [];
+  if (opts.scope === 'project') {
+    const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
+    allowlist = await addProjectPath(current, resolveProjectRoot());
+  }
+
   // --- Backup on first modification (no existing codemie entry, no existing backup) ---
   let backupPath: string | null = null;
   if (existsSync(settingsPath)) {
@@ -279,7 +319,11 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge env block ---
-  const mergedEnv: Record<string, string> = { ...(existing.env ?? {}), ...codemieEnv };
+  const mergedEnv: Record<string, string> = {
+    ...(existing.env ?? {}),
+    ...codemieEnv,
+    [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(allowlist),
+  };
 
   const merged: ClaudeSettings = {
     ...existing,
@@ -295,7 +339,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   logger.info(
     '[proxy] Configured Claude Code analytics',
-    ...sanitizeLogArgs({ settingsPath, backupPath, hookEvents: hookEventsCount, envVars: envVarsCount })
+    ...sanitizeLogArgs({ settingsPath, backupPath, hookEvents: hookEventsCount, envVars: envVarsCount, allowlist })
   );
 
   return {
@@ -304,20 +348,55 @@ export async function writeClaudeCodeOtlpConfig(
     backupPath,
     hookEvents: hookEventsCount,
     envVars: envVarsCount,
+    allowlist,
   };
 }
 
 export async function removeClaudeCodeOtlpConfig(
   opts: RemoveClaudeCodeOtlpOptions = {}
 ): Promise<RemoveClaudeCodeOtlpResult> {
-  const basePath = opts.scope === 'project' ? resolveProjectRoot() : resolveHomeDir();
-  const settingsPath = join(basePath, '.claude', 'settings.json');
+  const settingsPath = getClaudeSettingsPath();
 
   if (!existsSync(settingsPath)) {
-    return { removed: false, usedBackup: false, path: null };
+    return { removed: false, usedBackup: false, path: null, mode: 'noop', reason: 'no Claude Code settings file found' };
   }
 
   const existing = await readSettingsFile(settingsPath);
+
+  if (opts.scope === 'project') {
+    const allowlist = parseAllowlist(existing.env?.[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]);
+    if (allowlist.kind !== 'valid' || allowlist.paths.length === 0) {
+      let reason: string;
+      if (allowlist.kind === 'invalid') {
+        reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is invalid; fix it manually or run disconnect without --scope project`;
+      } else if (allowlist.kind === 'absent') {
+        reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
+      } else {
+        reason = 'all projects are tracked (no per-project entries)';
+      }
+      return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason };
+    }
+
+    const projectRoot = resolveProjectRoot();
+    const remaining = await removeProjectPath(allowlist.paths, projectRoot);
+    if (remaining.length === allowlist.paths.length) {
+      return {
+        removed: false,
+        usedBackup: false,
+        path: settingsPath,
+        mode: 'noop',
+        reason: `project ${await canonicalizePath(projectRoot)} is not in the allowlist`,
+      };
+    }
+
+    if (remaining.length > 0) {
+      const env = { ...(existing.env ?? {}), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(remaining) };
+      await writeAtomically(settingsPath, JSON.stringify({ ...existing, env }, null, 2) + '\n');
+      logger.info('[proxy] Removed project from Claude Code analytics allowlist', ...sanitizeLogArgs({ settingsPath, remaining }));
+      return { removed: true, usedBackup: false, path: settingsPath, mode: 'entry-removed', allowlist: remaining };
+    }
+    // Last entry removed: fall through to the full removal below
+  }
 
   let removedHookCommands = false;
   const hooks: Record<string, unknown> = {};
@@ -337,7 +416,7 @@ export async function removeClaudeCodeOtlpConfig(
 
   const env: Record<string, string> = { ...(existing.env ?? {}) };
   let removedEnvKeys = false;
-  for (const key of CODEMIE_ENV_KEYS) {
+  for (const key of [...CODEMIE_ENV_KEYS, CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]) {
     if (key in env) {
       removedEnvKeys = true;
       delete env[key];
@@ -345,7 +424,7 @@ export async function removeClaudeCodeOtlpConfig(
   }
 
   if (!removedHookCommands && !removedEnvKeys) {
-    return { removed: false, usedBackup: false, path: settingsPath };
+    return { removed: false, usedBackup: false, path: settingsPath, mode: 'noop', reason: 'no CodeMie entries found' };
   }
 
   const stripped: ClaudeSettings = { ...existing };
@@ -369,15 +448,15 @@ export async function removeClaudeCodeOtlpConfig(
       await writeAtomically(settingsPath, backupContent);
       await unlink(backupPath);
       logger.info('[proxy] Removed Claude Code analytics config (restored backup)', ...sanitizeLogArgs({ settingsPath }));
-      return { removed: true, usedBackup: true, path: settingsPath };
+      return { removed: true, usedBackup: true, path: settingsPath, mode: 'full' };
     } else {
       await unlink(settingsPath);
       logger.info('[proxy] Removed Claude Code analytics config (deleted settings)', ...sanitizeLogArgs({ settingsPath }));
-      return { removed: true, usedBackup: false, path: settingsPath };
+      return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
     }
   }
 
   await writeAtomically(settingsPath, JSON.stringify(stripped, null, 2) + '\n');
   logger.info('[proxy] Removed Claude Code analytics entries from settings', ...sanitizeLogArgs({ settingsPath }));
-  return { removed: true, usedBackup: false, path: settingsPath };
+  return { removed: true, usedBackup: false, path: settingsPath, mode: 'full' };
 }

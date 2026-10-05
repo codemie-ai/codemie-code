@@ -822,8 +822,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       } = await import('../../agents/core/session/session-origin-audit.js');
 
       existing.status = 'active';
-      if (gitBranch) existing.gitBranch = gitBranch;
-      if (remoteRepository) existing.repository = remoteRepository;
+      if (gitBranch) {
+        existing.gitBranch = gitBranch;
+      }
+      if (remoteRepository) {
+        existing.repository = remoteRepository;
+      }
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -1513,8 +1517,7 @@ export function createHookCommand(): Command {
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
-          await ensureOtlpProxy(analyticsAgent.name);
-          await analyticsAgent.processOtlpEvent(input);
+          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy });
           await logger.close();
           process.exitCode = 0;
           return;

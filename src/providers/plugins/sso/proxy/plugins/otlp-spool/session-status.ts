@@ -11,7 +11,7 @@ export interface SessionStatus {
    * file and is only advanced after the backend acknowledges those bytes.
    */
   cursors: SessionCursors;
-  /** Consecutive ticks a hooks-only session has waited for OTEL data. */
+  /** Consecutive ticks a session has waited for its missing group (hooks-only or OTEL-only). */
   waitTicks: number;
   /**
    * Time when a successfully forwarded hooks batch contained `SessionEnd`.
@@ -35,7 +35,9 @@ function toOffset(value: unknown): number {
  */
 function normalizeStatus(raw: unknown): SessionStatus {
   const status = createStatus();
-  if (typeof raw !== 'object' || raw === null) return status;
+  if (typeof raw !== 'object' || raw === null) {
+    return status;
+  }
 
   const source = raw as Record<string, unknown>;
   const cursors = (source['cursors'] ?? {}) as Record<string, unknown>;
@@ -44,7 +46,9 @@ function normalizeStatus(raw: unknown): SessionStatus {
   }
   status.waitTicks = toOffset(source['waitTicks']);
   const endedAt = toOffset(source['endedAt']);
-  if (endedAt > 0) status.endedAt = endedAt;
+  if (endedAt > 0) {
+    status.endedAt = endedAt;
+  }
 
   return status;
 }
@@ -104,7 +108,9 @@ export async function advanceCursor(
  * Caller MUST already hold the session lock.
  */
 export async function ensureStatusLocked(sessionId: string): Promise<void> {
-  if (await readStatus(sessionId)) return;
+  if (await readStatus(sessionId)) {
+    return;
+  }
   await writeStatus(sessionId, createStatus());
 }
 

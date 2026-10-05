@@ -735,7 +735,19 @@ export interface OtlpAgentAdapter  {
   readonly name: string;
   readonly type: AgentAdapterType.OTLP;
 
-  processOtlpEvent(rawHookInput: string): Promise<void>;
+  /**
+   * Handles one hook event. The adapter owns the decision of whether the OTLP
+   * daemon is needed: it MUST call `deps.ensureProxy()` before forwarding
+   * anything to the daemon and MAY skip it for events it will not forward.
+   *
+   * INVARIANT: events from untracked projects must never reach the daemon
+   * spool.
+   */
+  processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void>;
+}
+
+export interface OtlpAdapterDeps {
+  ensureOtlpProxy: (agentName: string) => Promise<void>;
 }
 
 /**

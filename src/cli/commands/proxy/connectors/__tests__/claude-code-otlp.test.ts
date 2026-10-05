@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,7 @@ import {
   removeClaudeCodeOtlpConfig,
 } from '../claude-code-otlp.js';
 import { readState } from '../../daemon-manager.js';
+import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import { resolveHomeDir } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
@@ -108,6 +109,7 @@ describe('claude-code-otlp connector', () => {
           backupPath: null,
           hookEvents: HOOK_EVENTS.length,
           envVars: CODEMIE_ENV_KEYS.length,
+          allowlist: [],
         });
 
         expect(existsSync(join(homeDir, '.claude'))).toBe(true);
@@ -115,20 +117,45 @@ describe('claude-code-otlp connector', () => {
         expect(existsSync(expectedPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
 
         const settings = await readJson(expectedPath);
-        expect(settings.env).toEqual(buildExpectedEnv(mockState));
+        expect(settings.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
 
         for (const event of HOOK_EVENTS) {
           expect(settings.hooks[event]).toEqual([codemieHookGroup()]);
         }
       });
 
-      it('writes to project root when scope is "project"', async () => {
+      it('writes to the user-level settings and tracks the project root when scope is "project"', async () => {
         const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
 
-        const expectedPath = join(projectDir, '.claude', 'settings.json');
+        const expectedPath = join(homeDir, '.claude', 'settings.json');
         expect(result.path).toBe(expectedPath);
-        expect(existsSync(expectedPath)).toBe(true);
-        expect(existsSync(join(homeDir, '.claude', 'settings.json'))).toBe(false);
+        expect(existsSync(join(projectDir, '.claude', 'settings.json'))).toBe(false);
+
+        const canonicalRoot = await realpath(projectDir);
+        expect(result.allowlist).toEqual([canonicalRoot]);
+        expect((await readJson(expectedPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(JSON.stringify([canonicalRoot]));
+
+        const again = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        expect(again.allowlist).toEqual([canonicalRoot]);
+      });
+
+      it('resets the allowlist to [] on a user-scope rerun', async () => {
+        await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const result = await writeClaudeCodeOtlpConfig({ scope: 'user' });
+        expect(result.allowlist).toEqual([]);
+      });
+
+      it('aborts before writing when the existing allowlist is invalid, unless forced', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        const original = JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: 'not-json' } });
+        await writeFile(settingsPath, original);
+
+        await expect(writeClaudeCodeOtlpConfig()).rejects.toBeInstanceOf(ConfigurationError);
+        expect(await readRaw(settingsPath)).toBe(original);
+
+        const forced = await writeClaudeCodeOtlpConfig({ force: true });
+        expect(forced.allowlist).toEqual([]);
       });
 
       it('writes to home dir when scope is "user"', async () => {
@@ -249,7 +276,7 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual({ KEEP_ME: 'yes', ...buildExpectedEnv(mockState) });
+        expect(merged.env).toEqual({ KEEP_ME: 'yes', ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
       });
 
       it('does not require force when existing env values already match the desired codemie values', async () => {
@@ -325,7 +352,7 @@ describe('claude-code-otlp connector', () => {
         expect(await readRaw(result.backupPath!)).toBe('');
 
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual(buildExpectedEnv(mockState));
+        expect(merged.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
         for (const event of HOOK_EVENTS) {
           expect(merged.hooks[event]).toEqual([codemieHookGroup()]);
         }
@@ -542,14 +569,14 @@ describe('claude-code-otlp connector', () => {
       it('returns removed:false and touches nothing when no settings file exists', async () => {
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: false, usedBackup: false, path: null });
+        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, usedBackup: false, path: null });
         expect(existsSync(join(homeDir, '.claude'))).toBe(false);
       });
 
       it('resolves the project root when scope is "project"', async () => {
         const result = await removeClaudeCodeOtlpConfig({ scope: 'project' });
 
-        expect(result).toEqual({ removed: false, usedBackup: false, path: null });
+        expect(result).toEqual({ mode: "noop", reason: "no Claude Code settings file found", removed: false, usedBackup: false, path: null });
       });
 
       it('does not require a live proxy daemon', async () => {
@@ -578,7 +605,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
         const final = await readJson(settingsPath);
         expect(final.theme).toBe('dark');
         expect(final.env).toEqual({ FOO: 'bar' });
@@ -625,7 +652,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: true, usedBackup: true, path: settingsPath });
+        expect(result).toEqual({ mode: "full", removed: true, usedBackup: true, path: settingsPath });
         expect(await readJson(settingsPath)).toEqual(originalBackup);
         expect(existsSync(backupPath)).toBe(false);
       });
@@ -652,7 +679,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
         expect(existsSync(settingsPath)).toBe(false);
       });
 
@@ -767,7 +794,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: false, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, usedBackup: false, path: settingsPath });
         expect(await readRaw(settingsPath)).toBe(raw);
         expect(logger.info).not.toHaveBeenCalled();
       });
@@ -779,9 +806,26 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: false, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "noop", reason: "no CodeMie entries found", removed: false, usedBackup: false, path: settingsPath });
         expect(await readRaw(settingsPath)).toBe('{}');
         expect(existsSync(backupPath)).toBe(true);
+      });
+
+      it('reports an "absent" reason for project scope when the allowlist key is not set', async () => {
+        const settingsPath = await seedSettings(
+          JSON.stringify({ theme: 'dark', env: { OTEL_LOGS_EXPORTER: 'otlp' }, hooks: { Stop: [codemieHookGroup()] } })
+        );
+
+        const result = await removeClaudeCodeOtlpConfig({ scope: 'project' });
+
+        expect(result).toEqual({
+          mode: 'noop',
+          reason: `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`,
+          removed: false,
+          usedBackup: false,
+          path: settingsPath,
+        });
+        expect(result.reason).toBe('CODEMIE_ANALYTICS_PROJECT_FILTER is not set');
       });
 
       it('returns removed:true when only codemie env keys are present (no hooks)', async () => {
@@ -791,7 +835,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
         const final = await readJson(settingsPath);
         expect(final.env).toEqual({ FOO: 'bar' });
         expect(final.theme).toBe('dark');
@@ -804,7 +848,7 @@ describe('claude-code-otlp connector', () => {
 
         const result = await removeClaudeCodeOtlpConfig();
 
-        expect(result).toEqual({ removed: true, usedBackup: false, path: settingsPath });
+        expect(result).toEqual({ mode: "full", removed: true, usedBackup: false, path: settingsPath });
         const final = await readJson(settingsPath);
         expect(final.hooks).toBeUndefined();
         expect(final.theme).toBe('dark');

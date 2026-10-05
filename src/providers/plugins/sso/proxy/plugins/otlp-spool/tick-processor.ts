@@ -3,6 +3,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus } from './session-status.js';
+import { OTEL_STREAMS } from './spool-paths.js';
 import { hasPendingData, readSpoolState } from './spool-state.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
@@ -50,6 +51,22 @@ export async function processSessionTick(
     } else if (decision === 'wait') {
       status.waitTicks += 1;
       await writeStatus(sessionId, status);
+    } else if (decision === 'skip') {
+      // INVARIANT: OTEL-only sessions are never forwarded (per-project allowlist,
+      // see completeness-gate.ts). Advance cursors to EOF so the session counts
+      // as drained and the sweeper deletes it.
+      // Pure in-place mutation: the session lock is not reentrant, so do NOT call
+      // advanceCursor/updateStatus/ensureStatus here.
+      // Without valid credentials the tick returns before the gate, so skipping
+      // resumes after a proxy restart with valid credentials.
+      // Accepted trade-off: a tracked session whose first hook arrives after the
+      // wait limit loses the OTEL bytes received before that.
+      if (pending) {
+        for (const stream of OTEL_STREAMS) {
+          status.cursors[stream] = Math.max(status.cursors[stream], spool.streams[stream].size);
+        }
+        await writeStatus(sessionId, status);
+      }
     }
     // 'noop': nothing written yet
   });

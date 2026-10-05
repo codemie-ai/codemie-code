@@ -102,6 +102,53 @@ describe('disconnectTargets', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('nothing to disconnect'));
       expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('disconnected ('));
     });
+
+    it('lists the remaining tracked projects when only an allowlist entry was removed', async () => {
+      vi.doMock('../connectors/claude-code-otlp.js', () => ({
+        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+          removed: true, usedBackup: false, path: settingsPath, mode: 'entry-removed',
+          allowlist: ['/work/a', '/work/b'],
+        }),
+      }));
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
+
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Project removed from Claude Code OTLP tracking'));
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('/work/a'));
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('/work/b'));
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Claude Code OTLP disconnected'));
+    });
+
+    it('reports a full disconnect for mode "full"', async () => {
+      vi.doMock('../connectors/claude-code-otlp.js', () => ({
+        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+          removed: true, usedBackup: false, path: settingsPath, mode: 'full',
+        }),
+      }));
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: { claudeCodeOtlp: true } });
+
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Claude Code OTLP disconnected'));
+      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Still tracked'));
+    });
+
+    it('includes the reason in the no-op message for mode "noop"', async () => {
+      vi.doMock('../connectors/claude-code-otlp.js', () => ({
+        removeClaudeCodeOtlpConfig: vi.fn().mockResolvedValue({
+          removed: false, usedBackup: false, path: settingsPath, mode: 'noop',
+          reason: 'CODEMIE_ANALYTICS_PROJECT_FILTER is not set',
+        }),
+      }));
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
+
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('nothing to disconnect (CODEMIE_ANALYTICS_PROJECT_FILTER is not set)')
+      );
+    });
   });
 
   it('sets a failing exit code when removal throws', async () => {

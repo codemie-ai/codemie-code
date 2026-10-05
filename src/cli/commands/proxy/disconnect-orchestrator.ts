@@ -62,7 +62,17 @@ async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<voi
     const result = await removeClaudeCodeOtlpConfig({ scope });
 
     if (!result.removed) {
-      console.log(chalk.dim('Claude Code OTLP: nothing to disconnect.'));
+      const reason = result.reason ? ` (${result.reason})` : '';
+      console.log(chalk.dim(`Claude Code OTLP: nothing to disconnect${reason}.`));
+      return;
+    }
+
+    if (result.mode === 'entry-removed') {
+      console.log(chalk.green(`✓ Project removed from Claude Code OTLP tracking (${result.path})`));
+      console.log(chalk.dim('  Still tracked:'));
+      for (const projectPath of result.allowlist ?? []) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
       return;
     }
 

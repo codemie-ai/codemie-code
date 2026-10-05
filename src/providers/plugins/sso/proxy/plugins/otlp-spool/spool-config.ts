@@ -42,6 +42,10 @@ export function sweepIntervalMs(): number {
  * `sendIntervalMs() * hooksOnlyWaitTicks()` — currently ~6 minutes, chosen to
  * out-wait one OTEL exporter flush cycle (~60s) plus a send interval.
  * Revisit this value whenever OTLP_SEND_INTERVAL_MINUTES changes.
+ *
+ * The same tick limit also bounds how long an OTEL-only session waits for hooks
+ * before being skipped, so changing it changes the untracked-data retention
+ * window and the late-hooks tolerance for tracked sessions.
  */
 export function hooksOnlyWaitTicks(): number {
   return envCount('OTLP_SEND_MAX_ATTEMPTS', 3);
