@@ -46,7 +46,7 @@ ES modules with `.js` import extensions, explicit return types on exports, `impo
 - Guides under `.ai-run/guides/` exist per AGENTS.md (architecture, code-quality, development-practices); not read in depth.
 
 ### Architectural Decisions
-Proposal doc (local-only, untracked) `VSCODE_MODEL_TOKEN_LIMITS.md`: catalog first, no arithmetic, table values kept, output limit hardcoded until API provides it.
+Proposal doc (local-only, untracked) `VSCODE_MODEL_TOKEN_LIMITS.md`: catalog first, output limit subtracted from catalog input, table values kept, output limit hardcoded until API provides it.
 
 ### Derived Conventions
 Doc comments on fields explaining upstream source (as in `LlmModel.max_input_tokens`).
@@ -87,7 +87,7 @@ None. No migrations or schema.
 
 - Speculative: other agent plugins read `LlmModel`; adding an optional `max_output_tokens` is additive and low risk.
 - Speculative: `resolveVsCodeTokenLimits` needs the default constants, which are module-private in vscode-models.ts; if placed in the same file they are accessible, but `entry` for default models already carries them (so the helper can use `entry` as 2nd/3rd source, as the proposal states).
-- Catalog `max_input_tokens` overrides table values, so written values change for most table models (e.g. 922000 -> 1050000, claude 136000 -> 200000). This is intended; but the table deliberately stored reduced values (e.g. 136000 = 200000-64000, 922000 = 1050000-128000) apparently to reserve output room. Using the full context window as VS Code's `maxInputTokens` may let prompt + output exceed the model window. The proposal and ticket accept this ("used as-is"); worth flagging to reviewers. This is inferred from numbers, not documented in code.
+- Catalog `max_input_tokens` overrides table values, so written values change for most table models (e.g. 922000 -> 1050000, claude 136000 -> 200000). The shipped rule subtracts the resolved output limit from the catalog input (e.g. 1050000 - 128000 = 922000); the table deliberately stored reduced values (e.g. 136000 = 200000-64000, 922000 = 1050000-128000) apparently to reserve output room. Using the full context window as VS Code's `maxInputTokens` could let prompt + output exceed the model window; this is mitigated by the subtraction. This is inferred from numbers, not documented in code.
 - A catalog `max_input_tokens` could be a numeric string or null from the API; parse must use `typeof === 'number' && Number.isFinite && > 0` (strings fall through per proposal).
 - Tests asserting `maxInputTokens === entry.maxInputTokens` stay valid only while fixtures omit token fields.
 - docs/ARCHITECTURE-PROXY.md:868 stale text (out of scope).
@@ -102,10 +102,10 @@ The change is small and well-contained: three source files in `src/cli/commands/
 
 The planned changes in the proposal match the actual code. `TenantModelDescriptor` has only in-folder consumers and `buildManagedModel` is private with one call site, so adding optional fields and a descriptor argument is non-breaking. The capability table is used in production only by vscode-models.ts; elsewhere only tests reference it. Novelty is low: a pure resolution helper following existing tolerant-parsing patterns.
 
-Existing tests cover the touched modules and should remain passing as fixtures lack token fields; no tests exist for the new behavior (to be added only on explicit request). Main risks: semantic shift of larger `maxInputTokens` versus the table's apparently reduced values, drift of catalog data, and layering of the `LlmModel` type import.
+Existing tests cover the touched modules and should remain passing as fixtures lack token fields; no tests exist for the new behavior (to be added only on explicit request). Main risks: semantic shift of larger `maxInputTokens` versus the table's reduced values (mitigated by subtracting the output limit), drift of catalog data, and layering of the `LlmModel` type import.
 
 ---
 
 ## 8. External References
 
-`/Users/bohdan_maliar/Projects/codemie-dev/codemie-code/VSCODE_MODEL_TOKEN_LIMITS.md` — resolved and read. Key facts: value counts only if finite number > 0; order API -> table -> defaults (128000 / 8192), fields independent; add `max_output_tokens?: number` to `LlmModel`; derive token fields of local `CodeMieLlmModel` from `LlmModel` (`Partial<Pick<LlmModel,'max_input_tokens'|'max_output_tokens'>>`); add `maxInputTokens`/`maxOutputTokens` to `TenantModelDescriptor`, populated in `toDescriptor`; exported pure `resolveVsCodeTokenLimits(entry, descriptor)` in vscode-models.ts; comment above table; vscode.ts passes descriptor to `buildManagedModel` for table and default models; docs JSON example gpt-5.6-sol -> 1050000. Includes expected-value tables from a 51-model live tenant (e.g. gpt-6-* 922000, claude-sonnet-5-5 1000000, o3 200000).
+`/Users/bohdan_maliar/Projects/codemie-dev/codemie-code/VSCODE_MODEL_TOKEN_LIMITS.md` — resolved and read. Key facts: value counts only if finite number > 0; output order API -> table -> default (8192); input = API value minus resolved output, else entry value (table or 128000); add `max_output_tokens?: number` to `LlmModel`; derive token fields of local `CodeMieLlmModel` from `LlmModel` (`Partial<Pick<LlmModel,'max_input_tokens'|'max_output_tokens'>>`); add `maxInputTokens`/`maxOutputTokens` to `TenantModelDescriptor`, populated in `toDescriptor`; exported pure `resolveVsCodeTokenLimits(entry, descriptor)` in vscode-models.ts; comment above table; vscode.ts passes descriptor to `buildManagedModel` for table and default models; docs JSON example gpt-5.6-sol -> 1050000. Includes expected-value tables from a 51-model live tenant (e.g. gpt-6-* 922000, claude-sonnet-5-5 1000000, o3 200000).
