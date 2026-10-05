@@ -46,6 +46,18 @@ describe('detectGitRemoteRepo', () => {
     expect(await detectGitRemoteRepo('/repo')).toBe('org/repo');
   });
 
+  it.each([
+    ['SSH with .git', 'git@github.com:test-owner/my.repo.git', 'test-owner/my.repo'],
+    ['SSH without .git', 'git@github.com:test-owner/my.repo', 'test-owner/my.repo'],
+    ['HTTPS with .git', 'https://github.com/test-owner/my.repo.git', 'test-owner/my.repo'],
+    ['HTTPS without .git', 'https://github.com/vercel/next.js', 'vercel/next.js'],
+    ['GitHub Pages repo', 'git@github.com:user/user.github.io.git', 'user/user.github.io'],
+    ['multiple dots', 'https://github.com/org/a.b.c.git', 'org/a.b.c'],
+  ])('keeps dots in repository name (%s)', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
   it('returns undefined when git command fails (no remote)', async () => {
     mockExecAsync.mockRejectedValue(new Error('fatal: No such remote origin'));
     expect(await detectGitRemoteRepo('/repo')).toBeUndefined();
