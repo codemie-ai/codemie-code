@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { getDirname } from '@/utils/paths.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
@@ -12,6 +15,27 @@ import {
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
+import { computeEventId } from './event-id.js';
+import { decodeJwtClaims, resolveIdentity, type IdentitySource } from './identity.js';
+import {
+  resolveExplicitStory,
+  resolveBranchStory,
+  resolveMarkerStory,
+  resolveMentionStory,
+} from './story-resolver.js';
+
+/** This package's own `version` from the repo-root `package.json`, read once at import time. */
+function loadCodemieCliVersion(): string {
+  try {
+    const packageJsonPath = join(getDirname(import.meta.url), '../../../../../../../package.json');
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version?: string };
+    return packageJson.version ?? '';
+  } catch {
+    return '';
+  }
+}
+
+const CODEMIE_CLI_VERSION = loadCodemieCliVersion();
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -47,24 +71,13 @@ interface ForwardContext {
   userEmail: string;
   /** Per-session git info cache, resolved lazily from the first hook `cwd`. */
   git: { branch?: string; remote?: string };
+  /** Per-session developer-identity cache, resolved once */
+  identity?: { developerName?: string; identitySource?: IdentitySource };
+  /** Per-tick story-id cache, resolved once per forward tick. */
+  story?: { storyId?: string; storySource?: 'explicit' | 'branch' | '' };
 }
 
 /* ------------------------------------------------------------------ auth --- */
-
-function decodeJwtClaims(token: string): Record<string, unknown> {
-  const parts = token.split('.');
-  if (parts.length < 2) {
-    return {};
-  }
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
-      string,
-      unknown
-    >;
-  } catch {
-    return {};
-  }
-}
 
 function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string {
   if (isJWTCredentials(credentials)) {
@@ -171,6 +184,10 @@ async function send(
 /* --------------------------------------------------------------- mapping --- */
 
 function hookEventType(hookName: string, event: Record<string, unknown>): string {
+  const explicitType = event['type'];
+  if (typeof explicitType === 'string' && explicitType.length > 0) {
+    return explicitType;
+  }
   if (hookName === 'PreToolUse') {
     return event['input'] && (event['input'] as Record<string, unknown>)['denied']
       ? 'agent.tool.denied'
@@ -187,12 +204,12 @@ function boundedText(value: unknown, maxChars: number): string {
     typeof value === 'string'
       ? value
       : (() => {
-          try {
-            return JSON.stringify(value) ?? String(value);
-          } catch {
-            return String(value);
-          }
-        })();
+        try {
+          return JSON.stringify(value) ?? String(value);
+        } catch {
+          return String(value);
+        }
+      })();
   return text.slice(0, maxChars);
 }
 
@@ -230,18 +247,91 @@ async function resolveGitInfo(ctx: ForwardContext, cwd: string): Promise<void> {
   }
 }
 
+/**
+ * Per-record story-id override for `UserPromptSubmit` hook events only,
+ * layered on top of the per-tick `resolveStoryOnce()` cache in
+ * `ctx.story` (explicit/branch/''). Priority order across the full chain is
+ * explicit -> marker -> branch -> mention:
+ *
+ * 1. If the per-tick cache already resolved to `'explicit'`, that is the
+ *    highest-priority result and wins outright.
+ * 2. Otherwise, try the marker tier (`story: X` / `ticket #X`) against this
+ *    record's OWN prompt text — it sits above branch in priority.
+ * 3. Otherwise, if the per-tick cache resolved to `'branch'`, that wins (it
+ *    is already correctly placed between marker and mention).
+ * 4. Otherwise, try the mention tier (bare ticket-shaped text) — the
+ *    lowest-priority tier.
+ * 5. Otherwise, empty.
+ *
+ * Computed fresh per record and never mutates `ctx.story`: other records in
+ * the same batch still need that shared per-tick cache untouched.
+ */
+function resolvePromptStory(
+  ctx: ForwardContext,
+  rawPrompt: string
+): { storyId: string; storySource: string } {
+  if (ctx.story?.storySource === 'explicit') {
+    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
+  }
+
+  const marker = resolveMarkerStory(rawPrompt);
+  if (marker) {
+    return { storyId: marker.storyId, storySource: marker.storySource };
+  }
+
+  if (ctx.story?.storySource === 'branch') {
+    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
+  }
+
+  const mention = resolveMentionStory(rawPrompt);
+  if (mention) {
+    return { storyId: mention.storyId, storySource: mention.storySource };
+  }
+
+  return { storyId: '', storySource: '' };
+}
+
+async function resolveStoryOnce(ctx: ForwardContext, cwd: string): Promise<void> {
+  if (ctx.story?.storyId !== undefined) return;
+
+  const explicit = await resolveExplicitStory(cwd);
+  const resolved = explicit ?? resolveBranchStory(ctx.git.branch ?? '');
+
+  ctx.story = resolved
+    ? { storyId: resolved.storyId, storySource: resolved.storySource }
+    : { storyId: '', storySource: '' };
+}
+
+async function resolveIdentityOnce(ctx: ForwardContext, cwd: string): Promise<void> {
+  if (!ctx.identity) ctx.identity = {};
+  if (ctx.identity.developerName !== undefined) return;
+  const { developerName, identitySource } = await resolveIdentity(ctx.credentials, cwd);
+  ctx.identity.developerName = developerName;
+  ctx.identity.identitySource = identitySource;
+}
+
 interface HookPayload {
   ndjson: string;
   containsSessionEnd: boolean;
   malformed: number;
 }
 
-async function mapHookRecords(records: string[], ctx: ForwardContext): Promise<HookPayload> {
+export async function mapHookRecords(
+  records: string[],
+  ctx: ForwardContext,
+  startOffset: number
+): Promise<HookPayload> {
   const mapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
+  let offset = startOffset;
 
   for (const record of records) {
+    // Every record occupied `byteLength(record) + 1` bytes in the spool file
+    // (the trailing newline `snapshotPendingHookRecords` already stripped).
+    const byteOffset = offset;
+    offset += Buffer.byteLength(record, 'utf-8') + 1;
+
     let spoolData: OtlpHookSpoolData;
     let hookEvent: Record<string, unknown>;
     try {
@@ -261,22 +351,50 @@ async function mapHookRecords(records: string[], ctx: ForwardContext): Promise<H
 
     const cwd = String(hookEvent['cwd'] ?? '');
     await resolveGitInfo(ctx, cwd);
+    await resolveIdentityOnce(ctx, cwd);
+    await resolveStoryOnce(ctx, cwd);
+
+    // Read the record's OWN untruncated prompt text here, before
+    // `limitHookPayload()` below produces its own truncated `limited` copy.
+    // `limitHookPayload` never mutates `hookEvent` itself (it builds a fresh
+    // `{ ...hookEvent }` copy), so this is still the full original string —
+    // used ONLY to feed the marker/mention regex tiers below; the matched
+    // ticket id (a short string) is all that ever reaches the output, never
+    // this raw text itself.
+    const rawPrompt = typeof hookEvent['prompt'] === 'string' ? hookEvent['prompt'] : '';
+    const promptStory =
+      hookName === 'UserPromptSubmit'
+        ? resolvePromptStory(ctx, rawPrompt)
+        : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
+
+    const { AgentRegistry } = await import('../../../../../../agents/registry.js');
+    const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
+    const commonFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
 
     const limited = limitHookPayload(hookEvent);
+    const type = hookEventType(hookName, hookEvent);
+    const sessionId = String(hookEvent['session_id'] ?? '');
     mapped.push(
       JSON.stringify({
         ...limited,
-        type: hookEventType(hookName, hookEvent),
-        session_id: String(hookEvent['session_id'] ?? ''),
+        type,
+        session_id: sessionId,
         timestamp: new Date(spoolData.timestamp).toISOString(),
         user_email: ctx.userEmail,
-        developer_name: ctx.userEmail,
+        developer_name: ctx.identity?.developerName ?? '',
+        identity_source: ctx.identity?.identitySource ?? '',
         git_branch: ctx.git.branch ?? '',
         repo_remote: ctx.git.remote ?? '',
+        story_id: promptStory.storyId,
+        story_source: promptStory.storySource,
         codemie_project_name: ctx.projectName,
         cwd,
         prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
         raw: limited,
+        ...commonFields,
+        schema_version: 2,
+        event_id: computeEventId(type, sessionId, { byteOffset }),
+        codemie_cli_version: CODEMIE_CLI_VERSION,
       })
     );
   }
@@ -304,6 +422,8 @@ async function buildForwardContext(
     projectName: state?.project ?? '',
     userEmail: resolveUserEmail(credentials),
     git: {},
+    identity: {},
+    story: {},
   };
 }
 
@@ -317,7 +437,7 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const payload = await mapHookRecords(batch.records, ctx);
+  const payload = await mapHookRecords(batch.records, ctx, batch.cursor);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',

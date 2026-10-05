@@ -731,7 +731,7 @@ export enum AgentAdapterType {
   OTLP,
 }
 
-export interface OtlpAgentAdapter  {
+export interface OtlpAgentAdapter {
   readonly name: string;
   readonly type: AgentAdapterType.OTLP;
 
@@ -744,6 +744,11 @@ export interface OtlpAgentAdapter  {
    * spool.
    */
   processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void>;
+
+  /**
+   * Resolve agent-owned common fields for a single hook event
+   */
+  prepareAnalyticsFields(hookEvent: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export interface OtlpAdapterDeps {
