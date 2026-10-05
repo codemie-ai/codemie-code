@@ -1,76 +1,63 @@
-# VS Code Model Token Limits Implementation Plan
+# VS Code Model Token Limits: Subtract Output From Catalog Input
 
-> **For agentic workers:** Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox syntax.
+> **For agentic workers:** Use superpowers:subagent-driven-development or superpowers:executing-plans.
 
-**Goal:** `codemie proxy connect --vscode` resolves each token limit as tenant catalog, then built-in table, then defaults (128000 input / 8192 output).
+**Goal:** In `codemie proxy connect --vscode`, `maxInputTokens` = catalog `max_input_tokens` minus the resolved `maxOutputTokens`, so input plus output fits the context window.
 
-**Architecture:** Parse `max_input_tokens` / `max_output_tokens` into `TenantModelDescriptor`, add a pure resolver in `vscode-models.ts`, and use it in `vscode.ts` `buildManagedModel`.
+**Requirements:** `docs/VSCODE_TOKEN_LIMITS_ADJUSTMENT.md` (authoritative). Research: `technical-analysis.md` in this dir.
 
-**Spec:** `/Users/bohdan_maliar/Projects/codemie-dev/codemie-code/VSCODE_MODEL_TOKEN_LIMITS.md` (section "Code changes"); research in `technical-analysis.md` (same dir as this plan).
+**Already on the branch (do not redo):** catalog parsing of `max_input_tokens`/`max_output_tokens` in `tenant-catalog.ts`; `LlmModel.max_output_tokens`; `resolveVsCodeTokenLimits` + `pickTokenLimit` in `vscode-models.ts:385-403` (currently returns the catalog input unchanged); `vscode.ts:119` already uses the resolver for table and default models. Only the input rule, comments, docs, task records and tests change.
 
-**Commits:** Commit per task using the repository's existing convention (Conventional Commits). Do not commit `VSCODE_MODEL_TOKEN_LIMITS.md`, `docs/stories/`, or `.codemie/codemie-cli.config.json`; do not touch other dirty files.
-
-## Global Constraints
-
-- Imports use `.js` extensions and the `@/` alias; no `any`; explicit return types on exports; `import type` for type-only imports.
-- A catalog value counts only if `typeof === 'number'`, finite and > 0; missing, null, 0, negative, string and NaN fall through.
-- Input and output resolve independently. No table values removed; reasoning effort, API type and headers stay in the table. No backend changes.
-- Tests are not requested (AGENTS.md): write no new tests; existing tests must keep passing.
-
-## Review Focus
-
-- Numeric string `"200000"` or `null` in catalog: ignored, falls back to table/default.
-- Catalog has input but not output (today's API): output comes from table or 8192.
-- Router / `sy-signal-*` models with no catalog limits: unchanged from today.
-- Model not in table with catalog input: gets catalog value, output 8192.
+**Commits:** Commit per task using the repository's existing convention (Conventional Commits). Do not commit `.codemie/codemie-cli.config.json`; leave other dirty files alone.
 
 ## Acceptance criteria
 
-- Catalog input limit overrides the table value.
-- Catalog output limit is used when present.
-- No catalog input: table value; not in table either: 128000.
-- Missing, zero, negative or NaN catalog values are ignored.
-- Input and output resolve independently.
-- Tenant with no limits yields the same output as today.
-- `docs/COMMANDS.md` states the order tenant catalog, built-in table, defaults.
+- Catalog `max_input_tokens` present: written `maxInputTokens` = that value minus the resolved `maxOutputTokens` (catalog, then table, then 8192).
+- Subtraction result <= 0, or no usable catalog input: entry value (table value or 128000).
+- Output limit order unchanged: catalog, table, 8192; input and output resolve independently.
+- Tenant reporting no limits yields today's output.
+- `docs/COMMANDS.md` describes the rule; example `gpt-5.6-sol` shows 922000.
+- Story and task-dir records match the shipped rule.
+- New tests in the three connector test files pass; lint and typecheck pass.
 
-Negative-constraints pass: tests not requested (no test tasks, honored); no table values removed (Task 1 adds only a comment); no backend changes (none planned); local docs/config files not committed (header); strings/NaN/0 fall through (Task 1 parsing, Task 2 helper).
+Negative-constraints pass: do not leave catalog input unchanged (Task 1); do not remove table values or change `tenant-catalog.ts`/`vscode.ts` (not touched); do not test every table family or repeat the fallback order across files (Task 3 scope); the doc's "Don't" items honored; ignore `.codemie/codemie-cli.config.json` (header).
 
 ---
 
-### Task 1: Catalog parsing of token limits
+### Task 1: Subtract output from catalog input, update comments
 
 **Files:**
-- Modify: `src/providers/plugins/sso/sso.http-client.ts:~200` (next to `max_input_tokens`)
-- Modify: `src/cli/commands/proxy/connectors/tenant-catalog.ts` (`CodeMieLlmModel`, `TenantModelDescriptor`, `toDescriptor`)
+- Modify: `src/cli/commands/proxy/connectors/vscode-models.ts` (`resolveVsCodeTokenLimits` ~395-403 and its doc comment; comment above `VS_CODE_CAPABILITY_TABLE` ~48-51)
+- Modify: `src/providers/plugins/sso/sso.http-client.ts:196-200` (doc comment on `max_input_tokens`)
 
-**Interfaces:**
-- Produces: `TenantModelDescriptor.maxInputTokens?: number` and `.maxOutputTokens?: number`, set only when the catalog value is a finite number > 0.
+Test-first: yes — `resolveVsCodeTokenLimits` with descriptor `maxInputTokens: 200000` and Claude 4.5 table entry (output 64000) expects `maxInputTokens` 136000 (fails today: returns 200000).
 
-Test-first: no — tests not requested per AGENTS.md
+- [ ] Resolve `maxOutputTokens` first via `pickTokenLimit`. Then if the descriptor's input passes the same positive-finite check, use `input - maxOutputTokens` when that is > 0, else `entry.maxInputTokens`. Rewrite the function doc: API input is treated as the whole context window, output is subtracted so the pair fits.
+- [ ] Table comment: keep the "fallbacks" note; add that the table's `maxInputTokens` is a prompt budget (window minus output) while the catalog value is not, hence the subtraction. In `sso.http-client.ts`, say the value is the whole window for some models and only the prompt budget for others, so callers must not assume it fits alongside the output limit.
 
-- [ ] Add `max_output_tokens?: number` to `LlmModel` with a doc comment (LiteLLM `model_info.max_output_tokens`; not returned by the backend yet). In `tenant-catalog.ts`, extend the local `CodeMieLlmModel` with `Partial<Pick<LlmModel, 'max_input_tokens' | 'max_output_tokens'>>` via `import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js'` (keep the rest of the loose local shape). Add the two optional fields to `TenantModelDescriptor` and populate them in `toDescriptor` with a small private positive-finite-number guard.
-
-### Task 2: Resolver and writer wiring
+### Task 2: Docs and task records
 
 **Files:**
-- Modify: `src/cli/commands/proxy/connectors/vscode-models.ts` (comment above `VS_CODE_CAPABILITY_TABLE` at ~line 48; new export near `buildDefaultVsCodeCapability` ~line 367)
-- Modify: `src/cli/commands/proxy/connectors/vscode.ts` (`buildManagedModel` ~line 111-127, `resolveManagedModels` ~line 159-170)
+- Modify: `docs/COMMANDS.md` (paragraph ~108; JSON example ~155)
+- Modify: `docs/stories/2026-10-02-vscode-model-token-limits/story.md` (line 36 background; line 42 first criterion)
+- Modify: `docs/superpowers/tasks/2026-10-02-vscode-model-token-limits/technical-analysis.md` (minimal edits only where it states the old rule: Section 1 "used as-is"/ordering text, Section 6 risk bullet about larger `maxInputTokens`, Section 7 summary, Section 8 key facts "no arithmetic")
 
-**Interfaces:**
-- Consumes: `TenantModelDescriptor` from Task 1.
-- Produces: `export function resolveVsCodeTokenLimits(entry: VsCodeCapabilityEntry, descriptor: TenantModelDescriptor): { maxInputTokens: number; maxOutputTokens: number }` returning, per field, the descriptor value if valid, else the `entry` value (table entry or default capability).
+Test-first: no — documentation only
 
-Test-first: no — tests not requested per AGENTS.md
+- [ ] `COMMANDS.md`: input limit is the catalog value minus the resolved output limit, else table value or 128000; output is catalog, table, 8192; keep the note that the catalog does not return an output limit yet. Change the `gpt-5.6-sol` example `maxInputTokens` from 1050000 to 922000.
+- [ ] `story.md`: line 36 explains the catalog input may be the whole window so the output limit is subtracted; line 42 says input = catalog value minus resolved output limit and still wins over the table. Leave line 48 as is.
+- [ ] `technical-analysis.md`: change the old "unchanged/as-is, no arithmetic" statements and the 922000 -> 1050000 example to the subtract rule, and reword the risk bullet as mitigated by subtraction. Keep other content untouched; this plan already replaces the old one.
 
-- [ ] Add the comment above the table: its token limits are fallbacks, used only when the tenant catalog does not report them. Implement the helper (re-validating with the same positive-finite check, so it is safe on hand-built descriptors).
-- [ ] Change `buildManagedModel` to take the descriptor and read limits from the helper instead of `entry.maxInputTokens/maxOutputTokens`; pass `descriptor` at its single call site for both table-matched and default models.
-
-### Task 3: Docs
+### Task 3: Tests
 
 **Files:**
-- Modify: `docs/COMMANDS.md` (paragraph ~line 108; JSON example ~line 155)
+- Modify: `src/cli/commands/proxy/connectors/__tests__/vscode-models.test.ts`
+- Modify: `src/cli/commands/proxy/connectors/__tests__/tenant-catalog.test.ts` (next to the "maps label, provider, multimodal and features.tools" test, ~116-176)
+- Modify: `src/cli/commands/proxy/connectors/__tests__/vscode.test.ts` (using `writeVsCodeLanguageModelsConfigAtPath`; existing fixtures stay unchanged)
 
-Test-first: no — tests not requested per AGENTS.md
+Test-first: yes — each new case asserts the new rule or parsing (e.g. untabled model with catalog input 922000 expects written `maxInputTokens` 913808, `maxOutputTokens` 8192; fails before Task 1).
 
-- [ ] Extend the paragraph to state token limits resolve per field in the order tenant catalog, built-in capability table, defaults (128000 input / 8192 output), and that the catalog does not return an output limit yet. Change the `gpt-5.6-sol-2026-07-09` example `maxInputTokens` from 922000 to 1050000.
+- [ ] `vscode-models.test.ts`, `describe('resolveVsCodeTokenLimits')` with real table numbers: catalog input + table output (Claude 4.5, 200000 -> 136000); catalog input + default output (untabled, API value - 8192); catalog input + catalog output (subtract catalog output); catalog output overrides table and default; subtraction <= 0 falls back to entry `maxInputTokens`; no catalog values returns entry unchanged; catalog output only (no input) keeps entry input.
+- [ ] `tenant-catalog.test.ts`: valid `max_input_tokens`/`max_output_tokens` become `maxInputTokens`/`maxOutputTokens`; `0`, negative, string and `null` are omitted; missing fields omitted.
+- [ ] `vscode.test.ts`: one fixture with `max_input_tokens` on one table family and one unknown model; assert both written `maxInputTokens` and `maxOutputTokens` in `chatLanguageModels.json`, proving the descriptor reaches table and default entries.
+- [ ] Run `npx vitest run src/cli/commands/proxy/connectors/__tests__/`, `npm run lint`, `npm run typecheck` for the touched files' sake (these are task-level checks; the flow runs the full gates).
