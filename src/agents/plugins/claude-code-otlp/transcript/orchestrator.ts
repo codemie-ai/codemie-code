@@ -15,7 +15,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { loadParseState, saveParseState } from './parse-state.js';
+import { loadParseState, saveParseState, withParseStateLock } from './parse-state.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent } from './usage-request.js';
 import {
@@ -33,7 +33,7 @@ import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js'
 // `runSubagentTranscriptParse` from this one module, per the plan's wiring description.
 export type { SubagentFile };
 
-export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd';
+export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
 
 interface ContentBlock {
   type?: string;
@@ -206,55 +206,74 @@ export async function runMainTranscriptParse(
   trigger: MainTranscriptTrigger
 ): Promise<void> {
   try {
-    const state = await loadParseState(sessionId);
-    const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
+    // Save-before-send, and both the load and the save happen inside the lock so a
+    // concurrent hook process for the same session can never read a state this pass is about to
+    // overwrite. Forwarding (network I/O) deliberately happens after the lock is released.
+    const eventsToForward = await withParseStateLock(sessionId, async () => {
+      const state = await loadParseState(sessionId);
+      const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
-    const touchedKeys = new Set<string>();
-    for (const line of lines) {
-      let rawGitBranch = '';
-      try {
-        rawGitBranch = (JSON.parse(line) as { gitBranch?: string })?.gitBranch ?? '';
-      } catch {
-        // Malformed line: still attempt usage parsing below (which has its own try/catch), but
-        // there is no branch to record from it.
+      const touchedKeys = new Set<string>();
+      for (const line of lines) {
+        let rawGitBranch = '';
+        try {
+          rawGitBranch = (JSON.parse(line) as { gitBranch?: string })?.gitBranch ?? '';
+        } catch {
+          // Malformed line: still attempt usage parsing below (which has its own try/catch), but
+          // there is no branch to record from it.
+        }
+        if (rawGitBranch) {
+          updateBranchCounts(state.branchCounts, rawGitBranch);
+        }
+
+        const parsed = parseUsageLine(line, 'main', '', '');
+        if (parsed) {
+          const key = `${parsed.requestId}::${parsed.model}`;
+          const existing = state.openRequests[key];
+          state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+          touchedKeys.add(key);
+        }
       }
-      if (rawGitBranch) {
-        updateBranchCounts(state.branchCounts, rawGitBranch);
+      state.mainOffset = nextOffset;
+
+      if (trigger === 'PreCompact') {
+        state.compactionCount += 1;
       }
 
-      const parsed = parseUsageLine(line, 'main', '', '');
-      if (parsed) {
-        const key = `${parsed.requestId}::${parsed.model}`;
-        const existing = state.openRequests[key];
-        state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-        touchedKeys.add(key);
+      const events: string[] = [];
+      for (const key of touchedKeys) {
+        events.push(JSON.stringify(buildUsageRequestEvent(sessionId, state.openRequests[key])));
       }
-    }
-    state.mainOffset = nextOffset;
 
-    for (const key of touchedKeys) {
-      const event = buildUsageRequestEvent(sessionId, state.openRequests[key]);
-      await forwardOtlpEventToSpool(JSON.stringify(event), CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
+      if (trigger === 'Stop' || trigger === 'SessionEnd') {
+        const { acc, named, startedAt } = await buildFullAccumulator(transcriptPath);
+        acc.compactionCount = state.compactionCount;
+        const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
+        const endedAt = trigger === 'SessionEnd' ? new Date().toISOString() : undefined;
+        const summaryEvent = buildSessionSummaryEvent(
+          sessionId,
+          phase,
+          acc,
+          named,
+          state.branchCounts,
+          startedAt,
+          endedAt
+        );
+        // Not yet carried by any input to buildSessionSummaryEvent (session-summary.ts's own
+        // docstring defers it to this caller) — this is the full set of agent.usage.request
+        // records derived for this session so far, main- and agent-scoped alike.
+        summaryEvent.api_calls = Object.keys(state.openRequests).length;
+        events.push(JSON.stringify(summaryEvent));
+      }
+      // PreCompact/StopFailure: usage requests only, no summary — handled by skipping the block above.
 
-    if (trigger === 'Stop' || trigger === 'SessionEnd') {
-      const { acc, named, startedAt } = await buildFullAccumulator(transcriptPath);
-      const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
-      const endedAt = trigger === 'SessionEnd' ? new Date().toISOString() : undefined;
-      const summaryEvent = buildSessionSummaryEvent(
-        sessionId,
-        phase,
-        acc,
-        named,
-        state.branchCounts,
-        startedAt,
-        endedAt
-      );
-      await forwardOtlpEventToSpool(JSON.stringify(summaryEvent), CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
-    // PreCompact: usage requests only, no summary — handled by skipping the block above.
+      await saveParseState(sessionId, state);
+      return events;
+    });
 
-    await saveParseState(sessionId, state);
+    for (const raw of eventsToForward) {
+      await forwardOtlpEventToSpool(raw, CLAUDE_CODE_OTLP_AGENT_NAME);
+    }
   } catch {
     // Swallow everything — never throw into processOtlpEvent.
   }
@@ -338,7 +357,7 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
   const startedAt = String(parsedLines[0].timestamp ?? '');
   const lastTimestamp = String(parsedLines[parsedLines.length - 1].timestamp ?? '');
   const diff = Date.parse(lastTimestamp) - Date.parse(startedAt);
-  const durationMs = Number.isFinite(diff) ? diff : 0;
+  const durationMs = Number.isFinite(diff) ? Math.max(0, diff) : 0;
 
   return { toolCalls, toolErrors, skillsInvoked: named.skillInvocations, startedAt, durationMs };
 }
@@ -382,51 +401,60 @@ export async function runSubagentTranscriptParse(
   subagentFile: SubagentFile
 ): Promise<void> {
   try {
-    const state = await loadParseState(sessionId);
-    const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
-    const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
+    // Save-before-send, load/mutate/save inside the lock — same rationale as
+    // runMainTranscriptParse: a sibling SubagentStop for another subagent in this same session
+    // must never read state this pass is about to overwrite.
+    const eventsToForward = await withParseStateLock(sessionId, async () => {
+      const state = await loadParseState(sessionId);
+      const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
+      const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
 
-    const touchedKeys = new Set<string>();
-    for (const line of lines) {
-      const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId);
-      if (parsed) {
-        const key = `${parsed.requestId}::${parsed.model}`;
-        const existing = state.openRequests[key];
-        state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-        touchedKeys.add(key);
+      const touchedKeys = new Set<string>();
+      for (const line of lines) {
+        const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId);
+        if (parsed) {
+          const key = `${parsed.requestId}::${parsed.model}`;
+          const existing = state.openRequests[key];
+          state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+          touchedKeys.add(key);
+        }
       }
+      state.subagentOffsets[subagentFile.agentId] = nextOffset;
+
+      const events: string[] = [];
+      for (const key of touchedKeys) {
+        events.push(JSON.stringify(buildUsageRequestEvent(sessionId, state.openRequests[key])));
+      }
+
+      // Cumulative usage for this agent — every scope_kind:'agent' record known for it so far,
+      // not just the ones touched this pass (consistent with buildFullAccumulator's own
+      // "recomputed from full state" framing for the sibling agent.session.summary event).
+      const usageRequestsForAgent = Object.values(state.openRequests).filter(
+        (r) => r.scopeKind === 'agent' && r.agentId === subagentFile.agentId
+      );
+
+      const { toolCalls, toolErrors, skillsInvoked, startedAt, durationMs } =
+        await scanSubagentTranscript(subagentFile.filePath);
+
+      const subagentEvent = buildSubagentUsageEvent(
+        sessionId,
+        subagentFile,
+        usageRequestsForAgent,
+        toolCalls,
+        toolErrors,
+        skillsInvoked,
+        startedAt,
+        durationMs
+      );
+      events.push(JSON.stringify(subagentEvent));
+
+      await saveParseState(sessionId, state);
+      return events;
+    });
+
+    for (const raw of eventsToForward) {
+      await forwardOtlpEventToSpool(raw, CLAUDE_CODE_OTLP_AGENT_NAME);
     }
-    state.subagentOffsets[subagentFile.agentId] = nextOffset;
-
-    for (const key of touchedKeys) {
-      const event = buildUsageRequestEvent(sessionId, state.openRequests[key]);
-      await forwardOtlpEventToSpool(JSON.stringify(event), CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
-
-    // Cumulative usage for this agent — every scope_kind:'agent' record known for it so far, not
-    // just the ones touched this pass (consistent with buildFullAccumulator's own
-    // "recomputed from full state" framing for the sibling agent.session.summary event).
-    const usageRequestsForAgent = Object.values(state.openRequests).filter(
-      (r) => r.scopeKind === 'agent' && r.agentId === subagentFile.agentId
-    );
-
-    const { toolCalls, toolErrors, skillsInvoked, startedAt, durationMs } = await scanSubagentTranscript(
-      subagentFile.filePath
-    );
-
-    const subagentEvent = buildSubagentUsageEvent(
-      sessionId,
-      subagentFile,
-      usageRequestsForAgent,
-      toolCalls,
-      toolErrors,
-      skillsInvoked,
-      startedAt,
-      durationMs
-    );
-    await forwardOtlpEventToSpool(JSON.stringify(subagentEvent), CLAUDE_CODE_OTLP_AGENT_NAME);
-
-    await saveParseState(sessionId, state);
   } catch {
     // Swallow everything — never throw into processOtlpEvent.
   }

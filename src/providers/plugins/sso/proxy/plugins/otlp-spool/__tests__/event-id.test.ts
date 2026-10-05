@@ -32,6 +32,18 @@ describe('computeEventId', () => {
         'sid1:agent.subagent.usage:tu1'
       );
     });
+
+    it('falls back to agent_id when tool_use_id is absent', () => {
+      expect(
+        computeEventId('agent.subagent.usage', 'sid1', { tool_use_id: '', agent_id: 'agent-1' })
+      ).toBe('sid1:agent.subagent.usage:agent-1');
+    });
+
+    it('keeps two top-level subagents (no tool_use_id each) from colliding when agent_id differs', () => {
+      const first = computeEventId('agent.subagent.usage', 'sid1', { agent_id: 'agent-1' });
+      const second = computeEventId('agent.subagent.usage', 'sid1', { agent_id: 'agent-2' });
+      expect(first).not.toBe(second);
+    });
   });
 
   describe('agent.session.summary', () => {

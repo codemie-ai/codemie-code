@@ -1,4 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Only 'claude-code-otlp' (the real registered OTLP agent name) resolves to an agent;
+// every other name — including 'claude', which every other test in this file deliberately
+// uses — resolves to `undefined`, matching the real AgentRegistry's behavior (CR-016).
+vi.mock('@/agents/registry.js', () => ({
+  AgentRegistry: {
+    getAnalyticsAgent: (agentName: string) =>
+      agentName === 'claude-code-otlp'
+        ? {
+          prepareAnalyticsFields: async () => ({
+            platform: 'claude-code',
+            client_version: '1.2.3',
+          }),
+        }
+        : undefined,
+  },
+}));
 
 interface MappedRecord {
   type: string;
@@ -9,6 +26,10 @@ interface MappedRecord {
   story_id?: string;
   story_source?: string;
   prompt_body?: string;
+  developer_name?: string;
+  identity_source?: string;
+  platform?: string;
+  client_version?: string;
 }
 
 function buildHookRecord(hookEventName: string, sessionId: string, extra: Record<string, unknown> = {}): string {
@@ -120,8 +141,8 @@ describe('mapHookRecords', () => {
 
   it(
     "overrides a UserPromptSubmit record's story_id/story_source with a prompt marker " +
-      'even when the per-tick branch tier would otherwise resolve to a different ticket, ' +
-      'and never leaks the raw prompt text onto the emitted record',
+    'even when the per-tick branch tier would otherwise resolve to a different ticket, ' +
+    'and never leaks the raw prompt text onto the emitted record',
     async () => {
       const { mapHookRecords } = await import('../forwarder.js');
 
@@ -163,7 +184,7 @@ describe('mapHookRecords', () => {
 
   it(
     'falls back to the per-tick branch result for a UserPromptSubmit record whose prompt ' +
-      'has no marker and no bare ticket mention',
+    'has no marker and no bare ticket mention',
     async () => {
       const { mapHookRecords } = await import('../forwarder.js');
 
@@ -176,7 +197,10 @@ describe('mapHookRecords', () => {
       };
 
       const rawPrompt = 'please just fix the thing, no ticket reference here';
-      const record = buildHookRecord('UserPromptSubmit', 'sid1', { prompt: rawPrompt });
+      const record = buildHookRecord('UserPromptSubmit', 'sid1', {
+        prompt: rawPrompt,
+        cwd: '/repo/nonexistent-for-this-test',
+      });
 
       const payload = await mapHookRecords([record], ctx, 0);
       const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
@@ -188,7 +212,7 @@ describe('mapHookRecords', () => {
 
   it(
     'falls back to the mention tier for a UserPromptSubmit record whose prompt has a bare ' +
-      'ticket mention and the branch carries no ticket',
+    'ticket mention and the branch carries no ticket',
     async () => {
       const { mapHookRecords } = await import('../forwarder.js');
 
@@ -210,4 +234,90 @@ describe('mapHookRecords', () => {
       expect(line.story_source).toBe('mention');
     }
   );
+
+  it('keys agent.subagent.usage event_id off tool_use_id/agent_id from the synthetic record itself, not just byteOffset', async () => {
+    const { mapHookRecords } = await import('../forwarder.js');
+
+    const ctx = {
+      credentials: { token: '', apiUrl: '' },
+      baseUrl: '',
+      projectName: 'proj',
+      userEmail: '',
+      git: {},
+    };
+
+    // Two top-level subagents, neither carrying a sidecar tool_use_id, but with
+    // distinct agent_id — CR-018's fallback must keep these from colliding.
+    const record1 = buildHookRecord('SubagentStop', 'sid1', {
+      type: 'agent.subagent.usage',
+      tool_use_id: '',
+      agent_id: 'agent-1',
+    });
+    const record2 = buildHookRecord('SubagentStop', 'sid1', {
+      type: 'agent.subagent.usage',
+      tool_use_id: '',
+      agent_id: 'agent-2',
+    });
+
+    const payload = await mapHookRecords([record1, record2], ctx, 0);
+    const [line1, line2] = payload.ndjson
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as MappedRecord);
+
+    expect(line1.event_id).toBe('sid1:agent.subagent.usage:agent-1');
+    expect(line2.event_id).toBe('sid1:agent.subagent.usage:agent-2');
+    expect(line1.event_id).not.toBe(line2.event_id);
+  });
+
+  it('merges prepareAnalyticsFields common fields onto the mapped record when the hook agent name is registered', async () => {
+    const { mapHookRecords } = await import('../forwarder.js');
+
+    const ctx = {
+      credentials: { token: '', apiUrl: '' },
+      baseUrl: '',
+      projectName: 'proj',
+      userEmail: '',
+      git: {},
+    };
+
+    // The real registered OTLP agent name, unlike every other test in this file which
+    // deliberately uses the unregistered 'claude' (CR-016: that name resolves to `undefined`,
+    // so this is the only test exercising the real AgentRegistry.getAnalyticsAgent merge path).
+    const record = JSON.stringify({
+      agentName: 'claude-code-otlp',
+      raw: JSON.stringify({ hook_event_name: 'Stop', session_id: 'sid1', cwd: '' }),
+      timestamp: Date.now(),
+    });
+
+    const payload = await mapHookRecords([record], ctx, 0);
+    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
+
+    expect(line.platform).toBe('claude-code');
+    expect(line.client_version).toBe('1.2.3');
+  });
+
+  it('carries ctx.identity through onto developer_name/identity_source for a non-jwt tier', async () => {
+    const { mapHookRecords } = await import('../forwarder.js');
+
+    // Pre-seeding ctx.identity (as resolveIdentityOnce's own cache would look once resolved)
+    // with a non-jwt tier result proves the wiring from ctx.identity onto the mapped record,
+    // independent of the identity-chain's own resolution logic (covered by identity.test.ts).
+    const ctx = {
+      credentials: { token: '', apiUrl: '' },
+      baseUrl: '',
+      projectName: 'proj',
+      userEmail: '',
+      git: {},
+      identity: { developerName: 'git-user@example.com', identitySource: 'git' as const },
+    };
+
+    const record = buildHookRecord('Stop', 'sid1');
+
+    const payload = await mapHookRecords([record], ctx, 0);
+    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
+
+    expect(line.developer_name).toBe('git-user@example.com');
+    expect(line.identity_source).toBe('git');
+  });
 });

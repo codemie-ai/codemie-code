@@ -8,7 +8,7 @@
  * state to disk between parse passes, keyed by session id.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 
@@ -41,6 +41,7 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: `${requestId}::${model}`
   activeSkill: string;
   branchCounts: Record<string, number>;
+  compactionCount: number;
 }
 
 /**
@@ -53,6 +54,7 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
+    compactionCount: 0,
   };
 }
 
@@ -79,6 +81,7 @@ export async function loadParseState(sessionId: string): Promise<TranscriptParse
       openRequests: parsed.openRequests ?? {},
       activeSkill: parsed.activeSkill ?? '',
       branchCounts: parsed.branchCounts ?? {},
+      compactionCount: parsed.compactionCount ?? 0,
     };
   } catch {
     return createParseState();
@@ -96,4 +99,62 @@ export async function saveParseState(sessionId: string, state: TranscriptParseSt
   const filePath = getParseStatePath(sessionId);
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+const LOCK_RETRY_MS = 25;
+const LOCK_STALE_MS = 5_000;
+
+function getLockPath(sessionId: string): string {
+  return `${getParseStatePath(sessionId)}.lock`;
+}
+
+async function isLockStale(lockPath: string): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return true; // disappeared between our EEXIST and this check — treat as gone
+  }
+}
+
+/**
+ * Serialize one session's load-mutate-save parse-state cycle across concurrent hook processes
+ * (e.g. sibling `SubagentStop` fires for the same session) via an exclusive-create lock file.
+ * Each hook fire is a fresh CLI process, so this cannot use an in-memory mutex.
+ *
+ * A lock older than {@link LOCK_STALE_MS} is treated as abandoned (its holder crashed before
+ * releasing it) and stolen rather than awaited forever. Likewise, if the lock cannot be acquired
+ * within a bounded wait, `fn` still runs unlocked rather than hanging the hook indefinitely —
+ * occasional lost contention here is strictly better than analytics never shipping at all.
+ */
+export async function withParseStateLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const lockPath = getLockPath(sessionId);
+  await mkdir(dirname(lockPath), { recursive: true });
+
+  const deadline = Date.now() + LOCK_STALE_MS * 2;
+  for (;;) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      await handle.close();
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        break; // can't lock (e.g. permissions) — proceed unlocked rather than block forever
+      }
+      if (await isLockStale(lockPath)) {
+        await rm(lockPath, { force: true }).catch(() => {});
+        continue;
+      }
+      if (Date.now() > deadline) {
+        break; // gave the lock a fair wait; proceed unlocked rather than hang the hook
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await rm(lockPath, { force: true }).catch(() => {});
+  }
 }

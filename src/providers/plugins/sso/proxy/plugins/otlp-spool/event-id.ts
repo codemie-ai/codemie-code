@@ -14,7 +14,8 @@ export function computeEventId(
     }
     case 'agent.subagent.usage': {
       const toolUseId = String(fields['tool_use_id'] ?? '');
-      return `${sessionId}:agent.subagent.usage:${toolUseId}`;
+      const agentId = String(fields['agent_id'] ?? '');
+      return `${sessionId}:agent.subagent.usage:${toolUseId || agentId}`;
     }
     case 'agent.session.summary': {
       const phase = String(fields['phase'] ?? '');

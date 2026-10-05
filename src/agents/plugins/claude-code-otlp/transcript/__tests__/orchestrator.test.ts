@@ -193,6 +193,48 @@ describe('runMainTranscriptParse — PreCompact trigger', () => {
   });
 });
 
+describe('runMainTranscriptParse — compaction_count', () => {
+  it('persists one increment per PreCompact trigger and surfaces the cumulative count on a later summary', async () => {
+    const { runMainTranscriptParse } = await import('../orchestrator.js');
+
+    const sessionId = 'session-compaction';
+    const transcriptPath = writeTranscript('transcript-compaction.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+    ]);
+
+    await runMainTranscriptParse(sessionId, transcriptPath, 'PreCompact');
+    await runMainTranscriptParse(sessionId, transcriptPath, 'PreCompact');
+    forwardMock.mockClear();
+    await runMainTranscriptParse(sessionId, transcriptPath, 'Stop');
+
+    const summaryEvents = forwardedEvents().filter((e) => e.type === 'agent.session.summary');
+    expect(summaryEvents).toHaveLength(1);
+    expect(summaryEvents[0].compaction_count).toBe(2);
+  });
+});
+
+describe('runMainTranscriptParse — api_calls', () => {
+  it("surfaces the session's full agent.usage.request record count on the summary event", async () => {
+    const { runMainTranscriptParse } = await import('../orchestrator.js');
+
+    const sessionId = 'session-api-calls';
+    const transcriptPath = writeTranscript('transcript-api-calls.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+      usageLine({ uuid: 'uuid-2', messageId: 'msg-2', outputTokens: 75 }),
+    ]);
+
+    await runMainTranscriptParse(sessionId, transcriptPath, 'Stop');
+
+    const events = forwardedEvents();
+    const usageEvents = events.filter((e) => e.type === 'agent.usage.request');
+    const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
+
+    expect(summaryEvents).toHaveLength(1);
+    expect(summaryEvents[0].api_calls).toBe(usageEvents.length);
+    expect(summaryEvents[0].api_calls).toBe(2);
+  });
+});
+
 describe('runMainTranscriptParse — SessionEnd trigger', () => {
   it('forwards a final-phase summary with an ended_at key present', async () => {
     const { runMainTranscriptParse } = await import('../orchestrator.js');

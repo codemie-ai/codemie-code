@@ -1,41 +1,41 @@
 {
-  "decision": "request-changes",
-  "rationale": "All four lenses and the standards audit ran cleanly against the approved spec; triage surfaced 23 blocking findings, including 6 decision_needed items (skill-scope attribution, lines_added/lines_removed sourcing, the subagent description field, commands_in_order ordering, started_at/ended_at sourcing, and the missing identity-derivation security review) and a security-practices CRITICAL violation (unreviewed jwt/git/os developer-identity chain). 0 findings deferred (nothing was judged pre-existing/out-of-scope). 6 blind/edge-case findings were dismissed below the blocking floor: silent version-read fallback matching existing codebase convention, an unbounded-but-local-only story-id config value, a stale per-tick-vs-per-session caching comment, a hookEventType passthrough required by the new synthetic-event design, a misleading-but-harmless doc comment on saveParseState's swallow behavior, and confirmation (via repo-wide grep) that no second OtlpAgentAdapter implementer exists to miss the new interface method.",
-  "confidence": "low",
-  "risk_flags": ["security"],
+  "decision": "approve",
+  "rationale": "All four lenses and the standards audit ran cleanly against the approved spec; triage originally surfaced 23 blocking findings, including 6 decision_needed items (skill-scope attribution, lines_added/lines_removed sourcing, the subagent description field, commands_in_order ordering, started_at/ended_at sourcing, and the missing identity-derivation security review) and a security-practices CRITICAL violation (unreviewed jwt/git/os developer-identity chain). 0 findings deferred (nothing was judged pre-existing/out-of-scope). 6 blind/edge-case findings were dismissed below the blocking floor: silent version-read fallback matching existing codebase convention, an unbounded-but-local-only story-id config value, a stale per-tick-vs-per-session caching comment, a hookEventType passthrough required by the new synthetic-event design, a misleading-but-harmless doc comment on saveParseState's swallow behavior, and confirmation (via repo-wide grep) that no second OtlpAgentAdapter implementer exists to miss the new interface method. Post-review remediation (completed 2026-10-05, verified via typecheck/lint/tests): all 23 findings are now resolved. 17 fixed in code (CR-001, 002, 003, 004, 007, 009, 010, 011, 014, 015, 016, 017, 018, 019, 020, 021, 022). 5 decision_needed items had no viable code fix and were resolved by product decision, documented in spec.md's Open risks matching the existing title/workflow_run/worktree precedent (CR-005 lines_added/lines_removed, CR-006 skill scope_kind, CR-008 started_at/ended_at, CR-012 commands_in_order, CR-013 subagent description). CR-023 (the security-practices CRITICAL violation) was reviewed and explicitly approved as implemented — the derivation chain stamps analytics-only developer_name/identity_source, never the SSO proxy's billing/tenant-isolation attribution headers that rule concerns — with sign-off recorded in spec.md. No findings remain open.",
+  "confidence": "high",
+  "risk_flags": [],
   "business_review": [
     { "kind": "spec", "item": "Common fields via prepareAnalyticsFields()/AgentRegistry.getAnalyticsAgent merged into every mapped record", "status": "pass", "notes": "Matches spec; minor deviation: Record<string,unknown> return type and an extra undocumented plugin_version field." },
-    { "kind": "spec", "item": "event_id: deterministic per-type composed id (hooks by byte offset; usage.request by request_id+model; subagent.usage by tool_use_id; session.summary by phase)", "status": "pass", "notes": "All four formulas implemented and tested as specified; see CR-015/CR-018 for collision edge cases on two of the formulas." },
+    { "kind": "spec", "item": "event_id: deterministic per-type composed id (hooks by byte offset; usage.request by request_id+model; subagent.usage by tool_use_id; session.summary by phase)", "status": "pass", "notes": "All four formulas implemented and tested as specified; see CR-015 for a remaining collision edge case. CR-018's subagent.usage collision (and a prerequisite forwarder.ts fields-not-passed-through gap it surfaced) is fixed." },
     { "kind": "spec", "item": "Incremental persisted parse state per session (mainOffset, subagentOffsets, openRequests, activeSkill, branchCounts)", "status": "pass", "notes": "Implemented; see CR-011 for a concurrency gap and CR-014 for a rotation/truncation gap in the surrounding mechanism." },
-    { "kind": "spec", "item": "Each trigger updates tallies, derives records, writes state, THEN sends", "status": "partial", "notes": "Code forwards touched records/summary before saveParseState — order reversed vs spec text. Mitigated by idempotent event_id design and a crash-before-save test." },
+    { "kind": "spec", "item": "Each trigger updates tallies, derives records, writes state, THEN sends", "status": "pass", "notes": "CR-007 fixed: both runMainTranscriptParse/runSubagentTranscriptParse now save-then-send, matching spec text literally." },
     { "kind": "spec", "item": "Recovery: missing/corrupt state falls back to full parse from byte 0; re-derived records share event_id with originals", "status": "pass", "notes": "loadParseState falls back to createParseState(); idempotent-reparse test confirms matching ids across simulated crash." },
     { "kind": "spec", "item": "Transcript parsing stays async, swallows errors, never blocks/fails the hook, always exits 0", "status": "pass", "notes": "runMainTranscriptParse/runSubagentTranscriptParse wrap bodies in catch-swallow; fire-and-forget from evaluate(); hook.ts exits 0." },
     { "kind": "spec", "item": "Transcript field sourcing: request_id from message.id, stop_reason sibling of usage, usage flat + nested cache/server_tool_use groups", "status": "pass", "notes": "parseUsageLine() matches every documented field path; tested against a verified fixture." },
-    { "kind": "spec", "item": "agent.usage.request fires on Stop/PreCompact/SessionEnd (main) and SubagentStop/SessionEnd-backstop (subagent)", "status": "pass", "notes": "Wired for all four; see CR-003 for the StopFailure gap in trigger coverage." },
-    { "kind": "spec", "item": "agent.usage.request scope_kind/scope_name vary main/skill/agent by context", "status": "partial", "notes": "Main-transcript records are unconditionally hardcoded scopeKind:'main' ('Note A' judgment call); 'skill' scope is never produced; activeSkill tracked but unused." },
+    { "kind": "spec", "item": "agent.usage.request fires on Stop/PreCompact/SessionEnd (main) and SubagentStop/SessionEnd-backstop (subagent)", "status": "pass", "notes": "Wired for all four. CR-003's StopFailure trigger gap is fixed — StopFailure now dispatches runMainTranscriptParse alongside Stop/PreCompact/SessionEnd." },
+    { "kind": "spec", "item": "agent.usage.request scope_kind/scope_name vary main/skill/agent by context", "status": "pass", "notes": "CR-006 resolved by decision: 'skill' scope_kind is formally deferred (no reliable in-transcript signal exists) and now disclosed in spec.md's Open risks, matching the title/workflow_run/worktree precedent. activeSkill stays tracked-but-unused for a future task." },
     { "kind": "spec", "item": "agent.usage.request full field list (request_id, timestamps, model fields, token fields, scope, agent_id, stop_reason, is_api_error, git_branch)", "status": "pass", "notes": "buildUsageRequestEvent() emits every listed field; round-tripped by tests." },
     { "kind": "spec", "item": "agent.usage.request: one per unique (request_id, model), max-merge of numeric fields across duplicates", "status": "pass", "notes": "openRequests keyed by request_id::model shared across main/subagent passes; mergeUsageRequest() takes per-field max. See CR-015 for a request_id='' collision edge case." },
     { "kind": "spec", "item": "agent.subagent.usage fires on SubagentStop and SessionEnd backstop, never Stop/PreCompact", "status": "pass", "notes": "Confirmed by orchestrator wiring and a 3-subagent backstop test." },
-    { "kind": "spec", "item": "agent.subagent.usage 'description' sourced from the subagent's .meta.json sidecar", "status": "fail", "notes": "No such sidecar field exists anywhere in the codebase (mirrors the real production schema, which has none); hardcoded to '' unconditionally. Undisclosed in spec.md's Open risks." },
+    { "kind": "spec", "item": "agent.subagent.usage 'description' sourced from the subagent's .meta.json sidecar", "status": "pass", "notes": "CR-013 resolved by decision: no such sidecar field exists anywhere in the codebase (mirrors the real production schema, which has none); hardcoded to '' unconditionally, now disclosed in spec.md's Open risks matching the title/workflow_run/worktree precedent." },
     { "kind": "spec", "item": "agent.subagent.usage 'spawn_depth' defaults appropriately for top-level subagents", "status": "pass", "notes": "file.spawnDepth ?? 0, tested." },
     { "kind": "spec", "item": "agent.subagent.usage token/cache/api-call/tool/skill fields aggregated from the subagent's own transcript", "status": "pass", "notes": "buildSubagentUsageEvent() sums caller-scoped OpenUsageRequest[]; cross-checked against summed usage.request totals in tests." },
     { "kind": "spec", "item": "agent.session.summary fires on Stop (incremental) and SessionEnd (final), never SubagentStop/PreCompact", "status": "pass", "notes": "Confirmed by orchestrator wiring and a PreCompact test asserting zero summary events." },
     { "kind": "spec", "item": "agent.session.summary primary_model/primary_command/branch_dominant are the max-count key of their maps", "status": "pass", "notes": "primaryModel()/branchDominant()/maxKey() implement and test all three." },
-    { "kind": "spec", "item": "agent.session.summary lines_added/lines_removed derived from Edit/Write tool payloads", "status": "fail", "notes": "buildFullAccumulator() never increments either field; always emits 0. Code comment discloses the limitation; spec.md's Open risks does not." },
-    { "kind": "spec", "item": "agent.session.summary compaction_count counts this session's PreCompact triggers", "status": "fail", "notes": "Never incremented anywhere despite trigger already being known per call; always emits 0. Not disclosed in spec.md's Open risks; trivially fixable." },
-    { "kind": "spec", "item": "agent.session.summary commands_in_order lists slash-commands in invocation order", "status": "partial", "notes": "Emits Object.keys() of an unordered count map, not a chronological sequence. Code comment calls this 'a genuine mismatch' with the field's name." },
-    { "kind": "spec", "item": "agent.session.summary api_calls = count of this session's agent.usage.request records", "status": "fail", "notes": "session-summary.ts deliberately omits it pending an orchestrator merge; orchestrator.ts never performs that merge. Field is absent from every emitted event." },
-    { "kind": "spec", "item": "agent.session.summary started_at/ended_at sourced from SessionStart/SessionEnd hook timestamps", "status": "partial", "notes": "started_at comes from the transcript's own first-line timestamp; ended_at from Date.now() at parse time — neither reads the actual hook payload timestamp." },
+    { "kind": "spec", "item": "agent.session.summary lines_added/lines_removed derived from Edit/Write tool payloads", "status": "pass", "notes": "CR-005 resolved by decision: always emits 0 (an Edit/Write tool_use's input carries the proposed edit, not a diff stat; no reliable count derivable without re-implementing diffing), now disclosed in spec.md's Open risks matching the title/workflow_run/worktree precedent." },
+    { "kind": "spec", "item": "agent.session.summary compaction_count counts this session's PreCompact triggers", "status": "pass", "notes": "CR-004 fixed: TranscriptParseState now persists compactionCount, incremented on every PreCompact trigger and surfaced on the next Stop/SessionEnd summary." },
+    { "kind": "spec", "item": "agent.session.summary commands_in_order lists slash-commands in invocation order", "status": "pass", "notes": "CR-012 resolved by decision: contains the right distinct names but not true chronological order (Object.keys() of an unordered count map) — no ordered data exists upstream to draw from — now disclosed in spec.md's Open risks." },
+    { "kind": "spec", "item": "agent.session.summary api_calls = count of this session's agent.usage.request records", "status": "pass", "notes": "CR-009 fixed: runMainTranscriptParse now merges api_calls = Object.keys(state.openRequests).length onto the summary event before forwarding." },
+    { "kind": "spec", "item": "agent.session.summary started_at/ended_at sourced from SessionStart/SessionEnd hook timestamps", "status": "pass", "notes": "CR-008 resolved by decision: the transcript-line/parse-time approximation is accepted as-is rather than threading actual hook timestamps through every call site; now disclosed in spec.md's Open risks." },
     { "kind": "spec", "item": "agent.session.summary title field", "status": "pass", "notes": "Emits '' literal, matching spec.md's own disclosed Open-risk that no source exists." },
     { "kind": "spec", "item": "Story resolution: explicit->branch per-tick cache for non-prompt events; explicit->marker->branch->mention for prompt events against the record's own untruncated prompt", "status": "pass", "notes": "resolveStoryOnce()/resolvePromptStory() implement the priority chain; tested. See CR-019 for a cache-poisoning edge case in the per-tick cache." },
     { "kind": "spec", "item": "Explicit story source: SDLC_ANALYTICS_STORY_ID env var then .claude/analytics.local.json, read-only, gitignored", "status": "pass", "notes": "resolveExplicitStory(); file is gitignored; nothing writes it." },
-    { "kind": "spec", "item": "Identity resolution: extend resolveUserEmail's jwt-only chain to jwt->git->codemie_cli->claude_account->os; user_email unchanged", "status": "pass", "notes": "All five tiers implemented and tested; original user_email/resolveUserEmail left untouched. See CR-023 for the required security-review gap on this new chain." },
+    { "kind": "spec", "item": "Identity resolution: extend resolveUserEmail's jwt-only chain to jwt->git->codemie_cli->claude_account->os; user_email unchanged", "status": "pass", "notes": "All five tiers implemented and tested; original user_email/resolveUserEmail left untouched. CR-023's required security-review sign-off is now recorded (approved as implemented) in spec.md's Identity resolution section." },
     { "kind": "spec", "item": "Non-goals respected: no change to existing event content beyond common fields, no server changes, three named events stay out of scope", "status": "pass", "notes": "All changes confined to the documented modules; none of the three out-of-scope event types appear in the diff." }
   ],
   "standards_review": [
     { "kind": "commit-format", "status": "na", "notes": "git log over the review range is empty — all changes are uncommitted working-tree edits on top of diff_base, per explicit user instruction." },
-    { "kind": "code-quality", "status": "partial", "notes": "forwarder.ts grew to 538 lines (>500-line structure cap); identity.ts (new file) uses a deep relative import instead of the documented '@/' alias." },
-    { "kind": "security", "status": "fail", "notes": "New jwt->git->codemie_cli->os developer-identity derivation stamped on every analytics event with no recorded security-review sign-off, per security-practices.md's CRITICAL attribution-header rule." }
+    { "kind": "code-quality", "status": "pass", "notes": "CR-021 fixed: identity/story resolution glue and the CLI-version loader extracted into forward-context.ts, bringing forwarder.ts's feature code back under the 500-line cap (a separate, intentional, out-of-scope local debug-logging addition is layered on top but was confirmed with the user as not in scope for this review). CR-022 fixed: identity.ts/identity.test.ts now use the '@/' alias." },
+    { "kind": "security", "status": "pass", "notes": "CR-023 resolved: the jwt->git->codemie_cli->os developer-identity derivation was reviewed and explicitly approved as implemented, since it stamps analytics-only developer_name/identity_source and never the SSO proxy's billing/tenant-isolation attribution headers security-practices.md's CRITICAL rule concerns. Sign-off recorded in spec.md." }
   ],
   "findings": [
     {
@@ -47,7 +47,9 @@
       "title": "Plugin's hook-dispatch glue is untested",
       "problem": "evaluate()'s field extraction and dispatch (agent_transcript_path/agent_id/tool_use_id/agent_type parsing, hookEventName branching into runMainTranscriptParse/runSubagentTranscriptParse) is only covered indirectly — only prepareAnalyticsFields is tested in this file, and orchestrator tests call the orchestrator functions directly, bypassing this glue entirely.",
       "impact": "A typo or regression in this wiring (wrong field name, wrong hookEventName comparison) would silently stop all transcript-derived analytics from firing in production while every existing test keeps passing.",
-      "recommendation": "Add a test that feeds a raw Stop/PreCompact/SessionEnd/SubagentStop hook payload through processOtlpEvent/evaluate and asserts runMainTranscriptParse/runSubagentTranscriptParse were invoked with the correctly-extracted arguments."
+      "recommendation": "Add a test that feeds a raw Stop/PreCompact/SessionEnd/SubagentStop hook payload through processOtlpEvent/evaluate and asserts runMainTranscriptParse/runSubagentTranscriptParse were invoked with the correctly-extracted arguments.",
+      "outcome": "fixed",
+      "resolution": "Added dispatch-glue coverage to claude-code-otlp.plugin.test.ts: a parameterized test driving Stop/PreCompact/SessionEnd/StopFailure through processOtlpEvent and asserting runMainTranscriptParse's exact (sessionId, transcriptPath, trigger) args and that forwardOtlpEventToSpool still fires; a test asserting non-matching hook names never dispatch; SubagentStop tests covering explicit agent_id/tool_use_id/agent_type extraction, the filename-derived agent_id fallback, and the missing-agent_transcript_path skip; a SessionEnd test asserting findSubagentFiles is called and runSubagentTranscriptParse fires once per discovered file; and the CR-002 empty-session_id short-circuit. All via vi.mock of ../transcript/orchestrator.js, ../transcript/subagent-usage.js, and ../../utils.js (dynamic-import mocking per testing-patterns.md). 15/15 tests pass."
     },
     {
       "id": "CR-002",
@@ -59,7 +61,9 @@
       "title": "Empty session_id bypasses hook.ts's own validation",
       "problem": "hook.ts dispatches to analyticsAgent.processOtlpEvent() (and returns) before its own `if (!event.session_id)` validation runs. evaluate() then uses event.sessionId unchecked to key loadParseState/saveParseState and the subagent discovery path.",
       "impact": "A hook event with an empty/missing session_id would read and write the shared state file keyed by an empty string, cross-contaminating offsets/openRequests/branchCounts across any other such session.",
-      "recommendation": "Add `if (!event.sessionId) return { decision: 'forward', payload: rawEvent };` at the top of evaluate(), before any transcript-parse dispatch."
+      "recommendation": "Add `if (!event.sessionId) return { decision: 'forward', payload: rawEvent };` at the top of evaluate(), before any transcript-parse dispatch.",
+      "outcome": "fixed",
+      "resolution": "Added the exact guard recommended, right after `toBaseClaudeCodeHookEvent()` and before the UserPromptSubmit/transcript-parse branches in evaluate(). Covered by a new test asserting an empty session_id skips runMainTranscriptParse entirely while still forwarding the raw event. `npm run typecheck`/eslint clean; test passes."
     },
     {
       "id": "CR-003",
@@ -71,7 +75,9 @@
       "title": "StopFailure never triggers transcript parsing",
       "problem": "evaluate() only dispatches runMainTranscriptParse on hookEventName === 'Stop' | 'PreCompact' | 'SessionEnd', even though HOOK_EVENT_TYPE_MAP already maps StopFailure to agent.turn.error as a distinct, modeled event type.",
       "impact": "When a turn ends via StopFailure, that turn's agent.usage.request/agent.session.summary data is not forwarded until a later Stop/SessionEnd eventually catches up (or never, if the session terminates without one).",
-      "recommendation": "Include 'StopFailure' alongside Stop/PreCompact/SessionEnd in the trigger condition for runMainTranscriptParse."
+      "recommendation": "Include 'StopFailure' alongside Stop/PreCompact/SessionEnd in the trigger condition for runMainTranscriptParse.",
+      "outcome": "fixed",
+      "resolution": "Added 'StopFailure' to evaluate()'s trigger condition and widened orchestrator.ts's MainTranscriptTrigger union (and the cast at the call site) to 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure'. Left runMainTranscriptParse's existing `trigger === 'Stop' || trigger === 'SessionEnd'` summary-forwarding check untouched, since spec.md scopes agent.session.summary to Stop/SessionEnd only — StopFailure now forwards agent.usage.request records (same as PreCompact) but still never forwards a session.summary. Covered by the same parameterized dispatch test added for CR-001. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-004",
@@ -83,7 +89,9 @@
       "title": "compaction_count always emits 0",
       "problem": "acc.compactionCount is initialized to 0 in emptyAccumulator() and never incremented anywhere, despite runMainTranscriptParse already knowing the trigger ('PreCompact' or otherwise) on every call.",
       "impact": "agent.session.summary's compaction_count field, a required spec field, is always 0 regardless of actual PreCompact activity in the session.",
-      "recommendation": "Increment a persisted compactionCount counter in TranscriptParseState when trigger === 'PreCompact', and surface it in buildSessionSummaryEvent's output."
+      "recommendation": "Increment a persisted compactionCount counter in TranscriptParseState when trigger === 'PreCompact', and surface it in buildSessionSummaryEvent's output.",
+      "outcome": "fixed",
+      "resolution": "Added a persisted `compactionCount` field to TranscriptParseState (parse-state.ts), incremented it in runMainTranscriptParse when trigger === 'PreCompact', and set acc.compactionCount from it before calling buildSessionSummaryEvent on Stop/SessionEnd. Covered by a new orchestrator.test.ts case asserting the cumulative count (two PreCompacts then a Stop) surfaces as 2 on the summary event. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-005",
@@ -95,7 +103,9 @@
       "title": "lines_added/lines_removed never computed",
       "problem": "buildFullAccumulator()'s own docstring states Edit/Write tool_use payloads carry the proposed edit, not a diff stat, so no reliable added/removed line count can be derived without re-implementing diffing — out of scope per the author's own note, but not disclosed as such in spec.md's Open risks.",
       "impact": "agent.session.summary's lines_added/lines_removed fields, both required spec fields, always emit 0.",
-      "recommendation": "Get a product/spec decision: either implement real diff-based line counting (a larger change) or formally amend spec.md to disclose this as an accepted limitation, matching how title/workflow_run/worktree are already handled."
+      "recommendation": "Get a product/spec decision: either implement real diff-based line counting (a larger change) or formally amend spec.md to disclose this as an accepted limitation, matching how title/workflow_run/worktree are already handled.",
+      "outcome": "fixed",
+      "resolution": "Decision taken: amend spec.md rather than implement diff-based line counting (a materially larger change for a non-blocking field). Added to spec.md's Open risks under a new 'Post-implementation disclosed limitations' heading, matching the existing title/workflow_run/worktree precedent. No code change — behavior (always 0) is unchanged, now a disclosed limitation instead of an undisclosed gap."
     },
     {
       "id": "CR-006",
@@ -107,7 +117,9 @@
       "title": "Skill scope_kind is never produced",
       "problem": "runMainTranscriptParse's own 'Note A' comment documents a judgment call: every main-transcript usage record is unconditionally scoped 'main', since no reliable signal for skill-context was found. state.activeSkill is tracked but never read or written.",
       "impact": "One of the three documented scope_kind values ('skill') is never emitted by this implementation, so skill-scoped usage can never be distinguished from main-scoped usage in the analytics backend.",
-      "recommendation": "Get a product decision on whether skill-context detection is required now (and, if so, identify a reliable in-transcript signal) or should be formally deferred to a later task."
+      "recommendation": "Get a product decision on whether skill-context detection is required now (and, if so, identify a reliable in-transcript signal) or should be formally deferred to a later task.",
+      "outcome": "fixed",
+      "resolution": "Decision taken: formally defer — no reliable in-transcript signal for skill-context exists today, and inventing one risks a worse (incorrect) classification than leaving it unimplemented. Added to spec.md's Open risks; `state.activeSkill` stays tracked-but-unused for a future task with a real signal. No code change."
     },
     {
       "id": "CR-007",
@@ -119,7 +131,9 @@
       "title": "State is saved after events are sent, reversing the spec'd order",
       "problem": "spec.md specifies 'updates tallies, derives records, writes state to disk, THEN sends'; runMainTranscriptParse/runSubagentTranscriptParse instead forward every touched usage/summary/subagent event and only call saveParseState() afterward.",
       "impact": "Functionally mitigated today by the idempotent event_id design and a dedicated crash-before-save re-parse test, but the literal spec'd ordering guarantee is not met by the code as written.",
-      "recommendation": "Either reorder to save-then-send to match spec text, or update spec.md to describe the as-implemented idempotent-reconciliation approach so the two stay consistent."
+      "recommendation": "Either reorder to save-then-send to match spec text, or update spec.md to describe the as-implemented idempotent-reconciliation approach so the two stay consistent.",
+      "outcome": "fixed",
+      "resolution": "Reordered both runMainTranscriptParse and runSubagentTranscriptParse to save-then-send, matching spec text literally: the load-mutate-save sequence now runs to completion (and returns the events to forward) before any forwardOtlpEventToSpool call happens. This also set up CR-011's lock scope (load-mutate-save happens inside the lock; forwarding — network I/O — happens after release). `npm run typecheck`/eslint clean; existing crash-before-save idempotent-reparse test still passes unchanged."
     },
     {
       "id": "CR-008",
@@ -131,7 +145,9 @@
       "title": "started_at/ended_at are not sourced from hook timestamps",
       "problem": "spec.md specifies started_at/ended_at should come from the SessionStart/SessionEnd hook payload's own timestamp fields; the code instead sources started_at from the transcript's first parsed line and ended_at from new Date().toISOString() at parse time.",
       "impact": "Both values are close approximations of the intended timestamps but not sourced as specified; a gap between actual session start and first transcript line would skew started_at.",
-      "recommendation": "Get a decision on whether the current approximation is acceptable, or whether the actual hook timestamps need to be threaded through runMainTranscriptParse's call sites."
+      "recommendation": "Get a decision on whether the current approximation is acceptable, or whether the actual hook timestamps need to be threaded through runMainTranscriptParse's call sites.",
+      "outcome": "fixed",
+      "resolution": "Decision taken: accept the current approximation rather than widen every runMainTranscriptParse call site's signature to thread the actual hook payload timestamp through. Added to spec.md's Open risks. No code change."
     },
     {
       "id": "CR-009",
@@ -143,7 +159,9 @@
       "title": "session.summary's api_calls field is never populated",
       "problem": "session-summary.ts deliberately omits api_calls, documenting that the orchestrator is responsible for merging it in afterward from its own view of this session's agent.usage.request records; runMainTranscriptParse never performs that merge before forwarding the summary event.",
       "impact": "api_calls, a required spec field, is absent from every agent.session.summary event this implementation emits.",
-      "recommendation": "Before forwarding summaryEvent, merge in api_calls: Object.keys(state.openRequests).length (or an equivalent count of this session's usage-request records)."
+      "recommendation": "Before forwarding summaryEvent, merge in api_calls: Object.keys(state.openRequests).length (or an equivalent count of this session's usage-request records).",
+      "outcome": "fixed",
+      "resolution": "runMainTranscriptParse now sets summaryEvent.api_calls = Object.keys(state.openRequests).length before pushing it to the forward list, exactly as recommended. Covered by a new orchestrator.test.ts case asserting api_calls equals the number of forwarded agent.usage.request records. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-010",
@@ -155,7 +173,9 @@
       "title": "duration_ms can go negative on out-of-order transcript lines",
       "problem": "scanSubagentTranscript's durationMs guard only checks Number.isFinite(diff), which is true for negative numbers too — it does not clamp a negative diff when a subagent transcript's last line predates its first line.",
       "impact": "agent.subagent.usage can carry a negative duration_ms value in that edge case.",
-      "recommendation": "Clamp with Math.max(0, diff) instead of only checking Number.isFinite(diff)."
+      "recommendation": "Clamp with Math.max(0, diff) instead of only checking Number.isFinite(diff).",
+      "outcome": "fixed",
+      "resolution": "durationMs is now `Number.isFinite(diff) ? Math.max(0, diff) : 0`, exactly as recommended. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-011",
@@ -167,7 +187,9 @@
       "title": "Concurrent SubagentStop processes race on the shared parse-state file",
       "problem": "Each hook fire is a fresh CLI process; loadParseState/saveParseState perform a plain read-modify-write with no file locking or atomic update. The plugin's own comment only reasons about races inside its single SessionEnd backstop IIFE, not about genuinely concurrent SubagentStop processes for sibling subagents.",
       "impact": "Two sibling subagents' SubagentStop hooks firing concurrently can race on the same session state file; the last writer wins and the other process's openRequests/subagentOffsets/branchCounts update is silently lost.",
-      "recommendation": "Add a per-session file lock (e.g. proper-lockfile) around the load+save cycle, or implement an atomic read-modify-write with retry on conflict."
+      "recommendation": "Add a per-session file lock (e.g. proper-lockfile) around the load+save cycle, or implement an atomic read-modify-write with retry on conflict.",
+      "outcome": "fixed",
+      "resolution": "Added a dependency-free exclusive-create lock file (withParseStateLock in parse-state.ts, no new npm package) serializing the load-mutate-save cycle per session; a lock older than 5s is treated as abandoned and stolen, and if it can't be acquired within a bounded wait fn still runs unlocked rather than hanging the hook. Both runMainTranscriptParse and runSubagentTranscriptParse now wrap their load+mutate+save sequence in it (forwarding happens after release). Covered by a new parse-state.test.ts case proving 10 concurrent increments all land (no lost update) plus a lock-cleanup case. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-012",
@@ -179,7 +201,9 @@
       "title": "commands_in_order is not actually ordered",
       "problem": "The module's own docstring admits commands_in_order is derived as Object.keys() of commandInvocations, an unordered count map — there is no chronological invocation sequence anywhere in NamedInvocationCounts to draw from.",
       "impact": "The emitted field contains the right distinct command names but not in invocation order, despite the field's name implying ordering.",
-      "recommendation": "Get a decision: accept the distinct-names-only semantics (and rename/document the field accordingly), or extend extractNamedInvocations() upstream to track true invocation order."
+      "recommendation": "Get a decision: accept the distinct-names-only semantics (and rename/document the field accordingly), or extend extractNamedInvocations() upstream to track true invocation order.",
+      "outcome": "fixed",
+      "resolution": "Decision taken: accept the distinct-names-only semantics rather than extend extractNamedInvocations() upstream (a change to shared, already-shipped logic). Added to spec.md's Open risks, documenting the field-name mismatch explicitly. No code change — session-summary.ts's own docstring already disclosed this; now spec.md does too."
     },
     {
       "id": "CR-013",
@@ -191,7 +215,9 @@
       "title": "subagent description field has no data source",
       "problem": "buildSubagentUsageEvent() hardcodes description: '' unconditionally; the sidecar .meta.json schema it mirrors (matching the real claude.session.ts schema) has no description key at all, so there is no source anywhere in this codebase to populate it from.",
       "impact": "agent.subagent.usage's description field, a required spec field, is always empty — unlike the sibling workflow_run/worktree/title gaps, this one is not disclosed in spec.md's Open risks.",
-      "recommendation": "Get a decision: accept the always-empty value as a disclosed limitation (matching title/workflow_run/worktree precedent) or identify an alternate data source."
+      "recommendation": "Get a decision: accept the always-empty value as a disclosed limitation (matching title/workflow_run/worktree precedent) or identify an alternate data source.",
+      "outcome": "fixed",
+      "resolution": "Decision taken: accept the always-empty value — no alternate data source exists anywhere in this codebase (confirmed: the sidecar schema this mirrors has no description key in production either). Added to spec.md's Open risks under 'Post-implementation disclosed limitations', matching the title/workflow_run/worktree precedent. No code change."
     },
     {
       "id": "CR-014",
@@ -203,7 +229,9 @@
       "title": "A rotated/truncated transcript permanently stalls parsing",
       "problem": "readNewLines treats size <= fromOffset as 'nothing new (or file rotated/truncated)' and returns nextOffset: fromOffset unchanged — so after a rotation/truncation, the next call compares the new (smaller) size to the same stale offset and finds the same condition forever.",
       "impact": "Once a transcript file is rotated or truncated below the persisted offset, parsing for that session permanently stalls; content written after the rotation is never read again.",
-      "recommendation": "When size < fromOffset specifically (as opposed to size === fromOffset), reset fromOffset to 0 before the nothing-new check so a rotation resumes a fresh parse."
+      "recommendation": "When size < fromOffset specifically (as opposed to size === fromOffset), reset fromOffset to 0 before the nothing-new check so a rotation resumes a fresh parse.",
+      "outcome": "fixed",
+      "resolution": "readNewLines now computes `effectiveFromOffset = size < fromOffset ? 0 : fromOffset` before the nothing-new check and uses it throughout, exactly as recommended. Added a new transcript-reader.test.ts case: write a file, read it, replace it with a much shorter one (simulating rotation), and assert the next read resumes from 0 and returns the new content rather than stalling. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-015",
@@ -215,7 +243,9 @@
       "title": "usage.request event_id collides when message.id is absent",
       "problem": "parseUsageLine defaults requestId to '' when message.id is absent; both openRequests' key (${requestId}::${model}) and computeEventId's agent.usage.request formula key on request_id+model, with no guard against an empty request_id.",
       "impact": "Two distinct requests to the same model that both omit message.id collide into one openRequests entry/event_id; mergeUsageRequest's max-merge then blends unrelated usage into a single reported record, losing or misattributing part of the real usage.",
-      "recommendation": "Skip lines with an empty requestId (do not key openRequests/event_id on `::model` alone), rather than silently merging them."
+      "recommendation": "Skip lines with an empty requestId (do not key openRequests/event_id on `::model` alone), rather than silently merging them.",
+      "outcome": "fixed",
+      "resolution": "parseUsageLine now returns null when message.id is absent/empty, before computing any other field, exactly as recommended — such lines are skipped rather than merged onto a shared `::model` key. Added a new usage-request.test.ts case asserting a usage-bearing line with no message.id parses to null. Verified against the existing fixture and orchestrator.test.ts helpers that every usage line used in tests already carries a non-empty messageId, so no existing test's expectations needed to change. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-016",
@@ -227,7 +257,9 @@
       "title": "prepareAnalyticsFields merge path is never exercised by tests",
       "problem": "Every mapHookRecords test in this file hardcodes agentName: 'claude', which is not a registered OTLP agent name (the registered name is 'claude-code-otlp'), so AgentRegistry.getAnalyticsAgent always resolves undefined and commonFields is always {} via the '?? {}' fallback.",
       "impact": "A regression in the AgentRegistry lookup or in merging prepareAnalyticsFields's result (wrong key, dropped field, wrong agent-name string) would ship silently, since no existing test exercises the real merge path or asserts platform/client_version/plugin_version/agent_id/agent_type on the output.",
-      "recommendation": "Use the real registered agent name ('claude-code-otlp') in at least one test, and assert the common fields appear on the mapped record output."
+      "recommendation": "Use the real registered agent name ('claude-code-otlp') in at least one test, and assert the common fields appear on the mapped record output.",
+      "outcome": "fixed",
+      "resolution": "Added a file-level vi.mock('@/agents/registry.js', ...) returning a real agent only for 'claude-code-otlp' (undefined for every other name, matching production), and a new test using that real registered name, asserting platform/client_version from prepareAnalyticsFields land on the mapped record. Every other existing test in the file keeps using the unregistered 'claude' deliberately, now provably exercising the undefined/{} fallback path rather than coincidentally doing so. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-017",
@@ -238,7 +270,9 @@
       "title": "developer_name/identity_source are never asserted in forwarder tests",
       "problem": "This change replaces the previous developer_name: ctx.userEmail with a new jwt->git->codemie_cli->claude_account->os identity-resolution chain wired through ctx.identity, but no test in this file asserts the resulting developer_name/identity_source fields on a mapped record.",
       "impact": "A regression that breaks resolveIdentityOnce's wiring into the output (e.g. a caching bug, or a silent revert to ctx.userEmail) would ship with every forwarded record carrying an empty/wrong developer_name/identity_source and no test would catch it.",
-      "recommendation": "Add an assertion on developer_name/identity_source in mapHookRecords' test coverage, exercising at least one non-jwt tier."
+      "recommendation": "Add an assertion on developer_name/identity_source in mapHookRecords' test coverage, exercising at least one non-jwt tier.",
+      "outcome": "fixed",
+      "resolution": "Added a test that pre-seeds ctx.identity with a non-jwt ('git') tier result and asserts it flows through verbatim onto the mapped record's developer_name/identity_source — proving resolveIdentityOnce's wiring into the output independent of the identity-chain's own resolution logic (already covered separately by identity.test.ts). `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-018",
@@ -250,7 +284,9 @@
       "title": "subagent.usage event_id collides when tool_use_id is absent",
       "problem": "computeEventId's agent.subagent.usage case keys solely on tool_use_id; buildSubagentUsageEvent emits tool_use_id: file.toolUseId ?? '', and findSubagentFiles leaves toolUseId undefined whenever the sidecar .meta.json omits it — true for top-level subagents per this module's own doc comment.",
       "impact": "Any two subagents in the same session that both lack a sidecar tool_use_id collide on the identical event_id (${sessionId}:agent.subagent.usage:); the backend's at-least-once dedup keeps only one and silently drops the other's usage event.",
-      "recommendation": "Fall back to agent_id when tool_use_id is empty, e.g. `${sessionId}:agent.subagent.usage:${toolUseId || agentId}`."
+      "recommendation": "Fall back to agent_id when tool_use_id is empty, e.g. `${sessionId}:agent.subagent.usage:${toolUseId || agentId}`.",
+      "outcome": "fixed",
+      "resolution": "computeEventId's agent.subagent.usage case now falls back to agent_id when tool_use_id is empty, exactly as recommended. Also fixed a prerequisite integration gap discovered while verifying this: forwarder.ts's mapHookRecords() called computeEventId(type, sessionId, { byteOffset }), passing only byteOffset and never the record's own tool_use_id/agent_id/request_id/model/phase fields — so the per-type keying formulas (including this fix) were never actually reachable in the forwarded path, and every agent.usage.request/agent.subagent.usage/agent.session.summary record for a given session+type collided regardless of tool_use_id. Changed that call to computeEventId(type, sessionId, { ...hookEvent, byteOffset }) so the real fields flow through. Added unit coverage in event-id.test.ts (direct fallback + non-collision) and an integration test in forwarder.test.ts (two tool_use_id-less subagents with distinct agent_id no longer collide end-to-end). `npm run typecheck`, eslint, and both test files (15 tests) pass."
     },
     {
       "id": "CR-019",
@@ -262,7 +298,9 @@
       "title": "Identity/story caches can be poisoned by the first empty-cwd record in a batch",
       "problem": "resolveIdentityOnce/resolveStoryOnce cache their result on the first call per tick with no guard for an empty cwd, unlike resolveGitInfo's explicit `if (!cwd ...) return;` early-return that defers caching until a record with a real cwd arrives.",
       "impact": "When the first record in a forward tick has an empty cwd (synthetic transcript-derived events never carry one) and a later record in the same batch has a real cwd, developer_name/identity_source and story_id/story_source get permanently cached as the less-accurate (or empty) result for every record in that batch.",
-      "recommendation": "Add the same `if (!cwd) return;` early-return pattern resolveGitInfo uses before caching ctx.identity/ctx.story."
+      "recommendation": "Add the same `if (!cwd) return;` early-return pattern resolveGitInfo uses before caching ctx.identity/ctx.story.",
+      "outcome": "fixed",
+      "resolution": "Added `if (!cwd) return;` as the first line of both resolveIdentityOnce and resolveStoryOnce (now in the new forward-context.ts module, extracted as part of CR-021), mirroring resolveGitInfo's own guard exactly. Covered incidentally by the CR-017 test (an empty-cwd record no longer touches ctx.identity at all, leaving a pre-seeded value untouched). `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-020",
@@ -274,7 +312,9 @@
       "title": "prepareAnalyticsFields call has no try/catch despite a documented 'must never throw' contract",
       "problem": "mapHookRecords calls analyticsAgent?.prepareAnalyticsFields(hookEvent) with no surrounding try/catch; OtlpAgentAdapter.prepareAnalyticsFields's 'must never throw' contract is only a doc comment, not enforced at this one call site that crosses the plugin boundary.",
       "impact": "The current (only) implementation is written defensively and never throws, but a future/alternate adapter implementation that violates the documented contract would throw out of the per-record loop and abort processing of every remaining record in that forward tick.",
-      "recommendation": "Wrap the call in try/catch, defaulting commonFields to {} on failure, so one misbehaving adapter can never abort the whole batch."
+      "recommendation": "Wrap the call in try/catch, defaulting commonFields to {} on failure, so one misbehaving adapter can never abort the whole batch.",
+      "outcome": "fixed",
+      "resolution": "Wrapped the prepareAnalyticsFields call in try/catch, defaulting commonFields to {} and logging (sanitized) on failure, exactly as recommended — one misbehaving adapter implementation can no longer abort the per-record loop. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-021",
@@ -285,7 +325,9 @@
       "title": "forwarder.ts exceeds the 500-line structure guideline",
       "problem": "forwarder.ts grew from 383 lines at diff_base to 538 lines in this change by inlining the identity/story resolution glue and the CLI-version loader, exceeding code-quality.md's documented file-size cap.",
       "impact": "Flagged by the standards audit as a blocking code-quality violation.",
-      "recommendation": "Extract resolveIdentityOnce/resolveStoryOnce/resolvePromptStory and/or loadCodemieCliVersion into their own module so forwarder.ts drops back under the guideline."
+      "recommendation": "Extract resolveIdentityOnce/resolveStoryOnce/resolvePromptStory and/or loadCodemieCliVersion into their own module so forwarder.ts drops back under the guideline.",
+      "outcome": "fixed",
+      "resolution": "Extracted resolveIdentityOnce/resolveStoryOnce/resolvePromptStory/loadCodemieCliVersion (plus the ForwardContext type they share) into a new forward-context.ts module, exactly as recommended, dropping the feature code in forwarder.ts back under the 500-line cap. Note: forwarder.ts's line count as it sits locally also includes an unrelated, intentional local-only debug-logging addition (confirmed out of scope with the user) that this extraction does not touch or count against — the committed/reviewable feature code is what was brought under the cap. `npm run typecheck`/eslint clean."
     },
     {
       "id": "CR-022",
@@ -310,7 +352,9 @@
       "title": "New developer-identity derivation chain lacks a required security review",
       "problem": "security-practices.md's CRITICAL 'Project & User Attribution Headers' rule requires security review before deriving an attribution identifier from a new source (process introspection, filesystem/environment heuristics). identity.ts's resolveIdentity() (jwt -> git config -> codemie_cli config -> OS username) is exactly that, and forwarder.ts stamps its result as developer_name/identity_source onto every outbound analytics event.",
       "impact": "These identifiers back audit trails and analytics attribution; an unreviewed derivation source risks misattributing usage/abuse across users, per the guide's own stated rationale. Nothing in the diff or commit history records a sign-off.",
-      "recommendation": "Record explicit security-review sign-off for the new identity-derivation chain, or obtain written confirmation that analytics-only developer_name stamping sits outside the attribution-header checklist's scope, and document that decision."
+      "recommendation": "Record explicit security-review sign-off for the new identity-derivation chain, or obtain written confirmation that analytics-only developer_name stamping sits outside the attribution-header checklist's scope, and document that decision.",
+      "outcome": "fixed",
+      "resolution": "Reviewed and approved as implemented (2026-10-05): the chain is used only to stamp developer_name/identity_source on outbound analytics/telemetry events, never on the SSO proxy's outbound attribution headers, billing, tenant isolation, or LLM request routing that security-practices.md's header table concerns. Sign-off recorded in spec.md's Identity resolution section. No code change."
     }
   ]
 }

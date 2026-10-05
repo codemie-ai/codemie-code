@@ -15,6 +15,7 @@ import {
   createParseState,
   loadParseState,
   saveParseState,
+  withParseStateLock,
   type OpenUsageRequest,
   type TranscriptParseState,
 } from '../parse-state.js';
@@ -39,6 +40,7 @@ describe('createParseState', () => {
       openRequests: {},
       activeSkill: '',
       branchCounts: {},
+      compactionCount: 0,
     });
   });
 });
@@ -90,6 +92,7 @@ describe('loadParseState', () => {
       openRequests: { 'req1::claude-3-5-sonnet': openRequest },
       activeSkill: 'brainstorming',
       branchCounts: { main: 3, feature: 1 },
+      compactionCount: 2,
     };
 
     await saveParseState('session-roundtrip', state);
@@ -98,5 +101,17 @@ describe('loadParseState', () => {
     expect(loaded.openRequests).toEqual(state.openRequests);
     expect(loaded.branchCounts).toEqual(state.branchCounts);
     expect(loaded).toEqual(state);
+  });
+});
+
+describe('withParseStateLock', () => {
+  it('still runs fn when the lock cannot be released cleanly, and leaves no stale lock file behind', async () => {
+    const sessionId = 'session-lock-cleanup';
+    const result = await withParseStateLock(sessionId, async () => 'done');
+    expect(result).toBe('done');
+
+    // A second acquisition must not be blocked by a lock the first call failed to clean up.
+    const second = await withParseStateLock(sessionId, async () => 'done-again');
+    expect(second).toBe('done-again');
   });
 });

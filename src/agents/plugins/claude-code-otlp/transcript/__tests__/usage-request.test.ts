@@ -34,6 +34,19 @@ describe('parseUsageLine', () => {
     expect(parseUsageLine('not valid json {{{', 'main', '', '')).toBeNull();
   });
 
+  it('returns null for a usage-bearing line with no message.id, instead of collapsing it onto a shared ::model key', () => {
+    const line = JSON.stringify({
+      timestamp: '2026-10-01T00:00:04.000Z',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-5-20250929',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    });
+
+    expect(parseUsageLine(line, 'main', '', '')).toBeNull();
+  });
+
   it('extracts every field from a fully-populated line', () => {
     const req = parseUsageLine(lines[3], 'main', '', '');
 

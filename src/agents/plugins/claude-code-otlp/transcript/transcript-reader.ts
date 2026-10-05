@@ -31,17 +31,21 @@ export async function readNewLines(
 
   try {
     const { size } = await handle.stat();
-    if (size <= fromOffset) {
-      return { lines: [], nextOffset: fromOffset }; // nothing new (or file rotated/truncated)
+    // A file strictly smaller than the persisted offset was rotated/truncated underneath us —
+    // resume a fresh parse from 0 rather than comparing the new (smaller) size against the stale
+    // offset forever (which would permanently stall this session's parsing).
+    const effectiveFromOffset = size < fromOffset ? 0 : fromOffset;
+    if (size <= effectiveFromOffset) {
+      return { lines: [], nextOffset: effectiveFromOffset }; // nothing new
     }
 
-    const buffer = Buffer.allocUnsafe(size - fromOffset);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, fromOffset);
+    const buffer = Buffer.allocUnsafe(size - effectiveFromOffset);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, effectiveFromOffset);
     const chunk = buffer.subarray(0, bytesRead);
 
     const lastNewline = chunk.lastIndexOf(NEWLINE);
     if (lastNewline < 0) {
-      return { lines: [], nextOffset: fromOffset }; // no complete line yet
+      return { lines: [], nextOffset: effectiveFromOffset }; // no complete line yet
     }
 
     const complete = chunk.subarray(0, lastNewline + 1);
@@ -50,7 +54,7 @@ export async function readNewLines(
       .split('\n')
       .filter((line) => line.trim().length > 0);
 
-    return { lines, nextOffset: fromOffset + complete.length };
+    return { lines, nextOffset: effectiveFromOffset + complete.length };
   } finally {
     await handle.close();
   }

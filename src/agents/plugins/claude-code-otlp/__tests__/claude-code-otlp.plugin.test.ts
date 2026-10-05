@@ -12,14 +12,31 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 const execMock = vi.fn();
+const runMainTranscriptParseMock = vi.fn();
+const runSubagentTranscriptParseMock = vi.fn();
+const findSubagentFilesMock = vi.fn();
+
 vi.mock('@/utils/exec.js', () => ({
   exec: execMock,
 }));
 
-import { ClaudeCodeOtlpPlugin } from '../claude-code-otlp.plugin.js';
+vi.mock('../transcript/orchestrator.js', () => ({
+  runMainTranscriptParse: runMainTranscriptParseMock,
+  runSubagentTranscriptParse: runSubagentTranscriptParseMock,
+}));
+
+vi.mock('../transcript/subagent-usage.js', () => ({
+  findSubagentFiles: findSubagentFilesMock,
+}));
+
 import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
 import { forwardOtlpEventToSpool } from '../../utils.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+
+// Deferred past the mock-backing consts above: a static import of the plugin would be
+// hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
+// transcript/orchestrator.js mock factory, which closes over those consts.
+const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
 
 const event = (name: string) => JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name });
 
@@ -121,5 +138,145 @@ describe('ClaudeCodeOtlpPlugin.prepareAnalyticsFields', () => {
     const fields = await plugin.prepareAnalyticsFields({});
 
     expect(fields.client_version).toBe('');
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  function hookEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      session_id: 'sid-1',
+      transcript_path: '/tmp/transcript.jsonl',
+      cwd: '/repo',
+      hook_event_name: 'Stop',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    runMainTranscriptParseMock.mockReset();
+    runSubagentTranscriptParseMock.mockReset();
+    findSubagentFilesMock.mockReset();
+    findSubagentFilesMock.mockResolvedValue([]);
+    vi.mocked(forwardOtlpEventToSpool).mockReset();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(['Stop', 'PreCompact', 'SessionEnd', 'StopFailure'] as const)(
+    'invokes runMainTranscriptParse with the extracted session/transcript/trigger on %s',
+    async (hookEventName) => {
+      const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+      const plugin = new ClaudeCodeOtlpPlugin();
+      const rawEvent = JSON.stringify(hookEvent({ hook_event_name: hookEventName }));
+
+      await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+      expect(runMainTranscriptParseMock).toHaveBeenCalledWith(
+        'sid-1',
+        '/tmp/transcript.jsonl',
+        hookEventName
+      );
+      expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
+    }
+  );
+
+  it('does not dispatch runMainTranscriptParse for unrelated hook events', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostToolUse' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    expect(runMainTranscriptParseMock).not.toHaveBeenCalled();
+  });
+
+  it('invokes runSubagentTranscriptParse with the agent_id/tool_use_id/agent_type extracted from a SubagentStop payload', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-1.jsonl',
+        agent_id: 'sub-1',
+        tool_use_id: 'tu-1',
+        agent_type: 'explore',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', {
+      agentId: 'sub-1',
+      filePath: '/tmp/agent-sub-1.jsonl',
+      toolUseId: 'tu-1',
+      agentType: 'explore',
+    });
+  });
+
+  it('derives agent_id from the sidecar filename on SubagentStop when agent_id is absent', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-2.jsonl',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith(
+      'sid-1',
+      '/tmp/transcript.jsonl',
+      expect.objectContaining({ agentId: 'sub-2' })
+    );
+  });
+
+  it('skips runSubagentTranscriptParse on SubagentStop when agent_transcript_path is missing', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SubagentStop' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    expect(runSubagentTranscriptParseMock).not.toHaveBeenCalled();
+  });
+
+  it('runs runSubagentTranscriptParse for every subagent file found on SessionEnd', async () => {
+    findSubagentFilesMock.mockResolvedValue([
+      { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl' },
+      { agentId: 'sub-2', filePath: '/tmp/agent-sub-2.jsonl' },
+    ]);
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SessionEnd' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    // The SessionEnd subagent-backstop sweep is fire-and-forget; flush microtasks.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(findSubagentFilesMock).toHaveBeenCalledWith('/tmp/transcript.jsonl');
+    expect(runSubagentTranscriptParseMock).toHaveBeenCalledTimes(2);
+    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith(
+      'sid-1',
+      '/tmp/transcript.jsonl',
+      { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl' }
+    );
+  });
+
+  it('forwards the raw event and skips all transcript-parse dispatch when session_id is empty', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ session_id: '', hook_event_name: 'Stop' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    expect(runMainTranscriptParseMock).not.toHaveBeenCalled();
+    expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
   });
 });

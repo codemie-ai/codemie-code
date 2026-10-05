@@ -1,8 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { getDirname } from '@/utils/paths.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
@@ -16,24 +13,14 @@ import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 import { computeEventId } from './event-id.js';
-import { decodeJwtClaims, resolveIdentity, type IdentitySource } from './identity.js';
+import { decodeJwtClaims } from './identity.js';
 import {
-  resolveExplicitStory,
-  resolveBranchStory,
-  resolveMarkerStory,
-  resolveMentionStory,
-} from './story-resolver.js';
-
-/** This package's own `version` from the repo-root `package.json`, read once at import time. */
-function loadCodemieCliVersion(): string {
-  try {
-    const packageJsonPath = join(getDirname(import.meta.url), '../../../../../../../package.json');
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version?: string };
-    return packageJson.version ?? '';
-  } catch {
-    return '';
-  }
-}
+  type ForwardContext,
+  loadCodemieCliVersion,
+  resolveIdentityOnce,
+  resolvePromptStory,
+  resolveStoryOnce,
+} from './forward-context.js';
 
 const CODEMIE_CLI_VERSION = loadCodemieCliVersion();
 
@@ -63,19 +50,6 @@ const MAX_TOOL_FIELD_CHARS = 300;
 const FORWARD_TIMEOUT_MS = 20_000;
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
-
-interface ForwardContext {
-  credentials: SSOCredentials | JWTCredentials;
-  baseUrl: string;
-  projectName: string;
-  userEmail: string;
-  /** Per-session git info cache, resolved lazily from the first hook `cwd`. */
-  git: { branch?: string; remote?: string };
-  /** Per-session developer-identity cache, resolved once */
-  identity?: { developerName?: string; identitySource?: IdentitySource };
-  /** Per-tick story-id cache, resolved once per forward tick. */
-  story?: { storyId?: string; storySource?: 'explicit' | 'branch' | '' };
-}
 
 /* ------------------------------------------------------------------ auth --- */
 
@@ -247,69 +221,6 @@ async function resolveGitInfo(ctx: ForwardContext, cwd: string): Promise<void> {
   }
 }
 
-/**
- * Per-record story-id override for `UserPromptSubmit` hook events only,
- * layered on top of the per-tick `resolveStoryOnce()` cache in
- * `ctx.story` (explicit/branch/''). Priority order across the full chain is
- * explicit -> marker -> branch -> mention:
- *
- * 1. If the per-tick cache already resolved to `'explicit'`, that is the
- *    highest-priority result and wins outright.
- * 2. Otherwise, try the marker tier (`story: X` / `ticket #X`) against this
- *    record's OWN prompt text — it sits above branch in priority.
- * 3. Otherwise, if the per-tick cache resolved to `'branch'`, that wins (it
- *    is already correctly placed between marker and mention).
- * 4. Otherwise, try the mention tier (bare ticket-shaped text) — the
- *    lowest-priority tier.
- * 5. Otherwise, empty.
- *
- * Computed fresh per record and never mutates `ctx.story`: other records in
- * the same batch still need that shared per-tick cache untouched.
- */
-function resolvePromptStory(
-  ctx: ForwardContext,
-  rawPrompt: string
-): { storyId: string; storySource: string } {
-  if (ctx.story?.storySource === 'explicit') {
-    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
-  }
-
-  const marker = resolveMarkerStory(rawPrompt);
-  if (marker) {
-    return { storyId: marker.storyId, storySource: marker.storySource };
-  }
-
-  if (ctx.story?.storySource === 'branch') {
-    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
-  }
-
-  const mention = resolveMentionStory(rawPrompt);
-  if (mention) {
-    return { storyId: mention.storyId, storySource: mention.storySource };
-  }
-
-  return { storyId: '', storySource: '' };
-}
-
-async function resolveStoryOnce(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (ctx.story?.storyId !== undefined) return;
-
-  const explicit = await resolveExplicitStory(cwd);
-  const resolved = explicit ?? resolveBranchStory(ctx.git.branch ?? '');
-
-  ctx.story = resolved
-    ? { storyId: resolved.storyId, storySource: resolved.storySource }
-    : { storyId: '', storySource: '' };
-}
-
-async function resolveIdentityOnce(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!ctx.identity) ctx.identity = {};
-  if (ctx.identity.developerName !== undefined) return;
-  const { developerName, identitySource } = await resolveIdentity(ctx.credentials, cwd);
-  ctx.identity.developerName = developerName;
-  ctx.identity.identitySource = identitySource;
-}
-
 interface HookPayload {
   ndjson: string;
   containsSessionEnd: boolean;
@@ -369,7 +280,19 @@ export async function mapHookRecords(
 
     const { AgentRegistry } = await import('../../../../../../agents/registry.js');
     const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
-    const commonFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
+    let commonFields: Record<string, unknown> = {};
+    try {
+      commonFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
+    } catch (err) {
+      // OtlpAgentAdapter.prepareAnalyticsFields's "must never throw" contract is only a doc
+      // comment — a future/alternate adapter implementation that violates it must not abort
+      // every remaining record in this forward tick.
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(
+        '[otlp-forwarder] prepareAnalyticsFields threw',
+        ...sanitizeLogArgs({ agentName: spoolData.agentName, err: msg })
+      );
+    }
 
     const limited = limitHookPayload(hookEvent);
     const type = hookEventType(hookName, hookEvent);
@@ -393,7 +316,7 @@ export async function mapHookRecords(
         raw: limited,
         ...commonFields,
         schema_version: 2,
-        event_id: computeEventId(type, sessionId, { byteOffset }),
+        event_id: computeEventId(type, sessionId, { ...hookEvent, byteOffset }),
         codemie_cli_version: CODEMIE_CLI_VERSION,
       })
     );

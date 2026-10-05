@@ -65,6 +65,24 @@ describe('readNewLines', () => {
     expect(result).toEqual({ lines: [], nextOffset: 0 });
   });
 
+  it('resumes a fresh parse from 0 after the file is rotated/truncated below the persisted offset', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'codemie-transcript-'));
+    const filePath = join(tmpDir, 'transcript.jsonl');
+
+    await writeFile(filePath, 'line1\nline2\nline3\n');
+    const first = await readNewLines(filePath, 0);
+    expect(first.lines).toEqual(['line1', 'line2', 'line3']);
+
+    // Rotation: the file is replaced by a much shorter one, so its size now sits below the
+    // previously persisted offset.
+    await writeFile(filePath, 'new1\nnew2\n');
+
+    const second = await readNewLines(filePath, first.nextOffset);
+
+    expect(second.lines).toEqual(['new1', 'new2']);
+    expect(second.nextOffset).toBe(Buffer.byteLength('new1\nnew2\n'));
+  });
+
   it('returns an empty result when nothing new has been written since fromOffset', async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'codemie-transcript-'));
     const filePath = join(tmpDir, 'transcript.jsonl');

@@ -82,6 +82,14 @@ export function parseUsageLine(
     return null;
   }
 
+  // Both openRequests' key and computeEventId's agent.usage.request formula key on
+  // `${requestId}::${model}` — an empty requestId would collide every such line in the session
+  // into one record instead of being skipped.
+  const requestId = String(parsed.message?.id ?? '');
+  if (!requestId) {
+    return null;
+  }
+
   // Same resolution chain the statusline and usage-readers.ts:188 already use:
   // parseBackendModelName() (the raw LiteLLM backend id, when the proxy injected one) wins over
   // the transcript's own literal `message.model`, since it reflects the actual billable backend
@@ -95,7 +103,7 @@ export function parseUsageLine(
   void parseRoutingHeaders(parsed.message);
 
   return {
-    requestId: String(parsed.message?.id ?? ''),
+    requestId,
     model: String(model),
     modelRaw,
     timestamp: String(parsed.timestamp ?? ''),

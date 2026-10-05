@@ -47,22 +47,27 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   }
 
   private async evaluate(hookEventName: string, rawEvent: string): Promise<ForwardDecision> {
+    const rawParsed = JSON.parse(rawEvent);
+    const event = toBaseClaudeCodeHookEvent(rawParsed);
+
+    if (!event.sessionId) {
+      return { decision: 'forward', payload: rawEvent };
+    }
+
     if (hookEventName === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(rawEvent);
     }
 
-    const rawParsed = JSON.parse(rawEvent);
-    const event = toBaseClaudeCodeHookEvent(rawParsed);
-
     if (
       event.hookEventName === 'Stop' ||
       event.hookEventName === 'PreCompact' ||
-      event.hookEventName === 'SessionEnd'
+      event.hookEventName === 'SessionEnd' ||
+      event.hookEventName === 'StopFailure'
     ) {
       void runMainTranscriptParse(
         event.sessionId,
         event.transcriptPath,
-        event.hookEventName as 'Stop' | 'PreCompact' | 'SessionEnd'
+        event.hookEventName as 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure'
       );
     }
 
