@@ -1,7 +1,7 @@
 /**
  * Pure, deterministic `event_id` derivation for analytics events.
  */
-export function computeEventId(
+export function resolveEventId(
   type: string,
   sessionId: string,
   fields: Record<string, unknown>

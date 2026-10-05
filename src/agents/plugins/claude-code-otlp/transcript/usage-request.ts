@@ -82,7 +82,7 @@ export function parseUsageLine(
     return null;
   }
 
-  // Both openRequests' key and computeEventId's agent.usage.request formula key on
+  // Both openRequests' key and resolveEventId's agent.usage.request formula key on
   // `${requestId}::${model}` — an empty requestId would collide every such line in the session
   // into one record instead of being skipped.
   const requestId = String(parsed.message?.id ?? '');

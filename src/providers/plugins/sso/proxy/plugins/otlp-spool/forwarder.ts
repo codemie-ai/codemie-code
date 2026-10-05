@@ -12,7 +12,7 @@ import {
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-import { computeEventId } from './event-id.js';
+import { resolveEventId } from './event-id.js';
 import { decodeJwtClaims } from './identity.js';
 import {
   type ForwardContext,
@@ -316,7 +316,7 @@ export async function mapHookRecords(
         raw: limited,
         ...agentSpecificFields,
         schema_version: 2,
-        event_id: computeEventId(type, sessionId, { ...hookEvent, byteOffset }),
+        event_id: resolveEventId(type, sessionId, { ...hookEvent, byteOffset }),
         codemie_cli_version: CODEMIE_CLI_VERSION,
       })
     );
