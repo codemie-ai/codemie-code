@@ -122,9 +122,6 @@ export function parseUsageLine(
     agentId,
     // Sibling of usage on message, not nested inside it.
     stopReason: String(parsed.message?.stop_reason ?? ''),
-    // No confirmed source field for this on any sampled real transcript line (spec.md's own
-    // "Transcript field confidence gaps" flags it as unverified) — default false, and pick it up
-    // from a top-level `isApiError` boolean if a line ever carries one.
     isApiError: Boolean(parsed.isApiError ?? false),
     gitBranch: String(parsed.gitBranch ?? ''),
   };
@@ -138,10 +135,6 @@ export function parseUsageLine(
  * falls back to `a`'s — so a later row that fills in a previously-empty field (e.g.
  * `stop_reason` once the turn finishes) wins, while a later row that is missing a field `a` had
  * does not blank it out.
- *
- * `isApiError` follows the same "non-empty b wins, else a" shape as the non-numeric fields: once
- * true on either record, it stays true across the merge (losing a true→false "fix" would hide a
- * real API error from aggregation).
  *
  * Returns a new object; neither `a` nor `b` is mutated.
  */
