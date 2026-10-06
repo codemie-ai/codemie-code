@@ -56,16 +56,16 @@ function buildHookRecord(hookEventName: string, sessionId: string, extra: Record
   });
 }
 
-describe('loadCodemieCliVersion', () => {
+describe('resolveCodemieCliVersion', () => {
   beforeEach(() => {
     execSyncMock.mockReset();
     execSyncMock.mockReturnValue('0.15.6');
   });
 
   it('reads the installed CLI version via `codemie --version` and strips the semver', async () => {
-    const { loadCodemieCliVersion } = await import('../forward-context.js');
+    const { resolveCodemieCliVersion } = await import('../forward-context.js');
 
-    expect(loadCodemieCliVersion()).toBe('0.15.6');
+    expect(resolveCodemieCliVersion()).toBe('0.15.6');
     expect(execSyncMock).toHaveBeenCalledWith('codemie --version', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -77,8 +77,8 @@ describe('loadCodemieCliVersion', () => {
       throw new Error('ENOENT');
     });
 
-    const { loadCodemieCliVersion } = await import('../forward-context.js');
-    expect(loadCodemieCliVersion()).toBe('');
+    const { resolveCodemieCliVersion } = await import('../forward-context.js');
+    expect(resolveCodemieCliVersion()).toBe('');
   });
 });
 
@@ -320,7 +320,7 @@ describe('mapHookRecords', () => {
 
     // The real registered OTLP agent name, unlike every other test in this file which
     // deliberately uses the unregistered 'claude' (that name resolves to `undefined`,
-    // so this is the only test exercising the real AgentRegistry.getAnalyticsAgent merge path).
+    // so this is the only test exercising the real agent-registry lookup merge path).
     const record = JSON.stringify({
       agentName: 'claude-code-otlp',
       raw: JSON.stringify({ hook_event_name: 'Stop', session_id: 'sid1', cwd: '' }),
@@ -337,7 +337,7 @@ describe('mapHookRecords', () => {
   it('carries ctx.identity through onto developer_name/identity_source for a non-jwt tier', async () => {
     const { mapHookRecords } = await import('../forwarder.js');
 
-    // Pre-seeding ctx.identity (as resolveIdentityOnce's own cache would look once resolved)
+    // Pre-seeding ctx.identity (mimicking what the per-tick identity cache would look like once resolved)
     // with a non-jwt tier result proves the wiring from ctx.identity onto the mapped record,
     // independent of the identity-chain's own resolution logic (covered by identity.test.ts).
     const ctx = {

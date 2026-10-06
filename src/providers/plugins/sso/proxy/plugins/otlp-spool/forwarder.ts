@@ -16,13 +16,13 @@ import { resolveEventId } from './event-id.js';
 import { decodeJwtClaims } from './identity.js';
 import {
   type ForwardContext,
-  loadCodemieCliVersion,
-  resolveIdentityOnce,
-  resolvePromptStory,
-  resolveStoryOnce,
+  resolveCodemieCliVersion,
+  resolveDeveloperIdentity,
+  resolveStory,
+  resolveStoryForPrompt,
 } from './forward-context.js';
 
-const CODEMIE_CLI_VERSION = loadCodemieCliVersion();
+const CODEMIE_CLI_VERSION = resolveCodemieCliVersion();
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -239,7 +239,7 @@ export async function mapHookRecords(
 
   for (const record of records) {
     // Every record occupied `byteLength(record) + 1` bytes in the spool file
-    // (the trailing newline `snapshotPendingHookRecords` already stripped).
+    // (the trailing newline was already stripped when the batch was read).
     const byteOffset = offset;
     offset += Buffer.byteLength(record, 'utf-8') + 1;
 
@@ -262,20 +262,22 @@ export async function mapHookRecords(
 
     const cwd = String(hookEvent['cwd'] ?? '');
     await resolveGitInfo(ctx, cwd);
-    await resolveIdentityOnce(ctx, cwd);
-    await resolveStoryOnce(ctx, cwd);
+    await resolveDeveloperIdentity(ctx, cwd);
+    await resolveStory(ctx, cwd);
 
-    // Read the record's OWN untruncated prompt text here, before
-    // `limitHookPayload()` below produces its own truncated `limited` copy.
-    // `limitHookPayload` never mutates `hookEvent` itself (it builds a fresh
-    // `{ ...hookEvent }` copy), so this is still the full original string —
-    // used ONLY to feed the marker/mention regex tiers below; the matched
-    // ticket id (a short string) is all that ever reaches the output, never
-    // this raw text itself.
+    // Read the record's OWN untruncated prompt text here, before the truncated
+    // copy below is produced. The original `hookEvent` is never mutated by that
+    // truncation step, so this is still the full string — used ONLY to feed the
+    // marker/mention regex tiers below; the matched ticket id (a short string)
+    // is all that ever reaches the output, never this raw text itself.
     const rawPrompt = typeof hookEvent['prompt'] === 'string' ? hookEvent['prompt'] : '';
+
+    // Each UserPromptSubmit record carries its own prompt text, which can hold a
+    // higher-priority override — so it's resolved fresh per record rather than
+    // just reusing the once-per-tick cache.
     const promptStory =
       hookName === 'UserPromptSubmit'
-        ? resolvePromptStory(ctx, rawPrompt)
+        ? resolveStoryForPrompt(ctx, rawPrompt)
         : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
 
     const { AgentRegistry } = await import('@/agents/registry.js');
@@ -284,9 +286,9 @@ export async function mapHookRecords(
     try {
       agentSpecificFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
     } catch (err) {
-      // OtlpAgentAdapter.prepareAnalyticsFields's "must never throw" contract is only a doc
-      // comment — a future/alternate adapter implementation that violates it must not abort
-      // every remaining record in this forward tick.
+      // An agent plugin's analytics-field hook is documented as "must never throw", but
+      // that's only a doc comment — a violating implementation must not abort every
+      // remaining record in this forward tick.
       const msg = err instanceof Error ? err.message : String(err);
       logger.debug(
         '[otlp-forwarder] prepareAnalyticsFields threw',
