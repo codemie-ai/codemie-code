@@ -1,4 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const execSyncMock = vi.fn();
+
+vi.mock('node:child_process', () => ({
+  execSync: execSyncMock,
+}));
+
+beforeEach(() => {
+  execSyncMock.mockReset();
+  execSyncMock.mockReturnValue('0.15.6');
+});
 
 // Only 'claude-code-otlp' (the real registered OTLP agent name) resolves to an agent;
 // every other name — including 'claude', which every other test in this file deliberately
@@ -44,6 +55,32 @@ function buildHookRecord(hookEventName: string, sessionId: string, extra: Record
     timestamp: Date.now(),
   });
 }
+
+describe('loadCodemieCliVersion', () => {
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    execSyncMock.mockReturnValue('0.15.6');
+  });
+
+  it('reads the installed CLI version via `codemie --version` and strips the semver', async () => {
+    const { loadCodemieCliVersion } = await import('../forward-context.js');
+
+    expect(loadCodemieCliVersion()).toBe('0.15.6');
+    expect(execSyncMock).toHaveBeenCalledWith('codemie --version', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  });
+
+  it('falls back to an empty string when `codemie --version` throws', async () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    const { loadCodemieCliVersion } = await import('../forward-context.js');
+    expect(loadCodemieCliVersion()).toBe('');
+  });
+});
 
 describe('mapHookRecords', () => {
   it('stamps schema_version, event_id, and codemie_cli_version on every mapped record', async () => {

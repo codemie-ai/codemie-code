@@ -4,9 +4,7 @@
  * that module under the documented 500-line structure cap (code-quality.md).
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { getDirname } from '@/utils/paths.js';
+import { execSync } from 'node:child_process';
 import type { SSOCredentials, JWTCredentials } from '@/providers/core/types.js';
 import { resolveIdentity, type IdentitySource } from './identity.js';
 import {
@@ -29,12 +27,15 @@ export interface ForwardContext {
   story?: { storyId?: string; storySource?: 'explicit' | 'branch' | '' };
 }
 
-/** This package's own `version` from the repo-root `package.json`, read once at import time. */
+/** The installed CodeMie CLI version, resolved once at import time. */
 export function loadCodemieCliVersion(): string {
   try {
-    const packageJsonPath = join(getDirname(import.meta.url), '../../../../../../../package.json');
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version?: string };
-    return packageJson.version ?? '';
+    const output = execSync('codemie --version', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const versionMatch = output.match(/(\d+\.\d+\.\d+)/);
+    return versionMatch ? versionMatch[1] : output;
   } catch {
     return '';
   }
