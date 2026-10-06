@@ -29,13 +29,12 @@ vi.mock('../../../../utils/processes.js', async (importOriginal) => {
   };
 });
 
-import { spawnDetached } from '../../../../utils/processes.js';
+import { isProcessAlive, spawnDetached } from '../../../../utils/processes.js';
 
 import {
   readState,
   writeState,
   clearState,
-  isProcessAlive,
   checkStatus,
   spawnDaemon,
   type DaemonState,

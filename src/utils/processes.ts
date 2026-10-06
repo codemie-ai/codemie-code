@@ -107,6 +107,16 @@ export interface DetachedSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdio?: 'ignore' | 'inherit';
+  windowsHide?: boolean;
+}
+
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function spawnDetached(
@@ -119,6 +129,7 @@ export function spawnDetached(
     env: options.env,
     detached: true,
     stdio: options.stdio ?? 'ignore',
+    windowsHide: options.windowsHide,
   });
   child.unref();
   return child.pid ?? -1;
