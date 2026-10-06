@@ -5,7 +5,7 @@
  * per-API-response usage shape the existing cost-reporting parser
  * (`src/cli/commands/analytics/cost/usage-readers.ts`'s `ClaudeRawMessage`/
  * `extractClaudeUsageRecords`) already reads, adapted here to this task's
- * {@link OpenUsageRequest} shape (Task 6, `parse-state.ts`) instead of that pipeline's
+ * {@link OpenUsageRequest} shape (`parse-state.ts`) instead of that pipeline's
  * `UsageRecord`.
  *
  * Claude Code can write more than one JSONL row for the same API response (progressive
@@ -90,7 +90,7 @@ export function parseUsageLine(
     return null;
   }
 
-  // Same resolution chain the statusline and usage-readers.ts:188 already use:
+  // Same resolution chain the statusline and usage-readers.ts already use:
   // parseBackendModelName() (the raw LiteLLM backend id, when the proxy injected one) wins over
   // the transcript's own literal `message.model`, since it reflects the actual billable backend
   // model for a routed/capable-tier request. `modelRaw` keeps the literal, unresolved alias.
@@ -165,7 +165,7 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
 
 /**
  * Build the `agent.usage.request` event payload for `req`. Carries its own explicit `type`, so
- * the daemon-side `mapHookRecords()` (Task 1) stamps `event_id`/`schema_version` onto it later —
+ * the daemon-side `mapHookRecords()` stamps `event_id`/`schema_version` onto it later —
  * this function deliberately does not set either.
  */
 export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest): Record<string, unknown> {

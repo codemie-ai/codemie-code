@@ -2,13 +2,13 @@
  * `agent.subagent.usage` discovery and event builder.
  *
  * Discovery (`findSubagentFiles`) follows the same path convention as the existing,
- * `private`/unexported `findSubagentFiles` in `src/agents/plugins/claude/claude.session.ts:384`
+ * `private`/unexported `findSubagentFiles` in `src/agents/plugins/claude/claude.session.ts`
  * (`<parentDir>/<sessionId>/subagents/agent-*.jsonl` + sibling `<name>.meta.json`), but is a
  * fresh, smaller implementation returning only the narrower {@link SubagentFile} shape this
- * task's event needs — no `parentAgentId`/`requestShape`/`requestNonInteractive`.
+ * event needs — no `parentAgentId`/`requestShape`/`requestNonInteractive`.
  *
  * The event builder (`buildSubagentUsageEvent`) aggregates token/cache fields by summing an
- * already-scoped `OpenUsageRequest[]` (Task 8's shape, reused — not redefined), and passes
+ * already-scoped `OpenUsageRequest[]` (`./usage-request.ts`'s shape, reused — not redefined), and passes
  * caller-built `tool_calls`/`tool_errors`/`skills_invoked` maps through verbatim: this module has
  * no access to a subagent's own tool-use/tool-error/skill-invocation occurrences, only to the
  * aggregates its caller already computed from that subagent's transcript.

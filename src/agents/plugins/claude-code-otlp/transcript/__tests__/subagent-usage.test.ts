@@ -31,7 +31,7 @@ afterEach(async () => {
   }
 });
 
-/** Build one transcript JSONL usage line, mirroring Task 8's confirmed transcript shape. */
+/** Build one transcript JSONL usage line, mirroring the confirmed transcript shape. */
 function usageLine(messageId: string, inputTokens: number, outputTokens: number): string {
   return JSON.stringify({
     sessionId: 'session-subagent-1',

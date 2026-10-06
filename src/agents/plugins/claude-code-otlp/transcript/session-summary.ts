@@ -3,7 +3,7 @@
  *
  * Unlike `agent.usage.request`/`agent.subagent.usage`, this event is a running, mutable
  * aggregate over an entire session, not a one-shot derivation from a single transcript line
- * or file. The caller (a later task — the transcript-reader orchestrator) is responsible for
+ * or file. The caller (the transcript-reader orchestrator) is responsible for
  * accumulating a {@link SessionSummaryAccumulator} across the session's parsed transcript lines
  * and tool-use/tool-result payloads, tracking `TranscriptParseState.branchCounts` via
  * {@link updateBranchCounts} as `git_branch` changes per record, and running
@@ -12,11 +12,10 @@
  * consumes. This module only aggregates/derives the final event shape from already-computed
  * inputs — it never reads a transcript file or calls `extractNamedInvocations()` itself.
  *
- * `event_id`/`schema_version` are stamped later, daemon-side (see Task 1) — this builder's output
+ * `event_id`/`schema_version` are stamped later, daemon-side — this builder's output
  * carries only an explicit `type` field.
  *
- * Field-shape rulings (see spec.md's `agent.session.summary` section and this task's own plan
- * entry for the full reasoning):
+ * Field-shape rulings (see spec.md's `agent.session.summary` section for the full reasoning):
  * - `models_used` is emitted as the full `acc.models` count map (not just a list of names) —
  *   preserves count information `primary_model` alone would discard, consistent with how
  *   `tool_calls`/`tool_errors`-style maps are emitted elsewhere in this stage.
@@ -33,12 +32,12 @@
  * - `title` has no identified source anywhere in this codebase or the external data-model doc
  *   (per spec.md's Open risks) — always emitted as a literal empty string, never fabricated.
  * - `api_calls` (count of `agent.usage.request` records this session) is intentionally OMITTED
- *   from this builder's output: the plan's `buildSessionSummaryEvent` signature has no parameter
+ *   from this builder's output: `buildSessionSummaryEvent`'s signature has no parameter
  *   for it, and neither `acc` nor any other input here carries a request count. It is left for
- *   the orchestrator (a later task) to merge in afterward, since only that caller has visibility
+ *   the orchestrator to merge in afterward, since only that caller has visibility
  *   into the full set of `agent.usage.request` records it has derived/forwarded this session.
  * - `client_version`/`codemie_cli_version` are common fields stamped later via
- *   `mapHookRecords()` (see Tasks 1-3) — not this builder's responsibility either.
+ *   `mapHookRecords()` — not this builder's responsibility either.
  */
 
 import type { NamedInvocationCounts } from '@/agents/plugins/claude/session/claude-named-invocations.js';
