@@ -46,7 +46,7 @@ interface RawBaseClaudeCodeHookEvent {
 /**
  * camelCase-keyed mirror of {@link RawBaseClaudeCodeHookEvent}.
  */
-interface BaseClaudeCodeHookEvent {
+export interface BaseClaudeCodeHookEvent {
   sessionId: string;
   promptId?: string;
   transcriptPath: string;
@@ -73,5 +73,5 @@ export function toBaseClaudeCodeHookEvent(raw: RawBaseClaudeCodeHookEvent): Base
 }
 
 export type ForwardDecision =
-  | { decision: 'forward'; payload: string }
+  | { decision: 'forward'; payload: string[] }
   | { decision: 'block'; reason: string, hookSpecificOutput: Record<string, string | boolean> };

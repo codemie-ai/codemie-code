@@ -156,7 +156,9 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
   beforeEach(() => {
     runMainTranscriptParseMock.mockReset();
+    runMainTranscriptParseMock.mockResolvedValue([]);
     runSubagentTranscriptParseMock.mockReset();
+    runSubagentTranscriptParseMock.mockResolvedValue([]);
     findSubagentFilesMock.mockReset();
     findSubagentFilesMock.mockResolvedValue([]);
     vi.mocked(forwardOtlpEventToSpool).mockReset();
@@ -257,8 +259,6 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SessionEnd' }));
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
-    // The SessionEnd subagent-backstop sweep is fire-and-forget; flush microtasks.
-    await new Promise((resolve) => setImmediate(resolve));
 
     expect(findSubagentFilesMock).toHaveBeenCalledWith('/tmp/transcript.jsonl');
     expect(runSubagentTranscriptParseMock).toHaveBeenCalledTimes(2);
@@ -278,5 +278,27 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     expect(runMainTranscriptParseMock).not.toHaveBeenCalled();
     expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
+  });
+
+  it('forwards every event a per-event handler returns (the raw event plus any derived events) through the single forwardToSpool path, in order', async () => {
+    const derivedUsageEvent = JSON.stringify({ type: 'agent.usage.request' });
+    const derivedSummaryEvent = JSON.stringify({ type: 'agent.session.summary' });
+    runMainTranscriptParseMock.mockResolvedValue([derivedUsageEvent, derivedSummaryEvent]);
+
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'Stop' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+
+    // runMainTranscriptParse/runSubagentTranscriptParse never call forwardOtlpEventToSpool
+    // themselves (they are mocked here to just return data) — every event that reaches the spool
+    // mock arrived via forwardToSpool, called exactly once from processOtlpEvent.
+    expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(forwardOtlpEventToSpool).mock.calls.map(([raw]) => raw)).toEqual([
+      rawEvent,
+      derivedUsageEvent,
+      derivedSummaryEvent,
+    ]);
   });
 });

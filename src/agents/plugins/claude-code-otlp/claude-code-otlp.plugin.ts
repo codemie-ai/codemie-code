@@ -5,7 +5,7 @@ import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { AgentAdapterType, OtlpAdapterDeps, OtlpAgentAdapter } from '@/agents/core/types.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
-import { ForwardDecision, toBaseClaudeCodeHookEvent } from './claude-code-otlp.types.js';
+import { BaseClaudeCodeHookEvent, ForwardDecision, toBaseClaudeCodeHookEvent } from './claude-code-otlp.types.js';
 import { forwardOtlpEventToSpool } from '../utils.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import { runMainTranscriptParse, runSubagentTranscriptParse, type SubagentFile } from './transcript/orchestrator.js';
@@ -52,58 +52,88 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     const event = toBaseClaudeCodeHookEvent(rawParsed);
 
     if (!event.sessionId) {
-      return { decision: 'forward', payload: rawEvent };
+      return { decision: 'forward', payload: [rawEvent] };
     }
 
     if (hookEventName === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(rawEvent);
     }
 
-    if (
-      event.hookEventName === 'Stop' ||
-      event.hookEventName === 'PreCompact' ||
-      event.hookEventName === 'SessionEnd' ||
-      event.hookEventName === 'StopFailure'
-    ) {
-      void runMainTranscriptParse(
-        event.sessionId,
-        event.transcriptPath,
-        event.hookEventName as 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure'
-      );
-    }
+    let derivedEvents: string[] = [];
 
-    if (event.hookEventName === 'SessionEnd') {
-      void (async () => {
-        const subagentFiles = await findSubagentFiles(event.transcriptPath);
-        for (const file of subagentFiles) {
-          await runSubagentTranscriptParse(event.sessionId, event.transcriptPath, file);
-        }
-      })();
-    }
-
-    if (event.hookEventName === 'SubagentStop') {
-      const rawRecord = rawParsed as Record<string, unknown>;
-      const agentTranscriptPath =
-        typeof rawRecord['agent_transcript_path'] === 'string' ? rawRecord['agent_transcript_path'] : '';
-      if (agentTranscriptPath) {
-        const agentId =
-          typeof rawRecord['agent_id'] === 'string'
-            ? rawRecord['agent_id']
-            : basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, '');
-        const subagentFile: SubagentFile = {
-          agentId,
-          filePath: agentTranscriptPath,
-          toolUseId: typeof rawRecord['tool_use_id'] === 'string' ? rawRecord['tool_use_id'] : undefined,
-          agentType: typeof rawRecord['agent_type'] === 'string' ? rawRecord['agent_type'] : undefined,
-        };
-        void runSubagentTranscriptParse(event.sessionId, event.transcriptPath, subagentFile);
-      }
+    switch (event.hookEventName) {
+      case 'Stop':
+        derivedEvents = await this.onStopEvent(event);
+        break;
+      case 'PreCompact':
+        derivedEvents = await this.onPreCompactEvent(event);
+        break;
+      case 'StopFailure':
+        derivedEvents = await this.onStopFailureEvent(event);
+        break;
+      case 'SessionEnd':
+        derivedEvents = await this.onSessionEndEvent(event);
+        break;
+      case 'SubagentStop':
+        derivedEvents = await this.onSubagentStopEvent(event, rawParsed as Record<string, unknown>);
+        break;
+      default:
+        break;
     }
 
     return {
       decision: 'forward',
-      payload: rawEvent,
+      payload: [rawEvent, ...derivedEvents],
     };
+  }
+
+  private async onStopEvent(event: BaseClaudeCodeHookEvent): Promise<string[]> {
+    return await runMainTranscriptParse(event.sessionId, event.transcriptPath, 'Stop');
+  }
+
+  private async onPreCompactEvent(event: BaseClaudeCodeHookEvent): Promise<string[]> {
+    return await runMainTranscriptParse(event.sessionId, event.transcriptPath, 'PreCompact');
+  }
+
+  private async onStopFailureEvent(event: BaseClaudeCodeHookEvent): Promise<string[]> {
+    return await runMainTranscriptParse(event.sessionId, event.transcriptPath, 'StopFailure');
+  }
+
+  private async onSessionEndEvent(event: BaseClaudeCodeHookEvent): Promise<string[]> {
+    const events = await runMainTranscriptParse(event.sessionId, event.transcriptPath, 'SessionEnd');
+
+    // Backstop: guarantee every subagent discovered for this session gets at least one
+    // agent.subagent.usage event, even when its own SubagentStop hook never fired.
+    const subagentFiles = await findSubagentFiles(event.transcriptPath);
+    for (const file of subagentFiles) {
+      events.push(...(await runSubagentTranscriptParse(event.sessionId, event.transcriptPath, file)));
+    }
+
+    return events;
+  }
+
+  private async onSubagentStopEvent(
+    event: BaseClaudeCodeHookEvent,
+    rawRecord: Record<string, unknown>
+  ): Promise<string[]> {
+    const agentTranscriptPath =
+      typeof rawRecord['agent_transcript_path'] === 'string' ? rawRecord['agent_transcript_path'] : '';
+    if (!agentTranscriptPath) {
+      return [];
+    }
+
+    const agentId =
+      typeof rawRecord['agent_id'] === 'string'
+        ? rawRecord['agent_id']
+        : basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, '');
+    const subagentFile: SubagentFile = {
+      agentId,
+      filePath: agentTranscriptPath,
+      toolUseId: typeof rawRecord['tool_use_id'] === 'string' ? rawRecord['tool_use_id'] : undefined,
+      agentType: typeof rawRecord['agent_type'] === 'string' ? rawRecord['agent_type'] : undefined,
+    };
+
+    return await runSubagentTranscriptParse(event.sessionId, event.transcriptPath, subagentFile);
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
@@ -116,9 +146,11 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     });
   }
 
-  private forwardToSpool(rawEvent: string): void {
+  private forwardToSpool(rawEvents: string[]): void {
     // Intentionally not awaited: forwardOtlpEventToSpool is fire-and-forget.
-    forwardOtlpEventToSpool(rawEvent, CLAUDE_CODE_OTLP_AGENT_NAME);
+    for (const rawEvent of rawEvents) {
+      forwardOtlpEventToSpool(rawEvent, CLAUDE_CODE_OTLP_AGENT_NAME);
+    }
   }
 
   public async prepareAnalyticsFields(
@@ -163,7 +195,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     if (authResult.ok) {
       return {
         decision: 'forward',
-        payload: rawEvent,
+        payload: [rawEvent],
       }
     }
 

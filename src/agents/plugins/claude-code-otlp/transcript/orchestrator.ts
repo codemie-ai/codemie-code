@@ -5,11 +5,13 @@
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
  * (`./parse-state.js`, Task 6), reads only the transcript lines appended since the last
  * persisted `mainOffset` (`./transcript-reader.js`, Task 7), derives/merges
- * `agent.usage.request` records for those new lines (`./usage-request.js`, Task 8), forwards one
- * event per completed request, optionally forwards one `agent.session.summary` event
- * (`./session-summary.js`, Task 10), and persists state back — all before returning.
+ * `agent.usage.request` records for those new lines (`./usage-request.js`, Task 8), persists
+ * state back, and RETURNS one JSON string per completed request plus (on `Stop`/`SessionEnd`)
+ * one `agent.session.summary` event — it never forwards anything to the spool itself. The caller
+ * (the plugin's `processOtlpEvent`, via its per-event handlers) owns forwarding, so there is
+ * exactly one place in the whole analytics pipeline that writes to the spool.
  *
- * Never throws: every path is wrapped so a read/parse/forward failure degrades to a no-op rather
+ * Never throws: every path is wrapped so a read/parse failure degrades to an empty result rather
  * than interrupting the hook that triggered it (`processOtlpEvent` must never block or fail on
  * this).
  */
@@ -25,8 +27,6 @@ import {
   type NamedInvocationCounts,
 } from './session-summary.js';
 import { extractNamedInvocations } from '@/agents/plugins/claude/session/claude-named-invocations.js';
-import { forwardOtlpEventToSpool } from '../../utils.js';
-import { CLAUDE_CODE_OTLP_AGENT_NAME } from '../claude-code-otlp.constants.js';
 import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
@@ -184,12 +184,15 @@ async function buildFullAccumulator(
  *   keyed by `${requestId}::${model}` (matching `parse-state.ts`'s documented key shape), and
  *   updates `state.branchCounts` from every new line's `gitBranch` (regardless of whether that
  *   line carried usage).
- * - Forwards one `agent.usage.request` event per request key touched by this pass.
- * - On `Stop`/`SessionEnd` only, forwards exactly one `agent.session.summary` event
+ * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
+ * - On `Stop`/`SessionEnd` only, also returns exactly one `agent.session.summary` event
  *   (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`) built from a fresh full-file
- *   recompute (see {@link buildFullAccumulator} and Note B). `PreCompact` never forwards a
+ *   recompute (see {@link buildFullAccumulator} and Note B). `PreCompact` never returns a
  *   summary.
  * - Persists state back to disk.
+ *
+ * Never forwards anything itself — the caller is responsible for sending the returned events to
+ * the spool (exactly one place in the pipeline does that).
  *
  * Scoping ruling (Note A — a judgment call, since no file in this codebase documents a reliable
  * signal for when a *main*-transcript turn enters/exits a "skill context"): every
@@ -204,12 +207,11 @@ export async function runMainTranscriptParse(
   sessionId: string,
   transcriptPath: string,
   trigger: MainTranscriptTrigger
-): Promise<void> {
+): Promise<string[]> {
   try {
-    // Save-before-send, and both the load and the save happen inside the lock so a
-    // concurrent hook process for the same session can never read a state this pass is about to
-    // overwrite. Forwarding (network I/O) deliberately happens after the lock is released.
-    const eventsToForward = await withParseStateLock(sessionId, async () => {
+    // Both the load and the save happen inside the lock so a concurrent hook process for the
+    // same session can never read a state this pass is about to overwrite.
+    return await withParseStateLock(sessionId, async () => {
       const state = await loadParseState(sessionId);
       const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
@@ -270,12 +272,9 @@ export async function runMainTranscriptParse(
       await saveParseState(sessionId, state);
       return events;
     });
-
-    for (const raw of eventsToForward) {
-      await forwardOtlpEventToSpool(raw, CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
   } catch {
     // Swallow everything — never throw into processOtlpEvent.
+    return [];
   }
 }
 
@@ -372,18 +371,21 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
  *   scoped `scopeKind: 'agent'`, keyed by `${requestId}::${model}` — same merge/key convention
  *   `runMainTranscriptParse` uses for the main transcript.
- * - Forwards one `agent.usage.request` event per request key touched by *this* pass (no new
- *   lines means no new forwards — a no-op reparse resends nothing at this layer).
- * - Unconditionally forwards exactly one `agent.subagent.usage` event summarizing this agent's
- *   *cumulative* usage (every `scopeKind: 'agent'` record in `state.openRequests` for this
- *   `agentId`, not just the ones touched this pass) plus a fresh full-file tool-call/error/skill/
- *   timing scan (see {@link scanSubagentTranscript}) — this is deliberate: the `SessionEnd`
- *   backstop's whole purpose is to guarantee every subagent gets at least one
+ * - Returns one `agent.usage.request` JSON string per request key touched by *this* pass (no new
+ *   lines means no new events — a no-op reparse returns nothing at this layer).
+ * - Unconditionally also returns exactly one `agent.subagent.usage` event summarizing this
+ *   agent's *cumulative* usage (every `scopeKind: 'agent'` record in `state.openRequests` for
+ *   this `agentId`, not just the ones touched this pass) plus a fresh full-file
+ *   tool-call/error/skill/timing scan (see {@link scanSubagentTranscript}) — this is deliberate:
+ *   the `SessionEnd` backstop's whole purpose is to guarantee every subagent gets at least one
  *   `agent.subagent.usage` event even when its own `SubagentStop` hook never fired, so a
- *   re-run with nothing new since the last pass still emits one (summarizing unchanged
+ *   re-run with nothing new since the last pass still returns one (summarizing unchanged
  *   cumulative state), rather than being skipped.
  * - Persists the updated `subagentOffsets[subagentFile.agentId]` (and `openRequests`) back to
  *   disk.
+ *
+ * Never forwards anything itself — the caller is responsible for sending the returned events to
+ * the spool (exactly one place in the pipeline does that).
  *
  * `mainTranscriptPath` is accepted per the plan's interface but is not used internally —
  * `subagentFile.filePath` already names the file to read, and the main transcript's own path
@@ -399,12 +401,12 @@ export async function runSubagentTranscriptParse(
   // (eslint.config.mjs argsIgnorePattern) rather than suppressing the lint rule.
   _mainTranscriptPath: string,
   subagentFile: SubagentFile
-): Promise<void> {
+): Promise<string[]> {
   try {
-    // Save-before-send, load/mutate/save inside the lock — same rationale as
-    // runMainTranscriptParse: a sibling SubagentStop for another subagent in this same session
-    // must never read state this pass is about to overwrite.
-    const eventsToForward = await withParseStateLock(sessionId, async () => {
+    // Load/mutate/save inside the lock — same rationale as runMainTranscriptParse: a sibling
+    // SubagentStop for another subagent in this same session must never read state this pass is
+    // about to overwrite.
+    return await withParseStateLock(sessionId, async () => {
       const state = await loadParseState(sessionId);
       const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
       const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
@@ -451,11 +453,8 @@ export async function runSubagentTranscriptParse(
       await saveParseState(sessionId, state);
       return events;
     });
-
-    for (const raw of eventsToForward) {
-      await forwardOtlpEventToSpool(raw, CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
   } catch {
     // Swallow everything — never throw into processOtlpEvent.
+    return [];
   }
 }
