@@ -21,7 +21,6 @@ import {
   resolvePromptStory,
   resolveStoryOnce,
 } from './forward-context.js';
-import { AgentRegistry } from '@/agents/registry.js';
 
 const CODEMIE_CLI_VERSION = loadCodemieCliVersion();
 
@@ -279,6 +278,7 @@ export async function mapHookRecords(
         ? resolvePromptStory(ctx, rawPrompt)
         : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
 
+    const { AgentRegistry } = await import('@/agents/registry.js');
     const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
     let agentSpecificFields: Record<string, unknown> = {};
     try {
