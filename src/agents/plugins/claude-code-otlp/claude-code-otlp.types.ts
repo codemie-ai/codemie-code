@@ -41,6 +41,18 @@ interface RawBaseClaudeCodeHookEvent {
 
   /** Name of the event that fired */
   hook_event_name: string;
+
+  /** `SubagentStop`-only: path to the subagent's own transcript file. */
+  agent_transcript_path?: string;
+
+  /** `SubagentStop`-only: identifier of the subagent, when the hook payload carries one. */
+  agent_id?: string;
+
+  /** `SubagentStop`-only: the subagent's declared type (e.g. `explore`). */
+  agent_type?: string;
+
+  /** `SubagentStop`-only: the tool_use_id of the Task invocation that spawned the subagent. */
+  tool_use_id?: string;
 }
 
 /**
@@ -57,6 +69,18 @@ export interface BaseClaudeCodeHookEvent {
     level: "low" | "medium" | "high" | "xhigh" | "max";
   };
   hookEventName: string;
+
+  /** `SubagentStop`-only: path to the subagent's own transcript file. */
+  agentTranscriptPath?: string;
+
+  /** `SubagentStop`-only: identifier of the subagent, when the hook payload carries one. */
+  agentId?: string;
+
+  /** `SubagentStop`-only: the subagent's declared type (e.g. `explore`). */
+  agentType?: string;
+
+  /** `SubagentStop`-only: the tool_use_id of the Task invocation that spawned the subagent. */
+  toolUseId?: string;
 }
 
 export function toBaseClaudeCodeHookEvent(raw: RawBaseClaudeCodeHookEvent): BaseClaudeCodeHookEvent {
@@ -69,6 +93,10 @@ export function toBaseClaudeCodeHookEvent(raw: RawBaseClaudeCodeHookEvent): Base
     permissionMode: raw.permission_mode,
     effort: raw.effort ? { level: raw.effort.level } : undefined,
     hookEventName: raw.hook_event_name,
+    agentTranscriptPath: raw.agent_transcript_path,
+    agentId: raw.agent_id,
+    agentType: raw.agent_type,
+    toolUseId: raw.tool_use_id,
   };
 }
 

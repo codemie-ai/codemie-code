@@ -30,7 +30,7 @@ import { extractNamedInvocations } from '@/agents/plugins/claude/session/claude-
 import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
-// `runSubagentTranscriptParse` from this one module.
+// `collectSubagentTranscriptEvents` from this one module.
 export type { SubagentFile };
 
 export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
@@ -176,7 +176,7 @@ async function buildFullAccumulator(
 }
 
 /**
- * Orchestrate a main-transcript parse pass for one `Stop`/`PreCompact`/`SessionEnd` hook fire.
+ * Collect the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd` hook fire.
  *
  * - Loads persisted state, reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
@@ -202,7 +202,7 @@ async function buildFullAccumulator(
  *
  * Swallows every error internally — never throws into `processOtlpEvent`.
  */
-export async function runMainTranscriptParse(
+export async function collectMainTranscriptEvents(
   sessionId: string,
   transcriptPath: string,
   trigger: MainTranscriptTrigger
@@ -361,15 +361,15 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
 }
 
 /**
- * Orchestrate a subagent-transcript parse pass for one `SubagentStop` hook fire, or for one
- * subagent file discovered by the `SessionEnd` backstop scan (`findSubagentFiles()`).
+ * Collect the spool-bound events for one `SubagentStop` hook fire, or for one subagent file
+ * discovered by the `SessionEnd` backstop scan (`findSubagentFiles()`).
  *
  * - Loads persisted state, reads only the lines appended since
  *   `state.subagentOffsets[subagentFile.agentId]` (defaulting to 0 for a never-before-seen
  *   agent).
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
  *   scoped `scopeKind: 'agent'`, keyed by `${requestId}::${model}` — same merge/key convention
- *   `runMainTranscriptParse` uses for the main transcript.
+ *   `collectMainTranscriptEvents` uses for the main transcript.
  * - Returns one `agent.usage.request` JSON string per request key touched by *this* pass (no new
  *   lines means no new events — a no-op reparse returns nothing at this layer).
  * - Unconditionally also returns exactly one `agent.subagent.usage` event summarizing this
@@ -386,23 +386,14 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
  * Never forwards anything itself — the caller is responsible for sending the returned events to
  * the spool (exactly one place in the pipeline does that).
  *
- * `mainTranscriptPath` is accepted as a parameter but is not used internally —
- * `subagentFile.filePath` already names the file to read, and the main transcript's own path
- * carries no information this function's own logic needs.
- *
  * Swallows every error internally — never throws into `processOtlpEvent`.
  */
-export async function runSubagentTranscriptParse(
+export async function collectSubagentTranscriptEvents(
   sessionId: string,
-  // `mainTranscriptPath` (positionally the second parameter) is unused in this function's own
-  // body — `subagentFile.filePath` already locates the file this call concerns. Prefixed with
-  // `_` per this repo's unused-arg convention
-  // (eslint.config.mjs argsIgnorePattern) rather than suppressing the lint rule.
-  _mainTranscriptPath: string,
   subagentFile: SubagentFile
 ): Promise<string[]> {
   try {
-    // Load/mutate/save inside the lock — same rationale as runMainTranscriptParse: a sibling
+    // Load/mutate/save inside the lock — same rationale as collectMainTranscriptEvents: a sibling
     // SubagentStop for another subagent in this same session must never read state this pass is
     // about to overwrite.
     return await withParseStateLock(sessionId, async () => {

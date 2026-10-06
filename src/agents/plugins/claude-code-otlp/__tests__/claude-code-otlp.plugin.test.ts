@@ -12,8 +12,8 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 const execMock = vi.fn();
-const runMainTranscriptParseMock = vi.fn();
-const runSubagentTranscriptParseMock = vi.fn();
+const collectMainTranscriptEventsMock = vi.fn();
+const collectSubagentTranscriptEventsMock = vi.fn();
 const findSubagentFilesMock = vi.fn();
 
 vi.mock('@/utils/exec.js', () => ({
@@ -21,8 +21,8 @@ vi.mock('@/utils/exec.js', () => ({
 }));
 
 vi.mock('../transcript/orchestrator.js', () => ({
-  runMainTranscriptParse: runMainTranscriptParseMock,
-  runSubagentTranscriptParse: runSubagentTranscriptParseMock,
+  collectMainTranscriptEvents: collectMainTranscriptEventsMock,
+  collectSubagentTranscriptEvents: collectSubagentTranscriptEventsMock,
 }));
 
 vi.mock('../transcript/subagent-usage.js', () => ({
@@ -155,10 +155,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   }
 
   beforeEach(() => {
-    runMainTranscriptParseMock.mockReset();
-    runMainTranscriptParseMock.mockResolvedValue([]);
-    runSubagentTranscriptParseMock.mockReset();
-    runSubagentTranscriptParseMock.mockResolvedValue([]);
+    collectMainTranscriptEventsMock.mockReset();
+    collectMainTranscriptEventsMock.mockResolvedValue([]);
+    collectSubagentTranscriptEventsMock.mockReset();
+    collectSubagentTranscriptEventsMock.mockResolvedValue([]);
     findSubagentFilesMock.mockReset();
     findSubagentFilesMock.mockResolvedValue([]);
     vi.mocked(forwardOtlpEventToSpool).mockReset();
@@ -170,7 +170,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   });
 
   it.each(['Stop', 'PreCompact', 'SessionEnd', 'StopFailure'] as const)(
-    'invokes runMainTranscriptParse with the extracted session/transcript/trigger on %s',
+    'invokes collectMainTranscriptEvents with the extracted session/transcript/trigger on %s',
     async (hookEventName) => {
       const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
       const plugin = new ClaudeCodeOtlpPlugin();
@@ -178,7 +178,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
       await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-      expect(runMainTranscriptParseMock).toHaveBeenCalledWith(
+      expect(collectMainTranscriptEventsMock).toHaveBeenCalledWith(
         'sid-1',
         '/tmp/transcript.jsonl',
         hookEventName
@@ -187,17 +187,17 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     }
   );
 
-  it('does not dispatch runMainTranscriptParse for unrelated hook events', async () => {
+  it('does not dispatch collectMainTranscriptEvents for unrelated hook events', async () => {
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostToolUse' }));
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(runMainTranscriptParseMock).not.toHaveBeenCalled();
+    expect(collectMainTranscriptEventsMock).not.toHaveBeenCalled();
   });
 
-  it('invokes runSubagentTranscriptParse with the agent_id/tool_use_id/agent_type extracted from a SubagentStop payload', async () => {
+  it('invokes collectSubagentTranscriptEvents with the agent_id/tool_use_id/agent_type extracted from a SubagentStop payload', async () => {
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(
@@ -212,7 +212,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', {
+    expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith('sid-1', {
       agentId: 'sub-1',
       filePath: '/tmp/agent-sub-1.jsonl',
       toolUseId: 'tu-1',
@@ -232,24 +232,23 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith(
+    expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith(
       'sid-1',
-      '/tmp/transcript.jsonl',
       expect.objectContaining({ agentId: 'sub-2' })
     );
   });
 
-  it('skips runSubagentTranscriptParse on SubagentStop when agent_transcript_path is missing', async () => {
+  it('skips collectSubagentTranscriptEvents on SubagentStop when agent_transcript_path is missing', async () => {
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SubagentStop' }));
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(runSubagentTranscriptParseMock).not.toHaveBeenCalled();
+    expect(collectSubagentTranscriptEventsMock).not.toHaveBeenCalled();
   });
 
-  it('runs runSubagentTranscriptParse for every subagent file found on SessionEnd', async () => {
+  it('runs collectSubagentTranscriptEvents for every subagent file found on SessionEnd', async () => {
     findSubagentFilesMock.mockResolvedValue([
       { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl' },
       { agentId: 'sub-2', filePath: '/tmp/agent-sub-2.jsonl' },
@@ -261,10 +260,9 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
     expect(findSubagentFilesMock).toHaveBeenCalledWith('/tmp/transcript.jsonl');
-    expect(runSubagentTranscriptParseMock).toHaveBeenCalledTimes(2);
-    expect(runSubagentTranscriptParseMock).toHaveBeenCalledWith(
+    expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledTimes(2);
+    expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith(
       'sid-1',
-      '/tmp/transcript.jsonl',
       { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl' }
     );
   });
@@ -276,14 +274,14 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(runMainTranscriptParseMock).not.toHaveBeenCalled();
+    expect(collectMainTranscriptEventsMock).not.toHaveBeenCalled();
     expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
   });
 
   it('forwards every event a per-event handler returns (the raw event plus any derived events) through the single forwardToSpool path, in order', async () => {
     const derivedUsageEvent = JSON.stringify({ type: 'agent.usage.request' });
     const derivedSummaryEvent = JSON.stringify({ type: 'agent.session.summary' });
-    runMainTranscriptParseMock.mockResolvedValue([derivedUsageEvent, derivedSummaryEvent]);
+    collectMainTranscriptEventsMock.mockResolvedValue([derivedUsageEvent, derivedSummaryEvent]);
 
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
@@ -291,7 +289,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    // runMainTranscriptParse/runSubagentTranscriptParse never call forwardOtlpEventToSpool
+    // collectMainTranscriptEvents/collectSubagentTranscriptEvents never call forwardOtlpEventToSpool
     // themselves (they are mocked here to just return data) — every event that reaches the spool
     // mock arrived via forwardToSpool, called exactly once from processOtlpEvent.
     expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(3);

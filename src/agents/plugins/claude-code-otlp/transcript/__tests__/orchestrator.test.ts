@@ -1,8 +1,8 @@
 /**
- * Tests for `runMainTranscriptParse` — the `Stop`/`PreCompact`/`SessionEnd` main-transcript
+ * Tests for `collectMainTranscriptEvents` — the `Stop`/`PreCompact`/`SessionEnd` main-transcript
  * orchestrator.
  *
- * Neither `runMainTranscriptParse` nor `runSubagentTranscriptParse` writes to the spool itself —
+ * Neither `collectMainTranscriptEvents` nor `collectSubagentTranscriptEvents` writes to the spool itself —
  * each returns the raw JSON strings it wants forwarded, and the caller (the plugin's
  * `processOtlpEvent`) is the only place that actually forwards them. So these tests read the
  * returned array directly; no network/daemon mocking is needed. `CODEMIE_HOME` points at a fresh
@@ -104,9 +104,9 @@ function writeSubagentFixture(
   return { agentId, filePath };
 }
 
-describe('runMainTranscriptParse — idempotent reparse', () => {
+describe('collectMainTranscriptEvents — idempotent reparse', () => {
   it('returns agent.usage.request events with identical request_id/model pairs across a crash-before-save re-parse', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
     const { saveParseState, createParseState } = await import('../parse-state.js');
 
     const sessionId = 'session-idempotent';
@@ -116,7 +116,7 @@ describe('runMainTranscriptParse — idempotent reparse', () => {
       usageLine({ uuid: 'uuid-2', messageId: 'msg-2', outputTokens: 75, stopReason: 'end_turn' }),
     ]);
 
-    const first = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'Stop'));
+    const first = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
 
     const firstPairs = first
       .filter((e) => e.type === 'agent.usage.request')
@@ -130,7 +130,7 @@ describe('runMainTranscriptParse — idempotent reparse', () => {
     // happened).
     await saveParseState(sessionId, createParseState());
 
-    const second = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'Stop'));
+    const second = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
 
     const secondPairs = second
       .filter((e) => e.type === 'agent.usage.request')
@@ -142,9 +142,9 @@ describe('runMainTranscriptParse — idempotent reparse', () => {
   });
 });
 
-describe('runMainTranscriptParse — Stop trigger', () => {
+describe('collectMainTranscriptEvents — Stop trigger', () => {
   it('returns one agent.usage.request event per distinct request plus one incremental agent.session.summary', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-stop-basic';
     const transcriptPath = writeTranscript('transcript-stop.jsonl', [
@@ -152,7 +152,7 @@ describe('runMainTranscriptParse — Stop trigger', () => {
       usageLine({ uuid: 'uuid-2', messageId: 'msg-2', outputTokens: 75 }),
     ]);
 
-    const raw = await runMainTranscriptParse(sessionId, transcriptPath, 'Stop');
+    const raw = await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
     expect(raw).toHaveLength(3);
 
     const events = parseAll(raw);
@@ -166,16 +166,16 @@ describe('runMainTranscriptParse — Stop trigger', () => {
   });
 });
 
-describe('runMainTranscriptParse — PreCompact trigger', () => {
+describe('collectMainTranscriptEvents — PreCompact trigger', () => {
   it('returns usage-request events but never a session summary', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-precompact';
     const transcriptPath = writeTranscript('transcript-precompact.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
 
-    const events = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'PreCompact'));
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'PreCompact'));
     const usageEvents = events.filter((e) => e.type === 'agent.usage.request');
     const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
 
@@ -184,18 +184,18 @@ describe('runMainTranscriptParse — PreCompact trigger', () => {
   });
 });
 
-describe('runMainTranscriptParse — compaction_count', () => {
+describe('collectMainTranscriptEvents — compaction_count', () => {
   it('persists one increment per PreCompact trigger and surfaces the cumulative count on a later summary', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-compaction';
     const transcriptPath = writeTranscript('transcript-compaction.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
 
-    await runMainTranscriptParse(sessionId, transcriptPath, 'PreCompact');
-    await runMainTranscriptParse(sessionId, transcriptPath, 'PreCompact');
-    const events = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'Stop'));
+    await collectMainTranscriptEvents(sessionId, transcriptPath, 'PreCompact');
+    await collectMainTranscriptEvents(sessionId, transcriptPath, 'PreCompact');
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
 
     const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
     expect(summaryEvents).toHaveLength(1);
@@ -203,9 +203,9 @@ describe('runMainTranscriptParse — compaction_count', () => {
   });
 });
 
-describe('runMainTranscriptParse — api_calls', () => {
+describe('collectMainTranscriptEvents — api_calls', () => {
   it("surfaces the session's full agent.usage.request record count on the summary event", async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-api-calls';
     const transcriptPath = writeTranscript('transcript-api-calls.jsonl', [
@@ -213,7 +213,7 @@ describe('runMainTranscriptParse — api_calls', () => {
       usageLine({ uuid: 'uuid-2', messageId: 'msg-2', outputTokens: 75 }),
     ]);
 
-    const events = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'Stop'));
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
     const usageEvents = events.filter((e) => e.type === 'agent.usage.request');
     const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
 
@@ -223,16 +223,16 @@ describe('runMainTranscriptParse — api_calls', () => {
   });
 });
 
-describe('runMainTranscriptParse — SessionEnd trigger', () => {
+describe('collectMainTranscriptEvents — SessionEnd trigger', () => {
   it('returns a final-phase summary with an ended_at key present', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-end';
     const transcriptPath = writeTranscript('transcript-end.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
 
-    const events = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'SessionEnd'));
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd'));
     const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
 
     expect(summaryEvents).toHaveLength(1);
@@ -242,33 +242,33 @@ describe('runMainTranscriptParse — SessionEnd trigger', () => {
   });
 });
 
-describe('runMainTranscriptParse — missing transcript file', () => {
+describe('collectMainTranscriptEvents — missing transcript file', () => {
   it('resolves cleanly to an empty array, for a trigger that never emits a summary', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
     const { loadParseState } = await import('../parse-state.js');
 
     const sessionId = 'session-missing-file';
     const missingPath = join(transcriptDir, 'does-not-exist.jsonl');
 
-    await expect(runMainTranscriptParse(sessionId, missingPath, 'PreCompact')).resolves.toEqual([]);
+    await expect(collectMainTranscriptEvents(sessionId, missingPath, 'PreCompact')).resolves.toEqual([]);
 
     const state = await loadParseState(sessionId);
     expect(state.mainOffset).toBe(0);
   });
 
   it('never throws even on Stop (which does attempt a full-file summary recompute)', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-missing-file-stop';
     const missingPath = join(transcriptDir, 'also-does-not-exist.jsonl');
 
-    await expect(runMainTranscriptParse(sessionId, missingPath, 'Stop')).resolves.toBeInstanceOf(Array);
+    await expect(collectMainTranscriptEvents(sessionId, missingPath, 'Stop')).resolves.toBeInstanceOf(Array);
   });
 });
 
-describe('runMainTranscriptParse — tool-call accumulation', () => {
+describe('collectMainTranscriptEvents — tool-call accumulation', () => {
   it('counts Edit/Write tool_use blocks into files_changed/files_written on the Stop summary', async () => {
-    const { runMainTranscriptParse } = await import('../orchestrator.js');
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-tools';
     const toolLine = JSON.stringify({
@@ -295,7 +295,7 @@ describe('runMainTranscriptParse — tool-call accumulation', () => {
     });
     const transcriptPath = writeTranscript('transcript-tools.jsonl', [toolLine, resultLine]);
 
-    const events = parseAll(await runMainTranscriptParse(sessionId, transcriptPath, 'Stop'));
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
 
     const summary = events.find((e) => e.type === 'agent.session.summary');
     expect(summary).toBeDefined();
@@ -308,9 +308,9 @@ describe('runMainTranscriptParse — tool-call accumulation', () => {
   });
 });
 
-describe('runSubagentTranscriptParse — SessionEnd backstop (three subagents, one pre-advanced)', () => {
+describe('collectSubagentTranscriptEvents — SessionEnd backstop (three subagents, one pre-advanced)', () => {
   it('returns exactly three agent.subagent.usage events — one per subagent, including the one whose own SubagentStop already advanced its offset — never a fourth', async () => {
-    const { runSubagentTranscriptParse } = await import('../orchestrator.js');
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
     const { findSubagentFiles } = await import('../subagent-usage.js');
 
     const sessionId = 'session-backstop';
@@ -331,7 +331,7 @@ describe('runSubagentTranscriptParse — SessionEnd backstop (three subagents, o
     const filesBeforeBackstop = await findSubagentFiles(mainTranscriptPath);
     const a1File = filesBeforeBackstop.find((f) => f.agentId === 'a1');
     if (!a1File) throw new Error('fixture missing a1');
-    await runSubagentTranscriptParse(sessionId, mainTranscriptPath, a1File);
+    await collectSubagentTranscriptEvents(sessionId, a1File);
 
     // Exercise exactly what the plugin's SessionEnd branch does: discover every subagent file
     // for the session and re-run the subagent parse for each one, unconditionally — the
@@ -340,7 +340,7 @@ describe('runSubagentTranscriptParse — SessionEnd backstop (three subagents, o
     expect(allFiles).toHaveLength(3);
     const backstopEvents: ForwardedEvent[] = [];
     for (const file of allFiles) {
-      backstopEvents.push(...parseAll(await runSubagentTranscriptParse(sessionId, mainTranscriptPath, file)));
+      backstopEvents.push(...parseAll(await collectSubagentTranscriptEvents(sessionId, file)));
     }
 
     const subagentUsageEvents = backstopEvents.filter((e) => e.type === 'agent.subagent.usage');
@@ -353,9 +353,9 @@ describe('runSubagentTranscriptParse — SessionEnd backstop (three subagents, o
   });
 });
 
-describe('runSubagentTranscriptParse — no new bytes since last run', () => {
+describe('collectSubagentTranscriptEvents — no new bytes since last run', () => {
   it('returns zero new agent.usage.request events on a no-op reparse, but still exactly one agent.subagent.usage event summarizing unchanged cumulative usage', async () => {
-    const { runSubagentTranscriptParse } = await import('../orchestrator.js');
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
     const { findSubagentFiles } = await import('../subagent-usage.js');
 
     const sessionId = 'session-no-new-bytes';
@@ -367,13 +367,13 @@ describe('runSubagentTranscriptParse — no new bytes since last run', () => {
 
     const [file] = await findSubagentFiles(mainTranscriptPath);
 
-    const firstEvents = parseAll(await runSubagentTranscriptParse(sessionId, mainTranscriptPath, file));
+    const firstEvents = parseAll(await collectSubagentTranscriptEvents(sessionId, file));
     expect(firstEvents.filter((e) => e.type === 'agent.usage.request')).toHaveLength(2);
     expect(firstEvents.filter((e) => e.type === 'agent.subagent.usage')).toHaveLength(1);
 
     // Re-run on the same subagent file with no new content appended since the last call (its
     // offset is now at EOF).
-    const secondEvents = parseAll(await runSubagentTranscriptParse(sessionId, mainTranscriptPath, file));
+    const secondEvents = parseAll(await collectSubagentTranscriptEvents(sessionId, file));
     const secondUsageRequests = secondEvents.filter((e) => e.type === 'agent.usage.request');
     const secondSubagentUsage = secondEvents.filter((e) => e.type === 'agent.subagent.usage');
 
@@ -387,19 +387,18 @@ describe('runSubagentTranscriptParse — no new bytes since last run', () => {
   });
 });
 
-describe('runSubagentTranscriptParse — missing subagent transcript file', () => {
+describe('collectSubagentTranscriptEvents — missing subagent transcript file', () => {
   it('resolves without throwing and still returns one empty-usage agent.subagent.usage event, with no agent.usage.request events', async () => {
-    const { runSubagentTranscriptParse } = await import('../orchestrator.js');
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-subagent-missing';
-    const mainTranscriptPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-main')]);
     const missingSubagentFile = {
       agentId: 'ghost',
       filePath: join(transcriptDir, sessionId, 'subagents', 'agent-ghost.jsonl'),
     };
 
     const events = parseAll(
-      await runSubagentTranscriptParse(sessionId, mainTranscriptPath, missingSubagentFile)
+      await collectSubagentTranscriptEvents(sessionId, missingSubagentFile)
     );
     const usageRequestEvents = events.filter((e) => e.type === 'agent.usage.request');
     const subagentUsageEvents = events.filter((e) => e.type === 'agent.subagent.usage');
