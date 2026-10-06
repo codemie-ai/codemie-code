@@ -44,7 +44,7 @@ export function loadCodemieCliVersion(): string {
 /**
  * Per-record story-id override for `UserPromptSubmit` hook events only,
  * layered on top of the per-tick `resolveStoryOnce()` cache in
- * `ctx.story` (explicit/branch/''). Priority order across the full chain is
+ * `ctx.story` (explicit/branch/undefined). Priority order across the full chain is
  * explicit -> marker -> branch -> mention:
  *
  * 1. If the per-tick cache already resolved to `'explicit'`, that is the

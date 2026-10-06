@@ -3,9 +3,9 @@
  * events.
  *
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
- * (`./parse-state.js`, Task 6), reads only the transcript lines appended since the last
- * persisted `mainOffset` (`./transcript-reader.js`, Task 7), derives/merges
- * `agent.usage.request` records for those new lines (`./usage-request.js`, Task 8), persists
+ * (`./parse-state.js`), reads only the transcript lines appended since the last
+ * persisted `mainOffset` (`./transcript-reader.js`), derives/merges
+ * `agent.usage.request` records for those new lines (`./usage-request.js`), persists
  * state back, and RETURNS one JSON string per completed request plus (on `Stop`/`SessionEnd`)
  * one `agent.session.summary` event — it never forwards anything to the spool itself. The caller
  * (the plugin's `processOtlpEvent`, via its per-event handlers) owns forwarding, so there is
@@ -30,7 +30,7 @@ import { extractNamedInvocations } from '@/agents/plugins/claude/session/claude-
 import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
-// `runSubagentTranscriptParse` from this one module, per the plan's wiring description.
+// `runSubagentTranscriptParse` from this one module.
 export type { SubagentFile };
 
 export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
@@ -93,24 +93,23 @@ function emptyAccumulator(): SessionSummaryAccumulator {
  * Recompute the full-session summary accumulator, named-invocation counts, and session start
  * time from byte 0 of the main transcript.
  *
- * `TranscriptParseState` (Task 6's fixed shape) has no persisted field for any of
+ * `TranscriptParseState`'s fixed shape has no persisted field for any of
  * `SessionSummaryAccumulator`'s data or for `NamedInvocationCounts` — only `branchCounts` is
  * incrementally tracked there. So, for `Stop`/`SessionEnd`, this helper re-derives everything
- * else fresh from the whole transcript file every time (see Task 11's Note B). Transcripts are
+ * else fresh from the whole transcript file every time. Transcripts are
  * not enormous and this only runs on `Stop`/`SessionEnd`, not on every hook.
  *
  * Never throws: a missing/unreadable transcript resolves to the emptiest defensible result
  * (empty accumulator, empty named-invocation counts, `startedAt: ''`); a malformed individual
  * line is skipped rather than aborting the whole scan.
  *
- * Known limitations (no reliable in-transcript signal found for any of these — see spec.md's
- * confidence gaps):
+ * Known limitations (no reliable in-transcript signal found for any of these):
  * - `toolCalls[*].errors` is derived from a sibling `tool_result` block's `is_error`/`isError`
  *   flag (the same pattern `claude.session.ts`/`claude.metrics-processor.ts` already use for
  *   tool-use_id → error lookups) when one is found; otherwise a tool call's `.errors` stays 0.
  * - `linesAdded`/`linesRemoved` default to 0 — an `Edit`/`Write` tool_use's `input` carries the
  *   *proposed* edit, not a diff stat, so no reliable added/removed line count can be derived from
- *   it without re-implementing diffing (out of scope for this task).
+ *   it without re-implementing diffing.
  * - `compactionCount` defaults to 0 — no verified in-transcript signal was found (`PreCompact` is
  *   a hook event, not a transcript line).
  */
@@ -140,7 +139,7 @@ async function buildFullAccumulator(
   // Pass 1: collect tool_result error flags keyed by their matching tool_use_id.
   const errorByToolUseId = collectErrorToolUseIds(parsedLines);
 
-  // Pass 2: models (reusing Task 8's own model-resolution logic via parseUsageLine).
+  // Pass 2: models (reusing parseUsageLine's own model-resolution logic).
   for (const line of rawLines) {
     const parsedUsage = parseUsageLine(line, 'main', '', '');
     if (parsedUsage) {
@@ -187,16 +186,16 @@ async function buildFullAccumulator(
  * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
  * - On `Stop`/`SessionEnd` only, also returns exactly one `agent.session.summary` event
  *   (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`) built from a fresh full-file
- *   recompute (see {@link buildFullAccumulator} and Note B). `PreCompact` never returns a
+ *   recompute (see {@link buildFullAccumulator}). `PreCompact` never returns a
  *   summary.
  * - Persists state back to disk.
  *
  * Never forwards anything itself — the caller is responsible for sending the returned events to
  * the spool (exactly one place in the pipeline does that).
  *
- * Scoping ruling (Note A — a judgment call, since no file in this codebase documents a reliable
+ * Scoping ruling (a judgment call, since no file in this codebase documents a reliable
  * signal for when a *main*-transcript turn enters/exits a "skill context"): every
- * main-transcript-derived usage record in this task is scoped as `scopeKind: 'main'`,
+ * main-transcript-derived usage record is scoped as `scopeKind: 'main'`,
  * `scopeName: ''` unconditionally. `state.activeSkill` is deliberately left untouched (not read,
  * not written) here — it stays available, unused, for a future task that identifies a real
  * signal for it.
@@ -363,7 +362,7 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
 
 /**
  * Orchestrate a subagent-transcript parse pass for one `SubagentStop` hook fire, or for one
- * subagent file discovered by the `SessionEnd` backstop scan (`findSubagentFiles()`, Task 9).
+ * subagent file discovered by the `SessionEnd` backstop scan (`findSubagentFiles()`).
  *
  * - Loads persisted state, reads only the lines appended since
  *   `state.subagentOffsets[subagentFile.agentId]` (defaulting to 0 for a never-before-seen
@@ -387,7 +386,7 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
  * Never forwards anything itself — the caller is responsible for sending the returned events to
  * the spool (exactly one place in the pipeline does that).
  *
- * `mainTranscriptPath` is accepted per the plan's interface but is not used internally —
+ * `mainTranscriptPath` is accepted as a parameter but is not used internally —
  * `subagentFile.filePath` already names the file to read, and the main transcript's own path
  * carries no information this function's own logic needs.
  *
@@ -395,9 +394,9 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
  */
 export async function runSubagentTranscriptParse(
   sessionId: string,
-  // `mainTranscriptPath` (positionally the second parameter, per the plan's binding interface
-  // signature) is unused in this function's own body — `subagentFile.filePath` already locates
-  // the file this call concerns. Prefixed with `_` per this repo's unused-arg convention
+  // `mainTranscriptPath` (positionally the second parameter) is unused in this function's own
+  // body — `subagentFile.filePath` already locates the file this call concerns. Prefixed with
+  // `_` per this repo's unused-arg convention
   // (eslint.config.mjs argsIgnorePattern) rather than suppressing the lint rule.
   _mainTranscriptPath: string,
   subagentFile: SubagentFile

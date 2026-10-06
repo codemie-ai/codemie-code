@@ -319,7 +319,7 @@ describe('mapHookRecords', () => {
     };
 
     // The real registered OTLP agent name, unlike every other test in this file which
-    // deliberately uses the unregistered 'claude' (CR-016: that name resolves to `undefined`,
+    // deliberately uses the unregistered 'claude' (that name resolves to `undefined`,
     // so this is the only test exercising the real AgentRegistry.getAnalyticsAgent merge path).
     const record = JSON.stringify({
       agentName: 'claude-code-otlp',

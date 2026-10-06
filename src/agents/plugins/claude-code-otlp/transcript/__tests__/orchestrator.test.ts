@@ -87,7 +87,7 @@ function parseAll(raw: string[]): ForwardedEvent[] {
 /**
  * Write a subagent fixture transcript (plus its sidecar `.meta.json`) under
  * `<transcriptDir>/<sessionId>/subagents/agent-<agentId>.jsonl`, matching
- * `findSubagentFiles()`'s own discovery convention (Task 9). Returns the `SubagentFile` shape
+ * `findSubagentFiles()`'s own discovery convention. Returns the `SubagentFile` shape
  * `findSubagentFiles()` would discover for it.
  */
 function writeSubagentFixture(
