@@ -13,7 +13,7 @@ beforeEach(() => {
 
 // Only 'claude-code-otlp' (the real registered OTLP agent name) resolves to an agent;
 // every other name — including 'claude', which every other test in this file deliberately
-// uses — resolves to `undefined`, matching the real AgentRegistry's behavior (CR-016).
+// uses — resolves to `undefined`, matching the real AgentRegistry's behavior.
 vi.mock('@/agents/registry.js', () => ({
   AgentRegistry: {
     getAnalyticsAgent: (agentName: string) =>
@@ -284,7 +284,7 @@ describe('mapHookRecords', () => {
     };
 
     // Two top-level subagents, neither carrying a sidecar tool_use_id, but with
-    // distinct agent_id — CR-018's fallback must keep these from colliding.
+    // distinct agent_id — the fallback must keep these from colliding.
     const record1 = buildHookRecord('SubagentStop', 'sid1', {
       type: 'agent.subagent.usage',
       tool_use_id: '',

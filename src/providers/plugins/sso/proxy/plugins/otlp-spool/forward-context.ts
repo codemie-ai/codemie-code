@@ -24,7 +24,7 @@ export interface ForwardContext {
   /** Per-session developer-identity cache, resolved once */
   identity?: { developerName?: string; identitySource?: IdentitySource };
   /** Per-tick story-id cache, resolved once per forward tick. */
-  story?: { storyId?: string; storySource?: 'explicit' | 'branch' | '' };
+  story?: { storyId?: string; storySource?: 'explicit' | 'branch' };
 }
 
 /** The installed CodeMie CLI version, resolved once at import time. */
@@ -88,8 +88,7 @@ export function resolvePromptStory(
 /**
  * Resolve and cache this forward tick's story id/source once, from the first record that carries
  * a real `cwd` — guarded the same way {@link resolveIdentityOnce} is, so a synthetic
- * transcript-derived record's empty `cwd` can never poison the cache for the rest of the batch
- * (CR-019).
+ * transcript-derived record's empty `cwd` can never poison the cache for the rest of the batch.
  */
 export async function resolveStoryOnce(ctx: ForwardContext, cwd: string): Promise<void> {
   if (!cwd || ctx.story?.storyId !== undefined) return;
@@ -99,7 +98,7 @@ export async function resolveStoryOnce(ctx: ForwardContext, cwd: string): Promis
 
   ctx.story = resolved
     ? { storyId: resolved.storyId, storySource: resolved.storySource }
-    : { storyId: '', storySource: '' };
+    : { storyId: '' };
 }
 
 /**
@@ -107,8 +106,7 @@ export async function resolveStoryOnce(ctx: ForwardContext, cwd: string): Promis
  * carries a real `cwd`. An empty `cwd` (every synthetic transcript-derived record) is skipped
  * rather than cached, mirroring {@link resolveGitInfo}'s own `if (!cwd) return;` guard in
  * `forwarder.ts` — otherwise the first such record in a batch would permanently cache the
- * cwd-less (and therefore less accurate) git-tier result for every later record in the same tick
- * (CR-019).
+ * cwd-less (and therefore less accurate) git-tier result for every later record in the same tick.
  */
 export async function resolveIdentityOnce(ctx: ForwardContext, cwd: string): Promise<void> {
   if (!cwd) return;
