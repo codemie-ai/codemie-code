@@ -58,8 +58,12 @@ describe('SSOModelProxy.fetchModels', () => {
     ]);
 
     const proxy = new SSOModelProxy();
+    // Org URL (frontend) and API URL differ in real setup; the API URL must win.
     const config = {
-      ...cfg({ codeMieUrl: 'https://codemie.example.com' }),
+      ...cfg({
+        codeMieUrl: 'https://codemie.example.com',
+        baseUrl: 'https://codemie.example.com/code-assistant-api',
+      }),
       cookies: { codemie_access_token: 'fresh-cookie' },
     } as CodeMieConfigOptions;
 
@@ -70,7 +74,7 @@ describe('SSOModelProxy.fetchModels', () => {
     ]);
     expect(getStoredCredentialsMock).not.toHaveBeenCalled();
     expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(
-      'https://codemie.example.com',
+      'https://codemie.example.com/code-assistant-api',
       { codemie_access_token: 'fresh-cookie' }
     );
   });
