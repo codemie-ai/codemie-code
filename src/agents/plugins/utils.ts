@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { OtlpHookSpoolData } from '@/providers/plugins/sso/proxy/plugins/otlp.plugin.js';
 import { readState } from '../../cli/commands/proxy/daemon-manager.js';
 import { logger } from '../../utils/logger.js';
@@ -26,7 +27,10 @@ export async function forwardOtlpEventToSpool(event: Record<string, unknown>, ag
     const body: OtlpHookSpoolData = {
       agentName,
       timestamp: Date.now(),
-      raw: JSON.stringify(event)
+      raw: JSON.stringify({
+        ...event,
+        event_id: randomUUID()
+      })
     }
 
     try {

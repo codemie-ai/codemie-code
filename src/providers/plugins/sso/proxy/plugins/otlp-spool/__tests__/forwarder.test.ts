@@ -26,13 +26,19 @@ interface MappedRecord {
   client_version?: string;
 }
 
-function buildHookRecord(hookEventName: string, sessionId: string, extra: Record<string, unknown> = {}): string {
+function buildHookRecord(
+  hookEventName: string,
+  sessionId: string,
+  extra: Record<string, unknown> = {},
+  eventId: string = 'default-event-id'
+): string {
   return JSON.stringify({
     agentName: 'claude',
     raw: JSON.stringify({
       hook_event_name: hookEventName,
       session_id: sessionId,
       cwd: '',
+      event_id: eventId,
       ...extra,
     }),
     timestamp: Date.now(),
@@ -77,10 +83,10 @@ describe('mapHookRecords', () => {
       git: {},
     };
 
-    const record1 = buildHookRecord('SessionStart', 'sid1');
-    const record2 = buildHookRecord('Stop', 'sid1');
+    const record1 = buildHookRecord('SessionStart', 'sid1', {}, 'event-id-1');
+    const record2 = buildHookRecord('Stop', 'sid1', {}, 'event-id-2');
 
-    const payload = await mapHookRecords([record1, record2], ctx, 0);
+    const payload = await mapHookRecords([record1, record2], ctx);
     const lines = payload.ndjson
       .trim()
       .split('\n')
@@ -95,7 +101,7 @@ describe('mapHookRecords', () => {
     expect(lines[0].codemie_cli_version).toBe(lines[1].codemie_cli_version);
   });
 
-  it('derives event_id from the running byte offset seeded by startOffset', async () => {
+  it('passes the event_id already stamped at spool-write time straight through unchanged', async () => {
     const { mapHookRecords } = await import('../forwarder.js');
 
     const ctx = {
@@ -106,16 +112,12 @@ describe('mapHookRecords', () => {
       git: {},
     };
 
-    const record = buildHookRecord('SessionStart', 'sid1');
+    const record = buildHookRecord('SessionStart', 'sid1', {}, 'stamped-event-id-abc');
 
-    const payloadAtZero = await mapHookRecords([record], ctx, 0);
-    const payloadAtOffset = await mapHookRecords([record], { ...ctx, git: {} }, 500);
+    const payload = await mapHookRecords([record], ctx);
+    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
-    const lineAtZero = JSON.parse(payloadAtZero.ndjson.trim()) as MappedRecord;
-    const lineAtOffset = JSON.parse(payloadAtOffset.ndjson.trim()) as MappedRecord;
-
-    expect(lineAtZero.event_id).toBe('sid1:agent.session.start:0');
-    expect(lineAtOffset.event_id).toBe('sid1:agent.session.start:500');
+    expect(line.event_id).toBe('stamped-event-id-abc');
   });
 
   it('prefers an explicit hookEvent.type over the HOOK_EVENT_TYPE_MAP lookup', async () => {
@@ -134,7 +136,7 @@ describe('mapHookRecords', () => {
     // carry) must win.
     const record = buildHookRecord('PostToolUse', 'sid1', { type: 'agent.custom.synthetic' });
 
-    const payload = await mapHookRecords([record], ctx, 0);
+    const payload = await mapHookRecords([record], ctx);
     const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
     expect(line.type).toBe('agent.custom.synthetic');
@@ -153,7 +155,7 @@ describe('mapHookRecords', () => {
 
     const record = buildHookRecord('PostToolUse', 'sid1');
 
-    const payload = await mapHookRecords([record], ctx, 0);
+    const payload = await mapHookRecords([record], ctx);
     const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
     expect(line.type).toBe('agent.tool.end');
@@ -186,7 +188,7 @@ describe('mapHookRecords', () => {
         ' end-of-prompt-marker-that-must-not-appear-anywhere-in-the-output';
       const record = buildHookRecord('UserPromptSubmit', 'sid1', { prompt: rawPrompt });
 
-      const payload = await mapHookRecords([record], ctx, 0);
+      const payload = await mapHookRecords([record], ctx);
       const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
       expect(line.story_id).toBe('EPMCDME-999');
@@ -222,7 +224,7 @@ describe('mapHookRecords', () => {
         cwd: '/repo/nonexistent-for-this-test',
       });
 
-      const payload = await mapHookRecords([record], ctx, 0);
+      const payload = await mapHookRecords([record], ctx);
       const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
       expect(line.story_id).toBe('EPMCDME-15301');
@@ -247,48 +249,13 @@ describe('mapHookRecords', () => {
       const rawPrompt = 'can you look into ABC-42 when you get a chance';
       const record = buildHookRecord('UserPromptSubmit', 'sid1', { prompt: rawPrompt });
 
-      const payload = await mapHookRecords([record], ctx, 0);
+      const payload = await mapHookRecords([record], ctx);
       const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
       expect(line.story_id).toBe('ABC-42');
       expect(line.story_source).toBe('mention');
     }
   );
-
-  it('keys agent.subagent.usage event_id off tool_use_id/agent_id from the synthetic record itself, not just byteOffset', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-      git: {},
-    };
-
-    // Two top-level subagents, neither carrying a sidecar tool_use_id, but with
-    // distinct agent_id — the fallback must keep these from colliding.
-    const record1 = buildHookRecord('SubagentStop', 'sid1', {
-      type: 'agent.subagent.usage',
-      tool_use_id: '',
-      agent_id: 'agent-1',
-    });
-    const record2 = buildHookRecord('SubagentStop', 'sid1', {
-      type: 'agent.subagent.usage',
-      tool_use_id: '',
-      agent_id: 'agent-2',
-    });
-
-    const payload = await mapHookRecords([record1, record2], ctx, 0);
-    const [line1, line2] = payload.ndjson
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as MappedRecord);
-
-    expect(line1.event_id).toBe('sid1:agent.subagent.usage:agent-1');
-    expect(line2.event_id).toBe('sid1:agent.subagent.usage:agent-2');
-    expect(line1.event_id).not.toBe(line2.event_id);
-  });
 
   it('passes agent-baked common fields (platform/client_version) through onto the mapped record without any agent-specific lookup', async () => {
     const { mapHookRecords } = await import('../forwarder.js');
@@ -316,7 +283,7 @@ describe('mapHookRecords', () => {
       timestamp: Date.now(),
     });
 
-    const payload = await mapHookRecords([record], ctx, 0);
+    const payload = await mapHookRecords([record], ctx);
     const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
     expect(line.platform).toBe('claude-code');
@@ -340,7 +307,7 @@ describe('mapHookRecords', () => {
 
     const record = buildHookRecord('Stop', 'sid1');
 
-    const payload = await mapHookRecords([record], ctx, 0);
+    const payload = await mapHookRecords([record], ctx);
     const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
     expect(line.developer_name).toBe('git-user@example.com');

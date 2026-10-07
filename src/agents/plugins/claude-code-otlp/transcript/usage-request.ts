@@ -78,9 +78,8 @@ export function parseUsageLine(
     return null;
   }
 
-  // Both openRequests' key and resolveEventId's agent.usage.request formula key on
-  // `${requestId}::${model}` — an empty requestId would collide every such line in the session
-  // into one record instead of being skipped.
+  // openRequests keys on `${requestId}::${model}` — an empty requestId would collide every such
+  // line in the session into one record instead of being skipped.
   const requestId = parsed.message?.id ?? '';
   if (!requestId) {
     return null;

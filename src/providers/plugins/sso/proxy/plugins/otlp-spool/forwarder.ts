@@ -12,7 +12,6 @@ import {
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-import { resolveEventId } from './event-id.js';
 import { decodeJwtClaims } from './identity.js';
 import {
   type ForwardContext,
@@ -229,20 +228,13 @@ interface HookPayload {
 
 export async function mapHookRecords(
   records: string[],
-  ctx: ForwardContext,
-  startOffset: number
+  ctx: ForwardContext
 ): Promise<HookPayload> {
   const mapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
-  let offset = startOffset;
 
   for (const record of records) {
-    // Every record occupied `byteLength(record) + 1` bytes in the spool file
-    // (the trailing newline was already stripped when the batch was read).
-    const byteOffset = offset;
-    offset += Buffer.byteLength(record, 'utf-8') + 1;
-
     let spoolData: OtlpHookSpoolData;
     let hookEvent: Record<string, unknown>;
     try {
@@ -301,7 +293,7 @@ export async function mapHookRecords(
         prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
         raw: limited,
         schema_version: 2,
-        event_id: resolveEventId(type, sessionId, { ...hookEvent, byteOffset }),
+        event_id: hookEvent['event_id'] as string,
         codemie_cli_version: CODEMIE_CLI_VERSION,
       })
     );
@@ -345,7 +337,7 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const payload = await mapHookRecords(batch.records, ctx, batch.cursor);
+  const payload = await mapHookRecords(batch.records, ctx);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
