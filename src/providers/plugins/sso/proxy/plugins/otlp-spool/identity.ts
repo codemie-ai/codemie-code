@@ -2,7 +2,7 @@ import { userInfo } from 'node:os';
 import type { SSOCredentials, JWTCredentials } from '@/providers/core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '@/providers/core/types.js';
 
-export type IdentitySource = 'jwt' | 'git' | 'codemie_cli' | 'claude_account' | 'os' | '';
+export type IdentitySource = 'jwt' | 'git' | 'codemie_cli' | 'os' | '';
 
 export interface ResolvedIdentity {
   developerName: string;
@@ -94,19 +94,7 @@ async function resolveCodemieCliIdentity(): Promise<string> {
 }
 
 /**
- * Tier 4 — claude_account: best-effort lookup of a locally authenticated
- * Claude account identity. Documented limitation: no such lookup exists
- * anywhere in this repo today (no stored Claude account email/id to read),
- * so this tier always yields `''` in practice and the chain falls through to
- * `os`. Kept as its own tier/function so a real lookup can be dropped in here
- * later without touching the rest of the chain.
- */
-async function resolveClaudeAccount(): Promise<string> {
-  return '';
-}
-
-/**
- * Tier 5 — os: the OS-reported username for the daemon process. Practically
+ * Tier 4 — os: the OS-reported username for the daemon process. Practically
  * never empty, but guarded anyway since some sandboxed environments can make
  * `os.userInfo()` throw.
  */
@@ -122,7 +110,7 @@ function resolveOsIdentity(): string {
  * Resolve a developer identity for analytics stamping, trying each tier in
  * order and returning the first non-empty result:
  *
- *   jwt -> git -> codemie_cli -> claude_account -> os
+ *   jwt -> git -> codemie_cli -> os
  *
  * Never throws — every tier swallows its own failures internally.
  */
@@ -139,9 +127,6 @@ export async function resolveIdentity(
 
     const cliIdentity = await resolveCodemieCliIdentity();
     if (cliIdentity) return { developerName: cliIdentity, identitySource: 'codemie_cli' };
-
-    const claudeAccount = await resolveClaudeAccount();
-    if (claudeAccount) return { developerName: claudeAccount, identitySource: 'claude_account' };
 
     const osIdentity = resolveOsIdentity();
     if (osIdentity) return { developerName: osIdentity, identitySource: 'os' };

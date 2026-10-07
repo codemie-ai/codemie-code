@@ -17,7 +17,7 @@
 - `event_id` is a pure string function of fields already on the record — never a generated/stored UUID.
 - Only the *resolved* `story_id`/`story_source` is ever sent — never raw prompt text. Nothing in this sub-stage writes `.claude/analytics.local.json` (read-only here).
 - Ticket regex (shared constant): `/(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?!\d)/gi`, result upper-cased.
-- Identity chain priority: `jwt → git → codemie_cli → claude_account → os`.
+- Identity chain priority: `jwt → git → codemie_cli → os`.
 - Out of scope (do not touch): `agent.session.env`, `agent.skill.dispatch`, `agent.git.snapshot`, and any change to existing-event *content* beyond the common fields.
 - Commit per task using the repository's existing convention.
 
@@ -71,7 +71,7 @@
 - Test: `src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/identity.test.ts`.
 
 **Interfaces:**
-- Produces: `resolveIdentity(credentials: SSOCredentials | JWTCredentials, cwd: string): Promise<{ developerName: string; identitySource: 'jwt' | 'git' | 'codemie_cli' | 'claude_account' | 'os' | '' }>` — tries, in order: existing JWT-claims logic (moved from `resolveUserEmail`), `git config user.email` / `user.name` via `exec()`, the existing `codemie_cli` profile config loader, a best-effort `claude_account` lookup that returns nothing if unavailable (documented limitation, falls through), `os.userInfo().username`. First non-empty wins.
+- Produces: `resolveIdentity(credentials: SSOCredentials | JWTCredentials, cwd: string): Promise<{ developerName: string; identitySource: 'jwt' | 'git' | 'codemie_cli' | 'os' | '' }>` — tries, in order: existing JWT-claims logic (moved from `resolveUserEmail`), `git config user.email` / `user.name` via `exec()`, the existing `codemie_cli` profile config loader, `os.userInfo().username`. First non-empty wins.
 
 **Test-first: yes — with JWT absent/empty, `resolveIdentity` falls through to git email when `git config user.email` succeeds, and to `os.userInfo().username` when every other tier is empty.**
 

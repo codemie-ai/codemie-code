@@ -116,12 +116,11 @@ Reading is read-only here: **nothing in this stage writes that file.** A command
 
 ## Identity resolution
 
-- Extend `resolveUserEmail()`'s JWT-only chain (`forwarder.ts:67-81`) to `jwt → git → codemie_cli → claude_account → os`, first available wins:
+- Extend `resolveUserEmail()`'s JWT-only chain (`forwarder.ts:67-81`) to `jwt → git → codemie_cli → os`, first available wins:
   - `git` reads `git config user.name`/`user.email`.
   - `codemie_cli` reads the existing CLI profile config.
   - `os` reads `os.userInfo().username`.
-  - `claude_account` has no precedent in this repo — implement it as a best-effort lookup that yields nothing if unavailable, falling through to `os` (documented limitation, not a blocker).
-- **Security review sign-off (2026-10-05):** this `jwt → git → codemie_cli → claude_account → os` derivation chain was flagged by code review as a CRITICAL "new attribution-identifier source" under `security-practices.md`'s Project & User Attribution Headers rule (CR-023), since it derives an identity-like value from local git config / CLI config / OS username with no verification. Reviewed and approved as implemented: the chain is used only to stamp `developer_name`/`identity_source` on outbound analytics/telemetry events (`identity.ts`), never on the SSO proxy's outbound attribution headers, billing, tenant isolation, or LLM request routing that the cited rule's header table concerns. No code change required.
+- **Security review sign-off (2026-10-05):** this `jwt → git → codemie_cli → os` derivation chain was flagged by code review as a CRITICAL "new attribution-identifier source" under `security-practices.md`'s Project & User Attribution Headers rule (CR-023), since it derives an identity-like value from local git config / CLI config / OS username with no verification. Reviewed and approved as implemented: the chain is used only to stamp `developer_name`/`identity_source` on outbound analytics/telemetry events (`identity.ts`), never on the SSO proxy's outbound attribution headers, billing, tenant isolation, or LLM request routing that the cited rule's header table concerns. No code change required.
 
 ## Non-goals
 
