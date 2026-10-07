@@ -16,16 +16,11 @@ This is additive to the existing 13-event `agent.*` taxonomy already produced by
 
 Every field below is sent on **every** emitted event. Split by *where* each is computed:
 
-- **Plugin-owned, resolved live in the forwarder — no hook-side capture, nothing new added to the spool.** A new method on the `OtlpAgentAdapter` interface (`src/agents/core/types.ts:734-739`, alongside its existing sole method `processOtlpEvent`): `prepareAnalyticsFields(hookEvent: Record<string, unknown>): Promise<CommonAnalyticsFields>`, implemented by `ClaudeCodeOtlpPlugin`. Called from the forwarder, resolving the right plugin per record off the spooled `OtlpHookSpoolData.agentName`:
-  ```ts
-  const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
-  const commonFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
-  ```
-  (mirrors the existing `AgentRegistry.getAnalyticsAgent(otlpHookSpoolData.agentName)` lookup already used in `otlp.plugin.ts`'s `handleHooks()` to validate `agentName` before spooling.) `ClaudeCodeOtlpPlugin.processOtlpEvent()` (the hook CLI process) is unchanged — nothing new is captured there and nothing new is added to the spooled record. Everything below is computed autocalculated on the fly, inside this method, when the forwarder calls it:
-  - `platform` — the plugin's own `platform` class field (`'claude-code' as const`).
-  - `client_version` — `const { stdout: claudeVersion } = await execPromise('claude --version');`, run live by the method itself.
-  - `entrypoint` — `process.env.CLAUDE_CODE_ENTRYPOINT`, read live by the method itself (empty string if unset, not blocking).
-  - `agent_id`/`agent_type` — read off this record's own `hookEvent` (already spooled as `raw` today), because interpreting which fields identify an agent/subagent is specific to that agent's hook-payload shape, not something a generic, agent-agnostic forwarder should own. Each OTLP plugin (today: `claude-code-otlp`; future: `cursor`/`codex`/`copilot`) implements its own interpretation.
+- **Plugin-owned, resolved hook-time inside `processOtlpEvent` itself.** `ClaudeCodeOtlpPlugin.withCommonFields()` (private, `claude-code-otlp.plugin.ts`) merges a small object onto every record in a `ForwardDecision`'s payload — the original hook event and any transcript-derived synthetic events alike — right before `forwardToSpool()` sends them.
+  - `platform` — the literal `'claude-code'`.
+  - `entrypoint` — `process.env.CLAUDE_CODE_ENTRYPOINT ?? ''`, read live.
+  - `client_version` — `resolveClientVersion()` (`client-version-cache.ts`): runs `claude --version` once and caches the result in a TTL file cache under `getCodemiePath('cache', ...)` (1h TTL). A *file* cache, not an in-memory one — each hook fire is a fresh CLI process, so there's no live instance to memoize on across calls.
+  - `agent_id`/`agent_type` are **not** common fields. They either arrive verbatim on the raw hook payload for subagent-shaped hook events (`SubagentStart`/`SubagentStop`, passed through as-is) or are sourced inside the transcript builders themselves (`agent.usage.request`/`agent.subagent.usage`, see "New events" below) — not through any shared enrichment step.
 
 - **Daemon-side, client-agnostic** — computed once per forward tick in `buildForwardContext()` and stamped onto every record in `mapHookRecords()` (`forwarder.ts`), the same pattern already used today for `user_email`/`developer_name`/`git_branch`/`repo_remote`/`codemie_project_name`:
   - `schema_version=2`
@@ -36,14 +31,9 @@ Every field below is sent on **every** emitted event. Split by *where* each is c
 
 ## `event_id`
 
-One mechanism for every event, old and new: a plain string composed from fields already on the record, computed daemon-side, no `generateUUID()`, no stored/persisted id anywhere.
+One mechanism for every event, old and new: a `randomUUID()` stamped once, hook-time, inside `forwardOtlpEventToSpool()` (`src/agents/plugins/utils.ts`) — the single chokepoint every record (the original hook event and every transcript-derived synthetic event alike) already passes through on its way to the spool. `mapHookRecords()` (`forwarder.ts`) carries that value straight through (`event_id: hookEvent['event_id']`) rather than computing anything daemon-side; `schema_version`/`codemie_cli_version` are still stamped there.
 
-| Event | `event_id` |
-|---|---|
-| Existing 13 hook-mapped events | `${session_id}:${type}:<byte offset of this record in the per-session spool file>` — computed in `mapHookRecords()` (`forwarder.ts`) from fields already available there; nothing new added to `OtlpHookSpoolData`. |
-| `agent.usage.request` | `${session_id}:agent.usage.request:${request_id}:${model}` — `model` included to match the `(request_id, model)` uniqueness key stated in "New events" below. |
-| `agent.subagent.usage` | `${session_id}:agent.subagent.usage:${tool_use_id}` |
-| `agent.session.summary` | `${session_id}:agent.session.summary:${phase}` (`phase` is `incremental` or `final`; every `Stop`-triggered re-emission this session reuses the same `incremental` id — intentional, a running summary is one record that gets refreshed) |
+Because `event_id` is generated fresh on every forward rather than derived from a record's natural key, it does not provide dedup across re-parses — see "Open risks" below.
 
 ## Transcript re-parsing
 
@@ -51,9 +41,9 @@ Needed to produce the three new events (`agent.usage.request`, `agent.subagent.u
 
 Per the data-model doc (§5.1), parsing is **incremental and backed by persisted per-session state** at `~/.codemie/analytics/state/<session_id>.json`:
 
-- **State holds**: the byte offset already consumed in the main transcript, and separately for each subagent transcript; the `openRequests` max-merge-in-progress map; `activeSkill`; `branchCounts` (feeds `branch_dominant`).
-- **Triggers**: `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd` — each reads only the bytes appended since its stored offset, updates the running tallies, derives any newly-complete records, writes the updated state back to disk, then sends.
-- **Recovery path**: if the state file is missing (first run for a session) or fails to parse (corruption), fall back to a full parse from byte `0` and treat every record as newly derived. Each record's `event_id` is a pure function of its natural key (see "`event_id`" above), so a record re-derived this way carries the exact same id as before — the backend sees an update, not a duplicate.
+- **State holds**: the byte offset already consumed in the main transcript, and separately for each subagent transcript; the `openRequests` max-merge-in-progress map; `activeSkill`; `branchCounts` (feeds `branch_dominant`); `compactionCount` (persisted count of this session's `PreCompact` triggers, feeds `agent.session.summary`'s `compaction_count`).
+- **Triggers**: `Stop`, `SubagentStop`, `PreCompact`, `StopFailure`, `SessionEnd` — each reads only the bytes appended since its stored offset, updates the running tallies, derives any newly-complete records, writes the updated state back to disk, then sends. Each session's load-mutate-save cycle is serialized by a per-session exclusive-create lock file (`withParseStateLock`, `parse-state.ts`) so concurrent hook processes for the same session (e.g. sibling `SubagentStop` fires) can't race on the shared state file; a stale lock (holder crashed) is detected and stolen rather than awaited forever.
+- **Recovery path**: if the state file is missing (first run for a session) or fails to parse (corruption), fall back to a full parse from byte `0` and treat every record as newly derived. Because `event_id` is generated fresh at forward-time (see "`event_id`" above) rather than derived from a record's natural key, a record re-derived this way is assigned a new `event_id` — the backend sees a new record, not an update to the original. See Open risks.
 - Stays `async`, swallows all errors internally (matching `hook.ts`'s existing try/catch + `process.exitCode` convention), and always exits 0.
 
 ## Transcript field shape (verified against real transcripts)
@@ -76,12 +66,12 @@ Verified against real Claude Code session transcripts (current client, multiple 
 
 ### `agent.usage.request`
 
-- Fires on `Stop` (re-parse of the main transcript), `SubagentStop` (re-parse of that subagent's own transcript, `scope_kind=agent`), `PreCompact` (re-parse of the main transcript, so in-progress request usage is captured before compaction can drop the turns it came from), and `SessionEnd` (final re-parse of the main transcript **and every subagent transcript**).
+- Fires on `Stop` (re-parse of the main transcript), `SubagentStop` (re-parse of that subagent's own transcript, `scope_kind=agent`), `PreCompact` (re-parse of the main transcript, so in-progress request usage is captured before compaction can drop the turns it came from), `StopFailure` (same re-parse as `Stop`, for a turn that ended via failure rather than a clean stop), and `SessionEnd` (final re-parse of the main transcript **and every subagent transcript**).
 - One per unique `(request_id, model)` across the session transcript and all subagent transcripts.
 - Take the max per numeric field across duplicate records (per `openRequests` merge).
 - `scope_kind`/`scope_name` = `main`/`skill`/`agent` depending on which transcript (main vs. a named skill context vs. a subagent transcript) the record came from.
 
-Fields: `request_id`, `timestamp`, `model_raw`, `model`, `speed`, `inference_geo`, `service_tier`, `input_tokens`, `cache_creation_5m_tokens`, `cache_creation_1h_tokens`, `cache_read_tokens`, `output_tokens`, `web_search_requests`, `web_fetch_requests`, `scope_kind`, `scope_name`, `agent_id`, `stop_reason`, `is_api_error`, `git_branch`. All sourced from the transcript shape confirmed above (`message.id`, `message.usage.*`, `message.stop_reason`, `server_tool_use.*`, `gitBranch`) or, for `model`/`model_raw`, from the same resolution chain the statusline already uses (`parseRoutingHeaders()`/`parseBackendModelName()`); `agent_id` comes from the new plugin method above. `is_api_error`'s presence pattern on a real error is unverified — see Open risks.
+Fields: `request_id`, `timestamp`, `model_raw`, `model`, `speed`, `inference_geo`, `service_tier`, `input_tokens`, `cache_creation_5m_tokens`, `cache_creation_1h_tokens`, `cache_read_tokens`, `output_tokens`, `web_search_requests`, `web_fetch_requests`, `scope_kind`, `scope_name`, `agent_id`, `stop_reason`, `is_api_error`, `git_branch`. All sourced from the transcript shape confirmed above (`message.id`, `message.usage.*`, `message.stop_reason`, `server_tool_use.*`, `gitBranch`) or, for `model`/`model_raw`, from the same resolution chain the statusline already uses (`parseRoutingHeaders()`/`parseBackendModelName()`); `agent_id` is passed through by the caller (the orchestrator) — `''` for a main-transcript record, the subagent's own `agentId` for a subagent-transcript record — not resolved by any shared enrichment step. `is_api_error`'s presence pattern on a real error is unverified — see Open risks.
 
 ### `agent.subagent.usage`
 
@@ -120,7 +110,7 @@ Reading is read-only here: **nothing in this stage writes that file.** A command
   - `git` reads `git config user.name`/`user.email`.
   - `codemie_cli` reads the existing CLI profile config.
   - `os` reads `os.userInfo().username`.
-- **Security review sign-off (2026-10-05):** this `jwt → git → codemie_cli → os` derivation chain was flagged by code review as a CRITICAL "new attribution-identifier source" under `security-practices.md`'s Project & User Attribution Headers rule (CR-023), since it derives an identity-like value from local git config / CLI config / OS username with no verification. Reviewed and approved as implemented: the chain is used only to stamp `developer_name`/`identity_source` on outbound analytics/telemetry events (`identity.ts`), never on the SSO proxy's outbound attribution headers, billing, tenant isolation, or LLM request routing that the cited rule's header table concerns. No code change required.
+- **Security scope (approved 2026-10-05):** this `jwt → git → codemie_cli → os` derivation chain reads an identity-like value from local git config / CLI config / OS username with no external verification. It is used only to stamp `developer_name`/`identity_source` on outbound analytics/telemetry events (`identity.ts`) — never on the SSO proxy's outbound attribution headers, billing, tenant isolation, or LLM request routing, which `security-practices.md`'s Project & User Attribution Headers rule governs.
 
 ## Non-goals
 
@@ -135,9 +125,10 @@ Reading is read-only here: **nothing in this stage writes that file.** A command
   - `spawn_depth` (`agent.subagent.usage`) is present in the `.meta.json` sidecar only for nested subagents (depth ≥ 2); top-level subagents omit it, so implementation needs an explicit default rather than treating absence as an error.
   - `workflow_run`/`worktree` (`agent.subagent.usage`) have no identified source in this codebase's transcript handling or the `.meta.json` sidecar. The external data-model doc names a `workflows/<runId>/` sidecar directory as the source, but a direct check across every local session directory found no such directory in any sampled session — the gap stands; worth revisiting with the data-model doc's owner.
   - `title` (`agent.session.summary`) has no identified source in a real transcript, top-level or nested, and the data-model doc doesn't name one either — unresolved on both sides.
-- **Post-implementation disclosed limitations** (surfaced by code review; accepted as-is rather than reworked, matching the precedent above for `title`/`workflow_run`/`worktree`):
+- **Known limitations, accepted as-is for this sub-stage:**
   - `lines_added`/`lines_removed` (`agent.session.summary`) always emit `0`. An `Edit`/`Write` tool_use's `input` carries the *proposed* edit, not a diff stat, so no reliable added/removed line count can be derived from it without re-implementing diffing — out of scope for this sub-stage.
   - `scope_kind: 'skill'` (`agent.usage.request`) is never emitted. No reliable in-transcript signal for "this turn is inside a skill context" was found, so every main-transcript usage record is unconditionally scoped `'main'`. `state.activeSkill` stays tracked-but-unused, available for a later task that identifies a real signal.
-  - `started_at`/`ended_at` (`agent.session.summary`) are close approximations, not the literal `SessionStart`/`SessionEnd` hook payload timestamps: `started_at` is the main transcript's own first parsed line timestamp, and `ended_at` is `Date.now()` at parse time. Threading the actual hook timestamps through would require widening every `runMainTranscriptParse` call site's signature; deferred.
+  - `started_at`/`ended_at` (`agent.session.summary`) are close approximations, not the literal `SessionStart`/`SessionEnd` hook payload timestamps: `started_at` is the main transcript's own first parsed line timestamp, and `ended_at` is `Date.now()` at parse time. Threading the actual hook timestamps through would require widening every `collectMainTranscriptEvents` call site's signature; deferred.
   - `commands_in_order` (`agent.session.summary`) contains the right distinct slash-command names but not a true chronological sequence — it is `Object.keys()` of `commandInvocations`, an unordered count map. No chronological invocation order is available anywhere in `NamedInvocationCounts` to draw from. A genuine mismatch with the field's name, documented rather than fabricated.
   - `description` (`agent.subagent.usage`) always emits `''`. The sidecar `.meta.json` schema it mirrors (matching the real production schema) has no `description` key at all, so there is no source anywhere in this codebase to populate it from — unlike the sibling `workflow_run`/`worktree`/`title` gaps above, this one wasn't caught before implementation.
+  - `event_id` does not provide idempotent dedup across re-parses: it's a `randomUUID()` generated fresh every time a record is forwarded, not a deterministic function of the record's natural key, so a crash-before-save re-parse of `agent.usage.request`/`agent.subagent.usage`/`agent.session.summary` forwards the re-derived record under a new `event_id` — the backend sees a new record rather than an update to the original. Accepted as-is for this sub-stage; the natural key is still stable across re-derivation (`request_id`+`model`, `tool_use_id`, or `session_id`+`phase`), so dedup on that key is possible if the backend needs it.

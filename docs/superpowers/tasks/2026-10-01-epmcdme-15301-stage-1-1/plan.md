@@ -4,7 +4,7 @@
 
 **Goal:** Extend the `claude-code-otlp` analytics pipeline with common fields on every `agent.*` event, incremental persisted transcript parsing, three new events (`agent.usage.request`, `agent.subagent.usage`, `agent.session.summary`), story resolution, and an extended identity chain — per `spec.md`.
 
-**Architecture:** Two layers already exist and are extended, not replaced. (1) Hook-side (`ClaudeCodeOtlpPlugin.processOtlpEvent`, runs once per Claude Code hook invocation, CLI process, must exit 0): gains a `prepareAnalyticsFields()` method for per-record agent-owned fields, and — on `Stop`/`SubagentStop`/`PreCompact`/`SessionEnd` — an orchestration step that incrementally parses the transcript(s) and forwards each derived event as its own synthetic hook-shaped record via the existing `forwardOtlpEventToSpool()`, tagged with an explicit `type` so it is **not** re-mapped by the hook-name table. (2) Daemon-side (`forwarder.ts`, long-running proxy tick): stamps `schema_version`, `event_id`, `codemie_cli_version`, `story_id`/`story_source`, `developer_name`/`identity_source` onto every record — old and new — in `mapHookRecords()`.
+**Architecture:** Two layers already exist and are extended, not replaced. (1) Hook-side (`ClaudeCodeOtlpPlugin.processOtlpEvent`, runs once per Claude Code hook invocation, CLI process, must exit 0): `evaluate()` dispatches one handler per hook event name; the handlers for `Stop`/`PreCompact`/`StopFailure`/`SessionEnd`/`SubagentStop` call the transcript orchestrator (`transcript/orchestrator.ts`'s `collectMainTranscriptEvents`/`collectSubagentTranscriptEvents`), which *returns* zero or more derived, explicitly-`type`d synthetic records rather than forwarding them itself; the handler appends those to the original parsed event in its `ForwardDecision.payload`. `processOtlpEvent()` then merges a small set of agent-owned common fields onto every record in that payload (`withCommonFields()`) and is the **one** call site that forwards to the spool (`forwardToSpool()`, looping over the payload and calling the shared `forwardOtlpEventToSpool()` per record) — this is also where each record's `event_id` is stamped (`randomUUID()`, inside `forwardOtlpEventToSpool()`). (2) Daemon-side (`forwarder.ts`, long-running proxy tick): stamps `schema_version`, `codemie_cli_version`, `story_id`/`story_source`, `developer_name`/`identity_source` onto every record — old and new — in `mapHookRecords()`, carrying the already-stamped `event_id` straight through.
 
 **Tech Stack:** TypeScript, Node `node:fs/promises`/`node:crypto`/`node:child_process`, Vitest. No new runtime dependencies.
 
@@ -14,7 +14,7 @@
 - Truncation unchanged: prompt 200 chars (`MAX_PROMPT_CHARS`), tool input/output/error 300 chars (`MAX_TOOL_FIELD_CHARS`) — both already defined in `forwarder.ts:37-38`.
 - Hooks/orchestration stay `async`, swallow all exceptions internally, never throw past the top-level handler, never block Claude Code.
 - Node only, no new npm dependencies.
-- `event_id` is a pure string function of fields already on the record — never a generated/stored UUID.
+- `event_id` is a `randomUUID()` stamped once per record, hook-time, inside `forwardOtlpEventToSpool()` — the one chokepoint every record (original and derived alike) passes through on its way to the spool.
 - Only the *resolved* `story_id`/`story_source` is ever sent — never raw prompt text. Nothing in this sub-stage writes `.claude/analytics.local.json` (read-only here).
 - Ticket regex (shared constant): `/(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?!\d)/gi`, result upper-cased.
 - Identity chain priority: `jwt → git → codemie_cli → os`.
@@ -25,41 +25,42 @@
 
 ### Task 1: Event IDs + schema/version stamp for existing events
 
+`event_id` is a `randomUUID()` stamped once per record, hook-time, inside the already-shared `forwardOtlpEventToSpool()` (`src/agents/plugins/utils.ts`) — the one chokepoint every record (original hook event and derived synthetic event alike) already passes through. `mapHookRecords()` (`forwarder.ts`) carries that value straight through (`event_id: hookEvent['event_id'] as string`) instead of computing it; it also stamps `schema_version: 2` and `codemie_cli_version` (resolved once via `resolveCodemieCliVersion()` in `forward-context.ts`) on every mapped record, old and new.
+
 **Files:**
-- Create: `src/providers/plugins/sso/proxy/plugins/otlp-spool/event-id.ts`
-- Modify: `src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts:159-269` — `hookEventType()` must prefer an explicit `hookEvent['type']` string over the `HOOK_EVENT_TYPE_MAP` lookup (needed so later tasks' synthetic records keep their own type); `mapHookRecords()` stamps `schema_version: 2`, `event_id` (via the new module), `codemie_cli_version` (this package's own `package.json` `version`) onto every mapped record, old and new. Track a running byte offset starting at `batch.cursor` (passed in from `forwardHooks`) to feed `event-id.ts`'s existing-event formula.
-- Test: `src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/event-id.test.ts`, `.../__tests__/forwarder.test.ts` (new — this pipeline has zero existing unit tests per technical-analysis.md §4).
+- Modify: `src/agents/plugins/utils.ts` — `forwardOtlpEventToSpool()` stamps `event_id: randomUUID()` onto the event before spooling it.
+- Modify: `src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts` — `hookEventType()` prefers an explicit `hookEvent['type']` string over the `HOOK_EVENT_TYPE_MAP` lookup (needed so synthetic records from later tasks keep their own type); `mapHookRecords()` stamps `schema_version: 2`, `codemie_cli_version`, and carries through the already-stamped `event_id`.
+- Test: `src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts`.
 
 **Interfaces:**
-- Produces: `computeEventId(type: string, sessionId: string, fields: Record<string, unknown>): string` — branches on `type`: existing 13 types use `${sessionId}:${type}:${byteOffset}` (`fields.byteOffset: number`); `agent.usage.request` uses `${sessionId}:agent.usage.request:${request_id}:${model}`; `agent.subagent.usage` uses `${sessionId}:agent.subagent.usage:${tool_use_id}`; `agent.session.summary` uses `${sessionId}:agent.session.summary:${phase}`.
+- Produces: nothing new — `forwardOtlpEventToSpool(event, agentName): Promise<void>` (pre-existing shared helper) now also stamps `event_id`.
 
-**Test-first: yes — `computeEventId` returns the exact byte-offset formula for an existing-event type and the request/model-keyed formula for `agent.usage.request`; `mapHookRecords()` on two records yields two different `event_id`s and both carry `schema_version: 2`.**
+**Test-first: yes — `mapHookRecords()` on two records yields two different `event_id`s (carried through from the input) and both carry `schema_version: 2`.**
 
-- [ ] Write failing tests for `computeEventId`'s four branches and for `mapHookRecords` stamping `schema_version`/`event_id`/`codemie_cli_version`.
-- [ ] Implement `event-id.ts` and the `forwarder.ts` edits.
-- [ ] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/event-id.test.ts src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests for `mapHookRecords` stamping `schema_version`/`event_id`/`codemie_cli_version`.
+- [x] Implement the `utils.ts`/`forwarder.ts` edits.
+- [x] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
-### Task 2: Agent-owned common fields (`prepareAnalyticsFields`)
+### Task 2: Agent-owned common fields (`withCommonFields`)
 
 **Files:**
-- Modify: `src/agents/core/types.ts:734-739` — add `prepareAnalyticsFields(hookEvent: Record<string, unknown>): Promise<Record<string, unknown>>` to `OtlpAgentAdapter` (return type kept generic so core/types.ts has no dependency on a leaf plugin's types).
-- Modify: `src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts` — implement it: `platform: 'claude-code'`, `entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? ''`, `client_version` from `claude --version` (reuse the `exec()` helper from `src/utils/exec.ts`, same approach as `ClaudeAgentAdapter.getVersion()` at `src/agents/plugins/claude/claude.plugin.ts:633`; cache the resolved version on the instance so a high-frequency hook like `PostToolUse` doesn't spawn a subprocess per call), `plugin_version` from `src/agents/plugins/claude/plugin/.claude-plugin/plugin.json`'s `version` field, `agent_id`/`agent_type` read directly off `hookEvent['agent_id']`/`hookEvent['agent_type']` when present (subagent context only).
-- Modify: `src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts` — in `mapHookRecords()`, resolve `AgentRegistry.getAnalyticsAgent(spoolData.agentName)` and merge `await analyticsAgent?.prepareAnalyticsFields(hookEvent) ?? {}` into the mapped record before the daemon-side fields.
-- Test: `src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts` (new).
+- Create: `src/agents/plugins/claude-code-otlp/client-version-cache.ts` — `resolveClientVersion()`: runs `claude --version` and caches the result in a TTL file cache (1h) under `getCodemiePath('cache', 'claude-code-client-version.json')`, since each hook fire is a fresh CLI process with no in-memory instance to cache on.
+- Modify: `src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts` — add a private `withCommonFields(records)` that merges `{ platform: 'claude-code', entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? '', client_version: await resolveClientVersion() }` onto every record, called once from `processOtlpEvent()` on the full `ForwardDecision.payload` just before `forwardToSpool()`.
+- Test: `src/agents/plugins/claude-code-otlp/__tests__/client-version-cache.test.ts`, `__tests__/claude-code-otlp.plugin.test.ts`.
 
 **Interfaces:**
-- Consumes: `AgentRegistry.getAnalyticsAgent(name): OtlpAgentAdapter | undefined` (`src/agents/registry.ts:76`).
-- Produces: `ClaudeCodeOtlpPlugin.prepareAnalyticsFields()` — relied on by Task 11/12's orchestrator for `agent_id` on `agent.usage.request`/`agent.subagent.usage`.
+- Produces: `resolveClientVersion(): Promise<string>` (`client-version-cache.ts`); `ClaudeCodeOtlpPlugin.withCommonFields(records: Record<string, unknown>[]): Promise<Record<string, unknown>[]>` (private).
+- `agent_id`/`agent_type` are **not** produced here — they arrive verbatim on raw subagent-shaped hook payloads, or are sourced inside the Task 8/9 transcript builders.
 
-**Test-first: yes — `prepareAnalyticsFields()` on a hook event carrying `agent_id`/`agent_type` returns both; on one without, it omits them; `client_version` is only spawned once across two calls.**
+**Test-first: yes — `resolveClientVersion()` spawns `claude --version` once and serves the cached value on a second call within the TTL; `withCommonFields()` on two records stamps identical `platform`/`entrypoint`/`client_version` onto both.**
 
-- [ ] Write failing tests (mock `exec()` to assert single invocation across two calls).
-- [ ] Implement.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests (mock `exec()`/the cache file to assert single invocation across two calls within the TTL).
+- [x] Implement.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/__tests__/client-version-cache.test.ts src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -75,10 +76,10 @@
 
 **Test-first: yes — with JWT absent/empty, `resolveIdentity` falls through to git email when `git config user.email` succeeds, and to `os.userInfo().username` when every other tier is empty.**
 
-- [ ] Write failing tests covering: jwt hit, jwt-miss→git-hit, all-miss→os-fallback.
-- [ ] Implement `identity.ts`, wire into `forwarder.ts`.
-- [ ] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/identity.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests covering: jwt hit, jwt-miss→git-hit, all-miss→os-fallback.
+- [x] Implement `identity.ts`, wire into `forwarder.ts`.
+- [x] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/identity.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -95,10 +96,10 @@
 
 **Test-first: yes — `resolveExplicitStory` prefers the env var over the file when both are set; `resolveBranchStory` extracts `EPMCDME-15301` from `feature/epmcdme-15301-foo` uppercased.**
 
-- [ ] Write failing tests for both resolvers plus the regex's word-boundary behavior (no match inside `ABC-123X`).
-- [ ] Implement `story-resolver.ts`, wire into `forwarder.ts`, add the `.gitignore` line.
-- [ ] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/story-resolver.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests for both resolvers plus the regex's word-boundary behavior (no match inside `ABC-123X`).
+- [x] Implement `story-resolver.ts`, wire into `forwarder.ts`, add the `.gitignore` line.
+- [x] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/story-resolver.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -114,10 +115,10 @@
 
 **Test-first: yes — a prompt containing `story: EPMCDME-999` resolves to `storySource: 'marker'` even when the branch carries a different ticket; a prompt with no marker but a bare `ABC-42` mention resolves to `storySource: 'mention'`; the raw prompt text itself is never present on the emitted record (only `prompt_body`, truncated, and `story_id`/`story_source`).**
 
-- [ ] Write failing tests for marker precedence over mention, and for the no-match case falling back to the Task 4 branch/explicit result.
-- [ ] Implement.
-- [ ] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/story-resolver.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests for marker precedence over mention, and for the no-match case falling back to the Task 4 branch/explicit result.
+- [x] Implement.
+- [x] Run `npx vitest run src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/story-resolver.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -145,19 +146,21 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: `${requestId}::${model}`
   activeSkill: string;
   branchCounts: Record<string, number>;
+  compactionCount: number; // persisted count of this session's PreCompact triggers, feeds agent.session.summary's compaction_count
 }
 export function createParseState(): TranscriptParseState;
 export async function loadParseState(sessionId: string): Promise<TranscriptParseState>; // missing or corrupt file -> fresh state, never throws
 export async function saveParseState(sessionId: string, state: TranscriptParseState): Promise<void>;
+export async function withParseStateLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T>; // serializes concurrent load-mutate-save cycles for one session via an exclusive-create lock file
 ```
 Stored at `getCodemiePath('analytics', 'state', `${sessionId}.json`)` (`src/utils/paths.ts:385`), directory created on write.
 
 **Test-first: yes — `loadParseState` on a missing file returns `createParseState()`'s fresh shape; on a corrupt JSON file it also recovers to fresh rather than throwing; `saveParseState` followed by `loadParseState` round-trips `openRequests` and `branchCounts` exactly.**
 
-- [ ] Write failing tests for missing/corrupt/round-trip.
-- [ ] Implement `parse-state.ts`.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests for missing/corrupt/round-trip.
+- [x] Implement `parse-state.ts`.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/parse-state.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -172,10 +175,10 @@ Stored at `getCodemiePath('analytics', 'state', `${sessionId}.json`)` (`src/util
 
 **Test-first: yes — a file with two complete lines plus a trailing unterminated partial line returns only the two complete lines and `nextOffset` points exactly after the second line's newline; a second call starting from that offset returns only lines appended afterwards.**
 
-- [ ] Write failing tests (fixture file written incrementally across two reads).
-- [ ] Implement.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/transcript-reader.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests (fixture file written incrementally across two reads).
+- [x] Implement.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/transcript-reader.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -194,10 +197,10 @@ Stored at `getCodemiePath('analytics', 'state', `${sessionId}.json`)` (`src/util
 
 **Test-first: yes — on a fixture with two JSONL lines for the same `message.id`+model where the second has a higher `output_tokens` and a `stop_reason` the first lacks, `mergeUsageRequest` of the two parsed records keeps the max `output_tokens` and the non-empty `stop_reason`; a line with no `usage` block parses to `null`.**
 
-- [ ] Write failing tests against the fixture.
-- [ ] Implement `usage-request.ts`.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/usage-request.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests against the fixture.
+- [x] Implement `usage-request.ts`.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/usage-request.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -214,10 +217,10 @@ Stored at `getCodemiePath('analytics', 'state', `${sessionId}.json`)` (`src/util
 
 **Test-first: yes — a session fixture with three subagent transcript files produces three `agent.subagent.usage` events whose summed token fields equal the sum of the `agent.usage.request` records this same fixture yields with `scope_kind: 'agent'` (the external data-model doc's §8 acceptance scenario).**
 
-- [ ] Write the failing cross-check test plus a `spawn_depth`-missing-sidecar case.
-- [ ] Implement `subagent-usage.ts`.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/subagent-usage.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write the failing cross-check test plus a `spawn_depth`-missing-sidecar case.
+- [x] Implement `subagent-usage.ts`.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/subagent-usage.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
@@ -235,53 +238,57 @@ Stored at `getCodemiePath('analytics', 'state', `${sessionId}.json`)` (`src/util
 
 **Test-first: yes — a `branchCounts` map built from a mid-session branch switch (`{main: 3, feature: 7}`) resolves `branch_dominant: 'feature'` (the external data-model doc's §8 branch-switch scenario); `buildSessionSummaryEvent` with `phase: 'incremental'` omits `endedAt` and with `phase: 'final'` includes it.**
 
-- [ ] Write failing tests for `branchDominant`, `primaryModel`, and both phases.
-- [ ] Implement `session-summary.ts`.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/session-summary.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write failing tests for `branchDominant`, `primaryModel`, and both phases.
+- [x] Implement `session-summary.ts`.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/session-summary.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
-### Task 11: Orchestrate main-transcript triggers (`Stop`, `PreCompact`, `SessionEnd`)
+### Task 11: Orchestrate main-transcript triggers (`Stop`, `PreCompact`, `StopFailure`, `SessionEnd`)
+
+The orchestrator does not forward anything itself — it `return`s the derived events, and the plugin's own `evaluate()`/`forwardToSpool()` chokepoint is what actually sends them, so there is exactly one place in the pipeline that writes to the spool (per `docs/ARCHITECTURE-OTLP-PLUGIN.md` §3.4). Load-mutate-save runs inside a per-session lock (`withParseStateLock`, Task 6) so forwarding only ever sees fully-persisted state.
 
 **Files:**
 - Create: `src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts`
-- Modify: `src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts:24-35` — in `evaluate()`, after the existing `UserPromptSubmit` branch, when `event.hookEventName` is `Stop`, `PreCompact`, or `SessionEnd`, call the orchestrator (fire-and-forget, matching `forwardToSpool`'s pattern) before returning the normal `forward` decision.
+- Modify: `src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts` — `evaluate()` dispatches `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` each to their own handler method (`onStopEvent`/`onPreCompactEvent`/`onStopFailureEvent`/`onSessionEndEvent`), which calls `collectMainTranscriptEvents()` and returns `{ decision: 'forward', payload: [parsed, ...derived] }` — the handler never forwards directly.
 - Test: `src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts`.
 
 **Interfaces:**
-- Produces: `runMainTranscriptParse(sessionId: string, transcriptPath: string, trigger: 'Stop' | 'PreCompact' | 'SessionEnd'): Promise<void>` — loads state (Task 6), reads new lines (Task 7), derives/merges `agent.usage.request` records (Task 8) keyed into `state.openRequests`, updates `state.branchCounts`/summary accumulator, emits one `forwardOtlpEventToSpool(JSON.stringify(event), CLAUDE_CODE_OTLP_AGENT_NAME)` call per completed `agent.usage.request` plus one `agent.session.summary` (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`; `PreCompact` emits only usage requests, never a summary — matches spec), saves state, and swallows every error internally (never throws into `processOtlpEvent`).
+- Produces: `collectMainTranscriptEvents(sessionId: string, transcriptPath: string, trigger: 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure'): Promise<Record<string, unknown>[]>` — loads state under the per-session lock (Task 6), reads new lines (Task 7), derives/merges `agent.usage.request` records (Task 8) keyed into `state.openRequests`, updates `state.branchCounts`/`state.compactionCount` (bumped on `PreCompact`), builds one event per completed `agent.usage.request` plus one `agent.session.summary` (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`; `PreCompact`/`StopFailure` return only usage requests, never a summary — matches spec), saves state, **returns** the built events (does not forward them), and swallows every error internally, returning `[]` on failure (never throws into `processOtlpEvent`).
 
-**Test-first: yes — calling `runMainTranscriptParse` twice with the same transcript (simulating a re-parse after a crash before state was saved) forwards `agent.usage.request` events whose `event_id`-determining fields (`request_id`, `model`) are identical both times — the idempotent-reparse scenario from the external data-model doc's §8.**
+**Test-first: yes — calling `collectMainTranscriptEvents` twice with the same transcript (simulating a re-parse after a crash before state was saved) returns `agent.usage.request` events whose natural-key fields (`request_id`, `model`) are identical both times — the idempotent-reparse scenario from the external data-model doc's §8. (`event_id` itself is not idempotent across these two calls — see spec.md's Open risks; the natural key is what's actually stable.)**
 
-- [ ] Write the failing idempotent-reparse test plus a basic Stop → one summary + N usage-request forwards test (mock `forwardOtlpEventToSpool`).
-- [ ] Implement `orchestrator.ts` and the `claude-code-otlp.plugin.ts` wiring.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write the failing idempotent-reparse test (on natural key, not `event_id`) plus a basic Stop → one summary + N usage-request results test.
+- [x] Implement `orchestrator.ts` and the `claude-code-otlp.plugin.ts` per-handler wiring.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
 ### Task 12: Orchestrate subagent triggers (`SubagentStop`, `SessionEnd` backstop)
 
+Same return-not-forward design as Task 11: the function returns its derived events rather than sending them.
+
 **Files:**
 - Modify: `orchestrator.ts` (Task 11) — add the subagent path.
-- Modify: `claude-code-otlp.plugin.ts` — on `SubagentStop`, call the new function with that record's own subagent transcript path (`hookEvent['agent_transcript_path']`, read loosely off the parsed JSON since it is outside `BaseClaudeCodeHookEvent`'s modeled fields) instead of the main one; `SessionEnd` additionally re-runs it for **every** subagent file `findSubagentFiles()` (Task 9) discovers, not just ones already seen — the crashed/missed-hook backstop.
+- Modify: `claude-code-otlp.plugin.ts` — `onSubagentStopEvent` reads `agent_transcript_path`/`agent_id`/`tool_use_id`/`agent_type` off the parsed hook event, builds a `SubagentFile`, and calls `collectSubagentTranscriptEvents()`; `onSessionEndEvent` additionally calls `findSubagentFiles()` (Task 9) and runs it for **every** subagent file discovered, not just ones already seen — the crashed/missed-hook backstop.
 - Test: extend `__tests__/orchestrator.test.ts`.
 
 **Interfaces:**
-- Produces: `runSubagentTranscriptParse(sessionId: string, mainTranscriptPath: string, subagentFile: SubagentFile): Promise<void>` — reads new lines from `state.subagentOffsets[subagentFile.agentId]` (Task 7), derives `agent.usage.request` with `scope_kind: 'agent'` (Task 8), builds and forwards one `agent.subagent.usage` (Task 9), saves the updated offset back into the shared `TranscriptParseState`.
+- Produces: `collectSubagentTranscriptEvents(sessionId: string, subagentFile: SubagentFile): Promise<Record<string, unknown>[]>` — reads new lines from `state.subagentOffsets[subagentFile.agentId]` (Task 7) under the per-session lock, derives `agent.usage.request` with `scope_kind: 'agent'` (Task 8), builds one `agent.subagent.usage` (Task 9) summarizing this agent's *cumulative* usage, saves the updated offset back into the shared `TranscriptParseState`, and **returns** the built events rather than forwarding them.
 
-**Test-first: yes — a `SessionEnd` on a session with three subagent files, only one of which already has a `SubagentStop`-advanced offset, still forwards three `agent.subagent.usage` events (the backstop), and never forwards a fourth for a subagent whose offset shows nothing new since the last run.**
+**Test-first: yes — a `SessionEnd` on a session with three subagent files, only one of which already has a `SubagentStop`-advanced offset, still returns three `agent.subagent.usage` events (the backstop); a subagent whose offset shows nothing new since the last run still returns its (unchanged) cumulative `agent.subagent.usage` summary rather than being skipped — that re-run guarantee is the whole point of the backstop.**
 
-- [ ] Write the failing backstop test (three fixture subagents, one pre-advanced offset) and a no-new-bytes-means-no-resend test.
-- [ ] Implement.
-- [ ] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts` — PASS.
-- [ ] Commit.
+- [x] Write the failing backstop test (three fixture subagents, one pre-advanced offset) and a no-new-bytes-still-returns-cumulative-summary test.
+- [x] Implement.
+- [x] Run `npx vitest run src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts` — PASS.
+- [x] Commit.
 
 ---
 
 ## Self-Review Notes
 
-- **Spec coverage:** Common fields (Tasks 1-3), story resolution (4-5), transcript parse-state (6-7), the three new events (8-10), and the four trigger wirings (11-12) each map to a numbered spec section. `event_id`'s "no `generateUUID()`" and the privacy "never raw prompt text" constraints are enforced structurally (pure-function `event_id`, resolved-only story fields) rather than left to each task's judgment.
+- **Spec coverage:** Common fields (Tasks 1-3), story resolution (4-5), transcript parse-state (6-7), the three new events (8-10), and the four trigger wirings (11-12) each map to a numbered spec section. The privacy "never raw prompt text" constraint is enforced structurally (only the resolved `story_id`/`story_source` ever leaves `mapHookRecords()`) rather than left to each task's judgment.
 - **Non-goals respected:** no task touches `agent.session.env`, `agent.skill.dispatch`, `agent.git.snapshot`, or any existing event's own content fields — only the common-field wrapper in `mapHookRecords()`.
 - **Type consistency:** `OpenUsageRequest` (Task 6) is the one shape Tasks 8, 9, and 11/12 all import and merge/aggregate — no parallel redefinition. `TranscriptParseState` (Task 6) is the single state object Tasks 7, 11, and 12 all read/mutate/save.
