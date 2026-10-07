@@ -268,21 +268,6 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     );
   });
 
-  it('forwards the raw event and skips all transcript-parse dispatch when session_id is empty', async () => {
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
-    const plugin = new ClaudeCodeOtlpPlugin();
-    const parsedEvent = hookEvent({ session_id: '', hook_event_name: 'Stop' });
-    const rawEvent = JSON.stringify(parsedEvent);
-
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
-
-    expect(collectMainTranscriptEventsMock).not.toHaveBeenCalled();
-    expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(
-      expect.objectContaining(parsedEvent),
-      'claude-code-otlp'
-    );
-  });
-
   it('forwards every event a per-event handler returns (the raw event plus any derived events) through the single forwardToSpool path, in order', async () => {
     const derivedUsageEvent = { type: 'agent.usage.request' };
     const derivedSummaryEvent = { type: 'agent.session.summary' };

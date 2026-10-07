@@ -1,11 +1,20 @@
 
 import { basename } from 'node:path';
+import type {
+  HookInput,
+  PreCompactHookInput,
+  SessionEndHookInput,
+  StopFailureHookInput,
+  StopHookInput,
+  SubagentStopHookInput,
+  UserPromptSubmitHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { AgentAdapterType, OtlpAdapterDeps, OtlpAgentAdapter } from '@/agents/core/types.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
-import { ForwardDecision } from './claude-code-otlp.types.js';
+import { ForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { forwardOtlpEventToSpool } from '../utils.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
@@ -20,8 +29,12 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
   public readonly type = AgentAdapterType.OTLP;
 
-  public async processOtlpEvent(rawEvent: string, { ensureOtlpProxy }: OtlpAdapterDeps): Promise<void> {
-    const event = JSON.parse(rawEvent) as Record<string, unknown>;
+  public async processOtlpEvent(rawHookInput: string, { ensureOtlpProxy }: OtlpAdapterDeps): Promise<void> {
+    const hookInput: unknown = JSON.parse(rawHookInput);
+    if (!isClaudeCodeHookInput(hookInput)) {
+      logger.debug('[Claude Code OTLP plugin] hook payload missing session_id/cwd/hook_event_name, ignoring');
+      return;
+    }
 
     // INVARIANT - do not weaken. An untracked project must produce NO hooks data
     // in the daemon spool, must not start the daemon, and must not run the SSO
@@ -30,7 +43,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     // data, and skips sessions that only have OTEL data. Forwarding a hook event
     // for an untracked project would make the session sendable and leak its
     // data to the backend.
-    const isTracked = await isProjectTracked(readString(event, 'cwd'), await readAllowlistState());
+    const isTracked = await isProjectTracked(hookInput.cwd, await readAllowlistState());
     if (!isTracked) {
       logger.debug('[Claude Code OTLP plugin] project not in analytics allowlist, ignoring hook event');
       return;
@@ -38,7 +51,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
 
     await ensureOtlpProxy(this.name);
 
-    const evaluation = await this.evaluate(event);
+    const evaluation = await this.evaluate(hookInput);
     if (evaluation.decision === 'block') {
       logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${evaluation.reason}`);
       console.log(JSON.stringify(evaluation));
@@ -57,65 +70,46 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     return records.map((record) => ({ ...record, ...common }));
   }
 
-  private async evaluate(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const sessionId = readString(parsed, 'session_id');
-    if (!sessionId) {
-      return { decision: 'forward', payload: [parsed] };
+  private async evaluate(hookInput: HookInput): Promise<ForwardDecision> {
+    if (hookInput.hook_event_name === 'UserPromptSubmit') {
+      return await this.onUserPromptSubmit(hookInput);
+    }
+    if (hookInput.hook_event_name === 'Stop') {
+      return await this.onStopEvent(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PreCompact') {
+      return await this.onPreCompactEvent(hookInput);
+    }
+    if (hookInput.hook_event_name === 'StopFailure') {
+      return await this.onStopFailureEvent(hookInput);
+    }
+    if (hookInput.hook_event_name === 'SessionEnd') {
+      return await this.onSessionEndEvent(hookInput);
+    }
+    if (hookInput.hook_event_name === 'SubagentStop') {
+      return await this.onSubagentStopEvent(hookInput);
     }
 
-    const hookEventName = readString(parsed, 'hook_event_name');
-    if (hookEventName === 'UserPromptSubmit') {
-      return await this.onUserPromptSubmit(parsed);
-    }
-    if (hookEventName === 'Stop') {
-      return await this.onStopEvent(parsed);
-    }
-    if (hookEventName === 'PreCompact') {
-      return await this.onPreCompactEvent(parsed);
-    }
-    if (hookEventName === 'StopFailure') {
-      return await this.onStopFailureEvent(parsed);
-    }
-    if (hookEventName === 'SessionEnd') {
-      return await this.onSessionEndEvent(parsed);
-    }
-    if (hookEventName === 'SubagentStop') {
-      return await this.onSubagentStopEvent(parsed);
-    }
-
-    return { decision: 'forward', payload: [parsed] };
+    return { decision: 'forward', payload: [hookInput] };
   }
 
-  private async onStopEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(
-      readString(parsed, 'session_id'),
-      readString(parsed, 'transcript_path'),
-      'Stop'
-    );
-    return { decision: 'forward', payload: [parsed, ...derived] };
+  private async onStopEvent(hookInput: StopHookInput): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'Stop');
+    return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onPreCompactEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(
-      readString(parsed, 'session_id'),
-      readString(parsed, 'transcript_path'),
-      'PreCompact'
-    );
-    return { decision: 'forward', payload: [parsed, ...derived] };
+  private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'PreCompact');
+    return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onStopFailureEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(
-      readString(parsed, 'session_id'),
-      readString(parsed, 'transcript_path'),
-      'StopFailure'
-    );
-    return { decision: 'forward', payload: [parsed, ...derived] };
+  private async onStopFailureEvent(hookInput: StopFailureHookInput): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'StopFailure');
+    return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onSessionEndEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const sessionId = readString(parsed, 'session_id');
-    const transcriptPath = readString(parsed, 'transcript_path');
+  private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ForwardDecision> {
+    const { session_id: sessionId, transcript_path: transcriptPath } = hookInput;
     const derived = await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd');
 
     // Backstop: guarantee every subagent discovered for this session gets at least one
@@ -125,26 +119,26 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
       derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
     }
 
-    return { decision: 'forward', payload: [parsed, ...derived] };
+    return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onSubagentStopEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-    const agentTranscriptPath = readOptionalString(parsed, 'agent_transcript_path');
+  private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ForwardDecision> {
+    const agentTranscriptPath = hookInput.agent_transcript_path;
     if (!agentTranscriptPath) {
-      return { decision: 'forward', payload: [parsed] };
+      return { decision: 'forward', payload: [hookInput] };
     }
 
     const subagentFile: SubagentFile = {
-      agentId:
-        readOptionalString(parsed, 'agent_id') ??
-        basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, ''),
+      agentId: hookInput.agent_id || basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, ''),
       filePath: agentTranscriptPath,
-      toolUseId: readOptionalString(parsed, 'tool_use_id'),
-      agentType: readOptionalString(parsed, 'agent_type'),
+      // `tool_use_id` is not declared on the SDK's SubagentStopHookInput type; read it
+      // defensively in case the raw hook payload carries it anyway.
+      toolUseId: readOptionalString(hookInput, 'tool_use_id'),
+      agentType: hookInput.agent_type,
     };
 
-    const derived = await collectSubagentTranscriptEvents(readString(parsed, 'session_id'), subagentFile);
-    return { decision: 'forward', payload: [parsed, ...derived] };
+    const derived = await collectSubagentTranscriptEvents(hookInput.session_id, subagentFile);
+    return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
@@ -164,13 +158,13 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     }
   }
 
-  private async onUserPromptSubmit(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+  private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ForwardDecision> {
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
       return {
         decision: 'forward',
-        payload: [parsed],
+        payload: [hookInput],
       }
     }
 
@@ -189,11 +183,11 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   }
 }
 
-function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
+/**
+ * Reads a string field not declared on the SDK's `HookInput` typings (e.g. `tool_use_id` on
+ * `SubagentStop`), in case the raw hook payload carries it anyway.
+ */
+function readOptionalString(record: object, key: string): string | undefined {
+  const value = (record as Record<string, unknown>)[key];
   return typeof value === 'string' ? value : undefined;
-}
-
-function readString(record: Record<string, unknown>, key: string): string {
-  return readOptionalString(record, key) ?? '';
 }
