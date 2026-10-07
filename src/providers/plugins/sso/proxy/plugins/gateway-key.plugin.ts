@@ -5,6 +5,12 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 
+/**
+ * Accepts the local gateway key either as `Authorization: Bearer <key>` or as
+ * `x-api-key: <key>` (Anthropic-format clients such as Claude for Office send
+ * the latter). Both headers are always stripped after validation so the local
+ * key never reaches the upstream, which authenticates via SSO cookies or JWT.
+ */
 export class GatewayKeyPlugin implements ProxyPlugin {
   id = '@codemie/proxy-gateway-key';
   name = 'Gateway Key Auth';
@@ -34,6 +40,7 @@ export class GatewayKeyPlugin implements ProxyPlugin {
         if (ctx.metadata.gatewayKeyValidated) return false;
 
         const authHeader = ctx.headers['authorization'] ?? ctx.headers['Authorization'];
+        const apiKeyHeader = ctx.headers['x-api-key'];
         const expected = `Bearer ${gatewayKey}`;
 
         logger.info(
@@ -41,18 +48,23 @@ export class GatewayKeyPlugin implements ProxyPlugin {
           ...sanitizeLogArgs({
             url: ctx.url,
             hasAuthorizationHeader: Boolean(authHeader),
+            hasApiKeyHeader: Boolean(apiKeyHeader),
             authorizationHeader: authHeader,
             expectedAuthorizationHeader: expected,
             headerKeys: Object.keys(ctx.headers),
           })
         );
 
-        if (!authHeader || authHeader !== expected) {
+        const bearerValid = authHeader === expected;
+        const apiKeyValid = apiKeyHeader === gatewayKey;
+
+        if (!bearerValid && !apiKeyValid) {
           logger.warn(
             '[gateway-key] Rejected request: invalid or missing gateway key',
             ...sanitizeLogArgs({
               url: ctx.url,
               hasAuthorizationHeader: Boolean(authHeader),
+              hasApiKeyHeader: Boolean(apiKeyHeader),
               authorizationHeader: authHeader,
               expectedAuthorizationHeader: expected,
             })
@@ -68,11 +80,13 @@ export class GatewayKeyPlugin implements ProxyPlugin {
 
         delete ctx.headers['authorization'];
         delete ctx.headers['Authorization'];
+        delete ctx.headers['x-api-key'];
         ctx.metadata.gatewayKeyValidated = true;
         logger.info(
-          '[gateway-key] Gateway key validated and authorization header stripped',
+          '[gateway-key] Gateway key validated and auth headers stripped',
           ...sanitizeLogArgs({
             url: ctx.url,
+            authScheme: bearerValid ? 'bearer' : 'x-api-key',
             remainingHeaderKeys: Object.keys(ctx.headers),
           })
         );

@@ -28,7 +28,7 @@
 The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between AI coding agents and their target API endpoints. It enables:
 
 - **SSO / JWT Authentication**: Automatic cookie or bearer-token injection for enterprise auth
-- **Local Gateway Auth**: Static bearer key validation for daemon-mode clients (e.g. Claude Desktop, VS Code BYOK)
+- **Local Gateway Auth**: Static key validation (`Authorization: Bearer` or `x-api-key`) for daemon-mode clients (e.g. Claude Desktop, VS Code BYOK)
 - **MCP Authorization**: OAuth proxy for remote MCP servers with SSRF protection
 - **Request Normalization & Sanitization**: Per-agent body fixes (Claude thinking params, Kimi token caps, Codex model mapping, encrypted reasoning-state replay/retry, VS Code user-id constraints)
 - **Header Management**: CodeMie-specific header injection for traceability
@@ -540,7 +540,7 @@ The MCP Auth Plugin works in conjunction with the stdio-to-HTTP bridge:
 **Priority**: 7
 **File**: `gateway-key.plugin.ts`
 
-**Purpose**: Validates a static local bearer key (`gatewayKey` on `ProxyConfig`) for daemon-mode clients (Claude Desktop, VS Code BYOK) so they authenticate to the local proxy without ever seeing real SSO/JWT credentials. Strips the header before the request is forwarded upstream.
+**Purpose**: Validates a static local key (`gatewayKey` on `ProxyConfig`) for daemon-mode clients (Claude Desktop, VS Code BYOK) so they authenticate to the local proxy without ever seeing real SSO/JWT credentials. The key is accepted as `Authorization: Bearer <key>` or as `x-api-key: <key>` (Anthropic-format clients that hardcode `x-api-key`, e.g. Claude for Office). Both `authorization` and `x-api-key` are stripped after validation, whichever scheme was used, so the local key never reaches the upstream.
 
 **Hook used**: `handleRequest`, not `onRequest` — this plugin runs in the earlier full-bypass phase (§4.1) so an invalid key is rejected (401) before any auth-injection or normalization plugin sees the request. On a valid key it returns `false` and the request falls through to the normal `onRequest` pipeline.
 
