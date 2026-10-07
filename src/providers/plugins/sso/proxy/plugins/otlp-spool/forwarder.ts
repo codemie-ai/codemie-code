@@ -12,7 +12,7 @@ import {
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-import { decodeJwtClaims } from './identity.js';
+import { resolveEmailFromCredentials } from './identity.js';
 import {
   type ForwardContext,
   resolveCodemieCliVersion,
@@ -51,26 +51,6 @@ const FORWARD_TIMEOUT_MS = 20_000;
 type SendResult = 'ok' | 'failed' | 'auth-expired';
 
 /* ------------------------------------------------------------------ auth --- */
-
-function resolveUserEmail(credentials: SSOCredentials | JWTCredentials): string {
-  if (isJWTCredentials(credentials)) {
-    const claims = decodeJwtClaims(credentials.token);
-    if (typeof claims['email'] === 'string' && claims['email']) {
-      return claims['email'];
-    }
-  }
-  if (isSSOCredentials(credentials)) {
-    const accessToken = credentials.cookies['codemie_access_token'];
-    if (accessToken) {
-      const claims = decodeJwtClaims(accessToken);
-      const email = claims['email'] ?? claims['preferred_username'];
-      if (typeof email === 'string' && email) {
-        return email;
-      }
-    }
-  }
-  return '';
-}
 
 function buildAuthHeadersFromCreds(
   credentials: SSOCredentials | JWTCredentials
@@ -320,7 +300,7 @@ async function buildForwardContext(
     credentials,
     baseUrl: state?.targetUrl ?? state?.url ?? '',
     projectName: state?.project ?? '',
-    userEmail: resolveUserEmail(credentials),
+    userEmail: resolveEmailFromCredentials(credentials),
     git: {},
     identity: {},
     story: {},
@@ -411,7 +391,7 @@ export async function forwardSession(
 
   const hooksResult = await forwardHooks(sessionId, ctx);
   if (hooksResult === 'auth-expired') {
-    markCredentialsStale()
+    markCredentialsStale();
     return;
   }
 

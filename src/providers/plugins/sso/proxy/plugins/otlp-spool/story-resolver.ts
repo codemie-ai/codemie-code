@@ -85,12 +85,16 @@ export async function resolveExplicitStory(cwd: string): Promise<ExplicitStoryRe
  * ticket-shaped substring.
  */
 export function resolveBranchStory(branch: string): BranchStoryResult | null {
-  if (!branch) return null;
+  if (!branch) {
+    return null;
+  }
 
   // Fresh RegExp per call: avoids reusing TICKET_RE's own `lastIndex` across
   // invocations (the classic stateful-global-regex-in-a-loop bug).
   const matches = branch.match(new RegExp(TICKET_RE.source, TICKET_RE.flags));
-  if (!matches || matches.length === 0) return null;
+  if (!matches || matches.length === 0) {
+    return null;
+  }
 
   return { storyId: matches[0].toUpperCase(), storySource: 'branch' };
 }
@@ -102,10 +106,14 @@ export function resolveBranchStory(branch: string): BranchStoryResult | null {
  * empty/falsy `promptText`).
  */
 export function resolveMarkerStory(promptText: string): MarkerStoryResult | null {
-  if (!promptText) return null;
+  if (!promptText) {
+    return null;
+  }
 
   const match = promptText.match(MARKER_RE);
-  if (!match || !match[1]) return null;
+  if (!match || !match[1]) {
+    return null;
+  }
 
   return { storyId: match[1].toUpperCase(), storySource: 'marker' };
 }
@@ -118,12 +126,16 @@ export function resolveMarkerStory(promptText: string): MarkerStoryResult | null
  * empty/falsy `promptText`).
  */
 export function resolveMentionStory(promptText: string): MentionStoryResult | null {
-  if (!promptText) return null;
+  if (!promptText) {
+    return null;
+  }
 
   // Fresh RegExp per call: avoids reusing TICKET_RE's own `lastIndex` across
   // invocations (the classic stateful-global-regex-in-a-loop bug).
   const matches = promptText.match(new RegExp(TICKET_RE.source, TICKET_RE.flags));
-  if (!matches || matches.length === 0) return null;
+  if (!matches || matches.length === 0) {
+    return null;
+  }
 
   return { storyId: matches[0].toUpperCase(), storySource: 'mention' };
 }

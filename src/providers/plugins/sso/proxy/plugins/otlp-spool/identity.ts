@@ -17,7 +17,9 @@ export interface ResolvedIdentity {
  */
 export function decodeJwtClaims(token: string): Record<string, unknown> {
   const parts = token.split('.');
-  if (parts.length < 2) return {};
+  if (parts.length < 2) {
+    return {};
+  }
   try {
     return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
       string,
@@ -29,21 +31,28 @@ export function decodeJwtClaims(token: string): Record<string, unknown> {
 }
 
 /**
- * Tier 1 — jwt: pull `email` straight off the JWT credential's claims, or off
- * the SSO session's `codemie_access_token` cookie claims (`email`, falling
- * back to `preferred_username`).
+ * Pull `email` straight off a JWT credential's claims, or off the SSO
+ * session's `codemie_access_token` cookie claims (`email`, falling back to
+ * `preferred_username`). Shared by the tier-1 `jwt` identity tier below and
+ * by the forwarder's plain `userEmail` field — both resolve the same claim.
  */
-function resolveJwtIdentity(credentials: SSOCredentials | JWTCredentials): string {
+export function resolveEmailFromCredentials(
+  credentials: SSOCredentials | JWTCredentials
+): string {
   if (isJWTCredentials(credentials)) {
     const claims = decodeJwtClaims(credentials.token);
-    if (typeof claims['email'] === 'string' && claims['email']) return claims['email'];
+    if (typeof claims['email'] === 'string' && claims['email']) {
+      return claims['email'];
+    }
   }
   if (isSSOCredentials(credentials)) {
     const accessToken = credentials.cookies['codemie_access_token'];
     if (accessToken) {
       const claims = decodeJwtClaims(accessToken);
       const email = claims['email'] ?? claims['preferred_username'];
-      if (typeof email === 'string' && email) return email;
+      if (typeof email === 'string' && email) {
+        return email;
+      }
     }
   }
   return '';
@@ -56,7 +65,9 @@ function resolveJwtIdentity(credentials: SSOCredentials | JWTCredentials): strin
  * throws.
  */
 async function resolveGitIdentity(cwd: string): Promise<string> {
-  if (!cwd) return '';
+  if (!cwd) {
+    return '';
+  }
   try {
     const { exec } = await import('@/utils/exec.js');
     const emailResult = await exec('git', ['config', 'user.email'], { cwd });
@@ -86,7 +97,9 @@ async function resolveCodemieCliIdentity(): Promise<string> {
   try {
     const { ConfigLoader } = await import('@/utils/config.js');
     const config = await ConfigLoader.loadMultiProviderConfig();
-    if (config.userEmail) return config.userEmail;
+    if (config.userEmail) {
+      return config.userEmail;
+    }
   } catch {
     /* best-effort */
   }
@@ -119,17 +132,25 @@ export async function resolveIdentity(
   cwd: string
 ): Promise<ResolvedIdentity> {
   try {
-    const jwtIdentity = resolveJwtIdentity(credentials);
-    if (jwtIdentity) return { developerName: jwtIdentity, identitySource: 'jwt' };
+    const jwtIdentity = resolveEmailFromCredentials(credentials);
+    if (jwtIdentity) {
+      return { developerName: jwtIdentity, identitySource: 'jwt' };
+    }
 
     const gitIdentity = await resolveGitIdentity(cwd);
-    if (gitIdentity) return { developerName: gitIdentity, identitySource: 'git' };
+    if (gitIdentity) {
+      return { developerName: gitIdentity, identitySource: 'git' };
+    }
 
     const cliIdentity = await resolveCodemieCliIdentity();
-    if (cliIdentity) return { developerName: cliIdentity, identitySource: 'codemie_cli' };
+    if (cliIdentity) {
+      return { developerName: cliIdentity, identitySource: 'codemie_cli' };
+    }
 
     const osIdentity = resolveOsIdentity();
-    if (osIdentity) return { developerName: osIdentity, identitySource: 'os' };
+    if (osIdentity) {
+      return { developerName: osIdentity, identitySource: 'os' };
+    }
 
     return { developerName: '', identitySource: '' };
   } catch {

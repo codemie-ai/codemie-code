@@ -88,7 +88,9 @@ export function resolveStoryForPrompt(
  * transcript-derived record's empty `cwd` can never poison the cache for the rest of the batch.
  */
 export async function resolveStory(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!cwd || ctx.story?.storyId !== undefined) return;
+  if (!cwd || ctx.story?.storyId !== undefined) {
+    return;
+  }
 
   const explicit = await resolveExplicitStory(cwd);
   const resolved = explicit ?? resolveBranchStory(ctx.git.branch ?? '');
@@ -106,9 +108,15 @@ export async function resolveStory(ctx: ForwardContext, cwd: string): Promise<vo
  * therefore less accurate) result for every later record in the same tick.
  */
 export async function resolveDeveloperIdentity(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!cwd) return;
-  if (!ctx.identity) ctx.identity = {};
-  if (ctx.identity.developerName !== undefined) return;
+  if (!cwd) {
+    return;
+  }
+  if (!ctx.identity) {
+    ctx.identity = {};
+  }
+  if (ctx.identity.developerName !== undefined) {
+    return;
+  }
   const { developerName, identitySource } = await resolveIdentity(ctx.credentials, cwd);
   ctx.identity.developerName = developerName;
   ctx.identity.identitySource = identitySource;
