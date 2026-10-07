@@ -130,6 +130,7 @@ Ask the user when:
 | `plugin`, `registry`, `agent`, `adapter` | architecture | external-integrations |
 | `claude`, `codex`, `gemini`, `opencode`, `pi`, `kimi`, `copilot`, `acp` | architecture | external-integrations |
 | `session`, `metrics`, `analytics`, `transcript`, `sync` | architecture | external-integrations |
+| `otel`, `otlp`, `hook`, `telemetry` | architecture | external-integrations |
 | `architecture`, `layer`, `structure`, `pattern` | architecture | development-practices |
 | `test`, `vitest`, `mock`, `coverage` | testing-patterns | development-practices |
 | `error`, `exception`, `validation` | development-practices | security-practices |

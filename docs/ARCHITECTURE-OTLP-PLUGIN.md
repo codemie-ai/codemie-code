@@ -1,22 +1,23 @@
 # OTLP Hook-Event Plugin Pattern (`OtlpAgentAdapter`)
 
-**Scope**: any plugin implementing `OtlpAgentAdapter` (`src/agents/core/types.ts`), under `src/agents/plugins/<name>/`. Today that's `claude-code-otlp` only; this doc is written so a second implementation (another coding agent/IDE with its own native hook/event surface — e.g. a future Cursor adapter) does not have to reinvent the dispatch shape.
-**Status**: Living doc — update this file when the dispatch pattern changes, or when a second `OtlpAgentAdapter` implementation lands (promote the parts that turn out to generalize, keep the parts that don't agent-specific).
+**Scope**: any plugin implementing `OtlpAgentAdapter` (`src/agents/core/types.ts`), under `src/agents/plugins/<name>/`. Today that's `claude-code-otlp` only.
+**Status**: Living doc — update when the dispatch pattern changes or a second adapter lands.
 
 ## 1. What this pattern is
 
-An `OtlpAgentAdapter` is not a chat agent — it never has a conversation. It is the ingestion point for one coding tool's own native hook/event surface, turned into CodeMie's analytics pipeline (session summaries, per-request usage, subagent usage, auth gating, etc.). Each tool that exposes hooks (Claude Code today; potentially Cursor or others later) gets its own adapter plugin, but every adapter implements the same one-method contract and feeds the same spool shape:
+An `OtlpAgentAdapter` is not a chat agent. It's the ingestion point for one coding tool's native hook/event surface, turned into CodeMie's analytics pipeline (session summaries, usage, auth gating). Every adapter implements one method and feeds the same shared spool shape:
 
 ```ts
 export interface OtlpAgentAdapter {
   readonly name: string;
   readonly type: AgentAdapterType.OTLP;
-
   processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void>;
 }
-```
 
-```ts
+export interface OtlpAdapterDeps {
+  ensureOtlpProxy: (agentName: string) => Promise<void>;
+}
+
 export interface OtlpHookSpoolData {
   agentName: string;
   raw: string;
@@ -24,73 +25,63 @@ export interface OtlpHookSpoolData {
 }
 ```
 
-`processOtlpEvent` is the only entry point; everything downstream of it — the spool, the forwarder, the analytics API — is agent-agnostic and already shared. Nothing about the pipeline described below is specific to any one tool's hook names or payload shape; those live entirely inside each adapter's own `evaluate()`.
+Everything downstream of `processOtlpEvent` — spool, forwarder, analytics API — is already agent-agnostic and shared. Nothing in it is specific to any one tool's hook names or payload shape; that lives entirely inside each adapter.
 
-## 2. Where an adapter sits in the pipeline
+## 2. Pipeline
 
 ```
-<tool>'s native hook/event fires (hook names & payload shape are agent-specific)
-        │  JSON on stdin
+<tool>'s native hook/event fires (agent-specific names/payload)
+        │ JSON on stdin
         ▼
-codemie hook --agent <adapter-name>              (src/cli/commands/hook.ts)
+codemie hook --agent <adapter-name>        (src/cli/commands/hook.ts)
+        │ looks up adapter via AgentRegistry.getAnalyticsAgent(name)
+        ▼
+<Adapter>.processOtlpEvent(rawEvent, deps)
         │
         ▼
-<Adapter>.processOtlpEvent(rawEvent: string)
-        │
-        ▼
-evaluate(rawEvent) → ForwardDecision               ◄── §4: the shape every adapter should follow
+evaluate(parsed) → ForwardDecision          (§3: shape every adapter follows)
         │
    ┌────┴─────┐
-   │          │
- block      forward
-   │          │
- log +      forwardToSpool(payload)  ──POST──►  proxy daemon spool  (OtlpHookSpoolData)
+ block       forward
+   │           │
+ log +     forwardToSpool(payload)  ──POST──►  proxy daemon spool (OtlpHookSpoolData)
  suppress                                              │
  (adapter-                                             ▼
-  specific)                              otlp-spool/forwarder.ts (background, agent-agnostic)
+  specific)                           otlp-spool/forwarder.ts (background, agent-agnostic)
                                                         │
                                                         ▼
                                               CodeMie analytics API
 ```
 
-- `codemie hook --agent <adapter-name>` (`src/cli/commands/hook.ts`) looks up the adapter via `AgentRegistry.getAnalyticsAgent(name)` and calls `processOtlpEvent` with the raw stdin payload. This part is already agent-agnostic — a new adapter just registers under a new name.
-- `forwardOtlpEventToSpool` (`src/agents/plugins/utils.ts`) is fire-and-forget and shared by every adapter: it POSTs `{ agentName, timestamp, raw }` to the local proxy daemon and swallows every error. A dead/unreachable daemon never blocks or fails the hook, regardless of which adapter called it.
-- `otlp-spool/forwarder.ts` is agent-agnostic by construction, not by convention — it reads spooled records and maps them straight through (`...limited` spread) to the analytics API payload. It never looks up or calls into any adapter. Any agent-owned common field (platform, client version, entrypoint, …) must already be baked into the event by the adapter's own `processOtlpEvent` before it reaches the spool.
-- Wiring _which_ native hooks/events get pointed at `codemie hook --agent <adapter-name>`, and how, is entirely tool-specific — see §5 for how `claude-code-otlp` does it; a different tool will have its own connector.
+- `forwardOtlpEventToSpool` (`src/agents/plugins/utils.ts`) is fire-and-forget and shared: POSTs `{ agentName, timestamp, raw }` to the local proxy daemon, swallows every error. A dead daemon never blocks or fails the hook.
+- `otlp-spool/forwarder.ts` is agent-agnostic by construction: it maps spooled records straight through to the analytics API payload and never calls into any adapter. Any agent-owned common field (platform, version, entrypoint, …) must already be baked into the event by the adapter before it reaches the spool (§5).
+- Wiring which native hooks/events call `codemie hook --agent <adapter-name>` is entirely tool-specific — see §6 for the Claude Code connector; a different tool has its own.
 
-## 3. The dispatch pattern every `evaluate()` should follow
+## 3. The dispatch pattern every `evaluate()` follows
 
-This is the part that generalizes across adapters, independent of which tool's hooks are being handled. Keep to this shape regardless of the native event names involved.
+This is a convention each adapter implements for itself, not a shared type from `core/types.ts` — `OtlpAgentAdapter`'s only contractual method is `processOtlpEvent`. Each adapter is free to define its own `ForwardDecision`-equivalent and field names to match its own tool's native event shape; keep the shape below, not the literal field/type names from the `claude-code-otlp` example.
 
-### 3.1 `ForwardDecision` — the only two outcomes
+### 3.1 Two outcomes — forward or block
 
 ```ts
 export type ForwardDecision =
-  | { decision: "forward"; payload: Record<string, unknown>[] }
-  | {
-      decision: "block";
-      reason: string;
-      hookSpecificOutput: Record<string, string | boolean>;
-    };
+  | { decision: 'forward'; payload: Record<string, unknown>[] }
+  | { decision: 'block'; reason: string; /* ...whatever this tool needs to suppress/respond to the native event... */ };
 ```
 
-Every native event an adapter processes should resolve to exactly one of these. `forward` carries the full list of parsed-object records to push to the spool (the original parsed event, plus zero or more derived analytics events). `block` stops the hook and logs a reason; what `hookSpecificOutput` means (e.g. suppressing a prompt) is specific to the tool and the event, not to this pattern.
+`forward` carries the full list of records to push to the spool (the original parsed event, plus zero or more derived analytics events). `block` stops the hook and logs a reason; any extra fields on `block` (`claude-code-otlp` uses `hookSpecificOutput`, mirroring Claude Code's own hook-output JSON schema) are specific to that tool's blocking mechanism, not to this pattern — a different tool may have no `block` case at all, or a differently-shaped one.
 
 ### 3.2 One handler per event name — no `switch`, no shared merge step
 
 ```ts
 private async evaluate(parsed: Record<string, unknown>): Promise<ForwardDecision> {
-  const sessionId = readString(parsed, 'session_id');
-  if (!sessionId) {
-    return { decision: 'forward', payload: [parsed] };
-  }
+  // early-return / continuation-key checks here are tool-specific — only add
+  // one if this tool's events need it (claude-code-otlp keys continuation on
+  // its own 'session_id' field; a different tool may have no such field)
 
-  const hookEventName = readString(parsed, 'hook_event_name');
-  if (hookEventName === 'SomeEvent') {
+  const nativeEventName = readString(parsed, /* this tool's own event-name field */ 'event_name');
+  if (nativeEventName === 'SomeEvent') {
     return await this.onSomeEvent(parsed);
-  }
-  if (hookEventName === 'OtherEvent') {
-    return await this.onOtherEvent(parsed);
   }
   // ...one `if` per handled event name...
 
@@ -98,70 +89,50 @@ private async evaluate(parsed: Record<string, unknown>): Promise<ForwardDecision
 }
 ```
 
-Each handler is fully responsible for its own `ForwardDecision` — it does not return a bare array for `evaluate()` to merge afterward. That means that the _only_ trailing fallthrough return (`{ decision: 'forward', payload: [parsed] }`) is for event names `evaluate()` doesn't branch on at all. It is not a sink that handled branches route through.
+Each handler returns its own full `ForwardDecision`. The trailing fallthrough return is only for event names `evaluate()` doesn't branch on at all — it's not a sink that handled branches route through.
 
 ### 3.3 One parsed object, read directly — no typed projection
 
-`rawEvent` is parsed exactly once, at the top of `processOtlpEvent()`, into `parsed: Record<string, unknown>` — the tool's own native (snake_case) field names, unchanged. That same object is both what handlers read fields off of (via small helpers like `readString(parsed, 'session_id')`/`readOptionalString(parsed, 'agent_id')`) and what gets forwarded to the spool. There is deliberately no second, camelCase-renamed "typed hook event" object: a 1:1 field-rename mapper adds a name to type-check against but zero runtime validation (a missing field becomes `undefined`/`''` either way), so for a handful of fields read in a handful of places it is not worth carrying a second shape through `evaluate()` and every handler signature. If a future adapter's handlers need many more fields in many more places, revisit this call — a typed projection becomes worth its weight once the number of call sites justifies it.
+`parsed` is read directly by handlers (via small helpers like `readString`/`readOptionalString`) and forwarded as-is; there's no typed/camelCase projection layer, since for a handful of fields that adds a type to check against with no runtime-validation benefit.
 
 ### 3.4 One place writes to the spool
 
-`forwardToSpool()` (or equivalent) should be the only call site for `forwardOtlpEventToSpool()` in an adapter, called exactly once from `processOtlpEvent()` after `evaluate()` resolves. No handler forwards anything itself — handlers only _compute_ what should be forwarded (the `ForwardDecision.payload`). This single-chokepoint property is relied on by analytics correctness (every event reaches the spool exactly once, in a known order, under this adapter's registered name).
+`forwardToSpool()` is the only call site for `forwardOtlpEventToSpool()`, called once from `processOtlpEvent()` after `evaluate()` resolves (it loops over `ForwardDecision.payload` and forwards each record). No handler forwards anything itself. This single-chokepoint property guarantees every event reaches the spool exactly once, in order, under the adapter's registered name.
 
-### 3.5 Only gate on proxy/daemon readiness when you're about to act on it
+### 3.5 Proxy readiness is the adapter's own responsibility
 
-An adapter owns the decision of whether it actually needs the local proxy/daemon for a given event — don't pay for an auth check or a daemon-readiness check on every event just because _some_ events need one. `claude-code-otlp` is the current example: only `onUserPromptSubmit` calls `ensureProxyAuth()` (because that handler's whole job is to gate on it); every other handler goes straight to building its `ForwardDecision` and skips the check entirely, since forwarding to the spool doesn't itself require proxy readiness. Keep that shape in a new adapter — gate per-handler, not globally in `evaluate()` or `processOtlpEvent()`.
+Whether and when to call `deps.ensureOtlpProxy()`, and whether to add any further gate (e.g. an auth check, a tracked-project check), is a decision each adapter makes for itself based on what its events actually need — there's no required shape here. `claude-code-otlp` gates `ensureOtlpProxy()` on its tracked-project check in `processOtlpEvent()` but, once past that, calls it for every event regardless of which handler runs (since every `forward` decision needs the daemon up to reach the spool) — it does not gate per-handler. It additionally gates an SSO auth check inside `onUserPromptSubmit` only, because that's the one handler whose job is to enforce it. A different tool may not need a tracked-project concept at all, may not need proxy readiness for every event, or may need a different gate entirely — don't carry `claude-code-otlp`'s specific gating choices into a new adapter, just the principle that each adapter decides this for itself.
 
 ## 4. Adding a new event to an existing adapter
 
-1. **Decide the shape you need.** Does the new event need extra fields beyond the adapter's current typed hook-event shape? If so, extend that type and its raw→typed mapping function.
-2. **Write one handler method**, taking `(rawEvent: string, event: <TypedHookEvent>)` and returning `Promise<ForwardDecision>` (unless the handler genuinely needs no typed field off the event — then `rawEvent` alone is fine).
-3. **Add exactly one `if` branch** in `evaluate()`, dispatching to the new handler. Do not add a `switch` case, do not touch the trailing fallthrough return.
-4. **Never forward anything from inside the handler.** Return the full `ForwardDecision`; the single `forwardToSpool()` call in `processOtlpEvent()` is what actually sends it.
-5. **Add a test** for the new branch, mocking at whatever boundary the adapter already mocks (e.g. a transcript/orchestrator module), following the adapter's existing test structure.
-6. **Update that adapter's own event-surface table** (see `claude-code-otlp`'s own notes/tests for the current example of such a table).
+1. Write one handler method, `(parsed: Record<string, unknown>) => Promise<ForwardDecision>`.
+2. Add exactly one `if` branch in `evaluate()` dispatching to it. No `switch`, don't touch the trailing fallthrough.
+3. Never forward from inside the handler — return the `ForwardDecision`; the single `forwardToSpool()` call in `processOtlpEvent()` sends it.
+4. Add a test for the new branch, following the adapter's existing test structure.
+5. Update that adapter's own event-surface table/notes (see §6 for the current example).
 
 ## 5. Adding a new `OtlpAgentAdapter` for a different tool
 
-1. Create `src/agents/plugins/<new-adapter-name>/` and implement `OtlpAgentAdapter`: just `processOtlpEvent`, following the `evaluate()`/`ForwardDecision` shape in §3 — enriching its own events with any agent-owned common fields (see §5a) before forwarding to the spool. `claude-code-otlp` is the current example.
-2. Register it in `AgentRegistry` (`src/agents/registry.ts`) under its own `name` — that name is also what gets passed to `forwardOtlpEventToSpool(event, name)` and later matched by `otlp-spool/forwarder.ts` via `AgentRegistry.getAnalyticsAgent(name)` (still used by `hook.ts`'s dispatch, see §2).
-3. Write a connector that wires the tool's own native hooks/events to `codemie hook --agent <new-adapter-name>` (see `src/cli/commands/proxy/connectors/claude-code-otlp.ts` for the Claude Code example — the specific hook names, settings file format, and env vars will be entirely different for another tool, and that's expected).
-4. Everything from `forwardOtlpEventToSpool` onward (the spool POST, `otlp-spool/forwarder.ts`, the analytics API call) is already shared and agent-agnostic by construction — no changes needed there as long as step 1-3 hold.
+1. Create `src/agents/plugins/<new-adapter-name>/`, implement `OtlpAgentAdapter` following §3. Enrich events with any agent-owned common fields (platform, version, entrypoint, …) **inside the adapter's own hook-time process**, not via a callback from the forwarder — the forwarder runs in the long-lived proxy daemon, a different process from the short-lived `codemie hook --agent <name>` CLI invocation, so resolving agent/tool state there would reflect the daemon's environment, not the invocation that produced the event. If resolving a field is expensive (subprocess spawn, network call), back it with a small file cache under `getCodemiePath()` — the hook-time process is fresh per event, so in-memory memoization buys nothing (see `client-version-cache.ts` for the pattern).
+2. Register it in `AgentRegistry` (`src/agents/registry.ts`) under its own `name` — same name passed to `forwardOtlpEventToSpool(event, name)` and matched by `AgentRegistry.getAnalyticsAgent(name)` in `hook.ts`.
+3. Write a connector wiring the tool's native hooks/events to `codemie hook --agent <new-adapter-name>` (see `src/cli/commands/proxy/connectors/claude-code-otlp.ts` for the example — hook names, settings format, and env vars are tool-specific).
+4. Everything from `forwardOtlpEventToSpool` onward is already shared — no changes needed there as long as 1-3 hold.
 
-## 5a. Agent-owned fields that are expensive to resolve
+## 6. Reference implementation: `claude-code-otlp`
 
-Resolve agent-owned fields (platform, version, entrypoint, …) **inside the adapter's own hook-time process**, not via a callback from the agent-agnostic forwarder — the forwarder (`otlp-spool/forwarder.ts`) runs in the long-lived proxy daemon, a different process from the short-lived `codemie hook --agent <name>` CLI invocation, and reading agent/tool state (e.g. an env var) there reflects the daemon's own startup environment, not the per-invocation environment that actually produced the event.
+`ClaudeCodeOtlpPlugin` (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`), registered as `claude-code-otlp`, ingests Claude Code's native hook events.
 
-If resolving a field is expensive (a subprocess spawn, a network call), back it with a small file cache under `getCodemiePath()` rather than relying on in-process memoization — the hook-time process is fresh per event and does not persist across events, so an in-memory cache buys nothing. `claude-code-otlp/client-version-cache.ts` is the current example: a TTL file cache around `claude --version`.
+| File | Role |
+|---|---|
+| `claude-code-otlp.plugin.ts` | `evaluate()` dispatch, per-event handlers, hook-time common-field enrichment, allowlist gate + daemon start |
+| `client-version-cache.ts` | TTL file cache around `claude --version`, backing the `client_version` common field |
+| `claude-code-otlp.types.ts` | `ForwardDecision` |
+| `claude-code-otlp.constants.ts` | `CLAUDE_CODE_OTLP_AGENT_NAME` — the registered adapter name |
+| `claude-code-otlp.allowlist.ts` | Per-project allowlist gating (`isProjectTracked`/`readAllowlistState`) — see the INVARIANT comment in `processOtlpEvent`: an untracked project must never reach the daemon spool, since the daemon has no allowlist of its own |
+| `transcript/orchestrator.ts` | `collectMainTranscriptEvents`/`collectSubagentTranscriptEvents` — transcript-derived analytics events |
+| `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session |
+| `src/cli/commands/proxy/connectors/claude-code-otlp.ts` | Wires Claude Code's `.claude/settings.json` hooks to `codemie hook --agent claude-code-otlp` |
 
-## 6. Session completeness gating & draining (`otlp-spool/`)
+Claude Code fires 12 hook events (`HOOK_EVENTS` in that connector). `evaluate()` branches on `UserPromptSubmit` (auth gate), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse), and `SubagentStop` (subagent-scoped transcript parse); everything else falls through to the raw passthrough.
 
-Past the per-adapter spool POST, the proxy daemon's `otlp-spool/` layer batches a session's spooled data before sending it to the analytics API, rather than forwarding each spooled record immediately. This part is already agent-agnostic — it keys everything off `sessionId`/`agentName`, not off any one adapter's event shape — but it's useful background for understanding what "forward to the spool" actually leads to.
-
-- **`spool-state.ts`** derives a session's state straight from the spool files on disk. `hooksGroupPresent`/`otelGroupPresent` check whether the hooks stream and any OTEL stream have _ever_ had data written — sticky, so a stream that already reached EOF still counts as "written" even once fully delivered.
-- **`completeness-gate.ts`** (`gateDecision(spool, status): GateDecision`) decides what to do with a session on each tick:
-  - hooks **and** OTEL both present → `'send'`.
-  - hooks only, waited long enough (and force-forwarding is allowed) → `'hooks-only-force'`; hooks only but not waited enough yet → `'wait'`.
-  - OTEL only → `'wait'` (today this waits indefinitely for a hooks event to arrive — there is no current path that gives up on an OTEL-only session).
-  - neither present → `'noop'`.
-- **`sweep.ts`** garbage-collects a session once every stream is fully drained (`isSessionDrained`) and a grace period has elapsed since the last producer write — measured from spool-file mtimes, not the status file, since cursor-only updates touch the status file without any new data arriving. Safe to delete: the next producer write recreates the status/spool files from scratch.
-- **`session-lock.ts`**'s `withSessionLock` serializes per-session operations but is **not reentrant**: calling it again for the same session from inside an already-running locked callback deadlocks (the inner call chains behind the outer one, which is itself waiting on the inner call to finish). Code running inside a lock must mutate session state in place rather than calling the cursor/status update helpers again.
-
-## 7. Reference implementation: `claude-code-otlp`
-
-`ClaudeCodeOtlpPlugin` (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`) is the current (and so far only) `OtlpAgentAdapter`, registered as `claude-code-otlp`. It ingests Claude Code's own native hook events.
-
-| File                                                    | Role                                                                                                                                                 |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code-otlp.plugin.ts`                            | `evaluate()` dispatch, all per-event handlers, hook-time common-field enrichment, allowlist gate + lazy proxy start                                   |
-| `client-version-cache.ts`                               | TTL file cache around `claude --version`, backing the `client_version` common field (see §5a)                                                        |
-| `claude-code-otlp.types.ts`                             | `ForwardDecision`                                                                                                                                      |
-| `claude-code-otlp.constants.ts`                         | `CLAUDE_CODE_OTLP_AGENT_NAME` — the registered adapter name                                                                                          |
-| `claude-code-otlp.allowlist.ts`                         | Per-project allowlist gating (`isProjectTracked`/`readAllowlistState`) — see the INVARIANT comment in `processOtlpEvent`                              |
-| `transcript/orchestrator.ts`                            | `collectMainTranscriptEvents`, `collectSubagentTranscriptEvents` — Claude-Code-transcript-specific derivation of analytics events                    |
-| `transcript/subagent-usage.ts`                          | `findSubagentFiles` — discovers every subagent transcript for a session                                                                              |
-| `src/cli/commands/proxy/connectors/claude-code-otlp.ts` | `HOOK_EVENTS` — wires Claude Code's `.claude/settings.json` hooks to `codemie hook --agent claude-code-otlp`; the tool-specific piece from §5 step 3 |
-
-Claude Code fires 12 distinct hook events today (`HOOK_EVENTS` in that connector): `SessionStart`, `Stop`, `StopFailure`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `PreCompact`, `Notification`. `evaluate()` branches explicitly on `UserPromptSubmit` (auth gate), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse), and `SubagentStop` (subagent-scoped transcript parse); everything else falls through to the raw passthrough — intentional, since most of those events carry nothing this pipeline needs to transform.
-
-See `docs/ARCHITECTURE-PROXY.md` for the proxy/plugin layer this hands off to (the spool endpoint, the daemon, the forwarder).
+See `docs/ARCHITECTURE-PROXY.md` for the proxy/daemon layer this hands off to, and `otlp-spool/` (`src/providers/plugins/sso/proxy/plugins/otlp-spool/`) for session completeness gating and draining — both already agent-agnostic and not something a new adapter needs to touch.
