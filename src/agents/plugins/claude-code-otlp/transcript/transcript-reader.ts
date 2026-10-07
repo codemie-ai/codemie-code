@@ -1,4 +1,4 @@
-import { open } from 'node:fs/promises';
+import { open, type FileHandle } from 'node:fs/promises';
 
 const NEWLINE = 0x0a;
 
@@ -22,7 +22,7 @@ export async function readNewLines(
   filePath: string,
   fromOffset: number
 ): Promise<ReadNewLinesResult> {
-  let handle;
+  let handle: FileHandle;
   try {
     handle = await open(filePath, 'r');
   } catch {

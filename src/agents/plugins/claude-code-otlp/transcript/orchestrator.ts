@@ -1,13 +1,14 @@
 /**
- * Main-transcript trigger orchestration for the `Stop`, `PreCompact`, and `SessionEnd` hook
- * events.
+ * Main-transcript trigger orchestration for the `Stop`, `PreCompact`, `SessionEnd`, and
+ * `StopFailure` hook events.
  *
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
  * (`./parse-state.js`), reads only the transcript lines appended since the last
  * persisted `mainOffset` (`./transcript-reader.js`), derives/merges
  * `agent.usage.request` records for those new lines (`./usage-request.js`), persists
  * state back, and RETURNS one JSON string per completed request plus (on `Stop`/`SessionEnd`)
- * one `agent.session.summary` event — it never forwards anything to the spool itself. The caller
+ * one `agent.session.summary` event (`Stop`/`SessionEnd` only) — it never forwards anything to
+ * the spool itself. The caller
  * (the plugin's `processOtlpEvent`, via its per-event handlers) owns forwarding, so there is
  * exactly one place in the whole analytics pipeline that writes to the spool.
  *
@@ -176,7 +177,7 @@ async function buildFullAccumulator(
 }
 
 /**
- * Collect the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd` hook fire.
+ * Collect the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd`/`StopFailure` hook fire.
  *
  * - Loads persisted state, reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
@@ -186,19 +187,16 @@ async function buildFullAccumulator(
  * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
  * - On `Stop`/`SessionEnd` only, also returns exactly one `agent.session.summary` event
  *   (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`) built from a fresh full-file
- *   recompute (see {@link buildFullAccumulator}). `PreCompact` never returns a
+ *   recompute (see {@link buildFullAccumulator}). `PreCompact`/`StopFailure` never return a
  *   summary.
  * - Persists state back to disk.
  *
  * Never forwards anything itself — the caller is responsible for sending the returned events to
  * the spool (exactly one place in the pipeline does that).
  *
- * Scoping ruling (a judgment call, since no file in this codebase documents a reliable
- * signal for when a *main*-transcript turn enters/exits a "skill context"): every
- * main-transcript-derived usage record is scoped as `scopeKind: 'main'`,
- * `scopeName: ''` unconditionally. `state.activeSkill` is deliberately left untouched (not read,
- * not written) here — it stays available, unused, for a future task that identifies a real
- * signal for it.
+ * Scoping: no reliable transcript signal marks a *main*-transcript turn entering/exiting a
+ * "skill context", so every main-transcript usage record is scoped `scopeKind: 'main'`,
+ * `scopeName: ''`. `state.activeSkill` is deliberately neither read nor written.
  *
  * Swallows every error internally — never throws into `processOtlpEvent`.
  */
@@ -266,7 +264,6 @@ export async function collectMainTranscriptEvents(
         summaryEvent.api_calls = Object.keys(state.openRequests).length;
         events.push(JSON.stringify(summaryEvent));
       }
-      // PreCompact/StopFailure: usage requests only, no summary — handled by skipping the block above.
 
       await saveParseState(sessionId, state);
       return events;

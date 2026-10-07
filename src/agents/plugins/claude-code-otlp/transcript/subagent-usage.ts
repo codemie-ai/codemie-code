@@ -1,23 +1,19 @@
 /**
  * `agent.subagent.usage` discovery and event builder.
  *
- * Discovery (`findSubagentFiles`) follows the same path convention as the existing,
- * `private`/unexported `findSubagentFiles` in `src/agents/plugins/claude/claude.session.ts`
- * (`<parentDir>/<sessionId>/subagents/agent-*.jsonl` + sibling `<name>.meta.json`), but is a
- * fresh, smaller implementation returning only the narrower {@link SubagentFile} shape this
- * event needs — no `parentAgentId`/`requestShape`/`requestNonInteractive`.
+ * Discovery (`findSubagentFiles`) uses the same path convention as the private
+ * `findSubagentFiles` in `src/agents/plugins/claude/claude.session.ts`
+ * (`<parentDir>/<sessionId>/subagents/agent-*.jsonl` + sibling `<name>.meta.json`) but returns
+ * only the narrower {@link SubagentFile} shape this event needs.
  *
- * The event builder (`buildSubagentUsageEvent`) aggregates token/cache fields by summing an
- * already-scoped `OpenUsageRequest[]` (`./usage-request.ts`'s shape, reused — not redefined), and passes
- * caller-built `tool_calls`/`tool_errors`/`skills_invoked` maps through verbatim: this module has
- * no access to a subagent's own tool-use/tool-error/skill-invocation occurrences, only to the
- * aggregates its caller already computed from that subagent's transcript.
+ * The event builder (`buildSubagentUsageEvent`) sums an already-scoped `OpenUsageRequest[]` for
+ * token/cache fields and passes the caller-built `tool_calls`/`tool_errors`/`skills_invoked` maps
+ * through verbatim; it has no access to the subagent transcript itself.
  *
- * `description`/`workflow_run`/`worktree` have no identified source anywhere in this codebase
- * (per spec.md's "Open risks") — always emitted as literal empty strings, never fabricated.
+ * `description`/`workflow_run`/`worktree` have no known source and are always empty strings,
+ * never fabricated.
  */
 
-import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { OpenUsageRequest } from './parse-state.js';
@@ -49,10 +45,6 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
     const filename = basename(mainTranscriptPath);
     const sessionId = filename.replace(/\.jsonl$/, '');
     const subagentsDir = join(parentDir, sessionId, 'subagents');
-
-    if (!existsSync(subagentsDir)) {
-      return [];
-    }
 
     const files = await readdir(subagentsDir);
     const agentFiles = await Promise.all(
@@ -99,7 +91,7 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
  * subagent transcript's own first/last line timestamps — not this function's job.
  *
  * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
- * sidecar omits the field — per spec.md's Open risks, not treated as an error).
+ * sidecar omits the field — not treated as an error).
  *
  * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, daemon-side.
  */

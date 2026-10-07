@@ -1,43 +1,24 @@
 /**
  * `agent.session.summary` builder.
  *
- * Unlike `agent.usage.request`/`agent.subagent.usage`, this event is a running, mutable
- * aggregate over an entire session, not a one-shot derivation from a single transcript line
- * or file. The caller (the transcript-reader orchestrator) is responsible for
- * accumulating a {@link SessionSummaryAccumulator} across the session's parsed transcript lines
- * and tool-use/tool-result payloads, tracking `TranscriptParseState.branchCounts` via
- * {@link updateBranchCounts} as `git_branch` changes per record, and running
- * `extractNamedInvocations()` (`@/agents/plugins/claude/session/claude-named-invocations.js`)
- * against the session's messages to get the {@link NamedInvocationCounts} this module's builder
- * consumes. This module only aggregates/derives the final event shape from already-computed
- * inputs — it never reads a transcript file or calls `extractNamedInvocations()` itself.
+ * Unlike `agent.usage.request`/`agent.subagent.usage`, this event is a running aggregate over an
+ * entire session. The orchestrator accumulates a {@link SessionSummaryAccumulator}, tracks
+ * `TranscriptParseState.branchCounts` via {@link updateBranchCounts}, and runs
+ * `extractNamedInvocations()` to produce the {@link NamedInvocationCounts} this builder consumes.
+ * This module only derives the final event shape from those inputs — it never reads a transcript.
  *
- * `event_id`/`schema_version` are stamped later, daemon-side — this builder's output
- * carries only an explicit `type` field.
+ * `event_id`/`schema_version`/`client_version`/`codemie_cli_version` are stamped later,
+ * daemon-side (`mapHookRecords()`); the output carries only an explicit `type`.
  *
- * Field-shape rulings (see spec.md's `agent.session.summary` section for the full reasoning):
- * - `models_used` is emitted as the full `acc.models` count map (not just a list of names) —
- *   preserves count information `primary_model` alone would discard, consistent with how
- *   `tool_calls`/`tool_errors`-style maps are emitted elsewhere in this stage.
- * - `tool_calls`/`tool_errors` are flattened from `acc.toolCalls`'s combined
- *   `{ calls, errors }`-per-tool shape into two separate flat `Record<string, number>` maps,
- *   matching `buildSubagentUsageEvent`'s (`./subagent-usage.ts`) already-established
- *   `tool_calls`/`tool_errors` output convention for the sibling `agent.subagent.usage` event.
- * - `commands_in_order` is derived as `Object.keys(named.commandInvocations)` — the distinct
- *   command names in whatever iteration order the object naturally has. `commandInvocations` is
- *   a COUNT map, not an ordered sequence, so no true chronological invocation order is available
- *   anywhere in `NamedInvocationCounts`; this is a genuine mismatch between this field's name
- *   (which implies ordering) and the upstream data shape. Documented here rather than silently
- *   papered over with a fabricated ordering.
- * - `title` has no identified source anywhere in this codebase or the external data-model doc
- *   (per spec.md's Open risks) — always emitted as a literal empty string, never fabricated.
- * - `api_calls` (count of `agent.usage.request` records this session) is intentionally OMITTED
- *   from this builder's output: `buildSessionSummaryEvent`'s signature has no parameter
- *   for it, and neither `acc` nor any other input here carries a request count. It is left for
- *   the orchestrator to merge in afterward, since only that caller has visibility
- *   into the full set of `agent.usage.request` records it has derived/forwarded this session.
- * - `client_version`/`codemie_cli_version` are common fields stamped later via
- *   `mapHookRecords()` — not this builder's responsibility either.
+ * Field-shape notes:
+ * - `models_used` is the full `acc.models` count map, preserving counts `primary_model` discards.
+ * - `tool_calls`/`tool_errors` are flattened from `acc.toolCalls`'s `{ calls, errors }` shape into
+ *   two flat maps, matching `buildSubagentUsageEvent` (`./subagent-usage.ts`).
+ * - `commands_in_order` is `Object.keys(named.commandInvocations)`. Upstream is a COUNT map, so no
+ *   chronological order exists; the field name implies more than the data can deliver.
+ * - `title` has no known source and is always an empty string, never fabricated.
+ * - `api_calls` is omitted here: no input carries a request count. The orchestrator, which owns
+ *   the full set of `agent.usage.request` records, merges it in afterward.
  */
 
 import type { NamedInvocationCounts } from '@/agents/plugins/claude/session/claude-named-invocations.js';

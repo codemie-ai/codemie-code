@@ -75,14 +75,7 @@ export async function loadParseState(sessionId: string): Promise<TranscriptParse
     const raw = await readFile(getParseStatePath(sessionId), 'utf-8');
     const parsed = JSON.parse(raw) as Partial<TranscriptParseState>;
 
-    return {
-      mainOffset: parsed.mainOffset ?? 0,
-      subagentOffsets: parsed.subagentOffsets ?? {},
-      openRequests: parsed.openRequests ?? {},
-      activeSkill: parsed.activeSkill ?? '',
-      branchCounts: parsed.branchCounts ?? {},
-      compactionCount: parsed.compactionCount ?? 0,
-    };
+    return { ...createParseState(), ...parsed };
   } catch {
     return createParseState();
   }
@@ -132,10 +125,12 @@ export async function withParseStateLock<T>(sessionId: string, fn: () => Promise
   await mkdir(dirname(lockPath), { recursive: true });
 
   const deadline = Date.now() + LOCK_STALE_MS * 2;
+  let acquired = false;
   for (;;) {
     try {
       const handle = await open(lockPath, 'wx');
       await handle.close();
+      acquired = true;
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
@@ -155,6 +150,9 @@ export async function withParseStateLock<T>(sessionId: string, fn: () => Promise
   try {
     return await fn();
   } finally {
-    await rm(lockPath, { force: true }).catch(() => {});
+    // Only release a lock we hold — when we proceeded unlocked, the file belongs to another process.
+    if (acquired) {
+      await rm(lockPath, { force: true }).catch(() => {});
+    }
   }
 }

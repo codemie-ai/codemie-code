@@ -2,11 +2,9 @@
  * `agent.usage.request` extraction and merge.
  *
  * One record per Claude transcript JSONL line that carries `message.usage` — the same
- * per-API-response usage shape the existing cost-reporting parser
- * (`src/cli/commands/analytics/cost/usage-readers.ts`'s `ClaudeRawMessage`/
- * `extractClaudeUsageRecords`) already reads, adapted here to this task's
- * {@link OpenUsageRequest} shape (`parse-state.ts`) instead of that pipeline's
- * `UsageRecord`.
+ * per-API-response usage shape the cost-reporting parser
+ * (`src/cli/commands/analytics/cost/usage-readers.ts`) reads, adapted to
+ * {@link OpenUsageRequest} (`parse-state.ts`) instead of that pipeline's `UsageRecord`.
  *
  * Claude Code can write more than one JSONL row for the same API response (progressive
  * streaming chunks, or a later row that fills in `stop_reason` once the turn finishes), so
@@ -16,16 +14,14 @@
  * not itself check that two records it is asked to merge actually share that identity.
  */
 
-import { parseRoutingHeaders, type RoutingHeaderSource } from '../../../../utils/routing-headers.mjs';
-import { parseBackendModelName } from '../../../../utils/bedrock-pricing.mjs';
+import type { RoutingHeaderSource } from '@/utils/routing-headers.mjs';
+import { parseBackendModelName } from '@/utils/bedrock-pricing.mjs';
 import type { OpenUsageRequest } from './parse-state.js';
 
 /**
- * Loose shape of one transcript JSONL line, mirroring `usage-readers.ts`'s
- * `ClaudeRawMessage` plus the additional fields this task's event needs
- * (`message.stop_reason`, `message.usage`'s extra nested groups, and the
- * top-level `gitBranch`/`isApiError`). Not exported — callers only see
- * {@link parseUsageLine}'s `OpenUsageRequest | null` result.
+ * Loose shape of one transcript JSONL line, mirroring `usage-readers.ts`'s `ClaudeRawMessage`
+ * plus `message.stop_reason`, `message.usage`'s extra nested groups, and the top-level
+ * `gitBranch`/`isApiError`. Not exported — callers only see {@link parseUsageLine}'s result.
  */
 interface TranscriptUsageLine {
   timestamp?: string;
@@ -85,7 +81,7 @@ export function parseUsageLine(
   // Both openRequests' key and resolveEventId's agent.usage.request formula key on
   // `${requestId}::${model}` — an empty requestId would collide every such line in the session
   // into one record instead of being skipped.
-  const requestId = String(parsed.message?.id ?? '');
+  const requestId = parsed.message?.id ?? '';
   if (!requestId) {
     return null;
   }
@@ -94,22 +90,17 @@ export function parseUsageLine(
   // parseBackendModelName() (the raw LiteLLM backend id, when the proxy injected one) wins over
   // the transcript's own literal `message.model`, since it reflects the actual billable backend
   // model for a routed/capable-tier request. `modelRaw` keeps the literal, unresolved alias.
-  const modelRaw = String(parsed.message?.model ?? 'unknown');
-  const model = parseBackendModelName(parsed.message) ?? parsed.message?.model ?? 'unknown';
-  // Routing metadata itself is not part of OpenUsageRequest's shape, but parsing it mirrors the
-  // same pattern usage-readers.ts follows for this message object — kept as a documented no-op
-  // read (not stored) so a future task extending OpenUsageRequest with routing fields has a
-  // precedent to follow rather than re-deriving the call from scratch.
-  void parseRoutingHeaders(parsed.message);
+  const modelRaw = parsed.message?.model ?? 'unknown';
+  const model = parseBackendModelName(parsed.message) ?? modelRaw;
 
   return {
     requestId,
-    model: String(model),
+    model,
     modelRaw,
-    timestamp: String(parsed.timestamp ?? ''),
-    speed: String(usage.speed ?? ''),
-    inferenceGeo: String(usage.inference_geo ?? ''),
-    serviceTier: String(usage.service_tier ?? ''),
+    timestamp: parsed.timestamp ?? '',
+    speed: usage.speed ?? '',
+    inferenceGeo: usage.inference_geo ?? '',
+    serviceTier: usage.service_tier ?? '',
     inputTokens: Number(usage.input_tokens ?? 0),
     cacheCreation5mTokens: Number(usage.cache_creation?.ephemeral_5m_input_tokens ?? 0),
     cacheCreation1hTokens: Number(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0),
@@ -121,9 +112,9 @@ export function parseUsageLine(
     scopeName,
     agentId,
     // Sibling of usage on message, not nested inside it.
-    stopReason: String(parsed.message?.stop_reason ?? ''),
-    isApiError: Boolean(parsed.isApiError ?? false),
-    gitBranch: String(parsed.gitBranch ?? ''),
+    stopReason: parsed.message?.stop_reason ?? '',
+    isApiError: Boolean(parsed.isApiError),
+    gitBranch: parsed.gitBranch ?? '',
   };
 }
 
