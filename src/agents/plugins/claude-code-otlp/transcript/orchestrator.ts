@@ -204,7 +204,7 @@ export async function collectMainTranscriptEvents(
   sessionId: string,
   transcriptPath: string,
   trigger: MainTranscriptTrigger
-): Promise<string[]> {
+): Promise<Record<string, unknown>[]> {
   try {
     // Both the load and the save happen inside the lock so a concurrent hook process for the
     // same session can never read a state this pass is about to overwrite.
@@ -239,9 +239,9 @@ export async function collectMainTranscriptEvents(
         state.compactionCount += 1;
       }
 
-      const events: string[] = [];
+      const events: Record<string, unknown>[] = [];
       for (const key of touchedKeys) {
-        events.push(JSON.stringify(buildUsageRequestEvent(sessionId, state.openRequests[key])));
+        events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
       }
 
       if (trigger === 'Stop' || trigger === 'SessionEnd') {
@@ -262,7 +262,7 @@ export async function collectMainTranscriptEvents(
         // docstring defers it to this caller) — this is the full set of agent.usage.request
         // records derived for this session so far, main- and agent-scoped alike.
         summaryEvent.api_calls = Object.keys(state.openRequests).length;
-        events.push(JSON.stringify(summaryEvent));
+        events.push(summaryEvent);
       }
 
       await saveParseState(sessionId, state);
@@ -388,7 +388,7 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
 export async function collectSubagentTranscriptEvents(
   sessionId: string,
   subagentFile: SubagentFile
-): Promise<string[]> {
+): Promise<Record<string, unknown>[]> {
   try {
     // Load/mutate/save inside the lock — same rationale as collectMainTranscriptEvents: a sibling
     // SubagentStop for another subagent in this same session must never read state this pass is
@@ -410,9 +410,9 @@ export async function collectSubagentTranscriptEvents(
       }
       state.subagentOffsets[subagentFile.agentId] = nextOffset;
 
-      const events: string[] = [];
+      const events: Record<string, unknown>[] = [];
       for (const key of touchedKeys) {
-        events.push(JSON.stringify(buildUsageRequestEvent(sessionId, state.openRequests[key])));
+        events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
       }
 
       // Cumulative usage for this agent — every scope_kind:'agent' record known for it so far,
@@ -435,7 +435,7 @@ export async function collectSubagentTranscriptEvents(
         startedAt,
         durationMs
       );
-      events.push(JSON.stringify(subagentEvent));
+      events.push(subagentEvent);
 
       await saveParseState(sessionId, state);
       return events;

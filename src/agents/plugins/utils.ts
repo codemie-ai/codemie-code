@@ -11,7 +11,7 @@ import { logger } from '../../utils/logger.js';
  * - Uses 1000ms timeout and swallows all errors
  * - Never throws, never affects hook's exit code
  */
-export async function forwardOtlpEventToSpool(rawEvent: string, agentName: string): Promise<void> {
+export async function forwardOtlpEventToSpool(event: Record<string, unknown>, agentName: string): Promise<void> {
   try {
     const state = await readState();
 
@@ -26,7 +26,7 @@ export async function forwardOtlpEventToSpool(rawEvent: string, agentName: strin
     const body: OtlpHookSpoolData = {
       agentName,
       timestamp: Date.now(),
-      raw: rawEvent
+      raw: JSON.stringify(event)
     }
 
     try {

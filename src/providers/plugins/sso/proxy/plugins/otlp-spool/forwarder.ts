@@ -280,22 +280,6 @@ export async function mapHookRecords(
         ? resolveStoryForPrompt(ctx, rawPrompt)
         : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
 
-    const { AgentRegistry } = await import('@/agents/registry.js');
-    const analyticsAgent = AgentRegistry.getAnalyticsAgent(spoolData.agentName);
-    let agentSpecificFields: Record<string, unknown> = {};
-    try {
-      agentSpecificFields = (await analyticsAgent?.prepareAnalyticsFields(hookEvent)) ?? {};
-    } catch (err) {
-      // An agent plugin's analytics-field hook is documented as "must never throw", but
-      // that's only a doc comment — a violating implementation must not abort every
-      // remaining record in this forward tick.
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.debug(
-        '[otlp-forwarder] prepareAnalyticsFields threw',
-        ...sanitizeLogArgs({ agentName: spoolData.agentName, err: msg })
-      );
-    }
-
     const limited = limitHookPayload(hookEvent);
     const type = hookEventType(hookName, hookEvent);
     const sessionId = String(hookEvent['session_id'] ?? '');
@@ -316,7 +300,6 @@ export async function mapHookRecords(
         cwd,
         prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
         raw: limited,
-        ...agentSpecificFields,
         schema_version: 2,
         event_id: resolveEventId(type, sessionId, { ...hookEvent, byteOffset }),
         codemie_cli_version: CODEMIE_CLI_VERSION,

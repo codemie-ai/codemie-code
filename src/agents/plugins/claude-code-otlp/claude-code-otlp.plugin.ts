@@ -5,7 +5,7 @@ import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { AgentAdapterType, OtlpAdapterDeps, OtlpAgentAdapter } from '@/agents/core/types.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
-import { BaseClaudeCodeHookEvent, ForwardDecision, toBaseClaudeCodeHookEvent } from './claude-code-otlp.types.js';
+import { ForwardDecision } from './claude-code-otlp.types.js';
 import { forwardOtlpEventToSpool } from '../utils.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
@@ -14,18 +14,15 @@ import {
   type SubagentFile,
 } from './transcript/orchestrator.js';
 import { findSubagentFiles } from './transcript/subagent-usage.js';
-import { exec } from '@/utils/exec.js';
+import { resolveClientVersion } from './client-version-cache.js';
 
 export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
   public readonly type = AgentAdapterType.OTLP;
 
-  /** Cached across calls so a high-frequency hook (e.g. PostToolUse) doesn't spawn a subprocess per call. */
-  private clientVersion: string | undefined;
-  private readonly platform = 'claude-code';
-
   public async processOtlpEvent(rawEvent: string, { ensureOtlpProxy }: OtlpAdapterDeps): Promise<void> {
-    const event = toBaseClaudeCodeHookEvent(JSON.parse(rawEvent));
+    const parsed = JSON.parse(rawEvent) as Record<string, unknown>;
+    const cwd = readString(parsed, 'cwd');
 
     // INVARIANT - do not weaken. An untracked project must produce NO hooks data
     // in the daemon spool, must not start the daemon, and must not run the SSO
@@ -34,7 +31,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     // data, and skips sessions that only have OTEL data. Forwarding a hook event
     // for an untracked project would make the session sendable and leak its
     // data to the backend.
-    const isTracked = await isProjectTracked(event.cwd, await readAllowlistState());
+    const isTracked = await isProjectTracked(cwd, await readAllowlistState());
     if (!isTracked) {
       logger.debug('[Claude Code OTLP plugin] project not in analytics allowlist, ignoring hook event');
       return;
@@ -42,86 +39,113 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
 
     await ensureOtlpProxy(this.name);
 
-    const evaluation = await this.evaluate(rawEvent);
+    const evaluation = await this.evaluate(parsed);
     if (evaluation.decision === 'block') {
       logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${evaluation.reason}`);
       console.log(JSON.stringify(evaluation));
       return;
     }
-    this.forwardToSpool(evaluation.payload);
+    this.forwardToSpool(await this.withCommonFields(evaluation.payload));
   }
 
-  private async evaluate(rawEvent: string): Promise<ForwardDecision> {
-    const event = toBaseClaudeCodeHookEvent(JSON.parse(rawEvent));
-
-    if (!event.sessionId) {
-      return { decision: 'forward', payload: [rawEvent] };
-    }
-
-    if (event.hookEventName === 'UserPromptSubmit') {
-      return await this.onUserPromptSubmit(rawEvent);
-    }
-    if (event.hookEventName === 'Stop') {
-      return await this.onStopEvent(rawEvent, event);
-    }
-    if (event.hookEventName === 'PreCompact') {
-      return await this.onPreCompactEvent(rawEvent, event);
-    }
-    if (event.hookEventName === 'StopFailure') {
-      return await this.onStopFailureEvent(rawEvent, event);
-    }
-    if (event.hookEventName === 'SessionEnd') {
-      return await this.onSessionEndEvent(rawEvent, event);
-    }
-    if (event.hookEventName === 'SubagentStop') {
-      return await this.onSubagentStopEvent(rawEvent, event);
-    }
-
-    return { decision: 'forward', payload: [rawEvent] };
+  /** Resolved once per call so every record in the batch shares one client-version lookup. */
+  private async withCommonFields(records: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const common = {
+      platform: 'claude-code',
+      entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? '',
+      client_version: await resolveClientVersion(),
+    };
+    return records.map((record) => ({ ...record, ...common }));
   }
 
-  private async onStopEvent(rawEvent: string, event: BaseClaudeCodeHookEvent): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(event.sessionId, event.transcriptPath, 'Stop');
-    return { decision: 'forward', payload: [rawEvent, ...derived] };
+  private async evaluate(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const sessionId = readString(parsed, 'session_id');
+    if (!sessionId) {
+      return { decision: 'forward', payload: [parsed] };
+    }
+
+    const hookEventName = readString(parsed, 'hook_event_name');
+    if (hookEventName === 'UserPromptSubmit') {
+      return await this.onUserPromptSubmit(parsed);
+    }
+    if (hookEventName === 'Stop') {
+      return await this.onStopEvent(parsed);
+    }
+    if (hookEventName === 'PreCompact') {
+      return await this.onPreCompactEvent(parsed);
+    }
+    if (hookEventName === 'StopFailure') {
+      return await this.onStopFailureEvent(parsed);
+    }
+    if (hookEventName === 'SessionEnd') {
+      return await this.onSessionEndEvent(parsed);
+    }
+    if (hookEventName === 'SubagentStop') {
+      return await this.onSubagentStopEvent(parsed);
+    }
+
+    return { decision: 'forward', payload: [parsed] };
   }
 
-  private async onPreCompactEvent(rawEvent: string, event: BaseClaudeCodeHookEvent): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(event.sessionId, event.transcriptPath, 'PreCompact');
-    return { decision: 'forward', payload: [rawEvent, ...derived] };
+  private async onStopEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(
+      readString(parsed, 'session_id'),
+      readString(parsed, 'transcript_path'),
+      'Stop'
+    );
+    return { decision: 'forward', payload: [parsed, ...derived] };
   }
 
-  private async onStopFailureEvent(rawEvent: string, event: BaseClaudeCodeHookEvent): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(event.sessionId, event.transcriptPath, 'StopFailure');
-    return { decision: 'forward', payload: [rawEvent, ...derived] };
+  private async onPreCompactEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(
+      readString(parsed, 'session_id'),
+      readString(parsed, 'transcript_path'),
+      'PreCompact'
+    );
+    return { decision: 'forward', payload: [parsed, ...derived] };
   }
 
-  private async onSessionEndEvent(rawEvent: string, event: BaseClaudeCodeHookEvent): Promise<ForwardDecision> {
-    const derived = await collectMainTranscriptEvents(event.sessionId, event.transcriptPath, 'SessionEnd');
+  private async onStopFailureEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const derived = await collectMainTranscriptEvents(
+      readString(parsed, 'session_id'),
+      readString(parsed, 'transcript_path'),
+      'StopFailure'
+    );
+    return { decision: 'forward', payload: [parsed, ...derived] };
+  }
+
+  private async onSessionEndEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const sessionId = readString(parsed, 'session_id');
+    const transcriptPath = readString(parsed, 'transcript_path');
+    const derived = await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd');
 
     // Backstop: guarantee every subagent discovered for this session gets at least one
     // agent.subagent.usage event, even when its own SubagentStop hook never fired.
-    const subagentFiles = await findSubagentFiles(event.transcriptPath);
+    const subagentFiles = await findSubagentFiles(transcriptPath);
     for (const file of subagentFiles) {
-      derived.push(...(await collectSubagentTranscriptEvents(event.sessionId, file)));
+      derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
     }
 
-    return { decision: 'forward', payload: [rawEvent, ...derived] };
+    return { decision: 'forward', payload: [parsed, ...derived] };
   }
 
-  private async onSubagentStopEvent(rawEvent: string, event: BaseClaudeCodeHookEvent): Promise<ForwardDecision> {
-    if (!event.agentTranscriptPath) {
-      return { decision: 'forward', payload: [rawEvent] };
+  private async onSubagentStopEvent(parsed: Record<string, unknown>): Promise<ForwardDecision> {
+    const agentTranscriptPath = readOptionalString(parsed, 'agent_transcript_path');
+    if (!agentTranscriptPath) {
+      return { decision: 'forward', payload: [parsed] };
     }
 
     const subagentFile: SubagentFile = {
-      agentId: event.agentId ?? basename(event.agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, ''),
-      filePath: event.agentTranscriptPath,
-      toolUseId: event.toolUseId,
-      agentType: event.agentType,
+      agentId:
+        readOptionalString(parsed, 'agent_id') ??
+        basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, ''),
+      filePath: agentTranscriptPath,
+      toolUseId: readOptionalString(parsed, 'tool_use_id'),
+      agentType: readOptionalString(parsed, 'agent_type'),
     };
 
-    const derived = await collectSubagentTranscriptEvents(event.sessionId, subagentFile);
-    return { decision: 'forward', payload: [rawEvent, ...derived] };
+    const derived = await collectSubagentTranscriptEvents(readString(parsed, 'session_id'), subagentFile);
+    return { decision: 'forward', payload: [parsed, ...derived] };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
@@ -134,59 +158,20 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     });
   }
 
-  private forwardToSpool(rawEvents: string[]): void {
+  private forwardToSpool(events: Record<string, unknown>[]): void {
     // Intentionally not awaited: forwardOtlpEventToSpool is fire-and-forget.
-    for (const rawEvent of rawEvents) {
-      forwardOtlpEventToSpool(rawEvent, CLAUDE_CODE_OTLP_AGENT_NAME);
+    for (const event of events) {
+      forwardOtlpEventToSpool(event, CLAUDE_CODE_OTLP_AGENT_NAME);
     }
   }
 
-  public async prepareAnalyticsFields(
-    hookEvent: Record<string, unknown>
-  ): Promise<Record<string, unknown>> {
-    const fields: Record<string, unknown> = {
-      platform: this.platform,
-      entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? '',
-      client_version: await this.getClientVersion(),
-    };
-
-    const agentId = readOptionalString(hookEvent, 'agent_id');
-    if (agentId !== undefined) {
-      fields.agent_id = agentId;
-    }
-    const agentType = readOptionalString(hookEvent, 'agent_type');
-    if (agentType !== undefined) {
-      fields.agent_type = agentType;
-    }
-
-    return fields;
-  }
-
-  private async getClientVersion(): Promise<string> {
-    if (this.clientVersion === undefined) {
-      this.clientVersion = await this.resolveClientVersion();
-    }
-    return this.clientVersion;
-  }
-
-  private async resolveClientVersion(): Promise<string> {
-    try {
-      const result = await exec('claude', ['--version']);
-      const trimmed = result.stdout.trim();
-      const versionMatch = trimmed.match(/^(\d+\.\d+\.\d+)/);
-      return versionMatch ? versionMatch[1] : trimmed;
-    } catch {
-      return '';
-    }
-  }
-
-  private async onUserPromptSubmit(rawEvent: string): Promise<ForwardDecision> {
+  private async onUserPromptSubmit(parsed: Record<string, unknown>): Promise<ForwardDecision> {
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
       return {
         decision: 'forward',
-        payload: [rawEvent],
+        payload: [parsed],
       }
     }
 
@@ -208,4 +193,8 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function readString(record: Record<string, unknown>, key: string): string {
+  return readOptionalString(record, key) ?? '';
 }

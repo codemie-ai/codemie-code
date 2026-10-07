@@ -11,13 +11,13 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const execMock = vi.fn();
+const resolveClientVersionMock = vi.fn();
 const collectMainTranscriptEventsMock = vi.fn();
 const collectSubagentTranscriptEventsMock = vi.fn();
 const findSubagentFilesMock = vi.fn();
 
-vi.mock('@/utils/exec.js', () => ({
-  exec: execMock,
+vi.mock('../client-version-cache.js', () => ({
+  resolveClientVersion: resolveClientVersionMock,
 }));
 
 vi.mock('../transcript/orchestrator.js', () => ({
@@ -44,7 +44,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
   const plugin = new ClaudeCodeOtlpPlugin();
   const ensureOtlpProxy = vi.fn(async () => {});
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+  });
 
   it('does nothing for untracked projects, for every event', async () => {
     vi.mocked(isProjectTracked).mockResolvedValue(false);
@@ -70,16 +73,31 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
   });
 });
 
-describe('ClaudeCodeOtlpPlugin.prepareAnalyticsFields', () => {
+describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
   const originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
 
+  function hookEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      session_id: 'sid-1',
+      transcript_path: '/tmp/transcript.jsonl',
+      cwd: '/repo',
+      hook_event_name: 'Stop',
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
-    execMock.mockReset();
-    execMock.mockResolvedValue({ code: 0, stdout: '2.1.23 (Claude Code)', stderr: '', signal: null });
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    collectMainTranscriptEventsMock.mockResolvedValue([]);
+    collectSubagentTranscriptEventsMock.mockResolvedValue([]);
+    findSubagentFilesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
     if (originalEntrypoint === undefined) {
       delete process.env.CLAUDE_CODE_ENTRYPOINT;
     } else {
@@ -87,57 +105,34 @@ describe('ClaudeCodeOtlpPlugin.prepareAnalyticsFields', () => {
     }
   });
 
-  it('returns platform, entrypoint, and client_version', async () => {
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+  it('enriches the forwarded event with platform, entrypoint, and client_version', async () => {
     process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    const rawEvent = JSON.stringify(hookEvent());
 
-    const plugin = new ClaudeCodeOtlpPlugin();
-    const fields = await plugin.prepareAnalyticsFields({});
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(fields.platform).toBe('claude-code');
-    expect(fields.entrypoint).toBe('cli');
-    expect(fields.client_version).toBe('2.1.23');
+    expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(1);
+    const [forwarded] = vi.mocked(forwardOtlpEventToSpool).mock.calls[0];
+    expect(forwarded.platform).toBe('claude-code');
+    expect(forwarded.entrypoint).toBe('cli');
+    expect(forwarded.client_version).toBe('2.1.23');
   });
 
-  it('includes agent_id/agent_type when present on the hook event', async () => {
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+  it('preserves agent_id/agent_type already present on the raw event (SubagentStop)', async () => {
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-1.jsonl',
+        agent_id: 'sub-1',
+        agent_type: 'explore',
+      })
+    );
 
-    const plugin = new ClaudeCodeOtlpPlugin();
-    const fields = await plugin.prepareAnalyticsFields({ agent_id: 'sub-1', agent_type: 'explore' });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
-    expect(fields.agent_id).toBe('sub-1');
-    expect(fields.agent_type).toBe('explore');
-  });
-
-  it('omits agent_id/agent_type when absent from the hook event', async () => {
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
-
-    const plugin = new ClaudeCodeOtlpPlugin();
-    const fields = await plugin.prepareAnalyticsFields({});
-
-    expect(fields).not.toHaveProperty('agent_id');
-    expect(fields).not.toHaveProperty('agent_type');
-  });
-
-  it('spawns `claude --version` only once across two prepareAnalyticsFields calls', async () => {
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
-
-    const plugin = new ClaudeCodeOtlpPlugin();
-    await plugin.prepareAnalyticsFields({});
-    await plugin.prepareAnalyticsFields({ agent_id: 'sub-2' });
-
-    expect(execMock).toHaveBeenCalledTimes(1);
-    expect(execMock).toHaveBeenCalledWith('claude', ['--version']);
-  });
-
-  it('falls back to an empty client_version when `claude --version` throws', async () => {
-    execMock.mockRejectedValue(new Error('ENOENT'));
-    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
-
-    const plugin = new ClaudeCodeOtlpPlugin();
-    const fields = await plugin.prepareAnalyticsFields({});
-
-    expect(fields.client_version).toBe('');
+    const [forwarded] = vi.mocked(forwardOtlpEventToSpool).mock.calls[0];
+    expect(forwarded.agent_id).toBe('sub-1');
+    expect(forwarded.agent_type).toBe('explore');
   });
 });
 
@@ -161,6 +156,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     collectSubagentTranscriptEventsMock.mockResolvedValue([]);
     findSubagentFilesMock.mockReset();
     findSubagentFilesMock.mockResolvedValue([]);
+    resolveClientVersionMock.mockReset();
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
     vi.mocked(forwardOtlpEventToSpool).mockReset();
     vi.mocked(isProjectTracked).mockResolvedValue(true);
   });
@@ -174,7 +171,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     async (hookEventName) => {
       const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
       const plugin = new ClaudeCodeOtlpPlugin();
-      const rawEvent = JSON.stringify(hookEvent({ hook_event_name: hookEventName }));
+      const parsedEvent = hookEvent({ hook_event_name: hookEventName });
+      const rawEvent = JSON.stringify(parsedEvent);
 
       await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
@@ -183,7 +181,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
         '/tmp/transcript.jsonl',
         hookEventName
       );
-      expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
+      expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(
+        expect.objectContaining(parsedEvent),
+        'claude-code-otlp'
+      );
     }
   );
 
@@ -270,22 +271,27 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   it('forwards the raw event and skips all transcript-parse dispatch when session_id is empty', async () => {
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
-    const rawEvent = JSON.stringify(hookEvent({ session_id: '', hook_event_name: 'Stop' }));
+    const parsedEvent = hookEvent({ session_id: '', hook_event_name: 'Stop' });
+    const rawEvent = JSON.stringify(parsedEvent);
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
     expect(collectMainTranscriptEventsMock).not.toHaveBeenCalled();
-    expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(rawEvent, 'claude-code-otlp');
+    expect(forwardOtlpEventToSpool).toHaveBeenCalledWith(
+      expect.objectContaining(parsedEvent),
+      'claude-code-otlp'
+    );
   });
 
   it('forwards every event a per-event handler returns (the raw event plus any derived events) through the single forwardToSpool path, in order', async () => {
-    const derivedUsageEvent = JSON.stringify({ type: 'agent.usage.request' });
-    const derivedSummaryEvent = JSON.stringify({ type: 'agent.session.summary' });
+    const derivedUsageEvent = { type: 'agent.usage.request' };
+    const derivedSummaryEvent = { type: 'agent.session.summary' };
     collectMainTranscriptEventsMock.mockResolvedValue([derivedUsageEvent, derivedSummaryEvent]);
 
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
-    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'Stop' }));
+    const parsedEvent = hookEvent({ hook_event_name: 'Stop' });
+    const rawEvent = JSON.stringify(parsedEvent);
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
 
@@ -293,10 +299,17 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     // themselves (they are mocked here to just return data) — every event that reaches the spool
     // mock arrived via forwardToSpool, called exactly once from processOtlpEvent.
     expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(forwardOtlpEventToSpool).mock.calls.map(([raw]) => raw)).toEqual([
-      rawEvent,
-      derivedUsageEvent,
-      derivedSummaryEvent,
+    expect(vi.mocked(forwardOtlpEventToSpool).mock.calls.map(([record]) => record)).toEqual([
+      expect.objectContaining(parsedEvent),
+      expect.objectContaining(derivedUsageEvent),
+      expect.objectContaining(derivedSummaryEvent),
     ]);
+  });
+
+  it('rejects when rawEvent is malformed JSON', async () => {
+    const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+    const plugin = new ClaudeCodeOtlpPlugin();
+
+    await expect(plugin.processOtlpEvent('not json', { ensureOtlpProxy })).rejects.toThrow();
   });
 });

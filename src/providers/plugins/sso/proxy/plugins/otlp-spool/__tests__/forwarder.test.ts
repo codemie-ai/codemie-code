@@ -11,23 +11,6 @@ beforeEach(() => {
   execSyncMock.mockReturnValue('0.15.6');
 });
 
-// Only 'claude-code-otlp' (the real registered OTLP agent name) resolves to an agent;
-// every other name — including 'claude', which every other test in this file deliberately
-// uses — resolves to `undefined`, matching the real AgentRegistry's behavior.
-vi.mock('@/agents/registry.js', () => ({
-  AgentRegistry: {
-    getAnalyticsAgent: (agentName: string) =>
-      agentName === 'claude-code-otlp'
-        ? {
-          prepareAnalyticsFields: async () => ({
-            platform: 'claude-code',
-            client_version: '1.2.3',
-          }),
-        }
-        : undefined,
-  },
-}));
-
 interface MappedRecord {
   type: string;
   session_id: string;
@@ -307,7 +290,7 @@ describe('mapHookRecords', () => {
     expect(line1.event_id).not.toBe(line2.event_id);
   });
 
-  it('merges prepareAnalyticsFields common fields onto the mapped record when the hook agent name is registered', async () => {
+  it('passes agent-baked common fields (platform/client_version) through onto the mapped record without any agent-specific lookup', async () => {
     const { mapHookRecords } = await import('../forwarder.js');
 
     const ctx = {
@@ -318,12 +301,18 @@ describe('mapHookRecords', () => {
       git: {},
     };
 
-    // The real registered OTLP agent name, unlike every other test in this file which
-    // deliberately uses the unregistered 'claude' (that name resolves to `undefined`,
-    // so this is the only test exercising the real agent-registry lookup merge path).
+    // Simulates what the plugin now bakes in hook-side before ever reaching the spool —
+    // the forwarder needs no agent-specific knowledge to pass these through, just the
+    // `...limited` spread like every other hook-native field.
     const record = JSON.stringify({
       agentName: 'claude-code-otlp',
-      raw: JSON.stringify({ hook_event_name: 'Stop', session_id: 'sid1', cwd: '' }),
+      raw: JSON.stringify({
+        hook_event_name: 'Stop',
+        session_id: 'sid1',
+        cwd: '',
+        platform: 'claude-code',
+        client_version: '1.2.3',
+      }),
       timestamp: Date.now(),
     });
 

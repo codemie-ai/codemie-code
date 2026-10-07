@@ -80,8 +80,8 @@ function writeTranscript(fileName: string, lines: string[]): string {
 
 type ForwardedEvent = Record<string, unknown>;
 
-function parseAll(raw: string[]): ForwardedEvent[] {
-  return raw.map((r) => JSON.parse(r) as ForwardedEvent);
+function parseAll(raw: ForwardedEvent[]): ForwardedEvent[] {
+  return raw;
 }
 
 /**
