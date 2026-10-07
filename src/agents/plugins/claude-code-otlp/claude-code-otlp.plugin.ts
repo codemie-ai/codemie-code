@@ -21,8 +21,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
   public readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawEvent: string, { ensureOtlpProxy }: OtlpAdapterDeps): Promise<void> {
-    const parsed = JSON.parse(rawEvent) as Record<string, unknown>;
-    const cwd = readString(parsed, 'cwd');
+    const event = JSON.parse(rawEvent) as Record<string, unknown>;
 
     // INVARIANT - do not weaken. An untracked project must produce NO hooks data
     // in the daemon spool, must not start the daemon, and must not run the SSO
@@ -31,7 +30,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     // data, and skips sessions that only have OTEL data. Forwarding a hook event
     // for an untracked project would make the session sendable and leak its
     // data to the backend.
-    const isTracked = await isProjectTracked(cwd, await readAllowlistState());
+    const isTracked = await isProjectTracked(readString(event, 'cwd'), await readAllowlistState());
     if (!isTracked) {
       logger.debug('[Claude Code OTLP plugin] project not in analytics allowlist, ignoring hook event');
       return;
@@ -39,7 +38,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
 
     await ensureOtlpProxy(this.name);
 
-    const evaluation = await this.evaluate(parsed);
+    const evaluation = await this.evaluate(event);
     if (evaluation.decision === 'block') {
       logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${evaluation.reason}`);
       console.log(JSON.stringify(evaluation));
