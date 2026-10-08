@@ -9,7 +9,11 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
-vi.mock('@/utils/config.js', () => ({ ConfigLoader: { load: vi.fn(async () => ({})) } }));
+vi.mock('@/utils/config.js', () => ({
+  ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
+}));
+vi.mock('@/agents/core/hook-credentials.js', () => ({ resolveHookCredentials: vi.fn(async () => null) }));
+vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: vi.fn(async () => '9.9.9') }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -308,5 +312,62 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const plugin = new ClaudeCodeOtlpPlugin();
 
     await expect(plugin.processOtlpEvent('not json', { ensureOtlpProxy, forwardOtlpEventToSpool })).rejects.toThrow();
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin wire type', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    collectMainTranscriptEventsMock.mockResolvedValue([]);
+    collectSubagentTranscriptEventsMock.mockResolvedValue([]);
+    findSubagentFilesMock.mockResolvedValue([]);
+  });
+
+  const typeFor = async (name: string): Promise<unknown> => {
+    await plugin.processOtlpEvent(event(name), { ensureOtlpProxy, forwardOtlpEventToSpool });
+    return vi.mocked(forwardOtlpEventToSpool).mock.calls[0][0]['type'];
+  };
+
+  it.each([
+    ['SessionStart', 'agent.session.start'],
+    ['Stop', 'agent.session.stop'],
+    ['StopFailure', 'agent.turn.error'],
+    ['SessionEnd', 'agent.session.end'],
+    ['PreToolUse', 'agent.tool.start'],
+    ['PostToolUse', 'agent.tool.end'],
+    ['PostToolUseFailure', 'agent.tool.error'],
+    ['SubagentStart', 'agent.subagent.start'],
+    ['SubagentStop', 'agent.subagent.stop'],
+    ['PreCompact', 'agent.session.compact'],
+    ['Notification', 'agent.notification'],
+  ])('maps %s to %s', async (hookName, expectedType) => {
+    expect(await typeFor(hookName)).toBe(expectedType);
+  });
+
+  it('maps UserPromptSubmit to agent.prompt.submit', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    await plugin.processOtlpEvent(
+      JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: 'UserPromptSubmit', prompt: 'hi' }),
+      { ensureOtlpProxy, forwardOtlpEventToSpool }
+    );
+    expect(vi.mocked(forwardOtlpEventToSpool).mock.calls[0][0]['type']).toBe('agent.prompt.submit');
+  });
+
+  it('falls back to agent.event for an unmapped hook name', () => {
+    const resolve = (plugin as unknown as { resolveEventType(e: Record<string, unknown>): string }).resolveEventType;
+    expect(resolve.call(plugin, { hook_event_name: 'SomethingNew' })).toBe('agent.event');
+    expect(resolve.call(plugin, {})).toBe('agent.event');
+  });
+
+  it('keeps the explicit type of a derived event', async () => {
+    collectMainTranscriptEventsMock.mockResolvedValue([{ type: 'agent.usage.request', session_id: 's' }]);
+    await plugin.processOtlpEvent(event('Stop'), { ensureOtlpProxy, forwardOtlpEventToSpool });
+    const types = vi.mocked(forwardOtlpEventToSpool).mock.calls.map(([record]) => record['type']);
+    expect(types).toEqual(['agent.session.stop', 'agent.usage.request']);
   });
 });

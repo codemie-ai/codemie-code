@@ -12,29 +12,8 @@ import {
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import { snapshotPendingBytes, snapshotPendingHookRecords } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-import { resolveEmailFromCredentials } from './identity.js';
-import {
-  type ForwardContext,
-  resolveCodemieCliVersion,
-  resolveDeveloperIdentity,
-} from './forward-context.js';
 
-const CODEMIE_CLI_VERSION = resolveCodemieCliVersion();
-
-const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
-  SessionStart: 'agent.session.start',
-  Stop: 'agent.session.stop',
-  StopFailure: 'agent.turn.error',
-  SessionEnd: 'agent.session.end',
-  UserPromptSubmit: 'agent.prompt.submit',
-  PreToolUse: 'agent.tool.start',
-  PostToolUse: 'agent.tool.end',
-  PostToolUseFailure: 'agent.tool.error',
-  SubagentStart: 'agent.subagent.start',
-  SubagentStop: 'agent.subagent.stop',
-  PreCompact: 'agent.session.compact',
-  Notification: 'agent.notification',
-};
+const SESSION_END_EVENT_TYPE = 'agent.session.end';
 
 const OTEL_ENDPOINTS: Record<OtelStream, string> = {
   logs: CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS,
@@ -42,8 +21,6 @@ const OTEL_ENDPOINTS: Record<OtelStream, string> = {
   traces: CODEMIE_ENDPOINTS.CLI_ANALYTICS_TRACES,
 };
 
-const MAX_PROMPT_CHARS = 200;
-const MAX_TOOL_FIELD_CHARS = 300;
 const FORWARD_TIMEOUT_MS = 20_000;
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
@@ -132,73 +109,7 @@ async function send(
   }
 }
 
-/* --------------------------------------------------------------- mapping --- */
-
-function hookEventType(hookName: string, event: Record<string, unknown>): string {
-  const explicitType = event['type'];
-  if (typeof explicitType === 'string' && explicitType.length > 0) {
-    return explicitType;
-  }
-  if (hookName === 'PreToolUse') {
-    return event['input'] && (event['input'] as Record<string, unknown>)['denied']
-      ? 'agent.tool.denied'
-      : 'agent.tool.start';
-  }
-  return HOOK_EVENT_TYPE_MAP[hookName] ?? 'agent.event';
-}
-
-function boundedText(value: unknown, maxChars: number): string {
-  if (value === undefined || value === null) {
-    return '';
-  }
-  const text =
-    typeof value === 'string'
-      ? value
-      : (() => {
-        try {
-          return JSON.stringify(value) ?? String(value);
-        } catch {
-          return String(value);
-        }
-      })();
-  return text.slice(0, maxChars);
-}
-
-/**
- * Prefer the event's own `timestamp` (e.g. the transcript line time on `agent.usage.request`)
- * over the spool-write time, which only reflects when the hook ran. Falls back when the
- * event has none or an unparseable one.
- */
-function resolveEventTimestamp(eventTimestamp: unknown, spoolTimestamp: number): string {
-  if (typeof eventTimestamp === 'string' && eventTimestamp.length > 0) {
-    const parsed = new Date(eventTimestamp);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
-  }
-  return new Date(spoolTimestamp).toISOString();
-}
-
-function stringOrEmpty(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
-  const limited: Record<string, unknown> = { ...hookEvent };
-
-  if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
-    limited.prompt = boundedText(hookEvent.prompt, MAX_PROMPT_CHARS);
-  }
-  for (const field of ['tool_input', 'tool_response', 'error']) {
-    if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
-      limited[field] = boundedText(hookEvent[field], MAX_TOOL_FIELD_CHARS);
-    }
-  }
-  // Prevent a nested/raw copy from bypassing the limits.
-  delete limited.raw;
-
-  return limited;
-}
+/* ------------------------------------------------------------- unwrapping --- */
 
 interface HookPayload {
   ndjson: string;
@@ -206,20 +117,21 @@ interface HookPayload {
   malformed: number;
 }
 
-export async function mapHookRecords(
-  records: string[],
-  ctx: ForwardContext
-): Promise<HookPayload> {
-  const mapped: string[] = [];
+/**
+ * Unwraps the spool envelopes. `hookEvent` is already the final wire event, built at hook time
+ * by the adapter, so it is forwarded byte for byte: same bytes on every retry.
+ */
+export function unwrapHookRecords(records: string[]): HookPayload {
+  const unwrapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
 
   for (const record of records) {
-    let spoolData: OtlpHookSpoolData;
-    let hookEvent: Record<string, unknown>;
+    let serialized: string;
+    let wireEvent: Record<string, unknown>;
     try {
-      spoolData = JSON.parse(record) as OtlpHookSpoolData;
-      hookEvent = JSON.parse(spoolData.raw) as Record<string, unknown>;
+      serialized = (JSON.parse(record) as OtlpHookSpoolData).hookEvent;
+      wireEvent = JSON.parse(serialized) as Record<string, unknown>;
     } catch {
       // Complete but unusable record: dropped deliberately. Its bytes are still
       // acknowledged with the batch so the cursor can never get stuck on it.
@@ -227,44 +139,14 @@ export async function mapHookRecords(
       continue;
     }
 
-    const hookName = String(hookEvent['hook_event_name'] ?? '');
-    if (hookName === 'SessionEnd') {
+    if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
       containsSessionEnd = true;
     }
-
-    const cwd = String(hookEvent['cwd'] ?? '');
-    await resolveDeveloperIdentity(ctx, cwd);
-
-    const limited = limitHookPayload(hookEvent);
-    const type = hookEventType(hookName, hookEvent);
-    const sessionId = String(hookEvent['session_id'] ?? '');
-    mapped.push(
-      JSON.stringify({
-        ...limited,
-        type,
-        session_id: sessionId,
-        timestamp: resolveEventTimestamp(hookEvent['timestamp'], spoolData.timestamp),
-        user_email: ctx.userEmail,
-        developer_name: ctx.identity?.developerName ?? '',
-        identity_source: ctx.identity?.identitySource ?? '',
-        // Resolved at hook time by the adapter (OtlpAgentAdapter); passed through as-is.
-        git_branch: stringOrEmpty(hookEvent['git_branch']),
-        repo_remote: stringOrEmpty(hookEvent['repo_remote']),
-        story_id: stringOrEmpty(hookEvent['story_id']),
-        story_source: stringOrEmpty(hookEvent['story_source']),
-        codemie_project_name: ctx.projectName,
-        cwd,
-        prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
-        raw: limited,
-        schema_version: 2,
-        event_id: hookEvent['event_id'] as string,
-        codemie_cli_version: CODEMIE_CLI_VERSION,
-      })
-    );
+    unwrapped.push(serialized);
   }
 
   return {
-    ndjson: mapped.length > 0 ? `${mapped.join('\n')}\n` : '',
+    ndjson: unwrapped.length > 0 ? `${unwrapped.join('\n')}\n` : '',
     containsSessionEnd,
     malformed,
   };
@@ -272,34 +154,26 @@ export async function mapHookRecords(
 
 /* ------------------------------------------------------------ forwarding --- */
 
-async function buildForwardContext(
-  credentials: SSOCredentials | JWTCredentials
-): Promise<ForwardContext> {
+async function resolveBaseUrl(): Promise<string> {
   const { readState } = await import(
     '../../../../../../cli/commands/proxy/daemon-manager.js'
   );
   const state = await readState();
-
-  return {
-    credentials,
-    baseUrl: state?.targetUrl ?? state?.url ?? '',
-    projectName: state?.project ?? '',
-    userEmail: resolveEmailFromCredentials(credentials),
-    identity: {},
-  };
+  return state?.targetUrl ?? state?.url ?? '';
 }
 
 /** Forward the complete hook records after the hooks cursor. */
 async function forwardHooks(
   sessionId: string,
-  ctx: ForwardContext
+  baseUrl: string,
+  credentials: SSOCredentials | JWTCredentials
 ): Promise<SendResult | 'idle'> {
   const batch = await snapshotPendingHookRecords(sessionId);
   if (!batch) {
     return 'idle';
   }
 
-  const payload = await mapHookRecords(batch.records, ctx);
+  const payload = unwrapHookRecords(batch.records);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
@@ -313,9 +187,9 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const url = `${ctx.baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
+  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
   const result = await send(
-    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', ctx.credentials
+    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', credentials
   );
   if (result !== 'ok') {
     return result;
@@ -334,16 +208,17 @@ async function forwardHooks(
 async function forwardOtelStream(
   sessionId: string,
   stream: OtelStream,
-  ctx: ForwardContext
+  baseUrl: string,
+  credentials: SSOCredentials | JWTCredentials
 ): Promise<SendResult | 'idle'> {
   const pending = await snapshotPendingBytes(sessionId, stream);
   if (!pending) {
     return 'idle';
   }
 
-  const url = `${ctx.baseUrl}${OTEL_ENDPOINTS[stream]}`;
+  const url = `${baseUrl}${OTEL_ENDPOINTS[stream]}`;
   const result = await send(
-    sessionId, stream, url, pending.bytes, 'application/x-protobuf', ctx.credentials
+    sessionId, stream, url, pending.bytes, 'application/x-protobuf', credentials
   );
   if (result !== 'ok') {
     return result;
@@ -369,9 +244,9 @@ export async function forwardSession(
   hooksOnly: boolean,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<void> {
-  const ctx = await buildForwardContext(credentials);
+  const baseUrl = await resolveBaseUrl();
 
-  const hooksResult = await forwardHooks(sessionId, ctx);
+  const hooksResult = await forwardHooks(sessionId, baseUrl, credentials);
   if (hooksResult === 'auth-expired') {
     markCredentialsStale();
     return;
@@ -382,7 +257,7 @@ export async function forwardSession(
   }
 
   for (const stream of OTEL_STREAMS) {
-    const result = await forwardOtelStream(sessionId, stream, ctx);
+    const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials);
     if (result === 'auth-expired') {
       markCredentialsStale();
       return;

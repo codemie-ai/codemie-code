@@ -6,8 +6,9 @@
  * `extractNamedInvocations()` to produce the {@link NamedInvocationCounts} this builder consumes.
  * This module only derives the final event shape from those inputs — it never reads a transcript.
  *
- * `event_id`/`schema_version`/`client_version`/`codemie_cli_version` are stamped later,
- * daemon-side (`mapHookRecords()`); the output carries only an explicit `type`.
+ * `event_id`, `schema_version`, `client_version` and `codemie_cli_version` are no longer stamped
+ * daemon-side; the adapter base class stamps them at hook time (`client_version` via
+ * `resolveAgentFields`). The output carries only an explicit `type`.
  *
  * `api_calls` is omitted here: no input carries a request count. The orchestrator, which owns
  * the full set of `agent.usage.request` records, merges it in afterward.

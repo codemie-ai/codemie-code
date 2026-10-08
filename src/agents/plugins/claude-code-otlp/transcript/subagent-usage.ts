@@ -93,7 +93,7 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
  * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
  * sidecar omits the field — not treated as an error).
  *
- * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, daemon-side.
+ * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, by the adapter base class at hook time.
  */
 export function buildSubagentUsageEvent(
   sessionId: string,

@@ -1,267 +1,164 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const execSyncMock = vi.fn();
+const snapshotPendingHookRecordsMock = vi.fn();
+const snapshotPendingBytesMock = vi.fn();
+const advanceCursorMock = vi.fn();
+const markSessionEndedMock = vi.fn();
+const readStateMock = vi.fn();
+const fetchMock = vi.fn();
 
-vi.mock('node:child_process', () => ({
-  execSync: execSyncMock,
+vi.mock('../spool-io.js', () => ({
+  snapshotPendingHookRecords: snapshotPendingHookRecordsMock,
+  snapshotPendingBytes: snapshotPendingBytesMock,
+}));
+vi.mock('../session-status.js', () => ({
+  advanceCursor: advanceCursorMock,
+  markSessionEnded: markSessionEndedMock,
+}));
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
+vi.mock('@/utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-beforeEach(() => {
-  execSyncMock.mockReset();
-  execSyncMock.mockReturnValue('0.15.6');
+const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+
+/** A spool line as the daemon stores it: the envelope around the wire event built at hook time. */
+function spoolLine(wireEvent: Record<string, unknown>): string {
+  return JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(wireEvent) });
+}
+
+describe('unwrapHookRecords', () => {
+  it('forwards each raw wire event byte for byte, newline-delimited', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    const first = { type: 'agent.prompt.submit', session_id: 's1', timestamp: '2026-01-01T00:00:00.000Z', zeta: 1, alpha: { b: 2 } };
+    const second = { type: 'agent.tool.end', session_id: 's1' };
+
+    const payload = unwrapHookRecords([spoolLine(first), spoolLine(second)]);
+
+    expect(payload.ndjson).toBe(`${JSON.stringify(first)}\n${JSON.stringify(second)}\n`);
+    expect(payload.malformed).toBe(0);
+  });
+
+  it('does not synthesize or change any field', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    const bare = { session_id: 's1', hook_event_name: 'SessionEnd' };
+
+    const payload = unwrapHookRecords([spoolLine(bare)]);
+
+    expect(JSON.parse(payload.ndjson.trim())).toEqual(bare);
+  });
+
+  it('counts and skips malformed lines, keeping the good ones', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    const good = { type: 'agent.tool.end', session_id: 's1' };
+    const badEnvelope = 'not json';
+    const badRaw = JSON.stringify({ agentName: 'x', hookEvent: 'not json' });
+    const noHookEvent = JSON.stringify({ agentName: 'x' });
+
+    const payload = unwrapHookRecords([badEnvelope, spoolLine(good), badRaw, noHookEvent]);
+
+    expect(payload.malformed).toBe(3);
+    expect(payload.ndjson).toBe(`${JSON.stringify(good)}\n`);
+  });
+
+  it('returns an empty payload when nothing is usable', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    expect(unwrapHookRecords(['nope'])).toEqual({ ndjson: '', containsSessionEnd: false, malformed: 1 });
+  });
+
+  it('detects a session end from the wire type, not from hook_event_name', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+
+    expect(unwrapHookRecords([spoolLine({ type: 'agent.session.end', session_id: 's1' })]).containsSessionEnd).toBe(true);
+    expect(unwrapHookRecords([spoolLine({ type: 'agent.session.stop', hook_event_name: 'SessionEnd' })]).containsSessionEnd).toBe(false);
+    expect(unwrapHookRecords([spoolLine({ hook_event_name: 'SessionEnd' })]).containsSessionEnd).toBe(false);
+  });
 });
 
-interface MappedRecord {
-  type: string;
-  session_id: string;
-  schema_version: number;
-  event_id: string;
-  codemie_cli_version: string;
-  story_id?: string;
-  story_source?: string;
-  git_branch?: string;
-  repo_remote?: string;
-  prompt_body?: string;
-  developer_name?: string;
-  identity_source?: string;
-  platform?: string;
-  client_version?: string;
-}
-
-function buildHookRecord(
-  hookEventName: string,
-  sessionId: string,
-  extra: Record<string, unknown> = {},
-  eventId: string = 'default-event-id'
-): string {
-  return JSON.stringify({
-    agentName: 'claude',
-    raw: JSON.stringify({
-      hook_event_name: hookEventName,
-      session_id: sessionId,
-      cwd: '',
-      event_id: eventId,
-      ...extra,
-    }),
-    timestamp: Date.now(),
-  });
-}
-
-describe('resolveCodemieCliVersion', () => {
+describe('forwardSession (hooks)', () => {
   beforeEach(() => {
-    execSyncMock.mockReset();
-    execSyncMock.mockReturnValue('0.15.6');
-  });
-
-  it('reads the installed CLI version via `codemie --version` and strips the semver', async () => {
-    const { resolveCodemieCliVersion } = await import('../forward-context.js');
-
-    expect(resolveCodemieCliVersion()).toBe('0.15.6');
-    expect(execSyncMock).toHaveBeenCalledWith('codemie --version', {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      records: [spoolLine({ type: 'agent.session.end', session_id: 's1' })],
+      cursor: 10,
+      byteLength: 100,
     });
   });
 
-  it('falls back to an empty string when `codemie --version` throws', async () => {
-    execSyncMock.mockImplementation(() => {
-      throw new Error('ENOENT');
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs the ndjson to the target API, advances the cursor and marks the session ended', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('https://api.example.com/v1/analytics/cli-analytics/event-hooks');
+    expect(init.body).toBe(`${JSON.stringify({ type: 'agent.session.end', session_id: 's1' })}\n`);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
+    expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
+  });
+
+  it('retries once on 401 and succeeds', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 }).mockResolvedValueOnce({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
+  });
+
+  it('leaves the cursor untouched and marks credentials stale after two 403s', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(true);
+  });
+
+  it('leaves the cursor untouched on a non-auth failure', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('advances the cursor without a request when every line is malformed', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ records: ['nope'], cursor: 5, byteLength: 4 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 9);
+  });
+
+  it('does not mark the session ended for a batch without a session end', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      records: [spoolLine({ type: 'agent.tool.end', session_id: 's1' })],
+      cursor: 0,
+      byteLength: 10,
     });
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
 
-    const { resolveCodemieCliVersion } = await import('../forward-context.js');
-    expect(resolveCodemieCliVersion()).toBe('');
-  });
-});
+    await forwardSession('s1', true, credentials);
 
-describe('mapHookRecords', () => {
-  it('stamps schema_version, event_id, and codemie_cli_version on every mapped record', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: 'user@example.com',
-    };
-
-    const record1 = buildHookRecord('SessionStart', 'sid1', {}, 'event-id-1');
-    const record2 = buildHookRecord('Stop', 'sid1', {}, 'event-id-2');
-
-    const payload = await mapHookRecords([record1, record2], ctx);
-    const lines = payload.ndjson
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as MappedRecord);
-
-    expect(lines).toHaveLength(2);
-    expect(lines[0].schema_version).toBe(2);
-    expect(lines[1].schema_version).toBe(2);
-    expect(lines[0].event_id).not.toBe(lines[1].event_id);
-    expect(typeof lines[0].codemie_cli_version).toBe('string');
-    expect(lines[0].codemie_cli_version.length).toBeGreaterThan(0);
-    expect(lines[0].codemie_cli_version).toBe(lines[1].codemie_cli_version);
-  });
-
-  it('passes the event_id already stamped at spool-write time straight through unchanged', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    const record = buildHookRecord('SessionStart', 'sid1', {}, 'stamped-event-id-abc');
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.event_id).toBe('stamped-event-id-abc');
-  });
-
-  it('prefers an explicit hookEvent.type over the HOOK_EVENT_TYPE_MAP lookup', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    // PostToolUse normally maps to 'agent.tool.end', but an explicit `type`
-    // field on the raw hook payload (as a later-task synthetic record would
-    // carry) must win.
-    const record = buildHookRecord('PostToolUse', 'sid1', { type: 'agent.custom.synthetic' });
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.type).toBe('agent.custom.synthetic');
-  });
-
-  it('leaves existing-event type resolution unchanged when type is absent', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    const record = buildHookRecord('PostToolUse', 'sid1');
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.type).toBe('agent.tool.end');
-  });
-
-  it('passes git_branch/repo_remote/story_id/story_source through from the incoming record', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    const record = buildHookRecord('UserPromptSubmit', 'sid1', {
-      prompt: 'story: ABC-1 is ignored here, the forwarder does not resolve stories',
-      git_branch: 'feature/x',
-      repo_remote: 'org/repo',
-      story_id: 'EPMCDME-999',
-      story_source: 'marker',
-    });
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.git_branch).toBe('feature/x');
-    expect(line.repo_remote).toBe('org/repo');
-    expect(line.story_id).toBe('EPMCDME-999');
-    expect(line.story_source).toBe('marker');
-  });
-
-  it("defaults git_branch/repo_remote/story_id/story_source to '' and never resolves them from the daemon env", async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-    vi.stubEnv('SDLC_ANALYTICS_STORY_ID', 'FROM-DAEMON-1');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    try {
-      const payload = await mapHookRecords([buildHookRecord('UserPromptSubmit', 'sid1', { prompt: 'story: ABC-1' })], ctx);
-      const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-      expect(line.git_branch).toBe('');
-      expect(line.repo_remote).toBe('');
-      expect(line.story_id).toBe('');
-      expect(line.story_source).toBe('');
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it('passes agent-baked common fields (platform/client_version) through onto the mapped record without any agent-specific lookup', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-    };
-
-    // Simulates what the plugin now bakes in hook-side before ever reaching the spool —
-    // the forwarder needs no agent-specific knowledge to pass these through, just the
-    // `...limited` spread like every other hook-native field.
-    const record = JSON.stringify({
-      agentName: 'claude-code-otlp',
-      raw: JSON.stringify({
-        hook_event_name: 'Stop',
-        session_id: 'sid1',
-        cwd: '',
-        platform: 'claude-code',
-        client_version: '1.2.3',
-      }),
-      timestamp: Date.now(),
-    });
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.platform).toBe('claude-code');
-    expect(line.client_version).toBe('1.2.3');
-  });
-
-  it('carries ctx.identity through onto developer_name/identity_source for a non-jwt tier', async () => {
-    const { mapHookRecords } = await import('../forwarder.js');
-
-    // Pre-seeding ctx.identity (mimicking what the per-tick identity cache would look like once resolved)
-    // with a non-jwt tier result proves the wiring from ctx.identity onto the mapped record,
-    // independent of the identity-chain's own resolution logic (covered by identity.test.ts).
-    const ctx = {
-      credentials: { token: '', apiUrl: '' },
-      baseUrl: '',
-      projectName: 'proj',
-      userEmail: '',
-      identity: { developerName: 'git-user@example.com', identitySource: 'git' as const },
-    };
-
-    const record = buildHookRecord('Stop', 'sid1');
-
-    const payload = await mapHookRecords([record], ctx);
-    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-    expect(line.developer_name).toBe('git-user@example.com');
-    expect(line.identity_source).toBe('git');
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
   });
 });

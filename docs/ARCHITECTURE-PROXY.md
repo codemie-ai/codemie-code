@@ -925,6 +925,8 @@ The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook event
 
 **OTEL-only invariant.** The OTel environment is global, so untracked sessions still export OTEL data to the daemon, but they never receive hooks data. The completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data; an OTEL-only session gets `wait` and, once `waitTicks >= OTLP_SEND_MAX_ATTEMPTS` (limit resolved by `hooksOnlyWaitTicks()` in `otlp-spool/spool-config.ts`), `skip`. On `skip` the tick processor advances the OTEL cursors to EOF without sending. No code path may send OTEL-only data without first adding daemon-side project filtering.
 
+**Who stamps what.** The hook process (`OtlpAgentAdapter`) stamps every event field: type, truncation, common, agent and context fields (identity, project, CLI version), `schema_version`, `event_id`, `timestamp`. The daemon spool (`otlp.plugin.ts`) only stores the line. The forwarder (`otlp-spool/forwarder.ts`) only forwards it: it owns `baseUrl` and the credentials, and reads nothing from an event except `type` to detect a session end. See [ARCHITECTURE-OTLP-PLUGIN.md](ARCHITECTURE-OTLP-PLUGIN.md). Restart the daemon after upgrading.
+
 **Deletion timeline for untracked data**
 
 | Stage   | When                                                                                            | Result                                         |

@@ -15,7 +15,7 @@ describe('resolveIdentity', () => {
   });
 
   it('resolves from the jwt tier when the token carries a valid email claim', async () => {
-    const { resolveIdentity } = await import('../identity.js');
+    const { resolveIdentity } = await import('../identity-resolver.js');
 
     const credentials: JWTCredentials = {
       token: makeJwt({ email: 'dev@example.com' }),
@@ -36,7 +36,7 @@ describe('resolveIdentity', () => {
       return { code: 1, stdout: '', stderr: '', signal: null };
     });
 
-    const { resolveIdentity } = await import('../identity.js');
+    const { resolveIdentity } = await import('../identity-resolver.js');
 
     // Empty token: isJWTCredentials() still matches the shape, but decodeJwtClaims
     // yields no usable email, so the jwt tier is a miss.
@@ -59,7 +59,7 @@ describe('resolveIdentity', () => {
       profiles: {},
     });
 
-    const { resolveIdentity } = await import('../identity.js');
+    const { resolveIdentity } = await import('../identity-resolver.js');
 
     const credentials: JWTCredentials = { token: '', apiUrl: '' };
 

@@ -155,7 +155,7 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
 
 /**
  * Build the `agent.usage.request` event payload for `req`. Carries its own explicit `type`, so
- * the daemon-side `mapHookRecords()` stamps `event_id`/`schema_version` onto it later —
+ * the adapter base class stamps `event_id`/`schema_version` onto it at hook time —
  * this function deliberately does not set either.
  */
 export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest): Record<string, unknown> {

@@ -733,7 +733,6 @@ export enum AgentAdapterType {
 
 export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string) => Promise<void>;
-  /** Fire-and-forget spool write; never throws. */
   forwardOtlpEventToSpool: (event: Record<string, unknown>, agentName: string) => Promise<void>;
 }
 

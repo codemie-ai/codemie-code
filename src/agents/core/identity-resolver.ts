@@ -34,11 +34,14 @@ export function decodeJwtClaims(token: string): Record<string, unknown> {
  * Pull `email` straight off a JWT credential's claims, or off the SSO
  * session's `codemie_access_token` cookie claims (`email`, falling back to
  * `preferred_username`). Shared by the tier-1 `jwt` identity tier below and
- * by the forwarder's plain `userEmail` field — both resolve the same claim.
+ * by the adapter's plain `user_email` field — both resolve the same claim.
  */
 export function resolveEmailFromCredentials(
-  credentials: SSOCredentials | JWTCredentials
+  credentials: SSOCredentials | JWTCredentials | null
 ): string {
+  if (!credentials) {
+    return '';
+  }
   if (isJWTCredentials(credentials)) {
     const claims = decodeJwtClaims(credentials.token);
     if (typeof claims['email'] === 'string' && claims['email']) {
@@ -107,7 +110,7 @@ async function resolveCodemieCliIdentity(): Promise<string> {
 }
 
 /**
- * Tier 4 — os: the OS-reported username for the daemon process. Practically
+ * Tier 4 — os: the OS-reported username of the process resolving the identity. Practically
  * never empty, but guarded anyway since some sandboxed environments can make
  * `os.userInfo()` throw.
  */
@@ -128,7 +131,7 @@ function resolveOsIdentity(): string {
  * Never throws — every tier swallows its own failures internally.
  */
 export async function resolveIdentity(
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOCredentials | JWTCredentials | null,
   cwd: string
 ): Promise<ResolvedIdentity> {
   try {

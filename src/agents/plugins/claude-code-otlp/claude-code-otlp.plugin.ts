@@ -24,6 +24,21 @@ import {
 import { findSubagentFiles } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 
+const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
+  SessionStart: 'agent.session.start',
+  Stop: 'agent.session.stop',
+  StopFailure: 'agent.turn.error',
+  SessionEnd: 'agent.session.end',
+  UserPromptSubmit: 'agent.prompt.submit',
+  PreToolUse: 'agent.tool.start',
+  PostToolUse: 'agent.tool.end',
+  PostToolUseFailure: 'agent.tool.error',
+  SubagentStart: 'agent.subagent.start',
+  SubagentStop: 'agent.subagent.stop',
+  PreCompact: 'agent.session.compact',
+  Notification: 'agent.notification',
+};
+
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
 
@@ -44,12 +59,16 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   /** Resolved once per call so every record in the batch shares one client-version lookup. */
-  protected async resolveAgentCommonFields(): Promise<Record<string, unknown>> {
+  protected async resolveAgentFields(): Promise<Record<string, unknown>> {
     return {
       platform: 'claude-code',
       entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? '',
       client_version: await resolveClientVersion(),
     };
+  }
+
+  protected resolveEventType(event: Record<string, unknown>): string {
+    return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
   }
 
   protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {
