@@ -161,8 +161,8 @@ describe('collectMainTranscriptEvents — Stop trigger', () => {
 
     expect(usageEvents).toHaveLength(2);
     expect(summaryEvents).toHaveLength(1);
-    expect(summaryEvents[0].phase).toBe('incremental');
-    expect(summaryEvents[0]).not.toHaveProperty('ended_at');
+    expect(summaryEvents[0].is_final).toBe(false);
+    expect(summaryEvents[0].ended_at).toBe('2026-10-01T00:00:00.000Z');
   });
 });
 
@@ -236,8 +236,7 @@ describe('collectMainTranscriptEvents — SessionEnd trigger', () => {
     const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
 
     expect(summaryEvents).toHaveLength(1);
-    expect(summaryEvents[0].phase).toBe('final');
-    expect(summaryEvents[0]).toHaveProperty('ended_at');
+    expect(summaryEvents[0].is_final).toBe(true);
     expect(typeof summaryEvents[0].ended_at).toBe('string');
   });
 });
@@ -267,7 +266,7 @@ describe('collectMainTranscriptEvents — missing transcript file', () => {
 });
 
 describe('collectMainTranscriptEvents — tool-call accumulation', () => {
-  it('counts Edit/Write tool_use blocks into files_changed/files_written on the Stop summary', async () => {
+  it('counts Edit/Write tool_use blocks into files_written/files_edited/files_changed on the Stop summary', async () => {
     const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-tools';
@@ -299,12 +298,15 @@ describe('collectMainTranscriptEvents — tool-call accumulation', () => {
 
     const summary = events.find((e) => e.type === 'agent.session.summary');
     expect(summary).toBeDefined();
-    expect(summary?.files_written).toEqual(['/repo/a.ts']);
-    expect(summary?.files_changed).toEqual(['/repo/b.ts']);
-    expect((summary?.tool_calls as Record<string, number>).Write).toBe(1);
-    expect((summary?.tool_calls as Record<string, number>).Edit).toBe(1);
-    expect((summary?.tool_errors as Record<string, number>).Edit).toBe(1);
-    expect((summary?.tool_errors as Record<string, number>).Write).toBe(0);
+    expect(summary?.files_written).toBe(1);
+    expect(summary?.files_edited).toBe(1);
+    expect(summary?.files_changed).toBe(2);
+    const tools = summary?.tools as Record<string, { calls: number; errors: number }>;
+    expect(tools.Write).toEqual({ calls: 1, errors: 0 });
+    expect(tools.Edit).toEqual({ calls: 1, errors: 1 });
+    expect(summary?.tool_calls).toBe(2);
+    expect(summary?.tool_errors).toBe(1);
+    expect(summary?.tool_results).toBe(2);
   });
 });
 

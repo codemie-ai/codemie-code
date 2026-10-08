@@ -17,9 +17,8 @@ function emptyAccumulator(): SessionSummaryAccumulator {
   return {
     models: {},
     toolCalls: {},
-    linesAdded: 0,
-    linesRemoved: 0,
-    filesChanged: new Set<string>(),
+    toolResults: 0,
+    filesEdited: new Set<string>(),
     filesWritten: new Set<string>(),
     compactionCount: 0,
   };
@@ -71,27 +70,24 @@ describe('updateBranchCounts', () => {
 });
 
 describe('buildSessionSummaryEvent', () => {
-  it('omits ended_at entirely for phase "incremental"', () => {
-    const event = buildSessionSummaryEvent(
+  it('sets is_final from phase and always carries started_at/ended_at', () => {
+    const incremental = buildSessionSummaryEvent(
       'session-1',
       'incremental',
       emptyAccumulator(),
       emptyNamed(),
       {},
       '2026-10-01T00:00:00.000Z',
-      undefined
+      '2026-10-01T00:30:00.000Z'
     );
 
-    expect('ended_at' in event).toBe(false);
-    expect(Object.keys(event)).not.toContain('ended_at');
-    expect(event.type).toBe('agent.session.summary');
-    expect(event.session_id).toBe('session-1');
-    expect(event.phase).toBe('incremental');
-    expect(event.started_at).toBe('2026-10-01T00:00:00.000Z');
-  });
+    expect(incremental.type).toBe('agent.session.summary');
+    expect(incremental.session_id).toBe('session-1');
+    expect(incremental.is_final).toBe(false);
+    expect(incremental.started_at).toBe('2026-10-01T00:00:00.000Z');
+    expect(incremental.ended_at).toBe('2026-10-01T00:30:00.000Z');
 
-  it('includes ended_at for phase "final"', () => {
-    const event = buildSessionSummaryEvent(
+    const final = buildSessionSummaryEvent(
       'session-1',
       'final',
       emptyAccumulator(),
@@ -101,17 +97,66 @@ describe('buildSessionSummaryEvent', () => {
       '2026-10-01T01:00:00.000Z'
     );
 
-    expect('ended_at' in event).toBe(true);
-    expect(event.ended_at).toBe('2026-10-01T01:00:00.000Z');
-    expect(event.phase).toBe('final');
+    expect(final.is_final).toBe(true);
   });
 
-  it('flattens acc.toolCalls {calls, errors} shape into separate tool_calls/tool_errors maps', () => {
+  it('computes duration_ms from started_at/ended_at, and null when either is missing', () => {
+    const event = buildSessionSummaryEvent(
+      'session-1',
+      'final',
+      emptyAccumulator(),
+      emptyNamed(),
+      {},
+      '2026-10-01T00:00:00.000Z',
+      '2026-10-01T01:00:00.000Z'
+    );
+    expect(event.duration_ms).toBe(3_600_000);
+    expect(event.ended_at).toBe('2026-10-01T01:00:00.000Z');
+
+    const noEndedAt = buildSessionSummaryEvent(
+      'session-1',
+      'incremental',
+      emptyAccumulator(),
+      emptyNamed(),
+      {},
+      '2026-10-01T00:00:00.000Z',
+      ''
+    );
+    expect(noEndedAt.duration_ms).toBeNull();
+    expect(noEndedAt.ended_at).toBeNull();
+  });
+
+  it('sets the envelope timestamp to ended_at, so the forwarder has a real one to prefer', () => {
+    const event = buildSessionSummaryEvent(
+      'session-1',
+      'final',
+      emptyAccumulator(),
+      emptyNamed(),
+      {},
+      '2026-10-01T00:00:00.000Z',
+      '2026-10-01T01:00:00.000Z'
+    );
+    expect(event.timestamp).toBe('2026-10-01T01:00:00.000Z');
+
+    const noEndedAt = buildSessionSummaryEvent(
+      'session-1',
+      'incremental',
+      emptyAccumulator(),
+      emptyNamed(),
+      {},
+      '2026-10-01T00:00:00.000Z',
+      ''
+    );
+    expect(noEndedAt.timestamp).toBeUndefined();
+  });
+
+  it('reports acc.toolCalls verbatim as tools, plus tool_calls/tool_errors/tool_results totals', () => {
     const acc = emptyAccumulator();
     acc.toolCalls = {
       Read: { calls: 5, errors: 0 },
       Edit: { calls: 3, errors: 1 },
     };
+    acc.toolResults = 8;
 
     const event = buildSessionSummaryEvent(
       'session-1',
@@ -123,14 +168,19 @@ describe('buildSessionSummaryEvent', () => {
       '2026-10-01T01:00:00.000Z'
     );
 
-    expect(event.tool_calls).toEqual({ Read: 5, Edit: 3 });
-    expect(event.tool_errors).toEqual({ Read: 0, Edit: 1 });
+    expect(event.tools).toEqual({
+      Read: { calls: 5, errors: 0 },
+      Edit: { calls: 3, errors: 1 },
+    });
+    expect(event.tool_calls).toBe(8);
+    expect(event.tool_errors).toBe(1);
+    expect(event.tool_results).toBe(8);
   });
 
-  it('derives skills_used and primary_command from a constructed NamedInvocationCounts', () => {
+  it('derives skills, agents and primary_command from a constructed NamedInvocationCounts', () => {
     const named: NamedInvocationCounts = {
       skillInvocations: { 'codemie:msgraph': 2, brainstorming: 1 },
-      agentInvocations: {},
+      agentInvocations: { Explore: 2 },
       commandInvocations: { init: 1, deploy: 4 },
     };
 
@@ -144,12 +194,13 @@ describe('buildSessionSummaryEvent', () => {
       '2026-10-01T01:00:00.000Z'
     );
 
-    expect(event.skills_used).toEqual({ 'codemie:msgraph': 2, brainstorming: 1 });
+    expect(event.skills).toEqual({ 'codemie:msgraph': 2, brainstorming: 1 });
+    expect(event.agents).toEqual({ Explore: 2 });
     expect(event.primary_command).toBe('deploy');
-    expect(event.commands_in_order).toEqual(Object.keys(named.commandInvocations));
+    expect(event.commands).toEqual(Object.keys(named.commandInvocations));
   });
 
-  it('reports models_used as the full count map and primary_model as the max key', () => {
+  it('reports models as an array with the primary model first', () => {
     const acc = emptyAccumulator();
     acc.models = { 'claude-sonnet-4-5': 2, 'claude-opus-4-1': 9 };
 
@@ -160,18 +211,16 @@ describe('buildSessionSummaryEvent', () => {
       emptyNamed(),
       {},
       '2026-10-01T00:00:00.000Z',
-      undefined
+      ''
     );
 
-    expect(event.models_used).toEqual({ 'claude-sonnet-4-5': 2, 'claude-opus-4-1': 9 });
+    expect(event.models).toEqual(['claude-opus-4-1', 'claude-sonnet-4-5']);
     expect(event.primary_model).toBe('claude-opus-4-1');
   });
 
-  it('reports lines/files/compaction fields and branch_counts/branch_dominant, converting Sets to arrays', () => {
+  it('reports lines_* as null and files_changed/written/edited as counts', () => {
     const acc = emptyAccumulator();
-    acc.linesAdded = 42;
-    acc.linesRemoved = 7;
-    acc.filesChanged = new Set(['a.ts', 'b.ts']);
+    acc.filesEdited = new Set(['b.ts']);
     acc.filesWritten = new Set(['a.ts']);
     acc.compactionCount = 2;
 
@@ -187,16 +236,37 @@ describe('buildSessionSummaryEvent', () => {
       '2026-10-01T01:00:00.000Z'
     );
 
-    expect(event.lines_added).toBe(42);
-    expect(event.lines_removed).toBe(7);
-    expect(event.files_changed).toEqual(['a.ts', 'b.ts']);
-    expect(event.files_written).toEqual(['a.ts']);
+    expect(event.lines_added).toBeNull();
+    expect(event.lines_removed).toBeNull();
+    expect(event.files_changed).toBe(2);
+    expect(event.files_written).toBe(1);
+    expect(event.files_edited).toBe(1);
     expect(event.compaction_count).toBe(2);
     expect(event.branch_counts).toBe(branchCounts);
     expect(event.branch_dominant).toBe('feature');
   });
 
-  it('emits title as a literal empty string (no identified source, per Open risks)', () => {
+  it('counts a file touched by both Edit and Write once in files_changed', () => {
+    const acc = emptyAccumulator();
+    acc.filesEdited = new Set(['a.ts']);
+    acc.filesWritten = new Set(['a.ts']);
+
+    const event = buildSessionSummaryEvent(
+      'session-1',
+      'final',
+      acc,
+      emptyNamed(),
+      {},
+      '2026-10-01T00:00:00.000Z',
+      '2026-10-01T01:00:00.000Z'
+    );
+
+    expect(event.files_changed).toBe(1);
+    expect(event.files_written).toBe(1);
+    expect(event.files_edited).toBe(1);
+  });
+
+  it('emits title as a literal empty string (no identified source)', () => {
     const event = buildSessionSummaryEvent(
       'session-1',
       'incremental',
@@ -204,7 +274,7 @@ describe('buildSessionSummaryEvent', () => {
       emptyNamed(),
       {},
       '2026-10-01T00:00:00.000Z',
-      undefined
+      ''
     );
 
     expect(event.title).toBe('');
@@ -218,7 +288,7 @@ describe('buildSessionSummaryEvent', () => {
       emptyNamed(),
       {},
       '2026-10-01T00:00:00.000Z',
-      undefined
+      ''
     );
 
     expect('api_calls' in event).toBe(false);

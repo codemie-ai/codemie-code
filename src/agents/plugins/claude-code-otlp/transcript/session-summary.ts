@@ -1,8 +1,7 @@
 /**
  * `agent.session.summary` builder.
  *
- * Unlike `agent.usage.request`/`agent.subagent.usage`, this event is a running aggregate over an
- * entire session. The orchestrator accumulates a {@link SessionSummaryAccumulator}, tracks
+ * The orchestrator accumulates a {@link SessionSummaryAccumulator}, tracks
  * `TranscriptParseState.branchCounts` via {@link updateBranchCounts}, and runs
  * `extractNamedInvocations()` to produce the {@link NamedInvocationCounts} this builder consumes.
  * This module only derives the final event shape from those inputs — it never reads a transcript.
@@ -10,15 +9,10 @@
  * `event_id`/`schema_version`/`client_version`/`codemie_cli_version` are stamped later,
  * daemon-side (`mapHookRecords()`); the output carries only an explicit `type`.
  *
- * Field-shape notes:
- * - `models_used` is the full `acc.models` count map, preserving counts `primary_model` discards.
- * - `tool_calls`/`tool_errors` are flattened from `acc.toolCalls`'s `{ calls, errors }` shape into
- *   two flat maps, matching `buildSubagentUsageEvent` (`./subagent-usage.ts`).
- * - `commands_in_order` is `Object.keys(named.commandInvocations)`. Upstream is a COUNT map, so no
- *   chronological order exists; the field name implies more than the data can deliver.
- * - `title` has no known source and is always an empty string, never fabricated.
- * - `api_calls` is omitted here: no input carries a request count. The orchestrator, which owns
- *   the full set of `agent.usage.request` records, merges it in afterward.
+ * `api_calls` is omitted here: no input carries a request count. The orchestrator, which owns
+ * the full set of `agent.usage.request` records, merges it in afterward.
+ *
+ * `title` has no identified source and is always `''`, never fabricated.
  */
 
 import type { NamedInvocationCounts } from '@/agents/plugins/claude/session/claude-named-invocations.js';
@@ -29,9 +23,8 @@ export type { NamedInvocationCounts };
 export interface SessionSummaryAccumulator {
   models: Record<string, number>;
   toolCalls: Record<string, { calls: number; errors: number }>;
-  linesAdded: number;
-  linesRemoved: number;
-  filesChanged: Set<string>;
+  toolResults: number;
+  filesEdited: Set<string>;
   filesWritten: Set<string>;
   compactionCount: number;
 }
@@ -78,11 +71,18 @@ export function branchDominant(counts: Record<string, number>): string {
   return maxKey(counts);
 }
 
+/** Distinct normalised models, primary first, per the contract's `models` field. */
+function modelsArray(models: Record<string, number>): string[] {
+  const primary = primaryModel(models);
+  const rest = Object.keys(models).filter((model) => model !== primary);
+  return primary ? [primary, ...rest] : rest;
+}
+
 /**
  * Build the `agent.session.summary` event payload.
  *
- * `endedAt` is included as `ended_at` only when `phase === 'final'`; for `phase === 'incremental'`
- * the key is omitted entirely (not merely `undefined`-valued).
+ * `startedAt`/`endedAt` are the transcript's own first/last line timestamps (never a hook's
+ * invocation time); `duration_ms` is `null`, not `0`, whenever either is missing or unparseable.
  */
 export function buildSessionSummaryEvent(
   sessionId: string,
@@ -91,40 +91,46 @@ export function buildSessionSummaryEvent(
   named: NamedInvocationCounts,
   branchCounts: Record<string, number>,
   startedAt: string,
-  endedAt: string | undefined
+  endedAt: string
 ): Record<string, unknown> {
-  const toolCalls: Record<string, number> = {};
-  const toolErrors: Record<string, number> = {};
-  for (const [tool, counts] of Object.entries(acc.toolCalls)) {
-    toolCalls[tool] = counts.calls;
-    toolErrors[tool] = counts.errors;
-  }
+  const diff = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : NaN;
+  const durationMs = Number.isFinite(diff) && diff >= 0 ? diff : null;
 
-  const event: Record<string, unknown> = {
+  const filesChanged = new Set<string>([...acc.filesEdited, ...acc.filesWritten]);
+  const toolTotals = Object.values(acc.toolCalls).reduce(
+    (totals, t) => ({ calls: totals.calls + t.calls, errors: totals.errors + t.errors }),
+    { calls: 0, errors: 0 }
+  );
+
+  return {
     type: 'agent.session.summary',
     session_id: sessionId,
-    phase,
-    models_used: acc.models,
+    // The envelope `timestamp` the forwarder reads to decide which summary is latest
+    // (`summary_ts`) — the contract's own value for it, same as `ended_at`. Left unset when
+    // unknown so the forwarder's existing spool-time fallback applies instead of fabricating one.
+    timestamp: endedAt || undefined,
+    is_final: phase === 'final',
+    started_at: startedAt,
+    ended_at: endedAt || null,
+    duration_ms: durationMs,
+    models: modelsArray(acc.models),
     primary_model: primaryModel(acc.models),
-    tool_calls: toolCalls,
-    tool_errors: toolErrors,
-    skills_used: named.skillInvocations,
-    commands_in_order: Object.keys(named.commandInvocations),
+    tool_calls: toolTotals.calls,
+    tool_errors: toolTotals.errors,
+    tool_results: acc.toolResults,
+    tools: acc.toolCalls,
+    skills: named.skillInvocations,
+    agents: named.agentInvocations,
+    commands: Object.keys(named.commandInvocations),
     primary_command: maxKey(named.commandInvocations),
-    lines_added: acc.linesAdded,
-    lines_removed: acc.linesRemoved,
-    files_changed: Array.from(acc.filesChanged),
-    files_written: Array.from(acc.filesWritten),
+    lines_added: null,
+    lines_removed: null,
+    files_changed: filesChanged.size,
+    files_written: acc.filesWritten.size,
+    files_edited: acc.filesEdited.size,
     compaction_count: acc.compactionCount,
     branch_counts: branchCounts,
     branch_dominant: branchDominant(branchCounts),
-    started_at: startedAt,
     title: '',
   };
-
-  if (phase === 'final') {
-    event.ended_at = endedAt;
-  }
-
-  return event;
 }

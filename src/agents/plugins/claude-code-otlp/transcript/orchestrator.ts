@@ -78,16 +78,38 @@ function collectErrorToolUseIds(parsedLines: TranscriptLine[]): Set<string> {
   return errorByToolUseId;
 }
 
+/** The first non-empty `timestamp` among `parsedLines`, in order, or `''` when none carry one. */
+function firstTimestamp(parsedLines: TranscriptLine[]): string {
+  for (const line of parsedLines) {
+    if (typeof line.timestamp === 'string' && line.timestamp) {
+      return line.timestamp;
+    }
+  }
+  return '';
+}
+
 function emptyAccumulator(): SessionSummaryAccumulator {
   return {
     models: {},
     toolCalls: {},
-    linesAdded: 0,
-    linesRemoved: 0,
-    filesChanged: new Set<string>(),
+    toolResults: 0,
+    filesEdited: new Set<string>(),
     filesWritten: new Set<string>(),
     compactionCount: 0,
   };
+}
+
+/** Total `tool_result` content blocks across `parsedLines` — the contract's `tool_results` count. */
+function countToolResults(parsedLines: TranscriptLine[]): number {
+  let count = 0;
+  for (const parsed of parsedLines) {
+    const content = parsed.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const item of content as ContentBlock[]) {
+      if (item?.type === 'tool_result') count += 1;
+    }
+  }
+  return count;
 }
 
 /**
@@ -108,22 +130,24 @@ function emptyAccumulator(): SessionSummaryAccumulator {
  * - `toolCalls[*].errors` is derived from a sibling `tool_result` block's `is_error`/`isError`
  *   flag (the same pattern `claude.session.ts`/`claude.metrics-processor.ts` already use for
  *   tool-use_id → error lookups) when one is found; otherwise a tool call's `.errors` stays 0.
- * - `linesAdded`/`linesRemoved` default to 0 — an `Edit`/`Write` tool_use's `input` carries the
- *   *proposed* edit, not a diff stat, so no reliable added/removed line count can be derived from
- *   it without re-implementing diffing.
+ * - Lines added/removed are not computed — an `Edit`/`Write` tool_use's `input` carries the
+ *   *proposed* edit, not a diff stat — so the event builder sends them as `null`, never `0`.
  * - `compactionCount` defaults to 0 — no verified in-transcript signal was found (`PreCompact` is
  *   a hook event, not a transcript line).
  */
-async function buildFullAccumulator(
-  transcriptPath: string
-): Promise<{ acc: SessionSummaryAccumulator; named: NamedInvocationCounts; startedAt: string }> {
+async function buildFullAccumulator(transcriptPath: string): Promise<{
+  acc: SessionSummaryAccumulator;
+  named: NamedInvocationCounts;
+  startedAt: string;
+  endedAt: string;
+}> {
   const acc = emptyAccumulator();
 
   let raw: string;
   try {
     raw = await readFile(transcriptPath, 'utf-8');
   } catch {
-    return { acc, named: extractNamedInvocations([]), startedAt: '' };
+    return { acc, named: extractNamedInvocations([]), startedAt: '', endedAt: '' };
   }
 
   const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
@@ -139,16 +163,23 @@ async function buildFullAccumulator(
 
   // Pass 1: collect tool_result error flags keyed by their matching tool_use_id.
   const errorByToolUseId = collectErrorToolUseIds(parsedLines);
+  acc.toolResults = countToolResults(parsedLines);
 
-  // Pass 2: models (reusing parseUsageLine's own model-resolution logic).
+  // Pass 2: models, one count per distinct request — a request can span several
+  // streaming/finalizing transcript lines, so lines are deduped by the same
+  // `${requestId}::${model}` key `state.openRequests` uses before counting.
+  const modelByRequestKey = new Map<string, string>();
   for (const line of rawLines) {
     const parsedUsage = parseUsageLine(line, 'main', '', '');
     if (parsedUsage) {
-      acc.models[parsedUsage.model] = (acc.models[parsedUsage.model] ?? 0) + 1;
+      modelByRequestKey.set(`${parsedUsage.requestId}::${parsedUsage.model}`, parsedUsage.model);
     }
   }
+  for (const model of modelByRequestKey.values()) {
+    acc.models[model] = (acc.models[model] ?? 0) + 1;
+  }
 
-  // Pass 3: tool calls/errors, files changed/written (Edit/Write tool_use payloads).
+  // Pass 3: tool calls/errors, files edited/written (Edit/Write tool_use payloads).
   for (const parsed of parsedLines) {
     const content = parsed.message?.content;
     if (!Array.isArray(content)) continue;
@@ -165,15 +196,19 @@ async function buildFullAccumulator(
       const filePath = item.input?.file_path ?? item.input?.path;
       if (typeof filePath === 'string' && filePath) {
         if (item.name === 'Write') acc.filesWritten.add(filePath);
-        if (item.name === 'Edit') acc.filesChanged.add(filePath);
+        if (item.name === 'Edit') acc.filesEdited.add(filePath);
       }
     }
   }
 
   const named = extractNamedInvocations(parsedLines);
-  const startedAt = parsedLines.length > 0 ? String(parsedLines[0].timestamp ?? '') : '';
+  // Real transcripts interleave non-message lines (file-history-snapshot, cost-state, ...)
+  // without a `timestamp`, including at index 0/length-1 — so the first/last *timestamped*
+  // line is used, not literally the first/last line.
+  const startedAt = firstTimestamp(parsedLines);
+  const endedAt = firstTimestamp([...parsedLines].reverse());
 
-  return { acc, named, startedAt };
+  return { acc, named, startedAt, endedAt };
 }
 
 /**
@@ -245,10 +280,9 @@ export async function collectMainTranscriptEvents(
       }
 
       if (trigger === 'Stop' || trigger === 'SessionEnd') {
-        const { acc, named, startedAt } = await buildFullAccumulator(transcriptPath);
+        const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
         acc.compactionCount = state.compactionCount;
         const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
-        const endedAt = trigger === 'SessionEnd' ? new Date().toISOString() : undefined;
         const summaryEvent = buildSessionSummaryEvent(
           sessionId,
           phase,
@@ -258,10 +292,10 @@ export async function collectMainTranscriptEvents(
           startedAt,
           endedAt
         );
-        // Not yet carried by any input to buildSessionSummaryEvent (session-summary.ts's own
-        // docstring defers it to this caller) — this is the full set of agent.usage.request
-        // records derived for this session so far, main- and agent-scoped alike.
-        summaryEvent.api_calls = Object.keys(state.openRequests).length;
+        // Main-thread requests only — the contract's api_calls excludes subagent requests.
+        summaryEvent.api_calls = Object.values(state.openRequests).filter(
+          (r) => r.scopeKind === 'main'
+        ).length;
         events.push(summaryEvent);
       }
 
