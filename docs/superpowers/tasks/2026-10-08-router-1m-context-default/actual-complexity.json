@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-10-08T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Router context window is now computed as the minimum of tier windows in the backend (llm_service _router_max_input_tokens, two router builders, by_name signature change) and consumed by the CLI's applyContextWindow to add or drop [1m]. No exact precedent for the cross-repo contract, but the change is small, non-security-sensitive and trivially reversible. No auto-bump applies: no injection or auth surface, and AC are not an edge-case enumeration." },
+    { "dimension": "component_scope", "reason": "Three components: CLI claude.models resolution, CLI sso.http-client catalog type, and backend llm_service router builders with a config entry. Two codebases are touched, but they meet through an existing catalog field (max_input_tokens), so the pattern is clear." },
+    { "dimension": "file_change_estimate", "reason": "5 files across 2 repos (3 in the CLI incl. 1 test, 2 in the backend), roughly 30 changed lines. Scored on the aggregate and mapped to M by file count (5-7). The line count is small." }
+  ],
+  "red_flags_applied": [
+    "Multi-repo changes with distinct content across 2 repos - scope scored additively.",
+    "No red-flag bump applied: no auth, schema, migration or new external service. The cross-repo contract is an existing field, so Affected Layers stays at S."
+  ],
+  "split_recommendation": null
+}
