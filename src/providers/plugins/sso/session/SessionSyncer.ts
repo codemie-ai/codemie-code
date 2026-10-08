@@ -226,6 +226,20 @@ export class SessionSyncer {
           failedProcessors: []
         };
       }
+      // Persist recovery before processors reload the session to apply their updates.
+      if (transcriptRecovered && sessionMetadata.correlation) {
+        sessionMetadata.correlation = { ...sessionMetadata.correlation, status: 'matched' };
+        try {
+          await this.sessionStore.saveSession(sessionMetadata);
+          logger.info(
+            `[SessionSyncer] Transcript for session ${sessionId} found after 'file_not_found'; correlation status restored to 'matched'`
+          );
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.warn(`[SessionSyncer] Failed to persist recovered correlation for session ${sessionId}: ${errorMessage}`);
+        }
+      }
+
 
       // 2. Create empty ParsedSession to force processors into "sync mode" (Branch 2)
       //    Empty messages array ensures processors read pending JSONL instead of transforming
