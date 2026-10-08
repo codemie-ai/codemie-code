@@ -166,6 +166,26 @@ function boundedText(value: unknown, maxChars: number): string {
   return text.slice(0, maxChars);
 }
 
+/**
+ * Prefer the event's own `timestamp` (e.g. the transcript line time on `agent.usage.request`)
+ * over the spool-write time, which only reflects when the hook ran. Falls back when the
+ * event has none or an unparseable one.
+ */
+function resolveEventTimestamp(eventTimestamp: unknown, spoolTimestamp: number): string {
+  if (typeof eventTimestamp === 'string' && eventTimestamp.length > 0) {
+    const parsed = new Date(eventTimestamp);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  return new Date(spoolTimestamp).toISOString();
+}
+
+/** Prefer the event's own `git_branch` (the session's branch) over the daemon's cwd branch. */
+function resolveEventGitBranch(eventBranch: unknown, daemonBranch: string | undefined): string {
+  return typeof eventBranch === 'string' && eventBranch.length > 0 ? eventBranch : (daemonBranch ?? '');
+}
+
 function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
   const limited: Record<string, unknown> = { ...hookEvent };
 
@@ -260,11 +280,11 @@ export async function mapHookRecords(
         ...limited,
         type,
         session_id: sessionId,
-        timestamp: new Date(spoolData.timestamp).toISOString(),
+        timestamp: resolveEventTimestamp(hookEvent['timestamp'], spoolData.timestamp),
         user_email: ctx.userEmail,
         developer_name: ctx.identity?.developerName ?? '',
         identity_source: ctx.identity?.identitySource ?? '',
-        git_branch: ctx.git.branch ?? '',
+        git_branch: resolveEventGitBranch(hookEvent['git_branch'], ctx.git.branch),
         repo_remote: ctx.git.remote ?? '',
         story_id: promptStory.storyId,
         story_source: promptStory.storySource,
