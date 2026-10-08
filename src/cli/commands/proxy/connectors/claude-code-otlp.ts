@@ -6,6 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import type { HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -57,6 +58,7 @@ interface RemoveClaudeCodeOtlpResult {
 interface HookEntry {
   type: string;
   command: string;
+  async?: boolean;
   [key: string]: unknown;
 }
 
@@ -99,7 +101,11 @@ export const HOOK_EVENTS = [
   'SubagentStop',
   'PreCompact',
   'Notification',
-] as const;
+] as const satisfies readonly HookEvent[];
+
+const SYNCHRONOUS_HOOKS: ReadonlyArray<(typeof HOOK_EVENTS)[number]> = [
+  'UserPromptSubmit',
+];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
@@ -288,9 +294,15 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  const codemieEntry: HookGroup = {
-    matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+  // UserPromptSubmit stays synchronous: its SSO-gate `block` decision must reach
+  // Claude Code before the prompt proceeds. Every other event is fire-and-forget.
+  const buildCodemieEntry = (eventName: (typeof HOOK_EVENTS)[number]): HookGroup => {
+    const hook: HookEntry & { async: boolean } = {
+      type: 'command',
+      command: `codemie ${CODEMIE_COMMAND_MARKER}`,
+      async: !SYNCHRONOUS_HOOKS.includes(eventName),
+    };
+    return { matcher: '', hooks: [hook] };
   };
 
   // Phase 1: strip our own command from EVERY existing event key, not just the
@@ -315,7 +327,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), codemieEntry];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
 
   // --- Merge env block ---
