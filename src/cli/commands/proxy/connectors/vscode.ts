@@ -335,20 +335,21 @@ export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boo
       throw error;
     }
 
-    const providers = await readProviders(configPath);
-    const filtered = providers.filter((provider) => !isManagedProvider(provider));
-    if (filtered.length === providers.length) continue;
-
-    // Each location's write is isolated: a failure at one location (e.g.
-    // Insiders) must not discard an already-successful write at the other
-    // (e.g. stable) — the caller needs to know the stable removal landed.
+    // Each location is isolated end to end (read through write): a failure at
+    // one location (e.g. Insiders) must not discard an already-successful
+    // removal at the other (e.g. stable), and must not prevent the other
+    // location from even being attempted.
     try {
+      const providers = await readProviders(configPath);
+      const filtered = providers.filter((provider) => !isManagedProvider(provider));
+      if (filtered.length === providers.length) continue;
+
       await writeAtomically(configPath, `${JSON.stringify(filtered, null, '\t')}\n`);
       removedAny = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
-        '[proxy] Failed to write VS Code Copilot Chat config at one location during disconnect',
+        '[proxy] Failed to update VS Code Copilot Chat config at one location during disconnect',
         ...sanitizeLogArgs({ configPath, insiders, error: message })
       );
       failures.push(`${insiders ? 'Insiders' : 'stable'} (${configPath}): ${message}`);
