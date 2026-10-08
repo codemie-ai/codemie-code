@@ -524,6 +524,22 @@ codemie codebase ui      # Start and open Codebase Memory graph UI
 codemie doctor           # Health check and diagnostics
 ```
 
+### Analytics for a separate Claude Code profile
+
+If a command such as `claude-work` stores sessions in a separate config directory,
+pass that same directory to analytics:
+
+```bash
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" codemie analytics --include-external --last 7d
+```
+
+Claude session discovery reads `<CLAUDE_CONFIG_DIR>/projects`. When the variable is unset
+or empty, it uses `~/.claude/projects`. The selected directory replaces the default for
+native Claude discovery; other Claude profile directories are not scanned automatically.
+Existing CodeMie-tracked sessions and other agents are still included as usual.
+Use an absolute path for scheduled jobs and set the variable in the job's environment;
+an alias or function in your interactive shell does not configure the scheduler.
+
 For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
 
 ## Codebase Memory MCP
