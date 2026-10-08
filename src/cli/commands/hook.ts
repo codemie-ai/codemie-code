@@ -6,6 +6,7 @@ import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/ty
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
+import { forwardOtlpEventToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 
 /**
@@ -1517,7 +1518,7 @@ export function createHookCommand(): Command {
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
-          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy });
+          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy, forwardOtlpEventToSpool });
           await logger.close();
           process.exitCode = 0;
           return;

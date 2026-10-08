@@ -17,8 +17,6 @@ import {
   type ForwardContext,
   resolveCodemieCliVersion,
   resolveDeveloperIdentity,
-  resolveStory,
-  resolveStoryForPrompt,
 } from './forward-context.js';
 
 const CODEMIE_CLI_VERSION = resolveCodemieCliVersion();
@@ -181,9 +179,8 @@ function resolveEventTimestamp(eventTimestamp: unknown, spoolTimestamp: number):
   return new Date(spoolTimestamp).toISOString();
 }
 
-/** Prefer the event's own `git_branch` (the session's branch) over the daemon's cwd branch. */
-function resolveEventGitBranch(eventBranch: unknown, daemonBranch: string | undefined): string {
-  return typeof eventBranch === 'string' && eventBranch.length > 0 ? eventBranch : (daemonBranch ?? '');
+function stringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
@@ -201,23 +198,6 @@ function limitHookPayload(hookEvent: Record<string, unknown>): Record<string, un
   delete limited.raw;
 
   return limited;
-}
-
-async function resolveGitInfo(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!cwd || ctx.git.branch !== undefined) {
-    return;
-  }
-  try {
-    const { detectGitBranch, detectGitRemoteRepo } = await import('@/utils/processes.js');
-    const [branch, remote] = await Promise.all([
-      detectGitBranch(cwd).then((v) => v ?? ''),
-      detectGitRemoteRepo(cwd).then((v) => v ?? ''),
-    ]);
-    ctx.git.branch = branch;
-    ctx.git.remote = remote;
-  } catch {
-    /* best-effort */
-  }
 }
 
 interface HookPayload {
@@ -253,24 +233,7 @@ export async function mapHookRecords(
     }
 
     const cwd = String(hookEvent['cwd'] ?? '');
-    await resolveGitInfo(ctx, cwd);
     await resolveDeveloperIdentity(ctx, cwd);
-    await resolveStory(ctx, cwd);
-
-    // Read the record's OWN untruncated prompt text here, before the truncated
-    // copy below is produced. The original `hookEvent` is never mutated by that
-    // truncation step, so this is still the full string — used ONLY to feed the
-    // marker/mention regex tiers below; the matched ticket id (a short string)
-    // is all that ever reaches the output, never this raw text itself.
-    const rawPrompt = typeof hookEvent['prompt'] === 'string' ? hookEvent['prompt'] : '';
-
-    // Each UserPromptSubmit record carries its own prompt text, which can hold a
-    // higher-priority override — so it's resolved fresh per record rather than
-    // just reusing the once-per-tick cache.
-    const promptStory =
-      hookName === 'UserPromptSubmit'
-        ? resolveStoryForPrompt(ctx, rawPrompt)
-        : { storyId: ctx.story?.storyId ?? '', storySource: ctx.story?.storySource ?? '' };
 
     const limited = limitHookPayload(hookEvent);
     const type = hookEventType(hookName, hookEvent);
@@ -284,10 +247,11 @@ export async function mapHookRecords(
         user_email: ctx.userEmail,
         developer_name: ctx.identity?.developerName ?? '',
         identity_source: ctx.identity?.identitySource ?? '',
-        git_branch: resolveEventGitBranch(hookEvent['git_branch'], ctx.git.branch),
-        repo_remote: ctx.git.remote ?? '',
-        story_id: promptStory.storyId,
-        story_source: promptStory.storySource,
+        // Resolved at hook time by the adapter (OtlpAgentAdapter); passed through as-is.
+        git_branch: stringOrEmpty(hookEvent['git_branch']),
+        repo_remote: stringOrEmpty(hookEvent['repo_remote']),
+        story_id: stringOrEmpty(hookEvent['story_id']),
+        story_source: stringOrEmpty(hookEvent['story_source']),
         codemie_project_name: ctx.projectName,
         cwd,
         prompt_body: boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
@@ -321,9 +285,7 @@ async function buildForwardContext(
     baseUrl: state?.targetUrl ?? state?.url ?? '',
     projectName: state?.project ?? '',
     userEmail: resolveEmailFromCredentials(credentials),
-    git: {},
     identity: {},
-    story: {},
   };
 }
 

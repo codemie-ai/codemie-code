@@ -1,5 +1,5 @@
 /**
- * Per-forward-tick context: the CLI version banner, and the identity/story resolution glue
+ * Per-forward-tick context: the CLI version banner, and the identity resolution glue
  * the hook-record mapping step calls once per batch. Split out of `forwarder.ts` to keep
  * that module under the documented 500-line structure cap (code-quality.md).
  */
@@ -7,24 +7,14 @@
 import { execSync } from 'node:child_process';
 import type { SSOCredentials, JWTCredentials } from '@/providers/core/types.js';
 import { resolveIdentity, type IdentitySource } from './identity.js';
-import {
-  resolveExplicitStory,
-  resolveBranchStory,
-  resolveMarkerStory,
-  resolveMentionStory,
-} from './story-resolver.js';
 
 export interface ForwardContext {
   credentials: SSOCredentials | JWTCredentials;
   baseUrl: string;
   projectName: string;
   userEmail: string;
-  /** Per-session git info cache, resolved lazily from the first hook `cwd`. */
-  git: { branch?: string; remote?: string };
   /** Per-session developer-identity cache, resolved once */
   identity?: { developerName?: string; identitySource?: IdentitySource };
-  /** Per-tick story-id cache, resolved once per forward tick. */
-  story?: { storyId?: string; storySource?: 'explicit' | 'branch' };
 }
 
 /** The installed CodeMie CLI version, resolved once at import time. */
@@ -39,65 +29,6 @@ export function resolveCodemieCliVersion(): string {
   } catch {
     return '';
   }
-}
-
-/**
- * Effective story id for ONE `UserPromptSubmit` record: layers this record's
- * own prompt text on top of the once-per-tick cache in `ctx.story`
- * (explicit/branch/undefined), without ever writing back to that cache —
- * other records in the same batch still need it untouched. Priority order
- * across the full chain is explicit -> marker -> branch -> mention:
- *
- * 1. If the cache already resolved to `'explicit'`, that wins outright.
- * 2. Otherwise, try the marker tier (`story: X` / `ticket #X`) against this
- *    record's OWN prompt text — it sits above branch in priority.
- * 3. Otherwise, if the cache resolved to `'branch'`, that wins (it is
- *    already correctly placed between marker and mention).
- * 4. Otherwise, try the mention tier (bare ticket-shaped text) — the
- *    lowest-priority tier.
- * 5. Otherwise, empty.
- */
-export function resolveStoryForPrompt(
-  ctx: ForwardContext,
-  rawPrompt: string
-): { storyId: string; storySource: string } {
-  if (ctx.story?.storySource === 'explicit') {
-    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
-  }
-
-  const marker = resolveMarkerStory(rawPrompt);
-  if (marker) {
-    return { storyId: marker.storyId, storySource: marker.storySource };
-  }
-
-  if (ctx.story?.storySource === 'branch') {
-    return { storyId: ctx.story.storyId ?? '', storySource: ctx.story.storySource };
-  }
-
-  const mention = resolveMentionStory(rawPrompt);
-  if (mention) {
-    return { storyId: mention.storyId, storySource: mention.storySource };
-  }
-
-  return { storyId: '', storySource: '' };
-}
-
-/**
- * Resolve and cache this forward tick's story id/source once, from the first record that carries
- * a real `cwd` — guarded the same way every other per-tick cache in this file is, so a synthetic
- * transcript-derived record's empty `cwd` can never poison the cache for the rest of the batch.
- */
-export async function resolveStory(ctx: ForwardContext, cwd: string): Promise<void> {
-  if (!cwd || ctx.story?.storyId !== undefined) {
-    return;
-  }
-
-  const explicit = await resolveExplicitStory(cwd);
-  const resolved = explicit ?? resolveBranchStory(ctx.git.branch ?? '');
-
-  ctx.story = resolved
-    ? { storyId: resolved.storyId, storySource: resolved.storySource }
-    : { storyId: '' };
 }
 
 /**

@@ -267,4 +267,4 @@ FrameworkRegistry.get('langgraph')     // src/frameworks/registry.ts
 | Core | `src/*/core/` |
 | Utils | `src/utils/` |
 | Tests | `tests/integration/`, `src/**/__tests__/` |
-| OTLP ingestion adapters | `OtlpAgentAdapter` (`src/agents/core/types.ts`) is a second, non-chat plugin type registered the same way as `AgentAdapter` — one plugin per coding tool, ingesting that tool's native hook/telemetry events into the analytics pipeline. See `docs/ARCHITECTURE-OTLP-PLUGIN.md` for the dispatch pattern and how to add a new adapter (e.g. a future Cursor/other-tool adapter). |
+| OTLP ingestion adapters | `OtlpAgentAdapter` (abstract base class, `src/agents/core/OtlpAgentAdapter.ts`) is a second, non-chat plugin type registered the same way as `AgentAdapter` — one plugin per coding tool, ingesting that tool's native hook/telemetry events into the analytics pipeline. See `docs/ARCHITECTURE-OTLP-PLUGIN.md` for the dispatch pattern and how to add a new adapter (e.g. a future Cursor/other-tool adapter). |

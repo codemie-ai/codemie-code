@@ -8,14 +8,13 @@ import type {
   StopHookInput,
   SubagentStopHookInput,
   UserPromptSubmitHookInput,
+  UserPromptSubmitHookSpecificOutput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
-import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
-import { AgentAdapterType, OtlpAdapterDeps, OtlpAgentAdapter } from '@/agents/core/types.js';
+import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
-import { ForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
-import { forwardOtlpEventToSpool } from '../utils.js';
+import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
   collectMainTranscriptEvents,
@@ -25,52 +24,35 @@ import {
 import { findSubagentFiles } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 
-export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
+export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
-  public readonly type = AgentAdapterType.OTLP;
 
-  public async processOtlpEvent(rawHookInput: string, { ensureOtlpProxy }: OtlpAdapterDeps): Promise<void> {
-    const hookInput: unknown = JSON.parse(rawHookInput);
-    if (!isClaudeCodeHookInput(hookInput)) {
-      logger.debug('[Claude Code OTLP plugin] hook payload missing session_id/cwd/hook_event_name, ignoring');
-      return;
-    }
+  protected extractHookContext(hookInput: HookInput): OtlpHookContext {
+    return {
+      cwd: hookInput.cwd,
+      prompt: hookInput.hook_event_name === 'UserPromptSubmit' ? hookInput.prompt : undefined,
+    };
+  }
 
-    // INVARIANT - do not weaken. An untracked project must produce NO hooks data
-    // in the daemon spool, must not start the daemon, and must not run the SSO
-    // check. The daemon has no allowlist of its own. Its completeness gate
-    // (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks
-    // data, and skips sessions that only have OTEL data. Forwarding a hook event
-    // for an untracked project would make the session sendable and leak its
-    // data to the backend.
-    const isTracked = await isProjectTracked(hookInput.cwd, await readAllowlistState());
-    if (!isTracked) {
-      logger.debug('[Claude Code OTLP plugin] project not in analytics allowlist, ignoring hook event');
-      return;
-    }
+  protected parseHookInput(raw: string): HookInput | null {
+    const parsed: unknown = JSON.parse(raw);
+    return isClaudeCodeHookInput(parsed) ? parsed : null;
+  }
 
-    await ensureOtlpProxy(this.name);
-
-    const evaluation = await this.evaluate(hookInput);
-    if (evaluation.decision === 'block') {
-      logger.error(`[Claude Code OTLP plugin] Blocking prompt: ${evaluation.reason}`);
-      console.log(JSON.stringify(evaluation));
-      return;
-    }
-    this.forwardToSpool(await this.withCommonFields(evaluation.payload));
+  protected async isTracked(hookInput: HookInput): Promise<boolean> {
+    return isProjectTracked(hookInput.cwd, await readAllowlistState());
   }
 
   /** Resolved once per call so every record in the batch shares one client-version lookup. */
-  private async withCommonFields(records: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
-    const common = {
+  protected async resolveAgentCommonFields(): Promise<Record<string, unknown>> {
+    return {
       platform: 'claude-code',
       entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? '',
       client_version: await resolveClientVersion(),
     };
-    return records.map((record) => ({ ...record, ...common }));
   }
 
-  private async evaluate(hookInput: HookInput): Promise<ForwardDecision> {
+  protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {
     if (hookInput.hook_event_name === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(hookInput);
     }
@@ -93,22 +75,22 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     return { decision: 'forward', payload: [hookInput] };
   }
 
-  private async onStopEvent(hookInput: StopHookInput): Promise<ForwardDecision> {
+  private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
     const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'Stop');
     return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ForwardDecision> {
+  private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ClaudeForwardDecision> {
     const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'PreCompact');
     return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onStopFailureEvent(hookInput: StopFailureHookInput): Promise<ForwardDecision> {
+  private async onStopFailureEvent(hookInput: StopFailureHookInput): Promise<ClaudeForwardDecision> {
     const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'StopFailure');
     return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ForwardDecision> {
+  private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ClaudeForwardDecision> {
     const { session_id: sessionId, transcript_path: transcriptPath } = hookInput;
     const derived = await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd');
 
@@ -122,7 +104,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
-  private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ForwardDecision> {
+  private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
     const agentTranscriptPath = hookInput.agent_transcript_path;
     if (!agentTranscriptPath) {
       return { decision: 'forward', payload: [hookInput] };
@@ -151,14 +133,7 @@ export class ClaudeCodeOtlpPlugin implements OtlpAgentAdapter {
     });
   }
 
-  private forwardToSpool(events: Record<string, unknown>[]): void {
-    // Intentionally not awaited: forwardOtlpEventToSpool is fire-and-forget.
-    for (const event of events) {
-      forwardOtlpEventToSpool(event, CLAUDE_CODE_OTLP_AGENT_NAME);
-    }
-  }
-
-  private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ForwardDecision> {
+  private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ClaudeForwardDecision> {
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {

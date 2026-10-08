@@ -1,8 +1,7 @@
+import type { ForwardDecision } from '@/agents/core/OtlpAgentAdapter.js';
 import type { HookInput, UserPromptSubmitHookSpecificOutput } from '@anthropic-ai/claude-agent-sdk';
 
-export type ForwardDecision =
-  | { decision: 'forward'; payload: Record<string, unknown>[] }
-  | { decision: 'block'; reason: string; hookSpecificOutput: UserPromptSubmitHookSpecificOutput };
+export type ClaudeForwardDecision = ForwardDecision<UserPromptSubmitHookSpecificOutput>;
 
 /**
  * Narrows parsed hook JSON to the SDK's `HookInput` union.

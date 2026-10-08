@@ -19,6 +19,8 @@ interface MappedRecord {
   codemie_cli_version: string;
   story_id?: string;
   story_source?: string;
+  git_branch?: string;
+  repo_remote?: string;
   prompt_body?: string;
   developer_name?: string;
   identity_source?: string;
@@ -80,7 +82,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: 'user@example.com',
-      git: {},
     };
 
     const record1 = buildHookRecord('SessionStart', 'sid1', {}, 'event-id-1');
@@ -109,7 +110,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: '',
-      git: {},
     };
 
     const record = buildHookRecord('SessionStart', 'sid1', {}, 'stamped-event-id-abc');
@@ -128,7 +128,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: '',
-      git: {},
     };
 
     // PostToolUse normally maps to 'agent.tool.end', but an explicit `type`
@@ -150,7 +149,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: '',
-      git: {},
     };
 
     const record = buildHookRecord('PostToolUse', 'sid1');
@@ -161,101 +159,56 @@ describe('mapHookRecords', () => {
     expect(line.type).toBe('agent.tool.end');
   });
 
-  it(
-    "overrides a UserPromptSubmit record's story_id/story_source with a prompt marker " +
-    'even when the per-tick branch tier would otherwise resolve to a different ticket, ' +
-    'and never leaks the raw prompt text onto the emitted record',
-    async () => {
-      const { mapHookRecords } = await import('../forwarder.js');
+  it('passes git_branch/repo_remote/story_id/story_source through from the incoming record', async () => {
+    const { mapHookRecords } = await import('../forwarder.js');
 
-      // Branch carries a DIFFERENT ticket than the prompt marker, so this
-      // test proves the marker tier wins over the already-cached branch tier.
-      const ctx = {
-        credentials: { token: '', apiUrl: '' },
-        baseUrl: '',
-        projectName: 'proj',
-        userEmail: '',
-        git: { branch: 'feature/ABC-1-unrelated-branch' },
-      };
+    const ctx = {
+      credentials: { token: '', apiUrl: '' },
+      baseUrl: '',
+      projectName: 'proj',
+      userEmail: '',
+    };
 
-      // Longer than MAX_PROMPT_CHARS (200) so every bounded copy on the
-      // mapped record is truncated and none of them equals this full text —
-      // which is what actually proves "the raw prompt is never present"
-      // rather than merely proving a short prompt survives truncation whole.
-      const rawPrompt =
-        `Please implement this feature. story: EPMCDME-999 is the ticket to reference. ` +
-        'x'.repeat(200) +
-        ' end-of-prompt-marker-that-must-not-appear-anywhere-in-the-output';
-      const record = buildHookRecord('UserPromptSubmit', 'sid1', { prompt: rawPrompt });
+    const record = buildHookRecord('UserPromptSubmit', 'sid1', {
+      prompt: 'story: ABC-1 is ignored here, the forwarder does not resolve stories',
+      git_branch: 'feature/x',
+      repo_remote: 'org/repo',
+      story_id: 'EPMCDME-999',
+      story_source: 'marker',
+    });
 
-      const payload = await mapHookRecords([record], ctx);
+    const payload = await mapHookRecords([record], ctx);
+    const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
+
+    expect(line.git_branch).toBe('feature/x');
+    expect(line.repo_remote).toBe('org/repo');
+    expect(line.story_id).toBe('EPMCDME-999');
+    expect(line.story_source).toBe('marker');
+  });
+
+  it("defaults git_branch/repo_remote/story_id/story_source to '' and never resolves them from the daemon env", async () => {
+    const { mapHookRecords } = await import('../forwarder.js');
+    vi.stubEnv('SDLC_ANALYTICS_STORY_ID', 'FROM-DAEMON-1');
+
+    const ctx = {
+      credentials: { token: '', apiUrl: '' },
+      baseUrl: '',
+      projectName: 'proj',
+      userEmail: '',
+    };
+
+    try {
+      const payload = await mapHookRecords([buildHookRecord('UserPromptSubmit', 'sid1', { prompt: 'story: ABC-1' })], ctx);
       const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
 
-      expect(line.story_id).toBe('EPMCDME-999');
-      expect(line.story_source).toBe('marker');
-
-      // The raw prompt text must never appear verbatim anywhere on the
-      // emitted record — only the truncated `prompt_body` and the resolved
-      // short `story_id` string are allowed to carry prompt-derived content.
-      const serialized = JSON.stringify(line);
-      expect(serialized).not.toContain(rawPrompt);
-      expect(serialized).not.toContain('end-of-prompt-marker-that-must-not-appear-anywhere-in-the-output');
-      expect(line.prompt_body).toBe(rawPrompt.slice(0, 200));
+      expect(line.git_branch).toBe('');
+      expect(line.repo_remote).toBe('');
+      expect(line.story_id).toBe('');
+      expect(line.story_source).toBe('');
+    } finally {
+      vi.unstubAllEnvs();
     }
-  );
-
-  it(
-    'falls back to the per-tick branch result for a UserPromptSubmit record whose prompt ' +
-    'has no marker and no bare ticket mention',
-    async () => {
-      const { mapHookRecords } = await import('../forwarder.js');
-
-      const ctx = {
-        credentials: { token: '', apiUrl: '' },
-        baseUrl: '',
-        projectName: 'proj',
-        userEmail: '',
-        git: { branch: 'feature/epmcdme-15301-foo' },
-      };
-
-      const rawPrompt = 'please just fix the thing, no ticket reference here';
-      const record = buildHookRecord('UserPromptSubmit', 'sid1', {
-        prompt: rawPrompt,
-        cwd: '/repo/nonexistent-for-this-test',
-      });
-
-      const payload = await mapHookRecords([record], ctx);
-      const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-      expect(line.story_id).toBe('EPMCDME-15301');
-      expect(line.story_source).toBe('branch');
-    }
-  );
-
-  it(
-    'falls back to the mention tier for a UserPromptSubmit record whose prompt has a bare ' +
-    'ticket mention and the branch carries no ticket',
-    async () => {
-      const { mapHookRecords } = await import('../forwarder.js');
-
-      const ctx = {
-        credentials: { token: '', apiUrl: '' },
-        baseUrl: '',
-        projectName: 'proj',
-        userEmail: '',
-        git: { branch: 'just-some-branch-name' },
-      };
-
-      const rawPrompt = 'can you look into ABC-42 when you get a chance';
-      const record = buildHookRecord('UserPromptSubmit', 'sid1', { prompt: rawPrompt });
-
-      const payload = await mapHookRecords([record], ctx);
-      const line = JSON.parse(payload.ndjson.trim()) as MappedRecord;
-
-      expect(line.story_id).toBe('ABC-42');
-      expect(line.story_source).toBe('mention');
-    }
-  );
+  });
 
   it('passes agent-baked common fields (platform/client_version) through onto the mapped record without any agent-specific lookup', async () => {
     const { mapHookRecords } = await import('../forwarder.js');
@@ -265,7 +218,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: '',
-      git: {},
     };
 
     // Simulates what the plugin now bakes in hook-side before ever reaching the spool —
@@ -301,7 +253,6 @@ describe('mapHookRecords', () => {
       baseUrl: '',
       projectName: 'proj',
       userEmail: '',
-      git: {},
       identity: { developerName: 'git-user@example.com', identitySource: 'git' as const },
     };
 

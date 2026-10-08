@@ -10,6 +10,7 @@ vi.mock('../proxy/connect-orchestrator.js', () => ({ ensureOtlpProxy: vi.fn() })
 
 import { createHookCommand } from '../hook.js';
 import { ensureOtlpProxy } from '../proxy/connect-orchestrator.js';
+import { forwardOtlpEventToSpool } from '@/agents/plugins/utils.js';
 import { AgentRegistry } from '../../../agents/registry.js';
 
 describe('hook command analytics wiring', () => {
@@ -29,7 +30,7 @@ describe('hook command analytics wiring', () => {
     vi.restoreAllMocks();
   });
 
-  it('calls processOtlpEvent with the parsed input and { ensureOtlpProxy }', async () => {
+  it('calls processOtlpEvent with the parsed input and { ensureOtlpProxy, forwardOtlpEventToSpool }', async () => {
     const processOtlpEvent = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(AgentRegistry, 'getAnalyticsAgent').mockReturnValue({ processOtlpEvent } as never);
 
@@ -39,7 +40,7 @@ describe('hook command analytics wiring', () => {
     expect(processOtlpEvent).toHaveBeenCalledTimes(1);
     const [input, deps] = processOtlpEvent.mock.calls[0];
     expect(JSON.parse(input as string)).toMatchObject({ hook_event_name: 'UserPromptSubmit' });
-    expect(deps).toEqual({ ensureOtlpProxy });
+    expect(deps).toEqual({ ensureOtlpProxy, forwardOtlpEventToSpool });
     expect((deps as { ensureOtlpProxy: unknown }).ensureOtlpProxy).toBe(ensureOtlpProxy);
   });
 });

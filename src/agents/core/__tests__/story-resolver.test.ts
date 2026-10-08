@@ -215,4 +215,71 @@ describe('story-resolver', () => {
       expect(second).toEqual({ storyId: 'ABC-42', storySource: 'mention' });
     });
   });
+
+  describe('resolveStoryFor', () => {
+    it('prefers explicit over marker, branch and mention', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+      process.env[ENV_KEY] = 'EXP-1';
+
+      const result = await resolveStoryFor({
+        cwd: '/nonexistent',
+        branch: 'feature/BR-2',
+        prompt: 'story: MK-3 and also ME-4',
+      });
+
+      expect(result).toEqual({ storyId: 'EXP-1', storySource: 'explicit' });
+    });
+
+    it('prefers marker over branch and mention', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+
+      const result = await resolveStoryFor({
+        cwd: '/nonexistent',
+        branch: 'feature/BR-2',
+        prompt: 'story: MK-3 and also ME-4',
+      });
+
+      expect(result).toEqual({ storyId: 'MK-3', storySource: 'marker' });
+    });
+
+    it('prefers branch over mention', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+
+      const result = await resolveStoryFor({ cwd: '/nonexistent', branch: 'feature/BR-2', prompt: 'look at ME-4' });
+
+      expect(result).toEqual({ storyId: 'BR-2', storySource: 'branch' });
+    });
+
+    it('falls back to mention when nothing else resolves', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+
+      const result = await resolveStoryFor({ cwd: '/nonexistent', branch: 'main', prompt: 'look at ME-4' });
+
+      expect(result).toEqual({ storyId: 'ME-4', storySource: 'mention' });
+    });
+
+    it('ignores marker and mention tiers without a prompt', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+
+      expect(await resolveStoryFor({ cwd: '/nonexistent', branch: 'main' })).toBeNull();
+      expect(await resolveStoryFor({ cwd: '/nonexistent', branch: 'feature/BR-2' })).toEqual({
+        storyId: 'BR-2',
+        storySource: 'branch',
+      });
+    });
+
+    it('reads the explicit story from a configurable file path', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+      const cwd = await makeTempProjectDir();
+      tempDirs.push(cwd);
+      await mkdir(join(cwd, '.other'), { recursive: true });
+      await writeFile(join(cwd, '.other', 'story.json'), JSON.stringify({ storyId: 'CFG-9' }), 'utf-8');
+
+      const result = await resolveStoryFor({ cwd, explicitConfigPath: ['.other', 'story.json'] });
+      const withDefault = await resolveStoryFor({ cwd });
+
+      expect(result).toEqual({ storyId: 'CFG-9', storySource: 'explicit' });
+      expect(withDefault).toBeNull();
+    });
+  });
 });

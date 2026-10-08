@@ -45,13 +45,21 @@ export interface MentionStoryResult {
  */
 const MARKER_RE = /(?:story|ticket)\s*[:#]?\s*([A-Za-z][A-Za-z0-9]+-\d+)/i;
 
+/**
+ * Known limitation: the default config location is Claude-flavoured
+ * (`<cwd>/.claude/analytics.local.json`). It is a parameter so another adapter
+ * can point at its own file without touching this module. The env var name
+ * (`SDLC_ANALYTICS_STORY_ID`) stays shared.
+ */
+export const DEFAULT_EXPLICIT_CONFIG_PATH: readonly string[] = ['.claude', 'analytics.local.json'];
+
 interface AnalyticsLocalConfig {
   storyId?: unknown;
 }
 
 /**
  * Explicit story-id tier: `SDLC_ANALYTICS_STORY_ID` env var first, falling
- * back to the `storyId` field of `<cwd>/.claude/analytics.local.json`.
+ * back to the `storyId` field of `<cwd>/<explicitConfigPath>` (default `.claude/analytics.local.json`).
  * Read-only — this never writes that file. Swallows every failure (missing
  * file, malformed JSON, permission error) and resolves to `null` instead of
  * throwing. The resolved `storyId` is taken verbatim from its source (env or
@@ -59,14 +67,17 @@ interface AnalyticsLocalConfig {
  * tier: a value a user/config explicitly supplied is already exact, whereas
  * free text scanned by a case-insensitive regex needs normalizing.
  */
-export async function resolveExplicitStory(cwd: string): Promise<ExplicitStoryResult | null> {
+export async function resolveExplicitStory(
+  cwd: string,
+  explicitConfigPath: readonly string[] = DEFAULT_EXPLICIT_CONFIG_PATH
+): Promise<ExplicitStoryResult | null> {
   const envStoryId = process.env['SDLC_ANALYTICS_STORY_ID'];
   if (envStoryId) {
     return { storyId: envStoryId, storySource: 'explicit' };
   }
 
   try {
-    const filePath = join(cwd, '.claude', 'analytics.local.json');
+    const filePath = join(cwd, ...explicitConfigPath);
     const content = await readFile(filePath, 'utf-8');
     const parsed = JSON.parse(content) as AnalyticsLocalConfig;
     if (typeof parsed.storyId === 'string' && parsed.storyId.length > 0) {
@@ -138,4 +149,34 @@ export function resolveMentionStory(promptText: string): MentionStoryResult | nu
   }
 
   return { storyId: matches[0].toUpperCase(), storySource: 'mention' };
+}
+
+export type StoryResult = ExplicitStoryResult | BranchStoryResult | MarkerStoryResult | MentionStoryResult;
+
+export interface ResolveStoryInput {
+  cwd: string;
+  /** Current git branch; empty/undefined skips the branch tier. */
+  branch?: string;
+  /** Prompt text; marker and mention tiers apply only when provided. */
+  prompt?: string;
+  explicitConfigPath?: readonly string[];
+}
+
+/**
+ * Effective story for one hook invocation. Priority: explicit -> marker ->
+ * branch -> mention. Marker and mention only apply when `prompt` is provided.
+ * Runs in the hook process, so the explicit tier sees the invoking shell's env.
+ */
+export async function resolveStoryFor({
+  cwd,
+  branch,
+  prompt,
+  explicitConfigPath,
+}: ResolveStoryInput): Promise<StoryResult | null> {
+  return (
+    (await resolveExplicitStory(cwd, explicitConfigPath)) ??
+    (prompt ? resolveMarkerStory(prompt) : null) ??
+    resolveBranchStory(branch ?? '') ??
+    (prompt ? resolveMentionStory(prompt) : null)
+  );
 }

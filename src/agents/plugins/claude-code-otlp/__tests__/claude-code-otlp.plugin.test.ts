@@ -4,7 +4,10 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
   readAllowlistState: vi.fn(async () => ({ kind: 'valid', paths: ['/proj'] })),
   isProjectTracked: vi.fn(),
 }));
-vi.mock('../../utils.js', () => ({ forwardOtlpEventToSpool: vi.fn() }));
+vi.mock('@/utils/processes.js', () => ({
+  detectGitBranch: vi.fn(async () => 'main'),
+  detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
+}));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/utils/config.js', () => ({ ConfigLoader: { load: vi.fn(async () => ({})) } }));
 vi.mock('@/utils/logger.js', () => ({
@@ -30,13 +33,14 @@ vi.mock('../transcript/subagent-usage.js', () => ({
 }));
 
 import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
-import { forwardOtlpEventToSpool } from '../../utils.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 
 // Deferred past the mock-backing consts above: a static import of the plugin would be
 // hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
 // transcript/orchestrator.js mock factory, which closes over those consts.
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+
+const forwardOtlpEventToSpool = vi.fn(async (_event: Record<string, unknown>, _agentName: string) => {});
 
 const event = (name: string) => JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name });
 
@@ -53,7 +57,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     vi.mocked(isProjectTracked).mockResolvedValue(false);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     for (const name of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
-      await plugin.processOtlpEvent(event(name), { ensureOtlpProxy });
+      await plugin.processOtlpEvent(event(name), { ensureOtlpProxy, forwardOtlpEventToSpool });
     }
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
     expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
@@ -64,7 +68,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
 
   it('ensures the proxy before forwarding for tracked projects', async () => {
     vi.mocked(isProjectTracked).mockResolvedValue(true);
-    await plugin.processOtlpEvent(event('SessionStart'), { ensureOtlpProxy });
+    await plugin.processOtlpEvent(event('SessionStart'), { ensureOtlpProxy, forwardOtlpEventToSpool });
     expect(ensureOtlpProxy).toHaveBeenCalledTimes(1);
     expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(1);
     expect(vi.mocked(ensureOtlpProxy).mock.invocationCallOrder[0]).toBeLessThan(
@@ -109,13 +113,21 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
     const rawEvent = JSON.stringify(hookEvent());
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(forwardOtlpEventToSpool).toHaveBeenCalledTimes(1);
     const [forwarded] = vi.mocked(forwardOtlpEventToSpool).mock.calls[0];
     expect(forwarded.platform).toBe('claude-code');
     expect(forwarded.entrypoint).toBe('cli');
     expect(forwarded.client_version).toBe('2.1.23');
+  });
+
+  it('stamps git_branch and repo_remote resolved at hook time', async () => {
+    await plugin.processOtlpEvent(JSON.stringify(hookEvent()), { ensureOtlpProxy, forwardOtlpEventToSpool });
+
+    const [forwarded] = vi.mocked(forwardOtlpEventToSpool).mock.calls[0];
+    expect(forwarded.git_branch).toBe('main');
+    expect(forwarded.repo_remote).toBe('org/repo');
   });
 
   it('preserves agent_id/agent_type already present on the raw event (SubagentStop)', async () => {
@@ -128,7 +140,7 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
       })
     );
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     const [forwarded] = vi.mocked(forwardOtlpEventToSpool).mock.calls[0];
     expect(forwarded.agent_id).toBe('sub-1');
@@ -174,7 +186,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       const parsedEvent = hookEvent({ hook_event_name: hookEventName });
       const rawEvent = JSON.stringify(parsedEvent);
 
-      await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+      await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
       expect(collectMainTranscriptEventsMock).toHaveBeenCalledWith(
         'sid-1',
@@ -193,7 +205,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostToolUse' }));
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(collectMainTranscriptEventsMock).not.toHaveBeenCalled();
   });
@@ -211,7 +223,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       })
     );
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith('sid-1', {
       agentId: 'sub-1',
@@ -231,7 +243,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       })
     );
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith(
       'sid-1',
@@ -244,7 +256,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SubagentStop' }));
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(collectSubagentTranscriptEventsMock).not.toHaveBeenCalled();
   });
@@ -258,7 +270,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SessionEnd' }));
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     expect(findSubagentFilesMock).toHaveBeenCalledWith('/tmp/transcript.jsonl');
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledTimes(2);
@@ -278,7 +290,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const parsedEvent = hookEvent({ hook_event_name: 'Stop' });
     const rawEvent = JSON.stringify(parsedEvent);
 
-    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy });
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventToSpool });
 
     // collectMainTranscriptEvents/collectSubagentTranscriptEvents never call forwardOtlpEventToSpool
     // themselves (they are mocked here to just return data) — every event that reaches the spool
@@ -295,6 +307,6 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
     const plugin = new ClaudeCodeOtlpPlugin();
 
-    await expect(plugin.processOtlpEvent('not json', { ensureOtlpProxy })).rejects.toThrow();
+    await expect(plugin.processOtlpEvent('not json', { ensureOtlpProxy, forwardOtlpEventToSpool })).rejects.toThrow();
   });
 });
