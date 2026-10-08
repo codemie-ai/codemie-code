@@ -23,6 +23,7 @@ import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugi
 import { LoggingPlugin } from './logging.plugin.js';
 import { RoutingHeaderInjectorPlugin } from './routing-header-injector.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
+import { OtlpPlugin } from './otlp.plugin.js';
 
 /**
  * Register core plugins
@@ -49,6 +50,7 @@ export function registerCorePlugins(): void {
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
+  registry.register(new OtlpPlugin()); // Priority 10 - OTLP ingestion
 }
 
 // Auto-register on import

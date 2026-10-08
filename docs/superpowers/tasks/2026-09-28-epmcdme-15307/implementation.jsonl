@@ -1,0 +1,8 @@
+{"task_id":"1","status":"done","commit":"4e08e92","test_command":"npx vitest run src/utils/__tests__/npm-prefix.test.ts"}
+{"task_id":"2","status":"done","commit":"8e25ebb","test_command":"npx vitest run src/utils/__tests__/processes.test.ts"}
+{"task_id":"3","status":"done","commit":"4eb1375","test_command":"npx vitest run src/utils/__tests__/cli-bin.test.ts"}
+{"task_id":"4","status":"done","commit":"9168900","test_command":"npx vitest run src/cli/commands/doctor/checks/__tests__/doctor-checks.test.ts"}
+{"task_id":"5","status":"done","commit":"042ab62","test_command":"powershell -NoProfile -ExecutionPolicy Bypass -File install/windows/install.ps1 -DryRun"}
+{"task_id":"7","status":"done","commit":"f90b3cf","test_command":"n/a (docs)"}
+{"task_id":"6","status":"done","commit":"b6cd1b2","test_command":"sh -n install/macos/install.sh"}
+{"task_id":"review-fix-CR-001..005","status":"done","commit":"f05be6b","test_command":"npx vitest run src/utils/__tests__/npm-prefix.test.ts src/utils/__tests__/cli-updater.test.ts"}

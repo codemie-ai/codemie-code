@@ -18,6 +18,7 @@ import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { extractNamedInvocations } from '../claude-named-invocations.js';
 import { stripClear } from '../strip-clear.js';
+import { takeMessagesBefore } from './messages-before.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -109,6 +110,27 @@ export class MetricsProcessor implements SessionProcessor {
         message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  /**
+   * Record ids the delta extraction would mark as processed for transcript content written
+   * before `cutoffMs` (main and subagent messages). Nothing is written, so storing these ids
+   * keeps that content from ever being emitted as deltas.
+   */
+  computeBaselineRecordIds(session: ParsedSession, existingIds: Iterable<string>, cutoffMs: number): string[] {
+    const processedIds = new Set<string>(existingIds);
+    const priorSession: ParsedSession = {
+      ...session,
+      messages: takeMessagesBefore(session.messages as any[], cutoffMs),
+      ...(session.subagents && {
+        subagents: session.subagents.map(subagent => ({
+          ...subagent,
+          messages: takeMessagesBefore(subagent.messages as any[], cutoffMs)
+        }))
+      })
+    };
+    this.transformMessagesToDeltas(priorSession, processedIds);
+    return Array.from(processedIds);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
@@ -33,6 +33,8 @@ import { extractGeneratedConfig } from './print-config.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
+import { applySystemProxyEnvironment } from '../../utils/system-proxy.js';
+import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
 
 /**
  * Base class for all agent adapters
@@ -41,6 +43,7 @@ import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
   public readonly metadata: AgentMetadata;
+  public readonly type = AgentAdapterType.BASE;
 
   constructor(metadata: AgentMetadata) {
     // Clone metadata to allow runtime overrides (e.g., CLI flags)
@@ -560,6 +563,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
+    // Must precede setupProxy(): in-process fetch gets per-request routing and
+    // the spawned agent inherits the best-effort proxy environment in `env`.
+    await this.primeSystemProxyEnv(env);
+
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
 
@@ -1037,6 +1044,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
       syncCodeMieUrl: env.CODEMIE_URL || undefined,
     };
+  }
+
+  /** Resolve routing for in-process fetch and the spawned agent environment. */
+  private async primeSystemProxyEnv(env: NodeJS.ProcessEnv): Promise<void> {
+    installSystemProxyDispatcher();
+    const targetApiUrl = env.CODEMIE_BASE_URL;
+    if (!targetApiUrl) return;
+    await applySystemProxyEnvironment(targetApiUrl, env);
   }
 
   /**

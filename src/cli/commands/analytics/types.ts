@@ -248,6 +248,12 @@ export interface AnalyticsOptions {
   export?: string | true;
   /** `-o, --output <path>`: target file or directory for the report (see resolveOutputTargets). */
   output?: string;
+  /** @deprecated Alias for a bare `--export` (html report); kept for backward compatibility. Will be removed on November 1, 2026. */
+  report?: boolean;
+  /** @deprecated Alias for {@link export}; kept for backward compatibility. `--export` wins when both are set. Will be removed on November 1, 2026. */
+  reportFormat?: string;
+  /** @deprecated Alias for {@link output}; kept for backward compatibility. `-o/--output` wins when both are set. Will be removed on November 1, 2026. */
+  reportOutput?: string;
   open?: boolean;
   /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;

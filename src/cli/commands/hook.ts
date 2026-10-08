@@ -5,6 +5,8 @@ import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } fro
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
+import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
+import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -553,44 +555,26 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
 
-    const analyticsConfigured = provider === 'ai-run-sso' || Boolean(ssoUrl && syncApiUrl);
-    if (!analyticsConfigured) {
+    const authInput: AuthGateInput = {
+      provider,
+      ssoUrl,
+      syncApiUrl,
+      apiKey: getConfigValue('CODEMIE_API_KEY', config),
+    };
+
+    const authResult = await ensureCodeMieSsoAuth(authInput);
+    if (authResult.ok) {
       return;
     }
-
-    let hasValidAuth = Boolean(getConfigValue('CODEMIE_API_KEY', config));
-    if (!hasValidAuth && ssoUrl) {
-      try {
-        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-        const credentials = await new CodeMieSSO().getStoredCredentials(ssoUrl);
-        hasValidAuth = Boolean(credentials?.cookies);
-      } catch (error) {
-        logger.debug('[hook:UserPromptSubmit] Auth gate: failed to load SSO credentials:', error);
-      }
-    }
-
-    const { getAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
-    const authStatus = await getAnalyticsAuthStatus();
-
-    if (hasValidAuth && !authStatus) {
-      return;
-    }
-
-    const reason = !hasValidAuth
-      ? 'no valid CodeMie SSO credentials found'
-      : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
-    const loginCommand = ssoUrl
-      ? `codemie profile login --url ${ssoUrl}`
-      : 'codemie profile login';
 
     const message = [
       'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
-      `Reason: ${reason}.`,
-      `Re-authenticate by running: ${loginCommand}`,
-      'Then re-send your prompt.'
+      `Reason: ${authResult.reason}.`,
+      'A browser sign-in window has been opened automatically.',
+      'Complete the sign-in, then re-send your prompt.',
     ].join('\n');
 
-    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${reason}`);
+    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
 
     if (config) {
       // Programmatic mode (e.g. VSCode extension): let the host decide how to
@@ -838,8 +822,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       } = await import('../../agents/core/session/session-origin-audit.js');
 
       existing.status = 'active';
-      if (gitBranch) existing.gitBranch = gitBranch;
-      if (remoteRepository) existing.repository = remoteRepository;
+      if (gitBranch) {
+        existing.gitBranch = gitBranch;
+      }
+      if (remoteRepository) {
+        existing.repository = remoteRepository;
+      }
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -1488,7 +1476,8 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
-    .action(async () => {
+    .option('--agent <name>', 'Agent name for hook attribution')
+    .action(async (opts: { agent?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
 
@@ -1524,6 +1513,14 @@ export function createHookCommand(): Command {
           logger.debug(`[hook] Invalid JSON: ${input.substring(0, 200)}...`);
           console.error(`codemie hook: failed to parse hook input JSON: ${parseMsg}`);
           process.exit(2); // Blocking error
+        }
+
+        const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
+        if (analyticsAgent) {
+          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy });
+          await logger.close();
+          process.exitCode = 0;
+          return;
         }
 
         // Validate required fields from hook input schema

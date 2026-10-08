@@ -1,0 +1,13 @@
+{
+  "decision": "approve",
+  "rationale": "Edge-case lens ran (compact profile); acceptance skipped as no spec exists, so confidence is low. All four edge candidates were read against statusline.ts: 3 dismissed as noise (wide-glyph width, truncate max<=1 only called with constants 10/20, non-string projectName impossible since it comes from path.basename or ''), 1 deferred (uncapped routed-model/budget segments precede cost, pre-existing; see code-review-deferred.md). Standards not expected for this profile.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not part of this review profile." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not part of this review profile." },
+    { "kind": "security", "status": "na", "notes": "Standards audit not part of this review profile." }
+  ],
+  "findings": []
+}

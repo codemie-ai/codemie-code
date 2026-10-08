@@ -39,4 +39,9 @@ export interface LocalTelemetryAdapter {
     context: ProcessingContext
   ): Promise<AggregatedResult>;
   isSessionComplete?(discovered: LocalTelemetryDiscoveredSession, now: number): boolean;
+  /**
+   * Marks transcript content written before `cutoffMs` as already synced, without sending it,
+   * and clears the session's baseline marker.
+   */
+  applyBaseline?(parsedSession: ParsedSession, cutoffMs: number, context: ProcessingContext): Promise<void>;
 }

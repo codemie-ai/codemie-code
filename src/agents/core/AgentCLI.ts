@@ -10,6 +10,7 @@ import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
+import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
@@ -761,6 +762,8 @@ export class AgentCLI {
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
+    // Auth validation and SSO re-login use global fetch before the adapter runs.
+    installSystemProxyDispatcher();
     await this.program.parseAsync(argv);
   }
 }

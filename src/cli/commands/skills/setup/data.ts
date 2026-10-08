@@ -7,7 +7,6 @@
 import { NotFoundError, type SkillListItem, type SkillDetail, type CodeMieClient } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import type { CodemieSkill } from '@/env/types.js';
-import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { assertApiListResponse } from '@/cli/commands/shared/api-response-guard.js';
 
 type ApiSkillScope = 'project' | 'marketplace';
@@ -53,6 +52,11 @@ function isSkillDetailResponse(response: unknown): response is SkillDetail {
   return !!r && typeof r === 'object' && typeof r.id === 'string';
 }
 
+export interface FetchSkillsByIdsResult {
+  found: SkillDetail[];
+  missing: string[];
+}
+
 export interface FetchSkillsParams {
   scope: 'registered' | 'project' | 'marketplace';
   searchQuery?: string;
@@ -68,7 +72,7 @@ export interface FetchSkillsResult {
 export interface SkillDataFetcher {
   fetchSkills: (params: FetchSkillsParams) => Promise<FetchSkillsResult>;
   fetchSkillById: (id: string) => Promise<SkillDetail>;
-  fetchSkillsByIds: (ids: string[], registeredSkills: CodemieSkill[]) => Promise<SkillDetail[]>;
+  fetchSkillsByIds: (ids: string[], registeredSkills: CodemieSkill[]) => Promise<FetchSkillsByIdsResult>;
   fetchAllVisibleSkills: () => Promise<SkillListItem[]>;
 }
 
@@ -189,32 +193,42 @@ export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDat
     return skills;
   }
 
-  async function fetchSkillsByIds(ids: string[], _registeredSkills: CodemieSkill[]): Promise<SkillDetail[]> {
+  async function fetchSkillsByIds(ids: string[], _registeredSkills: CodemieSkill[]): Promise<FetchSkillsByIdsResult> {
     if (ids.length === 0) {
-      return [];
+      return { found: [], missing: [] };
     }
 
     logger.debug('[SkillSetup] Fetching skills by IDs', { ids });
 
     // Fetch each requested id directly rather than crawling the whole catalog: the
     // visible catalog runs to thousands of skills, and paging through it took
-    // longer than 30s with no output. An id the API does not know aborts the run:
-    // filtering it out silently reports success for a skill that was never registered.
-    const skills = await Promise.all(ids.map(async (id) => {
+    // longer than 30s with no output. An id the API does not know is reported in
+    // `missing` for the caller to decide on; any other failure propagates.
+    const results = await Promise.all(ids.map(async (id): Promise<SkillDetail | { missing: string }> => {
       try {
         const skill: unknown = await client.skills.get(id);
         assertApiListResponse(skill, isSkillDetailResponse, 'skill details');
         return skill;
       } catch (error) {
         if (error instanceof NotFoundError) {
-          throw new RegistrationItemNotFoundError('skill', id);
+          return { missing: id };
         }
         throw error;
       }
     }));
 
-    logger.debug('[SkillSetup] Fetched skills by IDs', { count: skills.length });
-    return skills;
+    const found: SkillDetail[] = [];
+    const missing: string[] = [];
+    for (const result of results) {
+      if ('missing' in result) {
+        missing.push(result.missing);
+      } else {
+        found.push(result);
+      }
+    }
+
+    logger.debug('[SkillSetup] Fetched skills by IDs', { count: found.length, missing });
+    return { found, missing };
   }
 
   return { fetchSkills, fetchSkillById, fetchSkillsByIds, fetchAllVisibleSkills };

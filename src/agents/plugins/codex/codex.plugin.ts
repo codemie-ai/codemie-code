@@ -315,10 +315,11 @@ export const CodexPluginMetadata: AgentMetadata = {
 
       // 4. Inject session tuning flags (unconditional).
       // --config uses TOML values: integers unquoted, strings double-quoted.
+      const maxOutputTokens = /gpt[-.]?6(?:[-.]|\b)|gpt[-.]?5[.-]6(?:[-.]|\b)/i.test(config?.model ?? '') ? 128000 : 16384;
       enriched = [
         '--config', 'stream_max_retries=40',
         '--config', 'request_max_retries=40',
-        '--config', 'max_output_tokens=16384',
+        '--config', `max_output_tokens=${maxOutputTokens}`,
         '--config', 'model_verbosity="medium"',
         ...enriched,
       ];

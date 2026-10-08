@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Assistant, CodeMieClient } from 'codemie-sdk';
+import { NotFoundError, type Assistant, type CodeMieClient } from 'codemie-sdk';
 import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import { createDataFetcher } from '../data.js';
@@ -614,12 +614,13 @@ describe('Data Fetcher', () => {
       });
 
       // Act
-      const result = await fetcher.fetchAssistantsByIds(
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds(
         ['asst-1', 'asst-2'],
         existingAssistants
       );
 
       // Assert
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('asst-1');
       expect(result[1].id).toBe('asst-2');
@@ -642,12 +643,13 @@ describe('Data Fetcher', () => {
       });
 
       // Act
-      const result = await fetcher.fetchAssistantsByIds(
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds(
         ['asst-1', 'asst-2'],
         existingAssistants
       );
 
       // Assert
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('asst-1');
       expect(result[1].id).toBe('asst-2');
@@ -672,12 +674,13 @@ describe('Data Fetcher', () => {
       });
 
       // Act
-      const result = await fetcher.fetchAssistantsByIds(
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds(
         ['asst-1', 'asst-2', 'asst-3'],
         existingAssistants
       );
 
       // Assert
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(3);
       expect(result[0].id).toBe('asst-1');
       expect(result[1].id).toBe('asst-2');
@@ -685,16 +688,15 @@ describe('Data Fetcher', () => {
       expect(mockClient.assistants.get).toHaveBeenCalledTimes(2);
     });
 
-    it('should reject when an individual assistant fetch fails, instead of silently dropping it', async () => {
+    it('should reject when an individual assistant fetch fails with a non-404 error, instead of silently dropping it', async () => {
       // Arrange: a caller that cannot access asst-2 must see the run fail, not
       // silently succeed with only asst-1 and asst-3 registered.
       const existingAssistants: Assistant[] = [
         { id: 'asst-1', name: 'Assistant 1' } as Assistant,
       ];
 
-      const notFoundError = new Error('Assistant not found');
       vi.mocked(mockClient.assistants.get)
-        .mockRejectedValueOnce(notFoundError)
+        .mockRejectedValueOnce(new Error('boom'))
         .mockResolvedValueOnce({ id: 'asst-3', name: 'Assistant 3' } as Assistant);
 
       const fetcher = createDataFetcher({
@@ -706,7 +708,58 @@ describe('Data Fetcher', () => {
       // Act & Assert
       await expect(
         fetcher.fetchAssistantsByIds(['asst-1', 'asst-2', 'asst-3'], existingAssistants)
-      ).rejects.toThrow('Assistant not found');
+      ).rejects.toThrow('boom');
+    });
+
+    it('should report a 404 as missing and keep fetching the remaining ids', async () => {
+      // Arrange
+      const a = { id: 'asst-a', name: 'Assistant A' } as Assistant;
+      const c = { id: 'asst-c', name: 'Assistant C' } as Assistant;
+      vi.mocked(mockClient.assistants.get)
+        .mockResolvedValueOnce(a)
+        .mockRejectedValueOnce(new NotFoundError('Resource', 'unknown'))
+        .mockResolvedValueOnce(c);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      const result = await fetcher.fetchAssistantsByIds(['asst-a', 'asst-b', 'asst-c'], []);
+
+      // Assert
+      expect(result).toEqual({ found: [a, c], missing: ['asst-b'] });
+      expect(mockClient.assistants.get).toHaveBeenCalledWith('asst-c');
+    });
+
+    it('should return missing ids in selected order when interleaved with found ones', async () => {
+      // Arrange
+      const existingAssistants: Assistant[] = [
+        { id: 'asst-1', name: 'Assistant 1' } as Assistant,
+      ];
+      const asst3 = { id: 'asst-3', name: 'Assistant 3' } as Assistant;
+      vi.mocked(mockClient.assistants.get)
+        .mockRejectedValueOnce(new NotFoundError('Resource', 'unknown'))
+        .mockResolvedValueOnce(asst3)
+        .mockRejectedValueOnce(new NotFoundError('Resource', 'unknown'));
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act
+      const result = await fetcher.fetchAssistantsByIds(
+        ['gone-2', 'asst-1', 'asst-3', 'gone-1'],
+        existingAssistants
+      );
+
+      // Assert
+      expect(result).toEqual({ found: [existingAssistants[0], asst3], missing: ['gone-2', 'gone-1'] });
+      expect(mockClient.assistants.get).not.toHaveBeenCalledWith('asst-1');
     });
 
     it('should handle empty selected IDs', async () => {
@@ -718,9 +771,10 @@ describe('Data Fetcher', () => {
       });
 
       // Act
-      const result = await fetcher.fetchAssistantsByIds([], []);
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds([], []);
 
       // Assert
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(0);
       expect(mockClient.assistants.get).not.toHaveBeenCalled();
     });
@@ -737,9 +791,10 @@ describe('Data Fetcher', () => {
       });
 
       // Act
-      const result = await fetcher.fetchAssistantsByIds(['asst-1'], []);
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds(['asst-1'], []);
 
       // Assert
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('asst-1');
       expect(mockClient.assistants.get).toHaveBeenCalledWith('asst-1');
@@ -762,12 +817,13 @@ describe('Data Fetcher', () => {
       });
 
       // Act: Request in specific order
-      const result = await fetcher.fetchAssistantsByIds(
+      const { found: result, missing } = await fetcher.fetchAssistantsByIds(
         ['asst-1', 'asst-2', 'asst-3'],
         existingAssistants
       );
 
       // Assert: Should maintain requested order
+      expect(missing).toEqual([]);
       expect(result).toHaveLength(3);
       expect(result[0].id).toBe('asst-1');
       expect(result[1].id).toBe('asst-2');

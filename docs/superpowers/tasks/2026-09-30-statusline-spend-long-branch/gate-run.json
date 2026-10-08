@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "branch": "fix/statusline-spend-long-branch",
+  "head": "1db3f30df928d1e8f29c22e5dd86af59c1a0031d",
+  "runner": "npm",
+  "started_at": "2026-09-30T09:54:53Z",
+  "completed_at": "2026-09-30T09:55:55Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10527,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10872,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 757,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan' (scans staged files only). Real range scan covered by secrets-gitleaks-range."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 925,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 700,
+      "command": "npx --no -- commitlint --from c2aaa357d09978c513fd72eb936f84ebcb55ba86 --to HEAD",
+      "exit_code": 0,
+      "notes": "CI validate-commits checks the full PR range; guide only checks HEAD~1..HEAD."
+    },
+    {
+      "id": "secrets-gitleaks-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1562,
+      "command": "docker run --rm -v $PWD:/repo ghcr.io/gitleaks/gitleaks:latest git /repo --log-opts=c2aaa357..HEAD --no-banner",
+      "exit_code": 0,
+      "notes": "Approximates CI gitleaks-action (runs on pull_request only): 2 commits scanned, no leaks."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "notes": "No staged changes; pre-commit hook has nothing to run. typecheck stage covered by typecheck gate."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit / --project cli on windows-latest",
+      "notes": "Requires Windows runner; only CI can settle. Local repro via CRLF conversion not performed."
+    }
+  ],
+  "failures": {}
+}

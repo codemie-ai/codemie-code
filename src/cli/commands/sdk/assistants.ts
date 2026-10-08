@@ -35,6 +35,7 @@ import {
   type TableColumn,
   type DetailRow,
 } from "./utils/render.js";
+import { registerBuilderCommands } from "./assistant-builder/commands.js";
 
 export function createAssistantsSubcommand(): Command {
   const cmd = new Command("assistants").description(
@@ -280,6 +281,8 @@ export function createAssistantsSubcommand(): Command {
         handleSdkError(error, "get toolkits");
       }
     });
+
+  registerBuilderCommands(cmd);
 
   return cmd;
 }

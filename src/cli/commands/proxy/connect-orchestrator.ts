@@ -21,6 +21,7 @@ import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
+  isProcessAlive,
   readState,
   spawnDaemon,
   stopDaemon,
@@ -46,6 +47,8 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
+import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -54,6 +57,7 @@ export const DEFAULT_DAEMON_PORT = 4001;
 /** The orthogonal targets a single `connect` invocation may configure. */
 export interface ConnectTargets {
   claudeDesktop?: boolean;
+  claudeCodeOtlp?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
@@ -68,10 +72,15 @@ export interface ConnectOptions {
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
+  /**
+   * Claude Code OTLP tracking scope. Settings always live in ~/.claude/settings.json.
+   * "user" (default) tracks all projects and resets the allowlist; "project" adds only the current project root to it.
+   */
+  scope?: "user" | "project";
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop';
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | typeof CLAUDE_CODE_OTLP_AGENT_NAME;
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -85,7 +94,8 @@ export interface DaemonIdentity {
   spawnOptions:
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
-    | { clientType: 'codex-desktop' };
+    | { clientType: 'codex-desktop' }
+    | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME };
 }
 
 /**
@@ -97,6 +107,9 @@ export interface DaemonIdentity {
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
     return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
+  }
+  if (targets.claudeCodeOtlp) {
+    return { clientType: CLAUDE_CODE_OTLP_AGENT_NAME, spawnOptions: { clientType: CLAUDE_CODE_OTLP_AGENT_NAME } };
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
@@ -203,13 +216,19 @@ export async function resolveSsoProxyConfig(
     };
   }
 
-  const activeConfig = await ConfigLoader.load(process.cwd());
+  // Resolve the active profile by name first so ConfigLoader.load()'s
+  // profile-protection branch engages - otherwise env vars like
+  // CODEMIE_BASE_URL silently clobber the profile's baseUrl below.
+  const activeProfileName = await ConfigLoader.getActiveProfileName(process.cwd());
+  const activeConfig = await ConfigLoader.load(
+    process.cwd(),
+    activeProfileName ? { name: activeProfileName } : undefined
+  );
   const activeProvider = ProviderRegistry.getProvider(activeConfig.provider ?? '');
   if (activeProvider?.authType === 'sso') {
     return { config: activeConfig, profileSource: 'active' };
   }
 
-  const activeProfileName = await ConfigLoader.getActiveProfileName(process.cwd());
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
@@ -268,18 +287,20 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
+  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
+  `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
+  return Boolean(t.claudeDesktop || t.claudeCodeOtlp || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -287,6 +308,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   const flags: string[] = [];
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
+  if (t.claudeCodeOtlp) { flags.push(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`); labels.push('Claude Code OTLP'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
@@ -316,8 +338,8 @@ async function ensureDaemon(
   requested: RequestedDaemonConfig,
   identity: DaemonIdentity,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  force: boolean,
-  verbose: boolean
+  force?: boolean,
+  verbose?: boolean
 ): Promise<{ state: DaemonState; startedInThisRun: boolean }> {
   let { running, state } = await checkStatus();
   const matches = Boolean(running && state && daemonMatchesRequest(state, requested));
@@ -369,6 +391,42 @@ async function ensureDaemon(
   }
 
   return { state, startedInThisRun };
+}
+
+export async function ensureOtlpProxy(agentName: string): Promise<void> {
+  const state = await readState();
+
+  if (state && isProcessAlive(state.pid)) {
+    return;
+  }
+
+  const cwd = process.cwd();
+
+  const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
+
+  const config = await ConfigLoader.load(
+    cwd,
+    activeProfileName ? { name: activeProfileName } : undefined
+  );
+
+  const daemonConfig = {
+    clientType: agentName,
+    port: DEFAULT_DAEMON_PORT,
+    profile: config.name ?? 'default',
+    project: config.codeMieProject,
+    provider: config.provider ?? 'ai-run-sso',
+    syncApiUrl: config.ssoConfig?.apiUrl,
+    syncCodeMieUrl: config.codeMieUrl,
+    targetUrl: config.baseUrl,
+    model: normalizeDaemonModel(config.model)
+  }
+
+  const daemonIdentity = {
+    clientType: agentName,
+    spawnOptions: { clientType: agentName },
+  } as DaemonIdentity;
+
+  await ensureDaemon(daemonConfig, daemonIdentity, config);
 }
 
 /** One per-target write outcome, collected for the summary (spec §3.4). */
@@ -586,8 +644,44 @@ async function runCodexDesktop(
 /** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
 export const runCodexDesktopForTest = runCodexDesktop;
 
+interface ClaudeCodeOtlpRunOptions {
+  force?: boolean;
+  scope?: "user" | "project";
+}
+
+async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<TargetResult> {
+  const label = 'Claude Code Analytics';
+  try {
+    const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
+    console.log(chalk.green(`\u2713 Claude Code analytics configured`));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`));
+    console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in ${result.path}`));
+    if (result.backupPath) {
+      console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
+    }
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  OTel env is user-level: every Claude Code session exports telemetry to the daemon while it runs;'));
+    console.log(chalk.dim('  data from untracked projects is skipped and swept, never sent.'));
+    console.log(chalk.yellow('  First-time setup needs a Claude Code restart; allowlist changes apply immediately.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Claude Code analytics', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Claude Code analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
+
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
     return;
@@ -678,9 +772,15 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
 
   // Per-target dispatch (spec §3.4) — each writer runs independently.
   const results: TargetResult[] = [];
-  if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
-  if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
-  if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
+  if (targets.claudeDesktop) {
+    results.push(await runClaudeDesktop(state, verbose));
+  }
+  if (targets.vscode) {
+    results.push(await runVscodeByok(state, insiders, config, verbose));
+  }
+  if (targets.vscodeClaudeCode) {
+    results.push(await runVscodeClaudeCode(state, insiders));
+  }
   if (targets.codexDesktop) {
     results.push(await runCodexDesktop(state, {
       force: Boolean(opts.force),
@@ -688,6 +788,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       profileModel: config.model,
       verbose,
     }));
+  }
+  if (targets.claudeCodeOtlp) {
+    results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
   }
 
   const anyFailed = results.some((r) => !r.ok);

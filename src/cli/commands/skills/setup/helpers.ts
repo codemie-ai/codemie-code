@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { SkillDetail, SkillListItem } from 'codemie-sdk';
 import type { CodemieSkill } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { StorageScope } from '@/env/types.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/skills/setup/generators/claude-skill-generator.js';
 import { sanitizeToSlug } from '@/utils/slug.js';
@@ -28,6 +29,20 @@ export function determineChanges(
   registeredSkills: CodemieSkill[]
 ): RegistrationChanges {
   return _determineChanges(selectedIds, allSkills, registeredSkills);
+}
+
+export function resolveMissingSkills(
+  missing: string[],
+  registered: CodemieSkill[]
+): CodemieSkill[] {
+  const registeredById = new Map(registered.map(s => [s.id, s]));
+  return missing.map(id => {
+    const entry = registeredById.get(id);
+    if (!entry) {
+      throw new RegistrationItemNotFoundError('skill', id);
+    }
+    return entry;
+  });
 }
 
 export async function unregisterSkill(

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieLlmModels, buildModelLabelIndex, describeRouter, orderModelsForPicker } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -79,8 +79,8 @@ const INCOMPATIBLE_MODEL_PATTERNS: RegExp[] = [
 
 const COMPATIBLE_CODEX_MODEL_PATTERNS: RegExp[] = [
   /codex/i,
-  /^gpt[-.]?5(?:[-.]|\b)/i,
-  /^gpt[-.]?6(?:[-.]|\b)/i,
+  /gpt[-.]?5(?:[-.]|\b)/i,
+  /gpt[-.]?6(?:[-.]|\b)/i,
   // Fallback for router/switchyard aliases that don't carry the catalog's `is_router` flag
   // (e.g. a plain LiteLLM alias): `gpt-smart-router`, `gpt-fast-router`. Real Switchyard
   // routers are matched via isRouterCatalogEntry below instead, since their names don't
@@ -359,8 +359,8 @@ function buildCodexCatalog(models: RankedModel[], labelIndex: Map<string, string
       },
       supports_parallel_tool_calls: true,
       supports_image_detail_original: true,
-      context_window: 400000,
-      max_context_window: 400000,
+      context_window: /gpt[-.]?6(?:[-.]|\b)|gpt[-.]?5[.-]6(?:[-.]|\b)/i.test(entry.id) ? 1050000 : 400000,
+      max_context_window: /gpt[-.]?6(?:[-.]|\b)|gpt[-.]?5[.-]6(?:[-.]|\b)/i.test(entry.id) ? 1050000 : 400000,
       effective_context_window_percent: 95,
       experimental_supported_tools: [],
       input_modalities: entry.model.multimodal ? ['text', 'image'] : ['text'],
@@ -474,7 +474,13 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     currentModel && rankedIds.includes(currentModel)
       ? currentModel
       : catalogModels[0].id;
-  const catalogPath = await writeCatalogFile(buildCodexCatalog(catalogModels, buildModelLabelIndex(rawModels)));
+  const catalogPath = await writeCatalogFile(
+    // Codex marks the first row as its default, so the selected model leads (keeping the marker
+    // on the model actually in use), then routers, then the rest; `priority` is the position.
+    buildCodexCatalog(
+      orderModelsForPicker(catalogModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
+      buildModelLabelIndex(rawModels))
+  );
 
   if (isCodexCompatibleModelName(currentModel) && currentModel !== selectedModel) {
     console.error(`[codemie-codex] Requested model "${currentModel}" is not available; using ${selectedModel} instead.`);

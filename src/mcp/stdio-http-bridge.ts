@@ -20,6 +20,7 @@ import {
 import { StdioServerTransport } from '@modelcontextprotocol/server';
 import type { JSONRPCMessage } from '@modelcontextprotocol/client';
 import { logger } from '../utils/logger.js';
+import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { proxyLog } from './proxy-logger.js';
 import { McpOAuthProvider } from './auth/mcp-oauth-provider.js';
 
@@ -107,6 +108,10 @@ export class StdioHttpBridge {
    * HTTP connection is deferred until the first message arrives.
    */
   async start(): Promise<void> {
+    // Remote MCP and OAuth traffic uses global fetch; route it through the
+    // shared environment/Windows/PAC resolver like the rest of the CLI.
+    installSystemProxyDispatcher();
+
     this.stdioTransport.onmessage = (message: JSONRPCMessage) => {
       this.handleStdioMessage(message);
     };

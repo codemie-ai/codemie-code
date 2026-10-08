@@ -1,0 +1,36 @@
+{
+  "decision": "request-changes",
+  "rationale": "Acceptance did not run (no spec), so confidence is low. Two commit subjects carry the ticket key against the git-workflow anti-pattern. Both edge-case findings were dismissed after reading source (2 dismissed, 0 deferred). The marker path uses the same base as getCurrentCliVersion, and an EACCES failure there would also break the package.json read.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "fail", "notes": "Both subjects end with (EPMCDME-15433); guide says reference the ticket in the body footer." },
+    { "kind": "code-quality", "status": "pass", "notes": ".js imports, explicit return type on exported helper, JSDoc, logger.debug used." },
+    { "kind": "security", "status": "pass", "notes": "Fixed path from import.meta.url; no user-controlled paths, secrets or unsafe logging." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commit subject: feat(cli): make self-update a no-op message inside CodeMie Connect (EPMCDME-15433)",
+      "title": "Ticket key in commit subject",
+      "problem": "git-workflow.md Anti-Patterns: ticket key in the commit subject when scope already conveys context; the guide says reference the ticket in the body footer.",
+      "impact": "Documented commit-format anti-pattern that blocks the workflow and adds noise to history.",
+      "recommendation": "Drop the (EPMCDME-15433) suffix from the subject and add the ticket reference in the commit body footer."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commit subject: feat(cli): skip startup self-update inside CodeMie Connect (EPMCDME-15433)",
+      "title": "Ticket key in commit subject",
+      "problem": "git-workflow.md Anti-Patterns: ticket key in the commit subject when scope already conveys context; the guide says reference the ticket in the body footer.",
+      "impact": "Documented commit-format anti-pattern that blocks the workflow and adds noise to history.",
+      "recommendation": "Drop the (EPMCDME-15433) suffix from the subject and add the ticket reference in the commit body footer."
+    }
+  ]
+}

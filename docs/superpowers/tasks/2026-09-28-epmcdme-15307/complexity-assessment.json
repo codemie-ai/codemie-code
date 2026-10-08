@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Stop the Windows (and macOS user-prefix) installer from rewriting the user's npm prefix: add an auto mode default, scope the portable prefix to CodeMie and persist it for self-update and npm agent installs, detect legacy overrides in the installer and codemie doctor, and update the README (EPMCDME-15307).",
+  "generated": "2026-09-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base L: Windows installer, macOS installer, installer README, the shared npm helpers in utils/processes (installGlobal/uninstallGlobal/listGlobal) plus a persisted-prefix lookup under getCodemiePath, and a new doctor health check. Those helpers feed CLI self-update, update, BaseAgentAdapter, the codemie-code plugin and framework plugins, so the shared-utility red flag bumps it to XL." },
+    { "dimension": "technical_risk", "reason": "The nearest patterns are install.sh auto mode, the HealthCheck pattern, and .npmrc parsing in proxy-http-client. None of them cover PowerShell prefix-writability probing, telling CodeMie's legacy prefix apart from a user's own custom prefix, or keeping self-update working for existing portable installs whose shims point at the old prefix. BaseAgentAdapter.isInstalled resolves through PATH, which couples to the prefix location. The base is L. The acceptance criteria require every mode (auto, npm-global, portable, user-prefix) to work and the installer scripts have no test harness at all, so the variant-coverage auto-bump raises it to XL." },
+    { "dimension": "file_change_estimate", "reason": "About 8-10 modified files (install.ps1, install.sh, install/README.md, processes.ts, paths or config, cli-updater manual fallback, doctor index and checks barrel, processes and doctor-check tests) and 1-2 new ones (the prefix doctor check, possibly a prefix-state module), across install/, src/utils/ and src/cli/commands/doctor/." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities (the utils/processes npm helpers used by self-update, update, agent adapters and framework plugins).",
+    "Technical Risk bumped from L (4) to XL (5): the acceptance criteria require every install mode to work, and no test template exists for the installer scripts (no Pester or bats)."
+  ],
+  "split_recommendation": null
+}

@@ -5,11 +5,14 @@ import { buildSingleChoiceRow } from '@/cli/commands/shared/selection/ui.js';
 export interface StorageScopeOptions {
   title?: string;
   localNote?: string;
+  /** Warnings shown below the prompt on every render */
+  notices?: string[];
 }
 
 export async function promptStorageScope({
   title = 'Where would you like to save configuration?',
   localNote = 'Project-scoped configuration will override global ones for this repository.',
+  notices = [],
 }: StorageScopeOptions = {}): Promise<StorageScope> {
   const ANSI = {
     CLEAR_SCREEN: '\x1B[2J\x1B[H',
@@ -55,6 +58,11 @@ export async function promptStorageScope({
     if (selectedIndex === 1) {
       lines.push('');
       lines.push(chalk.dim(`  ${localNote}`));
+    }
+
+    if (notices.length > 0) {
+      lines.push('');
+      notices.forEach(notice => lines.push(chalk.yellow(`  ${notice}`)));
     }
 
     lines.push('');

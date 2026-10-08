@@ -6,6 +6,7 @@ import { AgentNotFoundError, AgentInstallationError, getErrorMessage } from '../
 import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
+import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
 import { compareVersions, isValidSemanticVersion } from '../../utils/version-utils.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -84,7 +85,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     const cliVersion = await getCurrentCliVersion();
     if (!cliVersion) return null;
 
-    const latestVersion = await npm.getLatestVersion('@codemieai/code');
+    const latestVersion = await npm.getLatestVersion(CLI_PACKAGE_NAME);
     if (!latestVersion) return null;
 
     // Validate both versions before comparing
@@ -101,7 +102,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
       currentVersion: cliVersion,
       latestVersion,
       hasUpdate,
-      npmPackage: '@codemieai/code',
+      npmPackage: CLI_PACKAGE_NAME,
     };
   }
 
@@ -213,7 +214,7 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
     await agent.installVersion('supported');
   } else if (agent.metadata.isBuiltIn) {
     // Special handling for built-in agent — update the CLI package
-    await npm.installGlobal('@codemieai/code', { version: latestVersion, force: true });
+    await npm.installGlobal(CLI_PACKAGE_NAME, { version: latestVersion, force: true });
   } else {
     // Standard npm-based agents
     const npmPackage = agent.metadata.npmPackage;

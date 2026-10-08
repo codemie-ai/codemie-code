@@ -1,0 +1,2 @@
+{"task_id":"task-1","status":"done","commit":"9e51b9cd","test_command":"npx vitest run src/agents/plugins/claude/plugin/__tests__/statusline.test.ts"}
+{"task_id":"task-2","status":"done","commit":"1db3f30d","test_command":"npx vitest run src/agents/plugins/claude/plugin/__tests__/statusline.test.ts"}

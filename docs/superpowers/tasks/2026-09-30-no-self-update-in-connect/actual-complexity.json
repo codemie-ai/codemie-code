@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-09-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 4 files (2 source, 2 test), mapping to M per diffstat rule, though changes are small (152 insertions, 4 deletions) and localized to src/cli/commands and src/utils." },
+    { "dimension": "component_scope", "reason": "Adds isCodemieConnectInstall() marker check in cli-updater.ts and guards in checkAndPromptForUpdate and the self-update command; self-contained, existing fs.access and import.meta path pattern." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

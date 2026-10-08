@@ -726,10 +726,35 @@ export interface ResumeOwnershipResult {
   auditData?: Record<string, unknown>;
 }
 
+export enum AgentAdapterType {
+  BASE,
+  OTLP,
+}
+
+export interface OtlpAgentAdapter  {
+  readonly name: string;
+  readonly type: AgentAdapterType.OTLP;
+
+  /**
+   * Handles one hook event. The adapter owns the decision of whether the OTLP
+   * daemon is needed: it MUST call `deps.ensureProxy()` before forwarding
+   * anything to the daemon and MAY skip it for events it will not forward.
+   *
+   * INVARIANT: events from untracked projects must never reach the daemon
+   * spool.
+   */
+  processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void>;
+}
+
+export interface OtlpAdapterDeps {
+  ensureOtlpProxy: (agentName: string) => Promise<void>;
+}
+
 /**
  * Agent adapter interface - implemented by BaseAgentAdapter
  */
 export interface AgentAdapter {
+  readonly type: AgentAdapterType.BASE;
   name: string;
   displayName: string;
   description: string;

@@ -1,0 +1,147 @@
+diff --git a/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts b/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
+index beddd5e2..7b629ce7 100644
+--- a/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
++++ b/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
+@@ -7,6 +7,7 @@ import {
+   extractBasicInfo,
+   formatDuration,
+   buildStatusLine,
++  truncate,
+   resolveBudget,
+   isMainModule,
+   ctxBar,
+@@ -170,11 +171,52 @@ describe('ctxBar', () => {
+   });
+ });
+ 
++describe('truncate', () => {
++  it('returns text within the limit untouched', () => {
++    expect(truncate('short', 10)).toBe('short');
++    expect(truncate('a'.repeat(10), 10)).toBe('a'.repeat(10));
++  });
++
++  it('cuts longer text to max-1 characters plus an ellipsis', () => {
++    const out = truncate('a'.repeat(30), 10);
++    expect(out).toBe(`${'a'.repeat(9)}…`);
++    expect(Array.from(out)).toHaveLength(10);
++  });
++
++  it('returns an empty string for non-string or empty input', () => {
++    expect(truncate(undefined, 10)).toBe('');
++    expect(truncate(null, 10)).toBe('');
++    expect(truncate(42, 10)).toBe('');
++    expect(truncate('', 10)).toBe('');
++  });
++});
++
+ describe('buildStatusLine', () => {
+   const basic = {
+     projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
+     ctxPct: 42, cost: 1.5, costExact: true, durationMs: 65000,
+   };
++  const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
++  const stripAnsi = (s: string) => s.replace(ANSI_RE, '');
++
++  it('truncates a long branch to 20 characters inside the parens and keeps the cost visible', () => {
++    const branch = 'feature/EPMCDME-15429-' + 'x'.repeat(23);
++    expect(branch.length).toBe(45);
++    const plain = stripAnsi(buildStatusLine({ ...basic, branch }));
++    const inner = plain.match(/\(([^)]*)\)/)![1];
++    expect(Array.from(inner)).toHaveLength(20);
++    expect(inner.endsWith('…')).toBe(true);
++    expect(plain).not.toContain(branch);
++    expect(plain).toContain('$1.5000');
++  });
++
++  it('truncates a long project name to 10 characters inside the brackets and keeps the cost visible', () => {
++    const plain = stripAnsi(buildStatusLine({ ...basic, projectName: 'p'.repeat(27) }));
++    const inner = plain.match(/^\[([^\]]*)\]/)![1];
++    expect(Array.from(inner)).toHaveLength(10);
++    expect(inner.endsWith('…')).toBe(true);
++    expect(plain).toContain('$1.5000');
++  });
+ 
+   it('always renders basic info (including session cost and duration)', () => {
+     const line = buildStatusLine({ ...basic });
+@@ -203,6 +245,26 @@ describe('buildStatusLine', () => {
+     expect(line).toContain(`${YELLOW}$12.34 (41%) resets 7/15/2026`);
+     expect(line.indexOf('[my-project]')).toBeLessThan(line.indexOf('$12.34'));
+     expect(line.indexOf('$12.34')).toBeLessThan(line.indexOf('(main)'));
++    expect(line.indexOf('(main)')).toBeLessThan(line.indexOf('$1.5000'));
++    expect(line.indexOf('[Claude Sonnet 5]')).toBeLessThan(line.indexOf('$1.5000'));
++    expect(line.indexOf('$1.5000')).toBeLessThan(line.indexOf('████░░░░░░'));
++  });
++
++  it('keeps the session cost within the first 100 columns in the worst case', () => {
++    const line = buildStatusLine({
++      ...basic,
++      projectName: 'p'.repeat(60),
++      branch: 'b'.repeat(80),
++      budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 },
++      tokIn: 1234,
++      tokOut: 56,
++    });
++    const plain = stripAnsi(line);
++    expect(plain.indexOf('$1.5000') + '$1.5000'.length).toBeLessThanOrEqual(100);
++    const costAt = line.indexOf('$1.5000');
++    expect(costAt).toBeLessThan(line.indexOf('████░░░░░░'));
++    expect(costAt).toBeLessThan(line.indexOf('in:'));
++    expect(costAt).toBeLessThan(line.indexOf('1m 5s'));
+   });
+ 
+   it('shows the budget error only when there is no budget', () => {
+diff --git a/src/agents/plugins/claude/plugin/statusline.ts b/src/agents/plugins/claude/plugin/statusline.ts
+index 57124219..622c247e 100644
+--- a/src/agents/plugins/claude/plugin/statusline.ts
++++ b/src/agents/plugins/claude/plugin/statusline.ts
+@@ -607,23 +607,25 @@ function budgetColor(pct) {
+   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
+ }
+ 
++const MAX_PROJECT_CHARS = 10;
++const MAX_BRANCH_CHARS = 20;
++
++// Ellipsis-truncate to at most `max` visible characters (code points, so surrogate pairs are not split).
++export function truncate(text, max) {
++  if (typeof text !== 'string') return '';
++  const chars = Array.from(text);
++  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
++}
++
+ export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
+   const parts: string[] = [];
+ 
+-  if (projectName) parts.push(c(C.purple, `[${projectName}]`));
++  if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
+   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
+   else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
+-  if (branch) parts.push(c(C.blue, `(${branch})`));
++  if (branch) parts.push(c(C.blue, `(${truncate(branch, MAX_BRANCH_CHARS)})`));
+   if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
+ 
+-  const bar = ctxBar(ctxPct);
+-  if (bar) parts.push(bar);
+-
+-  const stats: string[] = [];
+-  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
+-  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
+-  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
+-
+   // `costExact` is set when the figure was priced from the transcript by computeSessionCost()
+   // — every message attributed to the model that actually answered it. It is false when we fell
+   // back to Claude Code's own `total_cost_usd`, which prices the whole session against the model
+@@ -633,6 +635,14 @@ export function buildStatusLine({ projectName, branch, model, actualModel, ctxPc
+     parts.push(c(C.yellow, `${costExact ? '' : '~'}$${cost.toFixed(4)}`));
+   }
+ 
++  const bar = ctxBar(ctxPct);
++  if (bar) parts.push(bar);
++
++  const stats: string[] = [];
++  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
++  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
++  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
++
+   const dur = formatDuration(durationMs);
+   if (dur) parts.push(c(C.gray, dur));
+ 

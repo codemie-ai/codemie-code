@@ -1,0 +1,1 @@
+[{"location":"src/cli/commands/skills/setup/data.ts:652","trigger_condition":"API skill payload passes isSkillDetailResponse but carries its own 'missing' property","guard_snippet":"return { kind: 'missing', id } / { kind: 'found', skill } and branch on kind","potential_consequence":"Valid skill misclassified as missing; run aborts or skill wrongly unregistered as stale"}]

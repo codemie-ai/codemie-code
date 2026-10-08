@@ -14,6 +14,7 @@ import path from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { getPathModule } from './platform.js';
 
 // ============================================================================
 // Path Normalization and Manipulation
@@ -229,6 +230,16 @@ export function isPathWithinDirectory(workingDir: string, resolvedPath: string):
   return !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+/**
+ * Check whether two paths point to the same location, ignoring trailing separators and,
+ * on win32, letter case.
+ *
+ * @param platform - Platform whose path rules to use; defaults to `process.platform`.
+ */
+export function isSamePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  return getPathModule(platform).relative(a, b) === '';
+}
+
 // ============================================================================
 // UUID Validation Utilities
 // ============================================================================
@@ -316,7 +327,7 @@ export function isValidUuidFilename(filename: string, extension: string): boolea
  * resolveHomeDir('.gemini/auth.json')
  * // Returns: '/Users/john/.gemini/auth.json'
  */
-export function resolveHomeDir(relativePath: string): string {
+export function resolveHomeDir(relativePath: string=""): string {
   return path.join(homedir(), relativePath);
 }
 

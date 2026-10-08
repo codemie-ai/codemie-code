@@ -10,6 +10,7 @@ The CodeMie Code hooks system allows you to execute custom shell commands or LLM
 - [Hook Events](#hook-events)
 - [Security Considerations](#security-considerations)
 - [Examples](#examples)
+- [Claude Code OTLP Hook Filter](#claude-code-otlp-hook-filter)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -567,6 +568,18 @@ fi
   ]
 }
 ```
+
+## Claude Code OTLP Hook Filter
+
+The `claude-code-otlp` integration (`codemie proxy connect --claude-code-otlp`) registers Claude Code hooks in `~/.claude/settings.json` that forward hook events to the CodeMie proxy daemon for analytics. Which projects are tracked is controlled by the allowlist `CODEMIE_ANALYTICS_PROJECT_FILTER`, a JSON array (stored as a string) of absolute project paths in the `env` block of `~/.claude/settings.json`.
+
+- Absent or `[]`: every project is tracked.
+- Non-empty: an event is tracked when its `cwd` equals or is nested inside a listed path. A missing `cwd` or an invalid value is not tracked.
+- Managed through `connect`/`disconnect --claude-code-otlp --scope user|project` (see [COMMANDS.md](COMMANDS.md#claude-code-otlp-analytics)).
+
+The filter runs in the hook process. The plugin (`src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts`), not `hook.ts`, decides whether the daemon is ensured: `hook.ts` passes an `ensureOtlpProxy` callback and the plugin calls it only for tracked projects. For an untracked project the hook does nothing: no daemon start, no SSO check, nothing forwarded to the spool.
+
+Claude Code OTel telemetry is still exported globally, so untracked sessions reach the daemon as OTEL-only data. The daemon never sends OTEL-only sessions (completeness gate decision `skip`); they are skipped after `OTLP_SEND_MAX_ATTEMPTS` ticks and deleted by the sweeper after `OTLP_ABANDONED_SESSION_GRACE_MINUTES`. Details: [ARCHITECTURE-PROXY.md](ARCHITECTURE-PROXY.md#614-claude-code-otlp-per-project-allowlist).
 
 ## Environment Variables
 

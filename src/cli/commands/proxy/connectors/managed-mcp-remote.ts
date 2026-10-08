@@ -3,6 +3,7 @@ import { buildAuthHeaders } from '@/providers/core/codemie-auth-helpers.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { isTlsVerificationEnabled } from '@/utils/system-proxy.js';
 
 const VALID_NAME = /^[a-zA-Z0-9_-]+$/;
 const CANONICAL_TRANSPORTS = new Set(['http', 'sse', 'stdio']);
@@ -140,16 +141,14 @@ export async function fetchManagedMcpServers(
     const endpoint = new URL(`${creds.apiUrl.replace(/\/+$/, '')}/v1/mcp/managed-servers`);
     endpoint.searchParams.set('client', client);
 
-    // Go through the shared HTTPClient like fetchCodeMieUserInfo: enterprise
-    // on-prem CodeMie deployments commonly use self-signed certs (so we need
-    // rejectUnauthorized: false), it bounds the request with a timeout, and
+    // Go through the shared HTTPClient like fetchCodeMieUserInfo: it honors the
+    // common proxy/TLS policy, bounds the request with a timeout, and
     // buildAuthHeaders attaches the cookie plus the standard CLI-identifying
-    // headers every other CodeMie request sends. A raw fetch would reject those
-    // certs and could hang.
+    // headers every other CodeMie request sends.
     const httpClient = new HTTPClient({
       timeout: 10000,
       maxRetries: 3,
-      rejectUnauthorized: false,
+      rejectUnauthorized: isTlsVerificationEnabled(),
     });
     const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(creds.cookies));
 

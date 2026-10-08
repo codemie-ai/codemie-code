@@ -6,7 +6,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { createSkillDataFetcher } from './data.js';
 import { promptSkillSelection } from './selection/index.js';
-import { determineChanges, registerSkill, unregisterSkill } from './helpers.js';
+import { determineChanges, registerSkill, resolveMissingSkills, unregisterSkill } from './helpers.js';
 import { ACTION_TYPE } from './constants.js';
 import {
   enableVerboseLogging,
@@ -15,6 +15,7 @@ import {
   registerAllOrAbort,
 } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
+import { SHARED_MESSAGES } from '@/cli/commands/shared/constants.js';
 import {
   resolveAgentSetupTargets,
   formatAgentSetupTarget,
@@ -153,7 +154,11 @@ async function setupSkills(options: SetupCommandOptions, hostAgent?: TargetAgent
   }
 
   const fetcher = createSkillDataFetcher({ client, registeredSkills });
-  const selectedSkills = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
+  const { found: selectedSkills, missing } = await fetcher.fetchSkillsByIds(selectedIds, registeredSkills);
+  const staleSkills = resolveMissingSkills(missing, registeredSkills);
+  for (const entry of staleSkills) {
+    console.log(chalk.yellow(SHARED_MESSAGES.WARNING_STALE_REGISTRATION('skill', entry.name, entry.id)));
+  }
 
   const { toRegister, toUnregister } = determineChanges(selectedIds, selectedSkills, registeredSkills);
 

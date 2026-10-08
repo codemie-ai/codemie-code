@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
   getAllFrameworksMock: vi.fn(),
   detectVCSMock: vi.fn(),
   listWorkflowsMock: vi.fn(),
+  getUserNpmrcPrefixMock: vi.fn(),
+  getCodemieNpmPrefixMock: vi.fn(),
 }));
 
 // exec() drives AwsCliCheck and UvCheck.
@@ -82,6 +84,16 @@ vi.mock('@/workflows/index.js', async (importOriginal) => {
   return { ...actual, detectVCSProvider: h.detectVCSMock, listInstalledWorkflows: h.listWorkflowsMock };
 });
 
+// getUserNpmrcPrefix / getCodemieNpmPrefix drive NpmPrefixOverrideCheck; getLegacyNpmPrefixPath stays real (pure).
+vi.mock('@/utils/npm-prefix.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/npm-prefix.js')>();
+  return {
+    ...actual,
+    getUserNpmrcPrefix: h.getUserNpmrcPrefixMock,
+    getCodemieNpmPrefix: h.getCodemieNpmPrefixMock
+  };
+});
+
 // Import checks AFTER mocks are registered.
 import { NodeVersionCheck } from '../NodeVersionCheck.js';
 import { AwsCliCheck } from '../AwsCliCheck.js';
@@ -91,6 +103,8 @@ import { AgentsCheck } from '../AgentsCheck.js';
 import { AIConfigCheck } from '../AIConfigCheck.js';
 import { WorkflowsCheck } from '../WorkflowsCheck.js';
 import { FrameworksCheck } from '../FrameworksCheck.js';
+import { NpmPrefixOverrideCheck } from '../NpmPrefixOverrideCheck.js';
+import { getLegacyNpmPrefixPath } from '@/utils/npm-prefix.js';
 
 /** Build a fake JWT whose payload has the given exp (seconds since epoch), or none. */
 function fakeJwt(exp?: number): string {
@@ -488,5 +502,55 @@ describe('FrameworksCheck', () => {
     expect(started).toEqual(['Checking LangGraph...']);
     expect(displayed).toEqual([{ status: 'ok', message: 'LangGraph (1.0.0)' }]);
     expect(result.details).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+describe('NpmPrefixOverrideCheck', () => {
+  beforeEach(() => {
+    h.getCodemieNpmPrefixMock.mockReturnValue(null);
+  });
+
+  it('fails with fix steps when the user .npmrc prefix is the legacy CodeMie path', async () => {
+    h.getUserNpmrcPrefixMock.mockResolvedValue(getLegacyNpmPrefixPath());
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.name).toBe('npm prefix');
+    expect(result.success).toBe(false);
+    expect(result.details[0].status).toBe('warn');
+    const messages = result.details.map((d) => d.message);
+    expect(messages).toContain('2. Remove the override: npm config delete prefix --location user');
+    expect(messages.some((m) => m.startsWith('4. Optionally delete'))).toBe(true);
+  });
+
+  it('keeps CodeMie and its agents in place when CodeMie itself runs from the legacy path', async () => {
+    h.getUserNpmrcPrefixMock.mockResolvedValue(getLegacyNpmPrefixPath());
+    h.getCodemieNpmPrefixMock.mockReturnValue(getLegacyNpmPrefixPath());
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.success).toBe(false);
+    const reinstallStep = result.details.find((d) => d.message.startsWith('3.'));
+    expect(reinstallStep?.message).toContain('leave @codemieai/code and agents installed by CodeMie');
+    expect(result.details.some((d) => d.message.startsWith('4. Optionally delete'))).toBe(false);
+  });
+
+  it('reports ok for a custom prefix', async () => {
+    h.getUserNpmrcPrefixMock.mockResolvedValue('/opt/npm');
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.success).toBe(true);
+    expect(result.details).toEqual([{ status: 'ok', message: expect.any(String) }]);
+  });
+
+  it('reports ok when the user .npmrc sets no prefix', async () => {
+    h.getUserNpmrcPrefixMock.mockResolvedValue(null);
+
+    const result = await new NpmPrefixOverrideCheck().run();
+
+    expect(result.success).toBe(true);
+    expect(result.details).toEqual([{ status: 'ok', message: expect.any(String) }]);
   });
 });

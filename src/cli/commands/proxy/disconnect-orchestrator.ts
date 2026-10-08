@@ -13,16 +13,20 @@ import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeDesktopConfig } from './connectors/desktop.js';
 import { removeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { removeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 export interface DisconnectTargets {
   claudeDesktop?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
+  claudeCodeOtlp?: boolean;
 }
 
 export interface DisconnectOptions {
   targets: DisconnectTargets;
+  scope?: 'user' | 'project';
 }
 
 const DISCONNECT_TARGET_LIST = [
@@ -32,6 +36,7 @@ const DISCONNECT_TARGET_LIST = [
   "  --vscode                VS Code Copilot Chat models (removes chatLanguageModels.json entry)",
   '  --vscode-claude-code    VS Code Claude Code extension (removes ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN)',
   '  --codex-desktop         Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
+  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
   '',
   'Example:',
   '  codemie proxy disconnect --claude-desktop --vscode',
@@ -137,10 +142,46 @@ async function runCodexDesktop(): Promise<TargetResult> {
   }
 }
 
+async function runClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<TargetResult> {
+  const label = 'Claude Code OTLP';
+  try {
+    const result = await removeClaudeCodeOtlpConfig({ scope });
+
+    if (!result.removed) {
+      const reason = result.reason ? ` (${result.reason})` : '';
+      console.log(chalk.dim(`Claude Code OTLP: nothing to disconnect${reason}.`));
+      return { label, ok: true };
+    }
+
+    if (result.mode === 'entry-removed') {
+      console.log(chalk.green(`✓ Project removed from Claude Code OTLP tracking (${result.path})`));
+      console.log(chalk.dim('  Still tracked:'));
+      for (const projectPath of result.allowlist ?? []) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+      return { label, ok: true };
+    }
+
+    console.log(chalk.green(`✓ Claude Code OTLP disconnected (${result.path})`));
+    if (result.usedBackup) {
+      console.log(chalk.yellow(
+        "⚠ Restored the pre-connect backup because CodeMie's entries were the file's only content."
+      ));
+    }
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Claude Code OTLP disconnect failed', ...sanitizeLogArgs({ error: message }));
+    console.error(chalk.red(`✗ Claude Code OTLP — ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
   const { targets } = opts;
   const hasAnyTarget = Boolean(
-    targets.claudeDesktop || targets.vscode || targets.vscodeClaudeCode || targets.codexDesktop
+    targets.claudeDesktop || targets.vscode || targets.vscodeClaudeCode ||
+    targets.codexDesktop || targets.claudeCodeOtlp
   );
 
   if (!hasAnyTarget) {
@@ -153,6 +194,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   if (targets.vscode) results.push(await runVscode());
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode());
   if (targets.codexDesktop) results.push(await runCodexDesktop());
+  if (targets.claudeCodeOtlp) results.push(await runClaudeCodeOtlp(opts.scope));
 
   printSummary(results);
   if (results.some((r) => !r.ok)) {

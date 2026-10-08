@@ -1,0 +1,26 @@
+{
+  "decision": "request-changes",
+  "rationale": "One blocking code-quality structure finding: resolveClaudeModel (~112 lines) and claude.models.ts (exactly 500 lines) exceed the documented 50/500 limits. Confidence is low because no spec/story existed (acceptance skipped); blind and verification-gap lenses were not part of the balanced profile. 7 edge-case candidates dismissed as noise or by-design (non-finite windows cannot come from JSON, catalog fetch is cached and has a timeout, case-only [1M] rewrite is harmless, router/non-Claude/id-collision cases are speculative); 0 deferred.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "7 subjects in diff_base..HEAD all match <type>(<scope>): <subject>; scope agents is in the commitlint scope-enum; under 100 chars, imperative mood" },
+    { "kind": "code-quality", "status": "partial", "notes": "resolveClaudeModel in claude.models.ts spans ~112 lines (limit 50) and the file is exactly 500 lines (limit under 500). Imports, return types, no any, no console.log are fine." },
+    { "kind": "security", "status": "pass", "notes": "Adjudicated against .ai-run/guides/security/security-practices.md; no secrets, path handling or header changes; model ids pass through safeTerminalValue." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 389,
+      "title": "resolveClaudeModel exceeds function and file size limits",
+      "problem": "code-quality.md Code Structure Guidelines require functions under 50 lines and files under 500 lines. resolveClaudeModel spans lines 389-500 (~112 lines); this change added the keepWithContextWindow closure and further branches to an already long function, and the file now totals exactly 500 lines.",
+      "impact": "A documented code-quality standard is unmet by code this change grew, and it blocks the workflow; the function is also harder to reason about for future context-window changes.",
+      "recommendation": "Extract keepWithContextWindow and the catalog-ranking block into small module-level helpers so resolveClaudeModel drops under 50 lines and the file drops under 500."
+    }
+  ]
+}

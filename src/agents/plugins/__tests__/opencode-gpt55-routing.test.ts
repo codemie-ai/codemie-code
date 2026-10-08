@@ -17,6 +17,7 @@ vi.mock('../../../utils/logger.js', () => ({
 
 vi.mock('../../../providers/plugins/sso/sso.http-client.js', () => ({
   fetchCodeMieLlmModels: vi.fn(),
+  isRouterModel: vi.fn(() => false),
 }));
 
 vi.mock('../../../providers/plugins/sso/sso.auth.js', () => ({

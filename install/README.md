@@ -66,7 +66,7 @@ For reproducible installs, replace `main` with a release tag such as `v0.8.0`.
 
 | Parameter | Default | Values / Purpose |
 |---|---|---|
-| `-Mode` | `portable` | `portable` = npm prefix under `-InstallRoot` with shim `.cmd` files in `bin/` and a user PATH update; `npm-global` = plain `npm install -g` into the existing npm prefix |
+| `-Mode` | `auto` | `auto` = `npm-global` if the npm prefix is user-writable, otherwise `portable`; `npm-global` = plain `npm install -g` into the existing npm prefix; `portable` = npm prefix under `-InstallRoot` with shim `.cmd` files in `bin/`, adding `bin/` and the prefix to the user PATH |
 | `-Version` | *(empty)* | Pin `@codemieai/code` to a specific version |
 | `-RegistryUrl` | `https://registry.npmjs.org/` | npm registry used for resolution and install |
 | `-ScopeRegistryUrl` | *(empty)* | Sets the `@codemieai:registry` npm scope to an enterprise registry |
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/instal
 
 ## Windows Defaults
 
-Windows installs into the current user's local profile by default (`-Mode portable`):
+Windows uses `-Mode auto` by default: npm global installation when global npm is user-writable, otherwise a portable install into the current user's local profile:
 
 ```text
 %LOCALAPPDATA%\CodeMie
@@ -103,7 +103,16 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
 
 ## macOS/Linux Defaults
 
-macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script configures a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
+macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script installs into a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
+
+## Upgrading from an Older Installer
+
+Older installers set the npm `prefix` in the user `.npmrc` to `%LOCALAPPDATA%\CodeMie\npm-prefix` (Windows) or `$HOME/.codemie/npm-prefix` (macOS/Linux), which redirected every `npm install -g` into that folder and could break npm-installed tools such as Claude Code. Rerun the installer to remove the override; it lists the packages left in the old folder so you can reinstall them. `codemie doctor` reports the override and prints the manual fix:
+
+```bash
+npm config delete prefix --location user
+npm i -g @anthropic-ai/claude-code@latest   # repeat for each package listed in the old folder
+```
 
 ## Windows Installation Wizard
 

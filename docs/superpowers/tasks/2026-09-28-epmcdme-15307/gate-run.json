@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15307",
+  "head": "f05be6b0fbc9c39fa84675068e63213d22f65119",
+  "runner": "npm",
+  "started_at": "2026-09-28T13:45:15Z",
+  "completed_at": "2026-09-28T13:50:00.831Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4497,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15836,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Guide documents lint glob as {src,tests}/**/*.ts; package.json also lints src/agents/plugins/pi/extension/*.js — ran the package.json script."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7013,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11585,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "package.json build also runs bundle-statusline, not listed in guide."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 33489,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Also covers lint-staged hook adjacent __tests__ run for changed src files."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 33294,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3455,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Gitleaks ran via local container engine (\"no leaks found\"); local script scans staged diff only — CI gitleaks-action scans the full PR history."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1985,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 2575,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI validate-commits checks base..HEAD; guide gate only checks HEAD~1..HEAD."
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24599,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 92839,
+      "command": "npm run ci",
+      "exit_code": 0
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gh pr view <PR> --json title | npx commitlint",
+      "notes": "Requires an open PR; CI validates PR title against Conventional Commits once the PR exists."
+    }
+  ],
+  "failures": {}
+}

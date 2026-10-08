@@ -133,7 +133,45 @@ Environment variables override config file values and are useful for CI/CD, Dock
 | `CODEMIE_MODEL` | Model to use | - | `claude-sonnet-4-5-20250929` |
 | `CODEMIE_TIMEOUT` | Request timeout in milliseconds | `300000` | `600000` |
 | `CODEMIE_DEBUG` | Enable debug logging | `false` | `true` |
-| `CODEMIE_INSECURE` | Disable SSL certificate verification (for self-signed certs or local dev only) | `false` | `1` |
+| `CODEMIE_INSECURE` | Disable TLS certificate verification for local/on-prem development only | `false` | `1` |
+| `CODEMIE_NO_SYSTEM_PROXY` | Disable Windows system proxy/PAC discovery (explicit proxy variables still apply) | `false` | `1` |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Explicit outbound proxy; lowercase spellings are also supported | - | `http://proxy.example:8080` |
+| `NO_PROXY` | Comma-separated proxy bypass list; lowercase `no_proxy` is merged | loopback | `.internal.example,10.0.0.0/8` |
+
+#### Windows system proxy and PAC
+
+On Windows, CodeMie uses Internet Settings for Node HTTP clients, global
+`fetch()`, the local SSO proxy, SDK clients, and spawned agent tools. Routing is
+resolved per request in this order:
+
+1. Implicit loopback bypasses, `NO_PROXY`/`no_proxy`, and npm `noproxy`.
+2. Explicit user `HTTP_PROXY`/`HTTPS_PROXY` values (uppercase or lowercase).
+3. Windows `ProxyOverride` entries.
+4. The configured PAC (`AutoConfigURL`), including ordered proxy failover and
+   `DIRECT` fallback.
+5. The static Windows `ProxyServer`, only when PAC retrieval or evaluation is
+   unavailable.
+
+The CLI reads per-user settings from HKCU by default. If the machine policy
+`ProxySettingsPerUser=0` is set, it reads the corresponding HKLM Internet
+Settings instead. Trailing IPv4 wildcards such as `10.*` and `192.168.*`,
+`<local>`, domains, CIDR ranges, and loopback are supported. WPAD auto-detection
+and binary per-connection settings are not currently supported.
+
+In-process traffic evaluates PAC and bypass rules for every target. Tools and
+SDKs that only understand proxy environment variables receive a best-effort
+export: HTTP and HTTPS are resolved independently for their target, both case
+variants are populated only when missing, and representable Windows bypasses
+are merged into `NO_PROXY`/`no_proxy`. A single exported value cannot represent
+host-dependent PAC decisions, so this export is target-specific.
+
+TLS certificates are verified by default on direct and proxied connections.
+Node.js uses its bundled CA list rather than the Windows certificate store, so
+for enterprise TLS inspection point `NODE_EXTRA_CA_CERTS` at the corporate root
+certificate (PEM). `CODEMIE_INSECURE=1` (or Node's own
+`NODE_TLS_REJECT_UNAUTHORIZED=0`) disables verification; it is an explicit
+escape hatch for controlled self-signed development environments and should not
+be used as the permanent corporate configuration.
 
 #### AI/Run SSO Configuration
 

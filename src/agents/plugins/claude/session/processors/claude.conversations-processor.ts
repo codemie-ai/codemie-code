@@ -17,6 +17,15 @@ import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js'
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { takeMessagesBefore } from './messages-before.js';
+
+/** Assistant id stamped on every CLI-imported conversation; the backend keys CLI chats by it. */
+const CLI_ASSISTANT_ID = '5a430368-9e91-4564-be20-989803bf4da2';
+
+interface ConversationSyncPointer {
+  lastSyncedMessageUuid?: string;
+  lastSyncedHistoryIndex: number;
+}
 
 export class ConversationsProcessor implements SessionProcessor {
   readonly name = 'conversations';
@@ -134,7 +143,7 @@ export class ConversationsProcessor implements SessionProcessor {
         const result = await this.transformMessages(
           session.messages as any[],
           localSync,
-          '5a430368-9e91-4564-be20-989803bf4da2',
+          CLI_ASSISTANT_ID,
           session.agentName,
           context.agentSessionFile
         );
@@ -237,6 +246,42 @@ export class ConversationsProcessor implements SessionProcessor {
         message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  /**
+   * Sync pointer the drain loop would reach over the transcript as it was at `cutoffMs`.
+   *
+   * Runs the same turn-by-turn transform as processMessages over the pre-cutoff prefix but
+   * writes nothing, so the pointer (and its history index) matches what a real sync of that
+   * content would have produced. Later messages then sync normally from this point.
+   */
+  async computeBaselinePointer(
+    session: ParsedSession,
+    cutoffMs: number,
+    agentSessionFile?: string
+  ): Promise<ConversationSyncPointer> {
+    const messages = takeMessagesBefore(session.messages as any[], cutoffMs);
+    let pointer: ConversationSyncPointer = { lastSyncedHistoryIndex: -1 };
+
+    for (let iteration = 0; iteration <= messages.length; iteration++) {
+      const result = await this.transformMessages(
+        messages,
+        pointer,
+        CLI_ASSISTANT_ID,
+        session.agentName,
+        agentSessionFile
+      );
+      const advanced = result.lastProcessedMessageUuid !== pointer.lastSyncedMessageUuid
+        || result.currentHistoryIndex !== pointer.lastSyncedHistoryIndex;
+      if (result.history.length === 0 || !advanced) break;
+
+      pointer = {
+        lastSyncedMessageUuid: result.lastProcessedMessageUuid,
+        lastSyncedHistoryIndex: result.currentHistoryIndex
+      };
+    }
+
+    return pointer;
   }
 
   private async transformMessages(

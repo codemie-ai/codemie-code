@@ -10,6 +10,7 @@ import {
   fetchCodeMieUserInfo,
   buildAuthHeaders
 } from '../../core/codemie-auth-helpers.js';
+import { isTlsVerificationEnabled } from '../../../utils/system-proxy.js';
 export { fetchCodeMieUserInfo };
 export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
 
@@ -22,7 +23,11 @@ export const CODEMIE_ENDPOINTS = {
   USER: '/v1/user',
   ADMIN_APPLICATIONS: '/v1/admin/applications',
   METRICS: '/v1/metrics',
-  AUTH_LOGIN: '/v1/auth/login'
+  AUTH_LOGIN: '/v1/auth/login',
+  CLI_ANALYTICS_EVENT_HOOKS: '/v1/analytics/cli-analytics/event-hooks',
+  CLI_ANALYTICS_METRICS: '/v1/analytics/cli-analytics/metrics',
+  CLI_ANALYTICS_LOGS: '/v1/analytics/cli-analytics/logs',
+  CLI_ANALYTICS_TRACES: '/v1/analytics/cli-analytics/traces'
 } as const;
 
 
@@ -100,6 +105,32 @@ export function buildModelLabelIndex(models: LlmModel[]): Map<string, string> {
   return labels;
 }
 
+/** Whether a catalog entry is a router: a Switchyard virtual router or a declared LiteLLM auto-router. */
+export function isRouterModel(model: LlmModel): boolean {
+  return model.is_router === true || model.litellm_router?.is_router === true;
+}
+
+/**
+ * Picker order: the selected entry, then routers, then everything else. Stable, so each group
+ * keeps its incoming order. Putting the selected entry first also keeps a "first row is the
+ * default" picker (Codex) marking the model that is actually in use.
+ */
+export function orderModelsForPicker<T>(
+  items: T[],
+  getModel: (item: T) => LlmModel,
+  isSelected: (item: T) => boolean = () => false,
+): T[] {
+  const selected: T[] = [];
+  const routers: T[] = [];
+  const others: T[] = [];
+  for (const item of items) {
+    if (isSelected(item)) selected.push(item);
+    else if (isRouterModel(getModel(item))) routers.push(item);
+    else others.push(item);
+  }
+  return [...selected, ...routers, ...others];
+}
+
 /**
  * Full router description for a model/agent picker, e.g. `"LiteLLM (classifier -> Claude
  * Haiku 4.5): simple/medium: GPT-5.6 Luna · complex/reasoning: GPT-5.6 Terra"`, or
@@ -162,6 +193,11 @@ export interface LlmModel {
     top_p?: boolean;
   };
   forbidden_for_web?: boolean;
+  /**
+   * The model's maximum input context window in tokens (LiteLLM `model_info.max_input_tokens`).
+   * Absent on routers and on catalogs served from static config rather than the LiteLLM proxy.
+   */
+  max_input_tokens?: number;
   /**
    * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
    * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself
@@ -241,7 +277,7 @@ export async function fetchCodeMieLlmModels(
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false,
+    rejectUnauthorized: isTlsVerificationEnabled(),
   });
 
   const response = await client.getRaw(url, headers);
@@ -284,7 +320,7 @@ export async function fetchCodeMieModels(
   const client = new HTTPClient({
     timeout: 30000,
     maxRetries: 5,
-    rejectUnauthorized: false
+    rejectUnauthorized: isTlsVerificationEnabled()
   });
 
   const response = await client.getRaw(url, headers);
@@ -354,7 +390,7 @@ export async function fetchApplicationDetails(
     const client = new HTTPClient({
       timeout: 5000,
       maxRetries: 1,
-      rejectUnauthorized: false
+      rejectUnauthorized: isTlsVerificationEnabled()
     });
 
     const response = await client.getRaw(url, headers);
@@ -463,7 +499,7 @@ async function fetchIntegrationsPage(fullUrl: string, auth: Record<string, strin
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false
+    rejectUnauthorized: isTlsVerificationEnabled()
   });
 
   const response = await client.getRaw(fullUrl, headers);

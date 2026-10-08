@@ -29,9 +29,13 @@ const TEST_PROFILE_NAME = 'setup-test-sso';
 describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup wizard (SSO)', () => {
   let testHome: string;
 
+  const realGlobalConfig = join(homedir(), '.codemie', 'codemie-cli.config.json');
+  let realGlobalConfigBefore: string | null;
+
   beforeAll(() => {
     // Fresh isolated config home — wizard writes here, never touches ~/.codemie.
     testHome = mkdtempSync(join(getTempDir(), 'codemie-setup-'));
+    realGlobalConfigBefore = existsSync(realGlobalConfig) ? readFileSync(realGlobalConfig, 'utf-8') : null;
   });
 
   afterAll(() => {
@@ -42,7 +46,10 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
     'walks the wizard, creates an SSO profile, and verifies the written config',
     async () => {
       const proc = spawnPty(process.execPath, [CODEMIE_BIN, 'setup'], {
-        cwd: homedir(),
+        // cwd must not be homedir(): the wizard treats <cwd>/.codemie/codemie-cli.config.json as a
+        // *local* config, which in $HOME is the real global config — switchProfile would write
+        // activeProfile there despite CODEMIE_HOME. testHome has no .codemie/ subdir, so no local config.
+        cwd: testHome,
         // CODEMIE_HOME isolation: wizard reads/writes testHome, not ~/.codemie.
         env: { ...ssoCleanEnv(), CODEMIE_HOME: testHome },
       });
@@ -116,11 +123,15 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       // Wait for save confirmation: '✔ Profile "..." saved to global config'
       await proc.waitFor(/Profile .+ saved to (global|local) config/i, 15_000);
 
-      // ── Step 9: "Switch to profile as active?" → confirm ────────────────────────
-      // Safe: wizard writes to testHome only; ~/.codemie is not touched.
-      await proc.waitFor(/Switch to profile/i, 10_000);
-      await new Promise(r => setTimeout(r, 200));
-      proc.writeLine('y');
+      // ── Step 9 (conditional): "Switch to profile as active?" → confirm ─────────
+      // Only asked when the new profile is not already active. In a fresh testHome the first
+      // saved profile becomes active automatically, so the wizard goes straight to the success
+      // banner; either way the activeProfile assertion below must hold.
+      const afterSave = await proc.waitFor(/Switch to profile|configured successfully/i, 15_000);
+      if (/Switch to profile/i.test(afterSave)) {
+        await new Promise(r => setTimeout(r, 200));
+        proc.writeLine('y');
+      }
 
       await proc.exit(30_000);
 
@@ -165,6 +176,12 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
 
       // Verify the selected model was persisted (read from config — more reliable than PTY capture)
       expect(String(profile!.model ?? ''), 'model must not be empty').not.toBe('');
+
+      // Isolation: the user's real global config must be byte-identical after the wizard.
+      const realGlobalConfigAfter = existsSync(realGlobalConfig) ? readFileSync(realGlobalConfig, 'utf-8') : null;
+      expect(realGlobalConfigAfter, 'wizard must not modify ~/.codemie/codemie-cli.config.json').toBe(
+        realGlobalConfigBefore,
+      );
     },
     180_000, // 3 min: allows 2 min for browser auth + PTY interactions
   );

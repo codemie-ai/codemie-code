@@ -2,7 +2,7 @@
 name: codemie-sdk
 description: >-
   Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users, assistant-categories) directly from CLI
-  using CodeMie SDK. Use when user says "create assistant", "list workflows", "update datasource",
+  using CodeMie SDK. Use when user says "create assistant from this config", "list workflows", "update datasource",
   "delete assistant", "show my assistants", "get workflow details", "manage integrations",
   "create integration", "list integrations", "list llm models", "list embedding models",
   "list skills", "get skill", "create skill", "update skill", "delete skill", "publish skill",
@@ -10,6 +10,7 @@ description: >-
   "create assistant category", "delete assistant category", "who am i", "current user", "my profile", "user info",
   or any request to manage CodeMie platform resources.
   NOTE: For analytics requests (usage analytics, summaries, spending, users activity, leaderboards, etc.) use the codemie-analytics skill instead.
+  NOTE: To build an assistant for a purpose, test it against scenarios, or tune/improve an assistant's behavior, use the codemie-assistant-builder skill instead.
 ---
 
 # CodeMie SDK Asset Management
@@ -113,7 +114,15 @@ codemie sdk assistants get-tools [--json]
 codemie sdk assistants create --data '<json>' | --json <file>
 codemie sdk assistants update <id> --data '<json>' | --json <file>
 codemie sdk assistants delete <id>
+codemie sdk assistants chat <id> "<message>" [--history <file>] [--assistant-version <n>] [--timeout <s>] [--json]
+codemie sdk assistants test <id> --scenarios <file> --out <dir> [--assistant-version <n>] [--concurrency <n>] [--only <ids>] [--timeout <s>]
+codemie sdk assistants versions <id> [--current] [--json]
+codemie sdk assistants rollback <id> <version>
+codemie sdk assistants report <workspace-dir> [--name <name>] [--json]
+codemie sdk assistants conversations [<id>] [--limit <n>] [--ids <ids-or-links>] [--json]
 ```
+
+`chat` is stateless and works with any assistant ID (no `codemie assistants setup` needed); history is not saved on the platform.
 
 **Required on create:** `name`, `project`, `system_prompt`
 

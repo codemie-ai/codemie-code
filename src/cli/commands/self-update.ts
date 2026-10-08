@@ -4,7 +4,8 @@ import chalk from 'chalk';
 import {
   checkForCliUpdate,
   updateCli,
-  isAutoUpdateEnabled
+  isAutoUpdateEnabled,
+  isCodemieConnectInstall
 } from '../../utils/cli-updater.js';
 import { getErrorMessage } from '../../utils/errors.js';
 
@@ -16,6 +17,11 @@ export function createSelfUpdateCommand(): Command {
     .option('-c, --check', 'Check for updates without installing')
     .action(async (options?: { check?: boolean }) => {
       try {
+        if (await isCodemieConnectInstall()) {
+          console.log('This CodeMie CLI is part of CodeMie Connect. Update it from the CodeMie Connect app.');
+          return;
+        }
+
         const checkOnly = options?.check ?? false;
 
         const spinner = ora('Checking for CodeMie CLI updates...').start();

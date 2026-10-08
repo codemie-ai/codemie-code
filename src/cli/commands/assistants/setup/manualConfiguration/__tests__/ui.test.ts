@@ -234,5 +234,19 @@ describe('Configuration UI', () => {
 			expect(visibleOutput).toContain('  Assistant 2');
 			expect(visibleOutput).toContain('\n  Mode:');
 		});
+
+		it('should render notices below the instructions', () => {
+			const state = createMockState({ notices: ['Stale A no longer exists'] });
+			const visibleOutput = stripAnsi(renderUI(state));
+
+			expect(visibleOutput.indexOf('Stale A no longer exists'))
+				.toBeGreaterThan(visibleOutput.indexOf('Esc: Cancel'));
+		});
+
+		it('should render nothing after the instructions without notices', () => {
+			const visibleOutput = stripAnsi(renderUI(createMockState({ notices: [] })));
+
+			expect(visibleOutput.trimEnd().endsWith('Esc: Cancel')).toBe(true);
+		});
 	});
 });

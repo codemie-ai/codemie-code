@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotFoundError, type CodeMieClient, type SkillListItem } from 'codemie-sdk';
 import type { CodemieSkill } from '@/env/types.js';
-import { RegistrationItemNotFoundError } from '@/utils/errors.js';
 import { createSkillDataFetcher } from '../data.js';
 
 vi.mock('@/utils/logger.js', () => ({
@@ -97,12 +96,12 @@ describe('Skill Data Fetcher', () => {
   });
 
   describe('fetchSkillsByIds', () => {
-    it('returns an empty array without an API call when no IDs are requested', async () => {
+    it('resolves empty found and missing without an API call when no IDs are requested', async () => {
       const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
 
       const result = await fetcher.fetchSkillsByIds([], []);
 
-      expect(result).toHaveLength(0);
+      expect(result).toEqual({ found: [], missing: [] });
       expect(mockClient.skills.get).not.toHaveBeenCalled();
       expect(mockClient.skills.listPaginated).not.toHaveBeenCalled();
     });
@@ -113,38 +112,72 @@ describe('Skill Data Fetcher', () => {
       );
 
       const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
-      const result = await fetcher.fetchSkillsByIds(['skill-2', 'skill-7'], []);
+      const { found, missing } = await fetcher.fetchSkillsByIds(['skill-2', 'skill-7'], []);
 
-      expect(result.map(s => s.id)).toEqual(['skill-2', 'skill-7']);
+      expect(found.map(s => s.id)).toEqual(['skill-2', 'skill-7']);
+      expect(missing).toEqual([]);
       expect(mockClient.skills.get).toHaveBeenCalledTimes(2);
       expect(mockClient.skills.listPaginated).not.toHaveBeenCalled();
     });
 
-    it('throws RegistrationItemNotFoundError for a requested id the API does not know', async () => {
-      // Arrange: silently filtering an unavailable id out is reported as success,
-      // which is exactly the partial-success behaviour the contract forbids.
+    it('reports a 404 as missing and still fetches every other id', async () => {
+      // Arrange
+      const a = { id: 'skill-a', name: 'Skill A' } as any;
+      const c = { id: 'skill-c', name: 'Skill C' } as any;
       vi.mocked(mockClient.skills.get).mockImplementation(async (id: string) => {
-        if (id === 'skill-missing') throw new NotFoundError('Resource', 'unknown');
+        if (id === 'skill-b') throw new NotFoundError('Resource', 'unknown');
+        return id === 'skill-a' ? a : c;
+      });
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      // Act
+      const result = await fetcher.fetchSkillsByIds(['skill-a', 'skill-b', 'skill-c'], []);
+
+      // Assert
+      expect(result).toEqual({ found: [a, c], missing: ['skill-b'] });
+      expect(mockClient.skills.get).toHaveBeenCalledTimes(3);
+      expect(mockClient.skills.get).toHaveBeenCalledWith('skill-c');
+    });
+
+    it('returns missing ids in requested order when interleaved with found ones', async () => {
+      // Arrange
+      vi.mocked(mockClient.skills.get).mockImplementation(async (id: string) => {
+        if (id.startsWith('gone-')) throw new NotFoundError('Resource', 'unknown');
         return { id, name: `Skill ${id}` } as any;
       });
 
       const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
 
-      await expect(
-        fetcher.fetchSkillsByIds(['skill-1', 'skill-missing'], [])
-      ).rejects.toThrow(RegistrationItemNotFoundError);
-      await expect(
-        fetcher.fetchSkillsByIds(['skill-missing'], [])
-      ).rejects.toThrow(/skill-missing/);
+      // Act
+      const { found, missing } = await fetcher.fetchSkillsByIds(['gone-2', 'skill-1', 'gone-1', 'skill-3'], []);
+
+      // Assert
+      expect(found.map(s => s.id)).toEqual(['skill-1', 'skill-3']);
+      expect(missing).toEqual(['gone-2', 'gone-1']);
     });
 
     it('propagates non-404 API errors unchanged', async () => {
-      const serverError = new Error('500 Internal Server Error');
+      const serverError = new Error('boom');
       vi.mocked(mockClient.skills.get).mockRejectedValue(serverError);
 
       const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
 
       await expect(fetcher.fetchSkillsByIds(['skill-1'], [])).rejects.toBe(serverError);
+    });
+
+    it('rejects when a skill-details payload fails the shape check instead of reporting it missing', async () => {
+      // Arrange
+      vi.mocked(mockClient.skills.get).mockImplementation(async (id: string) =>
+        (id === 'skill-bad' ? { name: 'No id' } : { id, name: `Skill ${id}` }) as any
+      );
+
+      const fetcher = createSkillDataFetcher({ client: mockClient, registeredSkills });
+
+      // Act & Assert
+      await expect(
+        fetcher.fetchSkillsByIds(['skill-1', 'skill-bad'], [])
+      ).rejects.toThrow(/unexpected response fetching skill details/i);
     });
 
     it('surfaces a clear re-auth error on a stale session when fetching by IDs', async () => {

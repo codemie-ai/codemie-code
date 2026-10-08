@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14763",
+  "head": "204074dc9e493471b7fbd4c76d298a52bce8e3d5",
+  "runner": "npm",
+  "started_at": "2026-09-29T08:19:01Z",
+  "completed_at": "2026-09-29T08:47:11Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 31000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Fails only when run inside a CodeMie agent session: ambient CODEMIE_*/ANTHROPIC_* env vars leak into the test process. First verbatim run: 1 failed/4276 (AgentCLI-model-source.test.ts: expected 'env' to be 'default', CODEMIE_MODEL_SOURCE inherited). Re-run with CODEMIE_*/ANTHROPIC_* unset (CI-equivalent clean env) passed: 290 files, 4276 tests."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Fails only when run inside a CodeMie agent session: ambient CODEMIE_*/ANTHROPIC_* env vars leak into the test process. First verbatim run: 4 failed (tests/integration/sso-claude-plugin.test.ts: --model injected ahead of --plugin-dir). Re-run with CODEMIE_*/ANTHROPIC_* unset (CI-equivalent clean env) passed: 37 files passed, 1 skipped, 279 tests passed."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: output 'No staged changes to scan' (script scans only staged diff). Covered instead by gitleaks-ci gate over merge_base..HEAD."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "check-pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8000,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0,
+      "notes": "Equivalent to typecheck and lint gates, both run individually and passed."
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Aggregate of license-check, lint, build, unit, integration, each run individually above."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 28000,
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude tests/integration/cli-commands/models.test.ts src/agents/plugins/claude/__tests__/claude.models.test.ts src/agents/plugins/claude/__tests__/claude.plugin.model-swap-warning.test.ts src/agents/plugins/claude/claude.models.ts src/agents/plugins/claude/claude.plugin.ts src/agents/plugins/claude/plugin/__tests__/statusline.test.ts src/agents/plugins/claude/plugin/statusline.ts",
+      "exit_code": 0,
+      "notes": "Run with CODEMIE_*/ANTHROPIC_* env unset: 122 files, 1781 tests passed. Hook (lint-staged) runs eslint on staged files, covered by lint gate."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npx commitlint --from 954f015515a784f3c37c8af36b0d42a8f6435418 --to HEAD --verbose",
+      "exit_code": 0
+    },
+    {
+      "id": "gitleaks-ci",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "docker run --rm -v /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code:/repo ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --log-opts=954f015515a784f3c37c8af36b0d42a8f6435418..HEAD --config=/repo/.gitleaks.toml --verbose",
+      "exit_code": 0,
+      "notes": "8 commits scanned, no leaks found."
+    }
+  ],
+  "failures": {}
+}

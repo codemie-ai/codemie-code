@@ -12,6 +12,7 @@ import { CodeMieSSO } from '../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from './config.js';
 import { ConfigurationError } from './errors.js';
 import { logger } from './logger.js';
+import { applySystemProxyEnvironment } from './system-proxy.js';
 
 /**
  * Get authenticated CodeMieClient instance
@@ -85,6 +86,10 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
     spinner.text = 'Initializing SDK...';
   }
 
+  // The SDK talks over axios, which resolves proxies from the environment per
+  // request; on Windows the corporate proxy lives in Internet Settings only.
+  await applySystemProxyEnvironment(credentials.apiUrl);
+
   try {
     const client = new CodeMieClient({
       codemie_api_domain: credentials.apiUrl,
@@ -108,4 +113,3 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
     );
   }
 }
-

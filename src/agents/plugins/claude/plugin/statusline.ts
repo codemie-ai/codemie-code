@@ -36,6 +36,7 @@ const CACHE_FILE = path.join(HOME, 'budget-cache.json');
 const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
+const BUDGET_FETCH_TIMEOUT_MS = 2_000; // an unreachable API must not stall every render
 const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
 
 const ENCRYPTION_KEY = deriveMachineEncryptionKey();
@@ -230,7 +231,26 @@ export function parseRouterModelIds(env) {
  * naming) rather than an actual routing decision, and this is the only thing telling those apart.
  */
 export function isRoutingConfigured(env, modelId) {
-  return parseRouterModelIds(env).has(modelId);
+  const routerIds = parseRouterModelIds(env);
+  return routerIds.has(modelId) || routerIds.has(stripOneMillionSuffix(modelId));
+}
+
+/**
+ * Drops Claude Code's trailing `[1m]` 1M-context opt-in (case-insensitive). The catalog lists —
+ * router ids and labels alike — carry bare ids, while a session kept on `<id>[1m]` reports the
+ * suffixed form in `model.id`, so lookups must fall back to the bare id.
+ */
+function stripOneMillionSuffix(modelId) {
+  return (modelId ?? '').replace(/\[1m\]$/i, '');
+}
+
+/**
+ * The catalog's display label for the model Claude Code reports, or undefined when there is none.
+ * Tries the exact id first (a catalog may expose a literal `<id>[1m]` entry), then the bare id.
+ */
+export function lookupNominalLabel(labels, modelId) {
+  if (!modelId) return undefined;
+  return labels[modelId] ?? labels[stripOneMillionSuffix(modelId)];
 }
 
 /**
@@ -325,12 +345,15 @@ export async function resolveActualModel(transcriptPath, { readTail = defaultRea
 //      upstream populates it, split into 5m/1h buckets that bill at different rates. Prefer the
 //      split when it is non-zero, since 1h writes cost more than the flat rate assumes.
 //
-// The rate card is `pricing.json`, deployed next to this script by the statusline installer so
-// there is one source of truth for rates. Without it we fall back to Claude Code's figure.
+// The rate card is inlined into the bundle at build time by scripts/bundle-statusline.mjs (the same
+// priceTable() the analytics report prices with), so there is no sibling file to go missing or stale.
+// Run unbundled (unit tests, ts sources) there is no embedded card and callers inject `readPrices`.
 
-const PRICING_FILENAME = 'codemie-pricing.json';
+// Replaced by esbuild `define` with the serialized rate card; absent outside the bundle.
+declare const __CODEMIE_PRICE_TABLE__: string | undefined;
+
 const COST_CACHE_FILE = path.join(HOME, 'statusline-cost-cache.json');
-const COST_CACHE_SCHEMA = 1; // bump when the cached shape changes, to discard pre-upgrade entries
+const COST_CACHE_SCHEMA = 2; // bump when the cached shape changes, to discard pre-upgrade entries
 
 /**
  * Identity of the transcript set as it is on disk right now: path, size and mtime of each file.
@@ -351,8 +374,8 @@ async function sourceSignature(paths, stat) {
 }
 
 async function defaultReadPrices() {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  return JSON.parse(await fs.readFile(path.join(here, PRICING_FILENAME), 'utf8'));
+  if (typeof __CODEMIE_PRICE_TABLE__ === 'undefined') throw new Error('no embedded rate card');
+  return JSON.parse(__CODEMIE_PRICE_TABLE__);
 }
 
 // Both sides of the lookup must be folded the same way: the id through canonicalizeModelId(), the
@@ -394,8 +417,8 @@ export function lookupRate(table, modelId) {
 }
 
 function messageCost(rate, usage) {
-  // The deployed card is the built table, whose cache-write field is `cacheCreation`. Accept the raw
-  // `cacheWrite` spelling too, so a card deployed by an older install still prices cache writes
+  // The embedded card is the built table, whose cache-write field is `cacheCreation`. Accept the raw
+  // `cacheWrite` spelling too, so a hand-made or raw pricing.json still prices cache writes
   // instead of silently charging zero for them.
   const cacheWriteRate = rate.cacheCreation ?? rate.cacheWrite ?? 0;
   const split = usage.cache_creation;
@@ -509,8 +532,9 @@ export async function computeSessionCost(transcriptPath, {
       // isBedrockRegionalPremium() below. canonicalizeModelId() inside lookupRate strips the same
       // qualifier for the price lookup itself, so using the raw id here changes nothing about
       // which rate is selected.
-      const model = parseBackendModelName(message) ?? parseRoutingHeaders(message)?.routedModel ?? message.model ?? '';
-      byMessage.set(id, { model, usage: message.usage });
+      const routing = parseRoutingHeaders(message);
+      const model = parseBackendModelName(message) ?? routing?.routedModel ?? message.model ?? '';
+      byMessage.set(id, { model, usage: message.usage, classifierCost: routing?.classifierCostUSD ?? 0 });
     }
   }
   // A readable transcript with no priced turns yet is a session that has genuinely spent nothing
@@ -518,11 +542,23 @@ export async function computeSessionCost(transcriptPath, {
   // a fresh session `~$0.0000`, implying an estimate where there is simply no spend.
   let cost = 0;
   let exact = true;
-  for (const { model, usage } of byMessage.values()) {
+  let pricedTurns = 0;
+  for (const { model, usage, classifierCost } of byMessage.values()) {
+    // The router's classifier hop is billed on top of the generation and reported per turn in a
+    // routing header; the analytics report adds it to the session total, so this must too. It counts
+    // even when the generation model has no rate card entry.
+    cost += classifierCost;
     const rate = lookupRate(table, model);
     if (!rate) { exact = false; continue; }
     cost += messageCost(rate, usage);
+    pricedTurns++;
   }
+
+  // Turns exist but none could be priced (every model is missing from the rate card): the sum is
+  // just the classifier hop or zero, and showing `~$0.0000` reads as "free". Hand the caller back
+  // to Claude Code's own figure, which main() marks as an estimate. Not cached — a rate card that
+  // gains the model later must be picked up on the next render.
+  if (pricedTurns === 0 && byMessage.size > 0) return null;
 
   const result = { cost, exact };
   try {
@@ -567,23 +603,28 @@ export function ctxBar(pct) {
   return `${c(color, bar)} ${pct}%`;
 }
 
-// The CLI budget segment is intentionally not rendered. resolveBudget() and its helpers are kept
-// (and still covered by __tests__/statusline.test.ts) so the segment can be restored by calling it
-// from main() again, but main() no longer does, so no HTTP request is made per render.
-export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs }) {
+function budgetColor(pct) {
+  return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
+}
+
+const MAX_PROJECT_CHARS = 20;
+const MAX_BRANCH_CHARS = 20;
+
+// Ellipsis-truncate to at most `max` visible characters (code points, so surrogate pairs are not split).
+export function truncate(text, max) {
+  if (typeof text !== 'string') return '';
+  const chars = Array.from(text);
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
+}
+
+export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
   const parts: string[] = [];
 
-  if (projectName) parts.push(c(C.purple, `[${projectName}]`));
-  if (branch) parts.push(c(C.blue, `(${branch})`));
+  if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
+  if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
+  else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
+  if (branch) parts.push(c(C.blue, `(${truncate(branch, MAX_BRANCH_CHARS)})`));
   if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
-
-  const bar = ctxBar(ctxPct);
-  if (bar) parts.push(bar);
-
-  const stats: string[] = [];
-  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
-  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
-  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
 
   // `costExact` is set when the figure was priced from the transcript by computeSessionCost()
   // — every message attributed to the model that actually answered it. It is false when we fell
@@ -593,6 +634,14 @@ export function buildStatusLine({ projectName, branch, model, actualModel, ctxPc
   if (typeof cost === 'number' && !Number.isNaN(cost)) {
     parts.push(c(C.yellow, `${costExact ? '' : '~'}$${cost.toFixed(4)}`));
   }
+
+  const bar = ctxBar(ctxPct);
+  if (bar) parts.push(bar);
+
+  const stats: string[] = [];
+  if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
+  if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
+  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
 
   const dur = formatDuration(durationMs);
   if (dur) parts.push(c(C.gray, dur));
@@ -678,6 +727,17 @@ export async function resolveBudget({
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }
 
+  // The stored credentials belong to `codeMieUrl`; send them nowhere else. A profile on another
+  // backend (an Anthropic subscription, a LiteLLM gateway, a local stack) has no CodeMie budget API,
+  // and posting the CodeMie cookie/JWT to its baseUrl would hand it to a third party.
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(baseUrl).origin === new URL(codeMieUrl).origin;
+  } catch {
+    // malformed URL → not the same origin
+  }
+  if (!sameOrigin) return { budget: null, budgetError: null };
+
   let headers;
   try {
     headers = await getAuthHeadersImpl(codeMieUrl);
@@ -691,6 +751,7 @@ export async function resolveBudget({
   try {
     const res = await fetchImpl(`${baseUrl}/v1/analytics/budget_usage`, {
       headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
+      signal: AbortSignal.timeout(BUDGET_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -737,24 +798,30 @@ export async function main() {
   // Prefer the CodeMie catalog's own label over Claude Code's guessed display_name whenever
   // one is configured for this id — see parseModelLabels().
   const labels = parseModelLabels(process.env);
-  const nominalLabel = labels[basic.modelId];
+  const nominalLabel = lookupNominalLabel(labels, basic.modelId);
   if (nominalLabel) basic.model = nominalLabel;
 
-  // resolveBudget() is deliberately not called: the budget segment is not rendered, and it was the
-  // only network request the statusline made — one HTTP round trip on every single render.
+  // resolveBudget() only goes to the network when its 60s cache is stale, so this is not one HTTP
+  // round trip per render.
   const branchPromise = basic.cwd ? gitBranch(basic.cwd) : Promise.resolve('');
-  const [branch, actualModel, priced] = await Promise.all([
+  const [budgetResult, branch, actualModel, priced] = await Promise.all([
+    resolveBudget(),
     branchPromise,
     isRoutingConfigured(process.env, basic.modelId) ? resolveActualModel(basic.transcriptPath, { labels }) : Promise.resolve(null),
     computeSessionCost(basic.transcriptPath),
   ]);
 
   // Prefer our own per-model figure; fall back to Claude Code's (marked `~`) when the transcript
-  // or the rate card could not be read.
+  // or the rate card could not be read, or no model in it had a rate.
   const cost = priced ? priced.cost : basic.cost;
   const costExact = priced ? priced.exact : false;
 
-  process.stdout.write(buildStatusLine({ ...basic, branch, actualModel, cost, costExact }));
+  // Only "reauthenticate" is rendered: it is the one budget failure the user can act on (log in
+  // again), and it fires only for a profile on the CodeMie origin. Every other failure (HTTP error,
+  // unreachable API, no such endpoint) is not worth a permanent warning slot — the segment simply
+  // disappears until a lookup succeeds.
+  const budgetError = budgetResult.budgetError === 'reauthenticate' ? budgetResult.budgetError : null;
+  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the

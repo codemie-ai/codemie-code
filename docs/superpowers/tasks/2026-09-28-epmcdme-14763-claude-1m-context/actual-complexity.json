@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-09-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four production components changed: the catalog-driven model resolver (claude.models.ts: applyContextWindow, keepConfiguredModel, replaceRetiredModel, picker options), the Claude beforeRun lifecycle hook (claude.plugin.ts: new resolution reasons and warning branches), the statusline bundle (suffix-tolerant router and label lookups), and the shared LlmModel type (sso.http-client.ts: max_input_tokens). The pattern is clear, but the change crosses the resolver, plugin hook and statusline consumer and touches a shared catalog type." },
+    { "dimension": "file_change_estimate", "reason": "7 files changed (3 production files plus the statusline, and 3 test files), 639 insertions and 93 deletions, all under src/agents/plugins/claude and src/providers/plugins/sso. Diffstat count of 7 maps to L; roughly 60% of the added lines are tests." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

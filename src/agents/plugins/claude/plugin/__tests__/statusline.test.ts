@@ -7,11 +7,14 @@ import {
   extractBasicInfo,
   formatDuration,
   buildStatusLine,
+  truncate,
   resolveBudget,
   isMainModule,
   ctxBar,
   lookupRate,
   computeSessionCost,
+  isRoutingConfigured,
+  lookupNominalLabel,
 } from '../statusline.js';
 import { priceTable, resolvePrice, canonicalizeModelId } from '@/utils/pricing.js';
 
@@ -94,6 +97,42 @@ describe('extractBasicInfo', () => {
   });
 });
 
+describe('isRoutingConfigured', () => {
+  const env = { CODEMIE_ROUTER_MODEL_IDS: JSON.stringify(['sy-smart-router']) };
+
+  it('matches a bare router id', () => {
+    expect(isRoutingConfigured(env, 'sy-smart-router')).toBe(true);
+  });
+
+  it('matches a router id carrying the [1m] context suffix', () => {
+    expect(isRoutingConfigured(env, 'sy-smart-router[1m]')).toBe(true);
+    expect(isRoutingConfigured(env, 'sy-smart-router[1M]')).toBe(true);
+  });
+
+  it('does not match a non-router id with or without the suffix', () => {
+    expect(isRoutingConfigured(env, 'claude-sonnet-4-6')).toBe(false);
+    expect(isRoutingConfigured(env, 'claude-sonnet-4-6[1m]')).toBe(false);
+  });
+});
+
+describe('lookupNominalLabel', () => {
+  const labels = { 'sy-smart-router': 'Smart Router', 'claude-sonnet-5[1m]': 'Sonnet 5 (1M)' };
+
+  it('returns the label for an exact id', () => {
+    expect(lookupNominalLabel(labels, 'sy-smart-router')).toBe('Smart Router');
+    expect(lookupNominalLabel(labels, 'claude-sonnet-5[1m]')).toBe('Sonnet 5 (1M)');
+  });
+
+  it('falls back to the bare id when the reported id carries the [1m] suffix', () => {
+    expect(lookupNominalLabel(labels, 'sy-smart-router[1m]')).toBe('Smart Router');
+  });
+
+  it('returns undefined when neither form is labelled', () => {
+    expect(lookupNominalLabel(labels, 'claude-opus-5[1m]')).toBeUndefined();
+    expect(lookupNominalLabel(labels, '')).toBeUndefined();
+  });
+});
+
 describe('formatDuration', () => {
   it('formats milliseconds as "Xm Ys"', () => {
     expect(formatDuration(125000)).toBe('2m 5s');
@@ -132,11 +171,52 @@ describe('ctxBar', () => {
   });
 });
 
+describe('truncate', () => {
+  it('returns text within the limit untouched', () => {
+    expect(truncate('short', 10)).toBe('short');
+    expect(truncate('a'.repeat(10), 10)).toBe('a'.repeat(10));
+  });
+
+  it('cuts longer text to max-1 characters plus an ellipsis', () => {
+    const out = truncate('a'.repeat(30), 10);
+    expect(out).toBe(`${'a'.repeat(9)}…`);
+    expect(Array.from(out)).toHaveLength(10);
+  });
+
+  it('returns an empty string for non-string or empty input', () => {
+    expect(truncate(undefined, 10)).toBe('');
+    expect(truncate(null, 10)).toBe('');
+    expect(truncate(42, 10)).toBe('');
+    expect(truncate('', 10)).toBe('');
+  });
+});
+
 describe('buildStatusLine', () => {
   const basic = {
     projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
     ctxPct: 42, cost: 1.5, costExact: true, durationMs: 65000,
   };
+  const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+  const stripAnsi = (s: string) => s.replace(ANSI_RE, '');
+
+  it('truncates a long branch to 20 characters inside the parens and keeps the cost visible', () => {
+    const branch = 'feature/EPMCDME-15429-' + 'x'.repeat(23);
+    expect(branch.length).toBe(45);
+    const plain = stripAnsi(buildStatusLine({ ...basic, branch }));
+    const inner = plain.match(/\(([^)]*)\)/)![1];
+    expect(Array.from(inner)).toHaveLength(20);
+    expect(inner.endsWith('…')).toBe(true);
+    expect(plain).not.toContain(branch);
+    expect(plain).toContain('$1.5000');
+  });
+
+  it('truncates a long project name to 20 characters inside the brackets and keeps the cost visible', () => {
+    const plain = stripAnsi(buildStatusLine({ ...basic, projectName: 'p'.repeat(27) }));
+    const inner = plain.match(/^\[([^\]]*)\]/)![1];
+    expect(Array.from(inner)).toHaveLength(20);
+    expect(inner.endsWith('…')).toBe(true);
+    expect(plain).toContain('$1.5000');
+  });
 
   it('always renders basic info (including session cost and duration)', () => {
     const line = buildStatusLine({ ...basic });
@@ -160,14 +240,37 @@ describe('buildStatusLine', () => {
     expect(buildStatusLine({ ...basic, costExact: false })).toContain(`${YELLOW}~$1.5000`);
   });
 
-  it('never renders a budget segment, even when budget fields are passed', () => {
+  it('renders the budget segment right after the project name, colored by usage', () => {
+    const line = buildStatusLine({ ...basic, budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 } });
+    expect(line).toContain(`${YELLOW}$12.34 (41%) resets 7/15/2026`);
+    expect(line.indexOf('[my-project]')).toBeLessThan(line.indexOf('$12.34'));
+    expect(line.indexOf('$12.34')).toBeLessThan(line.indexOf('(main)'));
+    expect(line.indexOf('(main)')).toBeLessThan(line.indexOf('$1.5000'));
+    expect(line.indexOf('[Claude Sonnet 5]')).toBeLessThan(line.indexOf('$1.5000'));
+    expect(line.indexOf('$1.5000')).toBeLessThan(line.indexOf('████░░░░░░'));
+  });
+
+  it('keeps the session cost within the first 110 columns in the worst case', () => {
     const line = buildStatusLine({
       ...basic,
+      projectName: 'p'.repeat(60),
+      branch: 'b'.repeat(80),
       budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 },
-      budgetError: 'reauthenticate',
-    } as never);
-    expect(line).not.toContain('$12.34');
-    expect(line).not.toContain('⚠');
+      tokIn: 1234,
+      tokOut: 56,
+    });
+    const plain = stripAnsi(line);
+    expect(plain.indexOf('$1.5000') + '$1.5000'.length).toBeLessThanOrEqual(110);
+    const costAt = line.indexOf('$1.5000');
+    expect(costAt).toBeLessThan(line.indexOf('████░░░░░░'));
+    expect(costAt).toBeLessThan(line.indexOf('in:'));
+    expect(costAt).toBeLessThan(line.indexOf('1m 5s'));
+  });
+
+  it('shows the budget error only when there is no budget', () => {
+    expect(buildStatusLine({ ...basic, budgetError: 'reauthenticate' })).toContain('⚠ reauthenticate');
+    const both = buildStatusLine({ ...basic, budget: { text: '$1.00 (5%) resets 7/15/2026', pct: 5 }, budgetError: 'reauthenticate' });
+    expect(both).not.toContain('⚠');
   });
 
   it('does not throw and omits the cost segment when cost is non-numeric', () => {

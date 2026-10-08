@@ -120,6 +120,8 @@ export interface RuntimeCheckpoint {
   transcriptPath: string;
   lastDiscoveredAt: number;
   lastSeenActivityAt?: number;
+  /** See RuntimeCheckpoint.baselineCutoffMs in telemetry/runtime/checkpoints.ts. */
+  baselineCutoffMs?: number;
 }
 
 /**

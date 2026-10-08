@@ -1,0 +1,58 @@
+{
+  "decision": "request-changes",
+  "rationale": "Targeted check of 2 prior blocking findings: CR-001 resolved (data.test.ts:169 adds a malformed skill-details case asserting rejection with the 'skill details' unexpected-response error); CR-002 unresolved because src/cli/commands/skills/setup/data.ts is not in the fix-up and the `'missing' in result` sentinel at line 223 is unchanged. business_review and standards_review carried forward from the final round.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "AC1: interactive assistants setup with stale registered assistant completes, warns, unregisters on save", "status": "pending-stage-7", "notes": "Code path present in assistants index.ts; end-to-end run unproven" },
+    { "kind": "story-ac", "item": "AC2: fetchAssistantsByIds returns { found, missing }; 404 to missing, loop continues", "status": "pass", "notes": "NotFoundError caught and continued" },
+    { "kind": "story-ac", "item": "AC3: found/missing keep selectedIds order; existingAssistants ids not fetched", "status": "pass", "notes": "Iterates selectedIds; existingMap skip unchanged; tested" },
+    { "kind": "story-ac", "item": "AC4: non-404 rejection propagates unchanged", "status": "pass", "notes": "Non-NotFoundError rethrown; tested" },
+    { "kind": "story-ac", "item": "AC5: resolveMissingAssistants returns registered entries for missing ids, [] for empty", "status": "pass", "notes": "helpers.ts; unit tests added" },
+    { "kind": "story-ac", "item": "AC6: resolveMissingAssistants throws RegistrationItemNotFoundError naming the id", "status": "pass", "notes": "Tested" },
+    { "kind": "story-ac", "item": "AC7: headless assistants behavior and tests unchanged", "status": "pass", "notes": "Headless untouched" },
+    { "kind": "story-ac", "item": "AC8: assistants data.test.ts covers AC2-AC4; helper unit tests", "status": "pass", "notes": "Tests present; passing is Stage 7 evidence" },
+    { "kind": "story-ac", "item": "AC9: interactive skills setup with stale registered skill completes, warns, unregisters on save", "status": "pending-stage-7", "notes": "Code path present in skills index.ts; end-to-end run unproven" },
+    { "kind": "story-ac", "item": "AC10: fetchSkillsByIds returns { found, missing }; 404 to missing, others in parallel", "status": "pass", "notes": "Promise.all with per-id NotFoundError marker" },
+    { "kind": "story-ac", "item": "AC11: found/missing keep ids order; empty ids returns empty result", "status": "pass", "notes": "Tested" },
+    { "kind": "story-ac", "item": "AC12: non-404 rejection or failed shape assertion propagates unchanged", "status": "pass", "notes": "Shape-assertion error is not NotFoundError, so rethrown" },
+    { "kind": "story-ac", "item": "AC13: resolveMissingSkills returns registered entries, [] for empty missing", "status": "pass", "notes": "New helpers.test.ts covers it" },
+    { "kind": "story-ac", "item": "AC14: resolveMissingSkills throws RegistrationItemNotFoundError naming the id", "status": "pass", "notes": "Tested" },
+    { "kind": "story-ac", "item": "AC15: headless skills setup and headless.test.ts unchanged", "status": "pass", "notes": "Untouched" },
+    { "kind": "story-ac", "item": "AC16: skills data.test.ts covers AC10-AC12; expectations updated; helper unit tests", "status": "partial", "notes": "No test for the failed skill-details shape-assertion path of AC12" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not part of compact profile" },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not part of compact profile" },
+    { "kind": "security", "status": "na", "notes": "Standards audit not part of compact profile" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/skills/setup/__tests__/data.test.ts",
+      "title": "Missing test for skill-details shape-assertion rethrow",
+      "problem": "AC16 requires skills data.test.ts to cover AC10-AC12. AC12 has two halves (non-404 rejection, failed shape assertion); only the non-404 rejection is tested. No case has client.skills.get resolve a malformed payload so assertApiListResponse(skill, isSkillDetailResponse, 'skill details') rejects inside fetchSkillsByIds.",
+      "impact": "Required acceptance criterion AC16 is only partially met; a regression that swallows the shape-assertion error into 'missing' (silently unregistering a valid skill) would go undetected.",
+      "recommendation": "Add a fetchSkillsByIds test where client.skills.get resolves a payload without a string id and assert the call rejects with the 'skill details' unexpected-response error (not returned in missing)."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/skills/setup/data.ts",
+      "line": 223,
+      "title": "Ambiguous 'missing' sentinel in fetchSkillsByIds",
+      "problem": "Per-id results are typed SkillDetail | { missing: string } and split with `'missing' in result`. isSkillDetailResponse only checks for a string id, so a server payload that carries its own `missing` property would be classified as missing.",
+      "impact": "A valid skill would be treated as missing: if registered, warned and unregistered as stale; if newly selected, RegistrationItemNotFoundError aborts the run. Reachability unconfirmed: the SDK SkillDetail type declares no `missing` key, so this needs the server to add one.",
+      "recommendation": "Use a discriminated result, e.g. return { kind: 'missing', id } / { kind: 'found', skill } and branch on kind."
+    }
+  ],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "data.test.ts:169-181 mocks a payload without id for skill-bad and asserts rejection matching /unexpected response fetching skill details/i" },
+    { "id": "CR-002", "status": "unresolved", "notes": "data.ts not in changed_files; line 207 still types SkillDetail | { missing: string } and line 223 still branches on 'missing' in result" }
+  ]
+}

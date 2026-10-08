@@ -125,7 +125,9 @@ function buildOpenCodeConfig(params: {
       // which calls POST /v1/responses instead of /v1/chat/completions
       ...(params.responsesApiBaseUrl && hasResponsesApiModels && {
         openai: {
-          name: 'CodeMie SSO',
+          // OpenCode orders provider groups by name; a distinct, longer name keeps this group below
+          // the 'CodeMie SSO' group that holds the routers (equal names left the order arbitrary).
+          name: 'CodeMie SSO (Responses API)',
           // whitelist: suppress the built-in openai model list (GPT-4, GPT-4o, etc.)
           // OpenCode merges user models with models.dev — whitelist restricts to ours only
           whitelist: Object.keys(params.responsesApiModels),
@@ -262,17 +264,19 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
+      // Model selection priority: env var > config > default
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+
       // Fetch live model catalogue from the CodeMie API.
       // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
       const allModels = await fetchDynamicModelConfigs(
         baseUrl,
         env.CODEMIE_URL,
         env.CODEMIE_JWT_TOKEN,
+        selectedModel,
       );
 
-      // Model selection priority: env var > config > default
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
-      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
       const chatModels = getChatCompletionsModelConfigs(allModels);

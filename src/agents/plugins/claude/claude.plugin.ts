@@ -306,6 +306,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
       }
 
+      // Keep an already-installed statusline in step with this CLI version: the deployed script is
+      // a copy, so without this an upgrade (e.g. a corrected rate card) never reaches it.
+      // Best-effort and a no-op when the statusline is not installed.
+      try {
+        const { refreshStatuslineIfStale } = await import('./statusline-installer.js');
+        await refreshStatuslineIfStale();
+      } catch {
+        // the statusline must never block a launch
+      }
+
       // Statusline setup: when --status is passed, ensure the CodeMie statusline is
       // installed — the same installer `codemie install statusline` uses, so there is
       // exactly one statusline implementation instead of a separate duplicated one here.
@@ -402,17 +412,33 @@ export const ClaudePluginMetadata: AgentMetadata = {
             // session tier is the one a person selects (`--model`, `codemie setup`), so surface
             // that one on stderr; the haiku/sonnet/opus tiers stay quiet in the log.
             const previousModel = env[generic];
-            if (tier === 'model' && previousModel && previousModel !== resolution.selectedModel) {
-              console.error(
-                chalk.yellow(
-                  `⚠ Model "${safeTerminalValue(previousModel)}" is not available in this CodeMie catalog — using ${safeTerminalValue(resolution.selectedModel)} instead.`
-                )
-              );
-              console.error(chalk.yellow('  Run "codemie models list" to see the available model IDs.'));
+            // Gaining `[1m]` is the intended max-context default, not a swap worth a warning.
+            if (
+              tier === 'model' &&
+              previousModel &&
+              previousModel !== resolution.selectedModel &&
+              resolution.reason !== 'one-million-enabled'
+            ) {
+              // The same model is still live — only its `[1m]` opt-in was dropped. Saying it "is
+              // not available" would hide the real reason, so name the 1M context instead.
+              if (resolution.reason === 'one-million-unsupported') {
+                console.error(
+                  chalk.yellow(
+                    `⚠ Model "${safeTerminalValue(previousModel)}" does not support 1M context — using ${safeTerminalValue(resolution.selectedModel)} instead.`
+                  )
+                );
+              } else {
+                console.error(
+                  chalk.yellow(
+                    `⚠ Model "${safeTerminalValue(previousModel)}" is not available in this CodeMie catalog — using ${safeTerminalValue(resolution.selectedModel)} instead.`
+                  )
+                );
+                console.error(chalk.yellow('  Run "codemie models list" to see the available model IDs.'));
+              }
             }
             env[generic] = resolution.selectedModel;
             for (const nativeVar of native) {
-              // resolution is non-null only when the model was stale/absent — always
+              // resolution is non-null when the model was stale/absent or only its [1m] window changed — always
               // propagate so transformEnvVars()'s pre-population of ANTHROPIC_MODEL
               // from the old CODEMIE_MODEL value does not silently survive here.
               env[nativeVar] = resolution.selectedModel;

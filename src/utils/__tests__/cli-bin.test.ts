@@ -11,8 +11,8 @@ vi.mock('../logger.js', () => ({
   }
 }));
 
-vi.mock('../exec.js', () => ({
-  exec: vi.fn()
+vi.mock('@/utils/npm-prefix.js', () => ({
+  getCodemieOrGlobalNpmPrefix: vi.fn()
 }));
 
 vi.mock('fs/promises', () => ({
@@ -37,16 +37,12 @@ vi.mock('os', async () => {
 });
 
 import { logger } from '../logger.js';
-import { exec } from '../exec.js';
+import { getCodemieOrGlobalNpmPrefix } from '@/utils/npm-prefix.js';
 import fs from 'fs/promises';
 import { restoreCliBinLink } from '../cli-bin.js';
 
 function mockNpmPrefix(prefix = '/usr/local') {
-  vi.mocked(exec).mockResolvedValue({
-    code: 0,
-    stdout: `${prefix}\n`,
-    stderr: ''
-  });
+  vi.mocked(getCodemieOrGlobalNpmPrefix).mockResolvedValue(prefix);
 }
 
 function mockSymlink(isSymlink = true) {
@@ -66,7 +62,7 @@ describe('restoreCliBinLink', () => {
 
     await restoreCliBinLink();
 
-    expect(exec).not.toHaveBeenCalled();
+    expect(getCodemieOrGlobalNpmPrefix).not.toHaveBeenCalled();
     expect(fs.lstat).not.toHaveBeenCalled();
     expect(logger.debug).toHaveBeenCalledWith('Skipping CLI binary link restore on Windows');
   });
@@ -118,12 +114,22 @@ describe('restoreCliBinLink', () => {
     expect(fs.symlink).not.toHaveBeenCalled();
   });
 
-  it('should return early when npm prefix -g fails', async () => {
-    vi.mocked(exec).mockResolvedValue({
-      code: 1,
-      stdout: '',
-      stderr: 'error'
-    });
+  it('should look for the binary under the resolved prefix', async () => {
+    mockNpmPrefix('/home/u/.codemie/npm-prefix');
+    mockSymlink();
+    vi.mocked(fs.readlink).mockResolvedValue(
+      '../lib/node_modules/@codemieai/code/bin/codemie.js'
+    );
+
+    await restoreCliBinLink();
+
+    expect(fs.lstat).toHaveBeenCalledWith(
+      path.join('/home/u/.codemie/npm-prefix', 'bin', 'codemie')
+    );
+  });
+
+  it('should return early when no prefix can be resolved', async () => {
+    vi.mocked(getCodemieOrGlobalNpmPrefix).mockResolvedValue(null);
 
     await restoreCliBinLink();
 

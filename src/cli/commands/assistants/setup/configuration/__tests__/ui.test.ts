@@ -150,5 +150,27 @@ describe('Configuration UI', () => {
 			expect(visibleOutput).toContain('  ○ Agent Skills');
 			expect(visibleOutput).toContain('  ○ Manual Configuration');
 		});
+
+		it('should render notices below the instructions', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+				notices: ['Stale A no longer exists', 'Stale B no longer exists'],
+			};
+			const visibleOutput = stripAnsi(renderModeSelectionUI(state));
+
+			const instructionsAt = visibleOutput.indexOf('↑↓: Navigate');
+			expect(visibleOutput.indexOf('Stale A no longer exists')).toBeGreaterThan(instructionsAt);
+			expect(visibleOutput.indexOf('Stale B no longer exists')).toBeGreaterThan(instructionsAt);
+		});
+
+		it('should render nothing after the instructions without notices', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+				notices: [],
+			};
+			const visibleOutput = stripAnsi(renderModeSelectionUI(state));
+
+			expect(visibleOutput.trimEnd().endsWith('Esc: Cancel')).toBe(true);
+		});
 	});
 });

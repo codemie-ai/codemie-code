@@ -216,8 +216,12 @@ export class DesktopRepositoryResolver {
     // Subprocess lookup — finds the claude process behind the TCP connection. A subprocess
     // carrying --add-dir may belong to the Code tab or to a Cowork session, so the session
     // root decides which.
+    // Set when the connecting process runs in the Cowork sandbox (a system cwd, no --add-dir).
+    let inCoworkSandbox = false;
     if (connectingPid) {
-      workingDir = await findWorkingDirViaProcess(connectingPid).catch(() => null);
+      const processDir = await findWorkingDirViaProcess(connectingPid).catch(() => null);
+      inCoworkSandbox = processDir === COWORK_SANDBOX;
+      workingDir = processDir === COWORK_SANDBOX ? null : processDir;
       if (workingDir) {
         const sessionRes = await findWorkingDirForSession(cliSessionId).catch(() => null);
         isCodeIntegration = sessionRes ? sessionRes.isCodeIntegration : true;
@@ -226,7 +230,7 @@ export class DesktopRepositoryResolver {
         });
       } else {
         logger.debug(`${LOG} Process lookup returned no workingDir`, {
-          cliSessionId, connectingPid, remotePort: hints.remotePort
+          cliSessionId, connectingPid, remotePort: hints.remotePort, inCoworkSandbox
         });
       }
     } else {
@@ -248,6 +252,15 @@ export class DesktopRepositoryResolver {
       } else {
         logger.debug(`${LOG} Session file scan returned no workingDir`, { cliSessionId });
       }
+    }
+
+    // A sandboxed Cowork request whose session file is not on disk yet (the first message).
+    // The process-tree descent would latch onto whichever Claude subprocess is running, e.g.
+    // an unrelated Code tab project, so report Cowork tentatively and let the session file
+    // confirm it on the next request.
+    if (!workingDir && inCoworkSandbox) {
+      logger.debug(`${LOG} Attributed sandboxed request to Cowork`, { cliSessionId, remotePort: hints.remotePort });
+      return { repository: 'Cowork', branch: null, isCodeIntegration: false, confident: false };
     }
 
     // Process-tree descent — for orchestrator requests whose connecting process is the
@@ -334,11 +347,16 @@ async function getPidForRemotePort(remotePort: number): Promise<number | null> {
   }
 }
 
+/** Returned by findWorkingDirViaProcess for a process running in the Cowork sandbox. */
+const COWORK_SANDBOX = Symbol('cowork-sandbox');
+
 /**
  * Working directory of the subprocess owning `pid`, read from its --add-dir flag and
- * falling back to the OS-level cwd. macOS only; returns null on any failure.
+ * falling back to the OS-level cwd. Returns COWORK_SANDBOX when that cwd is an OS system
+ * path, which is how Claude Desktop runs Cowork sessions without a folder. macOS only;
+ * returns null on any failure.
  */
-async function findWorkingDirViaProcess(pid: number): Promise<string | null> {
+async function findWorkingDirViaProcess(pid: number): Promise<string | typeof COWORK_SANDBOX | null> {
   if (process.platform !== 'darwin') return null;
   try {
     const { stdout } = await execAsync(`ps -p ${pid} -o args=`, { timeout: 2000 });
@@ -346,13 +364,14 @@ async function findWorkingDirViaProcess(pid: number): Promise<string | null> {
     const match = stdout.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
     const dir = match?.[1]?.trim();
     // Reject relative paths — the Desktop renderer uses --add-dir for plugin loading.
-    if (dir?.startsWith('/')) return dir;
+    if (dir?.startsWith('/') && !isSystemPath(dir)) return dir;
 
     // Code tab subprocesses launch from the project directory but carry no --add-dir flag.
     // Reject launcher paths (home, Library, app bundles) so Cowork sessions with a
     // non-project cwd are not misattributed.
     const { stdout: lsofOut } = await execAsync(`lsof -a -d cwd -p ${pid} -Fn`, { timeout: 2000 });
     const cwd = lsofOut.split('\n').find(l => l.startsWith('n'))?.slice(1).trim();
+    if (cwd && isSystemPath(cwd)) return COWORK_SANDBOX;
     if (!isProjectCwd(cwd)) return null;
     return cwd!;
   } catch {
@@ -408,7 +427,7 @@ async function findWorkingDirForDesktopDirectRequest(connectingPid: number): Pro
       if (proc?.args.includes('--add-dir')) {
         const m = proc.args.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
         const dir = m?.[1]?.trim();
-        if (dir?.startsWith('/')) return dir;
+        if (dir?.startsWith('/') && !isSystemPath(dir)) return dir;
       } else if (proc?.args.includes('--output-format stream-json')) {
         try {
           const { stdout: cwdOut } = await execAsync(`lsof -a -d cwd -p ${cur} -Fn`, { timeout: 1000 });
@@ -430,9 +449,20 @@ async function findWorkingDirForDesktopDirectRequest(connectingPid: number): Pro
   }
 }
 
+/**
+ * OS locations that are never a user project. Claude Desktop runs Cowork sessions without a
+ * folder in a sandbox whose cwd is `/private/var/empty`; accepting it reported `var/empty` as
+ * the repository instead of falling through to the session file, which resolves to Cowork.
+ */
+const SYSTEM_PATH_PREFIXES = ['/private/', '/var/', '/tmp/', '/System/', '/usr/', '/bin/', '/sbin/', '/etc/', '/dev/'];
+
+function isSystemPath(path: string): boolean {
+  return path === '/' || SYSTEM_PATH_PREFIXES.some(prefix => path.startsWith(prefix) || path === prefix.slice(0, -1));
+}
+
 /** Rejects launcher directories that would misattribute a session to a non-project path. */
 function isProjectCwd(cwd: string | undefined): boolean {
   if (!cwd?.startsWith('/')) return false;
   const home = process.env.HOME ?? '';
-  return cwd !== home && !cwd.includes('/Library/') && !cwd.includes('.app/Contents');
+  return cwd !== home && !cwd.includes('/Library/') && !cwd.includes('.app/Contents') && !isSystemPath(cwd);
 }

@@ -1,0 +1,4 @@
+{"task_id":"1","status":"done","commit":"5ef25e6","test_command":"npx vitest run src/cli/commands/assistants/setup/__tests__/helpers.test.ts"}
+{"task_id":"2","status":"done","commit":"c17ab7a","test_command":"npx vitest run src/cli/commands/assistants/setup/__tests__/data.test.ts && npx tsc --noEmit"}
+{"task_id":"3","status":"done","commit":"d8a5269","test_command":"npx vitest run src/cli/commands/skills/setup/__tests__/helpers.test.ts"}
+{"task_id":"4","status":"done","commit":"bcfc20e","test_command":"npx vitest run src/cli/commands/skills/setup/__tests__/data.test.ts && npx tsc --noEmit"}

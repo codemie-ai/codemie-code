@@ -1,0 +1,64 @@
+{
+ "schema": 1,
+ "branch": "feat/EPMCDME-15433-no-self-update-in-connect",
+ "head": "3658cfc97f2d2452323011960857c127582f8923",
+ "runner": "npm",
+ "started_at": "2026-09-30T15:34:00Z",
+ "completed_at": "2026-09-30T15:35:40Z",
+ "status": "BLOCKED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 3000,
+   "command": "npm run lint",
+   "exit_code": 0
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 4000,
+   "command": "npm run typecheck",
+   "exit_code": 0
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 18000,
+   "command": "npx vitest run --project unit",
+   "exit_code": 1
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 8000,
+   "command": "npm run build",
+   "exit_code": 0
+  },
+  {
+   "id": "integration-self-update",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 3000,
+   "command": "npx vitest run --project cli tests/integration/cli-commands/self-update.test.ts",
+   "exit_code": 0
+  },
+  {
+   "id": "agent",
+   "source": "guide",
+   "status": "N/A",
+   "duration_ms": 0,
+   "command": "",
+   "exit_code": null,
+   "notes": "Skipped per caller: slow and unrelated; ci:full also skipped"
+  }
+ ],
+ "failures": {
+  "unit": "    \"message\": \"Invalid input: expected string, received null\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"mcp_servers\",\n      0,\n      \"config\",\n      \"audience\"\n    ],\n    \"message\": \"Invalid input: expected string, received null\"\n  },\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"mcp_servers\",\n      0,\n      \"mcp_connect_url\"\n    ],\n    \"message\": \"Invalid input: expected string, received null\"\n  },\n  {\n    \"expected\": \"number\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"mcp_servers\",\n      0,\n      \"tools_tokens_size_limit\"\n    ],\n    \"message\": \"Invalid input: expected number, received null\"\n  }\n]\n \u276f src/cli/commands/sdk/services/__tests__/assistants-builder.test.ts:113:48\n    111|     await updateAssistant(client, \"a1\", { system_prompt: \"new\" });\n    112|\n    113|     const parsed = AssistantUpdateParamsSchema.parse(update.mock.calls\u2026\n       |                                                ^\n    114|     expect(parsed.system_prompt).toBe(\"new\");\n    115|     expect(parsed.mcp_servers[0]).toMatchObject({\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af\n\n\n Test Files  1 failed | 312 passed (313)\n      Tests  1 failed | 4622 passed (4623)\n   Start at  15:35:08\n   Duration  17.03s (transform 13.50s, setup 0ms, import 68.18s, tests 37.00s, environment 23ms)\n\n"
+ }
+}

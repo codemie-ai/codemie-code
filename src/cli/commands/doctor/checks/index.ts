@@ -4,6 +4,7 @@
 
 export { NodeVersionCheck } from './NodeVersionCheck.js';
 export { NpmCheck } from './NpmCheck.js';
+export { NpmPrefixOverrideCheck } from './NpmPrefixOverrideCheck.js';
 export { PythonCheck } from './PythonCheck.js';
 export { UvCheck } from './UvCheck.js';
 export { AwsCliCheck } from './AwsCliCheck.js';

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-09-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 15,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four components across three subsystems: a new npm-prefix utility module (self-prefix derivation, legacy-prefix path, path comparison, user/global prefix lookup) consumed by shared utilities (processes, cli-updater, cli-bin), a new doctor health check (NpmPrefixOverrideCheck) registered in the doctor command, and both platform installers (install.sh, install.ps1) plus install README. Shared-utility involvement is already part of the L definition, so no extra bump." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for deriving the npm global prefix from the running package's install layout; cross-platform path rules (win32 case-insensitivity, codemie.cmd marker, POSIX lib/node_modules layout) and installers that mutate the user's npm config (npm config delete prefix --location user) with printed revert commands. Self-update targeting the wrong prefix would strand installs. Several post-review fix commits (win32 marker, fallback --prefix, DryRun truthfulness) confirm moderate risk. Existing Vitest templates covered the platform-variant tests, so no edge-case bump." },
+    { "dimension": "file_change_estimate", "reason": "15 files changed (818 insertions): 2 new source files (npm-prefix.ts, NpmPrefixOverrideCheck.ts), 1 new test (npm-prefix.test.ts), 12 modified across install/, src/utils/, src/cli/commands/doctor/ - 11-15 file band maps to XL." },
+    { "dimension": "requirements_clarity", "reason": "Core goal (stop the legacy per-user npm prefix override and make self-update target the running copy) was clear, but follow-up fixes to win32 install detection, fallback command text and installer dry-run output show minor gaps resolved during review." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

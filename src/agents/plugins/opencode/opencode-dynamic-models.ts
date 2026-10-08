@@ -14,7 +14,7 @@
  */
 
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
-import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
+import { fetchCodeMieLlmModels, isRouterModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import type { OpenCodeModelConfig } from './opencode-model-configs.js';
 import { OPENCODE_MODEL_CONFIGS } from './opencode-model-configs.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
@@ -84,6 +84,12 @@ function detectLimits(id: string, family: string): { context: number; output: nu
   return { context: 128000, output: 4096 };
 }
 
+// OpenCode lists a provider's models sorted by name and ignores config order. "(default) " and
+// "(router) " both start with "(", which sorts before letters and digits, and "d" < "r", so within
+// a provider the session's starting model leads, then the routers, then everything else.
+const SELECTED_NAME_PREFIX = '(default) ';
+const ROUTER_NAME_PREFIX = '(router) ';
+
 // ── Conversion ───────────────────────────────────────────────────────────────
 
 /**
@@ -92,8 +98,10 @@ function detectLimits(id: string, family: string): { context: number; output: nu
  * Cost conversion: API uses $/token; OpenCode uses $/million tokens.
  *   e.g. 0.000003 $/token → 3.0 $/M tokens
  */
-export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelConfig {
+export function convertApiModelToOpenCodeConfig(model: LlmModel, isSelected = false): OpenCodeModelConfig {
   const id = model.deployment_name || model.base_name;
+  const baseName = model.label || id;
+  const name = `${isSelected ? SELECTED_NAME_PREFIX : ''}${isRouterModel(model) ? ROUTER_NAME_PREFIX : ''}${baseName}`;
   const family = detectFamily(id);
   const limit = detectLimits(id, family);
   const responsesApi = isResponsesApiModel(id);
@@ -110,8 +118,8 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelC
 
   return {
     id,
-    name: model.label || id,
-    displayName: model.label || id,
+    name,
+    displayName: baseName,
     family,
     tool_call: model.features?.tools ?? true,
     reasoning: true,
@@ -145,12 +153,14 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelC
  * @param baseUrl    - CODEMIE_BASE_URL (authenticated proxy endpoint)
  * @param codeMieUrl - CODEMIE_URL (CodeMie org URL used for SSO credential lookup)
  * @param jwtToken   - CODEMIE_JWT_TOKEN (optional Bearer token, preferred over SSO)
+ * @param selectedModelId - the session's starting model; it is listed first within its provider
  * @returns Map of modelId → OpenCodeModelConfig (dynamic) or OPENCODE_MODEL_CONFIGS (fallback)
  */
 export async function fetchDynamicModelConfigs(
   baseUrl: string,
   codeMieUrl: string | undefined,
   jwtToken?: string,
+  selectedModelId?: string,
 ): Promise<Record<string, OpenCodeModelConfig>> {
   try {
     let rawModels: LlmModel[];
@@ -175,7 +185,10 @@ export async function fetchDynamicModelConfigs(
     const result: Record<string, OpenCodeModelConfig> = {};
     for (const model of rawModels) {
       if (!model.enabled) continue;
-      const config = convertApiModelToOpenCodeConfig(model);
+      const config = convertApiModelToOpenCodeConfig(
+        model,
+        selectedModelId !== undefined && (model.deployment_name || model.base_name) === selectedModelId,
+      );
       result[config.id] = config;
     }
 

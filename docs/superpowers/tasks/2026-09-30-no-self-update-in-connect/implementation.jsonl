@@ -1,0 +1,3 @@
+{"task_id":"T1","status":"done","commit":"f470ae4c","test_command":"npx vitest run src/utils/__tests__/cli-updater.test.ts"}
+{"task_id":"T2","status":"done","commit":"673f74af","test_command":"npx vitest run src/cli/commands/__tests__/self-update.test.ts"}
+{"task_id":"T3","status":"done","commit":"none","test_command":"mutation checks + manual Connect marker run"}

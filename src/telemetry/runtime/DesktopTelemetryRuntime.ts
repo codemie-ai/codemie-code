@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { stat } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
@@ -15,15 +16,33 @@ import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { ConfigLoader } from '@/utils/config.js';
 
+interface TranscriptFingerprint {
+  mtimeMs: number;
+  size: number;
+}
+
 interface TrackedSession {
   codemieSessionId: string;
   lastSeenActivityAt: number;
+  transcript?: TranscriptFingerprint;
+}
+
+function isSameFingerprint(
+  previous: TranscriptFingerprint | undefined,
+  current: TranscriptFingerprint
+): boolean {
+  return previous !== undefined
+    && previous.mtimeMs === current.mtimeMs
+    && previous.size === current.size;
 }
 
 export class DesktopTelemetryRuntime {
   private readonly sessionStore = new SessionStore();
   private readonly syncer = new SessionSyncer();
   private readonly trackedSessions = new Map<string, TrackedSession>();
+  // externalSessionId -> CodeMie session id for every session persisted by this or a previous
+  // daemon. Built with one directory scan so polls never rescan ~/.codemie/sessions per session.
+  private knownSessionIds?: Map<string, string>;
   private readonly startedAt = Date.now();
   private timer?: NodeJS.Timeout;
   private lastPollAt = this.startedAt;
@@ -74,6 +93,7 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
+      this.knownSessionIds ??= await this.sessionStore.indexSessionsByExternalId(this.config.clientType);
       const discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
       logger.debug('[desktop-telemetry] Poll tick', {
         discovered: discoveredSessions.length,
@@ -89,8 +109,18 @@ export class DesktopTelemetryRuntime {
           continue;
         }
 
-        const isNew = !this.trackedSessions.has(discovered.externalSessionId);
-        if (isNew) {
+        const tracked = this.trackedSessions.get(discovered.externalSessionId);
+        // Taken before parsing, so a write that lands mid-processing is picked up next tick.
+        const transcript = await this.readTranscriptFingerprint(discovered.transcriptPath);
+
+        // Desktop bumps lastActivityAt without necessarily appending to the transcript.
+        // Nothing new to parse or sync, so keep the session alive and skip the work.
+        if (tracked && transcript && isSameFingerprint(tracked.transcript, transcript)) {
+          tracked.lastSeenActivityAt = Math.max(tracked.lastSeenActivityAt, discovered.updatedAt);
+          continue;
+        }
+
+        if (!tracked) {
           logger.info('[desktop-telemetry] New session detected', {
             externalSessionId: discovered.externalSessionId,
             agentSessionId: discovered.agentSessionId,
@@ -99,13 +129,22 @@ export class DesktopTelemetryRuntime {
           });
         }
 
-        const session = await this.ensureSession(discovered);
-        this.trackedSessions.set(discovered.externalSessionId, {
+        const session = await this.ensureSession(
+          discovered,
+          tracked?.codemieSessionId ?? this.knownSessionIds.get(discovered.externalSessionId)
+        );
+        this.knownSessionIds.set(discovered.externalSessionId, session.sessionId);
+        const nextTracked: TrackedSession = {
           codemieSessionId: session.sessionId,
-          lastSeenActivityAt: discovered.updatedAt
-        });
+          lastSeenActivityAt: discovered.updatedAt,
+          transcript: tracked?.transcript
+        };
+        this.trackedSessions.set(discovered.externalSessionId, nextTracked);
 
         await this.processSession(session, discovered);
+        // Record the fingerprint only once processing succeeded: a failed parse or sync must
+        // not mark this transcript state as handled, or the delta would wait for the next write.
+        nextTracked.transcript = transcript;
       }
 
       for (const [externalSessionId, tracked] of this.trackedSessions) {
@@ -128,11 +167,25 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  private async ensureSession(discovered: LocalTelemetryDiscoveredSession): Promise<Session> {
-    const existing = await this.sessionStore.findSessionByExternalId(
-      this.config.clientType,
-      discovered.externalSessionId
-    );
+  private async readTranscriptFingerprint(transcriptPath: string): Promise<TranscriptFingerprint | undefined> {
+    try {
+      const stats = await stat(transcriptPath);
+      return { mtimeMs: stats.mtimeMs, size: stats.size };
+    } catch (error) {
+      // Unknown fingerprint never matches, so the session is processed as before.
+      logger.debug('[desktop-telemetry] Failed to stat transcript', {
+        transcriptPath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
+    }
+  }
+
+  private async ensureSession(
+    discovered: LocalTelemetryDiscoveredSession,
+    knownSessionId?: string
+  ): Promise<Session> {
+    const existing = knownSessionId ? await this.sessionStore.loadSession(knownSessionId) : null;
     if (existing) {
       // A previous daemon stop finalized this session. New activity means the conversation
       // continued, so reopen it — otherwise finalizeSession's completed-status early return
@@ -148,6 +201,8 @@ export class DesktopTelemetryRuntime {
       }
 
       setRuntimeCheckpoint(existing, {
+        // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
+        ...existing.runtimeCheckpoint,
         externalSessionId: discovered.externalSessionId,
         transcriptPath: discovered.transcriptPath,
         lastDiscoveredAt: Date.now(),
@@ -177,11 +232,16 @@ export class DesktopTelemetryRuntime {
     // tentative TTL-window guess.
     this.config.repositoryResolver?.recordDiscoveredSession(discovered.agentSessionId, repository);
 
+    // A chat CodeMie has never synced that already existed when the daemon started: sync only
+    // what is written from now on. Backfilling its whole history for every such chat at once
+    // after an upgrade is what spiked backend load; the tracked session starts at the cutoff.
+    const baselineCutoffMs = discovered.createdAt < this.startedAt ? this.startedAt : undefined;
+
     const session: Session = {
       sessionId: randomUUID(),
       agentName: this.config.clientType,
       provider: this.config.provider,
-      startTime: discovered.createdAt,
+      startTime: baselineCutoffMs ?? discovered.createdAt,
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
@@ -198,7 +258,8 @@ export class DesktopTelemetryRuntime {
         externalSessionId: discovered.externalSessionId,
         transcriptPath: discovered.transcriptPath,
         lastDiscoveredAt: Date.now(),
-        lastSeenActivityAt: discovered.updatedAt
+        lastSeenActivityAt: discovered.updatedAt,
+        ...(baselineCutoffMs !== undefined && { baselineCutoffMs })
       }
     };
 
@@ -210,6 +271,14 @@ export class DesktopTelemetryRuntime {
   private async processSession(session: Session, discovered: LocalTelemetryDiscoveredSession): Promise<void> {
     const parsedSession = await this.adapter.parseSession(discovered, session.sessionId);
     const context = await this.buildProcessingContext(session, discovered);
+
+    // Persisted with the session, so a crash before this point still applies it next time.
+    const baselineCutoffMs = session.runtimeCheckpoint?.baselineCutoffMs;
+    if (baselineCutoffMs !== undefined && this.adapter.applyBaseline) {
+      await this.adapter.applyBaseline(parsedSession, baselineCutoffMs, context);
+      delete session.runtimeCheckpoint!.baselineCutoffMs;
+    }
+
     const result = await this.adapter.processParsedSession(parsedSession, context);
 
     if (result.totalRecords > 0) {

@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
@@ -22,6 +22,7 @@ import {
   connectTargets,
   type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
@@ -31,15 +32,17 @@ interface ProxyStartOptions {
 }
 
 interface UnifiedConnectOptions {
+  claudeCodeOtlp?: boolean;
   claudeDesktop?: boolean;
-  vscode?: boolean;
-  vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
-  profile?: string;
   force?: boolean;
-  verbose?: boolean;
   insiders?: boolean;
   model?: string;
+  profile?: string;
+  scope?: "user" | "project";
+  verbose?: boolean;
+  vscode?: boolean;
+  vscodeClaudeCode?: boolean;
 }
 
 interface AliasConnectOptions {
@@ -98,8 +101,12 @@ function formatDaemonConflict(
     `  port: ${state.port}`,
   ];
 
-  if (state.clientType) details.push(`  client: ${state.clientType}`);
-  if (state.project) details.push(`  project: ${state.project}`);
+  if (state.clientType) {
+    details.push(`  client: ${state.clientType}`);
+  }
+  if (state.project) {
+    details.push(`  project: ${state.project}`);
+  }
 
   details.push('', 'Stop it first:', '  codemie proxy stop');
   return details.join('\n');
@@ -228,9 +235,15 @@ export function createProxyCommand(): Command {
           uptimeSec,
           level: health.level,
         };
-        if (state.clientType) payload.clientType = state.clientType;
-        if (state.project) payload.project = state.project;
-        if (!health.healthy) payload.reason = health.reason ?? state.healthReason ?? 'unknown';
+        if (state.clientType) {
+          payload.clientType = state.clientType;
+        }
+        if (state.project) {
+          payload.project = state.project;
+        }
+        if (!health.healthy) {
+          payload.reason = health.reason ?? state.healthReason ?? 'unknown';
+        }
         if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
           payload.lastRecordedIssue = state.healthReason;
         }
@@ -297,9 +310,19 @@ export function createProxyCommand(): Command {
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
+    .addOption(
+      new Option(
+        '--scope <scope>',
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds only the current project`,
+      )
+      .default('user')
+      .choices(['user', 'project']),
+    )
     .action(async (opts: UnifiedConnectOptions) => {
       await connectTargets({
         targets: {
+          claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
           claudeDesktop: Boolean(opts.claudeDesktop),
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
@@ -310,6 +333,7 @@ export function createProxyCommand(): Command {
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
         model: opts.model,
+        scope: opts.scope,
       });
     });
 
@@ -320,11 +344,22 @@ export function createProxyCommand(): Command {
     .option('--vscode', "Remove CodeMie's entry from VS Code Copilot Chat models (chatLanguageModels.json)")
     .option('--vscode-claude-code', "Remove CodeMie's ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN from the VS Code Claude Code extension")
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
+    .addOption(
+      new Option(
+        '--scope <scope>',
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
+      )
+      .default('user')
+      .choices(['user', 'project']),
+    )
     .action(async (opts: {
       claudeDesktop?: boolean;
       vscode?: boolean;
       vscodeClaudeCode?: boolean;
       codexDesktop?: boolean;
+      claudeCodeOtlp?: boolean;
+      scope?: 'user' | 'project';
     }) => {
       await disconnectTargets({
         targets: {
@@ -332,7 +367,9 @@ export function createProxyCommand(): Command {
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
+          claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
         },
+        scope: opts.scope,
       });
     });
 

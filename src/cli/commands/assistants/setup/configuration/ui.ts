@@ -95,5 +95,9 @@ export function renderModeSelectionUI(state: ModeSelectionState): string {
 		buildInstructions(),
 	];
 
+	if (state.notices && state.notices.length > 0) {
+		parts.push('', ...state.notices.map(notice => chalk.yellow(notice)));
+	}
+
 	return parts.join('\n');
 }
