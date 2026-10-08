@@ -195,7 +195,9 @@ export interface LlmModel {
   forbidden_for_web?: boolean;
   /**
    * The model's maximum input context window in tokens (LiteLLM `model_info.max_input_tokens`).
-   * Absent on routers and on catalogs served from static config rather than the LiteLLM proxy.
+   * On a router this is the minimum window across its tier models, and is absent when any tier is
+   * unknown. Also absent on catalogs served from static config rather than the LiteLLM proxy, and
+   * on older backends.
    */
   max_input_tokens?: number;
   /**
