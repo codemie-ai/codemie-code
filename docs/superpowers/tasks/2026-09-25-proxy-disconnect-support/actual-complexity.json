@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-09-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Adds a remove-config counterpart across four independent connector modules (desktop, vscode, vscode-claude-code, codex-desktop) plus a new disconnect-orchestrator.ts and CLI wiring in index.ts — five non-test components, all within the CLI/config-writer layer, each mirroring its existing writeXConfig pattern one-for-one." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 10 files changed (790 insertions, 17 deletions): 1 new non-test file (disconnect-orchestrator.ts), 4 modified non-test files (desktop.ts, vscode.ts, vscode-claude-code.ts, index.ts), and 5 test files (new + modified) covering the new remove-config functions and orchestrator dispatch." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
