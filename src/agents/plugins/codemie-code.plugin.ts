@@ -223,6 +223,14 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth'],
 
+  reasoningEffort: {
+    strategy: 'cli-flag',
+    flag: '--variant',
+    placement: 'append',
+    supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    userOverrideFlags: ['--variant'],
+  },
+
   ssoConfig: { enabled: true, clientType: 'codemie-code' },
 
   lifecycle: {

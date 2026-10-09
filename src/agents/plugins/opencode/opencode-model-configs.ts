@@ -52,6 +52,70 @@ export interface OpenCodeModelConfig {
     headers?: Record<string, string>;
     timeout?: number;
   };
+  /** Named model variants used by OpenCode's --variant flag. */
+  variants?: Record<string, Record<string, unknown>>;
+}
+
+const GPT_5_6_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+const GPT_6_REASONING_LEVELS_FROM_LOW = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+function getNativeReasoningLevels(modelId: string): readonly string[] | undefined {
+  if (/gpt-5[.-]6(?:[.-]|$)/.test(modelId)) {
+    return GPT_5_6_REASONING_LEVELS;
+  }
+
+  // GPT-6 Astra and GPT-6.1 Sol do not expose either `none` or `minimal`.
+  if (
+    /gpt-6[.-]astra(?:[.-]|$)/.test(modelId) ||
+    /gpt-6[.-]1(?:[.-]|$)/.test(modelId)
+  ) {
+    return GPT_6_REASONING_LEVELS_FROM_LOW;
+  }
+
+  // GPT-6 Sol and Luna expose `none`, but not `minimal`.
+  if (/gpt-6(?:[.-]|$)/.test(modelId)) {
+    return GPT_5_6_REASONING_LEVELS;
+  }
+
+  return undefined;
+}
+
+/**
+ * Return explicit OpenAI Responses variants for models with model-specific
+ * reasoning vocabularies. CodeMie's `minimal` is an alias for the model's
+ * lowest native setting when OpenAI does not expose a native `minimal` value.
+ * OpenCode's provider defaults do not define `max`, so it must be present in
+ * the injected model configuration.
+ */
+export function getExtendedReasoningVariants(
+  modelId: string,
+): Record<string, Record<string, unknown>> | undefined {
+  const nativeLevels = getNativeReasoningLevels(modelId);
+  if (!nativeLevels) return undefined;
+
+  const minimalTarget = nativeLevels.includes('none') ? 'none' : 'low';
+  const nativeVariants = nativeLevels.map(level => [
+    level,
+    {
+      reasoningEffort: level,
+      reasoningSummary: 'auto',
+      include: ['reasoning.encrypted_content'],
+    },
+  ] as const);
+
+  return Object.fromEntries(
+    [
+      ['minimal', {
+        reasoningEffort: minimalTarget,
+        reasoningSummary: 'auto',
+        include: ['reasoning.encrypted_content'],
+      }],
+      ...nativeVariants,
+    ].map(([level, options]) => [
+      level,
+      options,
+    ]),
+  );
 }
 
 export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
@@ -269,6 +333,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     temperature: false,
     structured_output: true,
     use_responses_api: true,
+    variants: getExtendedReasoningVariants('gpt-5.6-sol-2026-07-09'),
     modalities: {
       input: ['text', 'image'],
       output: ['text']
@@ -816,6 +881,7 @@ export function getModelConfig(modelId: string): OpenCodeModelConfig {
     prefix => modelId.startsWith(prefix)
   );
   const familyDefaults = familyPrefix ? MODEL_FAMILY_DEFAULTS[familyPrefix] : {};
+  const extendedVariants = getExtendedReasoningVariants(modelId);
 
   // Extract family from model ID (e.g., "gpt-4o" -> "gpt-4", "claude-4-5-sonnet" -> "claude-4")
   const family = familyDefaults.family
@@ -839,6 +905,7 @@ export function getModelConfig(modelId: string): OpenCodeModelConfig {
     release_date: today,
     last_updated: today,
     open_weights: false,
+    ...(extendedVariants && { use_responses_api: true, variants: extendedVariants }),
     cost: { input: 0, output: 0 },
     limit: familyDefaults.limit ?? { context: 128000, output: 4096 }
   };
