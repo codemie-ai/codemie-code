@@ -63,10 +63,10 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
   };
 }
 
-function codemieHookGroup() {
+function codemieHookGroup(event: (typeof HOOK_EVENTS)[number]) {
   return {
     matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}`, async: event !== 'UserPromptSubmit' }],
   };
 }
 
@@ -120,8 +120,37 @@ describe('claude-code-otlp connector', () => {
         expect(settings.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
 
         for (const event of HOOK_EVENTS) {
-          expect(settings.hooks[event]).toEqual([codemieHookGroup()]);
+          expect(settings.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
+      });
+
+      it('writes async: false only for UserPromptSubmit and async: true for every other event', async () => {
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        for (const event of HOOK_EVENTS) {
+          expect(settings.hooks[event][0].hooks[0].async).toBe(event !== 'UserPromptSubmit');
+        }
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].async).toBe(false);
+      });
+
+      it('upgrades a previously written codemie hook without async to the async-aware shape', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        const legacyGroup = {
+          matcher: '',
+          hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+        };
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ hooks: { PostToolUse: [legacyGroup], UserPromptSubmit: [legacyGroup] } }, null, 2)
+        );
+
+        await writeClaudeCodeOtlpConfig();
+
+        const merged = await readJson(settingsPath);
+        expect(merged.hooks.PostToolUse).toEqual([codemieHookGroup('PostToolUse')]);
+        expect(merged.hooks.UserPromptSubmit).toEqual([codemieHookGroup('UserPromptSubmit')]);
       });
 
       it('writes to the user-level settings and tracks the project root when scope is "project"', async () => {
@@ -190,9 +219,9 @@ describe('claude-code-otlp connector', () => {
         expect(merged.env).toEqual(expect.objectContaining({ FOO: 'bar', ...buildExpectedEnv(mockState) }));
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: 'Bash', hooks: [{ type: 'command', command: 'some-other-tool' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
-        expect(merged.hooks.SessionStart).toEqual([codemieHookGroup()]);
+        expect(merged.hooks.SessionStart).toEqual([codemieHookGroup('SessionStart')]);
       });
 
       it('is idempotent for a fresh install: rerunning does not create a backup or duplicate hooks', async () => {
@@ -237,7 +266,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: 'Bash', hooks: [{ type: 'command', command: 'some-other-tool' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
         for (const event of HOOK_EVENTS) {
           expect(merged.hooks[event]).toHaveLength(event === 'PreToolUse' ? 2 : 1);
@@ -298,7 +327,7 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
-        expect(merged.hooks.PreToolUse).toEqual([codemieHookGroup()]);
+        expect(merged.hooks.PreToolUse).toEqual([codemieHookGroup('PreToolUse')]);
       });
 
       it('dedups multiple stale whole-codemie hook groups down to exactly one, preserving foreign groups', async () => {
@@ -327,7 +356,7 @@ describe('claude-code-otlp connector', () => {
         await writeClaudeCodeOtlpConfig();
 
         const merged = await readJson(settingsPath);
-        expect(merged.hooks.SessionStart).toEqual([foreignEntry, codemieHookGroup()]);
+        expect(merged.hooks.SessionStart).toEqual([foreignEntry, codemieHookGroup('SessionStart')]);
       });
 
       it('backs up a pre-existing minimal ("{}") settings file, unlike a genuinely missing file', async () => {
@@ -354,7 +383,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
         for (const event of HOOK_EVENTS) {
-          expect(merged.hooks[event]).toEqual([codemieHookGroup()]);
+          expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
       });
 
@@ -392,7 +421,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: '', hooks: [{ type: 'command', command: 'echo my-own-hook' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
       });
 
@@ -414,7 +443,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: '', hooks: [{ type: 'command', command: 'echo my-own-hook' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
       });
 
@@ -443,7 +472,7 @@ describe('claude-code-otlp connector', () => {
               { type: 'command', command: 'echo second' },
             ],
           },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
       });
 
@@ -465,7 +494,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo bash-only-hook' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
       });
 
@@ -488,7 +517,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
           { matcher: '', hooks: [{ type: 'command', command: 'echo my-own-hook' }] },
-          codemieHookGroup(),
+          codemieHookGroup('PreToolUse'),
         ]);
       });
     });
@@ -688,7 +717,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(
           settingsPath,
-          JSON.stringify({ theme: 'dark', hooks: { PreToolUse: [codemieHookGroup()] } }, null, 2)
+          JSON.stringify({ theme: 'dark', hooks: { PreToolUse: [codemieHookGroup('PreToolUse')] } }, null, 2)
         );
 
         await removeClaudeCodeOtlpConfig();
@@ -813,7 +842,7 @@ describe('claude-code-otlp connector', () => {
 
       it('reports an "absent" reason for project scope when the allowlist key is not set', async () => {
         const settingsPath = await seedSettings(
-          JSON.stringify({ theme: 'dark', env: { OTEL_LOGS_EXPORTER: 'otlp' }, hooks: { Stop: [codemieHookGroup()] } })
+          JSON.stringify({ theme: 'dark', env: { OTEL_LOGS_EXPORTER: 'otlp' }, hooks: { Stop: [codemieHookGroup('Stop')] } })
         );
 
         const result = await removeClaudeCodeOtlpConfig({ scope: 'project' });
@@ -843,7 +872,7 @@ describe('claude-code-otlp connector', () => {
 
       it('returns removed:true when only a codemie hook is present (no env keys)', async () => {
         const settingsPath = await seedSettings(
-          JSON.stringify({ theme: 'dark', hooks: { Stop: [codemieHookGroup()] } })
+          JSON.stringify({ theme: 'dark', hooks: { Stop: [codemieHookGroup('Stop')] } })
         );
 
         const result = await removeClaudeCodeOtlpConfig();
@@ -936,7 +965,7 @@ describe('claude-code-otlp connector', () => {
       const merged = await readJson(settingsPath);
       expect(merged.hooks.SomeRetiredEvent).toBeUndefined();
       for (const event of HOOK_EVENTS) {
-        expect(merged.hooks[event]).toEqual([codemieHookGroup()]);
+        expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
       }
     });
 

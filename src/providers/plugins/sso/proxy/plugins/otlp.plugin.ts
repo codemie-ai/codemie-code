@@ -24,8 +24,8 @@ const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a
 
 export interface OtlpHookSpoolData {
   agentName: string;
-  raw: string;
-  timestamp: number;
+  /** The complete wire-ready event, built at hook time by the adapter. */
+  hookEvent: string;
 }
 
 function sendError(res: ServerResponse, status: number, type: string, message: string): true {
@@ -183,16 +183,16 @@ class OtlpInterceptor implements ProxyInterceptor {
       return sendError(res, 400, 'invalid_request_error', 'Agent validation failed');
     }
 
-    // Extract session_id from raw hook JSON
+    // Extract session_id from the hook event JSON
     let sessionId = '';
     try {
-      const hookEvent = JSON.parse(otlpHookSpoolData.raw) as Record<string, unknown>;
+      const hookEvent = JSON.parse(otlpHookSpoolData.hookEvent) as Record<string, unknown>;
       sessionId = String(hookEvent['session_id'] ?? '');
     } catch { /* ignore */ }
 
     if (!sessionId) {
       // No session id — log and accept without spooling
-      logger.debug('[otlp-ingest] hooks: no session_id in raw, discarding');
+      logger.debug('[otlp-ingest] hooks: no session_id in hookEvent, discarding');
       res.statusCode = 202;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ accepted: true }));

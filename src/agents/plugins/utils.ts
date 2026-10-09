@@ -3,15 +3,15 @@ import { readState } from '../../cli/commands/proxy/daemon-manager.js';
 import { logger } from '../../utils/logger.js';
 
 /**
- * Fire-and-forget forward of a raw hook event to the local proxy
- * daemon's analytics spool endpoint.
+ * Forward of a complete wire-ready event to the local proxy daemon's
+ * analytics spool endpoint. The event is stored and forwarded as is.
  *
  * - Calls readState() to get daemon URL and gateway key
- * - POSTs { agentName, timestamp, raw: rawInput } to /v1/analytics/hooks
+ * - POSTs { agentName, hookEvent: JSON.stringify(event) } to /v1/analytics/hooks
  * - Uses 1000ms timeout and swallows all errors
  * - Never throws, never affects hook's exit code
  */
-export async function forwardOtlpEventToSpool(rawEvent: string, agentName: string): Promise<void> {
+export async function forwardOtlpEventToSpool(event: Record<string, unknown>, agentName: string): Promise<void> {
   try {
     const state = await readState();
 
@@ -25,9 +25,8 @@ export async function forwardOtlpEventToSpool(rawEvent: string, agentName: strin
 
     const body: OtlpHookSpoolData = {
       agentName,
-      timestamp: Date.now(),
-      raw: rawEvent
-    }
+      hookEvent: JSON.stringify(event),
+    };
 
     try {
       await fetch(`${state.url}/v1/analytics/hooks`, {

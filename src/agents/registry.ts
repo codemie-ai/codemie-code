@@ -10,7 +10,8 @@ import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
-import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter, OtlpAgentAdapter } from './core/types.js';
+import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter } from './core/types.js';
+import type { OtlpAgentAdapter } from './core/OtlpAgentAdapter.js';
 
 // Re-export for backwards compatibility
 export { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
@@ -73,7 +74,7 @@ export class AgentRegistry {
     return AgentRegistry.adapters.get(name);
   }
 
-  static getAnalyticsAgent(name: string): OtlpAgentAdapter |  undefined {
+  static getAnalyticsAgent(name: string): OtlpAgentAdapter | undefined {
     AgentRegistry.initialize();
     return AgentRegistry.otlpAdapters.get(name);
   }
