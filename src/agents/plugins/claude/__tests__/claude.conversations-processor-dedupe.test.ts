@@ -85,21 +85,35 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
       .map(line => JSON.parse(line) as QueuedRecord);
   }
 
-  async function processSession(): Promise<{ success: boolean; metadata?: Record<string, unknown> }> {
+  async function processSession(
+    sessionMessages: unknown[] = messages
+  ): Promise<{ success: boolean; metadata?: Record<string, unknown> }> {
     const { ConversationsProcessor } = await import('../session/processors/claude.conversations-processor.js');
     const proc = new ConversationsProcessor();
     return proc.process(
-      { sessionId: SESSION_ID, agentName: 'claude', messages } as never,
+      { sessionId: SESSION_ID, agentName: 'claude', messages: sessionMessages } as never,
       { agentSessionId: AGENT_SESSION_ID } as never,
     ) as never;
   }
 
-  async function nextTurnUuid(): Promise<string> {
+  interface TransformResult {
+    lastProcessedMessageUuid: string;
+    currentHistoryIndex: number;
+  }
+
+  async function transformFrom(
+    sessionMessages: unknown[],
+    syncState: { lastSyncedMessageUuid?: string; lastSyncedHistoryIndex: number }
+  ): Promise<TransformResult> {
     const { ConversationsProcessor } = await import('../session/processors/claude.conversations-processor.js');
     const proc = new ConversationsProcessor() as unknown as {
-      transformMessages: (...args: unknown[]) => Promise<{ lastProcessedMessageUuid: string }>;
+      transformMessages: (...args: unknown[]) => Promise<TransformResult>;
     };
-    const result = await proc.transformMessages(messages, { lastSyncedHistoryIndex: -1 }, 'assistant-id', 'claude', undefined);
+    return proc.transformMessages(sessionMessages, syncState, 'assistant-id', 'claude', undefined);
+  }
+
+  async function nextTurnUuid(): Promise<string> {
+    const result = await transformFrom(messages, { lastSyncedHistoryIndex: -1 });
     return result.lastProcessedMessageUuid;
   }
 
@@ -127,6 +141,53 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
     expect(await loadPointer()).toBe(uuid);
     const syncUpdates = result.metadata?.syncUpdates as { conversations: { lastSyncedMessageUuid: string } } | undefined;
     expect(syncUpdates?.conversations.lastSyncedMessageUuid).toBe(uuid);
+  });
+
+  it('still queues the next turn after skipping an already-queued one in the same drain', async () => {
+    const twoTurns = [
+      ...messages,
+      {
+        type: 'user',
+        uuid: 'u2',
+        timestamp: new Date(1_700_000_002_000).toISOString(),
+        message: { role: 'user', content: 'and the tests?' },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a2',
+        timestamp: new Date(1_700_000_003_000).toISOString(),
+        message: { role: 'assistant', content: [{ type: 'text', text: 'vitest.' }] },
+      },
+    ];
+    await seedSession();
+    const turn1 = await transformFrom(twoTurns, { lastSyncedHistoryIndex: -1 });
+    const turn2 = await transformFrom(twoTurns, {
+      lastSyncedMessageUuid: turn1.lastProcessedMessageUuid,
+      lastSyncedHistoryIndex: turn1.currentHistoryIndex,
+    });
+    // Only turn 1 is queued; the session pointer is unset, so the drain starts at turn 1.
+    writeFileSync(
+      conversationsFile,
+      JSON.stringify({
+        payloadId: turn1.lastProcessedMessageUuid,
+        timestamp: 1_700_000_002_000,
+        isTurnContinuation: false,
+        historyIndices: [0, 0],
+        messageCount: 2,
+        lastProcessedMessageUuid: turn1.lastProcessedMessageUuid,
+        payload: { conversationId: AGENT_SESSION_ID, history: [] },
+        status: 'success',
+      }) + '\n'
+    );
+
+    await processSession(twoTurns);
+
+    const queued = readQueued() as Array<QueuedRecord & { historyIndices: number[] }>;
+    expect(queued).toHaveLength(2);
+    expect(queued[1].payloadId).toBe(turn2.lastProcessedMessageUuid);
+    expect(queued[1].payloadId).not.toBe(turn1.lastProcessedMessageUuid);
+    expect(queued[1].historyIndices).toEqual([1, 1]);
+    expect(await loadPointer()).toBe(turn2.lastProcessedMessageUuid);
   });
 
   it('queues a turn once when two hook events start from the same pointer', async () => {

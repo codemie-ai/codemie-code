@@ -21,7 +21,7 @@ import {
   getPayloadId,
   healSyncedDuplicates,
   isSendCandidate
-} from './payloadQueue.js';
+} from './payload-queue.js';
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
@@ -62,39 +62,7 @@ export function createSyncProcessor(): SessionProcessor {
       // Read conversation payloads from JSONL
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
-
-      // Heal: a candidate whose payloadId already has a success record was synced.
-      const healedCount = healSyncedDuplicates(allPayloads);
-
-      // Collapse: an older candidate whose every entry a newer candidate re-sends is
-      // superseded (terminal, never sent). Candidates share object identity with
-      // allPayloads, so the in-place status change is what gets persisted.
-      const sendCandidates = allPayloads.filter(isSendCandidate);
-      const supersededCount = collapseSupersededPayloads(sendCandidates);
-
-      // Persist both before sending anything, so even a run that defers immediately keeps them.
-      if (healedCount > 0 || supersededCount > 0) {
-        logger.debug(
-          `[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced and superseded ` +
-          `${supersededCount} fully covered payload(s)`
-        );
-        try {
-          await writeJSONLAtomic(conversationsFile, allPayloads);
-        } catch (writeError) {
-          logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
-        }
-      }
-
-      const unsentPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
-
-      // Cap: send oldest first, at most MAX_CONVERSATION_PAYLOADS_PER_RUN; the rest wait as they are.
-      const pendingPayloads = unsentPayloads.slice(0, MAX_CONVERSATION_PAYLOADS_PER_RUN);
-      if (unsentPayloads.length > pendingPayloads.length) {
-        logger.debug(
-          `[${CONVERSATION_PROCESSOR_NAME}] Per-run cap reached: deferring ` +
-          `${unsentPayloads.length - pendingPayloads.length} payload(s) to the next run`
-        );
-      }
+      const pendingPayloads = await prepareSendList(allPayloads, conversationsFile, context);
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -295,6 +263,56 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
     return 'pi';
   }
   return DEFAULT_CONVERSATION_FOLDER;
+}
+
+/**
+ * Prepare the queue for sending: heal → collapse → persist → cap.
+ * Mutates `allPayloads` in place and persists healed/superseded statuses before
+ * anything is sent, so even a run that defers immediately keeps them.
+ *
+ * The per-run cap applies only to unbounded runs (proxy timer, onProxyStop). A
+ * deadline-bounded run (SessionEnd) has no next run — its queue is renamed to
+ * `completed_` right after — so it defers only on the deadline.
+ *
+ * @returns the payloads to send this run, in queue order
+ */
+async function prepareSendList(
+  allPayloads: ConversationPayloadRecord[],
+  conversationsFile: string,
+  context: ProcessingContext
+): Promise<ConversationPayloadRecord[]> {
+  // Heal: a candidate whose payloadId already has a success record was synced.
+  const healedCount = healSyncedDuplicates(allPayloads);
+
+  // Collapse: an older candidate whose every entry a newer candidate re-sends is
+  // superseded (terminal, never sent). Candidates share object identity with
+  // allPayloads, so the in-place status change is what gets persisted.
+  const sendCandidates = allPayloads.filter(isSendCandidate);
+  const supersededCount = collapseSupersededPayloads(sendCandidates);
+
+  if (healedCount > 0 || supersededCount > 0) {
+    logger.debug(
+      `[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced and superseded ` +
+      `${supersededCount} fully covered payload(s)`
+    );
+    try {
+      await writeJSONLAtomic(conversationsFile, allPayloads);
+    } catch (writeError) {
+      logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
+    }
+  }
+
+  const unsentPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
+  if (context.syncDeadlineMs !== undefined || unsentPayloads.length <= MAX_CONVERSATION_PAYLOADS_PER_RUN) {
+    return unsentPayloads;
+  }
+
+  // Cap: send oldest first, at most MAX_CONVERSATION_PAYLOADS_PER_RUN; the rest wait as they are.
+  logger.debug(
+    `[${CONVERSATION_PROCESSOR_NAME}] Per-run cap reached: deferring ` +
+    `${unsentPayloads.length - MAX_CONVERSATION_PAYLOADS_PER_RUN} payload(s) to the next run`
+  );
+  return unsentPayloads.slice(0, MAX_CONVERSATION_PAYLOADS_PER_RUN);
 }
 
 /**

@@ -373,6 +373,18 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(readRecords().every(r => r.status === 'success')).toBe(true);
     });
 
+    it('does not cap a deadline-bounded run (SessionEnd has no next run)', async () => {
+      // Only the SessionEnd hook sets syncDeadlineMs; its queue is renamed to completed_
+      // right after, so anything left past the cap would never be synced.
+      writeRecords(Array.from({ length: 51 }, (_, i) => uniqueRecord(i)));
+
+      const result = await runSync({ syncDeadlineMs: Date.now() + 60_000 });
+
+      expect(upsertConversation).toHaveBeenCalledTimes(51);
+      expect(result.message).toBe('Synced 51/51 conversations');
+      expect(readRecords().every(r => r.status === 'success')).toBe(true);
+    });
+
     it('does not count superseded duplicates toward the cap', async () => {
       const duplicates = Array.from({ length: 10 }, (_, i) => uniqueRecord(i, `dup-${i}`));
       const survivors = Array.from({ length: 50 }, (_, i) => uniqueRecord(i));

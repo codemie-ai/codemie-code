@@ -141,15 +141,7 @@ export class ConversationsProcessor implements SessionProcessor {
       // Dedupe-before-append: a turn already in the queue (any status) is never
       // appended again. Concurrent Stop/SubagentStop hooks, or a pointer that
       // lags behind the queue, would otherwise queue the same turn twice.
-      // Lock-free, so two hooks racing past this read can still both append.
-      const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
-      const queuedPayloadIds = new Set<string>();
-      for (const existing of existingPayloads) {
-        const existingId = existing.payloadId ?? existing.lastProcessedMessageUuid;
-        if (existingId) {
-          queuedPayloadIds.add(existingId);
-        }
-      }
+      const queuedPayloadIds = await this.readQueuedPayloadIds(conversationsPath);
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         const prevMessageUuid = localSync.lastSyncedMessageUuid;
@@ -267,6 +259,23 @@ export class ConversationsProcessor implements SessionProcessor {
         message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  /**
+   * payloadIds of every record already in the conversation queue, any status.
+   * Read once before the drain loop; lock-free, so two hooks racing past this
+   * read can still both append.
+   */
+  private async readQueuedPayloadIds(conversationsPath: string): Promise<Set<string>> {
+    const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+    const queuedPayloadIds = new Set<string>();
+    for (const existing of existingPayloads) {
+      const existingId = existing.payloadId ?? existing.lastProcessedMessageUuid;
+      if (existingId) {
+        queuedPayloadIds.add(existingId);
+      }
+    }
+    return queuedPayloadIds;
   }
 
   /**
