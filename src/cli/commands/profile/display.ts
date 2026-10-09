@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import type { AuthStatus } from '../../../providers/core/types.js';
 import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
+import { alignIdentityWithProfile } from '../../../utils/codemie-identity.js';
 
 /**
  * Profile information for display
@@ -73,7 +74,11 @@ export class ProfileDisplay {
       const workspaceCodeMieUrl = profile.source === 'local'
         ? workspaceCodeMieUrls.local
         : workspaceCodeMieUrls.global;
-      const formatted = this.format(profile, workspaceCodeMieUrl);
+      const alignedCodeMieUrl = alignIdentityWithProfile(
+        { codeMieUrl: workspaceCodeMieUrl },
+        profile.profile
+      ).codeMieUrl;
+      const formatted = this.format(profile, alignedCodeMieUrl);
       console.log(formatted);
 
       // Add separator between profiles except for the last one
