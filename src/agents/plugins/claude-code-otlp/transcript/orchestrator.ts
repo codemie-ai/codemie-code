@@ -27,7 +27,18 @@ import {
   type SessionSummaryAccumulator,
   type NamedInvocationCounts,
 } from './session-summary.js';
-import { extractNamedInvocations } from '@/agents/plugins/claude/session/claude-named-invocations.js';
+import {
+  extractNamedInvocations,
+  extractOrderedNamedInvocations,
+} from '@/agents/plugins/claude/session/claude-named-invocations.js';
+import {
+  collectClientVersions,
+  collectCompactions,
+  collectEditLineStats,
+  countTurns,
+  latestTitle,
+  type SignalLine,
+} from './session-signals.js';
 import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
@@ -46,10 +57,8 @@ interface ContentBlock {
   input?: { file_path?: unknown; path?: unknown };
 }
 
-interface TranscriptLine {
-  timestamp?: string;
+interface TranscriptLine extends SignalLine {
   gitBranch?: string;
-  message?: { content?: unknown };
 }
 
 /**
@@ -95,7 +104,14 @@ function emptyAccumulator(): SessionSummaryAccumulator {
     toolResults: 0,
     filesEdited: new Set<string>(),
     filesWritten: new Set<string>(),
-    compactionCount: 0,
+    linesAdded: null,
+    linesRemoved: null,
+    turns: 0,
+    compactions: [],
+    clientVersions: [],
+    commandsInOrder: [],
+    title: '',
+    lastGitBranch: '',
   };
 }
 
@@ -130,10 +146,11 @@ function countToolResults(parsedLines: TranscriptLine[]): number {
  * - `toolCalls[*].errors` is derived from a sibling `tool_result` block's `is_error`/`isError`
  *   flag (the same pattern `claude.session.ts`/`claude.metrics-processor.ts` already use for
  *   tool-use_id → error lookups) when one is found; otherwise a tool call's `.errors` stays 0.
- * - Lines added/removed are not computed — an `Edit`/`Write` tool_use's `input` carries the
- *   *proposed* edit, not a diff stat — so the event builder sends them as `null`, never `0`.
- * - `compactionCount` defaults to 0 — no verified in-transcript signal was found (`PreCompact` is
- *   a hook event, not a transcript line).
+ * - Lines added/removed come from the applied diff on the `tool_result` line
+ *   (`toolUseResult.structuredPatch`, or a `create` result's `content`), not from the `tool_use`
+ *   input, which only carries the *proposed* edit. They stay `null` until one such result is seen.
+ * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
+ *   fires before the boundary line exists.
  */
 async function buildFullAccumulator(transcriptPath: string): Promise<{
   acc: SessionSummaryAccumulator;
@@ -147,7 +164,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
   try {
     raw = await readFile(transcriptPath, 'utf-8');
   } catch {
-    return { acc, named: extractNamedInvocations([]), startedAt: '', endedAt: '' };
+    return { acc, named: extractOrderedNamedInvocations([]), startedAt: '', endedAt: '' };
   }
 
   const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
@@ -201,7 +218,20 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
 
-  const named = extractNamedInvocations(parsedLines);
+  const named = extractOrderedNamedInvocations(parsedLines);
+  acc.commandsInOrder = named.commandsInOrder;
+
+  const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
+  acc.linesAdded = linesAdded;
+  acc.linesRemoved = linesRemoved;
+  acc.turns = countTurns(parsedLines);
+  acc.compactions = collectCompactions(parsedLines);
+  acc.clientVersions = collectClientVersions(parsedLines);
+  acc.title = latestTitle(parsedLines);
+  acc.lastGitBranch =
+    [...parsedLines].reverse().find((line) => typeof line.gitBranch === 'string' && line.gitBranch)
+      ?.gitBranch ?? '';
+
   // Real transcripts interleave non-message lines (file-history-snapshot, cost-state, ...)
   // without a `timestamp`, including at index 0/length-1 — so the first/last *timestamped*
   // line is used, not literally the first/last line.
@@ -217,8 +247,8 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
  * - Loads persisted state, reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
  *   keyed by `usageRequestKey()`, and
- *   updates `state.branchCounts` from every new line's `gitBranch` (regardless of whether that
- *   line carried usage).
+ *   updates `state.branchCounts` from every new user line's `gitBranch` (regardless of whether
+ *   that line carried usage).
  * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
  * - On `Stop`/`SessionEnd` only, also returns exactly one `agent.session.summary` event
  *   (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`) built from a fresh full-file
@@ -250,13 +280,17 @@ export async function collectMainTranscriptEvents(
       const touchedKeys = new Set<string>();
       for (const line of lines) {
         let rawGitBranch = '';
+        let isUserLine = false;
         try {
-          rawGitBranch = (JSON.parse(line) as { gitBranch?: string })?.gitBranch ?? '';
+          const head = JSON.parse(line) as { gitBranch?: string; type?: string };
+          rawGitBranch = head?.gitBranch ?? '';
+          isUserLine = head?.type === 'user';
         } catch {
           // Malformed line: still attempt usage parsing below (which has its own try/catch), but
           // there is no branch to record from it.
         }
-        if (rawGitBranch) {
+        // The contract's branch counts are user lines per branch.
+        if (rawGitBranch && isUserLine) {
           updateBranchCounts(state.branchCounts, rawGitBranch);
         }
 
@@ -270,10 +304,6 @@ export async function collectMainTranscriptEvents(
       }
       state.mainOffset = nextOffset;
 
-      if (trigger === 'PreCompact') {
-        state.compactionCount += 1;
-      }
-
       const events: Record<string, unknown>[] = [];
       for (const key of touchedKeys) {
         events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
@@ -281,7 +311,6 @@ export async function collectMainTranscriptEvents(
 
       if (trigger === 'Stop' || trigger === 'SessionEnd') {
         const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
-        acc.compactionCount = state.compactionCount;
         const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
         const summaryEvent = buildSessionSummaryEvent(
           sessionId,

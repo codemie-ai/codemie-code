@@ -44,7 +44,6 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
-  compactionCount: number;
 }
 
 /**
@@ -57,7 +56,6 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
-    compactionCount: 0,
   };
 }
 

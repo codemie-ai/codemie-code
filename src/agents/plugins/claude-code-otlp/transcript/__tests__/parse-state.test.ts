@@ -49,7 +49,6 @@ describe('createParseState', () => {
       openRequests: {},
       activeSkill: '',
       branchCounts: {},
-      compactionCount: 0,
     });
   });
 });
@@ -102,7 +101,6 @@ describe('loadParseState', () => {
       openRequests: { 'req1::claude-3-5-sonnet': openRequest },
       activeSkill: 'brainstorming',
       branchCounts: { main: 3, feature: 1 },
-      compactionCount: 2,
     };
 
     await saveParseState('session-roundtrip', state);

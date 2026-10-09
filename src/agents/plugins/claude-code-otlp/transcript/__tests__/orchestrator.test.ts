@@ -186,12 +186,28 @@ describe('collectMainTranscriptEvents — PreCompact trigger', () => {
   });
 });
 
-describe('collectMainTranscriptEvents — compaction_count', () => {
-  it('persists one increment per PreCompact trigger and surfaces the cumulative count on a later summary', async () => {
+/** A `type: 'user'` transcript line on `gitBranch`, with optional extra fields. */
+function userLine(content: unknown, extra: Record<string, unknown> = {}, gitBranch = 'feature'): string {
+  return JSON.stringify({
+    type: 'user',
+    gitBranch,
+    cwd: '/repo',
+    timestamp: '2026-10-01T00:00:00.000Z',
+    message: { role: 'user', content },
+    ...extra,
+  });
+}
+
+function commandText(name: string): string {
+  return `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args></command-args>`;
+}
+
+describe('collectMainTranscriptEvents — compactions', () => {
+  it('does not count PreCompact hook fires; compaction_count comes from compact_boundary lines', async () => {
     const { collectMainTranscriptEvents } = await import('../orchestrator.js');
 
-    const sessionId = 'session-compaction';
-    const transcriptPath = writeTranscript('transcript-compaction.jsonl', [
+    const sessionId = 'session-compaction-hook';
+    const transcriptPath = writeTranscript('transcript-compaction-hook.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
 
@@ -199,9 +215,149 @@ describe('collectMainTranscriptEvents — compaction_count', () => {
     await collectMainTranscriptEvents(sessionId, transcriptPath, 'PreCompact');
     const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
 
-    const summaryEvents = events.filter((e) => e.type === 'agent.session.summary');
-    expect(summaryEvents).toHaveLength(1);
-    expect(summaryEvents[0].compaction_count).toBe(2);
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+    expect(summary.compaction_count).toBe(0);
+    expect(summary.compactions).toEqual([]);
+  });
+
+  it('reports a boundary line as a completed compaction on the next summary', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-compaction-boundary';
+    const transcriptPath = writeTranscript('transcript-compaction-boundary.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+    ]);
+
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+
+    expect(summary.compaction_count).toBe(1);
+    expect(summary.compaction_pre_tokens).toBe(1000);
+  });
+});
+
+describe('collectMainTranscriptEvents — summary transcript signals', () => {
+  async function runFinalSummary(
+    sessionId: string,
+    lines: string[]
+  ): Promise<ForwardedEvent> {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+    const transcriptPath = writeTranscript(`${sessionId}.jsonl`, lines);
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd'));
+    return events.filter((e) => e.type === 'agent.session.summary')[0];
+  }
+
+  const editResult = userLine(
+    [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }],
+    { toolUseResult: { structuredPatch: [{ lines: [' ctx', '-old', '+new1', '+new2'] }] } }
+  );
+
+  it('derives lines, turns, commands, compactions, versions, title and branch from the transcript', async () => {
+    const summary = await runFinalSummary('session-signals', [
+      JSON.stringify({ type: 'ai-title', aiTitle: 'First title' }),
+      userLine('hello', { version: '2.1.295' }),
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+      editResult,
+      userLine(commandText('commit')),
+      userLine(commandText('plan')),
+      userLine(commandText('plan')),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Latest title' }),
+    ]);
+
+    expect(summary.lines_added).toBe(2);
+    expect(summary.lines_removed).toBe(1);
+    // 'hello' + three command lines; the tool_result-only line is not a prompt.
+    expect(summary.turns).toBe(4);
+    expect(summary.commands).toEqual(['commit', 'plan', 'plan']);
+    expect(summary.primary_command).toBe('commit');
+    expect(summary.compaction_count).toBe(1);
+    expect(summary.compactions).toEqual([
+      {
+        start: '2026-10-01T00:09:00.000Z',
+        end: '2026-10-01T00:10:00.000Z',
+        duration_ms: 60_000,
+        trigger: 'auto',
+        pre_tokens: 1000,
+        post_tokens: 300,
+        dropped_tokens: 700,
+      },
+    ]);
+    expect(summary.client_versions).toEqual(['2.1.295']);
+    expect(summary.title).toBe('Latest title');
+    expect(summary.git_branch).toBe('feature');
+  });
+
+  it('leaves lines_* null when the transcript has no applied edit result', async () => {
+    const summary = await runFinalSummary('session-no-edits', [
+      userLine('hello'),
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+    ]);
+
+    expect(summary.lines_added).toBeNull();
+    expect(summary.lines_removed).toBeNull();
+  });
+
+  it('recomputes the signals from the whole file on a later pass (cumulative, not just new lines)', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-cumulative';
+    const transcriptPath = writeTranscript('transcript-cumulative.jsonl', [userLine('first'), editResult]);
+    await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+
+    writeFileSync(transcriptPath, [userLine('first'), editResult, userLine('second'), editResult].map((l) => l + '\n').join(''));
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd'));
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+
+    expect(summary.turns).toBe(2);
+    expect(summary.lines_added).toBe(4);
+    expect(summary.lines_removed).toBe(2);
+  });
+});
+
+describe('collectMainTranscriptEvents — branch_counts', () => {
+  it('counts user lines only, not assistant usage lines', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-branch-user-only';
+    const transcriptPath = writeTranscript('transcript-branch-user-only.jsonl', [
+      userLine('one', {}, 'feature'),
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50, gitBranch: 'main' }),
+      usageLine({ uuid: 'uuid-2', messageId: 'msg-2', outputTokens: 50, gitBranch: 'main' }),
+      userLine('two', {}, 'feature'),
+    ]);
+
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+
+    expect(summary.branch_counts).toEqual({ feature: 2 });
+    expect(summary.branch_dominant).toBe('feature');
+  });
+
+  it('resolves a tied branch_dominant to the later branch', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-branch-tie';
+    const transcriptPath = writeTranscript('transcript-branch-tie.jsonl', [
+      userLine('one', {}, 'main'),
+      userLine('two', {}, 'feature'),
+    ]);
+
+    const events = parseAll(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+
+    expect(summary.branch_dominant).toBe('feature');
   });
 });
 

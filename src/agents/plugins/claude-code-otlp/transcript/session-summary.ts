@@ -13,10 +13,11 @@
  * `api_calls` is omitted here: no input carries a request count. The orchestrator, which owns
  * the full set of `agent.usage.request` records, merges it in afterward.
  *
- * `title` has no identified source and is always `''`, never fabricated.
+ * `title` is the transcript's latest `ai-title` (`''` when it has none), never fabricated.
  */
 
 import type { NamedInvocationCounts } from '@/agents/plugins/claude/session/claude-named-invocations.js';
+import type { Compaction } from './session-signals.js';
 
 export type { NamedInvocationCounts };
 
@@ -27,7 +28,17 @@ export interface SessionSummaryAccumulator {
   toolResults: number;
   filesEdited: Set<string>;
   filesWritten: Set<string>;
-  compactionCount: number;
+  /** `null` until an edit result reports a diff — unknown is never sent as `0`. */
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  turns: number;
+  compactions: Compaction[];
+  clientVersions: string[];
+  /** Slash commands in call order, repeats kept, no leading slash. */
+  commandsInOrder: string[];
+  title: string;
+  /** Branch of the last transcript line that carries one. */
+  lastGitBranch: string;
 }
 
 /**
@@ -46,14 +57,15 @@ export function updateBranchCounts(counts: Record<string, number>, branch: strin
 
 /**
  * Return the key with the highest value in `counts`, or `''` when `counts` is empty.
- * On a tie, the first-encountered key (in `Object.entries()` iteration order) wins.
+ * On a tie, the first-encountered key (in `Object.entries()` iteration order) wins, or the
+ * last-encountered one when `tieToLater` is set.
  */
-function maxKey(counts: Record<string, number>): string {
+function maxKey(counts: Record<string, number>, tieToLater = false): string {
   let best = '';
   let bestValue = -Infinity;
 
   for (const [key, value] of Object.entries(counts)) {
-    if (value > bestValue) {
+    if (tieToLater ? value >= bestValue : value > bestValue) {
       best = key;
       bestValue = value;
     }
@@ -67,9 +79,9 @@ export function primaryModel(models: Record<string, number>): string {
   return maxKey(models);
 }
 
-/** The branch with the highest count in `counts`, or `''` when empty. */
+/** The branch with the highest count in `counts` (a tie goes to the later one), or `''` when empty. */
 export function branchDominant(counts: Record<string, number>): string {
-  return maxKey(counts);
+  return maxKey(counts, true);
 }
 
 /** Distinct normalised models, primary first, per the contract's `models` field. */
@@ -102,6 +114,7 @@ export function buildSessionSummaryEvent(
     (totals, t) => ({ calls: totals.calls + t.calls, errors: totals.errors + t.errors }),
     { calls: 0, errors: 0 }
   );
+  const compactionPreTokens = acc.compactions.reduce((sum, c) => sum + (c.pre_tokens ?? 0), 0);
 
   return {
     type: 'agent.session.summary',
@@ -122,16 +135,21 @@ export function buildSessionSummaryEvent(
     tools: acc.toolCalls,
     skills: named.skillInvocations,
     agents: named.agentInvocations,
-    commands: Object.keys(named.commandInvocations),
-    primary_command: maxKey(named.commandInvocations),
-    lines_added: null,
-    lines_removed: null,
+    commands: acc.commandsInOrder,
+    primary_command: acc.commandsInOrder[0] ?? '',
+    turns: acc.turns,
+    lines_added: acc.linesAdded,
+    lines_removed: acc.linesRemoved,
     files_changed: filesChanged.size,
     files_written: acc.filesWritten.size,
     files_edited: acc.filesEdited.size,
-    compaction_count: acc.compactionCount,
+    compaction_count: acc.compactions.length,
+    compaction_pre_tokens: compactionPreTokens,
+    compactions: acc.compactions,
     branch_counts: branchCounts,
     branch_dominant: branchDominant(branchCounts),
-    title: '',
+    git_branch: acc.lastGitBranch,
+    client_versions: acc.clientVersions,
+    title: acc.title,
   };
 }
