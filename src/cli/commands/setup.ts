@@ -108,8 +108,8 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         isUpdate = true;
         console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
 
-        // For updates, use existing storage location (detect from current state)
-        storageLocation = hasLocalConfig ? 'local' : 'global';
+        // For updates, keep the profile in the config that defines it
+        storageLocation = await ConfigLoader.getProfileScope(selectedProfile);
       } else {
         // Adding new profile - ask where to store it
         console.log(chalk.white('\nConfiguring new profile...\n'));
