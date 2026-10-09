@@ -120,7 +120,10 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // backstop pass) already reported it and nothing was appended since, so re-running here would
     // only resend the same event as a duplicate.
     const subagentFiles = await findSubagentFiles(transcriptPath);
-    for (const file of subagentFiles) {
+    for (const rawFile of subagentFiles) {
+      // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
+      // available stand-in (subagents share their parent session's cwd).
+      const file: SubagentFile = { ...rawFile, cwd: hookInput.cwd };
       if (await subagentNeedsBackstop(sessionId, file)) {
         derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
       }
@@ -151,6 +154,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       agentType: hookInput.agent_type,
       spawnDepth: meta.spawnDepth,
       description: meta.description,
+      cwd: hookInput.cwd,
     };
 
     const derived = await collectSubagentTranscriptEvents(hookInput.session_id, subagentFile);

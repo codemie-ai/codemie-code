@@ -103,7 +103,7 @@ function usageRequest(overrides: Partial<OpenUsageRequest> = {}): OpenUsageReque
     speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
     inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
     cacheReadTokens: 0, outputTokens: 0, webSearchRequests: 0, webFetchRequests: 0,
-    scopeKind: 'agent', scopeName: '', agentId: 'a1',
+    scopeKind: 'agent', scopeName: '', agentId: 'a1', agentType: '',
     stopReason: 'end_turn', isApiError: false, gitBranch: 'main',
     ...overrides,
   };
@@ -275,7 +275,7 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.usage).toEqual([]);
   });
 
-  it('never fabricates agent_type/description/workflow_run/worktree — always empty string when absent', () => {
+  it('never fabricates agent_type/description/workflow_run — always empty string when absent; worktree also defaults to empty when the caller has no cwd', () => {
     const file: SubagentFile = { agentId: 'a3', filePath: '/tmp/agent-a3.jsonl' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
@@ -284,6 +284,16 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.description).toBe('');
     expect(event.workflow_run).toBe('');
     expect(event.worktree).toBe('');
+  });
+
+  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived', () => {
+    const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl', cwd: '/repo/worktrees/feature' };
+
+    const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
+
+    expect(event.worktree).toBe('/repo/worktrees/feature');
+    // workflow_run has no known source regardless of cwd — still never fabricated.
+    expect(event.workflow_run).toBe('');
   });
 
   it('picks the usage[] row with the most api_calls as the top-level model', () => {
@@ -330,7 +340,7 @@ describe('cross-check: agent.subagent.usage usage[] totals vs agent.usage.reques
       const lines = raw.split('\n').filter((l) => l.trim().length > 0);
 
       const reqs: OpenUsageRequest[] = lines
-        .map((line) => parseUsageLine(line, 'agent', '', file.agentId))
+        .map((line) => parseUsageLine(line, 'agent', '', file.agentId, file.agentType ?? ''))
         .filter((r): r is OpenUsageRequest => r !== null);
 
       expect(reqs.length).toBeGreaterThan(0);

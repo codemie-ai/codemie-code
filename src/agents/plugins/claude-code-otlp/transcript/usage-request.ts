@@ -61,15 +61,16 @@ interface TranscriptUsageLine {
  * carries no `message.usage` block (not a billable API response — e.g. a plain user/system
  * message) or is not valid JSON.
  *
- * `scopeKind`/`scopeName`/`agentId` are passed through verbatim from the caller, which already
- * knows which transcript (main vs. a named skill context vs. a subagent transcript) `line` came
- * from — this function has no way to derive that from the line itself.
+ * `scopeKind`/`scopeName`/`agentId`/`agentType` are passed through verbatim from the caller, which
+ * already knows which transcript (main vs. a named skill context vs. a subagent transcript) `line`
+ * came from — this function has no way to derive that from the line itself.
  */
 export function parseUsageLine(
   line: string,
   scopeKind: 'main' | 'skill' | 'agent',
   scopeName: string,
-  agentId: string
+  agentId: string,
+  agentType: string
 ): OpenUsageRequest | null {
   let parsed: TranscriptUsageLine;
   try {
@@ -117,6 +118,7 @@ export function parseUsageLine(
     scopeKind,
     scopeName,
     agentId,
+    agentType,
     // Sibling of usage on message, not nested inside it.
     stopReason: parsed.message?.stop_reason ?? '',
     isApiError: Boolean(parsed.isApiError),
@@ -164,6 +166,7 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
     scopeKind: b.scopeKind || a.scopeKind,
     scopeName: b.scopeName || a.scopeName,
     agentId: b.agentId || a.agentId,
+    agentType: b.agentType || a.agentType,
     stopReason: b.stopReason || a.stopReason,
     isApiError: b.isApiError || a.isApiError,
     gitBranch: b.gitBranch || a.gitBranch,
@@ -196,6 +199,7 @@ export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest)
     scope_kind: req.scopeKind,
     scope_name: req.scopeName,
     agent_id: req.agentId,
+    agent_type: req.agentType,
     stop_reason: req.stopReason,
     is_api_error: req.isApiError,
     git_branch: req.gitBranch,

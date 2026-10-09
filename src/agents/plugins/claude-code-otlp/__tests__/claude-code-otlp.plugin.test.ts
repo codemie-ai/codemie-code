@@ -244,6 +244,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       filePath: '/tmp/agent-sub-1.jsonl',
       toolUseId: 'tu-1',
       agentType: 'explore',
+      cwd: '/repo',
     });
   });
 
@@ -289,6 +290,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       agentType: 'explore',
       spawnDepth: 2,
       description: 'task',
+      cwd: '/repo',
     });
   });
 
@@ -334,7 +336,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledTimes(2);
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith(
       'sid-1',
-      { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl' }
+      { agentId: 'sub-1', filePath: '/tmp/agent-sub-1.jsonl', cwd: '/repo' }
     );
   });
 
@@ -355,7 +357,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledTimes(1);
     expect(collectSubagentTranscriptEventsMock).toHaveBeenCalledWith(
       'sid-1',
-      { agentId: 'pending', filePath: '/tmp/agent-pending.jsonl' }
+      { agentId: 'pending', filePath: '/tmp/agent-pending.jsonl', cwd: '/repo' }
     );
   });
 

@@ -13,7 +13,9 @@
  * scope_kind/scope_name) and passes the caller-built tool-call/tool-error/skill maps through as
  * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
- * `workflow_run`/`worktree` have no known source and are always empty strings, never fabricated.
+ * `workflow_run` has no known source and is always an empty string, never fabricated. `worktree`
+ * is the hook's own `cwd` (the contract's "its worktree path") — the caller fills it in from the
+ * triggering hook payload, since no sidecar or transcript signal carries it.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -27,6 +29,8 @@ export interface SubagentFile {
   agentType?: string;
   spawnDepth?: number;
   description?: string;
+  /** The triggering hook's `cwd` — the contract's `worktree` path. `''` when the caller has none. */
+  cwd?: string;
 }
 
 interface SubagentMeta {
@@ -228,7 +232,7 @@ export function buildSubagentUsageEvent(
     description: file.description ?? '',
     workflow_run: '',
     spawn_depth: file.spawnDepth ?? 0,
-    worktree: '',
+    worktree: file.cwd ?? '',
     started_at: startedAt,
     ended_at: endedAt,
     duration_ms: durationMs,

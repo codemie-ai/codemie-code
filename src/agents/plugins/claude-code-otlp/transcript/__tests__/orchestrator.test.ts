@@ -202,6 +202,43 @@ function commandText(name: string): string {
   return `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args></command-args>`;
 }
 
+/** An assistant usage line, optionally invoking the `Skill` tool alongside its own usage. */
+function skillAwareLine(opts: {
+  uuid: string;
+  messageId: string;
+  outputTokens: number;
+  skill?: string;
+}): string {
+  const content: unknown[] = [{ type: 'text', text: 'ok' }];
+  if (opts.skill) {
+    content.push({ type: 'tool_use', id: `tool-${opts.uuid}`, name: 'Skill', input: { skill: opts.skill } });
+  }
+  return JSON.stringify({
+    gitBranch: 'main',
+    cwd: '/repo',
+    timestamp: '2026-10-01T00:00:00.000Z',
+    uuid: opts.uuid,
+    message: {
+      id: opts.messageId,
+      role: 'assistant',
+      model: 'claude-sonnet-4-5-20250929',
+      stop_reason: '',
+      content,
+      usage: {
+        input_tokens: 100,
+        output_tokens: opts.outputTokens,
+        cache_read_input_tokens: 5,
+        cache_creation_input_tokens: 0,
+        service_tier: 'standard',
+        speed: 'standard',
+        inference_geo: '',
+        cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+        server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+      },
+    },
+  });
+}
+
 describe('collectMainTranscriptEvents — compactions', () => {
   it('does not count PreCompact hook fires; compaction_count comes from compact_boundary lines', async () => {
     const { collectMainTranscriptEvents } = await import('../orchestrator.js');
@@ -381,6 +418,77 @@ describe('collectMainTranscriptEvents — api_calls', () => {
   });
 });
 
+describe('collectMainTranscriptEvents — skill scoping', () => {
+  it('scopes the request that invokes a Skill tool as main, scopes subsequent requests as skill, and clears on the next genuine user turn', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-skill-scope';
+    const transcriptPath = writeTranscript('transcript-skill-scope.jsonl', [
+      // The invoking turn itself still belongs to whatever was active before it (main, here).
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'brainstorming' }),
+      // Now inside the skill's context.
+      skillAwareLine({ uuid: 'u2', messageId: 'msg-2', outputTokens: 20 }),
+      skillAwareLine({ uuid: 'u3', messageId: 'msg-3', outputTokens: 30 }),
+      // A fresh user prompt leaves the skill context.
+      userLine('new unrelated prompt'),
+      skillAwareLine({ uuid: 'u4', messageId: 'msg-4', outputTokens: 40 }),
+    ]);
+
+    const events = await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+    const byMessageId = (id: string): Record<string, unknown> => {
+      const found = usage.find((e) => e.message_id === id);
+      if (!found) throw new Error(`missing usage event for ${id}`);
+      return found;
+    };
+
+    expect(byMessageId('msg-1')).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    expect(byMessageId('msg-2')).toMatchObject({ scope_kind: 'skill', scope_name: 'brainstorming' });
+    expect(byMessageId('msg-3')).toMatchObject({ scope_kind: 'skill', scope_name: 'brainstorming' });
+    expect(byMessageId('msg-4')).toMatchObject({ scope_kind: 'main', scope_name: '' });
+  });
+
+  it('switches scope_name when a second, different Skill is invoked while already inside one', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-skill-switch';
+    const transcriptPath = writeTranscript('transcript-skill-switch.jsonl', [
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'brainstorming' }),
+      skillAwareLine({ uuid: 'u2', messageId: 'msg-2', outputTokens: 20, skill: 'code-review' }),
+      skillAwareLine({ uuid: 'u3', messageId: 'msg-3', outputTokens: 30 }),
+    ]);
+
+    const events = await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+
+    // msg-1 invokes 'brainstorming' but is itself scoped by whatever was active before it (main).
+    expect(usage.find((e) => e.message_id === 'msg-1')).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    // msg-2 invokes 'code-review' but is itself still scoped under 'brainstorming' (active since msg-1).
+    expect(usage.find((e) => e.message_id === 'msg-2')).toMatchObject({ scope_kind: 'skill', scope_name: 'brainstorming' });
+    expect(usage.find((e) => e.message_id === 'msg-3')).toMatchObject({ scope_kind: 'skill', scope_name: 'code-review' });
+  });
+
+  it('persists activeSkill across hook invocations (fresh CLI process per hook)', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-skill-persisted';
+    const transcriptPath = writeTranscript('transcript-skill-persisted.jsonl', [
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'brainstorming' }),
+    ]);
+    await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+
+    writeFileSync(
+      transcriptPath,
+      skillAwareLine({ uuid: 'u2', messageId: 'msg-2', outputTokens: 20 }) + '\n',
+      { flag: 'a' }
+    );
+    const events = await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage.find((e) => e.message_id === 'msg-2')).toMatchObject({ scope_kind: 'skill', scope_name: 'brainstorming' });
+  });
+});
+
 describe('collectMainTranscriptEvents — SessionEnd trigger', () => {
   it('returns a final-phase summary with an ended_at key present', async () => {
     const { collectMainTranscriptEvents } = await import('../orchestrator.js');
@@ -465,6 +573,34 @@ describe('collectMainTranscriptEvents — tool-call accumulation', () => {
     expect(summary?.tool_calls).toBe(2);
     expect(summary?.tool_errors).toBe(1);
     expect(summary?.tool_results).toBe(2);
+  });
+
+  it('counts MultiEdit (file_path) and NotebookEdit (notebook_path) toward files_edited/files_changed, not files_written', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-tools-multiedit-notebook';
+    const toolLine = JSON.stringify({
+      gitBranch: 'main',
+      timestamp: '2026-10-01T00:00:00.000Z',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'tool-1', name: 'MultiEdit', input: { file_path: '/repo/a.ts', edits: [] } },
+          { type: 'tool_use', id: 'tool-2', name: 'NotebookEdit', input: { notebook_path: '/repo/nb.ipynb' } },
+        ],
+      },
+    });
+    const transcriptPath = writeTranscript('transcript-multiedit-notebook.jsonl', [toolLine]);
+
+    const events = await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop');
+    const summary = events.find((e) => e.type === 'agent.session.summary');
+
+    expect(summary?.files_written).toBe(0);
+    expect(summary?.files_edited).toBe(2);
+    expect(summary?.files_changed).toBe(2);
+    const tools = summary?.tools as Record<string, { calls: number; errors: number }>;
+    expect(tools.MultiEdit).toEqual({ calls: 1, errors: 0 });
+    expect(tools.NotebookEdit).toEqual({ calls: 1, errors: 0 });
   });
 });
 
@@ -577,6 +713,35 @@ describe('collectSubagentTranscriptEvents — request identity', () => {
       ['', 'msg_bdrk_b'],
       ['req_a', 'msg_a'],
     ]);
+  });
+
+  it('carries the SubagentFile.agentType through onto every agent.usage.request event', async () => {
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-sub-agent-type';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10 }),
+    ]);
+
+    const events = await collectSubagentTranscriptEvents(sessionId, { ...file, agentType: 'Explore' });
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage).toHaveLength(1);
+    expect(usage[0].agent_type).toBe('Explore');
+  });
+
+  it('defaults agent_type to empty when the SubagentFile has none', async () => {
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-sub-no-agent-type';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10 }),
+    ]);
+
+    const events = await collectSubagentTranscriptEvents(sessionId, file);
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage[0].agent_type).toBe('');
   });
 });
 

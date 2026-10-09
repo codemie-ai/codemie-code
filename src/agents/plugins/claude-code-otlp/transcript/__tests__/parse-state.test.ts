@@ -90,6 +90,7 @@ describe('loadParseState', () => {
       scopeKind: 'main',
       scopeName: '',
       agentId: '',
+      agentType: '',
       stopReason: 'end_turn',
       isApiError: false,
       gitBranch: 'main',

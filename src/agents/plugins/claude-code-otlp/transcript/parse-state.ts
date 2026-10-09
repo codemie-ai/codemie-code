@@ -33,6 +33,8 @@ export interface OpenUsageRequest {
   scopeKind: 'main' | 'skill' | 'agent';
   scopeName: string;
   agentId: string;
+  /** The subagent's type (e.g. `'Explore'`); `''` for `scopeKind: 'main' | 'skill'`. */
+  agentType: string;
   stopReason: string;
   isApiError: boolean;
   gitBranch: string;

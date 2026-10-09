@@ -54,7 +54,7 @@ interface ContentBlock {
   tool_use_id?: string;
   is_error?: boolean;
   isError?: boolean;
-  input?: { file_path?: unknown; path?: unknown };
+  input?: { file_path?: unknown; path?: unknown; notebook_path?: unknown; skill?: unknown };
 }
 
 interface TranscriptLine extends SignalLine {
@@ -129,6 +129,36 @@ function countToolResults(parsedLines: TranscriptLine[]): number {
 }
 
 /**
+ * The `Skill` tool's invoked name (`input.skill`) on `parsed`'s assistant content, or `''` when
+ * this line does not invoke one. Mirrors `claude-named-invocations.ts`'s own `Skill` detection,
+ * but only needs the single name on one line rather than a session-wide count.
+ */
+function findSkillInvocation(parsed: TranscriptLine): string {
+  const content = parsed.message?.content;
+  if (!Array.isArray(content)) return '';
+  for (const item of content as ContentBlock[]) {
+    if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
+      const skill = item.input.skill.trim();
+      if (skill) return skill;
+    }
+  }
+  return '';
+}
+
+/**
+ * Whether `parsed` is a genuine new user turn (a real prompt, not a line carrying only
+ * `tool_result` blocks) — the same criteria `session-signals.ts`'s `countTurns` uses.
+ */
+function isGenuineUserTurn(parsed: TranscriptLine): boolean {
+  if (parsed.type !== 'user' || parsed.isMeta || parsed.isSidechain || parsed.isCompactSummary) {
+    return false;
+  }
+  const content = parsed.message?.content;
+  if (typeof content === 'string') return true;
+  return Array.isArray(content) && content.some((block) => (block as { type?: unknown } | null)?.type === 'text');
+}
+
+/**
  * Recompute the full-session summary accumulator, named-invocation counts, and session start
  * time from byte 0 of the main transcript.
  *
@@ -187,7 +217,9 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
   // `usageRequestKey()` key `state.openRequests` uses before counting.
   const modelByRequestKey = new Map<string, string>();
   for (const line of rawLines) {
-    const parsedUsage = parseUsageLine(line, 'main', '', '');
+    // scopeKind/scopeName/agentId/agentType don't affect this count (only `.model` is read), so
+    // 'main' is used uniformly rather than re-deriving collectMainTranscriptEvents's active-skill state.
+    const parsedUsage = parseUsageLine(line, 'main', '', '', '');
     if (parsedUsage) {
       modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
     }
@@ -210,10 +242,12 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
       }
       acc.toolCalls[item.name] = entry;
 
-      const filePath = item.input?.file_path ?? item.input?.path;
+      const filePath = item.input?.file_path ?? item.input?.path ?? item.input?.notebook_path;
       if (typeof filePath === 'string' && filePath) {
         if (item.name === 'Write') acc.filesWritten.add(filePath);
-        if (item.name === 'Edit') acc.filesEdited.add(filePath);
+        if (item.name === 'Edit' || item.name === 'MultiEdit' || item.name === 'NotebookEdit') {
+          acc.filesEdited.add(filePath);
+        }
       }
     }
   }
@@ -259,9 +293,15 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
  * Never forwards anything itself — the caller is responsible for sending the returned events to
  * the spool (exactly one place in the pipeline does that).
  *
- * Scoping: no reliable transcript signal marks a *main*-transcript turn entering/exiting a
- * "skill context", so every main-transcript usage record is scoped `scopeKind: 'main'`,
- * `scopeName: ''`. `state.activeSkill` is deliberately neither read nor written.
+ * Scoping: `state.activeSkill` tracks which skill (if any) the main transcript is currently
+ * "inside" — set to a skill's name when a `Skill` tool_use invokes it ({@link findSkillInvocation},
+ * applied *after* scoping that same line's own usage record, since the invoking turn itself still
+ * belongs to whatever was active before it), and cleared on the next genuine new user turn
+ * ({@link isGenuineUserTurn}) — a fresh prompt is treated as leaving any skill context the
+ * previous turn's work was under. Every usage record is scoped `scopeKind: 'skill'`,
+ * `scopeName: state.activeSkill` while a skill is active, else `scopeKind: 'main'`, `scopeName: ''`.
+ * This is a heuristic, not a tracked boundary Claude Code itself reports — a skill whose work
+ * spans multiple turns without an intervening user prompt is scoped as one continuous span.
  *
  * Swallows every error internally — never throws into `processOtlpEvent`.
  */
@@ -281,25 +321,40 @@ export async function collectMainTranscriptEvents(
       for (const line of lines) {
         let rawGitBranch = '';
         let isUserLine = false;
+        let head: TranscriptLine | null = null;
         try {
-          const head = JSON.parse(line) as { gitBranch?: string; type?: string };
+          head = JSON.parse(line) as TranscriptLine;
           rawGitBranch = head?.gitBranch ?? '';
           isUserLine = head?.type === 'user';
         } catch {
           // Malformed line: still attempt usage parsing below (which has its own try/catch), but
-          // there is no branch to record from it.
+          // there is no branch/skill/turn signal to read from it.
         }
         // The contract's branch counts are user lines per branch.
         if (rawGitBranch && isUserLine) {
           updateBranchCounts(state.branchCounts, rawGitBranch);
         }
 
-        const parsed = parseUsageLine(line, 'main', '', '');
+        if (head && isGenuineUserTurn(head)) {
+          state.activeSkill = '';
+        }
+
+        const scopeKind = state.activeSkill ? 'skill' : 'main';
+        const parsed = parseUsageLine(line, scopeKind, state.activeSkill, '', '');
         if (parsed) {
           const key = usageRequestKey(parsed);
           const existing = state.openRequests[key];
           state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
           touchedKeys.add(key);
+        }
+
+        // Applied after this line's own usage is scoped — the turn that invokes a skill still
+        // belongs to whatever context was active before it.
+        if (head) {
+          const skill = findSkillInvocation(head);
+          if (skill) {
+            state.activeSkill = skill;
+          }
         }
       }
       state.mainOffset = nextOffset;
@@ -508,7 +563,7 @@ export async function collectSubagentTranscriptEvents(
 
       const touchedKeys = new Set<string>();
       for (const line of lines) {
-        const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId);
+        const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId, subagentFile.agentType ?? '');
         if (parsed) {
           const key = usageRequestKey(parsed);
           const existing = state.openRequests[key];

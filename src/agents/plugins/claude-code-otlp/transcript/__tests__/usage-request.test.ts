@@ -34,13 +34,13 @@ beforeAll(async () => {
 describe('parseUsageLine', () => {
   it('returns null for a line with no message.usage block', () => {
     expect(lines).toHaveLength(4);
-    const result = parseUsageLine(lines[0], 'main', '', '');
+    const result = parseUsageLine(lines[0], 'main', '', '', '');
     expect(result).toBeNull();
   });
 
   it('returns null for malformed JSON instead of throwing', () => {
-    expect(() => parseUsageLine('not valid json {{{', 'main', '', '')).not.toThrow();
-    expect(parseUsageLine('not valid json {{{', 'main', '', '')).toBeNull();
+    expect(() => parseUsageLine('not valid json {{{', 'main', '', '', '')).not.toThrow();
+    expect(parseUsageLine('not valid json {{{', 'main', '', '', '')).toBeNull();
   });
 
   it('returns null for a usage-bearing line with neither requestId nor message.id, instead of collapsing it onto a shared ::model key', () => {
@@ -53,11 +53,11 @@ describe('parseUsageLine', () => {
       },
     });
 
-    expect(parseUsageLine(line, 'main', '', '')).toBeNull();
+    expect(parseUsageLine(line, 'main', '', '', '')).toBeNull();
   });
 
   it('extracts every field from a fully-populated line', () => {
-    const req = parseUsageLine(lines[3], 'main', '', '');
+    const req = parseUsageLine(lines[3], 'main', '', '', '');
 
     expect(req).not.toBeNull();
     const r = req as OpenUsageRequest;
@@ -93,7 +93,7 @@ describe('parseUsageLine', () => {
   });
 
   it('reads the top-level requestId and message.id separately from a direct-session line', () => {
-    const r = parseUsageLine(directLines[0], 'main', '', '') as OpenUsageRequest;
+    const r = parseUsageLine(directLines[0], 'main', '', '', '') as OpenUsageRequest;
 
     expect(r.requestId).toBe('req_011CfrTbrJgSQRWgsdY5FZFc');
     expect(r.messageId).toBe('msg_011CfrTbrWLhWiotBBJC62pV');
@@ -105,25 +105,32 @@ describe('parseUsageLine', () => {
       message: { role: 'assistant', model: 'm', usage: { input_tokens: 1, output_tokens: 1 } },
     });
 
-    const r = parseUsageLine(line, 'main', '', '') as OpenUsageRequest;
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
 
     expect(r.requestId).toBe('req_only');
     expect(r.messageId).toBe('');
   });
 
-  it('passes scopeKind/scopeName/agentId through verbatim from its own parameters', () => {
-    const req = parseUsageLine(lines[3], 'agent', 'reviewer', 'agent-42');
+  it('passes scopeKind/scopeName/agentId/agentType through verbatim from its own parameters', () => {
+    const req = parseUsageLine(lines[3], 'agent', 'reviewer', 'agent-42', 'Explore');
 
     expect(req?.scopeKind).toBe('agent');
     expect(req?.scopeName).toBe('reviewer');
     expect(req?.agentId).toBe('agent-42');
+    expect(req?.agentType).toBe('Explore');
+  });
+
+  it('defaults agentType to empty for a main-scoped line', () => {
+    const req = parseUsageLine(lines[3], 'main', '', '', '');
+
+    expect(req?.agentType).toBe('');
   });
 });
 
 describe('mergeUsageRequest', () => {
   it('keeps the max output_tokens and the non-empty stop_reason across two records for the same message.id', () => {
-    const first = parseUsageLine(lines[1], 'main', '', '');
-    const second = parseUsageLine(lines[2], 'main', '', '');
+    const first = parseUsageLine(lines[1], 'main', '', '', '');
+    const second = parseUsageLine(lines[2], 'main', '', '', '');
 
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
@@ -149,8 +156,8 @@ describe('mergeUsageRequest', () => {
   });
 
   it('merges the two rows of one direct-session response into one record with both ids', () => {
-    const a = parseUsageLine(directLines[0], 'main', '', '') as OpenUsageRequest;
-    const b = parseUsageLine(directLines[1], 'main', '', '') as OpenUsageRequest;
+    const a = parseUsageLine(directLines[0], 'main', '', '', '') as OpenUsageRequest;
+    const b = parseUsageLine(directLines[1], 'main', '', '', '') as OpenUsageRequest;
 
     expect(usageRequestKey(a)).toBe(usageRequestKey(b));
     const merged = mergeUsageRequest(a, b);
@@ -161,7 +168,7 @@ describe('mergeUsageRequest', () => {
   });
 
   it('keeps messageId when only the earlier record has it', () => {
-    const a = parseUsageLine(lines[1], 'main', '', '') as OpenUsageRequest;
+    const a = parseUsageLine(lines[1], 'main', '', '', '') as OpenUsageRequest;
     const merged = mergeUsageRequest(a, { ...a, messageId: '' });
 
     expect(merged.messageId).toBe('msg_pair_1');
@@ -173,7 +180,7 @@ describe('mergeUsageRequest', () => {
       speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
       inputTokens: 10, cacheCreation5mTokens: 1, cacheCreation1hTokens: 2,
       cacheReadTokens: 3, outputTokens: 4, webSearchRequests: 5, webFetchRequests: 6,
-      scopeKind: 'main', scopeName: '', agentId: '',
+      scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
       stopReason: '', isApiError: false, gitBranch: 'main',
     };
     const b: OpenUsageRequest = {
@@ -202,7 +209,7 @@ describe('mergeUsageRequest', () => {
       speed: '', inferenceGeo: '', serviceTier: '',
       inputTokens: 1, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
       cacheReadTokens: 0, outputTokens: 1, webSearchRequests: 0, webFetchRequests: 0,
-      scopeKind: 'main', scopeName: '', agentId: '',
+      scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
       stopReason: '', isApiError: false, gitBranch: '',
     };
     const b: OpenUsageRequest = { ...a, outputTokens: 2, stopReason: 'end_turn', isApiError: true };
@@ -218,6 +225,14 @@ describe('mergeUsageRequest', () => {
     // isApiError: once true, stays true across merges.
     expect(merged.isApiError).toBe(true);
   });
+
+  it('merges agentType like every other non-numeric field: b wins when non-empty, else a', () => {
+    const first = parseUsageLine(lines[3], 'agent', '', 'agent-1', 'Explore') as OpenUsageRequest;
+    const laterWithoutAgentType = { ...first, agentType: '' };
+
+    expect(mergeUsageRequest(first, laterWithoutAgentType).agentType).toBe('Explore');
+    expect(mergeUsageRequest(laterWithoutAgentType, first).agentType).toBe('Explore');
+  });
 });
 
 describe('buildUsageRequestEvent', () => {
@@ -227,7 +242,7 @@ describe('buildUsageRequestEvent', () => {
       speed: 'fast', inferenceGeo: 'us', serviceTier: 'priority',
       inputTokens: 10, cacheCreation5mTokens: 1, cacheCreation1hTokens: 2,
       cacheReadTokens: 3, outputTokens: 4, webSearchRequests: 5, webFetchRequests: 6,
-      scopeKind: 'skill', scopeName: 'brainstorming', agentId: 'agent-7',
+      scopeKind: 'skill', scopeName: 'brainstorming', agentId: 'agent-7', agentType: 'Explore',
       stopReason: 'end_turn', isApiError: false, gitBranch: 'main',
     };
 
@@ -253,6 +268,7 @@ describe('buildUsageRequestEvent', () => {
       scope_kind: 'skill',
       scope_name: 'brainstorming',
       agent_id: 'agent-7',
+      agent_type: 'Explore',
       stop_reason: 'end_turn',
       is_api_error: false,
       git_branch: 'main',
@@ -283,7 +299,7 @@ describe('usageRequestKey', () => {
 
 describe('buildUsageRequestEvent - direct session', () => {
   it('emits the API request id as request_id and message.id as message_id', () => {
-    const req = parseUsageLine(directLines[2], 'main', '', '') as OpenUsageRequest;
+    const req = parseUsageLine(directLines[2], 'main', '', '', '') as OpenUsageRequest;
 
     const event = buildUsageRequestEvent('session-direct', req);
 
