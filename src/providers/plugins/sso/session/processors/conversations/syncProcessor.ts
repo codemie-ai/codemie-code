@@ -33,7 +33,8 @@ import {
   CODEMIE_ASSISTANT_ID,
   DEFAULT_CONVERSATION_FOLDER,
   CONVERSATION_PROCESSOR_PRIORITY,
-  CONVERSATION_PROCESSOR_NAME
+  CONVERSATION_PROCESSOR_NAME,
+  MAX_CONVERSATION_PAYLOADS_PER_RUN
 } from './constants.js';
 
 /**
@@ -84,7 +85,16 @@ export function createSyncProcessor(): SessionProcessor {
         }
       }
 
-      const pendingPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
+      const unsentPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
+
+      // Cap: send oldest first, at most MAX_CONVERSATION_PAYLOADS_PER_RUN; the rest wait as they are.
+      const pendingPayloads = unsentPayloads.slice(0, MAX_CONVERSATION_PAYLOADS_PER_RUN);
+      if (unsentPayloads.length > pendingPayloads.length) {
+        logger.debug(
+          `[${CONVERSATION_PROCESSOR_NAME}] Per-run cap reached: deferring ` +
+          `${unsentPayloads.length - pendingPayloads.length} payload(s) to the next run`
+        );
+      }
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);

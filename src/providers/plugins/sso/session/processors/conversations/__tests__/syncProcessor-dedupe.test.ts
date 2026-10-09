@@ -335,4 +335,55 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(readRecords().map(r => r.status)).toEqual(['success', 'success', 'success']);
     });
   });
+
+  describe('per-run send cap (AC6)', () => {
+    function uniqueRecord(i: number, payloadId = `conv-${i}@0`): TestRecord {
+      return makeRecord({
+        payloadId,
+        lastProcessedMessageUuid: payloadId,
+        timestamp: 1_700_000_000_000 + i,
+        payload: {
+          conversationId: `conv-${i}`,
+          history: [{ role: 'User', message: `hello ${i}`, history_index: 0 }],
+        },
+      });
+    }
+
+    beforeEach(() => {
+      upsertConversation.mockResolvedValue(okResponse);
+    });
+
+    it('sends at most 50 payloads per run, oldest first, and leaves the rest pending', async () => {
+      writeRecords(Array.from({ length: 51 }, (_, i) => uniqueRecord(i)));
+
+      const result = await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(50);
+      expect(upsertConversation.mock.calls.map(call => call[0])).toEqual(
+        Array.from({ length: 50 }, (_, i) => `conv-${i}`)
+      );
+      expect(result.message).toBe('Synced 50/50 conversations');
+      const statuses = readRecords().map(r => r.status);
+      expect(statuses.filter(st => st === 'pending')).toHaveLength(1);
+      expect(statuses[50]).toBe('pending');
+
+      upsertConversation.mockClear();
+      await runSync();
+      expect(upsertConversation.mock.calls.map(call => call[0])).toEqual(['conv-50']);
+      expect(readRecords().every(r => r.status === 'success')).toBe(true);
+    });
+
+    it('does not count superseded duplicates toward the cap', async () => {
+      const duplicates = Array.from({ length: 10 }, (_, i) => uniqueRecord(i, `dup-${i}`));
+      const survivors = Array.from({ length: 50 }, (_, i) => uniqueRecord(i));
+      writeRecords([...duplicates, ...survivors]);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(50);
+      const statuses = readRecords().map(r => r.status);
+      expect(statuses.slice(0, 10).every(st => st === 'superseded')).toBe(true);
+      expect(statuses.slice(10).every(st => st === 'success')).toBe(true);
+    });
+  });
 });
