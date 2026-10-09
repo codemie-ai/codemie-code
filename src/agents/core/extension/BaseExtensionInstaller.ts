@@ -536,6 +536,38 @@ export abstract class BaseExtensionInstaller {
     }
   }
 
+  // Repair hooks.json commands whose absolute codemie path no longer exists (e.g. after a
+  // reinstall moved the binary). Runs on the already_exists branch; no PATH lookup or write
+  // unless something is stale. Non-fatal. EPMCDME-15769.
+  protected async repairStaleHooks(targetPath: string): Promise<void> {
+    try {
+      const { hasStaleCodemieCommand, repairStaleHooksCommandTree, resolveCodemieBinary } =
+        await import('../../../utils/hook-command.js');
+      const hooksFile = join(targetPath, 'hooks', 'hooks.json');
+      let raw: string;
+      try {
+        raw = await readFile(hooksFile, 'utf-8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      const parsed = JSON.parse(raw) as { hooks?: unknown };
+      if (!hasStaleCodemieCommand(parsed.hooks)) return;
+      const binary = await resolveCodemieBinary();
+      if (binary === 'codemie') {
+        logger.debug(`[${this.agentName}] Stale hook commands found but no codemie binary resolved; leaving as-is`);
+        return;
+      }
+      if (repairStaleHooksCommandTree(parsed.hooks, binary)) {
+        await writeFile(hooksFile, JSON.stringify(parsed, null, 2), 'utf-8');
+        logger.info(`[${this.agentName}] Repaired stale hook commands to ${binary}`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[${this.agentName}] Could not repair stale hook commands (non-fatal): ${msg}`);
+    }
+  }
+
   /**
    * Check if extension is already installed and get version info
    *
@@ -697,6 +729,7 @@ export abstract class BaseExtensionInstaller {
         await this.localizeInstalledHooks(targetPath);
       } else {
         logger.info(`[${this.agentName}] Skipping copy - extension already up-to-date`);
+        await this.repairStaleHooks(targetPath);
       }
 
       // Build result

@@ -1,0 +1,2 @@
+{"task_id":"1","status":"done","commit":"0e052955","test_command":"npx vitest run --project unit src/utils/__tests__/hook-command.test.ts"}
+{"task_id":"2","status":"done","commit":"841a3c32","test_command":"npx vitest run --project unit src/agents/core/extension/__tests__/BaseExtensionInstaller.hooks.test.ts src/utils/__tests__/hook-command.test.ts"}

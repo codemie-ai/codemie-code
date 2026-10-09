@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15769_claude-hooks-stale-path",
+  "head": "841a3c32f7c7594335ab31a4dcfeef2f6b80c863",
+  "runner": "npm",
+  "started_at": "2026-10-09T07:52:13Z",
+  "completed_at": "2026-10-09T08:35:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 22000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "322 files, 4767 tests passed"
+    },
+    {
+      "id": "cli",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 1140000,
+      "command": "npx vitest run --project cli",
+      "exit_code": null,
+      "notes": "hung; killed"
+    }
+  ],
+  "failures": {
+    "cli": "Hung with no completion after ~19 min (killed). 272 tests passed in verbose rerun, then stalled; child processes 'node ./bin/codemie.js doctor' and 'node ./bin/codemie.js list' (spawned by tests) never exited, so the per-test 30s timeout did not reclaim them. Stdout showed only: \"error: unknown command 'invalid-command-xyz'\". Rerun excluding cli-commands/doctor.test.ts and list.test.ts hung the same way. Stale orphans of the same pattern (pid 80036/80037) exist from 2 days ago, so likely environmental."
+  }
+}

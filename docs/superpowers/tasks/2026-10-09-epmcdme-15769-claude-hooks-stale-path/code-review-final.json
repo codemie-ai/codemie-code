@@ -1,0 +1,13 @@
+{
+  "decision": "approve",
+  "rationale": "Edge-case lens ran (blind, acceptance, verification-gap not part of the compact/no-spec roster, so confidence is low); all 4 candidates were read against repairStaleHooks and hook-command.ts and dismissed as non-blocking (null hooks.json is caught by the non-fatal try/catch, others speculative or minor). 0 deferred, 4 dismissed; test criterion 7 was not verified.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not expected for this profile." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not expected for this profile." },
+    { "kind": "security", "status": "na", "notes": "Standards audit not expected for this profile." }
+  ],
+  "findings": []
+}

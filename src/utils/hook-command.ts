@@ -3,7 +3,7 @@
  * bare `codemie hook` no longer fails with `command not found` when the hook
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
-import { realpathSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { getCommandPath } from './processes.js';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
@@ -126,4 +126,100 @@ export function rewriteHooksCommandTree(node: unknown, binary: string): boolean 
   }
 
   return false;
+}
+
+export type PathExists = (p: string) => boolean;
+
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:\/)/;
+const CODEMIE_BASENAME = /^codemie(\.cmd|\.exe)?$/i;
+const NODE_BASENAME = /^node(\.exe)?$/i;
+const CODEMIE_SCRIPT_BASENAME = /^codemie[^/]*\.[cm]?js$/i;
+
+interface CommandToken {
+  path: string;
+  end: number;
+  quoted: boolean;
+}
+
+function readToken(command: string, start: number): CommandToken | null {
+  if (start >= command.length) return null;
+  if (command[start] === '"') {
+    const close = command.indexOf('"', start + 1);
+    if (close < 0) return null;
+    return { path: command.slice(start + 1, close).replace(/\\/g, '/'), end: close + 1, quoted: true };
+  }
+  const space = command.indexOf(' ', start);
+  const end = space < 0 ? command.length : space;
+  return { path: command.slice(start, end).replace(/\\/g, '/'), end, quoted: false };
+}
+
+function basename(p: string): string {
+  return p.slice(p.lastIndexOf('/') + 1);
+}
+
+// Length of the leading stale codemie prefix of `command`, or 0 when not stale.
+function staleCodemiePrefixLength(command: string, exists: PathExists): number {
+  const first = readToken(command, 0);
+  if (!first || !ABSOLUTE_PATH.test(first.path)) return 0;
+
+  if (CODEMIE_BASENAME.test(basename(first.path))) {
+    return exists(first.path) ? 0 : first.end;
+  }
+
+  if (NODE_BASENAME.test(basename(first.path)) && command[first.end] === ' ') {
+    const second = readToken(command, first.end + 1);
+    if (
+      second &&
+      second.quoted &&
+      ABSOLUTE_PATH.test(second.path) &&
+      CODEMIE_SCRIPT_BASENAME.test(basename(second.path))
+    ) {
+      return exists(first.path) && exists(second.path) ? 0 : second.end;
+    }
+  }
+  return 0;
+}
+
+function walkCommands(node: unknown, visit: (record: Record<string, unknown>, key: string) => boolean): boolean {
+  if (Array.isArray(node)) {
+    let changed = false;
+    for (const item of node) {
+      if (walkCommands(item, visit)) changed = true;
+    }
+    return changed;
+  }
+  if (node && typeof node === 'object') {
+    const record = node as Record<string, unknown>;
+    let changed = false;
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'command' && typeof value === 'string') {
+        if (visit(record, key)) changed = true;
+      } else if (walkCommands(value, visit)) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  return false;
+}
+
+// True if any hook command starts with an absolute codemie path that no longer exists.
+export function hasStaleCodemieCommand(node: unknown, exists: PathExists = existsSync): boolean {
+  // visit returns true on "found"; walkCommands aggregates with OR.
+  return walkCommands(node, (record, key) => staleCodemiePrefixLength(record[key] as string, exists) > 0);
+}
+
+// Replace stale absolute codemie prefixes with `binary`. Mutates in place; returns true if changed.
+export function repairStaleHooksCommandTree(
+  node: unknown,
+  binary: string,
+  exists: PathExists = existsSync,
+): boolean {
+  return walkCommands(node, (record, key) => {
+    const command = record[key] as string;
+    const prefix = staleCodemiePrefixLength(command, exists);
+    if (prefix === 0) return false;
+    record[key] = binary + command.slice(prefix);
+    return true;
+  });
 }

@@ -125,3 +125,50 @@ describe('hook-command resolver', () => {
     expect(rewriteHooksCommandTree(null, '/abs/codemie')).toBe(false);
   });
 });
+
+describe('stale codemie path repair', () => {
+  const missing = () => false;
+  const present = () => true;
+
+  it('hasStaleCodemieCommand detects a missing absolute codemie path only', async () => {
+    const { hasStaleCodemieCommand } = await import('../hook-command.js');
+    const tree = { Stop: [{ hooks: [{ type: 'command', command: '/gone/codemie hook' }] }] };
+    expect(hasStaleCodemieCommand(tree, missing)).toBe(true);
+    expect(hasStaleCodemieCommand(tree, present)).toBe(false);
+  });
+
+  it('repairStaleHooksCommandTree rewrites stale quoted and Windows node+js prefixes, keeping args', async () => {
+    const { repairStaleHooksCommandTree } = await import('../hook-command.js');
+    const tree = {
+      a: [
+        { command: '"/gone dir/codemie" hook' },
+        { command: '"C:/n/node.exe" "C:/n/codemie.js" sound Stop' },
+        { command: '/gone/codemie.cmd hook' },
+      ],
+    };
+    expect(repairStaleHooksCommandTree(tree, '/new/codemie', missing)).toBe(true);
+    expect(tree.a[0].command).toBe('/new/codemie hook');
+    expect(tree.a[1].command).toBe('/new/codemie sound Stop');
+    expect(tree.a[2].command).toBe('/new/codemie hook');
+  });
+
+  it('repairStaleHooksCommandTree leaves bare, relative and other-program commands unchanged', async () => {
+    const { repairStaleHooksCommandTree } = await import('../hook-command.js');
+    const commands = [
+      'codemie hook',
+      './codemie hook',
+      '/usr/bin/other hook',
+      '"C:/n/node.exe" "C:/n/other.js" hook',
+    ];
+    const tree = { hooks: commands.map((command) => ({ command })) };
+    expect(repairStaleHooksCommandTree(tree, '/new/codemie', missing)).toBe(false);
+    expect(tree.hooks.map((h) => h.command)).toEqual(commands);
+  });
+
+  it('repairStaleHooksCommandTree leaves existing paths untouched', async () => {
+    const { repairStaleHooksCommandTree } = await import('../hook-command.js');
+    const tree = { hooks: [{ command: '/ok/codemie hook' }] };
+    expect(repairStaleHooksCommandTree(tree, '/new/codemie', present)).toBe(false);
+    expect(tree.hooks[0].command).toBe('/ok/codemie hook');
+  });
+});
