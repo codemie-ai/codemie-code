@@ -138,4 +138,54 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(records.map(r => r.syncAttempts)).toEqual([1, 1]);
     });
   });
+
+  describe('healing on read (AC2)', () => {
+    it('marks pending and retryable failed duplicates of a successful id success without sending', async () => {
+      writeRecords([
+        makeRecord({ status: 'success', syncAttempts: 1 }),
+        makeRecord({ timestamp: 1_700_000_000_500 }),
+        makeRecord({ timestamp: 1_700_000_000_900, status: 'failed', syncAttempts: 1, error: 'boom' }),
+      ]);
+      upsertConversation.mockResolvedValue(okResponse);
+
+      await runSync();
+
+      expect(upsertConversation).not.toHaveBeenCalled();
+      const records = readRecords();
+      expect(records.map(r => r.status)).toEqual(['success', 'success', 'success']);
+      // Healing is not a send attempt
+      expect(records.map(r => r.syncAttempts)).toEqual([1, undefined, 1]);
+    });
+
+    it('matches records without a payloadId through the conversationId:timestamp fallback', async () => {
+      const noIds = { payloadId: undefined, lastProcessedMessageUuid: undefined };
+      writeRecords([
+        makeRecord({ ...noIds, status: 'success' }),
+        makeRecord({ ...noIds }),
+        // Different timestamp = different fallback id: must still be sent
+        makeRecord({ ...noIds, timestamp: 1_700_000_000_500 }),
+      ]);
+      upsertConversation.mockResolvedValue(okResponse);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(1);
+      expect(readRecords().map(r => r.status)).toEqual(['success', 'success', 'success']);
+    });
+
+    it('persists healed statuses even when the run defers immediately', async () => {
+      writeRecords([
+        makeRecord({ status: 'success' }),
+        makeRecord({ timestamp: 1_700_000_000_500 }),
+        makeRecord({ payloadId: 'conv-2@0', lastProcessedMessageUuid: 'conv-2@0' }),
+      ]);
+      const controller = new AbortController();
+      controller.abort();
+
+      await runSync({ abortSignal: controller.signal });
+
+      expect(upsertConversation).not.toHaveBeenCalled();
+      expect(readRecords().map(r => r.status)).toEqual(['success', 'success', 'pending']);
+    });
+  });
 });

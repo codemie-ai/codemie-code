@@ -16,6 +16,7 @@ import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
+import { getPayloadId, healSyncedDuplicates, isSendCandidate } from './payloadQueue.js';
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
@@ -29,8 +30,6 @@ import {
   CONVERSATION_PROCESSOR_PRIORITY,
   CONVERSATION_PROCESSOR_NAME
 } from './constants.js';
-
-const MAX_CONVERSATION_SYNC_ATTEMPTS = 3;
 
 /**
  * Create a conversation sync processor instance
@@ -58,11 +57,19 @@ export function createSyncProcessor(): SessionProcessor {
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
 
-      const pendingPayloads = allPayloads.filter(p =>
-        p.status === CONVERSATION_SYNC_STATUS.PENDING ||
-        (p.status === CONVERSATION_SYNC_STATUS.FAILED &&
-          (p.syncAttempts ?? 0) < MAX_CONVERSATION_SYNC_ATTEMPTS)
-      );
+      // Heal: a candidate whose payloadId already has a success record was synced;
+      // persist that before anything else so even a run that defers immediately heals.
+      const healedCount = healSyncedDuplicates(allPayloads);
+      if (healedCount > 0) {
+        logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced duplicate payload(s)`);
+        try {
+          await writeJSONLAtomic(conversationsFile, allPayloads);
+        } catch (writeError) {
+          logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed payloads:`, writeError);
+        }
+      }
+
+      const pendingPayloads = allPayloads.filter(isSendCandidate);
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -289,12 +296,6 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
     return 'pi';
   }
   return DEFAULT_CONVERSATION_FOLDER;
-}
-
-function getPayloadId(payload: ConversationPayloadRecord): string {
-  return payload.payloadId ||
-    payload.lastProcessedMessageUuid ||
-    `${payload.payload.conversationId}:${payload.timestamp}`;
 }
 
 /**
