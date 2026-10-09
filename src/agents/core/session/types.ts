@@ -17,7 +17,7 @@ export interface BaseNormalizedMessage {
 /**
  * Correlation status
  */
-export type CorrelationStatus = 'pending' | 'matched' | 'failed';
+export type CorrelationStatus = 'pending' | 'matched' | 'failed' | 'file_not_found';
 
 /**
  * Correlation result
