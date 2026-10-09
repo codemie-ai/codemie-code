@@ -392,7 +392,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
   });
 
   describe('saveProfile / initProjectConfig — workspace split', () => {
-    it('saveProfile routes workspace fields into the global scope workspace, not into profiles[name]', async () => {
+    it('saveProfile stores identity fields per-profile, not in the shared workspace', async () => {
       await ConfigLoader.saveProfile('p1', {
         provider: 'ai-run-sso',
         codeMieUrl: 'https://x',
@@ -402,11 +402,11 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect((config.profiles.p1 as any).codeMieUrl).toBeUndefined();
-      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
+      expect((config.profiles.p1 as any).codeMieUrl).toBe('https://x');
+      expect((config.profiles.p1 as any).codeMieProject).toBe('proj');
       expect(config.profiles.p1.provider).toBe('ai-run-sso');
-      expect(config.workspace?.codeMieUrl).toBe('https://x');
-      expect(config.workspace?.codeMieProject).toBe('proj');
+      expect(config.workspace?.codeMieUrl).toBeUndefined();
+      expect(config.workspace?.codeMieProject).toBeUndefined();
     });
 
     it('initProjectConfig routes workspace fields into the local scope workspace, not into profiles[name]', async () => {

@@ -132,6 +132,17 @@ export class ConfigLoader {
     // whole-object override (local scope, else global), CodeMie identity from the
     // scope of the profile in use.
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
+
+    // For local profiles, identity must come from workspace only (whole-object
+    // override). Strip any identity keys that leaked in from the global profile
+    // via the backward-compat migration in loadGlobalConfigProfile, so they
+    // don't survive past the workspace layer below.
+    if (isLocalProfile) {
+      for (const key of this.IDENTITY_KEYS) {
+        delete (config as any)[key];
+      }
+    }
+
     const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
     Object.assign(config, this.removeUndefined(workspace));
 
@@ -236,13 +247,12 @@ export class ConfigLoader {
       return workspace;
     }
 
-    const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
+    // For global profiles, identity keys come from the profile itself (stored
+    // per-profile by saveProfile), not from the shared workspace. Strip them
+    // so the workspace layer does not overwrite the profile's own identity.
     const result: Record<string, unknown> = { ...workspace };
     for (const key of this.IDENTITY_KEYS) {
       delete result[key];
-      if (globalWorkspace[key] !== undefined) {
-        result[key] = globalWorkspace[key];
-      }
     }
     return result as WorkspaceConfig;
   }
@@ -316,8 +326,18 @@ export class ConfigLoader {
         );
       }
 
-      // Return profile with name included
-      return { ...rawConfig.profiles[profile], name: profile };
+      // Return profile with name included. Migrate identity keys from the
+      // shared workspace into the profile when the profile does not carry its
+      // own — this covers configs written before per-profile identity storage.
+      const result: Partial<CodeMieConfigOptions> = { ...rawConfig.profiles[profile], name: profile };
+      if (rawConfig.workspace) {
+        for (const key of this.IDENTITY_KEYS) {
+          if ((result as any)[key] === undefined && (rawConfig.workspace as any)[key] !== undefined) {
+            (result as any)[key] = (rawConfig.workspace as any)[key];
+          }
+        }
+      }
+      return result;
     }
 
     // Legacy single-provider config
@@ -654,6 +674,16 @@ export class ConfigLoader {
     const { codemieSkills: _skills, codemieAssistants: _assistants, ...cleanProfile } = profile as any;
 
     const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(cleanProfile);
+
+    // Identity keys must be per-profile — move them back from workspace into
+    // the profile so that switching profiles does not lose each environment's
+    // codeMieUrl / codeMieProject / codeMieIntegration.
+    for (const key of this.IDENTITY_KEYS) {
+      if ((workspaceFields as any)[key] !== undefined) {
+        (profileFields as any)[key] = (workspaceFields as any)[key];
+        delete (workspaceFields as any)[key];
+      }
+    }
 
     (profileFields as any).name = profileName;
     config.profiles[profileName] = profileFields as ProviderProfile;
