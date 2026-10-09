@@ -87,6 +87,7 @@ export function createSyncProcessor(): SessionProcessor {
       let successCount = 0;
       let totalMessages = 0;
       let deferred = false;
+      let consumedCount = 0;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
 
@@ -98,8 +99,14 @@ export function createSyncProcessor(): SessionProcessor {
           deferred = true;
           break;
         }
+        consumedCount++;
 
         const payloadId = getPayloadId(pendingPayload);
+        // Each payloadId is sent at most once per run: its outcome was already
+        // applied to every record sharing the id.
+        if (successfulPayloadIds.has(payloadId) || failedByPayloadId.has(payloadId)) {
+          continue;
+        }
         const { conversationId, history, assistantId, folder, llmModel } = pendingPayload.payload;
         const resolvedAssistantId = assistantId || CODEMIE_ASSISTANT_ID;
         const resolvedFolder = folder || resolveConversationFolder(context.clientType, session.agentName);
@@ -153,8 +160,7 @@ export function createSyncProcessor(): SessionProcessor {
       }
 
       const syncedAt = Date.now();
-      const attemptedCount = successfulPayloadIds.size + failedByPayloadId.size;
-      const remainingCount = pendingPayloads.length - attemptedCount;
+      const remainingCount = pendingPayloads.length - consumedCount;
 
       const message = deferred
         ? `Sync deferred: ${remainingCount} items remaining (deadline/abort)`
@@ -292,37 +298,41 @@ function getPayloadId(payload: ConversationPayloadRecord): string {
 }
 
 /**
- * Apply a single payload's sync outcome to the in-memory records (in place).
- * Mirrors the per-payload success/failure mapping so the file can be rewritten
- * after every payload instead of only at the end of the loop.
+ * Apply a payload's sync outcome to the in-memory records (in place).
+ * Every not-yet-terminal (pending/failed) record sharing the sent payloadId gets
+ * the outcome, so a duplicate of the sent turn is never left pending and re-sent.
+ * The file can then be rewritten after every payload instead of only at the end.
  */
 function applyPayloadOutcome(
   allPayloads: ConversationPayloadRecord[],
   payloadId: string,
   syncError: string | undefined
 ): void {
-  const index = allPayloads.findIndex(p => getPayloadId(p) === payloadId);
-  if (index === -1) {
-    return;
-  }
-
-  const p = allPayloads[index];
-  allPayloads[index] = syncError
-    ? {
-      ...p,
-      status: CONVERSATION_SYNC_STATUS.FAILED,
-      syncAttempts: (p.syncAttempts ?? 0) + 1,
-      error: syncError,
+  allPayloads.forEach((p, index) => {
+    if (getPayloadId(p) !== payloadId) {
+      return;
     }
-    : {
-      ...p,
-      status: CONVERSATION_SYNC_STATUS.SUCCESS,
-      syncAttempts: (p.syncAttempts ?? 0) + 1,
-      error: undefined,
-      response: {
-        syncedCount: p.payload.history.length
+    if (p.status !== CONVERSATION_SYNC_STATUS.PENDING && p.status !== CONVERSATION_SYNC_STATUS.FAILED) {
+      return;
+    }
+
+    allPayloads[index] = syncError
+      ? {
+        ...p,
+        status: CONVERSATION_SYNC_STATUS.FAILED,
+        syncAttempts: (p.syncAttempts ?? 0) + 1,
+        error: syncError,
       }
-    };
+      : {
+        ...p,
+        status: CONVERSATION_SYNC_STATUS.SUCCESS,
+        syncAttempts: (p.syncAttempts ?? 0) + 1,
+        error: undefined,
+        response: {
+          syncedCount: p.payload.history.length
+        }
+      };
+  });
 }
 
 function parseSourceIndex(value: unknown): number {
