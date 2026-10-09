@@ -74,6 +74,7 @@ describe('loadParseState', () => {
   it('round-trips openRequests and branchCounts exactly through saveParseState', async () => {
     const openRequest: OpenUsageRequest = {
       requestId: 'req1',
+      messageId: 'msg1',
       model: 'claude-3-5-sonnet',
       modelRaw: 'claude-3-5-sonnet-20241022',
       timestamp: '2026-10-01T00:00:00.000Z',

@@ -9,9 +9,13 @@
  * Claude Code can write more than one JSONL row for the same API response (progressive
  * streaming chunks, or a later row that fills in `stop_reason` once the turn finishes), so
  * callers parse every candidate line and merge same-identity records with
- * {@link mergeUsageRequest} — this module trusts the caller to key records by
- * `${requestId}::${model}` (see `parse-state.ts`'s `openRequests`) before merging; it does
+ * {@link mergeUsageRequest} — this module trusts the caller to key records with
+ * {@link usageRequestKey} (see `parse-state.ts`'s `openRequests`) before merging; it does
  * not itself check that two records it is asked to merge actually share that identity.
+ *
+ * Request identity follows the CLI analytics contract: `requestId` is the API request id
+ * (`req_...`, the transcript's top-level `requestId`; `''` when the transcript has none, as
+ * behind the proxy) and `messageId` is `message.id` (`msg_...`).
  */
 
 import { type RoutingHeaderSource } from '../../../../utils/routing-headers.mjs';
@@ -27,6 +31,7 @@ interface TranscriptUsageLine {
   timestamp?: string;
   gitBranch?: string;
   isApiError?: boolean;
+  requestId?: string;
   message?: RoutingHeaderSource & {
     id?: string;
     model?: string;
@@ -78,10 +83,11 @@ export function parseUsageLine(
     return null;
   }
 
-  // openRequests keys on `${requestId}::${model}` — an empty requestId would collide every such
-  // line in the session into one record instead of being skipped.
-  const requestId = parsed.message?.id ?? '';
-  if (!requestId) {
+  // openRequests keys on `${requestId || messageId}::${model}` — with neither id every such
+  // line in the session would collide into one record, so it is skipped instead.
+  const requestId = parsed.requestId ?? '';
+  const messageId = parsed.message?.id ?? '';
+  if (!requestId && !messageId) {
     return null;
   }
 
@@ -94,6 +100,7 @@ export function parseUsageLine(
 
   return {
     requestId,
+    messageId,
     model,
     modelRaw,
     timestamp: parsed.timestamp ?? '',
@@ -118,8 +125,17 @@ export function parseUsageLine(
 }
 
 /**
+ * Identity key for a logical request: the API request id when the transcript has one, else
+ * `message.id`, plus the resolved model. Single source of truth for every `openRequests` /
+ * dedupe key.
+ */
+export function usageRequestKey(r: { requestId: string; messageId: string; model: string }): string {
+  return `${r.requestId || r.messageId}::${r.model}`;
+}
+
+/**
  * Merge two {@link OpenUsageRequest} records the caller has already identified as the same
- * logical request (same `requestId`+`model` — this function does not verify that itself).
+ * logical request (same {@link usageRequestKey} — this function does not verify that itself).
  * Every numeric field takes the max of the two (a later streaming/finalizing row only ever adds
  * usage, never subtracts it); every non-numeric field takes `b`'s value when non-empty, else
  * falls back to `a`'s — so a later row that fills in a previously-empty field (e.g.
@@ -131,6 +147,7 @@ export function parseUsageLine(
 export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): OpenUsageRequest {
   return {
     requestId: b.requestId || a.requestId,
+    messageId: b.messageId || a.messageId,
     model: b.model || a.model,
     modelRaw: b.modelRaw || a.modelRaw,
     timestamp: b.timestamp || a.timestamp,
@@ -163,6 +180,7 @@ export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest)
     type: 'agent.usage.request',
     session_id: sessionId,
     request_id: req.requestId,
+    message_id: req.messageId,
     model_raw: req.modelRaw,
     model: req.model,
     speed: req.speed,

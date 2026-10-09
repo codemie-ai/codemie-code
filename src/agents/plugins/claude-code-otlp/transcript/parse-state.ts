@@ -13,7 +13,10 @@ import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 
 export interface OpenUsageRequest {
+  /** API request id (`req_...`); `''` when the transcript has none (e.g. behind the proxy). */
   requestId: string;
+  /** `message.id` (`msg_...`). */
+  messageId: string;
   model: string;
   modelRaw: string;
   timestamp: string;
@@ -38,7 +41,7 @@ export interface OpenUsageRequest {
 export interface TranscriptParseState {
   mainOffset: number;
   subagentOffsets: Record<string, number>;
-  openRequests: Record<string, OpenUsageRequest>; // key: `${requestId}::${model}`
+  openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
   compactionCount: number;

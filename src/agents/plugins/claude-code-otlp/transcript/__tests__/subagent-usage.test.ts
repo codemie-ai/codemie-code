@@ -99,7 +99,7 @@ async function buildFixture(
 
 function usageRequest(overrides: Partial<OpenUsageRequest> = {}): OpenUsageRequest {
   return {
-    requestId: 'r1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
+    requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
     speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
     inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
     cacheReadTokens: 0, outputTokens: 0, webSearchRequests: 0, webFetchRequests: 0,

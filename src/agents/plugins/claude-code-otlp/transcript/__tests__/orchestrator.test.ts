@@ -20,6 +20,7 @@ let transcriptDir: string;
 function usageLine(opts: {
   uuid: string;
   messageId: string;
+  requestId?: string;
   outputTokens: number;
   gitBranch?: string;
   stopReason?: string;
@@ -30,6 +31,7 @@ function usageLine(opts: {
     cwd: '/repo',
     timestamp: opts.timestamp ?? '2026-10-01T00:00:00.000Z',
     uuid: opts.uuid,
+    ...(opts.requestId ? { requestId: opts.requestId } : {}),
     message: {
       id: opts.messageId,
       role: 'assistant',
@@ -105,7 +107,7 @@ function writeSubagentFixture(
 }
 
 describe('collectMainTranscriptEvents — idempotent reparse', () => {
-  it('returns agent.usage.request events with identical request_id/model pairs across a crash-before-save re-parse', async () => {
+  it('returns agent.usage.request events with identical request_id/message_id/model triples across a crash-before-save re-parse', async () => {
     const { collectMainTranscriptEvents } = await import('../orchestrator.js');
     const { saveParseState, createParseState } = await import('../parse-state.js');
 
@@ -120,7 +122,7 @@ describe('collectMainTranscriptEvents — idempotent reparse', () => {
 
     const firstPairs = first
       .filter((e) => e.type === 'agent.usage.request')
-      .map((e) => `${e.request_id}::${e.model}`)
+      .map((e) => `${e.request_id}::${e.message_id}::${e.model}`)
       .sort();
 
     expect(firstPairs).toHaveLength(2);
@@ -134,7 +136,7 @@ describe('collectMainTranscriptEvents — idempotent reparse', () => {
 
     const secondPairs = second
       .filter((e) => e.type === 'agent.usage.request')
-      .map((e) => `${e.request_id}::${e.model}`)
+      .map((e) => `${e.request_id}::${e.message_id}::${e.model}`)
       .sort();
 
     expect(secondPairs).toHaveLength(2);
@@ -307,6 +309,118 @@ describe('collectMainTranscriptEvents — tool-call accumulation', () => {
     expect(summary?.tool_calls).toBe(2);
     expect(summary?.tool_errors).toBe(1);
     expect(summary?.tool_results).toBe(2);
+  });
+});
+
+describe('collectMainTranscriptEvents — request identity', () => {
+  const usageEventsOf = (events: ForwardedEvent[]): ForwardedEvent[] =>
+    events.filter((e) => e.type === 'agent.usage.request');
+
+  it('direct shape: merges the rows of one response into one event carrying request_id and message_id', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const transcriptPath = writeTranscript('transcript-direct.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', requestId: 'req_a', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_a', requestId: 'req_a', outputTokens: 40 }),
+      usageLine({ uuid: 'u3', messageId: 'msg_b', requestId: 'req_b', outputTokens: 20 }),
+    ]);
+
+    const usage = usageEventsOf(await collectMainTranscriptEvents('session-direct', transcriptPath, 'Stop'));
+
+    expect(usage.map((e) => [e.request_id, e.message_id]).sort()).toEqual([
+      ['req_a', 'msg_a'],
+      ['req_b', 'msg_b'],
+    ]);
+    expect(usage.find((e) => e.request_id === 'req_a')?.output_tokens).toBe(40);
+  });
+
+  it('proxy shape: distinct message ids stay distinct events with an empty request_id', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const transcriptPath = writeTranscript('transcript-proxy.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_bdrk_1', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_bdrk_2', outputTokens: 20 }),
+    ]);
+
+    const usage = usageEventsOf(await collectMainTranscriptEvents('session-proxy', transcriptPath, 'Stop'));
+
+    expect(usage).toHaveLength(2);
+    expect(usage.every((e) => e.request_id === '')).toBe(true);
+    expect(usage.map((e) => e.message_id).sort()).toEqual(['msg_bdrk_1', 'msg_bdrk_2']);
+  });
+
+  it('mixed transcript: a request with requestId and one without are not merged', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const transcriptPath = writeTranscript('transcript-mixed.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', requestId: 'req_a', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_b', outputTokens: 20 }),
+    ]);
+
+    const usage = usageEventsOf(await collectMainTranscriptEvents('session-mixed', transcriptPath, 'Stop'));
+
+    expect(usage.map((e) => [e.request_id, e.message_id]).sort()).toEqual([
+      ['', 'msg_b'],
+      ['req_a', 'msg_a'],
+    ]);
+  });
+
+  it('direct shape: summary api_calls counts a multi-row response once', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+
+    const transcriptPath = writeTranscript('transcript-direct-summary.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', requestId: 'req_a', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_a', requestId: 'req_a', outputTokens: 40 }),
+      usageLine({ uuid: 'u3', messageId: 'msg_b', requestId: 'req_b', outputTokens: 20 }),
+    ]);
+
+    const events = await collectMainTranscriptEvents('session-direct-summary', transcriptPath, 'Stop');
+    const summary = events.find((e) => e.type === 'agent.session.summary');
+
+    expect(summary?.api_calls).toBe(2);
+    expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
+  });
+
+  it('direct shape: a reparse after a state reset yields the same request_id/message_id set', async () => {
+    const { collectMainTranscriptEvents } = await import('../orchestrator.js');
+    const { saveParseState, createParseState } = await import('../parse-state.js');
+
+    const sessionId = 'session-direct-reparse';
+    const transcriptPath = writeTranscript('transcript-direct-reparse.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', requestId: 'req_a', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_a', requestId: 'req_a', outputTokens: 40 }),
+      usageLine({ uuid: 'u3', messageId: 'msg_b', requestId: 'req_b', outputTokens: 20 }),
+    ]);
+    const idsOf = (events: ForwardedEvent[]): string[] =>
+      usageEventsOf(events).map((e) => `${e.request_id}::${e.message_id}`).sort();
+
+    const first = idsOf(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
+    await saveParseState(sessionId, createParseState());
+    const second = idsOf(await collectMainTranscriptEvents(sessionId, transcriptPath, 'Stop'));
+
+    expect(first).toEqual(['req_a::msg_a', 'req_b::msg_b']);
+    expect(second).toEqual(first);
+  });
+});
+
+describe('collectSubagentTranscriptEvents — request identity', () => {
+  it('emits request_id and message_id on agent.usage.request events, merging rows of one response', async () => {
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-sub-identity';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', requestId: 'req_a', outputTokens: 10 }),
+      usageLine({ uuid: 'u2', messageId: 'msg_a', requestId: 'req_a', outputTokens: 40 }),
+      usageLine({ uuid: 'u3', messageId: 'msg_bdrk_b', outputTokens: 20 }),
+    ]);
+
+    const events = await collectSubagentTranscriptEvents(sessionId, file);
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage.map((e) => [e.request_id, e.message_id]).sort()).toEqual([
+      ['', 'msg_bdrk_b'],
+      ['req_a', 'msg_a'],
+    ]);
   });
 });
 

@@ -20,7 +20,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { loadParseState, saveParseState, withParseStateLock } from './parse-state.js';
 import { readNewLines } from './transcript-reader.js';
-import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent } from './usage-request.js';
+import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent, usageRequestKey } from './usage-request.js';
 import {
   updateBranchCounts,
   buildSessionSummaryEvent,
@@ -167,12 +167,12 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 
   // Pass 2: models, one count per distinct request — a request can span several
   // streaming/finalizing transcript lines, so lines are deduped by the same
-  // `${requestId}::${model}` key `state.openRequests` uses before counting.
+  // `usageRequestKey()` key `state.openRequests` uses before counting.
   const modelByRequestKey = new Map<string, string>();
   for (const line of rawLines) {
     const parsedUsage = parseUsageLine(line, 'main', '', '');
     if (parsedUsage) {
-      modelByRequestKey.set(`${parsedUsage.requestId}::${parsedUsage.model}`, parsedUsage.model);
+      modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
     }
   }
   for (const model of modelByRequestKey.values()) {
@@ -216,7 +216,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
  *
  * - Loads persisted state, reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
- *   keyed by `${requestId}::${model}` (matching `parse-state.ts`'s documented key shape), and
+ *   keyed by `usageRequestKey()`, and
  *   updates `state.branchCounts` from every new line's `gitBranch` (regardless of whether that
  *   line carried usage).
  * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
@@ -262,7 +262,7 @@ export async function collectMainTranscriptEvents(
 
         const parsed = parseUsageLine(line, 'main', '', '');
         if (parsed) {
-          const key = `${parsed.requestId}::${parsed.model}`;
+          const key = usageRequestKey(parsed);
           const existing = state.openRequests[key];
           state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
           touchedKeys.add(key);
@@ -442,7 +442,7 @@ export async function subagentNeedsBackstop(sessionId: string, subagentFile: Sub
  *   `state.subagentOffsets[subagentFile.agentId]` (defaulting to 0 for a never-before-seen
  *   agent).
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
- *   scoped `scopeKind: 'agent'`, keyed by `${requestId}::${model}` — same merge/key convention
+ *   scoped `scopeKind: 'agent'`, keyed by `usageRequestKey()` — same merge/key convention
  *   `collectMainTranscriptEvents` uses for the main transcript.
  * - Returns one `agent.usage.request` JSON string per request key touched by *this* pass (no new
  *   lines means no new events — a no-op reparse returns nothing at this layer).
@@ -481,7 +481,7 @@ export async function collectSubagentTranscriptEvents(
       for (const line of lines) {
         const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId);
         if (parsed) {
-          const key = `${parsed.requestId}::${parsed.model}`;
+          const key = usageRequestKey(parsed);
           const existing = state.openRequests[key];
           state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
           touchedKeys.add(key);
