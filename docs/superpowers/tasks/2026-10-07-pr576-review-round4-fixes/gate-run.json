@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "branch": "feat/agents-live-version-check",
+  "head": "9d1abd7e0e3f063eeb9ceed400cda13e063b1d16",
+  "runner": "npm",
+  "started_at": "2026-10-07T16:08:13Z",
+  "completed_at": "2026-10-07T16:23:51Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license", "source": "guide", "status": "PASS", "duration_ms": 12959, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 41860, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 20034, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 33578, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 114890, "command": "npx vitest run --project unit", "exit_code": 0, "notes": "323 files passed; 4827 tests passed, 2 skipped"},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 81242, "command": "npx vitest run --project cli", "exit_code": 0, "notes": "37 files passed, 1 skipped; 278 tests passed, 10 skipped"},
+    {"id": "secrets", "source": "guide", "status": "SKIPPED", "duration_ms": 4490, "command": "npm run validate:secrets", "exit_code": 1, "notes": "Guide Skip-if met (no running container engine; podman installed but machine not started): 'No container engine found — install Docker, Podman, or Apple Containers to enable local secrets scanning.' Enable with 'podman machine start'. CI gitleaks still owed."},
+    {"id": "commitlint-last", "source": "guide", "status": "PASS", "duration_ms": 2933, "command": "npm run commitlint:last", "exit_code": 0},
+    {"id": "pre-commit-aggregate", "source": "guide", "status": "PASS", "duration_ms": 63765, "command": "npm run check:pre-commit", "exit_code": 0},
+    {"id": "full-ci", "source": "guide", "status": "PASS", "duration_ms": 238004, "command": "npm run ci", "exit_code": 0, "notes": "license+lint+build+unit (4827 passed) +cli (278 passed) all green"},
+    {"id": "lint-staged", "source": "hook", "status": "SKIPPED", "duration_ms": 3583, "command": "npx lint-staged", "exit_code": 0, "notes": "Self-skip: 'lint-staged could not find any staged files.' Its eslint + adjacent-test work is covered by lint/unit gates over the full tree."},
+    {"id": "commitlint-range", "source": "ci", "status": "PASS", "duration_ms": 3719, "command": "npx commitlint --from 2b084ac697e7f8558228295573aeec7dbdcd0e10 --to HEAD --verbose", "exit_code": 0, "notes": "55/55 commits, 0 problems. Mirrors CI validate-commits and the commit-msg hook; guide's commitlint:last checks only HEAD~1..HEAD."},
+    {"id": "pr-title", "source": "ci", "status": "N/A", "command": "gh pr view <PR> --json title -q .title | npx commitlint --verbose", "notes": "Requires the live GitHub PR title; settle in CI or run the pipe manually against PR #576."},
+    {"id": "gitleaks-ci", "source": "ci", "status": "N/A", "command": "gitleaks/gitleaks-action@v2 (GitHub Actions)", "notes": "CI scans the PR commit range, local validate:secrets scans only the staged diff (mismatch). Owed to CI, or run gitleaks via a started podman machine against the branch range."}
+  ],
+  "failures": {}
+}

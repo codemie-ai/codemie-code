@@ -226,6 +226,28 @@ be used as the permanent corporate configuration.
 - Cache location: `~/.codemie/.last-update-check`
 - See `codemie self-update --help` for manual update options
 
+#### Agent Version Checks
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `CODEMIE_VERSION_CHECKS_ENABLED` | Compare installed agents (Claude, Codex, Gemini, Kimi) against their latest release on npm | `true` | `false` to turn checks off |
+
+When enabled, CodeMie reads each agent's latest release from your configured npm registry (cached for 24h) and shows a one-time notice when your installed version differs; `codemie doctor` uses the same value, and `codemie update` always fetches it fresh. The lookup is a single HTTPS request that honors npm's `registry`/`@scope:registry` settings and npm's `https-proxy`/`proxy`/`noproxy` settings; without an npm proxy it uses `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` and then the Windows system proxy or PAC (see [Windows system proxy and PAC](#windows-system-proxy-and-pac)). Registries that require authentication aren't supported. npm's `cafile`/`ca`/`strict-ssl` settings aren't read: behind a TLS-intercepting proxy, trust the corporate CA with `NODE_EXTRA_CA_CERTS`, or set `CODEMIE_VERSION_CHECKS_ENABLED=false`. A failed lookup is written to the CodeMie log file and never stops a launch — the check is simply skipped. While the registry is unreachable, a launch can wait up to 3 seconds for the lookup; after a failure CodeMie skips further lookups for 10 minutes (`codemie update` always retries). Set `CODEMIE_VERSION_CHECKS_ENABLED=false` if you work offline. These npm settings come from your user `.npmrc` (or `npm_config_*` environment variables) only; a project's `.npmrc` is ignored for this lookup, so a checked-out repository can't choose the registry or proxy that decides the tracked version. When CodeMie is started through `npm run` or `npx`, npm exports the project's settings as `npm_config_*` variables, so those are ignored too and only `~/.npmrc` is read.
+
+With checks off there is no lookup, notice, or update offer for these agents. `codemie install <agent> --supported` then installs the latest release, and the minimum-version guard (which refuses versions known to be broken) still applies.
+
+The same switch can be set in `~/.codemie/codemie-cli.config.json` (all projects) or a project's `.codemie/codemie-cli.config.json`:
+
+```json
+{
+  "workspace": {
+    "versionChecks": { "enabled": false }
+  }
+}
+```
+
+Precedence: the env var, then the project setting, then the global one. Only an explicit `false` turns checks off.
+
 #### Security & File Access
 
 | Variable | Description | Example |

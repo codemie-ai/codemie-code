@@ -1,0 +1,4 @@
+{"task_id":"1","status":"done","commit":"23f49f9","test_command":"npx vitest run --project unit src/utils/__tests__/version-cache.test.ts"}
+{"task_id":"2","status":"done","commit":"501712d","test_command":"npx vitest run --project unit src/agents/core/__tests__/BaseAgentAdapter.version-notice.test.ts"}
+{"task_id":"3","status":"done","commit":"1bef8f3","test_command":"npx vitest run --project unit src/agents/core/__tests__/version-resolution.test.ts"}
+{"task_id":"4","status":"done","commit":"0650714","test_command":"npx vitest run --project unit src/utils/__tests__/npm-registry.test.ts"}

@@ -32,7 +32,7 @@ export function createDoctorCommand(): Command {
   command
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-    .option('--reset-version-warnings', 'Show agent version recommendations again on next launch')
+    .option('--reset-version-warnings', 'Show agent version notices again on next launch')
     .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean }) => {
       if (options.resetVersionWarnings) {
         const { removed } = await VersionWarningStore.clear();

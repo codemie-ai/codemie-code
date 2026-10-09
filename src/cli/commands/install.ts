@@ -4,7 +4,8 @@ import { getAgentInstallCommand, getAgentLauncherCommand, getUserFacingAgentName
 import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
-import type { AgentInstallationOptions } from '@/agents/core/types.js';
+import type { AgentAdapter, AgentInstallationOptions, VersionCompatibilityResult } from '@/agents/core/types.js';
+import { isLiveTrackedAgent, liveBelowMinimumReason } from '@/agents/core/version-resolution.js';
 import {
   STATUSLINE_NAME,
   STATUSLINE_DISPLAY_NAME,
@@ -22,7 +23,7 @@ export function createInstallCommand(): Command {
     .description('Install an external AI coding agent or development framework')
     .argument('[name]', 'Agent or framework name to install (run without argument to see available)')
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
-    .option('--supported', 'Install the latest supported version tested with CodeMie')
+    .option('--supported', 'Install the version CodeMie is currently tracking')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
     .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {
@@ -105,6 +106,9 @@ export function createInstallCommand(): Command {
           // Determine which version to install
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
+          let trackedVersionUnknown = false;
+          // Neither pinned nor live-tracked (e.g. opencode, pi): --supported has no tracked version to install.
+          const hasNoTrackedVersion = !agent.metadata?.supportedVersion && !isLiveTrackedAgent(agent.name);
 
           // Priority: --supported flag > version argument > 'supported' (default for Claude) > undefined (latest)
           if (options?.supported) {
@@ -112,17 +116,40 @@ export function createInstallCommand(): Command {
             // Resolve 'supported' to actual version for display and comparison
             if (agent.checkVersionCompatibility) {
               const compat = await agent.checkVersionCompatibility();
-              actualVersionToInstall = compat.supportedVersion;
+              if (compat.liveBelowMinimum) {
+                exitBelowMinimum(agent, compat);
+                return;
+              }
+              if (compat.versionKnown === false) {
+                // installVersion('supported') then installs the latest release, not the stale fallback
+                trackedVersionUnknown = true;
+              } else {
+                actualVersionToInstall = compat.supportedVersion;
+              }
             }
           } else if (version) {
             versionToInstall = version;
             actualVersionToInstall = version;
           } else if ((agent.name === 'claude' || agent.name === 'codex') && agent.checkVersionCompatibility) {
-            // Default to supported version for agents whose backend compatibility is version-sensitive
-            versionToInstall = 'supported';
+            // Default to supported version for agents whose backend compatibility is version-sensitive;
+            // with the tracked version unknown this stays a plain install of the latest release.
             const compat = await agent.checkVersionCompatibility();
-            actualVersionToInstall = compat.supportedVersion;
+            if (compat.liveBelowMinimum) {
+              // The latest release is the one the minimum gate refuses to launch. Only stop
+              // when an install would happen; an installed agent stays the usual no-op below.
+              if (!(await agent.isInstalled())) {
+                exitBelowMinimum(agent, compat);
+                return;
+              }
+            } else if (compat.versionKnown !== false) {
+              versionToInstall = 'supported';
+              actualVersionToInstall = compat.supportedVersion;
+            }
           }
+
+          const unknownTrackedReason = hasNoTrackedVersion
+            ? `${agent.displayName} has no tracked version`
+            : 'the tracked version is unavailable (version checks disabled or npm unreachable)';
 
           // Check if already installed with matching version
           if (await agent.isInstalled()) {
@@ -141,7 +168,7 @@ export function createInstallCommand(): Command {
                 return;
               } else {
                 // Different version installed, ask to reinstall
-                const versionDisplay = options?.supported ? `${actualVersionToInstall} (supported)` : actualVersionToInstall;
+                const versionDisplay = options?.supported ? `${actualVersionToInstall} (tracked)` : actualVersionToInstall;
                 console.log(chalk.yellow(`${agent.displayName} v${installedVersion} is already installed (requested: ${versionDisplay})`));
                 const inquirer = (await import('inquirer')).default;
                 const { confirm } = await inquirer.prompt([
@@ -158,7 +185,7 @@ export function createInstallCommand(): Command {
                   return;
                 }
               }
-            } else if (!actualVersionToInstall) {
+            } else if (!versionToInstall) {
               // No specific version requested, already installed
               console.log(chalk.blueBright(`${agent.displayName} is already installed`));
 
@@ -168,16 +195,48 @@ export function createInstallCommand(): Command {
               }
 
               return;
+            } else if (trackedVersionUnknown) {
+              // --supported with no known target: ask, as for any other version change
+              const installedDisplay = installedVersion ? ` v${installedVersion}` : '';
+              console.log(
+                chalk.yellow(
+                  `${agent.displayName}${installedDisplay} is already installed; ${unknownTrackedReason}.`
+                )
+              );
+              const inquirer = (await import('inquirer')).default;
+              const { confirm } = await inquirer.prompt([
+                {
+                  type: 'confirm',
+                  name: 'confirm',
+                  message: 'Reinstall with the latest release?',
+                  default: false,
+                },
+              ]);
+
+              if (!confirm) {
+                console.log(chalk.gray('Installation cancelled'));
+                return;
+              }
             }
           }
 
           // Build installation message
           const isUsingSupported = versionToInstall === 'supported';
           const versionMessage = isUsingSupported && actualVersionToInstall
-            ? ` v${actualVersionToInstall} (supported version)`
+            ? ` v${actualVersionToInstall} (tracked version)`
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`
             : '';
+
+          if (trackedVersionUnknown) {
+            console.log(
+              chalk.dim(
+                hasNoTrackedVersion
+                  ? `${unknownTrackedReason} — installing the latest release.`
+                  : 'Tracked version unavailable (version checks disabled or npm unreachable) — installing the latest release.'
+              )
+            );
+          }
 
           const spinner = ora(`Installing ${agent.displayName}${versionMessage}...`).start();
 
@@ -185,7 +244,11 @@ export function createInstallCommand(): Command {
             // Use installVersion if available and version specified
             let installedVersion: string | null = null;
             if (versionToInstall && agent.installVersion) {
-              installedVersion = await agent.installVersion(versionToInstall);
+              // Install the tracked version shown above, not 'supported' re-resolved — a second
+              // lookup could return a different value than the one the user just confirmed.
+              const target =
+                versionToInstall === 'supported' && actualVersionToInstall ? actualVersionToInstall : versionToInstall;
+              installedVersion = await agent.installVersion(target);
             } else {
               await agent.install();
             }
@@ -345,4 +408,19 @@ export function createInstallCommand(): Command {
     });
 
   return command;
+}
+
+/**
+ * Stop an install of the tracked version when the registry's latest release is below the agent's
+ * hard minimum (e.g. a lagging mirror): installing `latest` would install a release the minimum
+ * gate then refuses to launch.
+ */
+function exitBelowMinimum(agent: AgentAdapter, compat: VersionCompatibilityResult): void {
+  const reason = liveBelowMinimumReason(
+    agent.name,
+    compat.registryLatestVersion ?? 'unknown',
+    compat.minimumSupportedVersion ?? 'unknown'
+  );
+  console.error(chalk.red(`✗ ${agent.displayName}: ${reason}`));
+  process.exit(1);
 }

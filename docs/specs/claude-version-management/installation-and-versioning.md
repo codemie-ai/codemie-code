@@ -1,5 +1,13 @@
 # Claude Code CLI Installation and Version Management
 
+> **Superseded in part (EPMCDME-14767).** The hand-maintained "supported version" described below
+> is no longer the source of truth. Claude, Codex, Gemini and Kimi now track their latest npm
+> release live (cached for 24h), behind the global `versionChecks.enabled` toggle. The metadata
+> `supportedVersion` only marks an agent as version-checked and is never shown as current: when the
+> lookup fails or checks are off, the tracked version is unknown and `install --supported` installs
+> the latest release. `minimumSupportedVersion` stays hand-maintained and still blocks launch. See
+> "Agent Version Checks" in `docs/CONFIGURATION.md`. The installation flow below is unchanged.
+
 ## Specification Summary
 
 **Last Updated**: 2026-01-29

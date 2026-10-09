@@ -53,6 +53,11 @@ vi.mock('@/utils/processes.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/processes.js')>();
   return { ...actual, getLatestVersion: npmMock.getLatestVersion, installGlobal: npmMock.installGlobal };
 });
+// Live-tracked agents read the registry directly; route it to the same mock.
+vi.mock('@/utils/npm-registry.js', () => ({
+  fetchLatestVersionFromRegistry: (pkg: string) => npmMock.getLatestVersion(pkg),
+  resolveRegistry: () => 'https://registry.npmjs.org/',
+}));
 
 // restoreCliBinLink — no-op (would otherwise touch the filesystem).
 vi.mock('@/utils/cli-bin.js', () => ({ restoreCliBinLink: vi.fn(async () => {}) }));
@@ -274,6 +279,149 @@ describe('createListCommand', () => {
 // createUpdateCommand — spawn is mocked; we only assert the install args.
 // ===========================================================================
 describe('createUpdateCommand', () => {
+  // The env var wins over every config scope, so these tests never depend on
+  // the developer's own versionChecks setting.
+  beforeEach(() => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'true';
+  });
+  afterEach(() => {
+    delete process.env.CODEMIE_VERSION_CHECKS_ENABLED;
+  });
+
+  it('skips a live-tracked agent with a note, and never looks it up, when version checks are disabled', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
+    const agent = {
+      name: 'gemini',
+      displayName: 'Gemini CLI',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: '@google/gemini-cli' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.0.0'),
+    };
+    registryMock.getAgent.mockReturnValue(agent as never);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync(['gemini'], { from: 'user' });
+
+    expect(captured()).toContain('Version checks are disabled');
+    expect(captured()).not.toContain('Could not check');
+    expect(spinner.warn).not.toHaveBeenCalled();
+    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+  });
+
+  it('explains an empty result instead of "No updatable agents installed" when checks are disabled', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
+    registryMock.getManageableAgents.mockReturnValue([
+      {
+        name: 'gemini',
+        displayName: 'Gemini CLI',
+        metadata: { isBuiltIn: false, npmPackage: '@google/gemini-cli' },
+        isInstalled: vi.fn(async () => true),
+        getVersion: vi.fn(async () => '1.0.0'),
+      },
+    ] as never);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync([], { from: 'user' });
+
+    expect(spinner.info).toHaveBeenCalledWith(expect.stringContaining('version checks are disabled'));
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+  });
+
+  // Each test below uses its own package name so earlier tests' cache entries can't satisfy it.
+  function liveTrackedAgent(npmPackage: string, installed = '1.0.0'): Record<string, unknown> {
+    return {
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage, supportedVersion: '9.9.9' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => installed),
+      installVersion: vi.fn(async () => '9.9.9'),
+    };
+  }
+
+  it('reports an installed agent whose lookup failed instead of "No updatable agents installed"', async () => {
+    registryMock.getManageableAgents.mockReturnValue([liveTrackedAgent('@codemie-test/all-offline')] as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    await createUpdateCommand().parseAsync([], { from: 'user' });
+
+    expect(captured()).toContain('Could not check OpenAI Codex CLI for updates');
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+  });
+
+  it('reports the built-in agent whose CLI lookup failed instead of "No updatable agents installed"', async () => {
+    registryMock.getManageableAgents.mockReturnValue([
+      {
+        name: 'codemie-code',
+        displayName: 'CodeMie Code',
+        description: 'd',
+        metadata: { isBuiltIn: true, npmPackage: null },
+        isInstalled: vi.fn(async () => true),
+        getVersion: vi.fn(async () => '1.0.0'),
+      },
+    ] as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    await createUpdateCommand().parseAsync([], { from: 'user' });
+
+    expect(captured()).toContain('Could not check CodeMie Code for updates');
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+  });
+
+  it('lists the agents it could check and reports the one whose lookup failed', async () => {
+    const opencode = {
+      name: 'opencode',
+      displayName: 'OpenCode',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: 'opencode-ai' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.0.0'),
+    };
+    registryMock.getManageableAgents.mockReturnValue([
+      opencode,
+      liveTrackedAgent('@codemie-test/mixed-offline'),
+    ] as never);
+    npmMock.getLatestVersion.mockImplementation(async (pkg: string) => (pkg === 'opencode-ai' ? '2.0.0' : null));
+
+    await createUpdateCommand().parseAsync(['--check'], { from: 'user' });
+
+    const output = captured();
+    expect(output).toContain('OpenCode');
+    expect(output).toContain('2.0.0');
+    expect(output).toContain('Could not check OpenAI Codex CLI for updates');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+  });
+
+  it('never offers the hardcoded fallback as an update when the live lookup fails', async () => {
+    const agent = liveTrackedAgent('@codemie-test/lookup-fails');
+    registryMock.getAgent.mockReturnValue(agent as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync(['codex'], { from: 'user' });
+
+    expect(spinner.warn).toHaveBeenCalledWith('Could not check OpenAI Codex CLI for updates');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+    expect(agent.installVersion).not.toHaveBeenCalled();
+  });
+
+  it('queries the registry on every explicit check, bypassing a fresh cache entry', async () => {
+    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/cached') as never);
+    npmMock.getLatestVersion.mockResolvedValue('2.0.0');
+    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
+
+    // A release published after the first check must be seen right away, not after 24h.
+    npmMock.getLatestVersion.mockResolvedValue('3.0.0');
+    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
+
+    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(2);
+    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('3.0.0'));
+  });
+
   it('updates a specific npm-based agent via installGlobal with force:true', async () => {
     const agent = {
       name: 'gemini',
@@ -295,6 +443,27 @@ describe('createUpdateCommand', () => {
       version: '2.0.0',
       force: true,
     });
+  });
+
+  it('updates Claude to the exact version it offered, through its own installer, not npm', async () => {
+    const agent = {
+      name: 'claude',
+      displayName: 'Claude Code',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: '@codemie-test/claude-update', supportedVersion: '1.0.0' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.5.0 (Claude Code)'),
+      installVersion: vi.fn(async () => '2.0.0'),
+      warnOnceIfUntested: vi.fn(async () => undefined),
+    };
+    registryMock.getAgent.mockReturnValue(agent as never);
+    npmMock.getLatestVersion.mockResolvedValue('2.0.0');
+
+    await createUpdateCommand().parseAsync(['claude'], { from: 'user' });
+
+    // The version the check displayed — not 'supported' re-resolved through the cache.
+    expect(agent.installVersion).toHaveBeenCalledWith('2.0.0');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
   });
 
   it('does NOT install in --check mode', async () => {

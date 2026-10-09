@@ -8,21 +8,17 @@ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionI
 import { validateGeminiModel } from './gemini.models.js';
 
 /**
- * Supported Gemini CLI version
- * Latest version tested and verified with CodeMie backend
- *
- * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ * Marks Gemini CLI as version-checked. The tracked version is resolved live
+ * from npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 const GEMINI_SUPPORTED_VERSION = '0.59.0';
 
 /**
  * Minimum supported Gemini CLI version — the only hard gate; below it the agent
- * refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * GEMINI_SUPPORTED_VERSION, move its old value down to here.
- *
- * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ * refuses to launch. Maintained by hand: raise it when an older Gemini CLI
+ * version stops working with CodeMie.
  */
 const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.5';
 
@@ -36,7 +32,7 @@ const metadata = {
   cliCommand: 'gemini',
 
   // Version management configuration
-  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Latest version tested with CodeMie backend
+  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   envMapping: {
@@ -236,7 +232,11 @@ export class GeminiPlugin extends BaseAgentAdapter {
 
     try {
       const { exec } = await import('../../../utils/processes.js');
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      // On Windows, gemini resolves to an npm .cmd shim — spawn() can only run it
+      // through a shell, the same reason installGlobal/uninstallGlobal set this.
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
 
       // Parse semver from output (handles both '0.29.5' and '0.29.5 (Gemini CLI)' formats)
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
