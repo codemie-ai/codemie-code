@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50" viewBox="0 0 200 50" role="img" aria-label="Download for Windows">
+  <defs>
+    <linearGradient id="grad-windows" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#672D92"/>
+      <stop offset="100%" stop-color="#547CCC"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="50" rx="12" ry="12" fill="url(#grad-windows)"/>
+  <text x="100" y="30" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#FFFFFF">Download for Windows</text>
+</svg>

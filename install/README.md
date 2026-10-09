@@ -2,8 +2,8 @@
 
 This directory contains source files for the CodeMie installers:
 
-- **GUI installers** — a signed `.dmg` (macOS, Apple Silicon) and a `.exe` wizard (Windows) that install and configure CodeMie with no terminal required.
-- **Script installers** — plain shell/PowerShell bootstrap scripts that install via npm. Prefer these for CI, headless machines, or when a GUI installer is unavailable.
+- **CodeMie Connect** — a signed `.dmg` (macOS, Apple Silicon) and a `.exe` (Windows) desktop app that bundles Node.js, npm and the CodeMie CLI, so there is nothing to install first.
+- **Script installers** — plain shell/PowerShell bootstrap scripts that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 ## Distribution Models
 
@@ -14,11 +14,11 @@ Two distribution models are supported:
    - Windows CMD: `install/windows/install.cmd`
    - macOS/Linux/WSL: `install/macos/install.sh`
 
-2. **GUI installers** — self-contained desktop applications:
-   - macOS: `install/macos/CodeMie Connect_2.0.1_aarch64_signed.dmg`
-   - Windows: `install/windows/CodeMie Connect_2.0.1_x64-setup.exe`
+2. **CodeMie Connect** — a self-contained desktop app:
+   - macOS: `install/macos/CodeMie Connect_2.1.0_aarch64.dmg`
+   - Windows: `install/windows/CodeMie Connect_2.1.0_x64-setup.exe`
 
-The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a GUI installer.
+The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require CodeMie Connect.
 
 3. **Chrome extension** — a packaged `.zip` build of the CodeMie browser side panel, for manual
    install while the Chrome Web Store listing is pending review: see
@@ -114,73 +114,41 @@ npm config delete prefix --location user
 npm i -g @anthropic-ai/claude-code@latest   # repeat for each package listed in the old folder
 ```
 
-## Windows Installation Wizard
+## Windows Installation
 
-`install/windows/CodeMie Connect_2.0.1_x64-setup.exe` is a self-contained Windows desktop GUI application that installs and configures the CodeMie Claude Code CLI end-to-end. It requires no terminal knowledge and bundles all dependencies.
+`install/windows/CodeMie Connect_2.1.0_x64-setup.exe` is CodeMie Connect, a self-contained Windows desktop app. It bundles Node.js, npm and the CodeMie CLI, so nothing needs to be installed first.
 
-### Running the Wizard
+### Running CodeMie Connect
 
-Double-click `CodeMie Connect_2.0.1_x64-setup.exe`. No command-line arguments are supported — the wizard is a pure GUI application.
+Double-click `CodeMie Connect_2.1.0_x64-setup.exe`. After install, the app runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-The wizard walks through the following steps in order:
-
-| Step | What it does |
-|------|-------------|
-| PowerShell execution policy | Sets `RemoteSigned` scope for the current user |
-| Git for Windows | Detects an existing install or silently downloads and installs v2.47.0-64-bit |
-| Node.js + npm | Detects an existing install or silently downloads and installs Node.js LTS v20.18.0 |
-| CodeMie CLI | Installs `@codemieai/code` globally via `npm install -g` |
-| CodeMie setup | Opens a visible terminal window and runs `codemie setup` interactively |
-| Claude engine | Opens a visible terminal window and runs `codemie install claude --supported` |
-| Validation | Runs `codemie doctor` to confirm everything is working |
-
-Each step that requires a download shows a progress animation and an inline **Approve** / **Ignore** button before proceeding.
-
-### Unattended Mode
-
-Check the **Unattended mode** checkbox in the left sidebar before clicking Install. All approval gates auto-approve, so the wizard runs without prompts. The two interactive terminal steps (`codemie setup` and `codemie install claude`) still open a visible console window because they require user input.
-
-### Default Paths
-
-Tools are installed to their standard system locations:
-
-```text
-Git:    C:\Program Files\Git\cmd\git.exe
-Node:   C:\Program Files\nodejs\node.exe
-```
-
-npm global binaries are added to the current user's `PATH`:
-
-```text
-%USERPROFILE%\AppData\Local\CodeMie\npm-prefix
-%USERPROFILE%\AppData\Roaming\npm
-```
+Installed coding tools are placed under `%USERPROFILE%\.codemie\agents`.
 
 ### Log File
 
-All wizard output is written to:
+App output is written to:
 
 ```text
-%TEMP%\codemie_wizard.log
+%USERPROFILE%\AppData\Local\CodeMie\Logs\codemie_wizard.log
 ```
 
-The log persists across runs. Each line is prefixed with an ISO-8601 timestamp and a tag: `[OUT]` stdout, `[ERR]` stderr, `[INF]` info, `[OK]` success, `[CMD]` command.
+The log persists across runs.
 
-## macOS Installation Wizard
+## macOS Installation
 
-`install/macos/CodeMie Connect_2.0.1_aarch64_signed.dmg` is a signed macOS desktop GUI application for **Apple Silicon (aarch64)** Macs. It installs and configures the CodeMie CLI and Claude engine end-to-end with no terminal required. (An Intel x86_64 build is not shipped.)
+`install/macos/CodeMie Connect_2.1.0_aarch64.dmg` is CodeMie Connect, a signed macOS desktop app for **Apple Silicon (aarch64)** Macs. It bundles Node.js, npm and the CodeMie CLI, so nothing needs to be installed first. (An Intel x86_64 build is not shipped.)
 
-The wizard is built from a separate repository (`codemie-claude-installer-mac`); the `.dmg` committed here is the distributed artifact.
+CodeMie Connect is built from a separate repository (`codemie-claude-installer-macos`); the `.dmg` committed here is the distributed artifact.
 
-### Running the Wizard
+### Running CodeMie Connect
 
-Download `CodeMie Connect_2.0.1_aarch64_signed.dmg` from the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos), open it, and run the app. The wizard walks the user through installing prerequisites (Xcode Command Line Tools, Node.js, Git), the CodeMie CLI, an interactive `codemie setup`, the Claude engine via `codemie install claude`, and a final `codemie doctor` validation.
+Download `CodeMie Connect_2.1.0_aarch64.dmg` from the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
 ### Log File
 
-Wizard output is written to `~/Library/Logs/CodeMie/wizard.log` (per the macOS installer plan; the wizard source lives in a separate repository). The log persists across runs.
+App output is written to `~/Library/Logs/CodeMie/codemie_wizard.log`. The log persists across runs.
 
-> The wizard version (`2.0.1` in the filename) is independent of the `@codemieai/code` npm package version.
+The app checks this repo for updates: `install/manifest.json` holds the latest app version and the download link for each platform. This is independent of the `@codemieai/code` npm package version.
 
 ## Release Artifacts
 

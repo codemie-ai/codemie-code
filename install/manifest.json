@@ -1,0 +1,7 @@
+{
+  "version": "2.1.0",
+  "platforms": {
+    "darwin-aarch64": { "url": "https://github.com/codemie-ai/codemie-code/raw/main/install/macos/CodeMie%20Connect_2.1.0_aarch64.dmg" },
+    "windows-x86_64": { "url": "https://github.com/codemie-ai/codemie-code/raw/main/install/windows/CodeMie%20Connect_2.1.0_x64-setup.exe" }
+  }
+}
