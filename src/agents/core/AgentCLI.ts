@@ -9,6 +9,7 @@ import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/co
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
+import { formatProfileNameConflictWarning } from '../../utils/profile.js';
 import { getDirname } from '../../utils/paths.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
@@ -214,6 +215,10 @@ export class AgentCLI {
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
       });
+
+      if (config.name && (await ConfigLoader.findProfileNameConflicts(process.cwd())).includes(config.name)) {
+        console.warn(`\n${formatProfileNameConflictWarning([config.name])}\n`);
+      }
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
