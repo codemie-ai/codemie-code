@@ -10,13 +10,15 @@
 export const CONVERSATION_SYNC_STATUS = {
   PENDING: 'pending',
   SUCCESS: 'success',
-  FAILED: 'failed'
+  FAILED: 'failed',
+  /** Terminal: every entry is also carried by a newer queued record, so it is never sent */
+  SUPERSEDED: 'superseded'
 } as const;
 
 /**
  * Conversation sync status type
  */
-export type ConversationSyncStatus = 'pending' | 'success' | 'failed';
+export type ConversationSyncStatus = 'pending' | 'success' | 'failed' | 'superseded';
 
 /**
  * Conversation payload record stored in JSONL

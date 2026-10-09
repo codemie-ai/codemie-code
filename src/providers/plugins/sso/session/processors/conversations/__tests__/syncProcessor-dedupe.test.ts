@@ -112,8 +112,19 @@ describe('createSyncProcessor — duplicate payload ids', () => {
   }
 
   describe('outcome marking (AC1)', () => {
+    // A rewound pointer re-queues the same turn (same payloadId) under a new history
+    // index, so the duplicate is not fully covered and collapse leaves it alone.
+    const requeued = (): TestRecord => makeRecord({
+      timestamp: 1_700_000_000_500,
+      historyIndices: [1],
+      payload: {
+        conversationId: 'conv-1',
+        history: [{ role: 'User', message: 'hello', history_index: 1 }],
+      },
+    });
+
     it('sends a shared payloadId once and marks every record carrying it success', async () => {
-      writeRecords([makeRecord(), makeRecord({ timestamp: 1_700_000_000_500 })]);
+      writeRecords([makeRecord(), requeued()]);
       upsertConversation.mockResolvedValue(okResponse);
 
       await runSync();
@@ -127,7 +138,7 @@ describe('createSyncProcessor — duplicate payload ids', () => {
     });
 
     it('marks every record carrying a failed payloadId failed with one attempt', async () => {
-      writeRecords([makeRecord(), makeRecord({ timestamp: 1_700_000_000_500 })]);
+      writeRecords([makeRecord(), requeued()]);
       upsertConversation.mockResolvedValue({ success: false, message: 'boom' });
 
       await runSync();
@@ -232,6 +243,96 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       };
       applyProcessingSyncUpdates(session as never, [result as never]);
       expect(session.sync.conversations.lastSyncedMessageUuid).toBe(UUIDS[2]);
+    });
+  });
+
+  describe('collapse superseded payloads (AC7, AC8)', () => {
+    let clock = 0;
+    function rec(payloadId: string, history: Record<string, unknown>[], conversationId = 'conv-1'): TestRecord {
+      clock++;
+      return makeRecord({
+        payloadId,
+        lastProcessedMessageUuid: payloadId,
+        timestamp: 1_700_000_000_000 + clock,
+        historyIndices: history.map(h => h.history_index as number),
+        messageCount: history.length,
+        payload: { conversationId, history },
+      });
+    }
+    const user0 = { role: 'User', message: 'question', history_index: 0 };
+    const assistant0 = (text: string): Record<string, unknown> => ({ role: 'Assistant', message: text, history_index: 0 });
+
+    function sentPayloads(): Array<{ conversationId: string; history: Record<string, unknown>[] }> {
+      return upsertConversation.mock.calls.map(call => ({ conversationId: call[0], history: call[1] }));
+    }
+
+    beforeEach(() => {
+      upsertConversation.mockResolvedValue(okResponse);
+    });
+
+    it('sends only the newest of fully covered records and marks the older ones superseded', async () => {
+      writeRecords([
+        rec('p1', [assistant0('draft 1')]),
+        rec('p2', [assistant0('draft 2')]),
+        rec('p3', [assistant0('final')]),
+      ]);
+
+      const result = await runSync();
+
+      expect(sentPayloads().map(p => p.history[0].message)).toEqual(['final']);
+      expect(readRecords().map(r => r.status)).toEqual(['superseded', 'superseded', 'success']);
+      expect(readRecords().map(r => r.syncAttempts)).toEqual([undefined, undefined, 1]);
+      expect(result.message).toBe('Synced 1/1 conversations');
+    });
+
+    it('sends a partly covered record whole, in queue order', async () => {
+      writeRecords([
+        rec('pA', [user0, assistant0('partial')]),
+        rec('pB', [assistant0('continued')]),
+      ]);
+
+      await runSync();
+
+      expect(sentPayloads().map(p => p.history.length)).toEqual([2, 1]);
+      expect(readRecords().map(r => r.status)).toEqual(['success', 'success']);
+    });
+
+    it('does not supersede across different conversationIds', async () => {
+      writeRecords([
+        rec('pX', [assistant0('main')], 'conv-main'),
+        rec('pY', [assistant0('sub')], 'conv-sub'),
+      ]);
+
+      await runSync();
+
+      expect(sentPayloads().map(p => p.conversationId)).toEqual(['conv-main', 'conv-sub']);
+    });
+
+    it('never supersedes a record with an empty history', async () => {
+      writeRecords([
+        rec('pEmpty', []),
+        rec('pFull', [user0, assistant0('answer')]),
+      ]);
+
+      await runSync();
+
+      expect(upsertConversation).toHaveBeenCalledTimes(2);
+      expect(readRecords().map(r => r.status)).toEqual(['success', 'success']);
+    });
+
+    it('sends codex sentinel records without roles in order and unchanged', async () => {
+      const records = [0, 1, 2].map(i =>
+        rec(`c@${i}`, [{ message: `event ${i}`, history_index: 0 }], 'codex-conv')
+      );
+      writeRecords(records);
+
+      await runSync();
+
+      expect(sentPayloads()).toEqual(records.map(r => ({
+        conversationId: 'codex-conv',
+        history: r.payload.history,
+      })));
+      expect(readRecords().map(r => r.status)).toEqual(['success', 'success', 'success']);
     });
   });
 });

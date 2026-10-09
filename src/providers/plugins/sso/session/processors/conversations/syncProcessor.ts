@@ -16,7 +16,12 @@ import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
-import { getPayloadId, healSyncedDuplicates, isSendCandidate } from './payloadQueue.js';
+import {
+  collapseSupersededPayloads,
+  getPayloadId,
+  healSyncedDuplicates,
+  isSendCandidate
+} from './payloadQueue.js';
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
@@ -57,19 +62,29 @@ export function createSyncProcessor(): SessionProcessor {
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
 
-      // Heal: a candidate whose payloadId already has a success record was synced;
-      // persist that before anything else so even a run that defers immediately heals.
+      // Heal: a candidate whose payloadId already has a success record was synced.
       const healedCount = healSyncedDuplicates(allPayloads);
-      if (healedCount > 0) {
-        logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced duplicate payload(s)`);
+
+      // Collapse: an older candidate whose every entry a newer candidate re-sends is
+      // superseded (terminal, never sent). Candidates share object identity with
+      // allPayloads, so the in-place status change is what gets persisted.
+      const sendCandidates = allPayloads.filter(isSendCandidate);
+      const supersededCount = collapseSupersededPayloads(sendCandidates);
+
+      // Persist both before sending anything, so even a run that defers immediately keeps them.
+      if (healedCount > 0 || supersededCount > 0) {
+        logger.debug(
+          `[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced and superseded ` +
+          `${supersededCount} fully covered payload(s)`
+        );
         try {
           await writeJSONLAtomic(conversationsFile, allPayloads);
         } catch (writeError) {
-          logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed payloads:`, writeError);
+          logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
         }
       }
 
-      const pendingPayloads = allPayloads.filter(isSendCandidate);
+      const pendingPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);

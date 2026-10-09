@@ -61,3 +61,55 @@ export function healSyncedDuplicates(allPayloads: ConversationPayloadRecord[]): 
   });
   return healed;
 }
+
+/**
+ * Keys `${conversationId}|${history_index}|${role}` of a record's history entries,
+ * or undefined when the record is ineligible for collapse: an empty history, or an
+ * entry without a numeric `history_index` and a string `role` (e.g. codex sentinels).
+ */
+function getCollapseKeys(record: ConversationPayloadRecord): string[] | undefined {
+  const history: unknown[] = record.payload.history ?? [];
+  if (history.length === 0) {
+    return undefined;
+  }
+
+  const keys: string[] = [];
+  for (const entry of history) {
+    const { history_index: historyIndex, role } = (entry ?? {}) as { history_index?: unknown; role?: unknown };
+    if (typeof historyIndex !== 'number' || typeof role !== 'string') {
+      return undefined;
+    }
+    keys.push(`${record.payload.conversationId}|${historyIndex}|${role}`);
+  }
+  return keys;
+}
+
+/**
+ * Mark send candidates whose every history entry is re-sent by a newer eligible
+ * candidate as `superseded` (in place). "Newer" means a later position in the
+ * queue file; a partly covered record is left to be sent whole.
+ *
+ * @param candidates send candidates in queue-file order
+ * @returns the number of records superseded
+ */
+export function collapseSupersededPayloads(candidates: ConversationPayloadRecord[]): number {
+  const newerKeys = new Set<string>();
+  let superseded = 0;
+
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    const keys = getCollapseKeys(candidates[index]);
+    if (!keys) {
+      continue;
+    }
+
+    if (keys.every(key => newerKeys.has(key))) {
+      candidates[index].status = CONVERSATION_SYNC_STATUS.SUPERSEDED;
+      superseded++;
+    } else {
+      for (const key of keys) {
+        newerKeys.add(key);
+      }
+    }
+  }
+  return superseded;
+}
