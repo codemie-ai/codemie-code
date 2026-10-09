@@ -17,7 +17,7 @@
  * this).
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { loadParseState, saveParseState, withParseStateLock } from './parse-state.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent } from './usage-request.js';
@@ -311,14 +311,18 @@ export async function collectMainTranscriptEvents(
 interface SubagentScanResult {
   toolCalls: Record<string, number>;
   toolErrors: Record<string, number>;
+  toolResults: number;
   skillsInvoked: Record<string, number>;
   startedAt: string;
+  endedAt: string;
   durationMs: number;
+  /** True when the file is missing, unreadable, or has no parseable lines — the phantom guard. */
+  isEmpty: boolean;
 }
 
 /**
- * Recompute one subagent transcript's tool-call/tool-error/skill-invocation aggregates and
- * timing span from byte 0 of its own file (the subagent-transcript analogue of
+ * Recompute one subagent transcript's tool-call/tool-error/tool-result/skill-invocation
+ * aggregates and timing span from byte 0 of its own file (the subagent-transcript analogue of
  * {@link buildFullAccumulator}'s "recompute fresh each time" approach — `TranscriptParseState`
  * has no persisted field for any of these either).
  *
@@ -326,23 +330,28 @@ interface SubagentScanResult {
  *   `tool_result.is_error` correlation {@link buildFullAccumulator} uses, but tally into two
  *   parallel `Record<string, number>` maps (not the combined `{calls, errors}` shape
  *   `SessionSummaryAccumulator` uses) to match {@link buildSubagentUsageEvent}'s own
- *   `tool_calls`/`tool_errors` parameter shapes.
+ *   `tool_calls`/`tool_errors` parameter shapes; `toolResults` reuses {@link countToolResults}.
  * - `skillsInvoked` is `extractNamedInvocations(parsedLines).skillInvocations`, taken verbatim.
- * - `startedAt` is the first parsed line's `timestamp`, or `''` when the file is empty/unreadable.
- * - `durationMs` is `Date.parse(lastLine.timestamp) - Date.parse(firstLine.timestamp)`, guarded by
- *   `Number.isFinite` (covers a missing/unparseable timestamp on either end, and a single-line
- *   file) so it is never `NaN` — falls back to `0`.
+ * - `startedAt`/`endedAt` are the first/last *timestamped* line via {@link firstTimestamp} (real
+ *   subagent transcripts interleave untimestamped lines, e.g. `attachment`, at either end).
+ * - `durationMs` is `Date.parse(endedAt) - Date.parse(startedAt)`, guarded by `Number.isFinite`
+ *   (covers a missing/unparseable timestamp on either end, and a single-line file) so it is
+ *   never `NaN` — falls back to `0`.
  *
  * Never throws: a missing/unreadable file or an empty file both resolve to the emptiest
- * defensible result; a malformed individual line is skipped rather than aborting the whole scan.
+ * defensible result with `isEmpty: true`; a malformed individual line is skipped rather than
+ * aborting the whole scan.
  */
 async function scanSubagentTranscript(filePath: string): Promise<SubagentScanResult> {
   const empty: SubagentScanResult = {
     toolCalls: {},
     toolErrors: {},
+    toolResults: 0,
     skillsInvoked: {},
     startedAt: '',
+    endedAt: '',
     durationMs: 0,
+    isEmpty: true,
   };
 
   let raw: string;
@@ -382,13 +391,47 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
     }
   }
 
+  const toolResults = countToolResults(parsedLines);
   const named = extractNamedInvocations(parsedLines);
-  const startedAt = String(parsedLines[0].timestamp ?? '');
-  const lastTimestamp = String(parsedLines[parsedLines.length - 1].timestamp ?? '');
-  const diff = Date.parse(lastTimestamp) - Date.parse(startedAt);
+  const startedAt = firstTimestamp(parsedLines);
+  const endedAt = firstTimestamp([...parsedLines].reverse());
+  const diff = Date.parse(endedAt) - Date.parse(startedAt);
   const durationMs = Number.isFinite(diff) ? Math.max(0, diff) : 0;
 
-  return { toolCalls, toolErrors, skillsInvoked: named.skillInvocations, startedAt, durationMs };
+  return {
+    toolCalls,
+    toolErrors,
+    toolResults,
+    skillsInvoked: named.skillInvocations,
+    startedAt,
+    endedAt,
+    durationMs,
+    isEmpty: false,
+  };
+}
+
+/**
+ * Whether the `SessionEnd` backstop still needs to (re)process `subagentFile`.
+ *
+ * False when a prior pass (that subagent's own `SubagentStop`, or an earlier backstop run)
+ * already advanced its persisted offset to the file's current size — nothing was appended since,
+ * so re-scanning would only resend the same cumulative `agent.subagent.usage` event as a
+ * duplicate. True whenever that cannot be established (never-seen agent, growth since the last
+ * offset, or a state/file read failure) — an extra pass is strictly better than silently dropping
+ * one.
+ */
+export async function subagentNeedsBackstop(sessionId: string, subagentFile: SubagentFile): Promise<boolean> {
+  try {
+    const state = await loadParseState(sessionId);
+    const offset = state.subagentOffsets[subagentFile.agentId];
+    if (offset === undefined) {
+      return true;
+    }
+    const info = await stat(subagentFile.filePath);
+    return info.size !== offset;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -403,14 +446,16 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
  *   `collectMainTranscriptEvents` uses for the main transcript.
  * - Returns one `agent.usage.request` JSON string per request key touched by *this* pass (no new
  *   lines means no new events — a no-op reparse returns nothing at this layer).
- * - Unconditionally also returns exactly one `agent.subagent.usage` event summarizing this
- *   agent's *cumulative* usage (every `scopeKind: 'agent'` record in `state.openRequests` for
- *   this `agentId`, not just the ones touched this pass) plus a fresh full-file
- *   tool-call/error/skill/timing scan (see {@link scanSubagentTranscript}) — this is deliberate:
- *   the `SessionEnd` backstop's whole purpose is to guarantee every subagent gets at least one
- *   `agent.subagent.usage` event even when its own `SubagentStop` hook never fired, so a
- *   re-run with nothing new since the last pass still returns one (summarizing unchanged
- *   cumulative state), rather than being skipped.
+ * - Also returns one `agent.subagent.usage` event summarizing this agent's *cumulative* usage
+ *   (every `scopeKind: 'agent'` record in `state.openRequests` for this `agentId`, not just the
+ *   ones touched this pass) plus a fresh full-file tool-call/error/result/skill/timing scan (see
+ *   {@link scanSubagentTranscript}) — unless that scan reports `isEmpty` (the file is missing or
+ *   has no parseable lines), in which case no `agent.subagent.usage` event is returned at all:
+ *   a subagent with no transcript content has nothing real to summarize, so one is never
+ *   fabricated with all-zero fields. A re-run with nothing new since the last pass (but a
+ *   non-empty file) still returns the event, summarizing unchanged cumulative state, rather than
+ *   being skipped — callers that only want to re-run when something changed should check
+ *   {@link subagentNeedsBackstop} first.
  * - Persists the updated `subagentOffsets[subagentFile.agentId]` (and `openRequests`) back to
  *   disk.
  *
@@ -456,20 +501,23 @@ export async function collectSubagentTranscriptEvents(
         (r) => r.scopeKind === 'agent' && r.agentId === subagentFile.agentId
       );
 
-      const { toolCalls, toolErrors, skillsInvoked, startedAt, durationMs } =
-        await scanSubagentTranscript(subagentFile.filePath);
-
-      const subagentEvent = buildSubagentUsageEvent(
-        sessionId,
-        subagentFile,
-        usageRequestsForAgent,
-        toolCalls,
-        toolErrors,
-        skillsInvoked,
-        startedAt,
-        durationMs
-      );
-      events.push(subagentEvent);
+      const scan = await scanSubagentTranscript(subagentFile.filePath);
+      if (!scan.isEmpty) {
+        events.push(
+          buildSubagentUsageEvent(
+            sessionId,
+            subagentFile,
+            usageRequestsForAgent,
+            scan.toolCalls,
+            scan.toolErrors,
+            scan.toolResults,
+            scan.skillsInvoked,
+            scan.startedAt,
+            scan.endedAt,
+            scan.durationMs
+          )
+        );
+      }
 
       await saveParseState(sessionId, state);
       return events;

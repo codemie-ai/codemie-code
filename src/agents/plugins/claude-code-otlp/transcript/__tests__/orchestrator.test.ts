@@ -382,15 +382,16 @@ describe('collectSubagentTranscriptEvents — no new bytes since last run', () =
     // No new lines means no new/touched openRequests keys at the agent.usage.request layer.
     expect(secondUsageRequests).toHaveLength(0);
     // But the agent.subagent.usage event is still returned exactly once, summarizing the same
-    // cumulative (unchanged) usage.
+    // cumulative (unchanged) usage — the file itself is non-empty, so this is not a phantom.
     expect(secondSubagentUsage).toHaveLength(1);
-    expect(secondSubagentUsage[0].output_tokens).toBe(30);
+    const usage = secondSubagentUsage[0].usage as Array<Record<string, unknown>>;
+    expect(usage[0].output_tokens).toBe(30);
     expect(secondSubagentUsage[0].api_calls).toBe(2);
   });
 });
 
-describe('collectSubagentTranscriptEvents — missing subagent transcript file', () => {
-  it('resolves without throwing and still returns one empty-usage agent.subagent.usage event, with no agent.usage.request events', async () => {
+describe('collectSubagentTranscriptEvents — missing subagent transcript file (phantom guard)', () => {
+  it('resolves without throwing and returns no agent.subagent.usage event — a missing transcript has nothing real to summarize', async () => {
     const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
 
     const sessionId = 'session-subagent-missing';
@@ -406,10 +407,63 @@ describe('collectSubagentTranscriptEvents — missing subagent transcript file',
     const subagentUsageEvents = events.filter((e) => e.type === 'agent.subagent.usage');
 
     expect(usageRequestEvents).toHaveLength(0);
-    expect(subagentUsageEvents).toHaveLength(1);
-    expect(subagentUsageEvents[0].api_calls).toBe(0);
-    expect(subagentUsageEvents[0].input_tokens).toBe(0);
-    expect(subagentUsageEvents[0].started_at).toBe('');
-    expect(subagentUsageEvents[0].duration_ms).toBe(0);
+    expect(subagentUsageEvents).toHaveLength(0);
+  });
+});
+
+describe('collectSubagentTranscriptEvents — empty subagent transcript file (phantom guard)', () => {
+  it('returns no agent.subagent.usage event for a file with no parseable lines', async () => {
+    const { collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-subagent-empty';
+    const emptyFile = writeSubagentFixture(sessionId, 'empty', []);
+
+    const events = parseAll(await collectSubagentTranscriptEvents(sessionId, emptyFile));
+
+    expect(events.filter((e) => e.type === 'agent.subagent.usage')).toHaveLength(0);
+  });
+});
+
+describe('subagentNeedsBackstop', () => {
+  it('is true for an agent never seen before (no persisted offset)', async () => {
+    const { subagentNeedsBackstop } = await import('../orchestrator.js');
+
+    const sessionId = 'session-backstop-needed-unseen';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'uuid-a1-1', messageId: 'msg-a1-1', outputTokens: 10 }),
+    ]);
+
+    expect(await subagentNeedsBackstop(sessionId, file)).toBe(true);
+  });
+
+  it('is false once a prior pass advanced the offset to the file\'s current size', async () => {
+    const { subagentNeedsBackstop, collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-backstop-already-reported';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'uuid-a1-1', messageId: 'msg-a1-1', outputTokens: 10 }),
+    ]);
+
+    await collectSubagentTranscriptEvents(sessionId, file);
+
+    expect(await subagentNeedsBackstop(sessionId, file)).toBe(false);
+  });
+
+  it('is true again once more content is appended after the last reported offset', async () => {
+    const { subagentNeedsBackstop, collectSubagentTranscriptEvents } = await import('../orchestrator.js');
+
+    const sessionId = 'session-backstop-grown';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'uuid-a1-1', messageId: 'msg-a1-1', outputTokens: 10 }),
+    ]);
+    await collectSubagentTranscriptEvents(sessionId, file);
+
+    writeFileSync(
+      file.filePath,
+      usageLine({ uuid: 'uuid-a1-2', messageId: 'msg-a1-2', outputTokens: 20 }) + '\n',
+      { flag: 'a' }
+    );
+
+    expect(await subagentNeedsBackstop(sessionId, file)).toBe(true);
   });
 });

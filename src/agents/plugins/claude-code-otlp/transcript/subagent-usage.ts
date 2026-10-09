@@ -4,14 +4,16 @@
  * Discovery (`findSubagentFiles`) uses the same path convention as the private
  * `findSubagentFiles` in `src/agents/plugins/claude/claude.session.ts`
  * (`<parentDir>/<sessionId>/subagents/agent-*.jsonl` + sibling `<name>.meta.json`) but returns
- * only the narrower {@link SubagentFile} shape this event needs.
+ * only the narrower {@link SubagentFile} shape this event needs. The sidecar reader is also
+ * exported ({@link readSubagentMeta}) so a `SubagentStop` hook — which only sees its own single
+ * transcript path, not the whole `subagents/` directory — can fill in the same fields.
  *
- * The event builder (`buildSubagentUsageEvent`) sums an already-scoped `OpenUsageRequest[]` for
- * token/cache fields and passes the caller-built `tool_calls`/`tool_errors`/`skills_invoked` maps
- * through verbatim; it has no access to the subagent transcript itself.
+ * The event builder (`buildSubagentUsageEvent`) sums an already-scoped `OpenUsageRequest[]` into
+ * the contract's `usage[]` rows (one per distinct model/speed/inference_geo/service_tier/
+ * scope_kind/scope_name) and passes the caller-built tool-call/tool-error/skill maps through as
+ * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
- * `description`/`workflow_run`/`worktree` have no known source and are always empty strings,
- * never fabricated.
+ * `workflow_run`/`worktree` have no known source and are always empty strings, never fabricated.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -24,20 +26,44 @@ export interface SubagentFile {
   toolUseId?: string;
   agentType?: string;
   spawnDepth?: number;
+  description?: string;
+}
+
+interface SubagentMeta {
+  toolUseId?: string;
+  agentType?: string;
+  spawnDepth?: number;
+  description?: string;
+}
+
+/**
+ * Read one subagent's `.meta.json` sidecar (same path, `.jsonl` swapped for `.meta.json`).
+ * Never throws: a missing or malformed sidecar resolves to `{}`.
+ */
+export async function readSubagentMeta(jsonlFilePath: string): Promise<SubagentMeta> {
+  const meta: SubagentMeta = {};
+  try {
+    const metaPath = jsonlFilePath.replace(/\.jsonl$/, '.meta.json');
+    const metaRaw = JSON.parse(await readFile(metaPath, 'utf-8')) as Record<string, unknown>;
+    if (typeof metaRaw.toolUseId === 'string') meta.toolUseId = metaRaw.toolUseId;
+    if (typeof metaRaw.agentType === 'string') meta.agentType = metaRaw.agentType;
+    if (typeof metaRaw.spawnDepth === 'number') meta.spawnDepth = metaRaw.spawnDepth;
+    if (typeof metaRaw.description === 'string') meta.description = metaRaw.description;
+  } catch {
+    // sidecar absent or malformed — proceed without it.
+  }
+  return meta;
 }
 
 /**
  * Discover subagent transcript files for a main transcript at `mainTranscriptPath`.
  *
  * Looks under `<parentDir>/<sessionId>/subagents/` (where `sessionId` is `mainTranscriptPath`'s
- * own basename, minus `.jsonl`) for `agent-*.jsonl` files, reading each one's sibling
- * `<name>.meta.json` sidecar (when present and parseable) for `toolUseId`/`agentType`/
- * `spawnDepth`. Never reads `mainTranscriptPath`'s own content — only its path is used to derive
- * the subagents directory.
+ * own basename, minus `.jsonl`) for `agent-*.jsonl` files, reading each one's sidecar via
+ * {@link readSubagentMeta}.
  *
  * Never throws: a missing subagents directory, an unreadable directory, or any other failure all
- * resolve to `[]`. A missing or malformed per-agent `.meta.json` sidecar is likewise swallowed —
- * that agent is still returned, just without the sidecar-derived fields.
+ * resolve to `[]`.
  */
 export async function findSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
   try {
@@ -53,23 +79,8 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
         .map(async (f): Promise<SubagentFile> => {
           const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '');
           const filePath = join(subagentsDir, f);
-
-          let toolUseId: string | undefined;
-          let agentType: string | undefined;
-          let spawnDepth: number | undefined;
-
-          try {
-            const metaRaw = JSON.parse(
-              await readFile(join(subagentsDir, f.replace(/\.jsonl$/, '.meta.json')), 'utf-8')
-            ) as Record<string, unknown>;
-            if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
-            if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
-            if (typeof metaRaw.spawnDepth === 'number') spawnDepth = metaRaw.spawnDepth;
-          } catch {
-            // meta file absent or malformed — proceed without it.
-          }
-
-          return { agentId, filePath, toolUseId, agentType, spawnDepth };
+          const meta = await readSubagentMeta(filePath);
+          return { agentId, filePath, ...meta };
         })
     );
 
@@ -79,19 +90,118 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
   }
 }
 
+/** One row of the contract's `usage[]`: `agent.usage.request`'s own fields, plus `api_calls`. */
+export interface SubagentUsageTotal {
+  model: string;
+  model_raw: string;
+  speed: string;
+  inference_geo: string;
+  service_tier: string;
+  scope_kind: string;
+  scope_name: string;
+  input_tokens: number;
+  cache_creation_5m_tokens: number;
+  cache_creation_1h_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  web_search_requests: number;
+  web_fetch_requests: number;
+  api_calls: number;
+}
+
+/**
+ * Group `usageRequests` by `(model, speed, inferenceGeo, serviceTier, scopeKind, scopeName)` —
+ * the contract's grouping for `agent.subagent.usage`'s `usage[]` — summing every token/call
+ * field within each group.
+ */
+export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsageTotal[] {
+  const groups = new Map<string, SubagentUsageTotal>();
+
+  for (const r of usageRequests) {
+    const key = [r.model, r.speed, r.inferenceGeo, r.serviceTier, r.scopeKind, r.scopeName].join('\u0000');
+    const existing = groups.get(key);
+    if (existing) {
+      existing.input_tokens += r.inputTokens;
+      existing.cache_creation_5m_tokens += r.cacheCreation5mTokens;
+      existing.cache_creation_1h_tokens += r.cacheCreation1hTokens;
+      existing.cache_read_tokens += r.cacheReadTokens;
+      existing.output_tokens += r.outputTokens;
+      existing.web_search_requests += r.webSearchRequests;
+      existing.web_fetch_requests += r.webFetchRequests;
+      existing.api_calls += 1;
+    } else {
+      groups.set(key, {
+        model: r.model,
+        model_raw: r.modelRaw,
+        speed: r.speed,
+        inference_geo: r.inferenceGeo,
+        service_tier: r.serviceTier,
+        scope_kind: r.scopeKind,
+        scope_name: r.scopeName,
+        input_tokens: r.inputTokens,
+        cache_creation_5m_tokens: r.cacheCreation5mTokens,
+        cache_creation_1h_tokens: r.cacheCreation1hTokens,
+        cache_read_tokens: r.cacheReadTokens,
+        output_tokens: r.outputTokens,
+        web_search_requests: r.webSearchRequests,
+        web_fetch_requests: r.webFetchRequests,
+        api_calls: 1,
+      });
+    }
+  }
+
+  return [...groups.values()];
+}
+
+/** The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`. */
+function primaryModel(totals: SubagentUsageTotal[]): string {
+  let best: SubagentUsageTotal | undefined;
+  for (const total of totals) {
+    if (!best || total.api_calls > best.api_calls) {
+      best = total;
+    }
+  }
+  return best?.model ?? '';
+}
+
+/** Sum of a `{name: count}` map's values — the contract's flat `tool_calls`/`tool_errors` totals. */
+function sumCounts(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((total, n) => total + n, 0);
+}
+
+/** Merge per-tool call/error counts into the contract's `tools: {tool: {calls, errors}}`. */
+function buildToolsBreakdown(
+  toolCalls: Record<string, number>,
+  toolErrors: Record<string, number>
+): Record<string, { calls: number; errors: number }> {
+  const tools: Record<string, { calls: number; errors: number }> = {};
+  for (const [name, calls] of Object.entries(toolCalls)) {
+    tools[name] = { calls, errors: toolErrors[name] ?? 0 };
+  }
+  for (const [name, errors] of Object.entries(toolErrors)) {
+    if (!(name in tools)) {
+      tools[name] = { calls: 0, errors };
+    }
+  }
+  return tools;
+}
+
 /**
  * Build the `agent.subagent.usage` event payload for one subagent file.
  *
  * `usageRequests` is an array of {@link OpenUsageRequest} the caller has already parsed and
- * scoped to this one subagent (`scope_kind: 'agent'`) — this function only sums it, it does not
- * filter or scope it itself. `toolCalls`/`toolErrors`/`skillsInvoked` are likewise caller-built
- * `Record<string, number>` maps (keyed by tool/skill name) and are passed through verbatim.
+ * scoped to this one subagent (`scope_kind: 'agent'`) — summed into `usage[]` by
+ * {@link buildUsageTotals}, never into flat token fields (the contract has none for this event).
+ * `toolCalls`/`toolErrors` are caller-built `Record<string, number>` maps (keyed by tool name),
+ * folded into the flat `tool_calls`/`tool_errors` totals and the per-tool `tools` breakdown.
+ * `skills` is passed through verbatim — it is already the contract's `{name: count}` shape.
  *
- * `started_at`/`duration_ms` are forwarded verbatim from the caller, which derives them from the
- * subagent transcript's own first/last line timestamps — not this function's job.
+ * `startedAt`/`endedAt`/`durationMs`/`toolResults` are forwarded verbatim from the caller, which
+ * derives them from the subagent transcript's own lines — not this function's job.
  *
  * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
- * sidecar omits the field — not treated as an error).
+ * sidecar omits the field — not treated as an error). `description` defaults to `''` when the
+ * sidecar has none.
  *
  * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, by the adapter base class at hook time.
  */
@@ -101,12 +211,13 @@ export function buildSubagentUsageEvent(
   usageRequests: OpenUsageRequest[],
   toolCalls: Record<string, number>,
   toolErrors: Record<string, number>,
-  skillsInvoked: Record<string, number>,
+  toolResults: number,
+  skills: Record<string, number>,
   startedAt: string,
+  endedAt: string,
   durationMs: number
 ): Record<string, unknown> {
-  const sum = (selector: (req: OpenUsageRequest) => number): number =>
-    usageRequests.reduce((total, req) => total + selector(req), 0);
+  const usage = buildUsageTotals(usageRequests);
 
   return {
     type: 'agent.subagent.usage',
@@ -114,22 +225,22 @@ export function buildSubagentUsageEvent(
     agent_id: file.agentId,
     tool_use_id: file.toolUseId ?? '',
     agent_type: file.agentType ?? '',
-    spawn_depth: file.spawnDepth ?? 0,
-    description: '',
+    description: file.description ?? '',
     workflow_run: '',
+    spawn_depth: file.spawnDepth ?? 0,
     worktree: '',
     started_at: startedAt,
+    ended_at: endedAt,
     duration_ms: durationMs,
-    input_tokens: sum((r) => r.inputTokens),
-    cache_creation_5m_tokens: sum((r) => r.cacheCreation5mTokens),
-    cache_creation_1h_tokens: sum((r) => r.cacheCreation1hTokens),
-    cache_read_tokens: sum((r) => r.cacheReadTokens),
-    output_tokens: sum((r) => r.outputTokens),
-    web_search_requests: sum((r) => r.webSearchRequests),
-    web_fetch_requests: sum((r) => r.webFetchRequests),
+    model: primaryModel(usage),
     api_calls: usageRequests.length,
-    tool_calls: toolCalls,
-    tool_errors: toolErrors,
-    skills_invoked: skillsInvoked,
+    tool_calls: sumCounts(toolCalls),
+    tool_results: toolResults,
+    tool_errors: sumCounts(toolErrors),
+    tools: buildToolsBreakdown(toolCalls, toolErrors),
+    skills,
+    commands: [],
+    compactions: [],
+    usage,
   };
 }

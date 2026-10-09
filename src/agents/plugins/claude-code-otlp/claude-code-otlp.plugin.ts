@@ -19,9 +19,10 @@ import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowli
 import {
   collectMainTranscriptEvents,
   collectSubagentTranscriptEvents,
+  subagentNeedsBackstop,
   type SubagentFile,
 } from './transcript/orchestrator.js';
-import { findSubagentFiles } from './transcript/subagent-usage.js';
+import { findSubagentFiles, readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
@@ -114,28 +115,42 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const derived = await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd');
 
     // Backstop: guarantee every subagent discovered for this session gets at least one
-    // agent.subagent.usage event, even when its own SubagentStop hook never fired.
+    // agent.subagent.usage event, even when its own SubagentStop hook never fired. Skipped for an
+    // agent whose offset already covers the whole file — its own SubagentStop (or an earlier
+    // backstop pass) already reported it and nothing was appended since, so re-running here would
+    // only resend the same event as a duplicate.
     const subagentFiles = await findSubagentFiles(transcriptPath);
     for (const file of subagentFiles) {
-      derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
+      if (await subagentNeedsBackstop(sessionId, file)) {
+        derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
+      }
     }
 
     return { decision: 'forward', payload: [hookInput, ...derived] };
   }
 
   private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
+    if (!hookInput.agent_type) {
+      // Claude Code's own internal check-ins ("is it done yet?") fire SubagentStop with no
+      // agent_type — not a real subagent, so nothing is derived or forwarded for it.
+      return { decision: 'forward', payload: [] };
+    }
+
     const agentTranscriptPath = hookInput.agent_transcript_path;
     if (!agentTranscriptPath) {
       return { decision: 'forward', payload: [hookInput] };
     }
 
+    const meta = await readSubagentMeta(agentTranscriptPath);
     const subagentFile: SubagentFile = {
       agentId: hookInput.agent_id || basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, ''),
       filePath: agentTranscriptPath,
-      // `tool_use_id` is not declared on the SDK's SubagentStopHookInput type; read it
-      // defensively in case the raw hook payload carries it anyway.
-      toolUseId: readOptionalString(hookInput, 'tool_use_id'),
+      // `tool_use_id` is not declared on the SDK's SubagentStopHookInput type; the hook payload
+      // wins when it carries it anyway, else fall back to the `.meta.json` sidecar.
+      toolUseId: readOptionalString(hookInput, 'tool_use_id') ?? meta.toolUseId,
       agentType: hookInput.agent_type,
+      spawnDepth: meta.spawnDepth,
+      description: meta.description,
     };
 
     const derived = await collectSubagentTranscriptEvents(hookInput.session_id, subagentFile);
