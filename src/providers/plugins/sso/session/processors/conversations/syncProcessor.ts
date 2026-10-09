@@ -95,6 +95,7 @@ export function createSyncProcessor(): SessionProcessor {
       let totalMessages = 0;
       let deferred = false;
       let consumedCount = 0;
+      let lastSentConversationId: string | undefined;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
 
@@ -144,6 +145,7 @@ export function createSyncProcessor(): SessionProcessor {
             successCount++;
             totalMessages += history.length;
             successfulPayloadIds.add(payloadId);
+            lastSentConversationId = conversationId;
           }
 
         } catch (error: any) {
@@ -181,42 +183,15 @@ export function createSyncProcessor(): SessionProcessor {
         );
       }
 
-      // Calculate sync updates for the adapter to persist
+      // Calculate sync updates for the adapter to persist. lastSyncedMessageUuid is
+      // deliberately not reported: each transform processor owns its own pointer, and
+      // rewriting it here from the latest *successful* payload rewound it past turns
+      // that were queued but not yet synced, re-queueing them as duplicates.
       let maxHistoryIndex = -1;
-      let conversationId: string | undefined;
-      let lastSyncedMessageUuid: string | undefined;
-
-      if (successCount > 0) {
-        let latestPayload: ConversationPayloadRecord | undefined;
-        for (const payload of pendingPayloads) {
-          if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
-          const historyIndices = payload.historyIndices || [];
-          const payloadMaxIndex = historyIndices.length > 0
-            ? Math.max(...historyIndices)
-            : -1;
-          const payloadRank = Math.max(
-            payloadMaxIndex,
-            parseSourceIndex(payload.lastProcessedMessageUuid)
-          );
-          const latestRank = latestPayload
-            ? Math.max(
-              latestPayload.historyIndices.length > 0 ? Math.max(...latestPayload.historyIndices) : -1,
-              parseSourceIndex(latestPayload.lastProcessedMessageUuid)
-            )
-            : -1;
-
-          if (!latestPayload || payloadRank > latestRank) {
-            latestPayload = payload;
-          }
-
-          if (historyIndices.length > 0) {
-            maxHistoryIndex = Math.max(maxHistoryIndex, payloadMaxIndex);
-          }
-        }
-
-        if (latestPayload) {
-          conversationId = latestPayload.payload.conversationId;
-          lastSyncedMessageUuid = latestPayload.lastProcessedMessageUuid;
+      for (const payload of pendingPayloads) {
+        if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
+        for (const historyIndex of payload.historyIndices || []) {
+          maxHistoryIndex = Math.max(maxHistoryIndex, historyIndex);
         }
       }
 
@@ -240,9 +215,8 @@ export function createSyncProcessor(): SessionProcessor {
           payloadsSynced: successCount,
           syncUpdates: successCount > 0 ? {
             conversations: {
-              lastSyncedMessageUuid,
               lastSyncedHistoryIndex: maxHistoryIndex,
-              conversationId,
+              conversationId: lastSentConversationId,
               totalMessagesSynced: totalMessages,
               totalSyncAttempts: 1,
               lastSyncAt: syncedAt
@@ -334,13 +308,4 @@ function applyPayloadOutcome(
         }
       };
   });
-}
-
-function parseSourceIndex(value: unknown): number {
-  if (typeof value !== 'string') {
-    return -1;
-  }
-
-  const index = Number.parseInt(value.slice(value.lastIndexOf('@') + 1), 10);
-  return Number.isFinite(index) ? index : -1;
 }

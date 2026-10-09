@@ -188,4 +188,50 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(readRecords().map(r => r.status)).toEqual(['success', 'success', 'pending']);
     });
   });
+
+  describe('sync updates do not rewind the transform pointer (AC3, AC4)', () => {
+    const UUIDS = [
+      '1234abcd-0000-4000-8000-000000000000',
+      '8e2f0000-0000-4000-8000-000000000001',
+      'ab120000-0000-4000-8000-000000000002',
+    ];
+
+    it('omits lastSyncedMessageUuid and reports the max successful history index', async () => {
+      writeRecords(UUIDS.map((uuid, i) => makeRecord({
+        payloadId: uuid,
+        lastProcessedMessageUuid: uuid,
+        timestamp: 1_700_000_000_000 + i,
+        historyIndices: [i],
+        payload: {
+          conversationId: 'conv-1',
+          history: [{ role: 'User', message: `turn ${i}`, history_index: i }],
+        },
+      })));
+      upsertConversation.mockImplementation(async (_id: string, history: Array<{ history_index: number }>) =>
+        history[0].history_index === 2 ? { success: false, message: 'boom' } : okResponse
+      );
+
+      const result = await runSync();
+
+      const syncUpdates = (result.metadata as { syncUpdates: { conversations: Record<string, unknown> } }).syncUpdates;
+      const conversations = syncUpdates.conversations;
+      expect(conversations).not.toHaveProperty('lastSyncedMessageUuid');
+      expect(conversations.lastSyncedHistoryIndex).toBe(1);
+      expect(conversations.conversationId).toBe('conv-1');
+
+      const { applyProcessingSyncUpdates } = await import('@/agents/core/session/sync-state-utils.js');
+      const session = {
+        sync: {
+          conversations: {
+            lastSyncedMessageUuid: UUIDS[2],
+            lastSyncedHistoryIndex: 2,
+            totalMessagesSynced: 0,
+            totalSyncAttempts: 0,
+          },
+        },
+      };
+      applyProcessingSyncUpdates(session as never, [result as never]);
+      expect(session.sync.conversations.lastSyncedMessageUuid).toBe(UUIDS[2]);
+    });
+  });
 });
