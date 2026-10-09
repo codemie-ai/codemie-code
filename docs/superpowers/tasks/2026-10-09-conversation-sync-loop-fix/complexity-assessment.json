@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Stop codemie-code CLI conversation-sync re-send loops by fixing duplicate-payloadId outcome marking (with on-read queue healing), keeping the sync step from rewinding lastSyncedMessageUuid, deduping concurrent Claude hook appends, and adding a 50-per-run cap plus collapse of pending payloads to the newest per (conversationId, history_index, role).",
+  "generated": "2026-10-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Three components across the upload, session-state and agent-transform layers: the shared conversation syncProcessor (applyPayloadOutcome, syncUpdates, parseSourceIndex, new cap and collapse step), the session-state merge in sync-state-utils (and possibly the claude adapter merge in claude.session.ts), and the Claude ConversationsProcessor append path. Base M because each fix is localized and has a clear pattern. Bumped to L because syncProcessor is a core shared utility used by every agent (claude, codex, opencode, pi, gemini, copilot-cli, Desktop telemetry)." },
+    { "dimension": "technical_risk", "reason": "Closest patterns all exist in the repo: the pre-#557 map-over-all-ids marking, the codex/opencode/pi existingPayloads.some(...) already-queued dedupe, and Math.max monotonic merges. That puts the base at M, because the collapse by (conversationId, history_index, role) is new logic that has to keep the latest Claude Assistant continuation and give superseded records a terminal status that is never re-picked. It also must not break codex/opencode/pi sentinel ids (<id>@<index>). The concurrent-hook dedupe is read-then-append with no lock, so it narrows the race but does not close it. Bumped to L because the acceptance criteria list specific edge cases (duplicate payloadId with mixed success/pending records, digit-led vs letter-led UUIDs in parseSourceIndex, concurrent Stop/SubagentStop, collapse with continuations) and the existing syncProcessor tests only use unique ids. No current template covers these duplicate-id or error-path cases." },
+    { "dimension": "requirements_clarity", "reason": "All four fixes and the 50-per-run cap are concrete. Still open: whether to remove lastSyncedMessageUuid from the syncUpdates or guard it as monotonic, whether the claude.session.ts merge is in scope, which terminal status superseded/collapsed records get, and how collapse treats turn continuations. Core is defined with a few gaps, so M." },
+    { "dimension": "file_change_estimate", "reason": "About 4-5 source files modified (syncProcessor.ts, sync-state-utils.ts, claude.conversations-processor.ts, possibly claude.session.ts and conversations constants), plus 1-3 new or extended colocated Vitest files. Low end of the band: M." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches a core shared utility (syncProcessor is shared by all agents)",
+    "Technical Risk bumped from M to L: the acceptance criteria list duplicate-id, UUID-parsing, concurrency and collapse edge cases that no existing test template covers"
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,47 @@
+{
+  "decision": "approve",
+  "rationale": "All 4 prior blocking findings were checked against the current source at HEAD 637affcb and are resolved: the per-run cap is skipped on deadline-bounded SessionEnd runs (CR-004), a two-turn skip-then-append test was added (CR-001), payloadQueue.ts was renamed to payload-queue.ts (CR-002), and the queue-prep and queued-id logic was moved into helpers (CR-003). The 1 deferred item (the SessionEnd rename strands deadline-deferred payloads) was not re-checked. Business and standards rows are carried forward from code-review-final.json, and test execution is left to Stage 7.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    { "kind": "spec", "item": "Phase 1 outcome marking: every not-yet-successful record sharing the sent payloadId gets the outcome; per-payload persistence and deadline deferral kept", "status": "pass", "notes": "applyPayloadOutcome marks all pending/failed records with the id; per-payload writeJSONLAtomic and shouldStopSync kept" },
+    { "kind": "spec", "item": "Phase 1 healing on read: candidate whose payloadId already has a success record set to success unsent, persisted same run", "status": "pass", "notes": "healSyncedDuplicates; persisted before any send; healing-on-read tests" },
+    { "kind": "spec", "item": "No pointer rewind: syncProcessor drops conversations.lastSyncedMessageUuid from syncUpdates", "status": "pass", "notes": "field removed from syncUpdates; transform processors own their pointer" },
+    { "kind": "spec", "item": "lastSyncedHistoryIndex still reported as the max history index sent", "status": "pass", "notes": "max over successful payloads' historyIndices; merge stays Math.max" },
+    { "kind": "spec", "item": "parseSourceIndex deleted if no remaining caller", "status": "pass", "notes": "removed with its only caller" },
+    { "kind": "spec", "item": "Merges in sync-state-utils.ts, claude.session.ts and ClaudeDesktopTelemetryAdapter.ts left unchanged", "status": "pass", "notes": "files absent from the diff" },
+    { "kind": "spec", "item": "Claude dedupe-before-append: read queue once before the drain loop, set of queued payloadIds across every status", "status": "pass", "notes": "single readJSONL before the loop, no status filter" },
+    { "kind": "spec", "item": "Claude: already-queued result not appended, checkpoint still advances, each append adds its id", "status": "pass", "notes": "skip branch falls through to the localSync/checkpoint update" },
+    { "kind": "spec", "item": "Collapse runs after healing and only among send candidates", "status": "pass", "notes": "collapseSupersededPayloads(allPayloads.filter(isSendCandidate)) after heal" },
+    { "kind": "spec", "item": "Collapse eligibility: every history entry carries history_index and role; ineligible records untouched", "status": "pass", "notes": "getCollapseKeys returns undefined for ineligible or empty history" },
+    { "kind": "spec", "item": "Older eligible record superseded when every key appears in a newer record; partly covered record sent whole", "status": "pass", "notes": "reverse scan with keys.every; partial-coverage tests present" },
+    { "kind": "spec", "item": "Superseded records never sent, never counted as failures, persisted", "status": "pass", "notes": "excluded from unsentPayloads; no syncAttempts/error; persisted with heal write" },
+    { "kind": "spec", "item": "Per-run cap MAX_CONVERSATION_PAYLOADS_PER_RUN = 50 in conversations/constants.ts", "status": "pass", "notes": "module constant present" },
+    { "kind": "spec", "item": "Cap: oldest-first in queue order, overflow left as is, healed/superseded not counted", "status": "pass", "notes": "slice of unsent candidates in queue order; tests present" },
+    { "kind": "spec", "item": "Read pipeline order heal -> collapse -> cap -> send", "status": "pass", "notes": "sequence confirmed in processConversations" },
+    { "kind": "spec", "item": "Data shape: status gains terminal 'superseded', never selected by the candidate filter", "status": "pass", "notes": "SUPERSEDED in types; isSendCandidate selects pending/failed only" },
+    { "kind": "spec", "item": "AC1 two records for one turn id: sent at most once, none pending after first success", "status": "pass", "notes": "mark-all-by-id, in-run skip and heal; tested" },
+    { "kind": "spec", "item": "AC2 pending record whose id already has a success record marked success unsent", "status": "pass", "notes": "healSyncedDuplicates; tested incl. timestamp fallback" },
+    { "kind": "spec", "item": "AC3 lastSyncedMessageUuid never earlier after sync; sync step does not write it", "status": "pass", "notes": "field absent from syncUpdates; tested" },
+    { "kind": "spec", "item": "AC4 newest fails, older succeed: next hook queues no already-synced turn, no duplicates", "status": "pass", "notes": "no pointer rewrite, monotonic index merge, Claude dedupe backstop" },
+    { "kind": "spec", "item": "AC5 two hook events for one session queue the turn once (lock-free limits)", "status": "pass", "notes": "queuedPayloadIds check; lock-free race documented" },
+    { "kind": "spec", "item": "AC6 more than 50 candidates: one run sends at most 50, rest remain for next run", "status": "pass", "notes": "slice to cap; 51-record test. SessionEnd has no next run, see CR-004" },
+    { "kind": "spec", "item": "AC7 several pending records for same key: newest sent, older fully covered superseded", "status": "pass", "notes": "collapseSupersededPayloads; statuses and syncAttempts asserted" },
+    { "kind": "spec", "item": "AC8 normal session without duplicates: content and order unchanged; @<index> sentinel payloads unchanged", "status": "pass", "notes": "role-less sentinels ineligible for collapse; codex sentinel test" },
+    { "kind": "spec", "item": "Negative: merges/monotonic guards in sync-state-utils/adapters and env-configurable cap are non-goals", "status": "pass", "notes": "untouched; cap is a plain constant" },
+    { "kind": "spec", "item": "Verification: syncProcessor harness tests for duplicates, healing, collapse, cap 51+, no lastSyncedMessageUuid", "status": "pass", "notes": "present in syncProcessor-dedupe.test.ts; suite results belong to Stage 7" },
+    { "kind": "spec", "item": "Verification: Claude processor test that a pre-queued payloadId is skipped and its checkpoint advances", "status": "pass", "notes": "present in claude.conversations-processor-dedupe.test.ts; suite results belong to Stage 7" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "all 6 subjects in a9b6d6c..HEAD use <type>(<scope>): <subject> with allowed type fix, allowed scopes providers/agents, imperative mood, each under the 100-char subject-max-length (git-workflow.md + commitlint.config.cjs)" },
+    { "kind": "code-quality", "status": "partial", "notes": "met: .js import extensions, import type, explicit return types, JSDoc, UPPER_SNAKE_CASE constants, logger; unmet: new camelCase payloadQueue.ts vs kebab-case rule; new logic inlined into over-long functions" },
+    { "kind": "security", "status": "pass", "notes": "guide is .ai-run/guides/security/security-practices.md; no secrets, credentials or headers logged; file paths derive from getSessionConversationPath(sessionId), not user input; no hardcoded secrets" }
+  ],
+  "findings": [],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "dedupe test.ts:146 adds a u1,a1,u2,a2 case with only turn 1 queued; it asserts 2 records, turn 2's payloadId, historyIndices [1,1] and the pointer. The skip branch at HEAD still advances localSync" },
+    { "id": "CR-002", "status": "resolved", "notes": "payload-queue.ts exists and payloadQueue.ts is gone; syncProcessor.ts:24 imports './payload-queue.js'; grep finds no payloadQueue reference left in src/" },
+    { "id": "CR-003", "status": "resolved", "notes": "heal/collapse/persist/cap moved into prepareSendList (syncProcessor.ts:279-316); the queued-id set moved into private readQueuedPayloadIds. processConversations is still long, but that predates this change" },
+    { "id": "CR-004", "status": "resolved", "notes": "prepareSendList returns every unsent payload when context.syncDeadlineMs is set (line 306); hook.ts:288 SessionEnd is the only setter. A 51-record deadline test was added" }
+  ]
+}

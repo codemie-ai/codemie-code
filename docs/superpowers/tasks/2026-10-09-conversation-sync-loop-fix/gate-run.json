@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "branch": "fix/conversation-sync-loop",
+  "head": "0c656b06002fd96822156baaed3ab4c73caf1e2b",
+  "runner": "npm",
+  "started_at": "2026-10-09T10:27:14Z",
+  "completed_at": "2026-10-09T10:31:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5810,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Guide describes Apache-2.0 source header check, but scripts/license-check.js reports dependency license counts; ran as defined."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4160,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7866,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7164,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 25110,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24277,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Suite-internal skips only: 1 file / 10 tests skipped by the suite itself; 37 files, 278 tests passed."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1349,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" - script scans only git diff --staged. Branch diff covered by gitleaks-range gate instead."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 751,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12430,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 74977,
+      "command": "npm run ci",
+      "exit_code": 0
+    },
+    {
+      "id": "lint-staged-eslint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 4398,
+      "command": "npx eslint --max-warnings=0 --no-warn-ignored src/agents/plugins/claude/__tests__/claude.conversations-processor-dedupe.test.ts src/agents/plugins/claude/session/processors/claude.conversations-processor.ts src/providers/plugins/sso/session/processors/conversations/__tests__/syncProcessor-dedupe.test.ts src/providers/plugins/sso/session/processors/conversations/constants.ts src/providers/plugins/sso/session/processors/conversations/payload-queue.ts src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts src/providers/plugins/sso/session/processors/conversations/types.ts",
+      "exit_code": 0,
+      "notes": ".husky/pre-commit lint-staged *.ts step 1, run over the branch diff .ts files (nothing staged, so npx lint-staged itself would no-op)."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 23107,
+      "command": "npx vitest related --run --project unit --project cli src/agents/plugins/claude/__tests__/claude.conversations-processor-dedupe.test.ts src/agents/plugins/claude/session/processors/claude.conversations-processor.ts src/providers/plugins/sso/session/processors/conversations/__tests__/syncProcessor-dedupe.test.ts src/providers/plugins/sso/session/processors/conversations/constants.ts src/providers/plugins/sso/session/processors/conversations/payload-queue.ts src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts src/providers/plugins/sso/session/processors/conversations/types.ts",
+      "exit_code": 0,
+      "notes": "User-approved override (QA retry 1/3): scoped to --project unit --project cli instead of cached plan command, because the agent project globalSetup (tests/setup/agent-build-setup.ts) npm link hits EACCES on /usr/local/lib/node_modules (environment permission issue). 138 files / 1838 tests passed. The agent project (tests/integration/agent-*.test.ts) was not exercised; the unscoped hook command would still fail on commit on this machine until npm global prefix permissions are fixed."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 772,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI validate-commits job lints the whole PR range; guide commitlint:last only checks HEAD~1..HEAD (mismatch)."
+    },
+    {
+      "id": "gitleaks-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 632,
+      "command": "git diff origin/main...HEAD | docker run --rm -i -v $PWD/.gitleaks.toml:/gitleaks.toml ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Local stand-in for CI secrets-detection (gitleaks-action) over the branch diff, same image and config as validate-secrets.js; \"no leaks found\". CI scans commit history via gitleaks-action, which only CI can fully settle."
+    },
+    {
+      "id": "commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx --no -- commitlint --edit \"$1\"",
+      "notes": "Runs on a commit message being written; no commit is made here. Equivalent coverage from commitlint-range."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "echo \"$PR_TITLE\" | npx commitlint --verbose",
+      "notes": "Needs an open PR title from GitHub; no PR exists. Must be Conventional Commits when the PR is created."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Needs a Windows runner; only CI can settle."
+    }
+  ],
+  "failures": {}
+}
