@@ -566,7 +566,7 @@ codemie proxy connect --vscode-claude-code                   # VS Code Claude Co
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
 ```
 
-Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
+Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, `--insiders` (VS Code targets only), and on macOS `--install-client` (download and install a missing app first) with `--yes` (skip its confirmation).
 
 Remove a target's configuration with `codemie proxy disconnect`:
 

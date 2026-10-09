@@ -57,6 +57,10 @@ vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
 vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
   syncPluginSkills: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../client-install-step.js', () => ({
+  assertInstallClientSupported: vi.fn(),
+  ensureClientsInstalled: vi.fn().mockResolvedValue('proceed'),
+}));
 
 // ── shared test helpers ──────────────────────────────────────────────────────
 
@@ -573,5 +577,121 @@ describe('runCodexDesktop', () => {
     );
 
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('printProxyError — ClientInstallError', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    console_ = spyConsole();
+  });
+
+  afterEach(() => {
+    console_.restore();
+  });
+
+  it('prints the message, the download page, and exits 1', async () => {
+    const errSpy = vi.mocked(console.error);
+    const { ClientInstallError } = await import('../client-install.js');
+    const { printProxyError } = await import('../connect-orchestrator.js');
+
+    expect(() => printProxyError(new ClientInstallError('boom', 'https://x'), 'connect failed')).toThrow('process.exit:1');
+
+    const lines = errSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('✗ boom'))).toBe(true);
+    expect(lines).toContain('Download page: https://x');
+  });
+});
+
+describe('connectTargets — --install-client', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+  });
+
+  it('runs the install step after skill sync and before the daemon starts', async () => {
+    const { ensureClientsInstalled } = await import('../client-install-step.js');
+    const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    vi.mocked(ensureClientsInstalled).mockResolvedValue('proceed');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true }, installClient: true, yes: true, insiders: false });
+
+    expect(ensureClientsInstalled).toHaveBeenCalledWith({ claudeDesktop: true }, { yes: true, insiders: false });
+    const install = vi.mocked(ensureClientsInstalled).mock.invocationCallOrder[0];
+    expect(vi.mocked(syncRegisteredSkills).mock.invocationCallOrder[0]).toBeLessThan(install);
+    expect(install).toBeLessThan(vi.mocked(checkStatus).mock.invocationCallOrder[0]);
+  });
+
+  it('cancelled: no daemon, no exit, exit code untouched', async () => {
+    const { ensureClientsInstalled } = await import('../client-install-step.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(ensureClientsInstalled).mockResolvedValue('cancelled');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true }, installClient: true });
+
+    expect(checkStatus).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(process.exit).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('ClientInstallError: prints message and download page, exits 1', async () => {
+    const { ensureClientsInstalled } = await import('../client-install-step.js');
+    const { ClientInstallError } = await import('../client-install.js');
+    const { spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(ensureClientsInstalled).mockRejectedValue(new ClientInstallError('nope', 'https://dl'));
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await expect(connectTargets({ targets: { claudeDesktop: true }, installClient: true })).rejects.toThrow('process.exit:1');
+
+    const lines = vi.mocked(console.error).mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('✗ nope'))).toBe(true);
+    expect(lines).toContain('Download page: https://dl');
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('never calls the install step without installClient', async () => {
+    const { ensureClientsInstalled, assertInstallClientSupported } = await import('../client-install-step.js');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(ensureClientsInstalled).not.toHaveBeenCalled();
+    expect(assertInstallClientSupported).not.toHaveBeenCalled();
+  });
+
+  it('unsupported platform: exits 1 before verifying SSO credentials', async () => {
+    const { assertInstallClientSupported } = await import('../client-install-step.js');
+    const { ConfigurationError } = await import('../../../../utils/errors.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    vi.mocked(assertInstallClientSupported).mockImplementation(() => {
+      throw new ConfigurationError('--install-client is only supported on macOS.');
+    });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await expect(connectTargets({ targets: { claudeDesktop: true }, installClient: true })).rejects.toThrow('process.exit:1');
+
+    expect(CodeMieSSO).not.toHaveBeenCalled();
   });
 });

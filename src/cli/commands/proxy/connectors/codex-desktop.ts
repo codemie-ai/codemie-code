@@ -3,7 +3,8 @@
  * app) at the local CodeMie proxy by splicing a managed provider block into the
  * user's `~/.codex/config.toml`.
  *
- * CodeMie never installs, launches or patches the app — the shared config file
+ * CodeMie installs the app only on an explicit `--install-client` (via
+ * `client-install.ts`) and never launches or patches it — the shared config file
  * that the app and the Codex CLI both read is the whole integration seam.
  */
 import { existsSync } from 'node:fs';
