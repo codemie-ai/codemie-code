@@ -393,7 +393,9 @@ const ShellHooksPlugin: Plugin = async (_input) => ({
   },
 
   // UserPromptSubmit → chat.message. Marks the start of an active period;
-  // codemie hook forwards it to SessionStore.startActivityTracking.
+  // codemie hook forwards it to SessionStore.startActivityTracking. Unlike
+  // telemetry-only events, this hook must propagate exit code 2 so an auth gate
+  // can prevent the model request from being submitted.
   "chat.message": async (input: any, output: any) => {
     const sessionId = resolveSessionId(input);
     if (!sessionId) return;
@@ -418,7 +420,12 @@ const ShellHooksPlugin: Plugin = async (_input) => ({
           .join("\\n")
       : "";
 
-    runCommands("UserPromptSubmit", sessionId, payload, commands, true);
+    const responses = runCommands("UserPromptSubmit", sessionId, payload, commands, false);
+    for (const response of responses) {
+      if (response.blocked) {
+        throw new Error(response.reason || "Hook blocked prompt submission");
+      }
+    }
   },
 
   // PreCompact → experimental.session.compacting (non-blocking)

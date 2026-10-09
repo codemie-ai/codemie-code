@@ -103,6 +103,7 @@ describe('OpenCode beforeRun', () => {
 
     const hooks = JSON.parse(env.OPENCODE_HOOKS!).hooks;
     expect(Object.keys(hooks).sort()).toEqual(['Stop', 'UserPromptSubmit']);
+    expect(hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(130);
     // Stop is detached: the plugin runs sync hooks with execSync, which would
     // otherwise stall OpenCode while the child re-parses SQLite.
     expect(hooks.Stop[0].hooks[0].async).toBe(true);

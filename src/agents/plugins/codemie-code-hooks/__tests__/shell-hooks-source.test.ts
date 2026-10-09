@@ -40,12 +40,18 @@ let capturePath: string;
 let modulePath: string;
 
 /** Load the plugin factory the way the OpenCode runtime would. */
-async function loadHooks(hookNames: string[]): Promise<Record<string, HookHandler>> {
+async function loadHooks(
+  hookNames: string[],
+  commandOverrides: Record<string, string> = {},
+): Promise<Record<string, HookHandler>> {
   const hooks: Record<string, unknown[]> = {};
   for (const name of hookNames) {
     // A shell command that appends whatever arrives on stdin, standing in for
     // the real `codemie hook` binary.
-    hooks[name] = [{ hooks: [{ type: 'command', command: `cat >> ${capturePath}` }] }];
+    hooks[name] = [{ hooks: [{
+      type: 'command',
+      command: commandOverrides[name] ?? `cat >> ${capturePath}`,
+    }] }];
   }
 
   process.env.OPENCODE_HOOKS = JSON.stringify({ hooks });
@@ -119,6 +125,17 @@ describe('SHELL_HOOKS_PLUGIN_SOURCE', () => {
     expect(payloads[0].prompt).toBe('hello\nworld');
     // codemie hook refuses to re-parse a session without a transcript path.
     expect(payloads[0].transcript_path).toBe(TRANSCRIPT);
+  });
+
+  it('propagates a blocking UserPromptSubmit hook result', async () => {
+    const hooks = await loadHooks(['UserPromptSubmit'], { UserPromptSubmit: 'exit 2' });
+
+    await expect(
+      hooks['chat.message'](
+        { sessionID: 'ses_blocked' },
+        { parts: [{ type: 'text', text: 'hello' }] },
+      ),
+    ).rejects.toThrow('Hook blocked execution');
   });
 
   it('collapses session.idle and session.status{idle} into a single Stop', async () => {

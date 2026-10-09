@@ -6,11 +6,13 @@
  * KISS: Simple interceptor, one clear purpose
  */
 
-import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
+import { IncomingMessage } from 'http';
+import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
+import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -89,5 +91,53 @@ class SSOAuthInterceptor implements ProxyInterceptor {
       cookieNames: Object.keys(this.credentials.cookies),
       headerLength: cookieHeader.length
     });
+  }
+
+  async onUpstreamResponse(
+    context: ProxyContext,
+    response: IncomingMessage,
+    tools: UpstreamResponseTools,
+  ): Promise<IncomingMessage> {
+    const statusCode = response.statusCode || 0;
+    const contentType = String(response.headers['content-type'] || '').toLowerCase();
+    const isHtmlLoginPage = statusCode >= 200 && statusCode < 300 && contentType.includes('text/html');
+    const isUnauthorized = statusCode === 401 || statusCode === 403;
+
+    if (!isHtmlLoginPage && !isUnauthorized) {
+      return response;
+    }
+
+    const reason = isHtmlLoginPage
+      ? 'CodeMie SSO returned an HTML login page instead of an API response'
+      : `CodeMie SSO rejected the upstream request with HTTP ${statusCode}`;
+
+    // Stop the invalid upstream body before replacing it with a small, stable
+    // JSON error. This also releases the pooled connection promptly.
+    response.resume();
+    await markAnalyticsAuthInvalid(reason, this.credentials.apiUrl);
+
+    const body = Buffer.from(JSON.stringify({
+      error: {
+        type: 'authentication_error',
+        code: 'AUTH_FAILED',
+        message: 'CodeMie SSO session expired. Run `codemie profile login`, then restart the proxy.',
+      },
+    }));
+    const replacement = tools.fromBuffer(response, body);
+    replacement.statusCode = 401;
+    replacement.statusMessage = 'Unauthorized';
+    replacement.headers = {
+      'content-type': 'application/json',
+      'content-length': String(body.length),
+    };
+
+    logger.warn(`[${this.name}] Replaced upstream authentication response`, {
+      requestId: context.requestId,
+      statusCode,
+      contentType,
+      reason,
+    });
+
+    return replacement;
   }
 }

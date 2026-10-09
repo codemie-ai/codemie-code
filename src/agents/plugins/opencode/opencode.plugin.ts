@@ -34,7 +34,9 @@ const OPENCODE_CLIENT_TYPE = 'codemie-opencode';
  * child re-parses SQLite and rewrites JSONL.
  */
 const DEFAULT_HOOKS: Record<string, unknown[]> = {
-  UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 5 }] }],
+  // The auth gate may wait for the browser callback before it returns the
+  // blocking exit status. Keep the timeout above its 120-second auth window.
+  UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 130 }] }],
   Stop: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 10, async: true }] }],
 };
 
