@@ -8,7 +8,7 @@
  * state to disk between parse passes, keyed by session id.
  */
 
-import { mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 
@@ -84,64 +84,88 @@ export async function loadParseState(sessionId: string): Promise<TranscriptParse
 /**
  * Persist parse state for a session, creating the parent directory if needed.
  *
+ * Writes to a sibling temp file and renames it into place, so a concurrent
+ * {@link loadParseState} never observes a partially written file (`rename` replaces the
+ * target atomically on both POSIX and Windows).
+ *
  * Unlike {@link loadParseState}, this does not swallow errors — a genuine write
  * failure (disk full, permissions) propagates to the caller rather than silently
  * discarding progress.
  */
 export async function saveParseState(sessionId: string, state: TranscriptParseState): Promise<void> {
   const filePath = getParseStatePath(sessionId);
+  const tmpPath = `${filePath}.tmp`;
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(state, null, 2), 'utf-8');
+  await writeFile(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+  await rename(tmpPath, filePath);
 }
 
 const LOCK_RETRY_MS = 25;
-const LOCK_STALE_MS = 5_000;
+const LOCK_WAIT_BUDGET_MS = 10_000;
+const EMPTY_LOCK_STALE_MS = 5_000;
+// Windows reports EPERM/EACCES/EBUSY, not EEXIST, when creating a lock whose deletion is pending.
+const LOCK_CONTENTION_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
 
 function getLockPath(sessionId: string): string {
   return `${getParseStatePath(sessionId)}.lock`;
 }
 
-async function isLockStale(lockPath: string): Promise<boolean> {
+/** A pid we cannot signal for any reason other than ESRCH (e.g. EPERM) is treated as alive. */
+function isPidAlive(pid: number): boolean {
   try {
-    const info = await stat(lockPath);
-    return Date.now() - info.mtimeMs > LOCK_STALE_MS;
-  } catch {
-    return true; // disappeared between our EEXIST and this check — treat as gone
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+/** Remove the lock only if it still holds `expected`, so a lock created meanwhile is never removed. */
+async function removeLockIfUnchanged(lockPath: string, expected: string): Promise<void> {
+  if ((await readFile(lockPath, 'utf-8').catch(() => null)) === expected) {
+    await rm(lockPath, { force: true }).catch(() => {});
   }
 }
 
 /**
  * Serialize one session's load-mutate-save parse-state cycle across concurrent hook processes
- * (e.g. sibling `SubagentStop` fires for the same session) via an exclusive-create lock file.
- * Each hook fire is a fresh CLI process, so this cannot use an in-memory mutex.
+ * (e.g. sibling `SubagentStop` fires for the same session) via an exclusive-create lock file
+ * holding the owner's pid. Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
  *
- * A lock older than {@link LOCK_STALE_MS} is treated as abandoned (its holder crashed before
- * releasing it) and stolen rather than awaited forever. Likewise, if the lock cannot be acquired
- * within a bounded wait, `fn` still runs unlocked rather than hanging the hook indefinitely —
- * occasional lost contention here is strictly better than analytics never shipping at all.
+ * A lock is reclaimed only when its owner pid is dead, never by age, so a slow holder keeps it.
+ * If the lock is not acquired within {@link LOCK_WAIT_BUDGET_MS}, this throws instead of running
+ * `fn` unlocked; the caller skips the pass and the next hook resumes from the saved offsets.
  */
 export async function withParseStateLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
   const lockPath = getLockPath(sessionId);
   await mkdir(dirname(lockPath), { recursive: true });
 
-  const deadline = Date.now() + LOCK_STALE_MS * 2;
-  let acquired = false;
+  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
   for (;;) {
     try {
-      const handle = await open(lockPath, 'wx');
-      await handle.close();
-      acquired = true;
+      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
       break;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-        break; // can't lock (e.g. permissions) — proceed unlocked rather than block forever
-      }
-      if (await isLockStale(lockPath)) {
-        await rm(lockPath, { force: true }).catch(() => {});
-        continue;
+      if (!LOCK_CONTENTION_CODES.has((err as NodeJS.ErrnoException).code ?? '')) {
+        throw err;
       }
       if (Date.now() > deadline) {
-        break; // gave the lock a fair wait; proceed unlocked rather than hang the hook
+        throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
+      }
+
+      const holder = await readFile(lockPath, 'utf-8').catch(() => null);
+      const holderPid = Number.parseInt(holder ?? '', 10);
+      if (holder !== null && !Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
+        await removeLockIfUnchanged(lockPath, holder);
+        continue;
+      }
+      if (holder === '') {
+        // Created but not yet written, or its creator died in between.
+        const info = await stat(lockPath).catch(() => null);
+        if (info && Date.now() - info.mtimeMs > EMPTY_LOCK_STALE_MS) {
+          await removeLockIfUnchanged(lockPath, holder);
+          continue;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
     }
@@ -150,9 +174,6 @@ export async function withParseStateLock<T>(sessionId: string, fn: () => Promise
   try {
     return await fn();
   } finally {
-    // Only release a lock we hold — when we proceeded unlocked, the file belongs to another process.
-    if (acquired) {
-      await rm(lockPath, { force: true }).catch(() => {});
-    }
+    await rm(lockPath, { force: true }).catch(() => {});
   }
 }

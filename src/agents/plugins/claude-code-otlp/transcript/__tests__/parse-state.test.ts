@@ -8,9 +8,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   createParseState,
   loadParseState,
@@ -21,6 +22,14 @@ import {
 } from '../parse-state.js';
 
 let codemieHome: string;
+
+/** Spawn-and-wait a throwaway process so its pid is guaranteed dead, for lock-reclaim tests. */
+async function exitedPid(): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
+    child.on('exit', () => resolve(child.pid as number));
+  });
+}
 
 beforeEach(() => {
   codemieHome = mkdtempSync(join(tmpdir(), 'codemie-home-'));
@@ -104,6 +113,17 @@ describe('loadParseState', () => {
   });
 });
 
+describe('saveParseState', () => {
+  it('leaves no temp file behind after a successful save', async () => {
+    const sessionId = 'session-atomic';
+    await saveParseState(sessionId, createParseState());
+
+    const filePath = join(codemieHome, 'analytics', 'state', `${sessionId}.json`);
+    expect(existsSync(filePath)).toBe(true);
+    expect(existsSync(`${filePath}.tmp`)).toBe(false);
+  });
+});
+
 describe('withParseStateLock', () => {
   it('still runs fn when the lock cannot be released cleanly, and leaves no stale lock file behind', async () => {
     const sessionId = 'session-lock-cleanup';
@@ -113,5 +133,64 @@ describe('withParseStateLock', () => {
     // A second acquisition must not be blocked by a lock the first call failed to clean up.
     const second = await withParseStateLock(sessionId, async () => 'done-again');
     expect(second).toBe('done-again');
+  });
+
+  it('serializes concurrent acquirers so two never run inside the critical section at once', async () => {
+    const sessionId = 'session-mutex';
+    const events: string[] = [];
+    const run = (label: string) =>
+      withParseStateLock(sessionId, async () => {
+        events.push(`${label}:enter`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        events.push(`${label}:exit`);
+      });
+
+    await Promise.all([run('a'), run('b'), run('c')]);
+
+    // Each label's enter/exit pair stays adjacent — no other label's enter lands between them.
+    expect(events).toHaveLength(6);
+    for (let i = 0; i < events.length; i += 2) {
+      const label = events[i].split(':')[0];
+      expect(events[i]).toBe(`${label}:enter`);
+      expect(events[i + 1]).toBe(`${label}:exit`);
+    }
+  });
+
+  it('reclaims a lock left behind by a process that has since exited', async () => {
+    const sessionId = 'session-dead-holder';
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, String(await exitedPid()));
+
+    const result = await withParseStateLock(sessionId, async () => 'reclaimed');
+
+    expect(result).toBe('reclaimed');
+  });
+
+  it('does not reclaim a lock whose holder process is still alive', async () => {
+    const sessionId = 'session-live-holder';
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, String(process.pid));
+
+    const pending = withParseStateLock(sessionId, async () => 'acquired');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Still exactly the lock we wrote — this test's own pid is alive, so it was never reclaimed.
+    expect(readFileSync(lockPath, 'utf-8')).toBe(String(process.pid));
+
+    rmSync(lockPath, { force: true }); // simulate that holder releasing it
+    await expect(pending).resolves.toBe('acquired');
+  });
+
+  it('reclaims an empty lock only once it is old enough to be abandoned', async () => {
+    const sessionId = 'session-empty-lock';
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, '');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, old, old);
+
+    await expect(withParseStateLock(sessionId, async () => 'reclaimed')).resolves.toBe('reclaimed');
   });
 });
