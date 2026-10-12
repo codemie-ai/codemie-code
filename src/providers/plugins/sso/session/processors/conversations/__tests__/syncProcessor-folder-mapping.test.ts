@@ -83,4 +83,88 @@ describe('createSyncProcessor — Copilot folder mapping', () => {
     expect(upsertConversation).toHaveBeenCalledTimes(1);
     expect(upsertConversation.mock.calls[0][3]).toBe('copilot-cli');
   });
+
+  it('routes codemie-gemini-acp sessions to the gemini folder', async () => {
+    const { createSyncProcessor } = await import('../syncProcessor.js');
+
+    const sessionsDir = join(tempHome, 'sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, 'sess-gemini-acp_conversation.jsonl'),
+      JSON.stringify({
+        payloadId: 'gm-conv-1@0',
+        timestamp: Date.now(),
+        isTurnContinuation: false,
+        historyIndices: [0, 0],
+        messageCount: 2,
+        lastProcessedMessageUuid: 'gm-conv-1@0',
+        payload: {
+          conversationId: 'gm-conv-1',
+          history: [
+            { role: 'User', message: 'hello', history_index: 0 },
+            { role: 'Assistant', message: 'world', history_index: 0 },
+          ],
+        },
+        status: 'pending',
+      }) + '\n'
+    );
+
+    const processor = createSyncProcessor();
+    const result = await processor.process(
+      { sessionId: 'sess-gemini-acp', agentName: 'gemini-acp' } as never,
+      {
+        apiBaseUrl: 'http://localhost:4000',
+        cookies: '',
+        clientType: 'codemie-gemini-acp',
+        version: '0.0.0',
+        dryRun: false,
+      } as never,
+    );
+
+    expect(result.success).toBe(true);
+    expect(upsertConversation).toHaveBeenCalledTimes(1);
+    expect(upsertConversation.mock.calls[0][3]).toBe('gemini');
+  });
+
+  it('routes codemie-opencode-acp sessions to the opencode folder', async () => {
+    const { createSyncProcessor } = await import('../syncProcessor.js');
+
+    const sessionsDir = join(tempHome, 'sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, 'sess-opencode-acp_conversation.jsonl'),
+      JSON.stringify({
+        payloadId: 'oc-conv-1@0',
+        timestamp: Date.now(),
+        isTurnContinuation: false,
+        historyIndices: [0, 0],
+        messageCount: 2,
+        lastProcessedMessageUuid: 'oc-conv-1@0',
+        payload: {
+          conversationId: 'oc-conv-1',
+          history: [
+            { role: 'User', message: 'hello', history_index: 0 },
+            { role: 'Assistant', message: 'world', history_index: 0 },
+          ],
+        },
+        status: 'pending',
+      }) + '\n'
+    );
+
+    const processor = createSyncProcessor();
+    const result = await processor.process(
+      { sessionId: 'sess-opencode-acp', agentName: 'opencode-acp' } as never,
+      {
+        apiBaseUrl: 'http://localhost:4000',
+        cookies: '',
+        clientType: 'codemie-opencode-acp',
+        version: '0.0.0',
+        dryRun: false,
+      } as never,
+    );
+
+    expect(result.success).toBe(true);
+    expect(upsertConversation).toHaveBeenCalledTimes(1);
+    expect(upsertConversation.mock.calls[0][3]).toBe('opencode');
+  });
 });

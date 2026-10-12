@@ -340,6 +340,41 @@ describe('opencode.incremental-sync', () => {
       );
     });
 
+    it('uploads with the clientType returned by buildContext() (e.g. codemie-opencode-acp)', async () => {
+      // Regression guard: the upload context used to hardcode 'codemie-opencode'
+      // regardless of what buildContext() returned, so opencode-acp sessions
+      // were mistagged in the upload path even though onSessionStart's
+      // buildContext() already carried the correct clientType.
+      process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
+      discoverSessions.mockResolvedValue([matchingDescriptor()]);
+      processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockSync.mockResolvedValue({ success: true, message: 'ok' });
+
+      const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
+      startOpenCodeIncrementalSync({
+        ...commonOptions(),
+        buildContext: () =>
+          ({
+            sessionId: currentSessionId,
+            apiBaseUrl: '',
+            cookies: '',
+            clientType: 'codemie-opencode-acp',
+            version: '0.1.0',
+            dryRun: false,
+          }) as never,
+        ssoUrl: 'https://codemie.example.com',
+        syncApiUrl: 'https://sync.example.com',
+        cliVersion: '1.2.3',
+      } as never);
+
+      await runTicks(5000, 1);
+      expect(mockSync).toHaveBeenCalledWith(
+        currentSessionId,
+        expect.objectContaining({ clientType: 'codemie-opencode-acp' })
+      );
+    });
+
     it('skips the upload when no sync URLs are configured', async () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       discoverSessions.mockResolvedValue([matchingDescriptor()]);

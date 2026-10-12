@@ -244,19 +244,19 @@ export function createSyncProcessor(): SessionProcessor {
 }
 
 function resolveConversationFolder(clientType?: string, agentName?: string): string {
-  if (clientType === 'codemie-codex' || agentName === 'codex') {
+  if (clientType === 'codemie-codex' || clientType === 'codemie-codex-acp' || agentName === 'codex' || agentName === 'codex-acp') {
     return 'codex';
   }
   if (clientType === 'codemie-copilot' || agentName === 'copilot-cli') {
     return 'copilot-cli';
   }
-  if (clientType === 'codemie-gemini' || agentName === 'gemini') {
+  if (clientType === 'codemie-gemini' || clientType === 'codemie-gemini-acp' || agentName === 'gemini' || agentName === 'gemini-acp') {
     return 'gemini';
   }
   if (clientType === 'codemie-claude' || agentName === 'claude') {
     return 'claude';
   }
-  if (clientType === 'codemie-opencode' || agentName === 'opencode') {
+  if (clientType === 'codemie-opencode' || clientType === 'codemie-opencode-acp' || agentName === 'opencode' || agentName === 'opencode-acp') {
     return 'opencode';
   }
   if (clientType === 'codemie-pi' || agentName === 'pi') {

@@ -88,6 +88,12 @@ describe('RequestSanitizerPlugin', () => {
       expect(interceptor.name).toBe('request-sanitizer');
     });
 
+    it('creates interceptor for codemie-opencode-acp (shares the opencode AI SDK request path)', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('codemie-opencode-acp'));
+      expect(interceptor).toBeDefined();
+      expect(interceptor.name).toBe('request-sanitizer');
+    });
+
     it('throws for claude agent', async () => {
       await expect(plugin.createInterceptor(createPluginContext('claude')))
         .rejects.toThrow('Plugin disabled for agent: claude');

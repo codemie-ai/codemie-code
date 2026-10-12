@@ -86,6 +86,13 @@ const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
 /**
  * Build a hook config object from environment variables.
  * Used by both onSessionStart and onSessionEnd lifecycle hooks.
+ *
+ * clientType reads env.CODEMIE_CLIENT_TYPE (set by BaseAgentAdapter from
+ * metadata.ssoConfig.clientType for every agent) rather than a fixed string,
+ * so that plugins extending CodexPlugin with a different clientType (e.g.
+ * codex-acp's 'codemie-codex-acp') are tagged correctly in telemetry. Falls
+ * back to 'codemie-codex' to preserve behavior for plain Codex / any caller
+ * that doesn't set the env var.
  */
 function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
   return {
@@ -99,7 +106,7 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
-    clientType: 'codemie-codex',
+    clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
   };
 }
 
@@ -226,7 +233,7 @@ export const CodexPluginMetadata: AgentMetadata = {
             sessionId,
             apiBaseUrl: env.CODEMIE_BASE_URL || '',
             cookies: '',
-            clientType: 'codemie-codex',
+            clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
             version: env.CODEMIE_CLI_VERSION || '0.0.0',
             dryRun: false,
           }),
@@ -374,7 +381,7 @@ export const CodexPluginMetadata: AgentMetadata = {
             sessionId,
             apiBaseUrl: env.CODEMIE_BASE_URL || '',
             cookies: '',
-            clientType: 'codemie-codex',
+            clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-codex',
             version: env.CODEMIE_CLI_VERSION || '1.0.0',
             dryRun: false,
           };

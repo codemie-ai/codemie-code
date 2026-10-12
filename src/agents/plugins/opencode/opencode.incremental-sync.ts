@@ -96,11 +96,13 @@ export function startOpenCodeIncrementalSync(options: StartOpenCodeIncrementalSy
         if (!projectPath) continue;
         if ((await safeRealpath(projectPath)) !== cwdReal) continue;
 
+        const tickContext = options.buildContext();
+
         try {
           const result = await adapter.processSession(
             descriptor.filePath,
             options.sessionId,
-            { ...options.buildContext(), agentSessionId: descriptor.sessionId }
+            { ...tickContext, agentSessionId: descriptor.sessionId }
           );
           logger.debug(
             `[opencode-incremental-sync] tick ok session=${options.sessionId} records=${result.totalRecords}`
@@ -115,7 +117,8 @@ export function startOpenCodeIncrementalSync(options: StartOpenCodeIncrementalSy
               options.sessionId,
               options.ssoUrl,
               options.syncApiUrl,
-              options.cliVersion
+              options.cliVersion,
+              tickContext.clientType
             );
             if (uploadContext) {
               const { SessionSyncer } = await import('../../../providers/plugins/sso/session/SessionSyncer.js');
@@ -168,7 +171,8 @@ async function buildUploadContext(
   sessionId: string,
   ssoUrl: string,
   syncApiUrl: string,
-  version = '0.0.0'
+  version = '0.0.0',
+  clientType = 'codemie-opencode'
 ): Promise<ProcessingContext | null> {
   try {
     const { CodeMieSSO } = await import('../../../providers/plugins/sso/sso.auth.js');
@@ -184,7 +188,7 @@ async function buildUploadContext(
     return {
       apiBaseUrl: syncApiUrl,
       cookies,
-      clientType: 'codemie-opencode',
+      clientType,
       version,
       dryRun: false,
       sessionId,

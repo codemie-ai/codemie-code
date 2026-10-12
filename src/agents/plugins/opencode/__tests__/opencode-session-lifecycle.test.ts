@@ -93,6 +93,31 @@ describe('OpenCode onSessionStart', () => {
     // The failsafe timer must still start.
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
   });
+
+  it('tags processEvent and buildContext with CODEMIE_CLIENT_TYPE when set (e.g. by opencode-acp)', async () => {
+    // OpenCodeAcpPluginMetadata inherits onSessionStart verbatim and relies on
+    // BaseAgentAdapter setting env.CODEMIE_CLIENT_TYPE from its own ssoConfig —
+    // regression guard for the hardcoded OPENCODE_CLIENT_TYPE this replaced.
+    const env = { ...baseEnv(), CODEMIE_CLIENT_TYPE: 'codemie-opencode-acp' };
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    const [, config] = processEvent.mock.calls[0];
+    expect(config.clientType).toBe('codemie-opencode-acp');
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.buildContext().clientType).toBe('codemie-opencode-acp');
+  });
+
+  it('falls back to codemie-opencode when CODEMIE_CLIENT_TYPE is unset (unchanged plain-OpenCode behavior)', async () => {
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv());
+
+    const [, config] = processEvent.mock.calls[0];
+    expect(config.clientType).toBe('codemie-opencode');
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.buildContext().clientType).toBe('codemie-opencode');
+  });
 });
 
 describe('OpenCode beforeRun', () => {

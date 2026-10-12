@@ -42,6 +42,10 @@ const ALLOWED_AGENTS = [
   // exactly like the Codex CLI. It has its own daemon client type, so without
   // this entry the sanitizer silently stops loading for that surface.
   'codex-desktop',
+  // codex-acp (the ACP editor adapter) also routes through the 'codemie'
+  // custom model provider with wire_api="responses", so it replays
+  // reasoning.encrypted_content the same way the Codex CLI does.
+  'codemie-codex-acp',
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 const RESPONSES_PATH_SUFFIX = '/responses';
