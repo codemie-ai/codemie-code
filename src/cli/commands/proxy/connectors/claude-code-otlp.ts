@@ -103,10 +103,6 @@ export const HOOK_EVENTS = [
   'Notification',
 ] as const satisfies readonly HookEvent[];
 
-const SYNCHRONOUS_HOOKS: ReadonlyArray<(typeof HOOK_EVENTS)[number]> = [
-  'UserPromptSubmit',
-];
-
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 
@@ -294,13 +290,10 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  // UserPromptSubmit stays synchronous: its SSO-gate `block` decision must reach
-  // Claude Code before the prompt proceeds. Every other event is fire-and-forget.
-  const buildCodemieEntry = (eventName: (typeof HOOK_EVENTS)[number]): HookGroup => {
-    const hook: HookEntry & { async: boolean } = {
+  const buildCodemieEntry = (): HookGroup => {
+    const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-      async: !SYNCHRONOUS_HOOKS.includes(eventName),
     };
     return { matcher: '', hooks: [hook] };
   };
@@ -327,7 +320,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry()];
   }
 
   // --- Merge env block ---
