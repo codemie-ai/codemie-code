@@ -215,10 +215,10 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | Plugin | Dir | Upstream | Notes |
 |---|---|---|---|
 | `codemie-code` | `codemie-code.plugin.ts` | `@codemieai/codemie-opencode` | Built-in (`isBuiltIn`); native binary resolved by `codemie-code-binary.ts`, OpenCode-derived (`.opencode` home, `run`/`chat`/`config`/`init` subcommands). **Not** LangGraph — LangGraph now only backs LLM hooks (`src/hooks/prompt-executor.ts`) |
-| `claude` / `claude-acp` | `claude/` | `@anthropic-ai/claude-code`, `@zed-industries/claude-code-acp` | Ships the CodeMie Claude plugin (`claude/plugin/`) |
-| `codex` | `codex/` | `@openai/codex` | Responses API; reasoning state handled by proxy plugins |
-| `gemini` | `gemini/` | `@google/gemini-cli` | |
-| `opencode` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics` |
+| `claude` / `claude-acp` | `claude/` | `@anthropic-ai/claude-code`, `@agentclientprotocol/claude-agent-acp` | Ships the CodeMie Claude plugin (`claude/plugin/`) |
+| `codex` / `codex-acp` | `codex/` | `@openai/codex`, `@agentclientprotocol/codex-acp` | Responses API; reasoning state handled by proxy plugins. ACP variant wraps `@openai/codex` via a separate JSON-RPC adapter package, configured through an injected `CODEX_CONFIG` env var (no `--config` flags) |
+| `gemini` / `gemini-acp` | `gemini/` | `@google/gemini-cli` | ACP variant prepends `--acp` to argv (native Gemini CLI mode, no extra package) |
+| `opencode` / `opencode-acp` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics`. ACP variant prepends `acp` subcommand (native OpenCode mode, no extra package) |
 | `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger |
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
 | `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |

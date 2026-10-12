@@ -206,10 +206,13 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Agent | Install | Shortcut | Upstream package |
 |---|---|---|---|
 | Claude Code | `codemie install claude --supported` | `codemie-claude` | `@anthropic-ai/claude-code` |
-| Claude Code ACP | `codemie install claude-acp` | `codemie-claude-acp` | `@zed-industries/claude-code-acp` |
+| Claude Code ACP | `codemie install claude-acp` | `codemie-claude-acp` | `@agentclientprotocol/claude-agent-acp` |
 | OpenAI Codex | `codemie install codex --supported` | `codemie-codex` | `@openai/codex` |
+| Codex ACP | `codemie install codex-acp` | `codemie-codex-acp` | `@agentclientprotocol/codex-acp` |
 | Gemini CLI | `codemie install gemini` | `codemie-gemini` | `@google/gemini-cli` |
+| Gemini CLI ACP | `codemie install gemini-acp` | `codemie-gemini-acp` | `@google/gemini-cli` (`--acp` mode) |
 | OpenCode | `codemie install opencode` | `codemie-opencode` | `opencode-ai` |
+| OpenCode ACP | `codemie install opencode-acp` | `codemie-opencode-acp` | `opencode-ai` (`acp` mode) |
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
@@ -272,12 +275,26 @@ Requirements and behavior:
 
 #### ACP Agent usage in IDEs and Editors
 
+Four agents ship an ACP (Agent Client Protocol) variant: `claude-acp`, `codex-acp`, `gemini-acp`, `opencode-acp`. Each is launched by the IDE via its own `codemie-<agent>-acp` shortcut — install with `codemie install <agent>-acp`, then point your editor at the matching command below.
+
 **Zed** (`~/.config/zed/settings.json`):
 ```json
 {
   "agent_servers": {
     "claude": {
       "command": "codemie-claude-acp",
+      "args": ["--profile", "work"]
+    },
+    "codex": {
+      "command": "codemie-codex-acp",
+      "args": ["--profile", "work"]
+    },
+    "gemini": {
+      "command": "codemie-gemini-acp",
+      "args": ["--profile", "work"]
+    },
+    "opencode": {
+      "command": "codemie-opencode-acp",
       "args": ["--profile", "work"]
     }
   }
@@ -291,6 +308,35 @@ Requirements and behavior:
   "agent_servers": {
     "Claude Code via CodeMie": {
       "command": "codemie-claude-acp"
+    },
+    "Codex via CodeMie": {
+      "command": "codemie-codex-acp"
+    },
+    "Gemini CLI via CodeMie": {
+      "command": "codemie-gemini-acp"
+    },
+    "OpenCode via CodeMie": {
+      "command": "codemie-opencode-acp"
+    }
+  }
+}
+```
+
+**JetBrains AIR** (`~/Library/Application Support/JetBrains/Air/acp.json` on macOS):
+```json
+{
+  "agent_servers": {
+    "Claude Code via CodeMie": {
+      "command": "codemie-claude-acp"
+    },
+    "Codex via CodeMie": {
+      "command": "codemie-codex-acp"
+    },
+    "Gemini CLI via CodeMie": {
+      "command": "codemie-gemini-acp"
+    },
+    "OpenCode via CodeMie": {
+      "command": "codemie-opencode-acp"
     }
   }
 }
@@ -301,6 +347,7 @@ Requirements and behavior:
 (setq acp-claude-command "codemie-claude-acp")
 (setq acp-claude-args '("--profile" "work"))
 ```
+Other agents follow the same pattern — swap in `acp-codex-command`, `acp-gemini-command`, or `acp-opencode-command` with the matching `codemie-<agent>-acp` command, per your acp.el agent configuration.
 
 
 **Version Management:**

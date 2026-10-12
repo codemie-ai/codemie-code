@@ -79,6 +79,7 @@ ACP (Agent Communication Protocol) is a stdio-based JSON-RPC protocol that enabl
 - Full CodeMie proxy integration for enterprise SSO
 - Profile-based configuration support
 - All Claude Code capabilities via ACP protocol
+- Uses `@agentclientprotocol/claude-agent-acp` — the official ACP adapter for the Claude Agent SDK (the previous `@zed-industries/claude-code-acp` package is deprecated and no longer updated)
 
 **IDE Configuration:**
 
@@ -108,6 +109,17 @@ After installation, configure your IDE to use `codemie-claude-acp`:
 }
 ```
 
+**JetBrains AIR** (`~/Library/Application Support/JetBrains/Air/acp.json` on macOS):
+```json
+{
+  "agent_servers": {
+    "Claude Code via CodeMie": {
+      "command": "codemie-claude-acp"
+    }
+  }
+}
+```
+
 **Emacs** (with acp.el):
 ```elisp
 (setq acp-claude-command "codemie-claude-acp")
@@ -125,6 +137,78 @@ codemie-claude-acp --profile work
 ```
 
 **Note:** Unlike `codemie-claude`, the ACP adapter is designed to be invoked by editors, not used interactively in a terminal. All output goes through the JSON-RPC protocol.
+
+## Codex ACP
+
+OpenAI Codex adapter for IDE integration via ACP (Agent Communication Protocol).
+
+**Installation:** `codemie install codex-acp`
+
+**What is ACP?**
+Same stdio-based JSON-RPC protocol as Claude Code ACP above — this is the Codex equivalent, for editors that want to drive OpenAI Codex directly instead of through the CLI.
+
+**Requirements:**
+- Node.js 20.0.0 or higher
+- Supported providers: LiteLLM, AI/Run SSO, Ollama, or Bearer Auth
+- IDE with ACP support (Zed, JetBrains, Emacs, etc.)
+
+**Features:**
+- Stdio-based JSON-RPC communication
+- Silent mode (no console output interfering with protocol)
+- Full CodeMie proxy integration for enterprise SSO, routed via a `codemie` custom model provider over the Responses API
+- Uses `@agentclientprotocol/codex-acp` — the official ACP adapter, which bundles `@openai/codex`. Unlike plain `codemie-codex`, configuration is passed entirely through an injected `CODEX_CONFIG` environment variable rather than `--config` flags, since the adapter ignores stray CLI arguments
+- Reasoning-effort tuning (`--reasoning-effort`) is **not** supported in ACP mode
+
+**IDE Configuration:**
+
+After installation, configure your IDE to use `codemie-codex-acp`:
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+{
+  "agent_servers": {
+    "codex": {
+      "command": "codemie-codex-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains** (`~/.jetbrains/acp.json`):
+```json
+{
+  "agent_servers": {
+    "Codex via CodeMie": {
+      "command": "codemie-codex-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains AIR** (`~/Library/Application Support/JetBrains/Air/acp.json` on macOS):
+```json
+{
+  "agent_servers": {
+    "Codex via CodeMie": {
+      "command": "codemie-codex-acp"
+    }
+  }
+}
+```
+
+**Usage:**
+```bash
+# Install the ACP adapter
+codemie install codex-acp
+
+# The command is typically invoked by your IDE, not directly
+# But you can test it manually:
+codemie-codex-acp --profile work
+```
+
+**Note:** Like `codemie-claude-acp`, the ACP adapter is designed to be invoked by editors, not used interactively in a terminal.
 
 ## Gemini CLI
 
@@ -164,6 +248,77 @@ codemie-gemini --model gemini-2.5-flash "analyze code"  # With config override
 ```
 
 **Note:** Installed via Python (pip/uv), not npm. Requires Python 3.9+ and Anthropic or OpenAI API key.
+
+## Gemini CLI ACP
+
+Gemini CLI adapter for IDE integration via ACP (Agent Communication Protocol).
+
+**Installation:** `codemie install gemini-acp`
+
+**What is ACP?**
+Same stdio-based JSON-RPC protocol as Claude Code ACP above. Unlike Claude and Codex, Gemini CLI has **native** ACP support built into the same binary — `gemini --acp` — so no separate npm package is installed; `gemini-acp` reuses the exact `@google/gemini-cli` install as the regular `gemini` agent.
+
+**Requirements:**
+- Node.js 20.0.0 or higher
+- A valid Google Gemini API key (same requirement as `gemini`)
+- IDE with ACP support (Zed, JetBrains, Emacs, etc.)
+
+**Features:**
+- Stdio-based JSON-RPC communication
+- Silent mode (no console output interfering with protocol)
+- Full CodeMie proxy integration
+- Same model-injection logic (`-m <model>`) as the regular Gemini CLI agent
+
+**IDE Configuration:**
+
+After installation, configure your IDE to use `codemie-gemini-acp`:
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+{
+  "agent_servers": {
+    "gemini": {
+      "command": "codemie-gemini-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains** (`~/.jetbrains/acp.json`):
+```json
+{
+  "agent_servers": {
+    "Gemini CLI via CodeMie": {
+      "command": "codemie-gemini-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains AIR** (`~/Library/Application Support/JetBrains/Air/acp.json` on macOS):
+```json
+{
+  "agent_servers": {
+    "Gemini CLI via CodeMie": {
+      "command": "codemie-gemini-acp"
+    }
+  }
+}
+```
+
+**Usage:**
+```bash
+# Install the ACP adapter (shares the gemini CLI install)
+codemie install gemini-acp
+
+# The command is typically invoked by your IDE, not directly
+# But you can test it manually:
+codemie-gemini-acp --profile work
+```
+
+**Note:** Like `codemie-claude-acp`, the ACP adapter is designed to be invoked by editors, not used interactively in a terminal.
 
 ## GitHub Copilot CLI
 
@@ -273,6 +428,76 @@ codemie setup
 # View metrics
 codemie analytics --agent opencode
 ```
+
+## OpenCode ACP
+
+OpenCode adapter for IDE integration via ACP (Agent Communication Protocol).
+
+**Installation:** `codemie install opencode-acp`
+
+**What is ACP?**
+Same stdio-based JSON-RPC protocol as Claude Code ACP above. Unlike Claude and Codex, OpenCode has **native** ACP support built into the same binary — the `opencode acp` subcommand — so no separate npm package is installed; `opencode-acp` reuses the exact `opencode-ai` install as the regular `opencode` agent.
+
+**Requirements:**
+- Node.js 20.0.0 or higher
+- Supported providers: LiteLLM, AI/Run SSO, Ollama, Bedrock, or Bearer Auth (same as `opencode`)
+- IDE with ACP support (Zed, JetBrains, Emacs, etc.)
+
+**Features:**
+- Stdio-based JSON-RPC communication
+- Silent mode (no console output interfering with protocol)
+- Same provider/model config injection (`OPENCODE_CONFIG_CONTENT`) as the regular OpenCode agent
+
+**IDE Configuration:**
+
+After installation, configure your IDE to use `codemie-opencode-acp`:
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+{
+  "agent_servers": {
+    "opencode": {
+      "command": "codemie-opencode-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains** (`~/.jetbrains/acp.json`):
+```json
+{
+  "agent_servers": {
+    "OpenCode via CodeMie": {
+      "command": "codemie-opencode-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains AIR** (`~/Library/Application Support/JetBrains/Air/acp.json` on macOS):
+```json
+{
+  "agent_servers": {
+    "OpenCode via CodeMie": {
+      "command": "codemie-opencode-acp"
+    }
+  }
+}
+```
+
+**Usage:**
+```bash
+# Install the ACP adapter (shares the opencode CLI install)
+codemie install opencode-acp
+
+# The command is typically invoked by your IDE, not directly
+# But you can test it manually:
+codemie-opencode-acp --profile work
+```
+
+**Note:** Like `codemie-claude-acp`, the ACP adapter is designed to be invoked by editors, not used interactively in a terminal.
 
 ## OpenWiki
 
