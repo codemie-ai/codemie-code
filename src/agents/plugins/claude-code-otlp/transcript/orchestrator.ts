@@ -3,22 +3,31 @@
  * `StopFailure` hook events.
  *
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
- * (`./parse-state.js`), reads only the transcript lines appended since the last
- * persisted `mainOffset` (`./transcript-reader.js`), derives/merges
- * `agent.usage.request` records for those new lines (`./usage-request.js`), persists
- * state back, and RETURNS one JSON string per completed request plus (on `Stop`/`SessionEnd`)
- * one `agent.session.summary` event (`Stop`/`SessionEnd` only) — it never forwards anything to
- * the spool itself. The caller
- * (the plugin's `processOtlpEvent`, via its per-event handlers) owns forwarding, so there is
- * exactly one place in the whole analytics pipeline that writes to the spool.
+ * (`./parse-state.js`), reads only the transcript lines appended since the last persisted
+ * `mainOffset` (`./transcript-reader.js`), derives/merges `agent.usage.request` records for
+ * those new lines (`./usage-request.js`), and returns one JSON string per completed request
+ * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event.
  *
- * Never throws: every path is wrapped so a read/parse failure degrades to an empty result rather
- * than interrupting the hook that triggered it (`processOtlpEvent` must never block or fail on
- * this).
+ * Commit-after-send: the exported `open*Pass` functions acquire the per-session parse-state
+ * lock, load state, derive in memory, and return `{ events, finalize }` *without* persisting
+ * anything yet. The caller (the plugin's handlers, via `OtlpAgentAdapter.processOtlpEvent`)
+ * sends `events` to the spool and then calls `finalize(accepted)` exactly once: only an
+ * accepted send persists the mutated state and advances the cursor; the lock is released either
+ * way. A failed send therefore leaves the transcript cursor untouched, so the next hook
+ * re-derives and re-sends the same events — the transcript itself is the retry log, no separate
+ * one is needed. Holding the lock from read through commit (not just through derive) is what
+ * makes this safe against a sibling hook for the same session: see `acquireParseStateLock`.
+ *
+ * Never throws: every path is wrapped so a read/parse/lock failure degrades to an empty pass
+ * (`{ events: [], finalize: no-op }`) rather than interrupting the hook that triggered it
+ * (`processOtlpEvent` must never block or fail on this) — any lock already acquired on that path
+ * is released before returning.
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import { loadParseState, saveParseState, withParseStateLock } from './parse-state.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+import { acquireParseStateLock, loadParseState, saveParseState, type TranscriptParseState } from './parse-state.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent, usageRequestKey } from './usage-request.js';
 import {
@@ -39,13 +48,21 @@ import {
   latestTitle,
   type SignalLine,
 } from './session-signals.js';
-import { type SubagentFile, buildSubagentUsageEvent } from './subagent-usage.js';
+import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from './subagent-usage.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
-// `collectSubagentTranscriptEvents` from this one module.
+// the pass openers from this one module.
 export type { SubagentFile };
 
 export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
+
+/** One hook invocation's derived events, with the deferred commit described above. */
+export interface TranscriptPass {
+  events: Record<string, unknown>[];
+  finalize: (accepted: boolean) => Promise<void>;
+}
+
+const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
 
 interface ContentBlock {
   type?: string;
@@ -218,7 +235,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
   const modelByRequestKey = new Map<string, string>();
   for (const line of rawLines) {
     // scopeKind/scopeName/agentId/agentType don't affect this count (only `.model` is read), so
-    // 'main' is used uniformly rather than re-deriving collectMainTranscriptEvents's active-skill state.
+    // 'main' is used uniformly rather than re-deriving deriveMainEvents's active-skill state.
     const parsedUsage = parseUsageLine(line, 'main', '', '', '');
     if (parsedUsage) {
       modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
@@ -276,22 +293,20 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 }
 
 /**
- * Collect the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd`/`StopFailure` hook fire.
+ * Derive the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd`/`StopFailure` hook fire,
+ * mutating `state` in memory. Does not persist anything — the caller (a pass opener below) owns
+ * the commit, so several passes can share one in-memory `state` under one lock (see
+ * `openSessionEndPass`).
  *
- * - Loads persisted state, reads only the lines appended since `state.mainOffset`.
+ * - Reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
- *   keyed by `usageRequestKey()`, and
- *   updates `state.branchCounts` from every new user line's `gitBranch` (regardless of whether
- *   that line carried usage).
+ *   keyed by `usageRequestKey()`, and updates `state.branchCounts` from every new user line's
+ *   `gitBranch` (regardless of whether that line carried usage).
  * - Returns one `agent.usage.request` JSON string per request key touched by this pass.
  * - On `Stop`/`SessionEnd` only, also returns exactly one `agent.session.summary` event
  *   (`phase: 'incremental'` on `Stop`, `'final'` on `SessionEnd`) built from a fresh full-file
  *   recompute (see {@link buildFullAccumulator}). `PreCompact`/`StopFailure` never return a
  *   summary.
- * - Persists state back to disk.
- *
- * Never forwards anything itself — the caller is responsible for sending the returned events to
- * the spool (exactly one place in the pipeline does that).
  *
  * Scoping: `state.activeSkill` tracks which skill (if any) the main transcript is currently
  * "inside" — set to a skill's name when a `Skill` tool_use invokes it ({@link findSkillInvocation},
@@ -302,93 +317,134 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
  * `scopeName: state.activeSkill` while a skill is active, else `scopeKind: 'main'`, `scopeName: ''`.
  * This is a heuristic, not a tracked boundary Claude Code itself reports — a skill whose work
  * spans multiple turns without an intervening user prompt is scoped as one continuous span.
- *
- * Swallows every error internally — never throws into `processOtlpEvent`.
  */
-export async function collectMainTranscriptEvents(
+async function deriveMainEvents(
+  state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
   trigger: MainTranscriptTrigger
 ): Promise<Record<string, unknown>[]> {
+  const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
+
+  const touchedKeys = new Set<string>();
+  for (const line of lines) {
+    let rawGitBranch = '';
+    let isUserLine = false;
+    let head: TranscriptLine | null = null;
+    try {
+      head = JSON.parse(line) as TranscriptLine;
+      rawGitBranch = head?.gitBranch ?? '';
+      isUserLine = head?.type === 'user';
+    } catch {
+      // Malformed line: still attempt usage parsing below (which has its own try/catch), but
+      // there is no branch/skill/turn signal to read from it.
+    }
+    // The contract's branch counts are user lines per branch.
+    if (rawGitBranch && isUserLine) {
+      updateBranchCounts(state.branchCounts, rawGitBranch);
+    }
+
+    if (head && isGenuineUserTurn(head)) {
+      state.activeSkill = '';
+    }
+
+    const scopeKind = state.activeSkill ? 'skill' : 'main';
+    const parsed = parseUsageLine(line, scopeKind, state.activeSkill, '', '');
+    if (parsed) {
+      const key = usageRequestKey(parsed);
+      const existing = state.openRequests[key];
+      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+      touchedKeys.add(key);
+    }
+
+    // Applied after this line's own usage is scoped — the turn that invokes a skill still
+    // belongs to whatever context was active before it.
+    if (head) {
+      const skill = findSkillInvocation(head);
+      if (skill) {
+        state.activeSkill = skill;
+      }
+    }
+  }
+  state.mainOffset = nextOffset;
+
+  const events: Record<string, unknown>[] = [];
+  for (const key of touchedKeys) {
+    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+  }
+
+  if (trigger === 'Stop' || trigger === 'SessionEnd') {
+    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
+    const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
+    const summaryEvent = buildSessionSummaryEvent(
+      sessionId,
+      phase,
+      acc,
+      named,
+      state.branchCounts,
+      startedAt,
+      endedAt
+    );
+    // Main-thread requests only — the contract's api_calls excludes subagent requests.
+    summaryEvent.api_calls = Object.values(state.openRequests).filter(
+      (r) => r.scopeKind === 'main'
+    ).length;
+    events.push(summaryEvent);
+  }
+
+  return events;
+}
+
+/**
+ * Build a pass's `finalize`: persists `state` only when the send was accepted, then always
+ * releases the lock — even if the save itself throws, so a disk error can never leak the lock.
+ * A failed save is logged and otherwise swallowed: the next hook replays the same batch from the
+ * transcript, which is harmless (the backend dedupes/collapses replays; see the delivery plan).
+ */
+function finalizeOf(
+  sessionId: string,
+  state: TranscriptParseState,
+  release: () => Promise<void>
+): (accepted: boolean) => Promise<void> {
+  return async (accepted: boolean) => {
+    try {
+      if (accepted) {
+        await saveParseState(sessionId, state);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn('[claude-code-otlp] failed to persist parse state', ...sanitizeLogArgs({ sessionId, err: msg }));
+    } finally {
+      await release();
+    }
+  };
+}
+
+/**
+ * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
+ * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
+ * events plus a `finalize` that commits only on an accepted send (see the module doc).
+ *
+ * On any failure — including a lock-wait timeout — releases whatever lock it holds and returns
+ * an empty pass, so the caller still forwards the raw hook event with no `finalize` (existing
+ * behaviour: the next hook resumes from the last saved offsets).
+ */
+export async function openMainTranscriptPass(
+  sessionId: string,
+  transcriptPath: string,
+  trigger: MainTranscriptTrigger
+): Promise<TranscriptPass> {
+  let release: (() => Promise<void>) | undefined;
   try {
-    // Both the load and the save happen inside the lock so a concurrent hook process for the
-    // same session can never read a state this pass is about to overwrite.
-    return await withParseStateLock(sessionId, async () => {
-      const state = await loadParseState(sessionId);
-      const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
-
-      const touchedKeys = new Set<string>();
-      for (const line of lines) {
-        let rawGitBranch = '';
-        let isUserLine = false;
-        let head: TranscriptLine | null = null;
-        try {
-          head = JSON.parse(line) as TranscriptLine;
-          rawGitBranch = head?.gitBranch ?? '';
-          isUserLine = head?.type === 'user';
-        } catch {
-          // Malformed line: still attempt usage parsing below (which has its own try/catch), but
-          // there is no branch/skill/turn signal to read from it.
-        }
-        // The contract's branch counts are user lines per branch.
-        if (rawGitBranch && isUserLine) {
-          updateBranchCounts(state.branchCounts, rawGitBranch);
-        }
-
-        if (head && isGenuineUserTurn(head)) {
-          state.activeSkill = '';
-        }
-
-        const scopeKind = state.activeSkill ? 'skill' : 'main';
-        const parsed = parseUsageLine(line, scopeKind, state.activeSkill, '', '');
-        if (parsed) {
-          const key = usageRequestKey(parsed);
-          const existing = state.openRequests[key];
-          state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-          touchedKeys.add(key);
-        }
-
-        // Applied after this line's own usage is scoped — the turn that invokes a skill still
-        // belongs to whatever context was active before it.
-        if (head) {
-          const skill = findSkillInvocation(head);
-          if (skill) {
-            state.activeSkill = skill;
-          }
-        }
-      }
-      state.mainOffset = nextOffset;
-
-      const events: Record<string, unknown>[] = [];
-      for (const key of touchedKeys) {
-        events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
-      }
-
-      if (trigger === 'Stop' || trigger === 'SessionEnd') {
-        const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
-        const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
-        const summaryEvent = buildSessionSummaryEvent(
-          sessionId,
-          phase,
-          acc,
-          named,
-          state.branchCounts,
-          startedAt,
-          endedAt
-        );
-        // Main-thread requests only — the contract's api_calls excludes subagent requests.
-        summaryEvent.api_calls = Object.values(state.openRequests).filter(
-          (r) => r.scopeKind === 'main'
-        ).length;
-        events.push(summaryEvent);
-      }
-
-      await saveParseState(sessionId, state);
-      return events;
-    });
-  } catch {
-    // Swallow everything — never throw into processOtlpEvent.
-    return [];
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    return { events, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
   }
 }
 
@@ -495,119 +551,169 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
 }
 
 /**
- * Whether the `SessionEnd` backstop still needs to (re)process `subagentFile`.
- *
- * False when a prior pass (that subagent's own `SubagentStop`, or an earlier backstop run)
- * already advanced its persisted offset to the file's current size — nothing was appended since,
- * so re-scanning would only resend the same cumulative `agent.subagent.usage` event as a
- * duplicate. True whenever that cannot be established (never-seen agent, growth since the last
- * offset, or a state/file read failure) — an extra pass is strictly better than silently dropping
- * one.
+ * Whether `state` already covers `subagentFile` — true when a prior pass (that subagent's own
+ * `SubagentStop`, or an earlier backstop run) already advanced its persisted offset to the
+ * file's current size, so re-scanning would only resend the same cumulative `agent.subagent.usage`
+ * event as a duplicate. False whenever that cannot be established (never-seen agent, growth
+ * since the last offset, or a file-stat failure) — an extra pass is strictly better than
+ * silently dropping one.
  */
-export async function subagentNeedsBackstop(sessionId: string, subagentFile: SubagentFile): Promise<boolean> {
+async function subagentAlreadyCovered(state: TranscriptParseState, subagentFile: SubagentFile): Promise<boolean> {
+  const offset = state.subagentOffsets[subagentFile.agentId];
+  if (offset === undefined) {
+    return false;
+  }
   try {
-    const state = await loadParseState(sessionId);
-    const offset = state.subagentOffsets[subagentFile.agentId];
-    if (offset === undefined) {
-      return true;
-    }
     const info = await stat(subagentFile.filePath);
-    return info.size !== offset;
+    return info.size === offset;
   } catch {
-    return true;
+    return false;
   }
 }
 
 /**
- * Collect the spool-bound events for one `SubagentStop` hook fire, or for one subagent file
- * discovered by the `SessionEnd` backstop scan (`findSubagentFiles()`).
+ * Derive the spool-bound events for one subagent file, mutating `state` in memory. Does not
+ * persist anything — see {@link deriveMainEvents}'s doc for why.
  *
- * - Loads persisted state, reads only the lines appended since
- *   `state.subagentOffsets[subagentFile.agentId]` (defaulting to 0 for a never-before-seen
- *   agent).
+ * - Reads only the lines appended since `state.subagentOffsets[subagentFile.agentId]`
+ *   (defaulting to 0 for a never-before-seen agent).
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
  *   scoped `scopeKind: 'agent'`, keyed by `usageRequestKey()` — same merge/key convention
- *   `collectMainTranscriptEvents` uses for the main transcript.
+ *   {@link deriveMainEvents} uses for the main transcript.
  * - Returns one `agent.usage.request` JSON string per request key touched by *this* pass (no new
  *   lines means no new events — a no-op reparse returns nothing at this layer).
  * - Also returns one `agent.subagent.usage` event summarizing this agent's *cumulative* usage
  *   (every `scopeKind: 'agent'` record in `state.openRequests` for this `agentId`, not just the
  *   ones touched this pass) plus a fresh full-file tool-call/error/result/skill/timing scan (see
  *   {@link scanSubagentTranscript}) — unless that scan reports `isEmpty` (the file is missing or
- *   has no parseable lines), in which case no `agent.subagent.usage` event is returned at all:
- *   a subagent with no transcript content has nothing real to summarize, so one is never
+ *   has no parseable lines), in which case no `agent.subagent.usage` event is returned at all: a
+ *   subagent with no transcript content has nothing real to summarize, so one is never
  *   fabricated with all-zero fields. A re-run with nothing new since the last pass (but a
  *   non-empty file) still returns the event, summarizing unchanged cumulative state, rather than
  *   being skipped — callers that only want to re-run when something changed should check
- *   {@link subagentNeedsBackstop} first.
- * - Persists the updated `subagentOffsets[subagentFile.agentId]` (and `openRequests`) back to
- *   disk.
- *
- * Never forwards anything itself — the caller is responsible for sending the returned events to
- * the spool (exactly one place in the pipeline does that).
- *
- * Swallows every error internally — never throws into `processOtlpEvent`.
+ *   {@link subagentAlreadyCovered} first.
  */
-export async function collectSubagentTranscriptEvents(
+async function deriveSubagentEvents(
+  state: TranscriptParseState,
   sessionId: string,
   subagentFile: SubagentFile
 ): Promise<Record<string, unknown>[]> {
+  const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
+  const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
+
+  const touchedKeys = new Set<string>();
+  for (const line of lines) {
+    const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId, subagentFile.agentType ?? '');
+    if (parsed) {
+      const key = usageRequestKey(parsed);
+      const existing = state.openRequests[key];
+      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+      touchedKeys.add(key);
+    }
+  }
+  state.subagentOffsets[subagentFile.agentId] = nextOffset;
+
+  const events: Record<string, unknown>[] = [];
+  for (const key of touchedKeys) {
+    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+  }
+
+  // Cumulative usage for this agent — every scope_kind:'agent' record known for it so far,
+  // not just the ones touched this pass (consistent with buildFullAccumulator's own
+  // "recomputed from full state" framing for the sibling agent.session.summary event).
+  const usageRequestsForAgent = Object.values(state.openRequests).filter(
+    (r) => r.scopeKind === 'agent' && r.agentId === subagentFile.agentId
+  );
+
+  const scan = await scanSubagentTranscript(subagentFile.filePath);
+  if (!scan.isEmpty) {
+    events.push(
+      buildSubagentUsageEvent(
+        sessionId,
+        subagentFile,
+        usageRequestsForAgent,
+        scan.toolCalls,
+        scan.toolErrors,
+        scan.toolResults,
+        scan.skillsInvoked,
+        scan.startedAt,
+        scan.endedAt,
+        scan.durationMs
+      )
+    );
+  }
+
+  return events;
+}
+
+/**
+ * Open a commit-after-send pass for one `SubagentStop` hook fire. Same acquire/derive/finalize
+ * shape as {@link openMainTranscriptPass}, for {@link deriveSubagentEvents}.
+ */
+export async function openSubagentPass(sessionId: string, subagentFile: SubagentFile): Promise<TranscriptPass> {
+  let release: (() => Promise<void>) | undefined;
   try {
-    // Load/mutate/save inside the lock — same rationale as collectMainTranscriptEvents: a sibling
-    // SubagentStop for another subagent in this same session must never read state this pass is
-    // about to overwrite.
-    return await withParseStateLock(sessionId, async () => {
-      const state = await loadParseState(sessionId);
-      const fromOffset = state.subagentOffsets[subagentFile.agentId] ?? 0;
-      const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    return { events, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] subagent transcript pass failed', ...sanitizeLogArgs({ sessionId, agentId: subagentFile.agentId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
+  }
+}
 
-      const touchedKeys = new Set<string>();
-      for (const line of lines) {
-        const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId, subagentFile.agentType ?? '');
-        if (parsed) {
-          const key = usageRequestKey(parsed);
-          const existing = state.openRequests[key];
-          state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-          touchedKeys.add(key);
-        }
+/**
+ * Open a commit-after-send pass for one `SessionEnd` hook fire: the main transcript plus the
+ * backstop scan over every subagent file discovered for this session (`findSubagentFiles()`),
+ * all against **one** in-memory `state` under **one** lock acquisition (so there is exactly one
+ * save at the end, instead of one per collector as a loop of separate passes would do).
+ *
+ * The main transcript is derived first, so `api_calls` (computed from `scopeKind: 'main'`
+ * records) can never be inflated by a subagent's records. A subagent whose offset already
+ * covers its file ({@link subagentAlreadyCovered}) is skipped — its own `SubagentStop` (or an
+ * earlier backstop run) already reported it. Sharing one `state` across subagents loses the
+ * per-collector isolation separate passes would give it, so each subagent derivation first
+ * snapshots `state` and restores it if that one subagent throws — a failing subagent can never
+ * leave `openRequests`/`subagentOffsets` half-mutated and committed, but it also never blocks the
+ * other subagents or the main events already derived.
+ */
+export async function openSessionEndPass(
+  sessionId: string,
+  transcriptPath: string,
+  cwd: string
+): Promise<TranscriptPass> {
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
+
+    const subagentFiles = await findSubagentFiles(transcriptPath);
+    for (const rawFile of subagentFiles) {
+      // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
+      // available stand-in (subagents share their parent session's cwd).
+      const file: SubagentFile = { ...rawFile, cwd };
+      if (await subagentAlreadyCovered(state, file)) {
+        continue;
       }
-      state.subagentOffsets[subagentFile.agentId] = nextOffset;
-
-      const events: Record<string, unknown>[] = [];
-      for (const key of touchedKeys) {
-        events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+      const snapshot = structuredClone(state);
+      try {
+        events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+      } catch (err) {
+        Object.assign(state, snapshot);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.debug('[claude-code-otlp] SessionEnd subagent backstop failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
       }
+    }
 
-      // Cumulative usage for this agent — every scope_kind:'agent' record known for it so far,
-      // not just the ones touched this pass (consistent with buildFullAccumulator's own
-      // "recomputed from full state" framing for the sibling agent.session.summary event).
-      const usageRequestsForAgent = Object.values(state.openRequests).filter(
-        (r) => r.scopeKind === 'agent' && r.agentId === subagentFile.agentId
-      );
-
-      const scan = await scanSubagentTranscript(subagentFile.filePath);
-      if (!scan.isEmpty) {
-        events.push(
-          buildSubagentUsageEvent(
-            sessionId,
-            subagentFile,
-            usageRequestsForAgent,
-            scan.toolCalls,
-            scan.toolErrors,
-            scan.toolResults,
-            scan.skillsInvoked,
-            scan.startedAt,
-            scan.endedAt,
-            scan.durationMs
-          )
-        );
-      }
-
-      await saveParseState(sessionId, state);
-      return events;
-    });
-  } catch {
-    // Swallow everything — never throw into processOtlpEvent.
-    return [];
+    return { events, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] SessionEnd pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
   }
 }

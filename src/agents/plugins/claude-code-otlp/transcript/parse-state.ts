@@ -131,15 +131,19 @@ async function removeLockIfUnchanged(lockPath: string, expected: string): Promis
 }
 
 /**
- * Serialize one session's load-mutate-save parse-state cycle across concurrent hook processes
- * (e.g. sibling `SubagentStop` fires for the same session) via an exclusive-create lock file
- * holding the owner's pid. Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
+ * Acquire the per-session parse-state lock across concurrent hook processes (e.g. sibling
+ * `SubagentStop` fires for the same session), via an exclusive-create lock file holding the
+ * owner's pid. Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
  *
  * A lock is reclaimed only when its owner pid is dead, never by age, so a slow holder keeps it.
- * If the lock is not acquired within {@link LOCK_WAIT_BUDGET_MS}, this throws instead of running
- * `fn` unlocked; the caller skips the pass and the next hook resumes from the saved offsets.
+ * If the lock is not acquired within {@link LOCK_WAIT_BUDGET_MS}, this throws rather than
+ * returning a release function; the caller skips its pass and the next hook resumes from the
+ * saved offsets.
+ *
+ * Returns a release function. It is idempotent (safe to call more than once) so a caller's
+ * cleanup path can call it without tracking whether it already ran.
  */
-export async function withParseStateLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+export async function acquireParseStateLock(sessionId: string): Promise<() => Promise<void>> {
   const lockPath = getLockPath(sessionId);
   await mkdir(dirname(lockPath), { recursive: true });
 
@@ -174,9 +178,22 @@ export async function withParseStateLock<T>(sessionId: string, fn: () => Promise
     }
   }
 
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    await rm(lockPath, { force: true }).catch(() => {});
+  };
+}
+
+/**
+ * Serialize one session's load-mutate-save parse-state cycle under {@link acquireParseStateLock}.
+ */
+export async function withParseStateLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const release = await acquireParseStateLock(sessionId);
   try {
     return await fn();
   } finally {
-    await rm(lockPath, { force: true }).catch(() => {});
+    await release();
   }
 }

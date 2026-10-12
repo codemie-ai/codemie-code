@@ -71,16 +71,19 @@ const tokenWith = (claims: Record<string, unknown>): string =>
 
 describe('OtlpAgentAdapter.processOtlpEvent', () => {
   const ensureOtlpProxy = vi.fn(async () => {});
-  const forwardToSpool = vi.fn(async () => {});
-  const deps = { ensureOtlpProxy, forwardOtlpEventToSpool: forwardToSpool };
+  const forwardToSpool = vi.fn(async () => true);
+  const deps = { ensureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
   let adapter: FakeAdapter;
 
   const run = (input: Partial<FakeInput> = {}) =>
     adapter.processOtlpEvent(JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], ...input }), deps);
-  const forwarded = () => forwardToSpool.mock.calls.map(([record]) => record as Record<string, unknown>);
+  /** Every event from the batch call(s), in send order. */
+  const forwarded = () =>
+    forwardToSpool.mock.calls.flatMap(([events]) => events as Record<string, unknown>[]);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    forwardToSpool.mockResolvedValue(true);
     adapter = new FakeAdapter();
     detectGitBranchMock.mockResolvedValue('main');
     detectGitRemoteRepoMock.mockResolvedValue('org/repo');
@@ -138,7 +141,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     expect(forwarded()).toHaveLength(2);
     expect(forwarded()[0]).toMatchObject({ a: 1, git_branch: 'main', repo_remote: 'org/repo', story_id: '', story_source: '', platform: 'fake-platform' });
     expect(forwarded()[1]).toMatchObject({ a: 2, git_branch: 'main', repo_remote: 'org/repo', story_id: '', story_source: '', platform: 'fake-platform' });
-    expect(forwardToSpool.mock.calls.map(([, name]) => name)).toEqual(['fake', 'fake']);
+    expect(forwardToSpool.mock.calls.map(([, name]) => name)).toEqual(['fake']);
   });
 
   it("keeps a record's own non-empty value and does not let undefined / '' clobber the base value", async () => {
@@ -337,18 +340,10 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
   });
 
   describe('spool forwarding', () => {
-    it('awaits each spool write and sends events strictly in order', async () => {
-      const order: string[] = [];
-      let inFlight = 0;
-      forwardToSpool.mockImplementation(async (record: Record<string, unknown>) => {
-        inFlight += 1;
-        expect(inFlight).toBe(1);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        order.push(String(record['n']));
-        inFlight -= 1;
-      });
+    it('sends every event as one batch, in payload order', async () => {
       await run({ payload: [{ n: 1 }, { n: 2 }, { n: 3 }] });
-      expect(order).toEqual(['1', '2', '3']);
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwarded().map((r) => r['n'])).toEqual([1, 2, 3]);
     });
 
     it('does not resolve before the spool write has finished', async () => {
@@ -356,9 +351,71 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       forwardToSpool.mockImplementation(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         done = true;
+        return true;
       });
       await run();
       expect(done).toBe(true);
+    });
+
+    it('does not retry a failed send when retryOnce is unset', async () => {
+      forwardToSpool.mockResolvedValue(false);
+      await run();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+    });
+
+    it('resends the same built events once more when retryOnce is set and the first send failed', async () => {
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        retryOnce: true,
+      });
+      forwardToSpool.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      await run();
+      expect(forwardToSpool).toHaveBeenCalledTimes(2);
+      const [firstEvents] = forwardToSpool.mock.calls[0] as [Record<string, unknown>[]];
+      const [secondEvents] = forwardToSpool.mock.calls[1] as [Record<string, unknown>[]];
+      expect(secondEvents[0]['event_id']).toBe(firstEvents[0]['event_id']);
+    });
+
+    it('does not retry a second time when the retry also fails', async () => {
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        retryOnce: true,
+      });
+      forwardToSpool.mockResolvedValue(false);
+      await run();
+      expect(forwardToSpool).toHaveBeenCalledTimes(2);
+    });
+
+    it('calls finalize(true) after an accepted send and finalize(false) after a failed one with no retryOnce', async () => {
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        finalize,
+      });
+      forwardToSpool.mockResolvedValueOnce(true);
+      await run();
+      expect(finalize).toHaveBeenCalledWith(true);
+
+      finalize.mockClear();
+      forwardToSpool.mockResolvedValueOnce(false);
+      await run();
+      expect(finalize).toHaveBeenCalledWith(false);
+    });
+
+    it('calls finalize(true) for an empty payload without resolving context or sending', async () => {
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [],
+        finalize,
+      });
+      await run();
+      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(detectGitBranchMock).not.toHaveBeenCalled();
+      expect(finalize).toHaveBeenCalledWith(true);
     });
   });
 });

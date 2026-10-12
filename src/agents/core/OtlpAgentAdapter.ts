@@ -9,7 +9,14 @@ import { resolveHookCredentials } from './hook-credentials.js';
 import { resolveEmailFromCredentials, resolveIdentity } from './identity-resolver.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
-  | { decision: 'forward'; payload: Record<string, unknown>[] }
+  | {
+      decision: 'forward';
+      payload: Record<string, unknown>[];
+      /** SessionEnd only: resend the same built events once if the first attempt failed. */
+      retryOnce?: boolean;
+      /** Called exactly once, after the send attempt. Commits state only when accepted; always releases any lock the handler is holding. */
+      finalize?: (accepted: boolean) => Promise<void>;
+    }
   | { decision: 'block'; reason: string; hookSpecificOutput: TBlockOutput };
 
 export interface OtlpHookContext {
@@ -68,7 +75,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   readonly type = AgentAdapterType.OTLP;
 
   public async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
-    const { ensureOtlpProxy, forwardOtlpEventToSpool } = deps;
+    const { ensureOtlpProxy, forwardOtlpEventsToSpool } = deps;
     // JSON.parse failures intentionally propagate to the caller.
     const hookInput = this.parseHookInput(rawHookInput);
     if (hookInput === null) {
@@ -100,17 +107,37 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       return;
     }
 
-    const context = this.extractHookContext(hookInput);
-    const [commonFields, agentFields] = await Promise.all([
-      this.resolveCommonFields(context),
-      this.resolveAgentFields(),
-    ]);
-    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+    // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
+    // back `finalize`, which persists its state only when `accepted` is true. This keeps
+    // the whole invocation's events a single all-or-nothing unit: on failure nothing is
+    // committed, so the next hook re-derives and re-sends the same events.
+    let accepted = false;
+    try {
+      if (decision.payload.length === 0) {
+        accepted = true; // nothing to send, nothing to lose
+        return;
+      }
 
-    // Sequential, so a hook event stays ahead of its derived events in the spool.
-    // forwardOtlpEventToSpool never throws and aborts after 1s.
-    for (const hookEvent of decision.payload) {
-      await forwardOtlpEventToSpool(this.buildEvent(hookEvent, invocation), this.name);
+      const context = this.extractHookContext(hookInput);
+      const [commonFields, agentFields] = await Promise.all([
+        this.resolveCommonFields(context),
+        this.resolveAgentFields(),
+      ]);
+      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+
+      // Built once: a retry below resends these exact bytes, event_ids included.
+      const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
+
+      accepted = await forwardOtlpEventsToSpool(events, this.name);
+      if (!accepted && decision.retryOnce) {
+        accepted = await forwardOtlpEventsToSpool(events, this.name);
+      }
+    } finally {
+      try {
+        await decision.finalize?.(accepted);
+      } catch (err) {
+        logger.warn(`[${this.name}] finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 

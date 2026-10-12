@@ -17,12 +17,12 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
-  collectMainTranscriptEvents,
-  collectSubagentTranscriptEvents,
-  subagentNeedsBackstop,
+  openMainTranscriptPass,
+  openSubagentPass,
+  openSessionEndPass,
   type SubagentFile,
 } from './transcript/orchestrator.js';
-import { findSubagentFiles, readSubagentMeta } from './transcript/subagent-usage.js';
+import { readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
@@ -96,40 +96,24 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
-    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'Stop');
-    return { decision: 'forward', payload: [hookInput, ...derived] };
+    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop');
+    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
   }
 
   private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ClaudeForwardDecision> {
-    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'PreCompact');
-    return { decision: 'forward', payload: [hookInput, ...derived] };
+    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'PreCompact');
+    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
   }
 
   private async onStopFailureEvent(hookInput: StopFailureHookInput): Promise<ClaudeForwardDecision> {
-    const derived = await collectMainTranscriptEvents(hookInput.session_id, hookInput.transcript_path, 'StopFailure');
-    return { decision: 'forward', payload: [hookInput, ...derived] };
+    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'StopFailure');
+    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
   }
 
   private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ClaudeForwardDecision> {
-    const { session_id: sessionId, transcript_path: transcriptPath } = hookInput;
-    const derived = await collectMainTranscriptEvents(sessionId, transcriptPath, 'SessionEnd');
-
-    // Backstop: guarantee every subagent discovered for this session gets at least one
-    // agent.subagent.usage event, even when its own SubagentStop hook never fired. Skipped for an
-    // agent whose offset already covers the whole file — its own SubagentStop (or an earlier
-    // backstop pass) already reported it and nothing was appended since, so re-running here would
-    // only resend the same event as a duplicate.
-    const subagentFiles = await findSubagentFiles(transcriptPath);
-    for (const rawFile of subagentFiles) {
-      // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
-      // available stand-in (subagents share their parent session's cwd).
-      const file: SubagentFile = { ...rawFile, cwd: hookInput.cwd };
-      if (await subagentNeedsBackstop(sessionId, file)) {
-        derived.push(...(await collectSubagentTranscriptEvents(sessionId, file)));
-      }
-    }
-
-    return { decision: 'forward', payload: [hookInput, ...derived] };
+    const pass = await openSessionEndPass(hookInput.session_id, hookInput.transcript_path, hookInput.cwd);
+    // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
+    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize, retryOnce: true };
   }
 
   private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
@@ -157,8 +141,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       cwd: hookInput.cwd,
     };
 
-    const derived = await collectSubagentTranscriptEvents(hookInput.session_id, subagentFile);
-    return { decision: 'forward', payload: [hookInput, ...derived] };
+    const pass = await openSubagentPass(hookInput.session_id, subagentFile);
+    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {

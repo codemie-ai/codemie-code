@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  acquireParseStateLock,
   createParseState,
   loadParseState,
   saveParseState,
@@ -192,5 +193,35 @@ describe('withParseStateLock', () => {
     utimesSync(lockPath, old, old);
 
     await expect(withParseStateLock(sessionId, async () => 'reclaimed')).resolves.toBe('reclaimed');
+  });
+});
+
+describe('acquireParseStateLock', () => {
+  it('holds the lock across an async gap, until the returned release is called', async () => {
+    const sessionId = 'session-acquire-release';
+    const release = await acquireParseStateLock(sessionId);
+
+    const second = withParseStateLock(sessionId, async () => 'second');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    expect(existsSync(lockPath)).toBe(true); // still held — the second acquirer is waiting
+
+    await release();
+    await expect(second).resolves.toBe('second');
+  });
+
+  it('release is idempotent — calling it twice does not throw or remove a lock acquired meanwhile', async () => {
+    const sessionId = 'session-acquire-idempotent';
+    const release = await acquireParseStateLock(sessionId);
+    await release();
+
+    const reacquireRelease = await acquireParseStateLock(sessionId);
+    await release(); // the first release firing again must not touch the new holder's lock
+
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    expect(existsSync(lockPath)).toBe(true);
+
+    await reacquireRelease();
   });
 });
