@@ -18,7 +18,11 @@ $Commands = @(
   'codemie-claude',
   'codemie-claude-acp',
   'codemie-gemini',
+  'codemie-gemini-acp',
   'codemie-opencode',
+  'codemie-opencode-acp',
+  'codemie-codex',
+  'codemie-codex-acp',
   'codemie-mcp-proxy'
 )
 

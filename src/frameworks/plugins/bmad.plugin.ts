@@ -24,9 +24,12 @@ const BMAD_TOOL_MAPPING: Record<string, string> = {
   claude: 'claude-code',
   'claude-acp': 'claude-code',
   codex: 'codex',
+  'codex-acp': 'codex',
   'codemie-code': 'opencode',
   gemini: 'gemini',
+  'gemini-acp': 'gemini',
   opencode: 'opencode',
+  'opencode-acp': 'opencode',
 };
 
 /**

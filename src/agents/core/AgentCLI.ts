@@ -16,9 +16,12 @@ import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
+import { GeminiAcpPluginMetadata } from '../plugins/gemini/gemini-acp.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
+import { OpenCodeAcpPluginMetadata } from '../plugins/opencode/opencode-acp.plugin.js';
 import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
 import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
+import { CodexAcpPluginMetadata } from '../plugins/codex/codex-acp.plugin.js';
 import { KimiPluginMetadata } from '../plugins/kimi/kimi.plugin.js';
 import { KimiAcpPluginMetadata } from '../plugins/kimi/kimi-acp.plugin.js';
 import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
@@ -654,6 +657,9 @@ export class AgentCLI {
       'opencode': OpenCodePluginMetadata,
       'claude-acp': ClaudeAcpPluginMetadata,
       'codex': CodexPluginMetadata,
+      'codex-acp': CodexAcpPluginMetadata,
+      'gemini-acp': GeminiAcpPluginMetadata,
+      'opencode-acp': OpenCodeAcpPluginMetadata,
       'kimi': KimiPluginMetadata,
       'kimi-acp': KimiAcpPluginMetadata,
       'pi': PiPluginMetadata,
