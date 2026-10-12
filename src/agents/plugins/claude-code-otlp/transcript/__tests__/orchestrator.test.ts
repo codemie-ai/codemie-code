@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { logger } from '@/utils/logger.js';
 import {
   openMainTranscriptPass,
   openSubagentPass,
@@ -102,9 +103,13 @@ beforeEach(() => {
   transcriptDir = mkdtempSync(join(tmpdir(), 'codemie-transcript-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.CODEMIE_HOME;
-  rmSync(codemieHome, { recursive: true, force: true });
+  // Flush and close the singleton logger's write stream before deleting the temp
+  // home: it opens the log file asynchronously, and Windows refuses to rmdir a
+  // directory ('logs') that still holds an open handle (ENOTEMPTY).
+  await logger.close();
+  try { rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
   rmSync(transcriptDir, { recursive: true, force: true });
 });
 
