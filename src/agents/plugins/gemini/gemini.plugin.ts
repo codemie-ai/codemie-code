@@ -6,6 +6,29 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { validateGeminiModel } from './gemini.models.js';
+import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
+import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { logger } from '../../../utils/logger.js';
+
+/**
+ * Build a hook config object from environment variables.
+ * Used by onSessionStart for stale-session reconciliation.
+ */
+function buildGeminiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || 'gemini',
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: 'codemie-gemini',
+  };
+}
 
 /**
  * Supported Gemini CLI version
@@ -177,6 +200,15 @@ export const GeminiPluginMetadata: AgentMetadata = {
       await validateGeminiModel(env);
 
       return env;
+    },
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      // Gemini's native SessionStart hook already routes through the shared
+      // codemie-hook -> handleSessionStart path and creates the session
+      // record reliably, so this must NOT also fire processEvent(SessionStart).
+      void reconcileStaleSessions('gemini', env, buildGeminiHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[gemini] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
     }
   }
 };
