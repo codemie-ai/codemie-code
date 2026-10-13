@@ -602,8 +602,11 @@ async function deriveSubagentEvents(
   const { lines, nextOffset } = await readNewLines(subagentFile.filePath, fromOffset);
 
   const touchedKeys = new Set<string>();
+  const agentType = subagentFile.agentType ?? '';
   for (const line of lines) {
-    const parsed = parseUsageLine(line, 'agent', '', subagentFile.agentId, subagentFile.agentType ?? '');
+    // Contract: for `scope_kind: 'agent'`, `scope_name` carries the agent type (never `''` unless
+    // the type itself is unresolved) — same source as the `agent_type` field below.
+    const parsed = parseUsageLine(line, 'agent', agentType, subagentFile.agentId, agentType);
     if (parsed) {
       const key = usageRequestKey(parsed);
       const existing = state.openRequests[key];

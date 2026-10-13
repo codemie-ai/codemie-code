@@ -730,7 +730,7 @@ describe('openSubagentPass — request identity', () => {
     ]);
   });
 
-  it('carries the SubagentFile.agentType through onto every agent.usage.request event', async () => {
+  it('carries the SubagentFile.agentType through onto every agent.usage.request event, as both agent_type and scope_name (EPMCDME-15783)', async () => {
 
     const sessionId = 'session-sub-agent-type';
     const file = writeSubagentFixture(sessionId, 'a1', [
@@ -741,10 +741,10 @@ describe('openSubagentPass — request identity', () => {
     const usage = events.filter((e) => e.type === 'agent.usage.request');
 
     expect(usage).toHaveLength(1);
-    expect(usage[0].agent_type).toBe('Explore');
+    expect(usage[0]).toMatchObject({ agent_type: 'Explore', scope_kind: 'agent', scope_name: 'Explore' });
   });
 
-  it('defaults agent_type to empty when the SubagentFile has none', async () => {
+  it('defaults agent_type and scope_name to empty when the SubagentFile has none', async () => {
 
     const sessionId = 'session-sub-no-agent-type';
     const file = writeSubagentFixture(sessionId, 'a1', [
@@ -754,7 +754,22 @@ describe('openSubagentPass — request identity', () => {
     const events = await subagentEvents(sessionId, file);
     const usage = events.filter((e) => e.type === 'agent.usage.request');
 
-    expect(usage[0].agent_type).toBe('');
+    expect(usage[0]).toMatchObject({ agent_type: '', scope_kind: 'agent', scope_name: '' });
+  });
+
+  it('carries agentType onto agent.subagent.usage\'s usage[] rows as scope_name, matching the contract\'s (model, speed, inference_geo, service_tier, scope_kind, scope_name) grouping key (EPMCDME-15783)', async () => {
+
+    const sessionId = 'session-sub-usage-scope-name';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10 }),
+    ]);
+
+    const events = await subagentEvents(sessionId, { ...file, agentType: 'Explore' });
+    const subagentUsage = events.find((e) => e.type === 'agent.subagent.usage');
+
+    expect(subagentUsage?.usage).toEqual([
+      expect.objectContaining({ scope_kind: 'agent', scope_name: 'Explore' }),
+    ]);
   });
 });
 
