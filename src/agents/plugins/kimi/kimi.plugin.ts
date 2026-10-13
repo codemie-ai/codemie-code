@@ -18,6 +18,28 @@ import { isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
+import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
+import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+
+/**
+ * Build a hook config object from environment variables.
+ * Used by onSessionStart for stale-session reconciliation.
+ */
+function buildKimiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || 'kimi',
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: 'codemie-kimi',
+  };
+}
 import { resolveHomeDir } from '../../../utils/paths.js';
 
 // Recommended version (one non-blocking notice on mismatch) and the hard gate
@@ -85,6 +107,15 @@ export const KimiPluginMetadata: AgentMetadata = {
 
       assertExplicitKimiModelAllowed(explicitModel, availableModels);
       return args;
+    },
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      // Kimi's hook injector registers SessionStart against `codemie hook`,
+      // which already creates the session record reliably — do NOT also
+      // fire processEvent(SessionStart) here.
+      void reconcileStaleSessions('kimi', env, buildKimiHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[kimi] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
     },
   },
   metricsConfig: {
