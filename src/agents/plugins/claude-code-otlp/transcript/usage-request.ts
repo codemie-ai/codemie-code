@@ -116,7 +116,10 @@ export function parseUsageLine(
     cacheCreation1hTokens: Number(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0),
     cacheReadTokens: Number(usage.cache_read_input_tokens ?? 0),
     outputTokens: Number(usage.output_tokens ?? 0),
-    thinkingTokens: Number(usage.output_tokens_details?.thinking_tokens ?? 0),
+    thinkingTokens:
+      usage.output_tokens_details?.thinking_tokens === undefined
+        ? null
+        : Number(usage.output_tokens_details.thinking_tokens),
     webSearchRequests: Number(usage.server_tool_use?.web_search_requests ?? 0),
     webFetchRequests: Number(usage.server_tool_use?.web_fetch_requests ?? 0),
     scopeKind,
@@ -165,7 +168,12 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
     cacheCreation1hTokens: Math.max(a.cacheCreation1hTokens, b.cacheCreation1hTokens),
     cacheReadTokens: Math.max(a.cacheReadTokens, b.cacheReadTokens),
     outputTokens: Math.max(a.outputTokens, b.outputTokens),
-    thinkingTokens: Math.max(a.thinkingTokens, b.thinkingTokens),
+    // null only when neither side has ever reported thinking tokens; token counts are never
+    // negative, so 0 is a safe stand-in for "no info" on whichever side Math.max still needs one.
+    thinkingTokens:
+      a.thinkingTokens === null && b.thinkingTokens === null
+        ? null
+        : Math.max(a.thinkingTokens ?? 0, b.thinkingTokens ?? 0),
     webSearchRequests: Math.max(a.webSearchRequests, b.webSearchRequests),
     webFetchRequests: Math.max(a.webFetchRequests, b.webFetchRequests),
     scopeKind: b.scopeKind || a.scopeKind,

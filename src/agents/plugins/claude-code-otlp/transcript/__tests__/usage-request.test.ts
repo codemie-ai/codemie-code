@@ -128,11 +128,11 @@ describe('parseUsageLine', () => {
     expect(req?.agentType).toBe('');
   });
 
-  it('defaults thinkingTokens to 0 when message.usage carries no output_tokens_details', () => {
+  it('defaults thinkingTokens to null (not 0) when message.usage carries no output_tokens_details', () => {
     // lines[1]/lines[2] carry no output_tokens_details block at all.
     const req = parseUsageLine(lines[1], 'main', '', '', '');
 
-    expect(req?.thinkingTokens).toBe(0);
+    expect(req?.thinkingTokens).toBeNull();
   });
 
   it('reads thinkingTokens from the nested message.usage.output_tokens_details.thinking_tokens field', () => {
@@ -242,6 +242,34 @@ describe('mergeUsageRequest', () => {
     expect(merged.isApiError).toBe(true);
   });
 
+  it('treats a null thinkingTokens as "no info" when merging — the other side\'s value wins', () => {
+    const a: OpenUsageRequest = {
+      requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
+      speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
+      inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+      cacheReadTokens: 0, outputTokens: 0, thinkingTokens: null, webSearchRequests: 0, webFetchRequests: 0,
+      scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
+      stopReason: '', isApiError: false, gitBranch: '',
+    };
+    const b: OpenUsageRequest = { ...a, thinkingTokens: 15 };
+
+    expect(mergeUsageRequest(a, b).thinkingTokens).toBe(15);
+    expect(mergeUsageRequest(b, a).thinkingTokens).toBe(15);
+  });
+
+  it('keeps thinkingTokens null when both records have no thinking-tokens info', () => {
+    const a: OpenUsageRequest = {
+      requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
+      speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
+      inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+      cacheReadTokens: 0, outputTokens: 0, thinkingTokens: null, webSearchRequests: 0, webFetchRequests: 0,
+      scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
+      stopReason: '', isApiError: false, gitBranch: '',
+    };
+
+    expect(mergeUsageRequest(a, { ...a }).thinkingTokens).toBeNull();
+  });
+
   it('merges agentType like every other non-numeric field: b wins when non-empty, else a', () => {
     const first = parseUsageLine(lines[3], 'agent', '', 'agent-1', 'Explore') as OpenUsageRequest;
     const laterWithoutAgentType = { ...first, agentType: '' };
@@ -294,6 +322,21 @@ describe('buildUsageRequestEvent', () => {
     // No event_id/schema_version here — those are stamped later, daemon-side.
     expect(event).not.toHaveProperty('event_id');
     expect(event).not.toHaveProperty('schema_version');
+  });
+
+  it('passes a null thinkingTokens through as thinking_tokens: null, so the backend stores it as NULL rather than 0', () => {
+    const req: OpenUsageRequest = {
+      requestId: 'req-1', messageId: 'msg-1', model: 'm', modelRaw: 'm-raw', timestamp: 't',
+      speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
+      inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+      cacheReadTokens: 0, outputTokens: 0, thinkingTokens: null, webSearchRequests: 0, webFetchRequests: 0,
+      scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
+      stopReason: '', isApiError: false, gitBranch: '',
+    };
+
+    const event = buildUsageRequestEvent('session-123', req);
+
+    expect(event.thinking_tokens).toBeNull();
   });
 });
 

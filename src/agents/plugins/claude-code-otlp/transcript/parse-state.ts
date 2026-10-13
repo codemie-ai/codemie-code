@@ -28,7 +28,7 @@ export interface OpenUsageRequest {
   cacheCreation1hTokens: number;
   cacheReadTokens: number;
   outputTokens: number;
-  thinkingTokens: number;
+  thinkingTokens: number | null;
   webSearchRequests: number;
   webFetchRequests: number;
   scopeKind: 'main' | 'skill' | 'agent';

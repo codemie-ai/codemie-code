@@ -445,6 +445,41 @@ describe('openMainTranscriptPass — api_calls', () => {
     expect(summaryEvents[0].api_calls).toBe(usageEvents.length);
     expect(summaryEvents[0].api_calls).toBe(2);
   });
+
+  it('counts skill-scoped main-thread requests toward api_calls, same as plain main-thread ones', async () => {
+    const sessionId = 'session-api-calls-skill';
+    const transcriptPath = writeTranscript('transcript-api-calls-skill.jsonl', [
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'brainstorming' }),
+      // Scoped 'skill' (brainstorming active since msg-1), but still a main-thread request.
+      skillAwareLine({ uuid: 'u2', messageId: 'msg-2', outputTokens: 20 }),
+    ]);
+
+    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'Stop'));
+    const usageEvents = events.filter((e) => e.type === 'agent.usage.request');
+    const summary = events.find((e) => e.type === 'agent.session.summary');
+
+    expect(usageEvents.find((e) => e.message_id === 'msg-2')).toMatchObject({ scope_kind: 'skill' });
+    expect(summary?.api_calls).toBe(usageEvents.length);
+    expect(summary?.api_calls).toBe(2);
+  });
+
+  it('still excludes subagent-scoped (agent) requests from api_calls, even alongside skill-scoped main requests', async () => {
+    const sessionId = 'session-api-calls-mixed-scopes';
+    const mainTranscriptPath = writeTranscript(`${sessionId}.jsonl`, [
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'brainstorming' }),
+      skillAwareLine({ uuid: 'u2', messageId: 'msg-2', outputTokens: 20 }),
+    ]);
+    writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'uuid-a1-1', messageId: 'msg-a1-1', outputTokens: 30 }),
+    ]);
+
+    const pass = await openSessionEndPass(sessionId, mainTranscriptPath, '/repo');
+    await pass.finalize(true);
+
+    const summary = pass.events.find((e) => e.type === 'agent.session.summary');
+    // 2 main-thread requests (1 main + 1 skill); the subagent's request must not inflate this.
+    expect(summary?.api_calls).toBe(2);
+  });
 });
 
 describe('openMainTranscriptPass — skill scoping', () => {

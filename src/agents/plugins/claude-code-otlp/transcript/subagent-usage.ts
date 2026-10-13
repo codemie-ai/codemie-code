@@ -131,7 +131,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_creation_1h_tokens += r.cacheCreation1hTokens;
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
-      existing.thinking_tokens += r.thinkingTokens;
+      existing.thinking_tokens += r.thinkingTokens ?? 0;
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
       existing.api_calls += 1;
@@ -149,7 +149,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_creation_1h_tokens: r.cacheCreation1hTokens,
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
-        thinking_tokens: r.thinkingTokens,
+        thinking_tokens: r.thinkingTokens ?? 0,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
         api_calls: 1,
