@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
-import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
-import { ConfigLoader } from '@/utils/config.js';
 import { extractRepository } from '@/utils/paths.js';
-import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
