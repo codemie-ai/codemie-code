@@ -61,6 +61,12 @@ export interface ProviderProfile {
   codeMieUrl?: string;
   codeMieProject?: string | null;
   codeMieIntegration?: CodeMieIntegrationInfo;
+  /**
+   * Additive, optional list of models available on this profile. When present, always includes
+   * `model`. Missing `models` means "single-model profile" and must be read as `[model]`
+   * (see `resolveProfileModels` in `src/utils/config.ts`).
+   */
+  models?: string[];
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
   reasoningEffort?: CanonicalReasoningEffort;
 

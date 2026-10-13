@@ -77,6 +77,17 @@ function pickIdentity(source: Partial<WorkspaceConfig> | undefined): ResolvedIde
 }
 
 /**
+ * Normalize a profile's model list at read time.
+ *
+ * `models` is additive and optional; a missing `models` field means
+ * "single-model profile" and is read as `[model]`, so every consumer can rely
+ * on a normalized array without a config migration.
+ */
+export function resolveProfileModels(profile: Pick<ProviderProfile, 'model' | 'models'>): string[] {
+  return profile.models?.length ? profile.models : profile.model ? [profile.model] : [];
+}
+
+/**
  * Unified configuration loader with priority system:
  * CLI args > Env vars > Project config > Global config > Defaults
  *
