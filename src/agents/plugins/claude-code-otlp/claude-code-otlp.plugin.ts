@@ -4,6 +4,7 @@ import type {
   HookInput,
   PreCompactHookInput,
   SessionEndHookInput,
+  SessionStartHookInput,
   StopFailureHookInput,
   StopHookInput,
   SubagentStartHookInput,
@@ -15,6 +16,9 @@ import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/ss
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
+import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
+import { resolveIdentityCandidateFields } from '@/agents/core/event-fields/identity-fields.js';
+import { resolveGitHeadFields } from '@/agents/core/event-fields/repo-fields.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
@@ -76,6 +80,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {
+    if (hookInput.hook_event_name === 'SessionStart') {
+      return await this.onSessionStart(hookInput);
+    }
     if (hookInput.hook_event_name === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(hookInput);
     }
@@ -113,6 +120,25 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const marker = await readForkedSkillMarker(agentTranscriptPath);
     const payload = marker.skillName ? { ...hookInput, skill_name: marker.skillName } : hookInput;
     return { decision: 'forward', payload: [payload] };
+  }
+
+  /**
+   * Enriches the session start with opt-in fields (not stamped on other events). The hook payload is
+   * spread first so a same-named payload key can never override a resolved value. `model` is passed
+   * through verbatim and is '' when the payload omits it (e.g. `clear`).
+   */
+  private async onSessionStart(hookInput: SessionStartHookInput): Promise<ClaudeForwardDecision> {
+    const context: OtlpHookContext = { cwd: hookInput.cwd };
+    const [envFields, identityCandidateFields, gitHeadStart] = await Promise.all([
+      resolveEnvFields(),
+      resolveIdentityCandidateFields(context),
+      resolveGitHeadFields(context, 'start'),
+    ]);
+    const model = readOptionalString(hookInput, 'model');
+    return {
+      decision: 'forward',
+      payload: [{ ...hookInput, ...envFields, ...identityCandidateFields, ...gitHeadStart, model: model ?? '' }],
+    };
   }
 
   private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
