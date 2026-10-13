@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   CODEMIE_COMMAND_MARKER,
   CODEMIE_ENV_KEYS,
+  CODEMIE_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
@@ -66,7 +67,7 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
 function codemieHookGroup() {
   return {
     matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}`, timeout: CODEMIE_HOOK_TIMEOUT_SECONDS }],
   };
 }
 

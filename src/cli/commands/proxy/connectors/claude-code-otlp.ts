@@ -59,6 +59,7 @@ interface HookEntry {
   type: string;
   command: string;
   async?: boolean;
+  timeout?: number;
   [key: string]: unknown;
 }
 
@@ -105,6 +106,7 @@ export const HOOK_EVENTS = [
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
+export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -294,6 +296,7 @@ export async function writeClaudeCodeOtlpConfig(
     const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
+      timeout: CODEMIE_HOOK_TIMEOUT_SECONDS,
     };
     return { matcher: '', hooks: [hook] };
   };
