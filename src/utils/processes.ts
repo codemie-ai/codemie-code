@@ -398,13 +398,31 @@ export async function npxRun(
  * @param cwd - Working directory path
  * @returns Repository in "owner/repo" format, or undefined if no remote is configured
  */
+function parseGitRemoteUrl(remoteUrl: string): string | undefined {
+  const withoutGitSuffix = remoteUrl.replace(/\.git$/, '');
+  const urlMatch = withoutGitSuffix.match(/^\w+:\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
+  const scpMatch = withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/);
+  const match = urlMatch ?? scpMatch;
+  if (!match) return undefined;
+
+  const [, host, path] = match;
+  const segments = path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => decodeURIComponent(segment));
+
+  const isAzureDevOps = host === 'dev.azure.com' || host === 'ssh.dev.azure.com';
+  const result = isAzureDevOps
+    ? segments.filter((segment, index) => segment !== '_git' && !(index === 0 && segment === 'v3'))
+    : segments;
+
+  return result.length > 0 ? result.join('/') : undefined;
+}
+
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
   try {
     const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
-    const remoteUrl = stdout.trim();
-    const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
-    if (match) return `${match[1]}/${match[2]}`;
-    return undefined;
+    return parseGitRemoteUrl(stdout.trim());
   } catch {
     return undefined;
   }
