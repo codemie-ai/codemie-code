@@ -17,6 +17,7 @@ const processEvent = vi.fn();
 const startIncrementalSync = vi.fn();
 const stopIncrementalSync = vi.fn();
 const ensureSessionFile = vi.fn();
+const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
 
 vi.mock('../../../../cli/commands/hook.js', () => ({ processEvent }));
 vi.mock('../opencode.incremental-sync.js', () => ({
@@ -24,6 +25,7 @@ vi.mock('../opencode.incremental-sync.js', () => ({
   stopOpenCodeIncrementalSync: stopIncrementalSync,
 }));
 vi.mock('../../../core/session/ensure-session.js', () => ({ ensureSessionFile }));
+vi.mock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
 vi.mock('../opencode.paths.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../opencode.paths.js')>()),
   getOpenCodeDbPath: () => '/data/opencode/opencode.db',
@@ -92,6 +94,24 @@ describe('OpenCode onSessionStart', () => {
 
     // The failsafe timer must still start.
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles stale opencode sessions on start', async () => {
+    const env = baseEnv();
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
+    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('opencode');
+    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
+  });
+
+  it('does not throw when reconciliation rejects', async () => {
+    reconcileStaleSessions.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv())
+    ).resolves.toBeUndefined();
   });
 });
 

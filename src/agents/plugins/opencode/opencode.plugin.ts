@@ -15,6 +15,7 @@ import {
 } from './opencode.incremental-sync.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
 import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
 import { ensureSessionFile } from '../../core/session/ensure-session.js';
@@ -219,6 +220,11 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[opencode] SessionStart hook failed (non-blocking): ${msg}`);
       }
+
+      void reconcileStaleSessions('opencode', env, buildHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[opencode] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
 
       // Failsafe path for metrics and conversations: everything it reads is
       // already durable in opencode.db, so deltas keep flowing even if the
