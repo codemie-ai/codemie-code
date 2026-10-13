@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15655_repo-name-extraction",
+  "head": "5e33137317087678dbe694a96ef17188d410ea8f",
+  "runner": "npm",
+  "started_at": "2026-10-13T11:46:48Z",
+  "completed_at": "2026-10-13T15:12:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12545,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "Script name implies Apache-2.0 header check per guide text, but it actually runs license-checker --onlyAllow over npm dependency licenses; guide description is stale relative to scripts/license-check.js. Exit 0 either way."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 58167,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 29806,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45935,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 212715,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "9 failures, all in AgentCLI-model-source.test.ts and providers-core.test.ts (claude.enrichArgs). Root cause for the providers-core failures: a stale leftover file C:\\Users\\ILYA_S~1\\AppData\\Local\\Temp\\codemie-claude-model-picker-config-28312-1791876048498.json pre-existing on this machine causes claudeHooks.enrichArgs to inject an unexpected --settings flag. Unrelated to this branch's diff (src/utils/processes.ts git-remote parsing)."
+    },
+    {
+      "id": "cross-platform-ci-windows",
+      "source": "guide",
+      "status": "N/A",
+      "notes": "Guide section has no Run field (describes a manual CRLF repro procedure for the CI test-windows job, not an executable gate). This gate-runner's own environment is windows-latest-equivalent (win32), so the unit/integration gates above already exercised the Windows code path CI's test-windows job checks."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 109777,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "7 failures across self-update.test.ts and skills.test.ts. self-update.test.ts fails with 'Please check your internet connection and try again' (sandbox has no outbound network); skills.test.ts subcommands time out after 30000ms likely for the same reason. Unrelated to this branch's diff."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 4940,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: output was exactly 'No staged changes to scan' (scripts/validate-secrets.js scans `git diff --staged`). This branch's diff is already committed (nothing staged), so the script does no scanning work despite exit 0. To enable locally: `git add` the files you want scanned before running, or rely on CI's secrets-detection job (gitleaks-action) which scans the full PR diff unconditionally \u2014 that check is still owed and only CI can settle it for this branch."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4167,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Only validates HEAD~1..HEAD (the most recent commit). This branch has 2 commits over merge_base; see commitlint-full-range for the range CI's validate-commits job actually checks."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 73414,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 248526,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Aggregate of license-check && lint && build && vitest-unit && vitest-cli; stopped at vitest-unit (same 9 failures as the standalone unit gate above), so vitest-cli never executed within this invocation. Do not infer the integration step passed here \u2014 see the standalone integration gate result instead."
+    },
+    {
+      "id": "affected-tests",
+      "source": "hook",
+      "status": "FAIL",
+      "duration_ms": 388562,
+      "command": "npx vitest related --run --exclude tests/integration/agent-*.test.ts --exclude tests/integration/cli-commands/models.test.ts src/utils/__tests__/processes-git.test.ts src/utils/processes.ts",
+      "exit_code": 1,
+      "notes": "From .husky/pre-commit's lint-staged chain (not covered by any guide gate \u2014 the guide only defines whole-project vitest runs, not a changed-file-aware 'related' run). Fails during global setup for the 'agent' vitest project (triggered because 'vitest related' spans all projects): AgentInstallationError \u2014 installing the claude CLI agent timed out after 300000ms, consistent with no outbound network in this sandbox. Not related to the branch diff content."
+    },
+    {
+      "id": "commitlint-full-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 5941,
+      "command": "npx commitlint --from 9963dc8a2c54baa87fd9494cdd170bf9a4852eac --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Mismatch vs guide: guide's commitlint-last gate only checks the last commit, but CI's validate-commits job (and this gate) checks the full merge_base..HEAD range used by the actual PR. Both of this branch's 2 commits pass with 0 problems."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "CI's validate-commits job also lints the PR title via `gh pr view` + commitlint; requires a live PR number and GH API/token, neither reachable from this local run (no PR has been opened yet)."
+    }
+  ],
+  "failures": {
+    "unit": "    435|       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(ar\u2026\n       |                                                                ^\n    436|     });\n    437|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[7/9]\u23af\n\n FAIL  |unit| src/providers/core/__tests__/providers-core.test.ts > defaultAgentHooks > claude.enrichArgs > does not override an explicit --model= form already in args\nAssertionError: expected [ '--settings', \u2026(4) ] to be [ '--model=claude-opus-5', '-p', 'hi' ] // Object.is equality\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\ILYA_S~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-28312-1791876048498.json\",\n    \"--model=claude-opus-5\",\n    \"-p\",\n    \"hi\",\n  ]\n\n \u276f src/providers/core/__tests__/providers-core.test.ts:442:64\n    440|       process.env.CODEMIE_MODEL = 'claude-sonnet-5';\n    441|       const args = ['--model=claude-opus-5', '-p', 'hi'];\n    442|       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(ar\u2026\n       |                                                                ^\n    443|     });\n    444|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[8/9]\u23af\n\n FAIL  |unit| src/providers/core/__tests__/providers-core.test.ts > defaultAgentHooks > claude.enrichArgs > ignores a blank CODEMIE_MODEL\nAssertionError: expected [ '--settings', \u2026(3) ] to be [ '-p', 'hi' ] // Object.is equality\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\ILYA_S~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-28312-1791876048498.json\",\n    \"-p\",\n    \"hi\",\n  ]\n\n \u276f src/providers/core/__tests__/providers-core.test.ts:451:64\n    449|       process.env.CODEMIE_MODEL = '   ';\n    450|       const args = ['-p', 'hi'];\n    451|       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(ar\u2026\n       |                                                                ^\n    452|     });\n    453|   });\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[9/9]\u23af\n\n\n Test Files  2 failed | 326 passed (328)\n      Tests  9 failed | 4817 passed | 2 skipped (4828)\n   Start at  14:51:53\n   Duration  204.56s (transform 158.80s, setup 0ms, import 513.17s, tests 314.53s, environment 124ms)\n\nFull failing-test list: AgentCLI-model-source.test.ts > AgentCLI.handleRun \u2014 CODEMIE_MODEL_SOURCE propagation > sets CODEMIE_MODEL_SOURCE=default when --model is not passed; providers-core.test.ts > defaultAgentHooks > claude.enrichArgs > (returns args unchanged when extension dir env var is unset / prepends --plugin-dir when env var set and not already present / does not duplicate --plugin-dir when already present / prepends --model from CODEMIE_MODEL / injects both --model and --plugin-dir together / does not override an explicit --model already in args / does not override an explicit --model= form already in args / ignores a blank CODEMIE_MODEL).",
+    "integration": ": expected 1 to be +0 // Object.is equality\n\n- Expected\n+ Received\n\n- 0\n+ 1\n\n \u276f tests/integration/cli-commands/self-update.test.ts:51:7\n     49|       result.status,\n     50|       `self-update --check failed\\nstdout: ${result.stdout}\\nstderr: $\u2026\n     51|     ).toBe(0);\n       |       ^\n     52|\n     53|     // Command must produce one of the two expected messages.\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[5/7]\u23af\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[6/7]\u23af\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > blocks every subcommand on unauthenticated invocation (spec \u00a77)\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f tests/integration/cli-commands/skills.test.ts:129:3\n    127|   });\n    128|\n    129|     // Point credentials lookup at a brand-new URL never logged in to \u2026\n    130|     // fallback global credentials in the user's keychain will not mat\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[7/7]\u23af\n\n Test Files  3 failed | 34 passed | 1 skipped (38)\n      Tests  7 failed | 271 passed | 10 skipped (288)\n   Start at  14:57:07\n   Duration  103.45s (transform 103.45s, setup 0ms, import 103.45s, tests 103.45s, environment 14ms)",
+    "ci": "Same vitest-unit failure as gates.unit above (npm run ci stops at the first failing step, so vitest-cli never ran inside this invocation).",
+    "affected-tests": "\u23af\u23af\u23af\u23af\u23af\u23af Unhandled Error \u23af\u23af\u23af\u23af\u23af\u23af\u23af\nAgentInstallationError: Failed to install agent claude: Failed to install: Command timed out after 300000ms\n \u276f installNativeAgent src/utils/native-installer.ts:460:9\n \u276f ClaudePlugin.installVersion src/agents/plugins/claude/claude.plugin.ts:802:20\n \u276f Object.setup tests/setup/agent-build-setup.ts:94:5\n \u276f TestProject._initializeGlobalSetup node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:10729:21\n \u276f Vitest.initializeGlobalSetup node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:13729:35\n \u276f node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:13572:6\n \u276f node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:13601:11\n \u276f node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:13463:19\n \u276f startVitest node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:14538:8\n \u276f start node_modules/vitest/dist/chunks/cac.DJJmV0dT.js:2340:15\n\nPreceded by: '[agent-integration] claude CLI version mismatch (installed: 2.1.296, required: 2.1.281) \u2014 installing supported version...' then a 300s install timeout, consistent with no outbound network access in this sandbox."
+  }
+}

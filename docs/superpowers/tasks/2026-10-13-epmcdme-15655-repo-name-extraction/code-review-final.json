@@ -1,0 +1,34 @@
+{
+  "decision": "request-changes",
+  "rationale": "Edge-case lens ran clean; acceptance was skipped because no spec/story artifact exists for this task (no-spec round, confidence capped at low), and blind/verification-gap are not part of the compact profile roster. Two patch-level regressions were confirmed by reading src/utils/processes.ts: bare filesystem git remotes now resolve to undefined instead of a best-effort owner/repo, and an unguarded decodeURIComponent on a malformed %-escape throws and is swallowed, silently discarding an otherwise-valid remote. Two findings were deferred as pre-existing, out-of-scope limitations (self-hosted Azure DevOps Server _git/v3 stripping; case-sensitive .git suffix matching); zero findings were dismissed.",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/processes.ts",
+      "line": 401,
+      "title": "Bare filesystem git remotes lose repo attribution",
+      "problem": "parseGitRemoteUrl only matches a scheme:// URL (urlMatch) or a scp-style user@host:path form (scpMatch); it has no fallback branch for a bare filesystem remote path such as '/home/user/repo.git' or '../repo.git', which the previous generic regex (`/[:/]([^/]+)\\/([^/.]+?)(?:\\.git)?$/`) matched successfully.",
+      "impact": "detectGitRemoteRepo now returns undefined for local/filesystem git remotes. Several call sites have no filesystem fallback of their own (hook.ts SessionStart handler, ensure-session.ts, skills-metrics.ts, DesktopTelemetryRuntime.ts, pi.plugin.ts, the otlp-spool forwarder), so repository attribution for this remote shape is silently lost in session/telemetry metrics — a behavior regression versus the prior implementation.",
+      "recommendation": "Add a fallback branch in parseGitRemoteUrl for bare path remotes when neither urlMatch nor scpMatch applies, e.g. matching the last two non-empty path segments of the (suffix-stripped) URL, to restore the previous best-effort owner/repo behavior."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/processes.ts",
+      "line": 412,
+      "title": "Malformed % escape crashes remote-name parsing",
+      "problem": "Each path segment is passed through decodeURIComponent with no per-segment try/catch (`.map((segment) => decodeURIComponent(segment))`); a segment containing a lone or invalid percent-encoding sequence throws a URIError.",
+      "impact": "The throw propagates out of parseGitRemoteUrl into detectGitRemoteRepo's outer try/catch, so an otherwise-valid remote URL silently returns undefined instead of a usable repository name, losing repo attribution for this corner case.",
+      "recommendation": "Guard the decode per segment, e.g. `try { return decodeURIComponent(segment); } catch { return segment; }`, so a bad escape degrades gracefully instead of discarding the whole parse result."
+    }
+  ]
+}
