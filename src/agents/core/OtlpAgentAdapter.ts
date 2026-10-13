@@ -1,12 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
-import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
-import { ConfigLoader } from '@/utils/config.js';
-import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
-import { resolveStoryFor } from './story-resolver.js';
-import { resolveHookCredentials } from './hook-credentials.js';
-import { resolveEmailFromCredentials, resolveIdentity } from './identity-resolver.js';
+import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
+import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -23,23 +19,6 @@ export interface OtlpHookContext {
   cwd: string;
   /** Only for prompt-submit style events; enables the marker/mention story tiers. */
   prompt?: string;
-}
-
-/** Git and story fields, resolved from the hook's cwd and prompt. */
-interface RepoFields {
-  git_branch: string;
-  repo_remote: string;
-  story_id: string;
-  story_source: string;
-}
-
-/** Identity, project and version fields, resolved from the hook's cwd and the stored SSO credentials. */
-interface IdentityFields {
-  user_email: string;
-  developer_name: string;
-  identity_source: string;
-  codemie_project_name: string;
-  codemie_cli_version: string;
 }
 
 /** Agent-independent fields resolved by the base class at hook time. */
@@ -220,74 +199,12 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  /**
-   * Identity, project and CLI version for the hook's cwd. Credentials are the SSO ones the
-   * daemon will use (see `resolveHookCredentials`); without them identity falls through to
-   * the git, codemie_cli and os tiers. A failed lookup yields empty fields, never a dropped event.
-   */
-  private async resolveIdentityFields(cwd: string): Promise<IdentityFields> {
-    const empty: IdentityFields = {
-      user_email: '',
-      developer_name: '',
-      identity_source: '',
-      codemie_project_name: '',
-      codemie_cli_version: '',
-    };
-    try {
-      const credentials = await resolveHookCredentials();
-      const [identity, projectName, version] = await Promise.all([
-        resolveIdentity(credentials, cwd),
-        this.resolveProjectName(cwd),
-        getCurrentCliVersion(),
-      ]);
-      return {
-        user_email: resolveEmailFromCredentials(credentials),
-        developer_name: identity.developerName,
-        identity_source: identity.identitySource,
-        codemie_project_name: projectName,
-        codemie_cli_version: version ?? '',
-      };
-    } catch (error) {
-      logger.debug(`[${this.name}] identity field resolution failed: ${error instanceof Error ? error.message : String(error)}`);
-      return empty;
-    }
-  }
-
-  private async resolveProjectName(cwd: string): Promise<string> {
-    try {
-      const profileName = await ConfigLoader.getActiveProfileName(cwd);
-      const config = await ConfigLoader.load(cwd, profileName ? { name: profileName } : undefined);
-      return config.codeMieProject ?? '';
-    } catch {
-      return '';
-    }
-  }
-
   private async resolveCommonFields(context: OtlpHookContext): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
-      this.resolveRepoFields(context),
-      this.resolveIdentityFields(context.cwd),
+      resolveRepoFields(context),
+      resolveIdentityFields(context),
     ]);
     return { ...repoFields, ...identityFields };
-  }
-
-  private async resolveRepoFields({ cwd, prompt }: OtlpHookContext): Promise<RepoFields> {
-    const empty: RepoFields = { git_branch: '', repo_remote: '', story_id: '', story_source: '' };
-    try {
-      const [branch, remote] = cwd
-        ? await Promise.all([detectGitBranch(cwd), detectGitRemoteRepo(cwd)])
-        : [undefined, undefined];
-      const story = await resolveStoryFor({ cwd, branch, prompt });
-      return {
-        git_branch: branch ?? '',
-        repo_remote: remote ?? '',
-        story_id: story?.storyId ?? '',
-        story_source: story?.storySource ?? '',
-      };
-    } catch (error) {
-      logger.debug(`[${this.name}] repo field resolution failed: ${error instanceof Error ? error.message : String(error)}`);
-      return empty;
-    }
   }
 
   /** Stamps the common fields; for the overridable ones a hook event's own non-empty string value wins. */

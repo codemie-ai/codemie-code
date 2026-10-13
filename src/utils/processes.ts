@@ -456,6 +456,25 @@ export async function detectGitBranch(cwd: string): Promise<string | undefined> 
   }
 }
 
+/**
+ * Full SHA of the current HEAD commit.
+ * Returns undefined when not in a git repo or when HEAD is unborn (no commits yet).
+ */
+export async function detectGitHeadSha(cwd: string): Promise<string | undefined> {
+  try {
+    const result = await exec('git', ['rev-parse', 'HEAD'], { cwd, timeout: 5000 });
+    const sha = result.stdout.trim();
+    if (result.code !== 0 || !sha) {
+      logger.debug('[GitUtils] No HEAD commit detected');
+      return undefined;
+    }
+    return sha;
+  } catch (error) {
+    logger.debug('[GitUtils] Failed to detect git HEAD sha:', error);
+    return undefined;
+  }
+}
+
 // Re-export exec function and types for convenience
 export { exec };
 export type { ExecOptions, ExecResult };
