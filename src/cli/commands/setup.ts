@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ConfigLoader } from '../../utils/config.js';
+import { ConfigLoader, resolveProfileModels } from '../../utils/config.js';
 import type { CodeMieConfigOptions, ProviderProfile } from '../../env/types.js';
 import { logger } from '../../utils/logger.js';
 import { ProviderRegistry } from '../../providers/index.js';
@@ -238,7 +238,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
  *
  * Uses ProviderSetupSteps from ProviderRegistry for clean, extensible setup
  */
-async function handlePluginSetup(
+export async function handlePluginSetup(
   providerName: string,
   setupSteps: any,
   profileName: string | null,
@@ -266,20 +266,31 @@ async function handlePluginSetup(
 
     // Step 3: Model selection
     let selectedModel: string;
+    let selectedModels: string[];
     const preselectedModel = setupSteps.selectModel
       ? await setupSteps.selectModel(credentials, models, providerTemplate)
       : undefined;
 
     if (preselectedModel) {
       selectedModel = preselectedModel;
+      selectedModels = [preselectedModel];
       logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
-      selectedModel = await promptForModelSelection(models, providerTemplate, setupSteps, credentials);
+      // On an update, pre-check the existing profile's models so removing the
+      // active model (or adding more) starts from what's already configured.
+      const existingModels = isUpdate && profileName
+        ? resolveProfileModels((await ConfigLoader.getProfile(profileName)) ?? {})
+        : undefined;
+      const result = await promptForModelsSelection(models, providerTemplate, setupSteps, credentials, existingModels);
+      selectedModel = result.activeModel;
+      selectedModels = result.models;
     }
 
-    // Step 3.5: Install model if provider supports it (e.g., Ollama)
+    // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model
     if (providerTemplate?.supportsModelInstallation && setupSteps.installModel) {
-      await setupSteps.installModel(credentials, selectedModel, models);
+      for (const modelId of selectedModels) {
+        await setupSteps.installModel(credentials, modelId, models);
+      }
     }
 
     // Step 3.6: Auto-configure model tiers for Claude
@@ -305,6 +316,9 @@ async function handlePluginSetup(
     config.haikuModel = modelTiers.haikuModel;
     config.sonnetModel = modelTiers.sonnetModel;
     config.opusModel = modelTiers.opusModel;
+    // Never persist a single-entry `models` array — keep the legacy shape
+    // for single-model profiles so existing consumers see no new field.
+    config.models = selectedModels.length > 1 ? selectedModels : undefined;
 
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
@@ -455,116 +469,9 @@ async function promptForProfileName(providerName: string): Promise<string> {
 }
 
 /**
- * Prompt for model selection with metadata
- *
- * Uses getAllModelChoices for enriched display
- */
-async function promptForModelSelection(
-  models: string[],
-  providerTemplate?: any,
-  setupSteps?: any,
-  credentials?: any
-): Promise<string> {
-  const canSearch = typeof setupSteps?.searchModel === 'function';
-
-  if (models.length === 0) {
-    if (canSearch) {
-      const { entryMethod } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'entryMethod',
-          message: 'No models found. How would you like to choose a model?',
-          choices: [
-            { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
-            { name: 'Enter model name manually', value: 'manual' }
-          ]
-        }
-      ]);
-
-      if (entryMethod === 'search') {
-        const searched = await setupSteps.searchModel(credentials);
-        if (searched) {
-          return searched;
-        }
-        // User backed out of search - fall through to manual entry
-      }
-    }
-
-    const { manualModel } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'manualModel',
-        message: 'Enter model name manually:',
-        default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
-        validate: (input: string) => input.trim() !== '' || 'Model name is required'
-      }
-    ]);
-    return manualModel ? manualModel.trim() : manualModel;
-  }
-
-  // Live-computed recommendations (fits this machine + agent-ready + most
-  // popular) when the provider supports it; falls back to the template's
-  // static recommendedModels inside getAllModelChoices otherwise.
-  let recommendedOverrideIds: Set<string> | undefined;
-  if (typeof setupSteps?.getRecommendedModels === 'function') {
-    const recommendSpinner = ora('Finding recommended models...').start();
-    try {
-      const recommended = await setupSteps.getRecommendedModels(models, credentials);
-      recommendedOverrideIds = new Set(recommended);
-      recommendSpinner.stop();
-    } catch {
-      recommendSpinner.stop();
-      // Non-fatal - just show the list without recommendations.
-    }
-  }
-
-  // Loop so backing out of search re-shows this list instead of dead-ending
-  for (;;) {
-    // Use getAllModelChoices for enriched display with metadata
-    const choices = [
-      ...getAllModelChoices(models, providerTemplate, recommendedOverrideIds),
-      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' },
-      ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
-    ];
-
-    const { selectedModel } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'selectedModel',
-        message: `Choose a model (${models.length} available):`,
-        choices,
-        pageSize: 15
-      }
-    ]);
-
-    if (selectedModel === 'search') {
-      const searched = await setupSteps.searchModel(credentials);
-      if (searched) {
-        return searched;
-      }
-      continue;
-    }
-
-    if (selectedModel === 'custom') {
-      const { customModel } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'customModel',
-          message: 'Enter model name:',
-          validate: (input: string) => input.trim() !== '' || 'Model is required'
-        }
-      ]);
-      return customModel ? customModel.trim() : customModel;
-    }
-
-    return selectedModel;
-  }
-}
-
-/**
  * Prompt for a multi-model selection with a default-active-model follow-up.
  *
- * Mirrors promptForModelSelection's catalog handling (empty-catalog manual/
+ * Mirrors the single-choice picker's catalog handling (empty-catalog manual/
  * search entry, live recommendations, "Custom model" / "Search Ollama
  * library" entries), but lets the user check 2+ models and then asks which
  * one should be active when more than one was picked.
