@@ -85,4 +85,16 @@ describe('detectGitRemoteRepo', () => {
     expect(result).toBe('qa-group-a/shared/svc');
     expect(result).not.toContain('token');
   });
+
+  it('falls back to the last two path segments for a bare filesystem remote', async () => {
+    mockExecAsync.mockResolvedValueOnce({ stdout: '/home/user/repo.git\n', stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe('user/repo');
+    mockExecAsync.mockResolvedValueOnce({ stdout: '/opt/repos/myrepo.git\n', stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe('repos/myrepo');
+  });
+
+  it('degrades a malformed %-escape to the raw segment instead of discarding the parse', async () => {
+    mockExecAsync.mockResolvedValueOnce({ stdout: 'https://github.com/org/bad%2.git\n', stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe('org/bad%2');
+  });
 });

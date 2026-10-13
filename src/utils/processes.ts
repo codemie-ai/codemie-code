@@ -403,20 +403,34 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   const urlMatch = withoutGitSuffix.match(/^\w+:\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
   const scpMatch = withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/);
   const match = urlMatch ?? scpMatch;
-  if (!match) return undefined;
 
-  const [, host, path] = match;
+  // Bare filesystem remote (e.g. "/home/user/repo.git", "../repo.git"): neither the
+  // scheme:// form nor the scp-style user@host: form applies, so there is no host and the
+  // whole (suffix-stripped) string is the path to split on.
+  const [, host, path] = match ?? [undefined, undefined, withoutGitSuffix];
+
   const segments = path
     .split('/')
     .filter(Boolean)
-    .map((segment) => decodeURIComponent(segment));
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        // Malformed %-escape: degrade to the raw segment rather than discarding the parse.
+        return segment;
+      }
+    });
 
   const isAzureDevOps = host === 'dev.azure.com' || host === 'ssh.dev.azure.com';
   const result = isAzureDevOps
     ? segments.filter((segment, index) => segment !== '_git' && !(index === 0 && segment === 'v3'))
     : segments;
 
-  return result.length > 0 ? result.join('/') : undefined;
+  if (result.length === 0) return undefined;
+
+  // Best-effort fallback for the bare-filesystem shape: restore the prior behavior of
+  // using only the last two path segments (owner/repo), rather than the full path.
+  return match ? result.join('/') : result.slice(-2).join('/');
 }
 
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
