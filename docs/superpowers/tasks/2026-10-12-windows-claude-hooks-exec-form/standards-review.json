@@ -1,0 +1,34 @@
+{
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Adjudicated against .ai-run/guides/standards/git-workflow.md. Both subjects in the range match <type>(<scope>): <subject>: type fix is in the allowed type list, scopes agents and utils are in the allowed scope list, one scope per commit, subjects are imperative and under 100 chars, no ticket key in the subject, bodies carry a Refs line and stay under the 300-char line limit. Branch fix/windows-claude-hooks-exec-form matches the fix/<kebab-description> pattern."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Adjudicated against .ai-run/guides/standards/code-quality.md plus the AGENTS.md Common Pitfalls table. Met: exported toExecFormHooks has an explicit return type and JSDoc; new class members carry JSDoc and explicit return types; all imports use .js extensions and import type for type-only imports; Node built-ins precede local imports; no console.log, no require(), no any, no new generic Error throw, unused param prefixed with _; new functions are under 50 lines; new files are kebab-case and tests are *.test.ts. Unmet: AGENTS.md Common Pitfalls says to avoid deep relative imports (../../..) and use the @/ alias; the change adds three-level and four-level relative specifiers in src/agents/plugins/claude/claude.plugin-installer.ts and in the new claude.plugin-installer.hooks.test.ts, while tsconfig.json defines @/* and sibling files statusline-installer.ts and sounds-installer.ts already use @/utils/.... Tension recorded for triage: code-quality.md's own Imports example shows a ../../../utils/processes.js import, and the pre-existing BaseExtensionInstaller.localizeInstalledHooks uses the same relative form. Observation, not raised as a finding: BaseExtensionInstaller.ts was already over the guide's 500-line file guideline before this change, which adds 13 lines to it."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "The path .ai-run/guides/development/security-patterns.md does not exist in this repo; adjudicated against the security guide the repo documents in the AGENTS.md Guide Map, .ai-run/guides/security/security-practices.md, read in full. No X-CodeMie-* attribution header, Responses user field, JWT claim override or header-injection path is touched, so the CRITICAL checklist does not apply. No hardcoded secrets and none in the new test fixtures. New log calls emit a fixed message and an error message only, no credentials or headers. File paths are derived from import.meta.url, process.execPath and the installer's own target path, not from user input. Hook commands are emitted in exec form (command plus args array) built from the bundled hooks.json, not concatenated into a shell string. The rewritten hooks.json holds no credentials, so the credential-file permission table does not apply. No concrete security issue found in the changed files."
+    }
+  ],
+  "blocking_findings": [
+    {
+      "location": "src/agents/plugins/claude/claude.plugin-installer.ts:21-22 and :100",
+      "violation": "AGENTS.md Common Pitfalls lists deep relative imports (../../..) as something to avoid in favour of the @/ alias (e.g. @/env/types.js). The change adds static imports of '../../../utils/logger.js' and '../../../utils/paths.js' and a dynamic import of '../../../utils/hook-command.js'.",
+      "why_blocking": "A documented repo-wide coding convention is not met by newly added lines; the alias is configured in tsconfig.json and already used by sibling files in the same directory (statusline-installer.ts, sounds-installer.ts). Note for triage: code-quality.md's Imports example itself shows a ../../../utils/ import, so the two documents disagree.",
+      "remedy": "Change the three specifiers to '@/utils/logger.js', '@/utils/paths.js' and '@/utils/hook-command.js'."
+    },
+    {
+      "location": "src/agents/plugins/claude/__tests__/claude.plugin-installer.hooks.test.ts:10, :51, :54",
+      "violation": "Same AGENTS.md Common Pitfalls rule: the new test file uses '../../../core/types.js' for a type import and four-level '../../../../utils/processes.js' and '../../../../utils/logger.js' specifiers in vi.doMock calls instead of the @/ alias.",
+      "why_blocking": "A documented repo-wide coding convention is not met in a file this change creates. Mock specifiers must resolve to the same module as the specifier used by the code under test, so they need to change together with the source imports.",
+      "remedy": "Use '@/agents/core/types.js', '@/utils/processes.js' and '@/utils/logger.js', keeping the mock specifiers consistent with whatever form the source file ends up using."
+    }
+  ],
+  "coverage_gap": false
+}

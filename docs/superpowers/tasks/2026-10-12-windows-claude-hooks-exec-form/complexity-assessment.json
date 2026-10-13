@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "task": "On Windows, write the Claude plugin's installed hooks in Claude Code exec form (absolute node.exe plus bin/codemie.js in args) and regenerate the installed hooks.json on every codemie-claude launch when it differs, leaving non-Windows, Gemini, Kimi and OpenCode hook handling unchanged.",
+  "generated": "2026-10-12T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components across utils, agent core and the Claude plugin: the shared hook-command resolver, the BaseExtensionInstaller template-method base and ClaudePluginInstaller. Base score M; raised to L once because the resolver and the base are shared with Gemini, Kimi, migration 006 and the codemie-code/OpenCode hook builder. The 'affects multiple agents' flag is not applied on top: their behaviour must stay unchanged, which is regression risk counted under technical_risk."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest precedents are the localizeInstalledHooks rewrite and the daemon-manager pattern of process.execPath plus a bin/*.js path resolved from the compiled module. Neither covers writing an args array, exec-form entries, or touching hooks on the already_exists path, and process.argv[1] is the wrong script source during an agent launch. Regression exposure through the shared base (Gemini must not change, Kimi has no hooks file) and order-sensitive installer mocks. Not raised to L: no auth, validation or injection surface (exec form removes the shell and the quoting), the 006 migration test already provides the rewrite / no-op / idempotence / write-failure template, platform spies exist, and rollback is trivial because the file is regenerated on every launch."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "About 6 firm files: hook-command.ts, BaseExtensionInstaller.ts, claude.plugin-installer.ts and their three test files. Up to 2-3 more if the already_exists change reaches the Gemini installer test, the sso-claude-plugin integration test, or a new Claude installer test file. Upper end of M; a Claude-only seam keeps it there, a base-wide change would push it to L."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Mapped to the rubric taxonomy, not the repo's internal layers: Service (installer and hook resolution logic) and Infrastructure (the on-disk plugin install and node/bin paths). The Claude Code exec-form contract is consumed only as a file format, with no API, UI or persistence change."
+    },
+    {
+      "dimension": "calibration",
+      "reason": "Anchored on bundled example m/epmcdme-10203-add-rest-endpoint-with-business-logic (total 15). Same total, different profile: this task scores higher on component scope and technical risk, lower on requirements clarity and affected layers. Total sits on the 14/15 boundary and is not leaned down to S, because existing patterns do not cover the exec-form generation or the per-launch refresh, which are the bulk of the work. The only project example is in the L band and was not used."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utilities (hook-command resolver and BaseExtensionInstaller, shared by the Claude, Gemini and Kimi installers, migration 006 and the codemie-code hook builder)"
+  ],
+  "split_recommendation": null
+}
