@@ -86,6 +86,7 @@ describe('loadParseState', () => {
       cacheCreation1hTokens: 0,
       cacheReadTokens: 5,
       outputTokens: 200,
+      thinkingTokens: 50,
       webSearchRequests: 1,
       webFetchRequests: 0,
       scopeKind: 'main',

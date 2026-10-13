@@ -102,7 +102,7 @@ function usageRequest(overrides: Partial<OpenUsageRequest> = {}): OpenUsageReque
     requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
     speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
     inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
-    cacheReadTokens: 0, outputTokens: 0, webSearchRequests: 0, webFetchRequests: 0,
+    cacheReadTokens: 0, outputTokens: 0, thinkingTokens: 0, webSearchRequests: 0, webFetchRequests: 0,
     scopeKind: 'agent', scopeName: '', agentId: 'a1', agentType: '',
     stopReason: 'end_turn', isApiError: false, gitBranch: 'main',
     ...overrides,
@@ -207,6 +207,18 @@ describe('buildUsageTotals', () => {
   it('returns [] for no usage requests', () => {
     expect(buildUsageTotals([])).toEqual([]);
   });
+
+  it('sums thinkingTokens into the group total, as a subset of output_tokens rather than added to it', () => {
+    const reqs: OpenUsageRequest[] = [
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 295, thinkingTokens: 200 }),
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 50, thinkingTokens: 10 }),
+    ];
+
+    const totals = buildUsageTotals(reqs);
+
+    expect(totals).toHaveLength(1);
+    expect(totals[0]).toMatchObject({ output_tokens: 345, thinking_tokens: 210 });
+  });
 });
 
 describe('buildSubagentUsageEvent', () => {
@@ -258,7 +270,7 @@ describe('buildSubagentUsageEvent', () => {
           model: 'm', model_raw: 'm-raw', speed: 'standard', inference_geo: '', service_tier: 'standard',
           scope_kind: 'agent', scope_name: '',
           input_tokens: 110, cache_creation_5m_tokens: 5, cache_creation_1h_tokens: 2, cache_read_tokens: 4,
-          output_tokens: 55, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
+          output_tokens: 55, thinking_tokens: 0, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
         },
       ],
     });

@@ -108,6 +108,7 @@ export interface SubagentUsageTotal {
   cache_creation_1h_tokens: number;
   cache_read_tokens: number;
   output_tokens: number;
+  thinking_tokens: number;
   web_search_requests: number;
   web_fetch_requests: number;
   api_calls: number;
@@ -130,6 +131,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_creation_1h_tokens += r.cacheCreation1hTokens;
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
+      existing.thinking_tokens += r.thinkingTokens;
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
       existing.api_calls += 1;
@@ -147,6 +149,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_creation_1h_tokens: r.cacheCreation1hTokens,
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
+        thinking_tokens: r.thinkingTokens,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
         api_calls: 1,

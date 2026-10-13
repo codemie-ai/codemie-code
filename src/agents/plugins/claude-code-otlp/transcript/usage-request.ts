@@ -52,6 +52,9 @@ interface TranscriptUsageLine {
         web_search_requests?: number;
         web_fetch_requests?: number;
       };
+      output_tokens_details?: {
+        thinking_tokens?: number;
+      };
     };
   };
 }
@@ -113,6 +116,7 @@ export function parseUsageLine(
     cacheCreation1hTokens: Number(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0),
     cacheReadTokens: Number(usage.cache_read_input_tokens ?? 0),
     outputTokens: Number(usage.output_tokens ?? 0),
+    thinkingTokens: Number(usage.output_tokens_details?.thinking_tokens ?? 0),
     webSearchRequests: Number(usage.server_tool_use?.web_search_requests ?? 0),
     webFetchRequests: Number(usage.server_tool_use?.web_fetch_requests ?? 0),
     scopeKind,
@@ -161,6 +165,7 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
     cacheCreation1hTokens: Math.max(a.cacheCreation1hTokens, b.cacheCreation1hTokens),
     cacheReadTokens: Math.max(a.cacheReadTokens, b.cacheReadTokens),
     outputTokens: Math.max(a.outputTokens, b.outputTokens),
+    thinkingTokens: Math.max(a.thinkingTokens, b.thinkingTokens),
     webSearchRequests: Math.max(a.webSearchRequests, b.webSearchRequests),
     webFetchRequests: Math.max(a.webFetchRequests, b.webFetchRequests),
     scopeKind: b.scopeKind || a.scopeKind,
@@ -194,6 +199,7 @@ export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest)
     cache_creation_1h_tokens: req.cacheCreation1hTokens,
     cache_read_tokens: req.cacheReadTokens,
     output_tokens: req.outputTokens,
+    thinking_tokens: req.thinkingTokens,
     web_search_requests: req.webSearchRequests,
     web_fetch_requests: req.webFetchRequests,
     scope_kind: req.scopeKind,

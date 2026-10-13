@@ -75,6 +75,8 @@ describe('parseUsageLine', () => {
     expect(r.serviceTier).toBe('priority');
     expect(r.inputTokens).toBe(300);
     expect(r.outputTokens).toBe(75);
+    // Nested usage.output_tokens_details.thinking_tokens.
+    expect(r.thinkingTokens).toBe(28);
     expect(r.cacheReadTokens).toBe(40);
     // Nested cache_creation.* fields, not the flat cache_creation_input_tokens.
     expect(r.cacheCreation5mTokens).toBe(5);
@@ -124,6 +126,19 @@ describe('parseUsageLine', () => {
     const req = parseUsageLine(lines[3], 'main', '', '', '');
 
     expect(req?.agentType).toBe('');
+  });
+
+  it('defaults thinkingTokens to 0 when message.usage carries no output_tokens_details', () => {
+    // lines[1]/lines[2] carry no output_tokens_details block at all.
+    const req = parseUsageLine(lines[1], 'main', '', '', '');
+
+    expect(req?.thinkingTokens).toBe(0);
+  });
+
+  it('reads thinkingTokens from the nested message.usage.output_tokens_details.thinking_tokens field', () => {
+    const req = parseUsageLine(lines[3], 'main', '', '', '');
+
+    expect(req?.thinkingTokens).toBe(28);
   });
 });
 
@@ -179,14 +194,14 @@ describe('mergeUsageRequest', () => {
       requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
       speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
       inputTokens: 10, cacheCreation5mTokens: 1, cacheCreation1hTokens: 2,
-      cacheReadTokens: 3, outputTokens: 4, webSearchRequests: 5, webFetchRequests: 6,
+      cacheReadTokens: 3, outputTokens: 4, thinkingTokens: 7, webSearchRequests: 5, webFetchRequests: 6,
       scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
       stopReason: '', isApiError: false, gitBranch: 'main',
     };
     const b: OpenUsageRequest = {
       ...a,
       inputTokens: 1, cacheCreation5mTokens: 9, cacheCreation1hTokens: 1,
-      cacheReadTokens: 30, outputTokens: 1, webSearchRequests: 0, webFetchRequests: 60,
+      cacheReadTokens: 30, outputTokens: 1, thinkingTokens: 2, webSearchRequests: 0, webFetchRequests: 60,
       timestamp: '',
     };
 
@@ -197,6 +212,7 @@ describe('mergeUsageRequest', () => {
     expect(merged.cacheCreation1hTokens).toBe(2);
     expect(merged.cacheReadTokens).toBe(30);
     expect(merged.outputTokens).toBe(4);
+    expect(merged.thinkingTokens).toBe(7);
     expect(merged.webSearchRequests).toBe(5);
     expect(merged.webFetchRequests).toBe(60);
     // Non-numeric fields: b's value wins when non-empty, else a's.
@@ -208,7 +224,7 @@ describe('mergeUsageRequest', () => {
       requestId: 'r1', messageId: 'm1', model: 'm', modelRaw: 'm-raw', timestamp: 't1',
       speed: '', inferenceGeo: '', serviceTier: '',
       inputTokens: 1, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
-      cacheReadTokens: 0, outputTokens: 1, webSearchRequests: 0, webFetchRequests: 0,
+      cacheReadTokens: 0, outputTokens: 1, thinkingTokens: 0, webSearchRequests: 0, webFetchRequests: 0,
       scopeKind: 'main', scopeName: '', agentId: '', agentType: '',
       stopReason: '', isApiError: false, gitBranch: '',
     };
@@ -241,7 +257,7 @@ describe('buildUsageRequestEvent', () => {
       requestId: 'req-1', messageId: 'msg-1', model: 'resolved-model', modelRaw: 'literal-model', timestamp: '2026-10-01T00:00:00.000Z',
       speed: 'fast', inferenceGeo: 'us', serviceTier: 'priority',
       inputTokens: 10, cacheCreation5mTokens: 1, cacheCreation1hTokens: 2,
-      cacheReadTokens: 3, outputTokens: 4, webSearchRequests: 5, webFetchRequests: 6,
+      cacheReadTokens: 3, outputTokens: 4, thinkingTokens: 9, webSearchRequests: 5, webFetchRequests: 6,
       scopeKind: 'skill', scopeName: 'brainstorming', agentId: 'agent-7', agentType: 'Explore',
       stopReason: 'end_turn', isApiError: false, gitBranch: 'main',
     };
@@ -263,6 +279,7 @@ describe('buildUsageRequestEvent', () => {
       cache_creation_1h_tokens: 2,
       cache_read_tokens: 3,
       output_tokens: 4,
+      thinking_tokens: 9,
       web_search_requests: 5,
       web_fetch_requests: 6,
       scope_kind: 'skill',
