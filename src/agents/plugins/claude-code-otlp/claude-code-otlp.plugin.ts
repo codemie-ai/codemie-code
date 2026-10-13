@@ -12,7 +12,6 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
-import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
