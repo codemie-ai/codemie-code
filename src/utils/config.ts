@@ -1775,6 +1775,8 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    const profileModels = resolveProfileModels(config);
+    if (profileModels.length >= 2) env.CODEMIE_PROFILE_MODELS = profileModels.join(',');
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     // Always emit tier model vars — even when absent — so stale shell values are
     // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).

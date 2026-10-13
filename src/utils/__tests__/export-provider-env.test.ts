@@ -118,6 +118,26 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
     });
   });
 
+  describe('CODEMIE_PROFILE_MODELS (multi-model profiles)', () => {
+    it('exports a comma-separated list when the profile has 2+ models', () => {
+      const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a', models: ['a', 'b'] }));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('a,b');
+    });
+
+    it('omits the key entirely for a single-model profile (only model, no models)', () => {
+      const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a' }));
+
+      expect(env).not.toHaveProperty('CODEMIE_PROFILE_MODELS');
+    });
+
+    it('omits the key entirely when models has exactly one entry', () => {
+      const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a', models: ['a'] }));
+
+      expect(env).not.toHaveProperty('CODEMIE_PROFILE_MODELS');
+    });
+  });
+
   describe('timeout mapping', () => {
     it('stringifies a positive timeout into CODEMIE_TIMEOUT', () => {
       const env = ConfigLoader.exportProviderEnvVars(cfg({ timeout: 30000 }));
