@@ -562,6 +562,150 @@ async function promptForModelSelection(
 }
 
 /**
+ * Prompt for a multi-model selection with a default-active-model follow-up.
+ *
+ * Mirrors promptForModelSelection's catalog handling (empty-catalog manual/
+ * search entry, live recommendations, "Custom model" / "Search Ollama
+ * library" entries), but lets the user check 2+ models and then asks which
+ * one should be active when more than one was picked.
+ */
+export async function promptForModelsSelection(
+  models: string[],
+  providerTemplate?: any,
+  setupSteps?: any,
+  credentials?: any,
+  preselected?: string[]
+): Promise<{ models: string[]; activeModel: string }> {
+  const canSearch = typeof setupSteps?.searchModel === 'function';
+
+  if (models.length === 0) {
+    if (canSearch) {
+      const { entryMethod } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'entryMethod',
+          message: 'No models found. How would you like to choose a model?',
+          choices: [
+            { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
+            { name: 'Enter model name manually', value: 'manual' }
+          ]
+        }
+      ]);
+
+      if (entryMethod === 'search') {
+        const searched = await setupSteps.searchModel(credentials);
+        if (searched) {
+          return { models: [searched], activeModel: searched };
+        }
+        // User backed out of search - fall through to manual entry
+      }
+    }
+
+    const { manualModel } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'manualModel',
+        message: 'Enter model name manually:',
+        default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
+        validate: (input: string) => input.trim() !== '' || 'Model name is required'
+      }
+    ]);
+    const result = manualModel ? manualModel.trim() : manualModel;
+    return { models: [result], activeModel: result };
+  }
+
+  // Live-computed recommendations (fits this machine + agent-ready + most
+  // popular) when the provider supports it; falls back to the template's
+  // static recommendedModels inside getAllModelChoices otherwise.
+  let recommendedOverrideIds: Set<string> | undefined;
+  if (typeof setupSteps?.getRecommendedModels === 'function') {
+    const recommendSpinner = ora('Finding recommended models...').start();
+    try {
+      const recommended = await setupSteps.getRecommendedModels(models, credentials);
+      recommendedOverrideIds = new Set(recommended);
+      recommendSpinner.stop();
+    } catch {
+      recommendSpinner.stop();
+      // Non-fatal - just show the list without recommendations.
+    }
+  }
+
+  // `checked` tracks the currently-checked set across re-prompts (custom
+  // entry, Ollama search, or an empty confirmation all loop back here
+  // instead of returning).
+  let checked = new Set<string>(preselected ?? []);
+
+  for (;;) {
+    const baseChoices = getAllModelChoices(models, providerTemplate, recommendedOverrideIds).map(choice => ({
+      ...choice,
+      checked: checked.has(choice.value)
+    }));
+    const choices = [
+      ...baseChoices,
+      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' },
+      ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
+    ];
+
+    const { selectedModels } = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'selectedModels',
+        message: `Choose models (${models.length} available):`,
+        choices,
+        pageSize: 15
+      }
+    ]);
+
+    const picks: string[] = Array.isArray(selectedModels) ? selectedModels : [];
+    const alreadyChecked = picks.filter(id => id !== 'custom' && id !== 'search');
+
+    if (picks.includes('search')) {
+      const searched = await setupSteps.searchModel(credentials);
+      checked = new Set(alreadyChecked);
+      if (searched) checked.add(searched);
+      continue;
+    }
+
+    if (picks.includes('custom')) {
+      const { customModel } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'customModel',
+          message: 'Enter model name:',
+          validate: (input: string) => input.trim() !== '' || 'Model is required'
+        }
+      ]);
+      checked = new Set(alreadyChecked);
+      if (customModel) checked.add(customModel.trim());
+      continue;
+    }
+
+    if (alreadyChecked.length === 0) {
+      // AC5: an empty confirmation re-prompts rather than returning.
+      checked = new Set();
+      continue;
+    }
+
+    if (alreadyChecked.length === 1) {
+      return { models: alreadyChecked, activeModel: alreadyChecked[0] };
+    }
+
+    const defaultActive = preselected?.find(id => alreadyChecked.includes(id)) ?? alreadyChecked[0];
+    const { activeModel } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'activeModel',
+        message: 'Which model should be active?',
+        choices: alreadyChecked,
+        default: defaultActive
+      }
+    ]);
+
+    return { models: alreadyChecked, activeModel };
+  }
+}
+
+/**
  * Helper function to parse model version from model name
  * Handles different naming patterns:
  * - claude-4-opus → [4]
