@@ -537,6 +537,17 @@ export abstract class BaseExtensionInstaller {
   }
 
   /**
+   * Bring the installed hooks file in line with the current environment. Runs on every
+   * successful install, including when the extension is already up to date. The default
+   * does nothing; overrides must not throw.
+   *
+   * @param _targetPath - Installed extension directory
+   */
+  protected refreshInstalledHooks(_targetPath: string): Promise<void> {
+    return Promise.resolve();
+  }
+
+  /**
    * Check if extension is already installed and get version info
    *
    * Verifies:
@@ -698,6 +709,8 @@ export abstract class BaseExtensionInstaller {
       } else {
         logger.info(`[${this.agentName}] Skipping copy - extension already up-to-date`);
       }
+
+      await this.refreshInstalledHooks(targetPath);
 
       // Build result
       logger.info(`[${this.agentName}] Step 6: Building result object...`);
