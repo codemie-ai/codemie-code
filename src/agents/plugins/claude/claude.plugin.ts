@@ -517,9 +517,31 @@ export const ClaudePluginMetadata: AgentMetadata = {
           let menuOptions = options;
           if (env.CODEMIE_PROFILE_MODELS) {
             const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
-            const filtered = options.filter((option) => allowed.has(option.model.replace(/\[1m\]$/, '')));
-            if (filtered.length > 0) {
-              menuOptions = filtered;
+            // The AC22 fallback is judged on the allowed-CSV intersection alone
+            // (before the active-model keep-case below), mirroring OpenCode/Pi's
+            // equivalents: when the profile's own list matches nothing in the
+            // live catalog at all, the whole unfiltered catalog is returned
+            // rather than silently narrowing it down to just the active model.
+            const matched = options.filter((option) => allowed.has(option.model.replace(/\[1m\]$/, '')));
+            if (matched.length > 0) {
+              // CR-002: never exclude the model this session is actually
+              // running, even when it falls outside the stored
+              // CODEMIE_PROFILE_MODELS (e.g. the tier-resolution loop above just
+              // retirement-healed it to a model not yet reflected there). Both
+              // sides are stripped of the `[1m]` opt-in suffix before comparing,
+              // since env.CODEMIE_MODEL may carry it too (applyContextWindow).
+              const activeBareId = env.CODEMIE_MODEL?.replace(/\[1m\]$/, '');
+              const alreadyIncludesActive = activeBareId
+                ? matched.some((option) => option.model.replace(/\[1m\]$/, '') === activeBareId)
+                : true;
+              if (alreadyIncludesActive) {
+                menuOptions = matched;
+              } else {
+                const activeOption = options.find(
+                  (option) => option.model.replace(/\[1m\]$/, '') === activeBareId
+                );
+                menuOptions = activeOption ? [...matched, activeOption] : matched;
+              }
             } else {
               logger.warn(
                 '[Claude] CODEMIE_PROFILE_MODELS matched none of the live /model options — showing the full catalog instead'

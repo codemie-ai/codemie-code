@@ -117,4 +117,29 @@ describe('Claude /model picker — CODEMIE_PROFILE_MODELS intersection', () => {
     expect(options).toHaveLength(4);
     expect(loggerMock.warn).toHaveBeenCalled();
   });
+
+  // CR-002: the narrowing filter must never exclude the model the session is
+  // actually running, even when it falls outside the stored
+  // CODEMIE_PROFILE_MODELS (e.g. after retirement-healing picked a model not
+  // yet reflected in the profile's stored list).
+  it('keeps the live active CODEMIE_MODEL in the narrowed options even when it is outside CODEMIE_PROFILE_MODELS (CR-002)', async () => {
+    const env: HookEnv = { CODEMIE_MODEL: 'a', CODEMIE_PROFILE_MODELS: 'b,c' };
+
+    await beforeRun(env, {});
+
+    const options = writtenOptions(env);
+    expect(options.map(o => o.model).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  // CR-002 / CR-005 keep-case: the active model id itself may carry the `[1m]`
+  // opt-in suffix (applyContextWindow), so the comparison must normalize both
+  // sides rather than only the catalog option's id.
+  it('keeps the active model when CODEMIE_MODEL itself carries the [1m] suffix', async () => {
+    const env: HookEnv = { CODEMIE_MODEL: 'd[1m]', CODEMIE_PROFILE_MODELS: 'b,c' };
+
+    await beforeRun(env, {});
+
+    const options = writtenOptions(env);
+    expect(options.map(o => o.model).sort()).toEqual(['b', 'c', 'd[1m]']);
+  });
 });
