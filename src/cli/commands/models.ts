@@ -138,17 +138,26 @@ export async function runModelsSwitch(
 
   // Refresh Claude's haiku/sonnet/opus tiers from the live catalog only when
   // this provider backs the Claude agent (same condition setup.ts uses).
+  // CR-006: this network call must never deny a switch that is otherwise a
+  // pure local config write - a transient failure here just skips the tier
+  // refresh rather than aborting switchActiveProfileModel below.
   let tierOverrides: { haikuModel?: string; sonnetModel?: string; opusModel?: string } | undefined;
   const claudeAgent = AgentRegistry.getAgent('claude');
   const claudeMetadata = (claudeAgent as any)?.metadata;
   const supportsClaude = claudeMetadata?.supportedProviders?.includes(profile.provider);
   if (supportsClaude && profile.provider) {
-    const proxy = ProviderRegistry.getModelProxy(profile.provider);
-    if (proxy) {
-      const config = await ConfigLoader.load(workingDir);
-      const catalog = await proxy.fetchModels(config);
-      const catalogIds = catalog.map(m => m.id);
-      tierOverrides = await autoSelectModelTiers(catalogIds, targetModel);
+    try {
+      const proxy = ProviderRegistry.getModelProxy(profile.provider);
+      if (proxy) {
+        const config = await ConfigLoader.load(workingDir);
+        const catalog = await proxy.fetchModels(config);
+        const catalogIds = catalog.map(m => m.id);
+        tierOverrides = await autoSelectModelTiers(catalogIds, targetModel);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Failed to refresh Claude model tiers during switch; continuing without them: ${message}`);
+      tierOverrides = undefined;
     }
   }
 
