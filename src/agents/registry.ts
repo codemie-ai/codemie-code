@@ -3,14 +3,18 @@ import { ClaudeAcpPlugin } from './plugins/claude/claude-acp.plugin.js';
 import { ClaudeCodeOtlpPlugin } from './plugins/claude-code-otlp/claude-code-otlp.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
+import { GeminiAcpPlugin } from './plugins/gemini/gemini-acp.plugin.js';
 import { OpenCodePlugin } from './plugins/opencode/index.js';
+import { OpenCodeAcpPlugin } from './plugins/opencode/opencode-acp.plugin.js';
 import { CodexPlugin } from './plugins/codex/index.js';
+import { CodexAcpPlugin } from './plugins/codex/codex-acp.plugin.js';
 import { PiPlugin } from './plugins/pi/index.js';
 import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
-import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter, OtlpAgentAdapter } from './core/types.js';
+import { AgentAdapter, AgentAdapterType, AgentAnalyticsAdapter } from './core/types.js';
+import type { OtlpAgentAdapter } from './core/OtlpAgentAdapter.js';
 
 // Re-export for backwards compatibility
 export { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
@@ -38,8 +42,11 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new ClaudePlugin());
     AgentRegistry.registerPlugin(new ClaudeAcpPlugin());
     AgentRegistry.registerPlugin(new GeminiPlugin());
+    AgentRegistry.registerPlugin(new GeminiAcpPlugin());
     AgentRegistry.registerPlugin(new OpenCodePlugin());
+    AgentRegistry.registerPlugin(new OpenCodeAcpPlugin());
     AgentRegistry.registerPlugin(new CodexPlugin());
+    AgentRegistry.registerPlugin(new CodexAcpPlugin());
     AgentRegistry.registerPlugin(new PiPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
@@ -73,7 +80,7 @@ export class AgentRegistry {
     return AgentRegistry.adapters.get(name);
   }
 
-  static getAnalyticsAgent(name: string): OtlpAgentAdapter |  undefined {
+  static getAnalyticsAgent(name: string): OtlpAgentAdapter | undefined {
     AgentRegistry.initialize();
     return AgentRegistry.otlpAdapters.get(name);
   }

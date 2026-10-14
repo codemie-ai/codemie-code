@@ -22,6 +22,11 @@ export interface NamedInvocationCounts {
   commandInvocations: Record<string, number>;
 }
 
+/** {@link NamedInvocationCounts} plus the slash commands in call order, repeats kept. */
+export interface OrderedNamedInvocations extends NamedInvocationCounts {
+  commandsInOrder: string[];
+}
+
 interface RawBlock {
   type?: string;
   name?: string;
@@ -44,9 +49,20 @@ function bump(map: Record<string, number>, key: string): void {
  * Safe against missing or malformed fields — anything that isn't a recognized shape is skipped.
  */
 export function extractNamedInvocations(messages: readonly unknown[]): NamedInvocationCounts {
+  const { skillInvocations, agentInvocations, commandInvocations } =
+    extractOrderedNamedInvocations(messages);
+  return { skillInvocations, agentInvocations, commandInvocations };
+}
+
+/**
+ * Same extraction as {@link extractNamedInvocations}, additionally keeping the slash commands in
+ * the order they were invoked (repeats kept, no leading slash).
+ */
+export function extractOrderedNamedInvocations(messages: readonly unknown[]): OrderedNamedInvocations {
   const skillInvocations: Record<string, number> = {};
   const agentInvocations: Record<string, number> = {};
   const commandInvocations: Record<string, number> = {};
+  const commandsInOrder: string[] = [];
 
   // Count slash commands from a text payload, but only when it carries the CLI's
   // `<command-message>` sibling — that distinguishes a real invocation from prose that
@@ -59,7 +75,10 @@ export function extractNamedInvocations(messages: readonly unknown[]): NamedInvo
     let match: RegExpExecArray | null;
     while ((match = COMMAND_TAG.exec(text)) !== null) {
       const cmd = match[1].replace(/^\//, '').trim();
-      if (cmd) bump(commandInvocations, cmd);
+      if (cmd) {
+        bump(commandInvocations, cmd);
+        commandsInOrder.push(cmd);
+      }
     }
   };
 
@@ -95,5 +114,5 @@ export function extractNamedInvocations(messages: readonly unknown[]): NamedInvo
     }
   }
 
-  return { skillInvocations, agentInvocations, commandInvocations };
+  return { skillInvocations, agentInvocations, commandInvocations, commandsInOrder };
 }

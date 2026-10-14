@@ -1,0 +1,22 @@
+{
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "all 6 subjects in a9b6d6c..HEAD use <type>(<scope>): <subject> with allowed type fix, allowed scopes providers/agents, imperative mood, each under the 100-char subject-max-length (git-workflow.md + commitlint.config.cjs)"},
+    {"kind": "code-quality", "status": "partial", "notes": "met: .js import extensions, import type for type-only imports, explicit return types and JSDoc on new exports in payloadQueue.ts, UPPER_SNAKE_CASE constants, logger not console, no commented-out code; unmet: new file payloadQueue.ts is camelCase where code-quality.md Naming Conventions requires kebab-case.ts (sibling files syncProcessor.ts/apiClient.ts share the camelCase precedent); new heal/collapse/cap logic is added inline to processConversations (syncProcessor.ts:51-262, ~210 lines) and dedupe-before-append inline to the Claude processor's message-processing method (claude.conversations-processor.ts:141-207), extending functions already well past the guide's under-50-lines / no-100+-line-functions rule"},
+    {"kind": "security", "status": "pass", "notes": "guide is .ai-run/guides/security/security-practices.md (the repo's documented location, AGENTS.md Guide Map; .ai-run/guides/development/security-patterns.md does not exist); no secrets, credentials or headers logged (new log lines carry only payloadId, counts, conversationId), no X-CodeMie-* attribution header or Responses user field touched, file paths derive from getSessionConversationPath(sessionId) not user input, no hardcoded secrets in source or test fixtures observed"}
+  ],
+  "blocking_findings": [
+    {
+      "location": "src/providers/plugins/sso/session/processors/conversations/payloadQueue.ts",
+      "violation": "code-quality.md Naming Conventions requires files to be kebab-case.ts; the new module is named payloadQueue.ts (camelCase), following the directory's existing syncProcessor.ts/apiClient.ts precedent rather than the documented rule",
+      "why_blocking": "code-quality.md is a blocking standard and its Pre-Commit Checklist requires naming conventions followed; a new file is the point where the documented convention is cheapest to honour",
+      "remedy": "rename to payload-queue.ts and update the import in syncProcessor.ts (and any test imports) to './payload-queue.js', or record in the guide that this directory keeps camelCase file names"
+    },
+    {
+      "location": "src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts:66-97; src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:141-152,198-207",
+      "violation": "code-quality.md Code Structure Guidelines / Best Practices require functions under 50 lines and forbid 100+ line functions; the change adds the heal/collapse/persist/cap pipeline inline to processConversations (now ~210 lines, syncProcessor.ts:51-262) and the queued-payload dedupe inline to the Claude processor's already-long message-processing method instead of extracting helpers",
+      "why_blocking": "the documented structure rule is unmet by code this change adds; the over-length condition pre-exists, but the change grows it rather than containing new logic in its own functions",
+      "remedy": "extract the pre-send queue preparation (heal, collapse, persist, cap) into one helper in payloadQueue.ts or syncProcessor.ts returning the capped send list, and extract the queued-payloadId set construction in the Claude processor into a small private method"
+    }
+  ],
+  "coverage_gap": false
+}

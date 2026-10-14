@@ -1,0 +1,13 @@
+{
+  "decision": "approve",
+  "rationale": "Edge-case lens ran and returned no findings; acceptance did not run (no spec), so confidence is low. Standards audit intentionally omitted by the compact profile; 0 deferred, 0 dismissed. Brief written to code-review-brief.md.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not run for this review profile." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not run for this review profile." },
+    { "kind": "security", "status": "na", "notes": "Standards audit not run for this review profile." }
+  ],
+  "findings": []
+}

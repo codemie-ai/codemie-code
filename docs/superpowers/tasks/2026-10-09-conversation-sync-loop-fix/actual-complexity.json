@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-10-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four components across two subsystems: the shared SSO conversation sync processor (prepareSendList heal -> collapse -> persist -> cap pipeline, per-payloadId outcome marking, removal of lastSyncedMessageUuid from syncUpdates), a new pure payload-queue helper module (getPayloadId, isSendCandidate, healSyncedDuplicates, collapseSupersededPayloads), the shared conversation types/constants contract (new terminal 'superseded' status, MAX_CONVERSATION_PAYLOADS_PER_RUN), and the Claude ConversationsProcessor (dedupe-before-append over queued payloadIds). Base L; bumped to XL because the sync processor and status contract serve every agent's conversation queue (claude, codex, gemini, opencode, pi, copilot-cli), not only Claude." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for record-level collapse or on-read healing: the processor now rewrites persisted queue statuses before sending, and a record marked 'superseded' is never sent, so a wrong coverage key (conversationId|history_index|role) would silently drop conversation data. The per-run cap is deliberately exempt for deadline-bounded SessionEnd runs, and the Claude dedupe read is lock-free (racing hooks can still both append). Mitigated by reuse of the existing atomic JSONL rewrite and sync-pointer patterns and by two dedicated edge-case test suites; no security, auth or external-contract change." },
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 7 files (865 insertions, 91 deletions) -> L band (7-10). Roughly 5 modified source files (syncProcessor.ts, types.ts, constants.ts, claude.conversations-processor.ts, plus payload-queue.ts if it pre-existed) and 2 new test files (syncProcessor-dedupe.test.ts, claude.conversations-processor-dedupe.test.ts), spanning src/providers/plugins/sso/session/processors/conversations and src/agents/plugins/claude. Most of the insertion volume is in the tests." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: the change affects the conversation-sync workflow shared by multiple agents (the SSO sync processor and the shared status contract are used by every agent adapter that queues conversation payloads)."
+  ],
+  "split_recommendation": null
+}

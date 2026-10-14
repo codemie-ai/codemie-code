@@ -1,0 +1,88 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran, and all 27 spec criteria pass. There are 4 blocking findings: the new per-run cap can strand candidates at SessionEnd (CR-004; reachability is unconfirmed, because it depends on 50 sends fitting inside the 2s budget), a multi-turn dedupe test gap (CR-001), and two code-quality.md violations, the camelCase payloadQueue.ts and the over-long processConversations (CR-002, CR-003). 1 deferred (pre-existing: the SessionEnd rename strands deadline-deferred conversation payloads), see code-review-deferred.md. 16 lens candidates were dismissed as spec-mandated, already guarded, or below the emission floor.",
+  "confidence": "medium",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    { "kind": "spec", "item": "Phase 1 outcome marking: every not-yet-successful record sharing the sent payloadId gets the outcome; per-payload persistence and deadline deferral kept", "status": "pass", "notes": "applyPayloadOutcome marks all pending/failed records with the id; per-payload writeJSONLAtomic and shouldStopSync kept" },
+    { "kind": "spec", "item": "Phase 1 healing on read: candidate whose payloadId already has a success record set to success unsent, persisted same run", "status": "pass", "notes": "healSyncedDuplicates; persisted before any send; healing-on-read tests" },
+    { "kind": "spec", "item": "No pointer rewind: syncProcessor drops conversations.lastSyncedMessageUuid from syncUpdates", "status": "pass", "notes": "field removed from syncUpdates; transform processors own their pointer" },
+    { "kind": "spec", "item": "lastSyncedHistoryIndex still reported as the max history index sent", "status": "pass", "notes": "max over successful payloads' historyIndices; merge stays Math.max" },
+    { "kind": "spec", "item": "parseSourceIndex deleted if no remaining caller", "status": "pass", "notes": "removed with its only caller" },
+    { "kind": "spec", "item": "Merges in sync-state-utils.ts, claude.session.ts and ClaudeDesktopTelemetryAdapter.ts left unchanged", "status": "pass", "notes": "files absent from the diff" },
+    { "kind": "spec", "item": "Claude dedupe-before-append: read queue once before the drain loop, set of queued payloadIds across every status", "status": "pass", "notes": "single readJSONL before the loop, no status filter" },
+    { "kind": "spec", "item": "Claude: already-queued result not appended, checkpoint still advances, each append adds its id", "status": "pass", "notes": "skip branch falls through to the localSync/checkpoint update" },
+    { "kind": "spec", "item": "Collapse runs after healing and only among send candidates", "status": "pass", "notes": "collapseSupersededPayloads(allPayloads.filter(isSendCandidate)) after heal" },
+    { "kind": "spec", "item": "Collapse eligibility: every history entry carries history_index and role; ineligible records untouched", "status": "pass", "notes": "getCollapseKeys returns undefined for ineligible or empty history" },
+    { "kind": "spec", "item": "Older eligible record superseded when every key appears in a newer record; partly covered record sent whole", "status": "pass", "notes": "reverse scan with keys.every; partial-coverage tests present" },
+    { "kind": "spec", "item": "Superseded records never sent, never counted as failures, persisted", "status": "pass", "notes": "excluded from unsentPayloads; no syncAttempts/error; persisted with heal write" },
+    { "kind": "spec", "item": "Per-run cap MAX_CONVERSATION_PAYLOADS_PER_RUN = 50 in conversations/constants.ts", "status": "pass", "notes": "module constant present" },
+    { "kind": "spec", "item": "Cap: oldest-first in queue order, overflow left as is, healed/superseded not counted", "status": "pass", "notes": "slice of unsent candidates in queue order; tests present" },
+    { "kind": "spec", "item": "Read pipeline order heal -> collapse -> cap -> send", "status": "pass", "notes": "sequence confirmed in processConversations" },
+    { "kind": "spec", "item": "Data shape: status gains terminal 'superseded', never selected by the candidate filter", "status": "pass", "notes": "SUPERSEDED in types; isSendCandidate selects pending/failed only" },
+    { "kind": "spec", "item": "AC1 two records for one turn id: sent at most once, none pending after first success", "status": "pass", "notes": "mark-all-by-id, in-run skip and heal; tested" },
+    { "kind": "spec", "item": "AC2 pending record whose id already has a success record marked success unsent", "status": "pass", "notes": "healSyncedDuplicates; tested incl. timestamp fallback" },
+    { "kind": "spec", "item": "AC3 lastSyncedMessageUuid never earlier after sync; sync step does not write it", "status": "pass", "notes": "field absent from syncUpdates; tested" },
+    { "kind": "spec", "item": "AC4 newest fails, older succeed: next hook queues no already-synced turn, no duplicates", "status": "pass", "notes": "no pointer rewrite, monotonic index merge, Claude dedupe backstop" },
+    { "kind": "spec", "item": "AC5 two hook events for one session queue the turn once (lock-free limits)", "status": "pass", "notes": "queuedPayloadIds check; lock-free race documented" },
+    { "kind": "spec", "item": "AC6 more than 50 candidates: one run sends at most 50, rest remain for next run", "status": "pass", "notes": "slice to cap; 51-record test. SessionEnd has no next run, see CR-004" },
+    { "kind": "spec", "item": "AC7 several pending records for same key: newest sent, older fully covered superseded", "status": "pass", "notes": "collapseSupersededPayloads; statuses and syncAttempts asserted" },
+    { "kind": "spec", "item": "AC8 normal session without duplicates: content and order unchanged; @<index> sentinel payloads unchanged", "status": "pass", "notes": "role-less sentinels ineligible for collapse; codex sentinel test" },
+    { "kind": "spec", "item": "Negative: merges/monotonic guards in sync-state-utils/adapters and env-configurable cap are non-goals", "status": "pass", "notes": "untouched; cap is a plain constant" },
+    { "kind": "spec", "item": "Verification: syncProcessor harness tests for duplicates, healing, collapse, cap 51+, no lastSyncedMessageUuid", "status": "pass", "notes": "present in syncProcessor-dedupe.test.ts; suite results belong to Stage 7" },
+    { "kind": "spec", "item": "Verification: Claude processor test that a pre-queued payloadId is skipped and its checkpoint advances", "status": "pass", "notes": "present in claude.conversations-processor-dedupe.test.ts; suite results belong to Stage 7" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "all 6 subjects in a9b6d6c..HEAD use <type>(<scope>): <subject> with allowed type fix, allowed scopes providers/agents, imperative mood, each under the 100-char subject-max-length (git-workflow.md + commitlint.config.cjs)" },
+    { "kind": "code-quality", "status": "partial", "notes": "met: .js import extensions, import type, explicit return types, JSDoc, UPPER_SNAKE_CASE constants, logger; unmet: new camelCase payloadQueue.ts vs kebab-case rule; new logic inlined into over-long functions" },
+    { "kind": "security", "status": "pass", "notes": "guide is .ai-run/guides/security/security-practices.md; no secrets, credentials or headers logged; file paths derive from getSessionConversationPath(sessionId), not user input; no hardcoded secrets" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/__tests__/claude.conversations-processor-dedupe.test.ts",
+      "title": "Dedupe skip untested with a following new turn",
+      "problem": "Regression gap: the new dedupe-before-append skip branch (claude.conversations-processor.ts:198-217) is covered only by single-turn transcripts (u1/a1). No test has an already-queued turn followed by a not-yet-queued turn in the same drain. The current code falls through correctly: after a skip it still sets localSync to result.currentHistoryIndex. Nothing pins that behaviour down.",
+      "impact": "The Claude Stop/SubagentStop drain loop (performIncrementalSync) is the consumer. A regression that breaks after the skip, or that skips without carrying currentHistoryIndex into localSync, would pass both new tests. The turn after a lagging pointer would then go unqueued, or be queued under a reused history_index. collapseSupersededPayloads would then mark the older turn superseded and never send it, so conversation turns are lost silently.",
+      "recommendation": "In claude.conversations-processor-dedupe.test.ts add a two-turn transcript case (u1,a1,u2,a2): seed the queue with only turn 1's payloadId, leave the session pointer unset, run processSession, and assert that the queue holds 2 records, that the new record's payloadId is turn 2's uuid, and that its historyIndices are [1,1]. This pins down that the skip branch falls through and still carries result.currentHistoryIndex into localSync."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/conversations/payloadQueue.ts",
+      "title": "New payloadQueue.ts violates kebab-case file naming",
+      "problem": "code-quality.md (Naming Conventions, Files: kebab-case.ts) requires kebab-case file names. The new module is named payloadQueue.ts (camelCase). It follows the directory's existing syncProcessor.ts/apiClient.ts precedent rather than the documented rule. ESLint does not enforce this rule.",
+      "impact": "The code-quality.md Pre-Commit Checklist requires that naming conventions are followed, and the standards audit treats this as blocking. A new file is the cheapest point to honour the convention, and no automated gate will catch it later.",
+      "recommendation": "Rename to payload-queue.ts and change the imports in syncProcessor.ts and any test to './payload-queue.js'. Alternatively, record in .ai-run/guides/standards/code-quality.md that this directory keeps its existing camelCase file names (syncProcessor.ts, apiClient.ts)."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts",
+      "line": 66,
+      "title": "Queue-prep pipeline inlined into over-long functions",
+      "problem": "code-quality.md asks for functions under 50 lines and lists 100+ line functions as a don't. The change adds the heal/collapse/persist/cap pipeline inline to processConversations (syncProcessor.ts:66-97; the function now spans ~210 lines, 51-262). It also adds the queued-payloadId dedupe inline to the Claude processor's already-long message-processing method (claude.conversations-processor.ts:141-152, 198-207).",
+      "impact": "The documented structure rule is unmet by code this change adds. The functions were already over length, but the change makes them longer instead of putting the new logic in its own functions. That makes the sync pipeline harder to test and change in isolation.",
+      "recommendation": "Move the pre-send queue preparation (heal, collapse, persist, cap) into one helper, in payloadQueue.ts or syncProcessor.ts, that returns the capped send list. Move the queued-payloadId set construction in the Claude processor (claude.conversations-processor.ts:145-152) into a small private method."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts",
+      "line": 91,
+      "title": "Per-run cap strands payloads at SessionEnd",
+      "problem": "Regression gap: the new MAX_CONVERSATION_PAYLOADS_PER_RUN=50 cap leaves candidates past the 50th pending 'for the next run' and reports plain success. The cap is verified only by calling runSync twice on the same un-renamed file. On the SessionEnd path, handleSessionEnd (hook.ts:236-239) runs one sync and then renameSessionFiles moves the queue to completed_{id}_conversation.jsonl. getSessionConversationPath has no completed_ fallback, and stale-session reconciliation skips completed_ entries, so there is no next run.",
+      "impact": "A session that ends with more than 50 unsent candidates sends 50, and the rest are never synced by the proxy timer, onProxyStop or reconciliation, so conversation turns are lost. This affects handleSessionEnd for Claude SessionEnd and the opencode/codex onSessionEnd routes. Reachability is unconfirmed: the 2s SessionEnd deadline may usually stop the run before 50 sends complete, but the path is live with fast APIs or a raised CODEMIE_SESSION_END_SYNC_BUDGET_MS.",
+      "recommendation": "Do not apply MAX_CONVERSATION_PAYLOADS_PER_RUN when the caller already bounds the run with context.syncDeadlineMs (the SessionEnd path), so SessionEnd defers only on the deadline, as it did before this change. Keep the cap for the unbounded proxy-timer and onProxyStop callers. Add a SessionEnd-path test (hook-routing-contract.test.ts or a SessionSyncer test) that seeds more than MAX_CONVERSATION_PAYLOADS_PER_RUN pending records, runs processEvent(SessionEnd) with upsertConversation mocked, and asserts that every record is sent or is still reachable by a later sync."
+    }
+  ]
+}

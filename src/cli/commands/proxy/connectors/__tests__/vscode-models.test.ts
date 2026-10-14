@@ -24,8 +24,17 @@ describe('findVsCodeCapabilityEntry', () => {
     expect(findVsCodeCapabilityEntry('openai.gpt-5.6-luna')?.family).toBe('gpt-5.6-luna');
   });
 
-  it('returns undefined for a model with no capability-table family', () => {
-    expect(findVsCodeCapabilityEntry('gpt-6-sol')).toBeUndefined();
+  it('returns the table entry for a GPT-6 model', () => {
+    expect(findVsCodeCapabilityEntry('gpt-6-sol')).toMatchObject({
+      family: 'gpt-6-sol',
+      apiType: 'responses',
+      maxInputTokens: 922000,
+      maxOutputTokens: 128000,
+    });
+  });
+
+  it('resolves a vendor-prefixed GPT-6 tenant id to its family entry', () => {
+    expect(findVsCodeCapabilityEntry('openai.gpt-6-luna')?.family).toBe('gpt-6-luna');
   });
 });
 

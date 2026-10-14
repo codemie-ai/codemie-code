@@ -8,8 +8,10 @@ import {ClaudePlugin, ClaudePluginMetadata} from './claude.plugin.js';
  * ACP (Agent Communication Protocol) adapter for Claude Code.
  * Enables integration with editors like Zed, Emacs, Neovim via stdio JSON-RPC.
  *
- * Uses @zed-industries/claude-code-acp - Zed's official ACP adapter.
- * https://github.com/zed-industries/claude-code-acp
+ * Uses @agentclientprotocol/claude-agent-acp - the official ACP adapter for
+ * the Claude Agent SDK (renamed/migrated from @zed-industries/claude-code-acp,
+ * which is deprecated and no longer receives updates).
+ * https://github.com/agentclientprotocol/claude-agent-acp
  */
 export const ClaudeAcpPluginMetadata: AgentMetadata = {
   // Inherit all from Claude plugin
@@ -20,9 +22,9 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
   displayName: 'Claude Code ACP',
   description: 'Claude Code ACP adapter for editor integration (Zed, Emacs, etc.)',
 
-  // Zed's ACP adapter package (separate from Claude CLI!)
-  npmPackage: '@zed-industries/claude-code-acp',
-  cliCommand: 'claude-code-acp',
+  // ACP adapter package for the Claude Agent SDK (separate from the Claude CLI!)
+  npmPackage: '@agentclientprotocol/claude-agent-acp',
+  cliCommand: 'claude-agent-acp',
 
   // No native installer - npm only
   installerUrls: undefined,
@@ -47,6 +49,9 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
     '  "agent_servers": { "claude": { "command": "codemie-claude-acp" } }',
     '',
     'JetBrains (~/.jetbrains/acp.json):',
+    '  "agent_servers": { "Claude Code via CodeMie": { "command": "codemie-claude-acp" } }',
+    '',
+    'JetBrains AIR (~/Library/Application Support/JetBrains/Air/acp.json):',
     '  "agent_servers": { "Claude Code via CodeMie": { "command": "codemie-claude-acp" } }',
   ],
 };

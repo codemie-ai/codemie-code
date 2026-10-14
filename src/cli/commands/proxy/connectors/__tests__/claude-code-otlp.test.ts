@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   CODEMIE_COMMAND_MARKER,
   CODEMIE_ENV_KEYS,
+  CODEMIE_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
@@ -66,7 +67,7 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
 function codemieHookGroup() {
   return {
     matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}`, timeout: CODEMIE_HOOK_TIMEOUT_SECONDS }],
   };
 }
 
@@ -121,6 +122,15 @@ describe('claude-code-otlp connector', () => {
 
         for (const event of HOOK_EVENTS) {
           expect(settings.hooks[event]).toEqual([codemieHookGroup()]);
+        }
+      });
+
+      it('writes every hook entry without an async field, so Claude Code runs all of them synchronously', async () => {
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        for (const event of HOOK_EVENTS) {
+          expect(settings.hooks[event][0].hooks[0].async).toBeUndefined();
         }
       });
 

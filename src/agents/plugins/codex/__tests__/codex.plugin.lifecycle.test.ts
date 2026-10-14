@@ -59,6 +59,53 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
     });
   });
 
+  it('tags buildContext and processEvent with CODEMIE_CLIENT_TYPE when set (e.g. by codex-acp)', async () => {
+    // CodexAcpPluginMetadata inherits onSessionStart/onSessionEnd verbatim and relies
+    // on BaseAgentAdapter setting env.CODEMIE_CLIENT_TYPE from its own ssoConfig —
+    // regression guard for the hardcoded 'codemie-codex' this replaced.
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_AGENT: 'codex',
+      CODEMIE_CLIENT_TYPE: 'codemie-codex-acp',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'http://127.0.0.1:49152',
+      CODEMIE_URL: 'https://codemie.example.com',
+      CODEMIE_CLI_VERSION: '0.1.0',
+      CODEMIE_MODEL: 'gpt-5.4',
+    };
+
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-client-type', env);
+
+    const opts = startSync.mock.calls[0][0];
+    expect(opts.buildContext()).toMatchObject({ clientType: 'codemie-codex-acp' });
+    expect(processEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ clientType: 'codemie-codex-acp' }),
+    );
+  });
+
+  it('falls back to codemie-codex when CODEMIE_CLIENT_TYPE is unset (unchanged plain-Codex behavior)', async () => {
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-default', {
+      CODEMIE_AGENT: 'codex',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'http://127.0.0.1:49152',
+    });
+
+    const opts = startSync.mock.calls[0][0];
+    expect(opts.buildContext()).toMatchObject({ clientType: 'codemie-codex' });
+    expect(processEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ clientType: 'codemie-codex' }),
+    );
+  });
+
   it('stops the timer on SessionEnd before processEvent', async () => {
     const calls: string[] = [];
     stopSync.mockImplementation(() => calls.push('stop'));

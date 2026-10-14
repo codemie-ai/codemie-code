@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "branch": "feat/profile-url-first-platform-lookup",
+  "head": "3950ad434b5576e5b2e6e8025c1f0ebdf3717924",
+  "runner": "npm",
+  "started_at": "2026-10-08T11:47:31Z",
+  "completed_at": "2026-10-08T11:47:53Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 2000, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 4000, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 4000, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 7000, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "SKIPPED", "command": "npx vitest run --project unit", "notes": "repo policy: tests only on explicit user request"},
+    {"id": "integration", "source": "guide", "status": "SKIPPED", "command": "npx vitest run --project cli", "notes": "repo policy: tests only on explicit user request"},
+    {"id": "secrets", "source": "hook", "status": "SKIPPED", "duration_ms": 1000, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Self-skip: output 'No staged changes to scan' (nothing staged, scan did not run). To run locally, stage changes and have Docker running; CI runs the Gitleaks scan unconditionally."}
+  ],
+  "failures": {}
+}

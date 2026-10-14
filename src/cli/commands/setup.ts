@@ -246,8 +246,9 @@ async function handlePluginSetup(
     try {
       models = await setupSteps.fetchModels(credentials);
       modelsSpinner.succeed(chalk.green(`Found ${models.length} available models`));
-    } catch {
-      modelsSpinner.warn(chalk.yellow('Could not fetch models - will use manual entry'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      modelsSpinner.warn(chalk.yellow(`Could not fetch models: ${message} - will use manual entry`));
       models = [];
     }
 

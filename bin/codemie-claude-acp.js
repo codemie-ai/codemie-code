@@ -5,7 +5,7 @@
  * Direct entry point for codemie-claude-acp command
  *
  * ACP (Agent Communication Protocol) adapter for editor integration.
- * Uses Zed's claude-code-acp wrapper for stdio JSON-RPC communication.
+ * Uses @agentclientprotocol/claude-agent-acp for stdio JSON-RPC communication.
  */
 
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';

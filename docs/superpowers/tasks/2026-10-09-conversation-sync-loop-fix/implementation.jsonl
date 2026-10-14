@@ -1,0 +1,6 @@
+{"task_id":"1","status":"done","commit":"f54c31b7","test_command":"npx vitest run src/providers/plugins/sso/session/processors/conversations/__tests__/"}
+{"task_id":"2","status":"done","commit":"58804e57","test_command":"npx vitest run src/providers/plugins/sso/session/processors/conversations/__tests__/"}
+{"task_id":"3","status":"done","commit":"a1991d6c","test_command":"npx vitest run src/providers/plugins/sso/session/processors/conversations/__tests__/"}
+{"task_id":"4","status":"done","commit":"f561d26a","test_command":"npx vitest run src/agents/plugins/claude/__tests__/claude.conversations-processor-dedupe.test.ts src/agents/plugins/claude/__tests__/claude.conversations-processor.test.ts"}
+{"task_id":"5","status":"done","commit":"fa763d1f","test_command":"npx vitest run src/providers/plugins/sso/session/processors/conversations/__tests__/"}
+{"task_id":"6","status":"done","commit":"637affcb","test_command":"npx vitest run src/providers/plugins/sso/session/processors/conversations/__tests__/"}

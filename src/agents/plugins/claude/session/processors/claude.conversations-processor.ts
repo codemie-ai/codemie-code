@@ -15,6 +15,8 @@
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
+import type { ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
+import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { takeMessagesBefore } from './messages-before.js';
@@ -136,6 +138,11 @@ export class ConversationsProcessor implements SessionProcessor {
 
       const maxIterations = Math.max(1, session.messages.length + 1);
 
+      // Dedupe-before-append: a turn already in the queue (any status) is never
+      // appended again. Concurrent Stop/SubagentStop hooks, or a pointer that
+      // lags behind the queue, would otherwise queue the same turn twice.
+      const queuedPayloadIds = await this.readQueuedPayloadIds(conversationsPath);
+
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         const prevMessageUuid = localSync.lastSyncedMessageUuid;
         const prevHistoryIndex = localSync.lastSyncedHistoryIndex;
@@ -180,10 +187,16 @@ export class ConversationsProcessor implements SessionProcessor {
           status: CONVERSATION_SYNC_STATUS.PENDING
         };
 
-        await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
-
-        totalRecords += result.history.length;
-        turnsWritten++;
+        if (queuedPayloadIds.has(payloadRecord.payloadId)) {
+          logger.debug(
+            `[${this.name}] Turn ${payloadRecord.payloadId} already queued, skipping append`
+          );
+        } else {
+          await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
+          queuedPayloadIds.add(payloadRecord.payloadId);
+          totalRecords += result.history.length;
+          turnsWritten++;
+        }
         lastSyncUpdate = {
           conversations: {
             lastSyncedMessageUuid: result.lastProcessedMessageUuid,
@@ -220,7 +233,7 @@ export class ConversationsProcessor implements SessionProcessor {
         }
       }
 
-      if (turnsWritten === 0) {
+      if (!lastSyncUpdate) {
         logger.debug(`[${this.name}] No history generated from messages`);
         return { success: true, message: 'No history generated', metadata: { recordsProcessed: 0 } };
       }
@@ -246,6 +259,23 @@ export class ConversationsProcessor implements SessionProcessor {
         message: error instanceof Error ? error.message : 'Unknown error'
       };
     }
+  }
+
+  /**
+   * payloadIds of every record already in the conversation queue, any status.
+   * Read once before the drain loop; lock-free, so two hooks racing past this
+   * read can still both append.
+   */
+  private async readQueuedPayloadIds(conversationsPath: string): Promise<Set<string>> {
+    const existingPayloads = await readJSONL<ConversationPayloadRecord>(conversationsPath);
+    const queuedPayloadIds = new Set<string>();
+    for (const existing of existingPayloads) {
+      const existingId = existing.payloadId ?? existing.lastProcessedMessageUuid;
+      if (existingId) {
+        queuedPayloadIds.add(existingId);
+      }
+    }
+    return queuedPayloadIds;
   }
 
   /**

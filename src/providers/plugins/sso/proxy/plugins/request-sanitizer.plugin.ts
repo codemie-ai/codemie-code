@@ -25,6 +25,10 @@
  * Scope: Only enabled for codemie-code and codemie-opencode agents (which use
  * AI SDKs that inject these params). Other agents (claude, gemini) handle their
  * own request formatting and don't need this sanitization.
+ *
+ * codemie-opencode-acp shares the exact same AI SDK request path as
+ * codemie-opencode (same opencode-ai binary, same provider config injection,
+ * just launched via the `acp` subcommand), so it needs the same sanitization.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -32,7 +36,7 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
 /** Agents that use AI SDKs which inject unsupported reasoning params */
-const ALLOWED_AGENTS = ['codemie-code', 'codemie-opencode'];
+const ALLOWED_AGENTS = ['codemie-code', 'codemie-opencode', 'codemie-opencode-acp'];
 
 export class RequestSanitizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-request-sanitizer';

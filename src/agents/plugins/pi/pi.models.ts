@@ -24,6 +24,9 @@ const RESPONSES_API_PATTERNS: RegExp[] = [
   /^gpt-5\.5-/,
   /^gpt-5-5-/,
   /gpt-5[.-]6/,
+  // gpt-6-*/gpt-6.* (e.g. gpt-6-luna, gpt-6.1-sol, openai.gpt-6-luna, bare openai.gpt-6).
+  // (?!\d) keeps gpt-60-style ids out while staying ready for 6.2+.
+  /gpt-6(?!\d)/,
 ];
 
 export function classifyPiModel(modelId: string): PiModelClassification {
@@ -69,6 +72,7 @@ function detectLimits(id: string): { contextWindow: number; maxTokens: number } 
   if (id.startsWith('gpt-4.1')) return { contextWindow: 1048576, maxTokens: 32768 };
   if (/^gpt-5\.5-/.test(id) || /^gpt-5-5-/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
   if (/gpt-5[.-]6/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
+  if (/gpt-6(?!\d)/.test(id)) return { contextWindow: 1050000, maxTokens: 128000 };
   if (id.startsWith('gpt-5')) return { contextWindow: 400000, maxTokens: 128000 };
   if (/^o[134]-/.test(id) || id === 'o1') return { contextWindow: 200000, maxTokens: 100000 };
   if (id.startsWith('qwen') || id.startsWith('moonshotai') || id.startsWith('kimi')) {
@@ -96,6 +100,7 @@ function isReasoningModel(id: string): boolean {
     id.startsWith('gemini') ||
     id.startsWith('gpt-5') ||
     /gpt-5[.-]6/.test(id) ||
+    /gpt-6(?!\d)/.test(id) ||
     /^o[134]-/.test(id) ||
     id === 'o1' ||
     id.startsWith('deepseek') ||

@@ -370,14 +370,18 @@ All external agents share the same command pattern:
 # Basic usage
 codemie-claude "message"         # Claude Code agent
 codemie-claude-acp               # Claude Code ACP (invoked by IDEs)
+codemie-codex-acp                # Codex ACP (invoked by IDEs)
 codemie-gemini "message"         # Gemini CLI agent
+codemie-gemini-acp               # Gemini CLI ACP (invoked by IDEs)
+codemie-opencode-acp             # OpenCode ACP (invoked by IDEs)
 
 # Health checks
 codemie-claude health
 codemie-gemini health
 
-# Note: codemie-claude-acp doesn't have interactive mode or health check
-# It's designed to be invoked by IDEs via ACP protocol
+# Note: codemie-claude-acp, codemie-codex-acp, codemie-gemini-acp, and
+# codemie-opencode-acp don't have interactive mode or health check — they're
+# designed to be invoked by IDEs via ACP protocol
 
 # With configuration overrides
 codemie-claude --model claude-sonnet-4-6 --api-key sk-... "review code"
@@ -1164,8 +1168,11 @@ codemie install <agent>
 **Supported Agents:**
 - `claude` - Claude Code (npm-based)
 - `claude-acp` - Claude Code ACP adapter for IDE integration (npm-based)
+- `codex-acp` - Codex ACP adapter for IDE integration (npm-based)
 - `gemini` - Gemini CLI (npm-based)
+- `gemini-acp` - Gemini CLI ACP mode for IDE integration (same `gemini` install)
 - `opencode` - OpenCode AI assistant (npm-based)
+- `opencode-acp` - OpenCode ACP mode for IDE integration (same `opencode` install)
 
 ### `codemie uninstall [agent]`
 

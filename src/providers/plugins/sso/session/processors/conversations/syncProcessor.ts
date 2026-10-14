@@ -16,6 +16,12 @@ import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
+import {
+  collapseSupersededPayloads,
+  getPayloadId,
+  healSyncedDuplicates,
+  isSendCandidate
+} from './payload-queue.js';
 import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
@@ -27,10 +33,9 @@ import {
   CODEMIE_ASSISTANT_ID,
   DEFAULT_CONVERSATION_FOLDER,
   CONVERSATION_PROCESSOR_PRIORITY,
-  CONVERSATION_PROCESSOR_NAME
+  CONVERSATION_PROCESSOR_NAME,
+  MAX_CONVERSATION_PAYLOADS_PER_RUN
 } from './constants.js';
-
-const MAX_CONVERSATION_SYNC_ATTEMPTS = 3;
 
 /**
  * Create a conversation sync processor instance
@@ -57,12 +62,7 @@ export function createSyncProcessor(): SessionProcessor {
       // Read conversation payloads from JSONL
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
-
-      const pendingPayloads = allPayloads.filter(p =>
-        p.status === CONVERSATION_SYNC_STATUS.PENDING ||
-        (p.status === CONVERSATION_SYNC_STATUS.FAILED &&
-          (p.syncAttempts ?? 0) < MAX_CONVERSATION_SYNC_ATTEMPTS)
-      );
+      const pendingPayloads = await prepareSendList(allPayloads, conversationsFile, context);
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -87,6 +87,8 @@ export function createSyncProcessor(): SessionProcessor {
       let successCount = 0;
       let totalMessages = 0;
       let deferred = false;
+      let consumedCount = 0;
+      let lastSentConversationId: string | undefined;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
 
@@ -98,8 +100,14 @@ export function createSyncProcessor(): SessionProcessor {
           deferred = true;
           break;
         }
+        consumedCount++;
 
         const payloadId = getPayloadId(pendingPayload);
+        // Each payloadId is sent at most once per run: its outcome was already
+        // applied to every record sharing the id.
+        if (successfulPayloadIds.has(payloadId) || failedByPayloadId.has(payloadId)) {
+          continue;
+        }
         const { conversationId, history, assistantId, folder, llmModel } = pendingPayload.payload;
         const resolvedAssistantId = assistantId || CODEMIE_ASSISTANT_ID;
         const resolvedFolder = folder || resolveConversationFolder(context.clientType, session.agentName);
@@ -130,6 +138,7 @@ export function createSyncProcessor(): SessionProcessor {
             successCount++;
             totalMessages += history.length;
             successfulPayloadIds.add(payloadId);
+            lastSentConversationId = conversationId;
           }
 
         } catch (error: any) {
@@ -153,8 +162,7 @@ export function createSyncProcessor(): SessionProcessor {
       }
 
       const syncedAt = Date.now();
-      const attemptedCount = successfulPayloadIds.size + failedByPayloadId.size;
-      const remainingCount = pendingPayloads.length - attemptedCount;
+      const remainingCount = pendingPayloads.length - consumedCount;
 
       const message = deferred
         ? `Sync deferred: ${remainingCount} items remaining (deadline/abort)`
@@ -168,42 +176,15 @@ export function createSyncProcessor(): SessionProcessor {
         );
       }
 
-      // Calculate sync updates for the adapter to persist
+      // Calculate sync updates for the adapter to persist. lastSyncedMessageUuid is
+      // deliberately not reported: each transform processor owns its own pointer, and
+      // rewriting it here from the latest *successful* payload rewound it past turns
+      // that were queued but not yet synced, re-queueing them as duplicates.
       let maxHistoryIndex = -1;
-      let conversationId: string | undefined;
-      let lastSyncedMessageUuid: string | undefined;
-
-      if (successCount > 0) {
-        let latestPayload: ConversationPayloadRecord | undefined;
-        for (const payload of pendingPayloads) {
-          if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
-          const historyIndices = payload.historyIndices || [];
-          const payloadMaxIndex = historyIndices.length > 0
-            ? Math.max(...historyIndices)
-            : -1;
-          const payloadRank = Math.max(
-            payloadMaxIndex,
-            parseSourceIndex(payload.lastProcessedMessageUuid)
-          );
-          const latestRank = latestPayload
-            ? Math.max(
-              latestPayload.historyIndices.length > 0 ? Math.max(...latestPayload.historyIndices) : -1,
-              parseSourceIndex(latestPayload.lastProcessedMessageUuid)
-            )
-            : -1;
-
-          if (!latestPayload || payloadRank > latestRank) {
-            latestPayload = payload;
-          }
-
-          if (historyIndices.length > 0) {
-            maxHistoryIndex = Math.max(maxHistoryIndex, payloadMaxIndex);
-          }
-        }
-
-        if (latestPayload) {
-          conversationId = latestPayload.payload.conversationId;
-          lastSyncedMessageUuid = latestPayload.lastProcessedMessageUuid;
+      for (const payload of pendingPayloads) {
+        if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
+        for (const historyIndex of payload.historyIndices || []) {
+          maxHistoryIndex = Math.max(maxHistoryIndex, historyIndex);
         }
       }
 
@@ -227,9 +208,8 @@ export function createSyncProcessor(): SessionProcessor {
           payloadsSynced: successCount,
           syncUpdates: successCount > 0 ? {
             conversations: {
-              lastSyncedMessageUuid,
               lastSyncedHistoryIndex: maxHistoryIndex,
-              conversationId,
+              conversationId: lastSentConversationId,
               totalMessagesSynced: totalMessages,
               totalSyncAttempts: 1,
               lastSyncAt: syncedAt
@@ -264,19 +244,19 @@ export function createSyncProcessor(): SessionProcessor {
 }
 
 function resolveConversationFolder(clientType?: string, agentName?: string): string {
-  if (clientType === 'codemie-codex' || agentName === 'codex') {
+  if (clientType === 'codemie-codex' || clientType === 'codemie-codex-acp' || agentName === 'codex' || agentName === 'codex-acp') {
     return 'codex';
   }
   if (clientType === 'codemie-copilot' || agentName === 'copilot-cli') {
     return 'copilot-cli';
   }
-  if (clientType === 'codemie-gemini' || agentName === 'gemini') {
+  if (clientType === 'codemie-gemini' || clientType === 'codemie-gemini-acp' || agentName === 'gemini' || agentName === 'gemini-acp') {
     return 'gemini';
   }
   if (clientType === 'codemie-claude' || agentName === 'claude') {
     return 'claude';
   }
-  if (clientType === 'codemie-opencode' || agentName === 'opencode') {
+  if (clientType === 'codemie-opencode' || clientType === 'codemie-opencode-acp' || agentName === 'opencode' || agentName === 'opencode-acp') {
     return 'opencode';
   }
   if (clientType === 'codemie-pi' || agentName === 'pi') {
@@ -285,51 +265,90 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
   return DEFAULT_CONVERSATION_FOLDER;
 }
 
-function getPayloadId(payload: ConversationPayloadRecord): string {
-  return payload.payloadId ||
-    payload.lastProcessedMessageUuid ||
-    `${payload.payload.conversationId}:${payload.timestamp}`;
+/**
+ * Prepare the queue for sending: heal → collapse → persist → cap.
+ * Mutates `allPayloads` in place and persists healed/superseded statuses before
+ * anything is sent, so even a run that defers immediately keeps them.
+ *
+ * The per-run cap applies only to unbounded runs (proxy timer, onProxyStop). A
+ * deadline-bounded run (SessionEnd) has no next run — its queue is renamed to
+ * `completed_` right after — so it defers only on the deadline.
+ *
+ * @returns the payloads to send this run, in queue order
+ */
+async function prepareSendList(
+  allPayloads: ConversationPayloadRecord[],
+  conversationsFile: string,
+  context: ProcessingContext
+): Promise<ConversationPayloadRecord[]> {
+  // Heal: a candidate whose payloadId already has a success record was synced.
+  const healedCount = healSyncedDuplicates(allPayloads);
+
+  // Collapse: an older candidate whose every entry a newer candidate re-sends is
+  // superseded (terminal, never sent). Candidates share object identity with
+  // allPayloads, so the in-place status change is what gets persisted.
+  const sendCandidates = allPayloads.filter(isSendCandidate);
+  const supersededCount = collapseSupersededPayloads(sendCandidates);
+
+  if (healedCount > 0 || supersededCount > 0) {
+    logger.debug(
+      `[${CONVERSATION_PROCESSOR_NAME}] Healed ${healedCount} already-synced and superseded ` +
+      `${supersededCount} fully covered payload(s)`
+    );
+    try {
+      await writeJSONLAtomic(conversationsFile, allPayloads);
+    } catch (writeError) {
+      logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
+    }
+  }
+
+  const unsentPayloads = sendCandidates.filter(p => p.status !== CONVERSATION_SYNC_STATUS.SUPERSEDED);
+  if (context.syncDeadlineMs !== undefined || unsentPayloads.length <= MAX_CONVERSATION_PAYLOADS_PER_RUN) {
+    return unsentPayloads;
+  }
+
+  // Cap: send oldest first, at most MAX_CONVERSATION_PAYLOADS_PER_RUN; the rest wait as they are.
+  logger.debug(
+    `[${CONVERSATION_PROCESSOR_NAME}] Per-run cap reached: deferring ` +
+    `${unsentPayloads.length - MAX_CONVERSATION_PAYLOADS_PER_RUN} payload(s) to the next run`
+  );
+  return unsentPayloads.slice(0, MAX_CONVERSATION_PAYLOADS_PER_RUN);
 }
 
 /**
- * Apply a single payload's sync outcome to the in-memory records (in place).
- * Mirrors the per-payload success/failure mapping so the file can be rewritten
- * after every payload instead of only at the end of the loop.
+ * Apply a payload's sync outcome to the in-memory records (in place).
+ * Every not-yet-terminal (pending/failed) record sharing the sent payloadId gets
+ * the outcome, so a duplicate of the sent turn is never left pending and re-sent.
+ * The file can then be rewritten after every payload instead of only at the end.
  */
 function applyPayloadOutcome(
   allPayloads: ConversationPayloadRecord[],
   payloadId: string,
   syncError: string | undefined
 ): void {
-  const index = allPayloads.findIndex(p => getPayloadId(p) === payloadId);
-  if (index === -1) {
-    return;
-  }
-
-  const p = allPayloads[index];
-  allPayloads[index] = syncError
-    ? {
-      ...p,
-      status: CONVERSATION_SYNC_STATUS.FAILED,
-      syncAttempts: (p.syncAttempts ?? 0) + 1,
-      error: syncError,
+  allPayloads.forEach((p, index) => {
+    if (getPayloadId(p) !== payloadId) {
+      return;
     }
-    : {
-      ...p,
-      status: CONVERSATION_SYNC_STATUS.SUCCESS,
-      syncAttempts: (p.syncAttempts ?? 0) + 1,
-      error: undefined,
-      response: {
-        syncedCount: p.payload.history.length
+    if (p.status !== CONVERSATION_SYNC_STATUS.PENDING && p.status !== CONVERSATION_SYNC_STATUS.FAILED) {
+      return;
+    }
+
+    allPayloads[index] = syncError
+      ? {
+        ...p,
+        status: CONVERSATION_SYNC_STATUS.FAILED,
+        syncAttempts: (p.syncAttempts ?? 0) + 1,
+        error: syncError,
       }
-    };
-}
-
-function parseSourceIndex(value: unknown): number {
-  if (typeof value !== 'string') {
-    return -1;
-  }
-
-  const index = Number.parseInt(value.slice(value.lastIndexOf('@') + 1), 10);
-  return Number.isFinite(index) ? index : -1;
+      : {
+        ...p,
+        status: CONVERSATION_SYNC_STATUS.SUCCESS,
+        syncAttempts: (p.syncAttempts ?? 0) + 1,
+        error: undefined,
+        response: {
+          syncedCount: p.payload.history.length
+        }
+      };
+  });
 }

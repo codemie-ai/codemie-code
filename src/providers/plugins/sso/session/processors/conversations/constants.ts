@@ -47,3 +47,6 @@ export const CONVERSATION_PROCESSOR_PRIORITY = 2;
 
 /** Processor name identifier for logging and tracking */
 export const CONVERSATION_PROCESSOR_NAME = 'conversation-sync';
+
+/** Max conversation payloads sent per sync run; the rest stay queued for the next run */
+export const MAX_CONVERSATION_PAYLOADS_PER_RUN = 50;

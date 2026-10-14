@@ -276,7 +276,7 @@ describe('resolveClaudeModel — catalog context window', () => {
     }
   });
 
-  it('never touches "[1m]" on a router, which carries no window', async () => {
+  it('never touches "[1m]" on a router whose catalog entry reports no window', async () => {
     fetchCodeMieLlmModelsMock.mockResolvedValue([
       { ...model({ deployment_name: 'sy-signal-claude-sonnet-haiku' }), is_router: true },
     ]);

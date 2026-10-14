@@ -146,7 +146,11 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         codeMieProject: selectedProject,
         userEmail: selectedUserEmail,
         codeMieIntegration: integrationInfo,
-        apiUrl: authResult.apiUrl
+        apiUrl: authResult.apiUrl,
+        // Reused by fetchModels() below so it hits the API with the same
+        // authenticated session instead of re-resolving credentials from
+        // storage (which can race with the credential store write on Windows).
+        cookies: authResult.cookies
       }
     };
   },
@@ -160,7 +164,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     const modelProxy = new SSOModelProxy(credentials.baseUrl);
     const models = await modelProxy.fetchModels({
       codeMieUrl: credentials.additionalConfig?.codeMieUrl,
-      baseUrl: credentials.baseUrl
+      baseUrl: credentials.baseUrl,
+      cookies: credentials.additionalConfig?.cookies
     } as CodeMieConfigOptions);
 
     return models.map(m => m.id);

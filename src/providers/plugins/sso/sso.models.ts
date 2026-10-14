@@ -74,32 +74,39 @@ export class SSOModelProxy extends BaseModelProxy {
   /**
    * Fetch models for setup wizard
    *
-   * Returns models from CodeMie SSO API
+   * Returns models from CodeMie SSO API. When the setup wizard already holds
+   * cookies from the just-completed browser auth (see sso.setup-steps.ts
+   * getCredentials()), those are used directly instead of re-resolving
+   * credentials from disk/keychain, avoiding a race with the credential
+   * store write and reusing the same authenticated session.
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
-    try {
-      // Try to get credentials with URL parameter
-      const lookupUrl = config.codeMieUrl || config.baseUrl;
-      const credentials = await this.sso.getStoredCredentials(lookupUrl);
+    const suppliedCookies = (config as CodeMieConfigOptions & { cookies?: Record<string, string> }).cookies;
 
-      if (!credentials) {
-        // If no credentials yet, return empty array (setup wizard will handle auth)
-        logger.debug('No SSO credentials found, returning empty model list');
-        return [];
-      }
+    // Supplied cookies come with the auth result's API URL (config.baseUrl);
+    // codeMieUrl is the org/frontend URL and serves HTML, not the API.
+    if (suppliedCookies && config.baseUrl) {
+      // Real API/network errors propagate so setup.js can show an actionable
+      // message instead of silently reporting "Found 0 available models".
+      return await this.fetchModelsFromAPI(config.baseUrl, suppliedCookies);
+    }
 
-      // Use API URL from credentials or config
-      const apiUrl = credentials.apiUrl || config.codeMieUrl;
-      if (!apiUrl) {
-        throw new Error('No CodeMie URL configured');
-      }
+    const lookupUrl = config.codeMieUrl || config.baseUrl;
+    const credentials = await this.sso.getStoredCredentials(lookupUrl);
 
-      return await this.fetchModelsFromAPI(apiUrl, credentials.cookies);
-    } catch (error) {
-      logger.debug('Failed to fetch SSO models:', error);
-      // Return empty array instead of throwing - setup wizard will handle this
+    if (!credentials) {
+      // Genuinely no credentials yet - setup wizard will handle auth.
+      logger.debug('No SSO credentials found, returning empty model list');
       return [];
     }
+
+    // Use API URL from credentials or config
+    const apiUrl = credentials.apiUrl || config.codeMieUrl;
+    if (!apiUrl) {
+      throw new Error('No CodeMie URL configured');
+    }
+
+    return await this.fetchModelsFromAPI(apiUrl, credentials.cookies);
   }
 
   /**

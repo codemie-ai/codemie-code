@@ -6,6 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import type { HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { copyFile, readFile, unlink } from 'node:fs/promises';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -57,6 +58,8 @@ interface RemoveClaudeCodeOtlpResult {
 interface HookEntry {
   type: string;
   command: string;
+  async?: boolean;
+  timeout?: number;
   [key: string]: unknown;
 }
 
@@ -99,10 +102,11 @@ export const HOOK_EVENTS = [
   'SubagentStop',
   'PreCompact',
   'Notification',
-] as const;
+] as const satisfies readonly HookEvent[];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
+export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -288,9 +292,13 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  const codemieEntry: HookGroup = {
-    matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}` }],
+  const buildCodemieEntry = (): HookGroup => {
+    const hook: HookEntry = {
+      type: 'command',
+      command: `codemie ${CODEMIE_COMMAND_MARKER}`,
+      timeout: CODEMIE_HOOK_TIMEOUT_SECONDS,
+    };
+    return { matcher: '', hooks: [hook] };
   };
 
   // Phase 1: strip our own command from EVERY existing event key, not just the
@@ -315,7 +323,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), codemieEntry];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry()];
   }
 
   // --- Merge env block ---

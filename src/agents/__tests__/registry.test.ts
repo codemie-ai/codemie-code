@@ -20,8 +20,11 @@ describe('AgentRegistry', () => {
           'claude',
           'claude-acp',
           'gemini',
+          'gemini-acp',
           'opencode',
+          'opencode-acp',
           'codex',
+          'codex-acp',
           'pi',
           'kimi',
           'kimi-acp',
@@ -66,6 +69,27 @@ describe('AgentRegistry', () => {
       expect(agent?.name).toBe('claude-acp');
     });
 
+    it('should register Codex ACP plugin', () => {
+      const agent = AgentRegistry.getAgent('codex-acp');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('codex-acp');
+    });
+
+    it('should register Gemini ACP plugin', () => {
+      const agent = AgentRegistry.getAgent('gemini-acp');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('gemini-acp');
+    });
+
+    it('should register OpenCode ACP plugin', () => {
+      const agent = AgentRegistry.getAgent('opencode-acp');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('opencode-acp');
+    });
+
     it('should register Kimi plugin', () => {
       const agent = AgentRegistry.getAgent('kimi');
 
@@ -102,8 +126,11 @@ describe('AgentRegistry', () => {
       expect(names).toContain('claude');
       expect(names).toContain('claude-acp');
       expect(names).toContain('gemini');
+      expect(names).toContain('gemini-acp');
       expect(names).toContain('opencode');
+      expect(names).toContain('opencode-acp');
       expect(names).toContain('codex');
+      expect(names).toContain('codex-acp');
       expect(names).toContain('kimi');
       expect(names).toContain('kimi-acp');
     });

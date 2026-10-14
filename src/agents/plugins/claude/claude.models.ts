@@ -207,8 +207,9 @@ function stripOneMillionSuffix(id: string): string {
 /**
  * The one form a model id takes for Claude Code, decided by the catalog's own context window:
  * `<id>[1m]` when `maxInputTokens` reaches 1M, the bare id when it is smaller. A catalog that
- * reports no window (routers, static-config catalogs) decides nothing — the id is returned
- * untouched, so `[1m]` is neither guessed onto it nor stripped off it.
+ * reports no window (static-config catalogs, routers with an unknown tier) decides nothing — the
+ * id is returned untouched, so `[1m]` is neither guessed onto it nor stripped off it. A router's
+ * window is the minimum of its tiers' windows, computed by the backend.
  */
 function applyContextWindow(id: string, maxInputTokens: number | undefined): string {
   if (typeof maxInputTokens !== 'number') return id;

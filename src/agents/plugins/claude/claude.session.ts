@@ -1,11 +1,11 @@
 /**
  * Claude Session Adapter
  *
- * Parses Claude Code session files from ~/.claude/projects/
+ * Parses Claude Code session files from $CLAUDE_CONFIG_DIR/projects (default ~/.claude/projects).
  * Extracts metrics and preserves messages for processors.
  */
 
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
@@ -66,9 +66,14 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Resolve the Claude Code projects directory (e.g. ~/.claude/projects).
+   * Respect the same config directory as Claude Code so isolated profiles are discoverable.
    */
   private getProjectsDir(): string | null {
+    const configDir = process.env.CLAUDE_CONFIG_DIR;
+    if (configDir) {
+      return resolve(configDir, 'projects');
+    }
+
     const home = this.metadata.dataPaths?.home;
     if (!home) {
       return null;
@@ -77,7 +82,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Discover native Claude Code sessions under ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl.
+   * Discover native Claude Code sessions under the selected config directory’s projects/<encoded-cwd>/<uuid>.jsonl.
    *
    * Each project directory name is the cwd with path separators replaced by '-'. That encoding
    * is lossy (paths containing '-' are ambiguous), so the returned `projectPath` is a best-effort
