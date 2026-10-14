@@ -495,6 +495,25 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
   };
 }
 
+/**
+ * Narrow an available-model id list to the active profile's own models
+ * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has 2+
+ * models). Falls back to the unfiltered list when the env var is unset or the
+ * intersection is empty, so Codex's --model validation never ends up with zero
+ * usable models (AC22).
+ */
+export function filterAvailableModelsToProfile(
+  availableModels: string[],
+  env: NodeJS.ProcessEnv
+): string[] {
+  if (!env.CODEMIE_PROFILE_MODELS) {
+    return availableModels;
+  }
+  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
+  const filtered = availableModels.filter(id => allowed.has(id));
+  return filtered.length > 0 ? filtered : availableModels;
+}
+
 export function assertExplicitCodexModelAllowed(model: string, availableModels: string[]): void {
   // A model the live catalog already vouches for (resolveCodexModel's availableModels,
   // which trusts a flagged router regardless of its name — see isRouterCatalogEntry) needs
