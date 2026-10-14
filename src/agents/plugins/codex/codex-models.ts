@@ -498,9 +498,14 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
 /**
  * Narrow an available-model id list to the active profile's own models
  * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has 2+
- * models). Falls back to the unfiltered list when the env var is unset or the
- * intersection is empty, so Codex's --model validation never ends up with zero
- * usable models (AC22).
+ * models), keeping the configured CODEMIE_MODEL even when it is missing from
+ * the allowed list (CR-003) — setupProxy assigns env.CODEMIE_MODEL right
+ * before calling this, so a retirement-healed active model must survive the
+ * narrowing the same way OpenCode's filterToAllowed and Pi's
+ * filterEntriesToProfile already keep theirs. Falls back to the unfiltered
+ * list (with a warning — CR-004) when the env var is unset or the
+ * allowed-CSV intersection is empty, so Codex's --model validation never
+ * ends up with zero usable models (AC22).
  */
 export function filterAvailableModelsToProfile(
   availableModels: string[],
@@ -511,7 +516,20 @@ export function filterAvailableModelsToProfile(
   }
   const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
   const filtered = availableModels.filter(id => allowed.has(id));
-  return filtered.length > 0 ? filtered : availableModels;
+
+  if (filtered.length === 0) {
+    logger.warn(
+      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the available models — showing the full catalog instead'
+    );
+    return availableModels;
+  }
+
+  const configuredModel = env.CODEMIE_MODEL;
+  if (configuredModel && !filtered.includes(configuredModel) && availableModels.includes(configuredModel)) {
+    return [...filtered, configuredModel];
+  }
+
+  return filtered;
 }
 
 export function assertExplicitCodexModelAllowed(model: string, availableModels: string[]): void {

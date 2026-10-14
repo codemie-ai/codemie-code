@@ -9,8 +9,9 @@
  * falling back to the full catalogue on an empty intersection (AC22).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { filterToAllowed, type OpenCodeModelConfig } from '../opencode-model-configs.js';
+import { logger } from '../../../../utils/logger.js';
 
 function config(id: string): OpenCodeModelConfig {
   return {
@@ -38,6 +39,10 @@ describe('filterToAllowed', () => {
     c: config('c'),
   };
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('keeps only the ids in the allowed CSV list', () => {
     const result = filterToAllowed(allModels, 'a,b', 'a');
     expect(Object.keys(result).sort()).toEqual(['a', 'b']);
@@ -46,6 +51,16 @@ describe('filterToAllowed', () => {
   it('returns the unfiltered map when the allowed list has no overlap at all (AC22)', () => {
     const result = filterToAllowed(allModels, 'z', 'a');
     expect(result).toEqual(allModels);
+  });
+
+  // CR-004: the AC22 fallback must also be logged, matching Claude/Pi's
+  // equivalent warn - OpenCode's fallback previously logged nothing at all.
+  it('logs a warning on the AC22 fallback (CR-004)', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    filterToAllowed(allModels, 'z', 'a');
+
+    expect(warnSpy).toHaveBeenCalled();
   });
 
   it('always keeps the selected model even if it is missing from the allowed CSV', () => {

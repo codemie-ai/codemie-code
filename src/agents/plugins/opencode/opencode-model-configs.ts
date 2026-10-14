@@ -1,3 +1,5 @@
+import { logger } from '../../../utils/logger.js';
+
 /**
  * Model configuration for OpenCode agent
  * Uses OpenCode's native format for direct injection
@@ -766,6 +768,11 @@ export function filterToAllowed(
   const matchedIds = Object.keys(allModels).filter(id => allowed.has(id));
 
   if (matchedIds.length === 0) {
+    // CR-004: AC22 requires a notice when the menu can't be limited and falls
+    // back to the full catalog — Claude/Pi's equivalent fallbacks already warn.
+    logger.warn(
+      '[opencode-model-configs] CODEMIE_PROFILE_MODELS matched none of the live models — showing the full catalog instead'
+    );
     return allModels;
   }
 

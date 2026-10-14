@@ -10,10 +10,15 @@
  * the narrowing itself.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { filterAvailableModelsToProfile } from '../codex-models.js';
+import { logger } from '../../../../utils/logger.js';
 
 describe('filterAvailableModelsToProfile', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('intersects with CODEMIE_PROFILE_MODELS when set (SSO/JWT/Bedrock-branch shape)', () => {
     const result = filterAvailableModelsToProfile(['a', 'b', 'c'], { CODEMIE_PROFILE_MODELS: 'a,b' });
     expect(result).toEqual(['a', 'b']);
@@ -36,8 +41,45 @@ describe('filterAvailableModelsToProfile', () => {
     expect(result).toEqual(['a', 'b']);
   });
 
+  // CR-004: the fallback must also be logged, matching Claude/Pi's equivalent warn.
+  it('logs a warning on the AC22 fallback (CR-004)', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    filterAvailableModelsToProfile(['a', 'b'], { CODEMIE_PROFILE_MODELS: 'z,y' });
+
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
   it('is a no-op on a single-model (LiteLLM-branch) list already matching the profile', () => {
     const result = filterAvailableModelsToProfile(['gpt-5-codex'], { CODEMIE_PROFILE_MODELS: 'gpt-5-codex' });
     expect(result).toEqual(['gpt-5-codex']);
+  });
+
+  // CR-003: setupProxy assigns env.CODEMIE_MODEL = resolution.selectedModel
+  // immediately before calling this filter - the live active model must
+  // survive the narrowing even when it falls outside CODEMIE_PROFILE_MODELS,
+  // mirroring OpenCode's filterToAllowed and Pi's filterEntriesToProfile.
+  it('keeps env.CODEMIE_MODEL in the result even when it is outside CODEMIE_PROFILE_MODELS (CR-003)', () => {
+    const result = filterAvailableModelsToProfile(['a', 'b', 'c'], {
+      CODEMIE_PROFILE_MODELS: 'b,c',
+      CODEMIE_MODEL: 'a',
+    });
+    expect(result.sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not duplicate env.CODEMIE_MODEL when it is already in the intersection', () => {
+    const result = filterAvailableModelsToProfile(['a', 'b', 'c'], {
+      CODEMIE_PROFILE_MODELS: 'a,b',
+      CODEMIE_MODEL: 'a',
+    });
+    expect(result).toEqual(['a', 'b']);
+  });
+
+  it('does not add env.CODEMIE_MODEL when it is not itself in availableModels', () => {
+    const result = filterAvailableModelsToProfile(['a', 'b', 'c'], {
+      CODEMIE_PROFILE_MODELS: 'b,c',
+      CODEMIE_MODEL: 'not-in-list',
+    });
+    expect(result.sort()).toEqual(['b', 'c']);
   });
 });
