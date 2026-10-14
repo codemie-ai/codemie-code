@@ -101,12 +101,37 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "apiKey": "sk-***",
       "model": "gpt-4.1",
       "timeout": 300
+    },
+    "enterprise-sso": {
+      "name": "enterprise-sso",
+      "provider": "ai-run-sso",
+      "model": "claude-sonnet-5",
+      "models": ["claude-sonnet-5", "gpt-5.6-terra", "gemini-3-pro"]
     }
   }
 }
 ```
 
 **Legacy Configuration**: If you have an existing single-provider config, it will automatically migrate to a profile named "default" on first use.
+
+### Multiple Models per Profile
+
+A profile may optionally hold several models in `models` (as on `enterprise-sso`
+above), alongside the existing `model` field, which stays the single source of
+truth for the *active* model. `models` is purely additive:
+
+- A profile with no `models` field behaves exactly as before — it is treated
+  as having that one `model`.
+- `codemie setup` → "Update an existing profile" lets you check several models
+  at once; when you select 2+, you are asked which one should be active.
+- `codemie models switch [model-id]` changes the active model in place,
+  without touching credentials, `reasoningEffort`, or any other profile
+  field. Pass a model id directly, or omit it to pick interactively. Only
+  profiles with 2+ models support it — a single-model profile is a no-op
+  (run `codemie setup` to add more models first).
+- The Claude, Codex, OpenCode/codemie-code, and Pi in-session model menus are
+  limited to the active profile's own `models` list when it has 2+ entries;
+  otherwise they show the full provider catalog as before.
 
 ## Supported Providers
 

@@ -75,6 +75,7 @@
 │  - CODEMIE_BASE_URL       = https://codemie.ai                      │
 │  - CODEMIE_API_KEY        = (SSO session token)                     │
 │  - CODEMIE_MODEL          = claude-3-5-sonnet                       │
+│  - CODEMIE_PROFILE_MODELS = (comma-sep.; only when profile has 2+)  │
 │  - CODEMIE_TIMEOUT        = 300                                     │
 │  - CODEMIE_DEBUG          = 0/1                                     │
 │                                                                     │
@@ -321,6 +322,7 @@
 | profile name | CLI > Env > Config | CODEMIE_PROFILE_NAME | `name` | `profile` | via `config.profile` |
 | provider | CLI > Env > Config | CODEMIE_PROVIDER | `provider` | `provider` | via `config.provider` |
 | model | CLI > Env > Config | CODEMIE_MODEL | `model` | `model` | via `config.model` |
+| profile models (2+ only) | Config (`resolveProfileModels`) | CODEMIE_PROFILE_MODELS | `models` | ❌ | ❌ (agent-menu filtering only) |
 | base URL | CLI > Env > Config | CODEMIE_BASE_URL | `baseUrl` | `targetApiUrl` | via `config.targetApiUrl` |
 | API key | CLI > Env > Config | CODEMIE_API_KEY | `apiKey` | ❌ | via `credentials` |
 | timeout | CLI > Env > Config | CODEMIE_TIMEOUT | `timeout` | `timeout` | via `config.timeout` |
@@ -355,6 +357,19 @@ CODEMIE_DEBUG=1
 CODEMIE_PROFILE_NAME=work
 CODEMIE_CLI_VERSION=0.0.16
 ```
+
+### Conditional (only when the active profile has 2+ models)
+
+```bash
+CODEMIE_PROFILE_MODELS=claude-sonnet-5,gpt-5.6-terra
+```
+
+Set by `ConfigLoader.exportProviderEnvVars()` from `resolveProfileModels(config)`;
+absent for any legacy or single-model profile. Consumed only by each agent
+plugin's own in-session model menu (Claude `/model`, Codex's catalog, OpenCode/
+codemie-code's dynamic model config, Pi's `models.json`) to narrow it to the
+profile's own models — never persisted, and ignored by the proxy/credential
+path entirely.
 
 ### Provider-Specific (SSO)
 

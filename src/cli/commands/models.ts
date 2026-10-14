@@ -159,6 +159,19 @@ export async function runModelsSwitch(
 export function createModelsCommand(): Command {
   const command = new Command('models');
   command.description('Manage and list AI models, including the active profile\'s own list');
+  command.addHelpText('after', `
+A profile may optionally hold several models (the "models" array) alongside
+its single active "model". "codemie models switch" changes which one is
+active, without touching credentials or any other profile field; "codemie
+setup" -> "Update an existing profile" is how you add models to the list in
+the first place.
+
+When the active profile has 2+ models, Claude's /model picker, Codex's model
+catalog, OpenCode/codemie-code's dynamic model config, and Pi's models.json
+are all limited to just those models for the running session - never the
+full provider catalog. A single-model (or legacy) profile sees the full
+catalog everywhere, exactly as before.
+`);
 
   const listCommand = new Command('list');
   listCommand
