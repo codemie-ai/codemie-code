@@ -509,9 +509,26 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          if (options.length > 0) {
+          // CODEMIE_PROFILE_MODELS (set only when the active profile has 2+ models)
+          // narrows the menu to this profile's own list. Its absence is the
+          // fallback signal to show the full catalog, same as an empty
+          // intersection with a live catalog that dropped every one of those
+          // ids — never leave the picker empty (AC22).
+          let menuOptions = options;
+          if (env.CODEMIE_PROFILE_MODELS) {
+            const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
+            const filtered = options.filter((option) => allowed.has(option.model.replace(/\[1m\]$/, '')));
+            if (filtered.length > 0) {
+              menuOptions = filtered;
+            } else {
+              logger.warn(
+                '[Claude] CODEMIE_PROFILE_MODELS matched none of the live /model options — showing the full catalog instead'
+              );
+            }
+          }
+          if (menuOptions.length > 0) {
             const settingsJson = JSON.stringify({
-              modelPicker: { options, replaceBuiltInOptions: true },
+              modelPicker: { options: menuOptions, replaceBuiltInOptions: true },
             });
             env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS = writeConfigToTempFile(settingsJson, 'claude-model-picker');
           }
