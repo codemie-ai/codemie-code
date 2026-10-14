@@ -422,6 +422,55 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     });
   });
 
+  it('stamps description/tool_use_id/spawn_depth/worktree/started_at/duration_ms on the forwarded agent.subagent.stop event', async () => {
+    readSubagentMetaMock.mockResolvedValue({ toolUseId: 'tu-sidecar', spawnDepth: 2, description: 'task' });
+    openSubagentPassMock.mockResolvedValue({
+      events: [{ type: 'agent.subagent.usage', started_at: '2026-10-01T00:00:00.000Z', duration_ms: 1500 }],
+      finalize: vi.fn(async () => {}),
+    });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-3.jsonl',
+        agent_id: 'sub-3',
+        agent_type: 'explore',
+        cwd: '/repo/worktrees/feature',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [stopEvent] = forwardedEvents();
+    expect(stopEvent).toMatchObject({
+      description: 'task',
+      tool_use_id: 'tu-sidecar',
+      workflow_run: '',
+      spawn_depth: 2,
+      worktree: '/repo/worktrees/feature',
+      started_at: '2026-10-01T00:00:00.000Z',
+      duration_ms: 1500,
+    });
+  });
+
+  it('defaults started_at/duration_ms to empty/0 on agent.subagent.stop when no agent.subagent.usage was derived', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-5.jsonl',
+        agent_id: 'sub-5',
+        agent_type: 'explore',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [stopEvent] = forwardedEvents();
+    expect(stopEvent.started_at).toBe('');
+    expect(stopEvent.duration_ms).toBe(0);
+  });
+
   it('skips openSubagentPass on SubagentStop when agent_transcript_path is missing', async () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'SubagentStop', agent_type: 'explore' }));

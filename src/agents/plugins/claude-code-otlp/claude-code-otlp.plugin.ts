@@ -30,7 +30,8 @@ import {
 } from './transcript/orchestrator.js';
 import { readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
-import { resolveToolContextFields, resolveToolDiffFields } from './tool-fields.js';
+import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
+import { resolveToolContextFields, resolveToolDiffFields } from './event-fields/tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -177,7 +178,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     };
 
     const pass = await openSubagentPass(hookInput.session_id, subagentFile);
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
+    const stopFields = resolveSubagentStopFields(subagentFile, pass.events);
+    return { decision: 'forward', payload: [{ ...hookInput, ...stopFields }, ...pass.events], finalize: pass.finalize };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
@@ -214,7 +216,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
   }
 
-    private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
+  private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
     return { decision: 'forward', payload: [{ ...hookInput, ...contextFields }] };
   }
