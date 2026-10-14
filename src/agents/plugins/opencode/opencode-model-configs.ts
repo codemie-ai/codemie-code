@@ -742,6 +742,45 @@ export function getResponsesApiModelConfigs(
 }
 
 /**
+ * Narrow a model config map to the active profile's own models
+ * (CODEMIE_PROFILE_MODELS, comma-separated), plus whichever model is actually
+ * selected for this session — the selected model is always kept even when it
+ * is missing from the allowed list, so the session never starts with a
+ * config lacking its own active model.
+ *
+ * The AC22 fallback is judged on the allowed-CSV intersection alone (before
+ * the selected-model add): when the profile's own list matches nothing in
+ * `allModels` at all, the whole unfiltered map is returned unchanged rather
+ * than silently narrowing it down to just the one selected model.
+ *
+ * @param allModels - the full live (or static-fallback) catalogue from fetchDynamicModelConfigs().
+ * @param allowedCsv - env.CODEMIE_PROFILE_MODELS value; call site only passes this when the var is set.
+ * @param selectedModel - the model this session is actually launching with.
+ */
+export function filterToAllowed(
+  allModels: Record<string, OpenCodeModelConfig>,
+  allowedCsv: string,
+  selectedModel: string
+): Record<string, OpenCodeModelConfig> {
+  const allowed = new Set(allowedCsv.split(',').map(id => id.trim()).filter(Boolean));
+  const matchedIds = Object.keys(allModels).filter(id => allowed.has(id));
+
+  if (matchedIds.length === 0) {
+    return allModels;
+  }
+
+  const result: Record<string, OpenCodeModelConfig> = {};
+  for (const id of matchedIds) {
+    result[id] = allModels[id];
+  }
+  if (!(selectedModel in result) && selectedModel in allModels) {
+    result[selectedModel] = allModels[selectedModel];
+  }
+
+  return result;
+}
+
+/**
  * Family-specific defaults for unknown model variants.
  * Used by getModelConfig() when an exact match isn't found but
  * the model ID prefix matches a known family.
