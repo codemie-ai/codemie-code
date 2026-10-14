@@ -49,6 +49,20 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     );
   });
 
+  it('unified connect passes --install-client and --yes through to connectTargets', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-desktop', '--install-client', '--yes'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ installClient: true, yes: true })
+    );
+  });
+
   it('deprecated `connect desktop` prints a notice and delegates to { claudeDesktop: true }', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
