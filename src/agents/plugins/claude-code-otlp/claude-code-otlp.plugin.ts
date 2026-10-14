@@ -154,8 +154,11 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
-    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop');
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
+    const [pass, gitHeadEnd] = await Promise.all([
+      openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop'),
+      resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+    ]);
+    return { decision: 'forward', payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events], finalize: pass.finalize };
   }
 
   private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ClaudeForwardDecision> {
@@ -169,9 +172,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ClaudeForwardDecision> {
-    const pass = await openSessionEndPass(hookInput.session_id, hookInput.transcript_path, hookInput.cwd);
+    const [pass, gitHeadEnd] = await Promise.all([
+      openSessionEndPass(hookInput.session_id, hookInput.transcript_path, hookInput.cwd),
+      resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+    ]);
     // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize, retryOnce: true };
+    return {
+      decision: 'forward',
+      payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events],
+      finalize: pass.finalize,
+      retryOnce: true,
+    };
   }
 
   private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
