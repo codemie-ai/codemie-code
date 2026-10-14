@@ -595,3 +595,104 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     expect(types).toEqual(['agent.session.stop', 'agent.usage.request']);
   });
 });
+
+describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  const promptEvent = (prompt: string, overrides: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      session_id: 's',
+      transcript_path: '',
+      cwd: '/x',
+      hook_event_name: 'UserPromptSubmit',
+      prompt,
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+  });
+
+  it('stamps command_name, story_marker, ticket_mentions and prompt_length', async () => {
+    await plugin.processOtlpEvent(promptEvent('/sdlc-factory:sdlc-standard story: abc-12 and see XYZ-3, abc-12'), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['command_name']).toBe('sdlc-factory:sdlc-standard');
+    expect(forwarded['story_marker']).toBe('ABC-12');
+    expect(forwarded['ticket_mentions']).toEqual(['ABC-12', 'XYZ-3']);
+    expect(forwarded['prompt_length']).toBe('/sdlc-factory:sdlc-standard story: abc-12 and see XYZ-3, abc-12'.length);
+  });
+
+  it('derives prompt_length from the full prompt, not the 200-char prompt_body', async () => {
+    await plugin.processOtlpEvent(promptEvent('x'.repeat(500)), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['prompt_length']).toBe(500);
+    expect(String(forwarded['prompt_body'])).toHaveLength(200);
+  });
+
+  it('finds a ticket mention that sits beyond the 200-char cut', async () => {
+    await plugin.processOtlpEvent(promptEvent(`${'x '.repeat(150)}see ABC-99`), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    expect(forwardedEvents()[0]['ticket_mentions']).toEqual(['ABC-99']);
+  });
+
+  it('emits empty values for a plain prompt and for a pasted path', async () => {
+    await plugin.processOtlpEvent(promptEvent('/Users/foo/bar is broken'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['command_name']).toBe('');
+    expect(forwarded['story_marker']).toBe('');
+    expect(forwarded['ticket_mentions']).toEqual([]);
+  });
+
+  it('handles an empty prompt', async () => {
+    await plugin.processOtlpEvent(promptEvent(''), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['prompt_length']).toBe(0);
+    expect(forwarded['command_name']).toBe('');
+  });
+
+  it('lets a resolved value win over a same-named key in the hook payload', async () => {
+    await plugin.processOtlpEvent(promptEvent('hello', { prompt_length: 999, command_name: 'evil' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['prompt_length']).toBe(5);
+    expect(forwarded['command_name']).toBe('');
+  });
+
+  it('does not stamp the prompt fields on other events', async () => {
+    await plugin.processOtlpEvent(event('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    for (const key of ['command_name', 'story_marker', 'ticket_mentions', 'prompt_length']) {
+      expect(forwarded).not.toHaveProperty(key);
+    }
+  });
+
+  it('emits no event when the SSO gate blocks the prompt', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await plugin.processOtlpEvent(promptEvent('/simplify ABC-1'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    stdout.mockRestore();
+  });
+});
