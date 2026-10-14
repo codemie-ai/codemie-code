@@ -13,7 +13,11 @@ const SUBSCRIPTION_SINGLE_MODEL_PROVIDERS = new Set(['anthropic-subscription', '
 
 const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
 
-function formatTable(models: ModelInfo[]): void {
+export function formatTable(
+  models: ModelInfo[],
+  profileModelIds: string[] = [],
+  activeModelId?: string
+): void {
   // Router aliases (Switchyard virtual routers, LiteLLM auto-router declarations) are
   // free-form custom names and routinely run longer than any concrete deployment id
   // (e.g. a custom Switchyard variant name) — wide enough not to silently truncate those.
@@ -47,7 +51,16 @@ function formatTable(models: ModelInfo[]): void {
     const desc = truncate(model.description ?? '', DESC_WIDTH);
     const origin = showOrigin ? formatOrigin(model.metadata?.origin, ORIGIN_WIDTH) : '';
     const type = showType ? formatType(model.metadata?.isRouter, TYPE_WIDTH) : '';
-    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + chalk.dim(desc));
+    // Mark rows belonging to the active profile's own model list (resolveProfileModels),
+    // and the one matching the active model distinctly — so the profile's own models
+    // are visible at a glance without opening the full catalog.
+    const tag =
+      model.id === activeModelId
+        ? chalk.green(' (active)')
+        : profileModelIds.includes(model.id)
+          ? chalk.cyan(' (profile)')
+          : '';
+    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + chalk.dim(desc) + tag);
   }
 }
 
@@ -182,7 +195,9 @@ export function createModelsCommand(): Command {
         }
 
         console.log(chalk.bold(`\nProvider: ${chalk.cyan(provider)}\n`));
-        formatTable(models);
+        // config already carries the active profile's own model/models fields
+        // (ProviderProfile & WorkspaceConfig) — no extra profile lookup needed.
+        formatTable(models, resolveProfileModels(config), config.model);
         console.log(chalk.dim(`\n${models.length} model(s) available.\n`));
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
