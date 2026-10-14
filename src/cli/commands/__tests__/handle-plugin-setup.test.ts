@@ -130,4 +130,56 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     expect(savedConfig.model).toBe('x');
     expect(savedConfig.models).toEqual(['x', 'y']);
   });
+
+  // CR-010: the active-model follow-up's default must be the profile's actual
+  // active model (profile.model), not just the first still-checked stored id.
+  it('defaults the active-model follow-up to the profile\'s actual active model even when it is not first in models (CR-010)', async () => {
+    configMock.getProfile.mockResolvedValue({ model: 'y', models: ['x', 'y'] });
+    const setupSteps = {
+      getCredentials: vi.fn().mockResolvedValue({}),
+      fetchModels: vi.fn().mockResolvedValue(['x', 'y', 'z']),
+      buildConfig: vi.fn((_credentials: unknown, model: string) => ({ provider: 'test', model }))
+    };
+
+    promptMock
+      .mockResolvedValueOnce({ selectedModels: ['x', 'y'] })
+      .mockResolvedValueOnce({ activeModel: 'y' });
+
+    await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
+
+    const activeModelQuestion = promptMock.mock.calls[1][0][0] as { default?: string };
+    expect(activeModelQuestion.default).toBe('y');
+  });
+
+  // CR-007: a failure installing one of several selected models must not abort
+  // the whole setup - the profile should still be saved with the models that
+  // succeeded, and the failure surfaced via a warning.
+  it('isolates a per-model install failure, saving the profile with only the models that succeeded (CR-007)', async () => {
+    providerRegistryMock.getProvider.mockReturnValue({ supportsModelInstallation: true });
+    const setupSteps = {
+      getCredentials: vi.fn().mockResolvedValue({}),
+      fetchModels: vi.fn().mockResolvedValue(['a', 'b', 'c']),
+      buildConfig: vi.fn((_credentials: unknown, model: string) => ({ provider: 'test', model })),
+      installModel: vi.fn()
+        .mockResolvedValueOnce(undefined) // a
+        .mockRejectedValueOnce(new Error('pull failed')) // b
+        .mockResolvedValueOnce(undefined) // c
+    };
+
+    promptMock
+      .mockResolvedValueOnce({ selectedModels: ['a', 'b', 'c'] })
+      .mockResolvedValueOnce({ activeModel: 'a' });
+
+    const { logger } = await import('../../../utils/logger.js');
+
+    await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
+
+    expect(setupSteps.installModel).toHaveBeenCalledTimes(3);
+    expect(logger.warn).toHaveBeenCalled();
+
+    expect(configMock.saveProfile).toHaveBeenCalledTimes(1);
+    const [, savedConfig] = configMock.saveProfile.mock.calls[0];
+    expect(savedConfig.model).toBe('a');
+    expect(savedConfig.models).toEqual(['a', 'c']);
+  });
 });

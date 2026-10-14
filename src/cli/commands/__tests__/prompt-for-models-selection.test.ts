@@ -105,4 +105,65 @@ describe('promptForModelsSelection', () => {
     const choiceA = checkboxQuestion.choices.find(c => c.value === 'a');
     expect(choiceA?.checked).toBe(true);
   });
+
+  // CR-009: inquirer's checkbox can only return a value that is one of its
+  // `choices`. A custom-entered or Ollama-searched id that never gains a
+  // matching choice on the re-render can never actually be checked by a real
+  // checkbox prompt - the previous "adds a custom-entered model id" test
+  // above only proved the return value, not that the id was ever a
+  // selectable choice (it is mocked at the inquirer level).
+  it('adds the custom-entered model id as a real choice on the re-rendered checkbox (CR-009)', async () => {
+    const seen = queueAnswers([
+      { selectedModels: ['a', 'custom'] },
+      { customModel: 'my-custom-model' },
+      { selectedModels: ['a', 'my-custom-model'] },
+      { activeModel: 'my-custom-model' }
+    ]);
+
+    await promptForModelsSelection(['a', 'b', 'c']);
+
+    const secondCheckbox = seen[2][0] as { choices: Array<{ value: string }> };
+    expect(secondCheckbox.choices.some(c => c.value === 'my-custom-model')).toBe(true);
+  });
+
+  it('adds the Ollama-searched model id as a real choice on the re-rendered checkbox (CR-009)', async () => {
+    const setupSteps = { searchModel: vi.fn().mockResolvedValue('searched-model') };
+    const seen = queueAnswers([
+      { selectedModels: ['a', 'search'] },
+      { selectedModels: ['a', 'searched-model'] },
+      { activeModel: 'searched-model' }
+    ]);
+
+    await promptForModelsSelection(['a', 'b', 'c'], undefined, setupSteps, undefined);
+
+    const secondCheckbox = seen[1][0] as { choices: Array<{ value: string }> };
+    expect(secondCheckbox.choices.some(c => c.value === 'searched-model')).toBe(true);
+  });
+
+  // CR-010: the follow-up "which model should be active?" default must reflect
+  // the profile's actual active model, not just the first still-checked id.
+  it('defaults the active-model prompt to the profile\'s actual active model, not the first checked id (CR-010)', async () => {
+    const seen = queueAnswers([
+      { selectedModels: ['a', 'b'] },
+      { activeModel: 'b' }
+    ]);
+
+    await promptForModelsSelection(['a', 'b', 'c'], undefined, undefined, undefined, ['a', 'b'], 'b');
+
+    const activeModelQuestion = seen[1][0] as { default?: string };
+    expect(activeModelQuestion.default).toBe('b');
+  });
+
+  it('falls back to the first still-checked preselected id when the actual active model is no longer checked (CR-010)', async () => {
+    const seen = queueAnswers([
+      { selectedModels: ['a', 'b'] },
+      { activeModel: 'a' }
+    ]);
+
+    // preselectedActive 'x' was unchecked this round - fall back to preselected order.
+    await promptForModelsSelection(['a', 'b', 'c'], undefined, undefined, undefined, ['a', 'b'], 'x');
+
+    const activeModelQuestion = seen[1][0] as { default?: string };
+    expect(activeModelQuestion.default).toBe('a');
+  });
 });

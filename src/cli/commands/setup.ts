@@ -278,18 +278,53 @@ export async function handlePluginSetup(
     } else {
       // On an update, pre-check the existing profile's models so removing the
       // active model (or adding more) starts from what's already configured.
-      const existingModels = isUpdate && profileName
-        ? resolveProfileModels((await ConfigLoader.getProfile(profileName)) ?? {})
+      const existingProfile = isUpdate && profileName
+        ? (await ConfigLoader.getProfile(profileName)) ?? {}
         : undefined;
-      const result = await promptForModelsSelection(models, providerTemplate, setupSteps, credentials, existingModels);
+      const existingModels = existingProfile ? resolveProfileModels(existingProfile) : undefined;
+      // CR-010: the profile's actual active model, threaded through separately
+      // so the active-model follow-up defaults to it rather than just the
+      // first still-checked id in existingModels.
+      const existingActiveModel = existingProfile?.model;
+      const result = await promptForModelsSelection(
+        models,
+        providerTemplate,
+        setupSteps,
+        credentials,
+        existingModels,
+        existingActiveModel
+      );
       selectedModel = result.activeModel;
       selectedModels = result.models;
     }
 
-    // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model
+    // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model.
+    // CR-007: a single failed install must not abort the whole setup before any
+    // profile is saved - each install is isolated, failures are collected and
+    // surfaced, and the profile is still saved with whichever models succeeded.
     if (providerTemplate?.supportsModelInstallation && setupSteps.installModel) {
+      const failedModelIds: string[] = [];
       for (const modelId of selectedModels) {
-        await setupSteps.installModel(credentials, modelId, models);
+        try {
+          await setupSteps.installModel(credentials, modelId, models);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn(`Failed to install model "${modelId}": ${message}`);
+          failedModelIds.push(modelId);
+        }
+      }
+
+      if (failedModelIds.length > 0) {
+        selectedModels = selectedModels.filter(id => !failedModelIds.includes(id));
+        if (selectedModels.length === 0) {
+          throw new Error(`Failed to install all selected models: ${failedModelIds.join(', ')}`);
+        }
+        console.log(
+          chalk.yellow(`⚠ Could not install: ${failedModelIds.join(', ')} - continuing with the rest`)
+        );
+        if (!selectedModels.includes(selectedModel)) {
+          selectedModel = selectedModels[0];
+        }
       }
     }
 
@@ -469,56 +504,104 @@ async function promptForProfileName(providerName: string): Promise<string> {
 }
 
 /**
+ * Empty-catalog model entry: offers to search (when supported) or enter a
+ * model name manually, returning a single-model selection either way.
+ */
+async function promptForManualOrSearchModel(
+  providerTemplate: any,
+  setupSteps: any,
+  credentials: any
+): Promise<{ models: string[]; activeModel: string }> {
+  const canSearch = typeof setupSteps?.searchModel === 'function';
+
+  if (canSearch) {
+    const { entryMethod } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'entryMethod',
+        message: 'No models found. How would you like to choose a model?',
+        choices: [
+          { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
+          { name: 'Enter model name manually', value: 'manual' }
+        ]
+      }
+    ]);
+
+    if (entryMethod === 'search') {
+      const searched = await setupSteps.searchModel(credentials);
+      if (searched) {
+        return { models: [searched], activeModel: searched };
+      }
+      // User backed out of search - fall through to manual entry
+    }
+  }
+
+  const { manualModel } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'manualModel',
+      message: 'Enter model name manually:',
+      default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
+      validate: (input: string) => input.trim() !== '' || 'Model name is required'
+    }
+  ]);
+  const result = manualModel ? manualModel.trim() : manualModel;
+  return { models: [result], activeModel: result };
+}
+
+/**
+ * Follow-up "which model should be active?" prompt, asked only when 2+
+ * models ended up checked. Defaults to the profile's actual active model
+ * (preselectedActive) when it is still checked - falling back to the first
+ * still-checked preselected id, then the first checked id - rather than
+ * always defaulting to the first still-checked stored id (CR-010).
+ */
+async function promptForActiveModel(
+  alreadyChecked: string[],
+  preselected?: string[],
+  preselectedActive?: string
+): Promise<string> {
+  const defaultActive =
+    preselectedActive && alreadyChecked.includes(preselectedActive)
+      ? preselectedActive
+      : preselected?.find(id => alreadyChecked.includes(id)) ?? alreadyChecked[0];
+
+  const { activeModel } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'activeModel',
+      message: 'Which model should be active?',
+      choices: alreadyChecked,
+      default: defaultActive
+    }
+  ]);
+
+  return activeModel;
+}
+
+/**
  * Prompt for a multi-model selection with a default-active-model follow-up.
  *
  * Mirrors the single-choice picker's catalog handling (empty-catalog manual/
  * search entry, live recommendations, "Custom model" / "Search Ollama
  * library" entries), but lets the user check 2+ models and then asks which
  * one should be active when more than one was picked.
+ *
+ * @param preselectedActive - the profile's actual active model (profile.model)
+ * on an update, used as the active-model follow-up's default - see CR-010.
  */
 export async function promptForModelsSelection(
   models: string[],
   providerTemplate?: any,
   setupSteps?: any,
   credentials?: any,
-  preselected?: string[]
+  preselected?: string[],
+  preselectedActive?: string
 ): Promise<{ models: string[]; activeModel: string }> {
   const canSearch = typeof setupSteps?.searchModel === 'function';
 
   if (models.length === 0) {
-    if (canSearch) {
-      const { entryMethod } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'entryMethod',
-          message: 'No models found. How would you like to choose a model?',
-          choices: [
-            { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
-            { name: 'Enter model name manually', value: 'manual' }
-          ]
-        }
-      ]);
-
-      if (entryMethod === 'search') {
-        const searched = await setupSteps.searchModel(credentials);
-        if (searched) {
-          return { models: [searched], activeModel: searched };
-        }
-        // User backed out of search - fall through to manual entry
-      }
-    }
-
-    const { manualModel } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'manualModel',
-        message: 'Enter model name manually:',
-        default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
-        validate: (input: string) => input.trim() !== '' || 'Model name is required'
-      }
-    ]);
-    const result = manualModel ? manualModel.trim() : manualModel;
-    return { models: [result], activeModel: result };
+    return promptForManualOrSearchModel(providerTemplate, setupSteps, credentials);
   }
 
   // Live-computed recommendations (fits this machine + agent-ready + most
@@ -569,7 +652,15 @@ export async function promptForModelsSelection(
     if (picks.includes('search')) {
       const searched = await setupSteps.searchModel(credentials);
       checked = new Set(alreadyChecked);
-      if (searched) checked.add(searched);
+      if (searched) {
+        checked.add(searched);
+        // CR-009: extend the choices source itself so the next render's
+        // checkbox actually has a matching choice for this id - inquirer's
+        // checkbox can never return a value that isn't one of its choices.
+        if (!models.includes(searched)) {
+          models = [...models, searched];
+        }
+      }
       continue;
     }
 
@@ -583,7 +674,14 @@ export async function promptForModelsSelection(
         }
       ]);
       checked = new Set(alreadyChecked);
-      if (customModel) checked.add(customModel.trim());
+      if (customModel) {
+        const trimmed = customModel.trim();
+        checked.add(trimmed);
+        // CR-009: same reasoning as the search branch above.
+        if (!models.includes(trimmed)) {
+          models = [...models, trimmed];
+        }
+      }
       continue;
     }
 
@@ -597,17 +695,7 @@ export async function promptForModelsSelection(
       return { models: alreadyChecked, activeModel: alreadyChecked[0] };
     }
 
-    const defaultActive = preselected?.find(id => alreadyChecked.includes(id)) ?? alreadyChecked[0];
-    const { activeModel } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'activeModel',
-        message: 'Which model should be active?',
-        choices: alreadyChecked,
-        default: defaultActive
-      }
-    ]);
-
+    const activeModel = await promptForActiveModel(alreadyChecked, preselected, preselectedActive);
     return { models: alreadyChecked, activeModel };
   }
 }
