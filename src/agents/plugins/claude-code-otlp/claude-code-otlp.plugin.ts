@@ -2,7 +2,9 @@
 import { basename } from 'node:path';
 import type {
   HookInput,
+  PostToolUseHookInput,
   PreCompactHookInput,
+  PreToolUseHookInput,
   SessionEndHookInput,
   SessionStartHookInput,
   StopFailureHookInput,
@@ -28,6 +30,7 @@ import {
 } from './transcript/orchestrator.js';
 import { readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
+import { resolveToolContextFields, resolveToolDiffFields } from './tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -82,6 +85,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
     if (hookInput.hook_event_name === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PreToolUse') {
+      return await this.onPreToolUse(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PostToolUse') {
+      return await this.onPostToolUse(hookInput);
     }
     if (hookInput.hook_event_name === 'Stop') {
       return await this.onStopEvent(hookInput);
@@ -204,7 +213,19 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       }
     }
   }
+
+    private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
+    const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
+    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields }] };
+  }
+
+  private async onPostToolUse(hookInput: PostToolUseHookInput): Promise<ClaudeForwardDecision> {
+    const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
+    const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
+    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields, ...diffFields }] };
+  }
 }
+
 
 /**
  * Reads a string field not declared on the SDK's `HookInput` typings (e.g. `tool_use_id` on

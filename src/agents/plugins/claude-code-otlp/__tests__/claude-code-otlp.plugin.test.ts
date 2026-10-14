@@ -260,11 +260,102 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
   it('does not dispatch openMainTranscriptPass for unrelated hook events', async () => {
     const plugin = new ClaudeCodeOtlpPlugin();
-    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostToolUse' }));
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }));
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(openMainTranscriptPassMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['Edit', 'Write', 'MultiEdit'])(
+    'stamps file_path on agent.tool.start/end for %s',
+    async (toolName) => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ hook_event_name: 'PreToolUse', tool_name: toolName, tool_input: { file_path: '/repo/a.ts' } })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      expect(forwardedEvents()[0].file_path).toBe('/repo/a.ts');
+
+      await plugin.processOtlpEvent(
+        JSON.stringify(
+          hookEvent({
+            hook_event_name: 'PostToolUse',
+            tool_name: toolName,
+            tool_input: { file_path: '/repo/a.ts' },
+            tool_response: {},
+          })
+        ),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      expect(forwardedEvents()[0].file_path).toBe('/repo/a.ts');
+    }
+  );
+
+  it('stamps file_path from notebook_path on NotebookEdit', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(
+        hookEvent({ hook_event_name: 'PreToolUse', tool_name: 'NotebookEdit', tool_input: { notebook_path: '/repo/nb.ipynb' } })
+      ),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    expect(forwardedEvents()[0].file_path).toBe('/repo/nb.ipynb');
+  });
+
+  it.each(['Agent', 'Task'])('stamps subagent_type/description on agent.tool.start/end for %s', async (toolName) => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(
+        hookEvent({
+          hook_event_name: 'PreToolUse',
+          tool_name: toolName,
+          tool_input: { subagent_type: 'Explore', description: 'find files' },
+        })
+      ),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.subagent_type).toBe('Explore');
+    expect(forwarded.description).toBe('find files');
+  });
+
+  it('stamps skill_name on agent.tool.start/end for Skill', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(hookEvent({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'codemie:msgraph' } })),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    expect(forwardedEvents()[0].skill_name).toBe('codemie:msgraph');
+  });
+
+  it('stamps lines_added/lines_removed on agent.tool.end from the Edit structuredPatch', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(
+        hookEvent({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Edit',
+          tool_input: { file_path: '/repo/a.ts' },
+          tool_response: { structuredPatch: [{ lines: ['+a', '+b', '-old'] }] },
+        })
+      ),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.lines_added).toBe(2);
+    expect(forwarded.lines_removed).toBe(1);
+  });
+
+  it('does not stamp lines_added/lines_removed on agent.tool.start (not resolvable pre-execution)', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(hookEvent({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/repo/a.ts' } })),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.lines_added).toBeUndefined();
+    expect(forwarded.lines_removed).toBeUndefined();
   });
 
   it('invokes openSubagentPass with the agent_id/tool_use_id/agent_type extracted from a SubagentStop payload', async () => {

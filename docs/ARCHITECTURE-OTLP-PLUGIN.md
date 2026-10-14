@@ -166,6 +166,7 @@ The base flow calls `isTracked()` (abstract) before `deps.ensureOtlpProxy()`, so
 | `src/agents/core/hook-credentials.ts` | `resolveHookCredentials()`: the SSO credentials the daemon will use, read from daemon state (SSO only) |
 | `src/agents/core/story-resolver.ts` | Story tiers and `resolveStoryFor({ cwd, branch, prompt, explicitConfigPath })` |
 | `client-version-cache.ts` | TTL file cache around `claude --version`, backing the `client_version` common field |
+| `tool-fields.ts` | `resolveToolContextFields`/`resolveToolDiffFields` — `PreToolUse`/`PostToolUse`-only, Claude-tool-shape-aware enrichment (`file_path`, `subagent_type`/`description`, `skill_name`, `lines_added`/`lines_removed`) |
 | `claude-code-otlp.types.ts` | `ClaudeForwardDecision` alias, `isClaudeCodeHookInput` |
 | `claude-code-otlp.constants.ts` | `CLAUDE_CODE_OTLP_AGENT_NAME` — the registered adapter name |
 | `claude-code-otlp.allowlist.ts` | Per-project allowlist gating (`isProjectTracked`/`readAllowlistState`) — see the INVARIANT comment in the base `processOtlpEvent`: an untracked project must never reach the daemon spool, since the daemon has no allowlist of its own |
@@ -173,6 +174,6 @@ The base flow calls `isTracked()` (abstract) before `deps.ensureOtlpProxy()`, so
 | `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session |
 | `src/cli/commands/proxy/connectors/claude-code-otlp.ts` | Wires Claude Code's `.claude/settings.json` hooks to `codemie hook --agent claude-code-otlp` |
 
-Claude Code fires 12 hook events (`HOOK_EVENTS` in that connector). `evaluate()` branches on `SessionStart` (adds the opt-in `os`, `timezone`, `git_email`, `codemie_cli_email`, `os_user`, `git_head_start` and `model` fields), `UserPromptSubmit` (auth gate), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse), and `SubagentStop` (subagent-scoped transcript parse); everything else falls through to the raw passthrough.
+Claude Code fires 12 hook events (`HOOK_EVENTS` in that connector). `evaluate()` branches on `SessionStart` (adds the opt-in `os`, `timezone`, `git_email`, `codemie_cli_email`, `os_user`, `git_head_start` and `model` fields), `UserPromptSubmit` (auth gate), `PreToolUse`/`PostToolUse` (tool-specific enrichment via `tool-fields.ts`: `file_path` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, `subagent_type`/`description` for `Agent`/`Task`, `skill_name` for `Skill`; `PostToolUse` additionally stamps `lines_added`/`lines_removed` from the tool result's own diff, not resolvable pre-execution), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse), and `SubagentStop` (subagent-scoped transcript parse); everything else falls through to the raw passthrough.
 
 See `docs/ARCHITECTURE-PROXY.md` for the proxy/daemon layer this hands off to, and `otlp-spool/` (`src/providers/plugins/sso/proxy/plugins/otlp-spool/`) for session completeness gating and draining — both already agent-agnostic and not something a new adapter needs to touch.
