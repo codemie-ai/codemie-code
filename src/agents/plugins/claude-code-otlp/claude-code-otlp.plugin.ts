@@ -32,7 +32,8 @@ import {
 } from './transcript/orchestrator.js';
 import { readForkedSkillMarker, readSubagentMeta, subagentFilePath } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
-import { resolveToolContextFields, resolveToolDiffFields } from './tool-fields.js';
+import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
+import { resolveToolContextFields, resolveToolDiffFields } from './event-fields/tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -206,7 +207,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     };
 
     const pass = await openSubagentPass(hookInput.session_id, subagentFile);
-    const stopPayload = marker.skillName ? { ...hookInput, skill_name: marker.skillName } : hookInput;
+    const stopFields = resolveSubagentStopFields(subagentFile, pass.events);
+    const stopPayload = {
+      ...hookInput,
+      ...stopFields,
+      ...(marker.skillName ? { skill_name: marker.skillName } : {}),
+    };
     return { decision: 'forward', payload: [stopPayload, ...pass.events], finalize: pass.finalize };
   }
 
@@ -244,7 +250,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
   }
 
-    private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
+  private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
     return { decision: 'forward', payload: [{ ...hookInput, ...contextFields }] };
   }
