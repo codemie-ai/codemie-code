@@ -124,11 +124,13 @@ truth for the *active* model. `models` is purely additive:
   as having that one `model`.
 - `codemie setup` → "Update an existing profile" lets you check several models
   at once; when you select 2+, you are asked which one should be active.
-- `codemie models switch [model-id]` changes the active model in place,
-  without touching credentials, `reasoningEffort`, or any other profile
-  field. Pass a model id directly, or omit it to pick interactively. Only
-  profiles with 2+ models support it — a single-model profile is a no-op
-  (run `codemie setup` to add more models first).
+- `codemie models switch [model-id]` changes the active model in place, only
+  writing the profile's `model` field (plus Claude's `haikuModel`/
+  `sonnetModel`/`opusModel` tiers, when applicable) — never credentials,
+  `reasoningEffort`, or any other profile field. Pass a model id directly, or
+  omit it to pick interactively. Only profiles with 2+ models support it — a
+  single-model profile is a no-op (run `codemie setup` to add more models
+  first).
 - The Claude, Codex, OpenCode/codemie-code, and Pi in-session model menus are
   limited to the active profile's own `models` list when it has 2+ entries;
   otherwise they show the full provider catalog as before.
