@@ -7,6 +7,7 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
+  detectGitHeadSha: vi.fn(async () => 'abc123def456'),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/utils/config.js', () => ({
@@ -40,6 +41,7 @@ vi.mock('../transcript/subagent-usage.js', () => ({
 
 import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { detectGitHeadSha } from '@/utils/processes.js';
 
 // Deferred past the mock-backing consts above: a static import of the plugin would be
 // hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
@@ -147,6 +149,42 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     const [forwarded] = forwardedEvents();
     expect(forwarded.git_branch).toBe('main');
     expect(forwarded.repo_remote).toBe('org/repo');
+  });
+
+  it.each([
+    ['Stop', 'agent.session.stop'],
+    ['SessionEnd', 'agent.session.end'],
+  ])('stamps git_head_end and git_branch on %s', async (hookEventName) => {
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: hookEventName }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.git_head_end).toBe('abc123def456');
+    expect(forwarded.git_branch).toBe('main');
+    expect(forwarded).not.toHaveProperty('git_head_start');
+  });
+
+  it('sends an empty git_head_end when the HEAD lookup fails, without dropping the event', async () => {
+    vi.mocked(detectGitHeadSha).mockRejectedValueOnce(new Error('not a git repo'));
+
+    await plugin.processOtlpEvent(JSON.stringify(hookEvent({ hook_event_name: 'Stop' })), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.git_head_end).toBe('');
+  });
+
+  it('does not stamp git_head_end on other events (PreCompact)', async () => {
+    await plugin.processOtlpEvent(JSON.stringify(hookEvent({ hook_event_name: 'PreCompact' })), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded).not.toHaveProperty('git_head_end');
   });
 
   it('preserves agent_id/agent_type already present on the raw event (SubagentStop)', async () => {
