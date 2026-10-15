@@ -88,3 +88,36 @@ describe('fetchAndBuildPiModels — CODEMIE_PROFILE_MODELS narrowing (CR-005 int
     expect(writtenModelIds()).toEqual(['model-a']);
   });
 });
+
+describe('fetchAndBuildPiModels — compat.thinkingFormat schema (Pi 1.2.0)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Pi validates models.json against a closed enum and drops the WHOLE file on a mismatch,
+  // which surfaces as `Unknown provider "codemie-proxy"`. 'reasoning_effort' was rejected in 1.2.0.
+  const PI_THINKING_FORMATS = [
+    'openai', 'openrouter', 'deepseek', 'together', 'baseten', 'zai', 'qwen',
+    'chat-template', 'qwen-chat-template', 'string-thinking', 'ant-ling',
+  ];
+
+  it('writes only thinkingFormat values Pi accepts, for every generated provider', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      llmModel('gpt-5-mini'),
+      llmModel('claude-sonnet-4'),
+    ]);
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_JWT_TOKEN: 'jwt-token',
+      CODEMIE_BASE_URL: 'http://localhost:1234',
+    };
+
+    await fetchAndBuildPiModels(env, '/work');
+
+    const [, json] = writeFileMock.mock.calls[0];
+    const providers = JSON.parse(json as string).providers as Record<string, { compat: { thinkingFormat: string } }>;
+    expect(Object.keys(providers).sort()).toEqual(['codemie-anthropic', 'codemie-proxy']);
+    for (const provider of Object.values(providers)) {
+      expect(PI_THINKING_FORMATS).toContain(provider.compat.thinkingFormat);
+    }
+  });
+});
