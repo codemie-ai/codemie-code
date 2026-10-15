@@ -172,7 +172,7 @@ export interface SubagentUsageTotal {
   output_tokens: number;
   /** True when any request in this group has no final `stop_reason`, so `output_tokens` may undercount. */
   output_tokens_partial: boolean;
-  thinking_tokens: number;
+  thinking_tokens: number | null;
   web_search_requests: number;
   web_fetch_requests: number;
   api_calls: number;
@@ -196,7 +196,10 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
       existing.output_tokens_partial = existing.output_tokens_partial || isOutputTokensPartial(r);
-      existing.thinking_tokens += r.thinkingTokens ?? 0;
+      existing.thinking_tokens =
+        existing.thinking_tokens === null && r.thinkingTokens === null
+          ? null
+          : (existing.thinking_tokens ?? 0) + (r.thinkingTokens ?? 0);
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
       existing.api_calls += 1;
@@ -215,7 +218,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
         output_tokens_partial: isOutputTokensPartial(r),
-        thinking_tokens: r.thinkingTokens ?? 0,
+        thinking_tokens: r.thinkingTokens,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
         api_calls: 1,
