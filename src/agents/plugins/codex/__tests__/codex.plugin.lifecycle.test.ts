@@ -11,10 +11,14 @@ vi.mock('../codex.incremental-sync.js', () => ({
   stopCodexIncrementalSync: stopSync,
 }));
 
+const reconcileStaleCodexSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
+vi.mock('../codex.reconciliation.js', () => ({ reconcileStaleCodexSessions }));
+
 describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
   beforeEach(() => {
     startSync.mockReset();
     stopSync.mockReset();
+    reconcileStaleCodexSessions.mockReset().mockResolvedValue({ reconciled: 0, failed: 0 });
     vi.resetModules();
   });
 
@@ -187,5 +191,45 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
       agentSessionFile: rolloutPath,
     });
     expect(calls).toEqual([`save:${rolloutPath}`, 'processEvent']);
+  });
+});
+
+describe('CodexPluginMetadata.lifecycle — stale-session reconciliation wiring', () => {
+  beforeEach(() => {
+    startSync.mockReset();
+    stopSync.mockReset();
+    reconcileStaleCodexSessions.mockReset().mockResolvedValue({ reconciled: 0, failed: 0 });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    delete process.env.CODEMIE_CODEX_STARTED_AT;
+  });
+
+  it('reconciles stale codex sessions on start, alongside the existing SessionStart call', async () => {
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'codex', CODEMIE_PROVIDER: 'ai-run-sso' };
+
+    await CodexPluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
+
+    expect(processEvent).toHaveBeenCalledTimes(1);
+    expect(reconcileStaleCodexSessions).toHaveBeenCalledTimes(1);
+    expect(reconcileStaleCodexSessions.mock.calls[0][0]).toBe(env);
+    expect(typeof reconcileStaleCodexSessions.mock.calls[0][1]).toBe('function');
+  });
+
+  it('does not throw when reconciliation rejects', async () => {
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+    reconcileStaleCodexSessions.mockRejectedValue(new Error('boom'));
+
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+
+    await expect(
+      CodexPluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'codex' })
+    ).resolves.toBeUndefined();
   });
 });
