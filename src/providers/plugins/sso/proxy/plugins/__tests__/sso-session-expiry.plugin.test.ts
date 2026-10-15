@@ -203,4 +203,53 @@ describe('SSOSessionExpiryPlugin', () => {
     );
     expect(body.error.message).toBe(`CodeMie SSO session expired. ${describeLogin('started')}`);
   });
+
+  it('treats a credential within clock-skew tolerance of expiry as confirmed-expired', async () => {
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({
+        cookies: { session: 'abc' },
+        apiUrl: TARGET_API_URL,
+        // Not yet past expiresAt by wall-clock, but within a small tolerance window:
+        // a locally slow clock must not read this as "still fresh".
+        expiresAt: Date.now() + 3_000,
+      })
+    );
+    const context = createProxyContext();
+    const tools = createTools();
+    const original = response(302, { location: 'https://x/oauth2/start?rd=%2F' });
+
+    const result = await interceptor.onUpstreamResponse!(context, original, tools);
+
+    expect(result.statusCode).toBe(401);
+    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a synthetic 401 (not the raw redirect) when re-auth plumbing rejects, and logs which step failed', async () => {
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    vi.mocked(startDetachedSsoLogin).mockRejectedValueOnce(new Error('spawn failed'));
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({
+        cookies: { session: 'abc' },
+        apiUrl: TARGET_API_URL,
+        expiresAt: Date.now() - 1000,
+      })
+    );
+    const context = createProxyContext();
+    const tools = createTools();
+    const original = response(302, { location: 'https://x/oauth2/start?rd=%2F' });
+
+    const result = await interceptor.onUpstreamResponse!(context, original, tools);
+
+    expect(result).not.toBe(original);
+    expect(result.statusCode).toBe(401);
+    const body = JSON.parse(
+      ((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toString('utf-8')
+    );
+    expect(body.error.message).toBe(`CodeMie SSO session expired. ${describeLogin()}`);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [message] = errorSpy.mock.calls[0];
+    expect(message).toContain('startDetachedSsoLogin');
+
+    errorSpy.mockRestore();
+  });
 });

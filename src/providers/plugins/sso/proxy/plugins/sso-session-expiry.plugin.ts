@@ -19,10 +19,14 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } f
 import { ProxyContext } from '../proxy-types.js';
 import { SSOCredentials } from '../../../../core/types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
-import { startDetachedSsoLogin, describeLogin } from '../../sso.detached-login.js';
+import { logger } from '../../../../../utils/logger.js';
+import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
+/** Local-clock tolerance so a slow machine clock cannot read an already
+ * server-expired token as still fresh. */
+const CLOCK_SKEW_TOLERANCE_MS = 10_000;
 
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
@@ -56,15 +60,30 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
     if (!isOauthRedirect) return response;
 
     const expiresAt = this.credentials.expiresAt;
-    const confirmedExpired = expiresAt !== undefined && Date.now() >= expiresAt;
+    const confirmedExpired = expiresAt !== undefined && Date.now() >= expiresAt - CLOCK_SKEW_TOLERANCE_MS;
     if (!confirmedExpired) return response;
 
-    await tools.readBody(response); // drain the original 302 body; its content is discarded
-    await markAnalyticsAuthInvalid(
-      `oauth2-proxy redirected to ${OAUTH2_START_MARKER} (expired SSO session)`,
-      this.targetApiUrl
-    );
-    const outcome = await startDetachedSsoLogin(this.targetApiUrl);
+    let outcome: DetachedLoginOutcome | undefined;
+    let failedStep: string | undefined;
+    try {
+      failedStep = 'readBody';
+      await tools.readBody(response); // drain the original 302 body; its content is discarded
+      failedStep = 'markAnalyticsAuthInvalid';
+      await markAnalyticsAuthInvalid(
+        `oauth2-proxy redirected to ${OAUTH2_START_MARKER} (expired SSO session)`,
+        this.targetApiUrl
+      );
+      failedStep = 'startDetachedSsoLogin';
+      outcome = await startDetachedSsoLogin(this.targetApiUrl);
+    } catch (error) {
+      // Any of the three steps above can reject; without this catch the raw 302
+      // would silently pass through and the <synthetic>-turn bug would recur.
+      // Still synthesize the 401 below using a generic fallback message.
+      logger.error(
+        `[${this.name}] ${failedStep} failed while handling an expired SSO session; synthesizing a fallback 401`,
+        error
+      );
+    }
 
     const body = Buffer.from(JSON.stringify({
       type: 'error',
