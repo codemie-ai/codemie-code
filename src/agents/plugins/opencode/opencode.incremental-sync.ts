@@ -34,6 +34,8 @@ export interface StartOpenCodeIncrementalSyncOptions {
   buildContext: () => ProcessingContext;
   /** CodeMie SSO URL used to load stored credentials (e.g. env.CODEMIE_URL). */
   ssoUrl?: string;
+  /** Agent env (CODEMIE_PROFILE_CONFIG) for the profile-first credential lookup. */
+  env?: NodeJS.ProcessEnv;
   /** Sync API base URL for the upload context (env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL). */
   syncApiUrl?: string;
   /** CLI version string forwarded to the upload context. */
@@ -116,6 +118,7 @@ export function startOpenCodeIncrementalSync(options: StartOpenCodeIncrementalSy
             const uploadContext = await buildUploadContext(
               options.sessionId,
               options.ssoUrl,
+              options.env,
               options.syncApiUrl,
               options.cliVersion,
               tickContext.clientType
@@ -170,14 +173,14 @@ export function stopOpenCodeIncrementalSync(sessionId: string): void {
 async function buildUploadContext(
   sessionId: string,
   ssoUrl: string,
+  env: NodeJS.ProcessEnv | undefined,
   syncApiUrl: string,
   version = '0.0.0',
   clientType = 'codemie-opencode'
 ): Promise<ProcessingContext | null> {
   try {
-    const { CodeMieSSO } = await import('../../../providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(ssoUrl);
+    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
+    const credentials = (await getStoredAnalyticsCredentials(ssoUrl, env))?.credentials;
     if (!credentials?.cookies) {
       logger.debug('[opencode-incremental-sync] No SSO credentials available, skipping upload');
       return null;

@@ -92,6 +92,7 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    env,
     syncApiUrl: env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
@@ -409,6 +410,7 @@ export const PiPluginMetadata: AgentMetadata = {
           dryRun: false,
         }),
         ssoUrl: env.CODEMIE_URL,
+        env,
         syncApiUrl: env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL,
         cliVersion: env.CODEMIE_CLI_VERSION,
       });

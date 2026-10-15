@@ -27,6 +27,13 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
 
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 import {
   isCodexCompatibleModelName,
   rankCodexModelIdsByRecency,
@@ -253,5 +260,43 @@ describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
     // No JWT/SSO env → fetchCodeMieModelsForCodex returns [] without any network call.
     await expect(resolveCodexModel({})).rejects.toThrow(/No CodeMie GPT\/Codex model is available/i);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveCodexModel SSO lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const profile = JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' });
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+  });
+
+  it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'C' })]);
+
+    const result = await resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(result.selectedModel).toBe('gpt-5-codex');
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'C' })]);
+
+    await resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_BASE_URL: 'http://localhost:4321' });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+  });
+
+  it('reports the resolved URL when SSO credentials are missing', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(null);
+
+    await expect(resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
+      'codemie profile login --url https://profile.example.com'
+    );
   });
 });

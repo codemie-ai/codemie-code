@@ -1,0 +1,9 @@
+{"task_id":"1","status":"done","commit":"0df25c2","test_command":"npx vitest run src/providers/core/__tests__/codemie-auth-helpers.test.ts"}
+{"task_id":"2","status":"done","commit":"2ee00c3","test_command":"npx vitest run src/utils/__tests__/sdk-client.test.ts src/cli/commands/skills/lib/__tests__/require-auth.test.ts src/providers/plugins/sso/__tests__/sso.models.test.ts src/cli/commands/skills/lib/__tests__/skills-search-client.test.ts"}
+{"task_id":"3","status":"done","commit":"50b151e","test_command":"npx vitest run src/providers/plugins/sso/__tests__/sso.setup-steps.test.ts"}
+{"task_id":"4","status":"done","commit":"0942e62","test_command":"npx vitest run src/cli/commands/profile/__tests__/auth.test.ts"}
+{"task_id":"5","status":"done","commit":"e727e48","test_command":"npx vitest run src/providers/plugins/sso/__tests__/sso.health.test.ts src/cli/commands/doctor/checks/__tests__/doctor-checks.test.ts"}
+{"task_id":"6","status":"done","commit":"22fa1bf","test_command":"npx vitest run src/agents/plugins/claude/__tests__/claude.models.test.ts src/agents/plugins/gemini/__tests__/gemini.models.test.ts src/agents/plugins/codex/__tests__/codex-models.test.ts"}
+{"task_id":"7","status":"done","commit":"349692d","test_command":"npx vitest run src/agents/plugins/pi/__tests__/pi.models.test.ts src/agents/plugins/kimi/__tests__/kimi.models.test.ts src/agents/plugins/copilot-cli/__tests__/copilot-cli.models.test.ts"}
+{"task_id":"8","status":"done","commit":"f246e3a","test_command":"npx vitest run src/agents/plugins/opencode/__tests__/opencode-dynamic-models.test.ts src/agents/plugins/__tests__/codemie-code-plugin.test.ts src/agents/plugins/__tests__/opencode-gpt55-routing.test.ts"}
+{"task_id":"9","status":"done","commit":"60a0382","test_command":"n/a (documentation)"}

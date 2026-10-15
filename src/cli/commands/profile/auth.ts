@@ -5,6 +5,10 @@ import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { logger } from '../../../utils/logger.js';
+import {
+  getPlatformUrl,
+  getStoredPlatformCredentials
+} from '../../../providers/core/codemie-auth-helpers.js';
 
 // Export individual commands for profile (not nested under 'auth')
 export function createLoginCommand(): Command {
@@ -61,7 +65,7 @@ export function createRefreshCommand(): Command {
 async function handleLogin(url?: string): Promise<void> {
   const config = await ConfigLoader.load();
 
-  const codeMieUrl = url || config.codeMieUrl;
+  const codeMieUrl = url || getPlatformUrl(config);
   if (!codeMieUrl) {
     console.log(chalk.red('❌ No AI/Run CodeMie URL configured or provided'));
     console.log(chalk.white('Use: codemie profile login --url https://your-airun-codemie-instance.com'));
@@ -103,10 +107,12 @@ async function handleLogout(): Promise<void> {
 
   try {
     const config = await ConfigLoader.load();
-    const baseUrl = config.codeMieUrl || config.baseUrl;
-
+    // Clear only the URL that holds this profile's credentials, so logging out of
+    // one environment never wipes the login of another. With no URL, clear the
+    // default slot.
     const sso = new CodeMieSSO();
-    await sso.clearStoredCredentials(baseUrl);
+    const found = await getStoredPlatformCredentials(config);
+    await sso.clearStoredCredentials(found?.url ?? getPlatformUrl(config));
 
     spinner.succeed(chalk.green('Successfully logged out'));
     console.log(chalk.white('SSO credentials have been cleared'));
@@ -121,15 +127,23 @@ async function handleRefresh(): Promise<void> {
 
   // Check if current provider uses SSO authentication
   const provider = ProviderRegistry.getProvider(config.provider || '');
-  if (!provider || provider.authType !== 'sso' || !config.codeMieUrl) {
+  if (!provider || provider.authType !== 'sso') {
     console.log(chalk.red('❌ Not configured for SSO authentication'));
     console.log(chalk.white('Run: codemie setup'));
     return;
   }
 
-  // Clear existing credentials and re-authenticate
-  const sso = new CodeMieSSO();
-  await sso.clearStoredCredentials(config.codeMieUrl);
+  // Refresh the URL that actually holds the credentials, else the first candidate
+  const url = (await getStoredPlatformCredentials(config))?.url ?? getPlatformUrl(config);
+  if (!url) {
+    console.log(chalk.red('❌ No AI/Run CodeMie URL configured'));
+    console.log(chalk.white('Run: codemie setup'));
+    return;
+  }
 
-  await handleLogin(config.codeMieUrl);
+  // Clear existing credentials and re-authenticate against the same URL
+  const sso = new CodeMieSSO();
+  await sso.clearStoredCredentials(url);
+
+  await handleLogin(url);
 }

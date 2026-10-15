@@ -18,6 +18,13 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   return { ...actual, fetchCodeMieLlmModels: fetchMock };
 });
 
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 import {
   isGeminiCompatibleModelName,
   getGeminiModelIds,
@@ -119,5 +126,47 @@ describe('validateGeminiModel (best-effort, fetch mocked)', () => {
   it('skips validation when the catalog exposes no gemini models', async () => {
     fetchMock.mockResolvedValue([model({ deployment_name: 'gpt-5', base_name: 'gpt-5', label: 'GPT-5' })]);
     await expect(validateGeminiModel({ ...baseEnv, CODEMIE_MODEL: 'gemini-3-pro' })).resolves.toBeUndefined();
+  });
+});
+
+describe('validateGeminiModel SSO lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const profile = JSON.stringify({ provider: 'ai-run-sso', baseUrl: 'https://profile.example.com' });
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+  });
+
+  it('fetches the catalog for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([model({ deployment_name: 'gemini-3-pro', base_name: 'gemini-3-pro', label: 'G' })]);
+
+    await validateGeminiModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_MODEL: 'gemini-3-pro' });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchMock.mockResolvedValue([]);
+
+    await validateGeminiModel({
+      CODEMIE_PROFILE_CONFIG: profile,
+      CODEMIE_BASE_URL: 'http://localhost:4321',
+      CODEMIE_MODEL: 'gemini-3-pro',
+    });
+
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
+  });
+
+  it('skips validation when no credentials are stored', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(null);
+
+    await expect(
+      validateGeminiModel({ CODEMIE_PROFILE_CONFIG: profile, CODEMIE_MODEL: 'gemini-3-pro' })
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

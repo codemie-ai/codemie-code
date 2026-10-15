@@ -10,14 +10,13 @@ import type { HealthCheckResult, HealthCheckDetail } from '../../core/types.js';
 import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
-import { CodeMieSSO } from './sso.auth.js';
 import { SSOModelProxy } from './sso.models.js';
+import { getPlatformUrl, getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
 
 /**
  * Health check implementation for SSO provider
  */
 export class SSOHealthCheck extends BaseHealthCheck {
-  private sso: CodeMieSSO;
   private modelProxy: SSOModelProxy;
 
   constructor() {
@@ -26,7 +25,6 @@ export class SSOHealthCheck extends BaseHealthCheck {
       baseUrl: '',
       timeout: 10000
     });
-    this.sso = new CodeMieSSO();
     this.modelProxy = new SSOModelProxy();
   }
 
@@ -38,8 +36,12 @@ export class SSOHealthCheck extends BaseHealthCheck {
   async check(config: CodeMieConfigOptions): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
 
+    // Profile baseUrl first, workspace codeMieUrl as fallback
+    const platformSource = { ...config, provider: 'ai-run-sso' };
+    const platformUrl = getPlatformUrl(platformSource);
+
     // 1. Check CodeMie URL
-    if (!config.codeMieUrl) {
+    if (!platformUrl) {
       details.push({
         status: 'error',
         message: 'CodeMie URL not configured',
@@ -55,12 +57,12 @@ export class SSOHealthCheck extends BaseHealthCheck {
 
     details.push({
       status: 'ok',
-      message: `CodeMie URL: ${config.codeMieUrl}`
+      message: `CodeMie URL: ${platformUrl}`
     });
 
     // 2. Check credentials
-    const credentials = await this.sso.getStoredCredentials(config.codeMieUrl);
-    if (!credentials) {
+    const found = await getStoredPlatformCredentials(platformSource);
+    if (!found) {
       details.push({
         status: 'error',
         message: 'SSO credentials not found',
@@ -73,6 +75,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
         details
       };
     }
+
+    const { credentials, url: credentialsUrl } = found;
 
     details.push({
       status: 'ok',
@@ -109,7 +113,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
     // 4. Test API access and validate configured model
     try {
       // Update modelProxy baseUrl for credential lookup
-      this.modelProxy.setBaseUrl(config.codeMieUrl);
+      this.modelProxy.setBaseUrl(credentialsUrl);
       const models = await this.modelProxy.listModels();
 
       // Validate configured model is available

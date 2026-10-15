@@ -157,15 +157,29 @@ codemie-claude                      # repo's local profile: repo's CodeMie URL a
 codemie-claude --profile anthropic  # global profile: global CodeMie URL and project
 ```
 
+### Which CodeMie URL is used
+
+Two URLs can point at the CodeMie platform, and they have different jobs:
+
+| URL | Field | Used for |
+|---|---|---|
+| Profile URL (P) | profile `baseUrl` | Direct platform interaction: stored-credential lookup, `codemie profile login/logout/refresh`, model lists, health/doctor |
+| Workspace URL (W) | `workspace.codeMieUrl` (`codeMieUrl`) | Analytics/metrics sync (`syncCodeMieUrl`, `CODEMIE_SYNC_API_URL`) and the fallback when a lookup under P finds nothing |
+
+For `ai-run-sso` and `bearer-auth` profiles, P is tried first and W second (a same-origin P and W is looked up once).
+Subscription providers (`anthropic-subscription`, `moonshot-subscription`) use W only, because their `baseUrl` is a vendor endpoint, not CodeMie.
+The resolver lives in `src/providers/core/codemie-auth-helpers.ts` (`getPlatformUrl`, `getStoredPlatformCredentials`); agent-side code resolves from `CODEMIE_PROFILE_CONFIG` because `CODEMIE_BASE_URL` is rewritten to the local proxy before the agent starts.
+
 ### CI/CD overrides
 
 ```bash
 export CODEMIE_PROVIDER=bedrock
 export CODEMIE_MODEL=claude-3-5-sonnet
-export CODEMIE_PROJECT=ci-project
 ```
 
-Environment variables override both global and local config. No local config file is needed in CI.
+Environment variables override both global and local config for the fields `ConfigLoader.loadFromEnv` reads (`CODEMIE_PROVIDER`, `CODEMIE_BASE_URL`, `CODEMIE_API_KEY`, `CODEMIE_MODEL`, `CODEMIE_TIMEOUT`, `CODEMIE_DEBUG`, `CODEMIE_ALLOWED_DIRS`, `CODEMIE_IGNORE_PATTERNS`, `CODEMIE_URL`, `CODEMIE_AUTH_METHOD`, integration id/alias). No local config file is needed in CI.
+
+`CODEMIE_PROJECT` is not one of them: `loadFromEnv` never reads it, so it does not override `codeMieProject` from config. It is only passed through to the agent's child environment (and from there to the `X-CodeMie-Project` header and session records) when the active profile has no `codeMieProject` of its own; a profile that sets one always re-exports its own value.
 
 ---
 

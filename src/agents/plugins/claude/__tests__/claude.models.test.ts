@@ -23,6 +23,13 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   };
 });
 
+const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
+  CodeMieSSO: class {
+    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
+  },
+}));
+
 const ONE_MILLION = 1_000_000;
 const TWO_HUNDRED_K = 200_000;
 
@@ -412,5 +419,56 @@ describe('buildModelPickerOptions', () => {
     const options = await buildModelPickerOptions(freshEnv());
 
     expect(options.map((o) => o.model)).toEqual(['claude-sonnet-5[1m]']);
+  });
+});
+
+describe('SSO catalog lookup (profile baseUrl first)', () => {
+  const creds = { cookies: { s: '1' }, apiUrl: 'https://api.sso.example/code-assistant-api' };
+  const routerModel = {
+    ...model({ deployment_name: 'router-x', max_input_tokens: ONE_MILLION }),
+    is_router: true,
+  } as LlmModel;
+  let n = 0;
+  function ssoEnv(profile: { baseUrl?: string; provider?: string }, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    n += 1;
+    return {
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', ...profile, baseUrl: `https://p${n}.example.com` }),
+      ...extra,
+    };
+  }
+
+  beforeEach(() => {
+    fetchCodeMieLlmModelsMock.mockReset();
+    ssoMock.getStoredCredentials.mockReset();
+  });
+
+  it('fetches models for a baseUrl-only profile with CODEMIE_URL unset', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchCodeMieLlmModelsMock.mockResolvedValue([routerModel]);
+    const { listRouterModelIds } = await import('../claude.models.js');
+
+    const ids = await listRouterModelIds(ssoEnv({}));
+
+    expect(ids).toEqual(['router-x']);
+    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/p\d+\.example\.com$/));
+  });
+
+  it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
+    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    fetchCodeMieLlmModelsMock.mockResolvedValue([routerModel]);
+    const { listRouterModelIds } = await import('../claude.models.js');
+
+    await listRouterModelIds(ssoEnv({}, { CODEMIE_BASE_URL: 'http://localhost:4321' }));
+
+    for (const [url] of ssoMock.getStoredCredentials.mock.calls) {
+      expect(url).not.toContain('localhost');
+    }
+  });
+
+  it('returns [] without lookup when no platform URL is known', async () => {
+    const { listRouterModelIds } = await import('../claude.models.js');
+
+    expect(await listRouterModelIds({})).toEqual([]);
+    expect(ssoMock.getStoredCredentials).not.toHaveBeenCalled();
   });
 });

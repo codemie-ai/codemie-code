@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "branch": "feat/profile-url-first-platform-lookup",
+  "head": "60a0382860bb9a01a775f9f8a7d0b626199adf09",
+  "runner": "npm",
+  "started_at": "2026-09-30T14:12:41Z",
+  "completed_at": "2026-09-30T14:14:20Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3900,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 26899,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "5 failed tests in 4 files (AgentCLI-model-source, assistants-builder, SessionSyncer-lock, SessionSyncer)"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 17809,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "9 failed tests in 2 files (session-syncer, sso-claude-plugin)"
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 500,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Exit 0 but output: \"No staged changes to scan\". Stage changes (git add) or rely on CI gitleaks scan (pull_request); Docker/gitleaks scan not exercised on committed range."
+    },
+    {
+      "id": "commitlint",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npx commitlint --from 895b5bc3763a4f2f6b112b93971a77aee7877e99 --to HEAD",
+      "exit_code": 0,
+      "notes": "Mirrors CI validate-commits job; PR title check not runnable locally."
+    }
+  ],
+  "failures": {
+    "unit": "    112|\n    113|     const parsed = AssistantUpdateParamsSchema.parse(update.mock.calls\u2026\n       |                                                ^\n    114|     expect(parsed.system_prompt).toBe(\"new\");\n    115|     expect(parsed.mcp_servers[0]).toMatchObject({\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/5]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/session/__tests__/SessionSyncer-lock.test.ts > SessionSyncer \u2014 cross-process sync lock > takes over a stale lock, syncs, and releases it\nAssertionError: expected \"vi.fn()\" to be called 1 times, but got 0 times\n \u276f src/providers/plugins/sso/session/__tests__/SessionSyncer-lock.test.ts:122:32\n    120|\n    121|     expect(result.success).toBe(true);\n    122|     expect(mockMetricsProcess).toHaveBeenCalledTimes(1);\n       |                                ^\n    123|     expect(mockConvProcess).toHaveBeenCalledTimes(1);\n    124|     expect(existsSync(lockPath)).toBe(false);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/5]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/session/__tests__/SessionSyncer-lock.test.ts > SessionSyncer \u2014 cross-process sync lock > removes the lock file after a successful sync\nAssertionError: expected \"vi.fn()\" to be called 1 times, but got 0 times\n \u276f src/providers/plugins/sso/session/__tests__/SessionSyncer-lock.test.ts:132:32\n    130|\n    131|     expect(result.success).toBe(true);\n    132|     expect(mockMetricsProcess).toHaveBeenCalledTimes(1);\n       |                                ^\n    133|     expect(mockConvProcess).toHaveBeenCalledTimes(1);\n    134|     expect(existsSync(lockPath)).toBe(false);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/5]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/session/__tests__/SessionSyncer.test.ts > SessionSyncer > runs processors normally for a legacy session with no origin field (back-compat)\nAssertionError: expected \"vi.fn()\" to be called 1 times, but got 0 times\n \u276f src/providers/plugins/sso/session/__tests__/SessionSyncer.test.ts:109:32\n    107|\n    108|     expect(result.success).toBe(true);\n    109|     expect(mockMetricsProcess).toHaveBeenCalledTimes(1);\n       |                                ^\n    110|     expect(mockConvProcess).toHaveBeenCalledTimes(1);\n    111|   });\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[5/5]\u23af\n\n\n Test Files  4 failed | 315 passed (319)\n      Tests  5 failed | 4695 passed (4700)\n   Start at  17:13:11\n   Duration  25.93s (transform 13.17s, setup 0ms, import 75.84s, tests 35.87s, environment 38ms)\n\n",
+    "integration": "+ Received\n\n  [\n+   \"--model\",\n+   \"claude-router-standard[1m]\",\n    \"test\",\n    \"task\",\n  ]\n\n \u276f tests/integration/sso-claude-plugin.test.ts:183:28\n    181|\n    182|       // Verify args unchanged\n    183|       expect(enrichedArgs).toEqual(args);\n       |                            ^\n    184|\n    185|       // Verify --plugin-dir NOT injected\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[8/9]\u23af\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install \u2192 inject\nAssertionError: expected [ '--model', \u2026(5) ] to deeply equal [ '--plugin-dir', \u2026(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--model\",\n+   \"claude-router-standard[1m]\",\n    \"--plugin-dir\",\n    \"/var/folders/v_/bhncj9t54m92qzz5f8zmshv80000gn/T/codemie-test-claude-plugin/claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n \u276f tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '\u2026\n       |                            ^\n    234|     });\n    235|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[9/9]\u23af\n\n\n Test Files  2 failed | 35 passed | 1 skipped (38)\n      Tests  9 failed | 270 passed | 10 skipped (289)\n   Start at  17:13:45\n   Duration  16.76s (transform 5.76s, setup 0ms, import 18.74s, tests 89.12s, environment 2ms)\n\n"
+  }
+}

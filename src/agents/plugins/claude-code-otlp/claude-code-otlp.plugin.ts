@@ -152,6 +152,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     return await ensureCodeMieSsoAuth({
       provider: config.provider,
       ssoUrl: config.codeMieUrl || config.baseUrl,
+      baseUrl: config.baseUrl,
     });
   }
 

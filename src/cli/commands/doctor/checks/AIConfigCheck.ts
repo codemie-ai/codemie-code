@@ -4,6 +4,7 @@
 
 import { ConfigLoader } from '../../../../utils/config.js';
 import { ProviderRegistry } from '../../../../providers/core/registry.js';
+import { getPlatformUrl } from '../../../../providers/core/codemie-auth-helpers.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 
 export class AIConfigCheck implements HealthCheck {
@@ -73,10 +74,11 @@ export class AIConfigCheck implements HealthCheck {
       // For SSO providers, show CodeMie URL instead of API endpoint
       if (isSSOProvider) {
         onProgress?.('Checking CodeMie URL');
-        if (config.codeMieUrl) {
+        const platformUrl = getPlatformUrl(config);
+        if (platformUrl) {
           details.push({
             status: 'ok',
-            message: `CodeMie URL: ${config.codeMieUrl}`
+            message: `CodeMie URL: ${platformUrl}`
           });
         } else {
           missingFields.push('CodeMie URL');
