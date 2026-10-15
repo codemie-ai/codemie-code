@@ -11,6 +11,7 @@ import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
 import { GatewayKeyPlugin } from './gateway-key.plugin.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { JWTAuthPlugin } from './jwt-auth.plugin.js';
+import { SSOSessionExpiryPlugin } from './sso-session-expiry.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
@@ -38,6 +39,7 @@ export function registerCorePlugins(): void {
   registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
+  registry.register(new SSOSessionExpiryPlugin()); // Priority 11 - relabels a confirmed expired-SSO-session oauth2 redirect as 401 and triggers re-auth before any other onUpstreamResponse plugin sees it
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new BackgroundRequestNormalizerPlugin()); // Priority 14 - forces cheap background calls (e.g. title-gen) onto haiku
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
@@ -63,6 +65,7 @@ export {
   GatewayKeyPlugin,
   SSOAuthPlugin,
   JWTAuthPlugin,
+  SSOSessionExpiryPlugin,
   HeaderInjectionPlugin,
   RequestSanitizerPlugin,
   ClaudeRequestNormalizerPlugin,
