@@ -1,0 +1,2 @@
+{"task_id":"task-1","status":"done","commit":"99cbfd54","test_command":"npx vitest run src/providers/plugins/sso/proxy/plugins/__tests__/sso-session-expiry.plugin.test.ts"}
+{"task_id":"task-2","status":"done","commit":"f561adf9","test_command":"npx vitest run src/providers/plugins/sso/proxy/plugins"}

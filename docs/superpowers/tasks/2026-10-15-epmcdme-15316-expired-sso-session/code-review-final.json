@@ -1,0 +1,50 @@
+{
+  "decision": "request-changes",
+  "rationale": "The verification-gap lens's declared output file (lens-verification-gap.json) does not exist on disk despite the roster marking it ran, so that lens failed for this round; acceptance did not run (no spec/story, genuine no-spec). Two findings block: no clock-skew tolerance in the new expiry check (CR-001) and an unhandled-rejection path around readBody/markAnalyticsAuthInvalid/startDetachedSsoLogin that silently reverts to the pre-fix behavior (CR-002). One finding deferred (unbounded body-read buffering lives in the pre-existing shared ProxyHttpClient.readResponseBody utility, already called the same way elsewhere). Five findings dismissed as noise: expiresAt-undefined fallthrough (intended conservative design, already tested), Location-as-array edge case (oauth2-proxy never emits it), the duck-typed credentials cast (matches the identical pre-existing SSOAuthPlugin pattern), the priority-ordering claim (verified true against the registry's ascending sort and sibling plugins' priority 10), and non-302/303 status codes (explicitly out of the task's stated 302/303 detection scope).",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Both subjects use allowed type/scope (feat/providers), imperative mood, under the 100-char subject-max-length per git-workflow.md."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Plugin + test meet code-quality.md: explicit return types, .js imports, import type for types, kebab-case naming, one class per file, functions under 50 lines, JSDoc, no console.log/any."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "No documented security checklist exists (absent standard, not a gap). Manual review found no secrets logged, no reflected input in the 401 body; re-auth needs redirect signal plus local expiry."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts",
+      "line": 59,
+      "title": "No clock-skew tolerance in expiry check",
+      "problem": "confirmedExpired compares Date.now() directly to the JWT-derived expiresAt (sourced from the codemie_access_token exp claim via deriveExpiresAt in sso.auth.ts) with zero tolerance for clock drift between the local machine and the issuing IdP.",
+      "impact": "A locally slow clock creates a window right after the token's real expiry where oauth2-proxy has already started redirecting to /oauth2/start but confirmedExpired still reads false, so the raw 302/303 passes through unlabeled and the original <synthetic>-turn bug this plugin exists to eliminate can recur until the local clock catches up.",
+      "recommendation": "Subtract a small fixed tolerance (e.g. 5-10s) from expiresAt before the Date.now() comparison, as both the blind and edge-case lenses independently flagged."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts",
+      "line": 62,
+      "title": "Unhandled rejection silently reverts re-auth",
+      "problem": "The sequential awaits — tools.readBody(response), markAnalyticsAuthInvalid(...), startDetachedSsoLogin(...) — carry no local try/catch. A rejection from any of the three propagates out of onUpstreamResponse; the only safety net is the proxy's generic per-interceptor catch in runUpstreamResponseHooks (sso.proxy.ts:597), which just logs a generic 'Upstream response hook error' and keeps the prior (already partially drained) response.",
+      "impact": "On a transient failure in any of the three calls (e.g. analytics endpoint down, lock-file contention), the fix silently regresses to the exact pre-fix behavior — raw redirect reaches the client, no re-auth triggered, no SSO-specific log signal — with no indication the regression is tied to this plugin.",
+      "recommendation": "Wrap the three awaits in a local try/catch; on failure still return a best-effort synthetic 401 or at minimum emit a dedicated, identifiable log line rather than relying on the generic outer catch."
+    }
+  ]
+}

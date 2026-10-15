@@ -1,0 +1,20 @@
+[
+  {
+    "location": "src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts:62-67",
+    "trigger_condition": "tools.readBody(response) rejects mid-drain (e.g. socket reset) before re-auth side effects run",
+    "guard_snippet": "try { await tools.readBody(response); await markAnalyticsAuthInvalid(...); outcome = await startDetachedSsoLogin(...); } catch (e) { logger.debug(e); }",
+    "potential_consequence": "Re-auth never triggered; caller's catch returns the now half-drained/errored original 302 to the client"
+  },
+  {
+    "location": "src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts:53",
+    "trigger_condition": "oauth2-proxy answers the same /oauth2/start redirect with 301, 307 or 308 instead of 302/303",
+    "guard_snippet": "[301, 302, 303, 307, 308].includes(response.statusCode)",
+    "potential_consequence": "Confirmed-expired session on those status codes bypasses detection, falls back to the old synthetic-turn behavior this plugin exists to replace"
+  },
+  {
+    "location": "src/providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.ts:58-60",
+    "trigger_condition": "local clock lags the issuing server so Date.now() < credentials.expiresAt even though oauth2-proxy already redirected",
+    "guard_snippet": "const confirmedExpired = expiresAt !== undefined && Date.now() >= expiresAt - CLOCK_SKEW_MS;",
+    "potential_consequence": "Genuinely expired session is treated as not confirmed; raw 302 passes through unlabeled with no re-auth kicked off"
+  }
+]
