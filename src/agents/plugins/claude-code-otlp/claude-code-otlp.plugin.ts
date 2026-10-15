@@ -15,6 +15,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { parsePromptFields } from '@/agents/core/ticket-parser.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
 import { resolveIdentityCandidateFields } from '@/agents/core/event-fields/identity-fields.js';
@@ -30,6 +31,7 @@ import {
 } from './transcript/orchestrator.js';
 import { readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
+import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import { resolveToolContextFields, resolveToolDiffFields } from './event-fields/tool-fields.js';
 
@@ -196,9 +198,11 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
+      // Derived from the full prompt: the base class truncates `prompt` to 200 chars later.
+      const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';
       return {
         decision: 'forward',
-        payload: [hookInput],
+        payload: [{ ...hookInput, ...parsePromptFields(prompt), ...resolveCommandFields(prompt) }],
       }
     }
 
