@@ -116,7 +116,7 @@ describe('copilot-cli SSO lookup (profile baseUrl first)', () => {
     const { resolveCopilotModel } = await import('../copilot-cli.models.js');
 
     await expect(resolveCopilotModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
-      'codemie profile login --url https://profile.example.com'
+      'codemie profile login'
     );
   });
 });

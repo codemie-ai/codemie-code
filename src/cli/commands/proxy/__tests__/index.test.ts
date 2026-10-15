@@ -345,7 +345,7 @@ describe('proxy connect --claude-desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
+      expect.stringContaining("No active CodeMie session for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
@@ -455,7 +455,7 @@ describe('proxy connect --claude-desktop', () => {
       expect.stringContaining('Failed to verify credentials: keychain locked')
     );
     expect(consoleErrorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('No SSO credentials found')
+      expect.stringContaining('No active CodeMie session')
     );
   });
 

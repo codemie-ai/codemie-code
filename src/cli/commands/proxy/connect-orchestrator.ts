@@ -283,12 +283,13 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
       loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
     }
@@ -298,7 +299,7 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
+      `No active CodeMie session for profile '${profileName}'.\n` +
       `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
     );
   }
@@ -309,10 +310,11 @@ export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
   codeMieUrl?: string,
+  provider?: string,
   beforeExit?: () => void
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
     beforeExit?.();
     const [firstLine, ...rest] = (err as Error).message.split('\n');
@@ -1049,6 +1051,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       config.baseUrl,
       profile,
       config.codeMieUrl,
+      config.provider,
       () => printFailures(results)
     );
     if (activeTargets.claudeCodeOtlp && otlpDisplay) {
