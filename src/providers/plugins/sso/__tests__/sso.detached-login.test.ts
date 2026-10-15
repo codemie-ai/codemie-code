@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, access, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -93,10 +93,19 @@ describe('startDetachedSsoLogin', () => {
     expect(await startDetachedSsoLogin(URL_)).toBe('started');
   });
 
-  it.each([['not json'], [{ pid: 'x' }], [{ startedAt: 1 }]])('treats a corrupt lock (%j) as stale', async (lock) => {
+  it.each([['not json'], [{ pid: 'x' }], [{ startedAt: 1 }]])('treats an old corrupt lock (%j) as stale', async (lock) => {
     await writeLock(lock);
+    const old = new Date(Date.now() - 10_000);
+    await utimes(lockPath(), old, old);
 
     expect(await startDetachedSsoLogin(URL_)).toBe('started');
+  });
+
+  it.each([[''], ['not json']])('reports in-progress for a freshly written unreadable lock (%j)', async (lock) => {
+    await writeLock(lock);
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('in-progress');
+    expect(spawnDetached).not.toHaveBeenCalled();
   });
 
   it('fails and removes the lock when spawn returns -1', async () => {

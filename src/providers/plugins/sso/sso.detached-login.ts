@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { link, readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
@@ -9,6 +9,7 @@ export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'fai
 
 const LOCK_MAX_AGE_MS = 150_000;
 const COOLDOWN_MS = 30_000;
+const UNREADABLE_LOCK_GRACE_MS = 5_000;
 
 interface LoginLock {
   pid: number;
@@ -31,6 +32,19 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
   }
 }
 
+/**
+ * Lock writes are not atomic (`wx` open and write, the child-pid rewrite truncates
+ * first), so a concurrent reader can briefly see an empty lock.
+ */
+async function isRecentlyModified(lockPath: string): Promise<boolean> {
+  try {
+    const { mtimeMs } = await stat(lockPath);
+    return Date.now() - mtimeMs < UNREADABLE_LOCK_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
 async function removeLock(lockPath: string): Promise<void> {
   try {
     await unlink(lockPath);
@@ -39,29 +53,17 @@ async function removeLock(lockPath: string): Promise<void> {
   }
 }
 
-/**
- * Atomically creates the lock; returns false if it already exists.
- * Writes the full content to a private temp file first, then publishes it
- * with `link` (fails EEXIST like `wx`, but atomically — a concurrent reader
- * can never observe the lock path existing with partial/empty content, which
- * a plain `writeFile(path, data, { flag: 'wx' })` cannot guarantee: open and
- * write are separate syscalls, so another caller can read an empty file in
- * between, decide the lock is corrupt, and steal it from the real owner).
- */
+/** Atomically creates the lock; returns false if it already exists. */
 async function tryCreateLock(lockPath: string): Promise<boolean> {
   const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
-  const tmpPath = `${lockPath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await writeFile(tmpPath, JSON.stringify(lock));
-    await link(tmpPath, lockPath);
+    await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       return false;
     }
     throw error;
-  } finally {
-    await unlink(tmpPath).catch(() => {});
   }
 }
 
@@ -81,6 +83,9 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
       if (age < COOLDOWN_MS) {
         return 'cooldown';
       }
+    } else if (await isRecentlyModified(lockPath)) {
+      // Unreadable but just written: its owner is mid-write, not a corrupt lock.
+      return 'in-progress';
     }
 
     // Stale or corrupt: replace it. Losing this race means another login just started.
