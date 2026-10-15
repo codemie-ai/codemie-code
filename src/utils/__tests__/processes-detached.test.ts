@@ -14,7 +14,7 @@ const { spawnDetached, isProcessAlive } = await import('../processes.js');
 describe('spawnDetached', () => {
   beforeEach(() => {
     spawnMock.mockReset();
-    spawnMock.mockReturnValue({ pid: 123, unref: vi.fn() });
+    spawnMock.mockReturnValue({ pid: 123, unref: vi.fn(), on: vi.fn() });
   });
 
   it('forwards windowsHide to spawn', () => {
@@ -28,8 +28,18 @@ describe('spawnDetached', () => {
   });
 
   it('returns -1 when the child has no pid', () => {
-    spawnMock.mockReturnValue({ pid: undefined, unref: vi.fn() });
+    spawnMock.mockReturnValue({ pid: undefined, unref: vi.fn(), on: vi.fn() });
     expect(spawnDetached('node')).toBe(-1);
+  });
+
+  it('handles the child error event so a failed spawn does not crash the process', () => {
+    const on = vi.fn();
+    spawnMock.mockReturnValue({ pid: undefined, unref: vi.fn(), on });
+
+    spawnDetached('missing-binary');
+
+    expect(on).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(() => on.mock.calls.find(([event]) => event === 'error')![1](new Error('spawn ENOENT'))).not.toThrow();
   });
 });
 

@@ -26,7 +26,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isProcessAlive, readState } from '../../src/cli/commands/proxy/daemon-manager.js';
+import { readState } from '../../src/cli/commands/proxy/daemon-manager.js';
+import { isProcessAlive } from '../../src/utils/processes.js';
 import {
   VS_CODE_CAPABILITY_TABLE,
   type VsCodeCapabilityEntry,

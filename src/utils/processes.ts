@@ -131,6 +131,11 @@ export function spawnDetached(
     stdio: options.stdio ?? 'ignore',
     windowsHide: options.windowsHide,
   });
+  // A failed spawn emits 'error' on the next tick; unhandled, it crashes the process.
+  // The caller learns of the failure from the missing pid (-1).
+  child.on('error', (error) => {
+    logger.debug(`[spawnDetached] Failed to spawn ${command}:`, error);
+  });
   child.unref();
   return child.pid ?? -1;
 }
