@@ -1249,7 +1249,7 @@ describe('ensureOtlpProxy', () => {
       expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
       expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work', clientType: AGENT }));
       expect(warnings(s.warn)).toEqual([
-        expect.stringContaining("No SSO credentials found for profile 'work'"),
+        expect.stringContaining("No active CodeMie session for profile 'work'"),
         expect.stringContaining('no recorded proxy connection'),
       ]);
       expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: work)');
@@ -1334,7 +1334,7 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
     expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p', clientType: AGENT }));
-    expect(warnings(s.warn)).toEqual([expect.stringContaining("No SSO credentials found for profile 'p'")]);
+    expect(warnings(s.warn)).toEqual([expect.stringContaining("No active CodeMie session for profile 'p'")]);
     expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: p, local scope)');
     expect(warnings(s.warn)[0]).toContain('holds the port until you sign in');
     expectNoConsoleNoExit();
@@ -1869,7 +1869,7 @@ describe('assertSsoCredentials', () => {
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect((thrown as Error).message).toBe(
-      "No SSO credentials found for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
+      "No active CodeMie session for profile 'p'.\n  Run: codemie profile login --url https://x.example.com"
     );
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(lookup).toHaveBeenCalledWith({

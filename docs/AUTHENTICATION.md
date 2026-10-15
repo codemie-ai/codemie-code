@@ -35,7 +35,7 @@ If you need to authenticate separately or refresh your credentials:
 
 ```bash
 # Authenticate with AI/Run CodeMie SSO
-codemie profile login --url https://your-airun-codemie-instance.com
+codemie profile login
 
 # Check authentication status
 codemie profile status
@@ -94,7 +94,7 @@ codemie profile status              # Check auth-specific issues
 
 # Complete re-authentication
 codemie profile logout
-codemie profile login --url https://your-airun-codemie-instance.com
+codemie profile login
 
 # Reset all configuration
 codemie config reset
