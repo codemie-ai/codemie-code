@@ -620,3 +620,91 @@ Expected: empty output (no matches) — confirms this fix touched zero codex/pi 
 git add -A
 git commit -m "test(agents): confirm full regression pass for stale-session reconciliation wiring"
 ```
+
+---
+
+### Task 8 (Follow-up, 2026-10-15): Claude Desktop restart-reconciliation fallback
+
+Reported after Tasks 1-7 shipped: `claude-desktop` sessions have no agent plugin and no `onSessionStart`, so none of the reconciliation added above reaches them. They are finalized only by `DesktopTelemetryRuntime` inside the daemon process, which keeps the sessions it is tracking in an in-memory `Map` — nothing it does across a hard `kill -9` + restart. Repro: open a Desktop chat, `kill -9` the daemon before the 5-minute idle timeout, restart it, wait 10+ minutes without touching Desktop — the session file stays `status: "active"` forever (confirmed against current code; see root cause below).
+
+**Root cause:** `DesktopTelemetryRuntime.poll()` only ever adds a session to `trackedSessions` when newly discovered activity lands *after* the current process's `startedAt` (`discovered.updatedAt < this.startedAt` is skipped, by design, so a restart doesn't replay old untouched chats as live). A session that was already idle — or stays idle — across the restart never satisfies that condition again on its own, so it is never (re)tracked, and the idle-timeout loop (which only iterates `trackedSessions`) never sees it.
+
+**Files:**
+- Modify: `src/agents/core/session/SessionStore.ts` (new `findActiveSessions(agentName)` method)
+- Modify: `src/telemetry/runtime/DesktopTelemetryRuntime.ts` (new private `reconcilePersistedSessions()`, called from `start()`)
+- Test: `src/agents/core/session/__tests__/SessionStore.index.test.ts` (new `SessionStore.findActiveSessions` describe block)
+- Test: `src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts` (new `restart reconciliation of already-active sessions` describe block; `findActiveSessions` wired into the existing `SessionStore` mock)
+
+**Interfaces:**
+- Produces: `SessionStore.findActiveSessions(agentName: string): Promise<Session[]>` — same single-directory-scan shape as `indexSessionsByExternalId`.
+- Produces (private): `DesktopTelemetryRuntime.reconcilePersistedSessions(): Promise<void>`.
+
+- [x] **Step 1: Add `SessionStore.findActiveSessions`**
+
+Scans `~/.codemie/sessions/`, same pattern as `indexSessionsByExternalId`, returning every persisted session where `agentName` matches and `status === 'active'`.
+
+- [x] **Step 2: Add `DesktopTelemetryRuntime.reconcilePersistedSessions()`, called from `start()` before the first `poll()`**
+
+```ts
+async start(): Promise<void> {
+  await this.reconcilePersistedSessions();
+  await this.poll();
+  this.timer = setInterval(() => { /* unchanged */ }, this.config.pollIntervalMs);
+}
+
+private async reconcilePersistedSessions(): Promise<void> {
+  const activeSessions = await this.sessionStore.findActiveSessions(this.config.clientType);
+  if (activeSessions.length === 0) return;
+
+  const now = Date.now();
+  for (const session of activeSessions) {
+    const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
+    if (!externalSessionId) continue;
+
+    const lastSeenActivityAt = session.runtimeCheckpoint?.lastSeenActivityAt ?? session.startTime;
+    const inactiveForMs = now - lastSeenActivityAt;
+
+    if (inactiveForMs >= this.config.inactivityTimeoutMs) {
+      await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale');
+      continue;
+    }
+
+    this.trackedSessions.set(externalSessionId, { codemieSessionId: session.sessionId, lastSeenActivityAt });
+  }
+}
+```
+
+Already-stale sessions are finalized immediately (reusing the existing `finalizeSession`, so the final transcript sync and `sendSessionEndMetric` still run). Sessions not yet stale are seeded back into `trackedSessions` so the existing idle-timeout loop in `poll()` — unmodified — catches them later if no further activity arrives; without this seeding they would hit the exact same restart gate a second time once they did age past the timeout.
+
+**QA-driven refinement**: the initial version let one session's `finalizeSession` failure (network/SSO blip during sync or metric send) propagate out of `reconcilePersistedSessions()` → `start()`, uncaught — which would have failed the whole daemon startup (`proxy-daemon.ts`'s outer catch calls `process.exit(1)`) over a single stranded session, a strictly worse outcome than the original bug. Fixed by wrapping the `finalizeSession` call in its own try/catch, logging and continuing to the next session — matching the "fire-and-forget, non-blocking" convention already used everywhere else in this reconciliation path:
+
+```ts
+try {
+  await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale');
+} catch (error) {
+  logger.warn('[desktop-telemetry] Failed to finalize stranded session (non-blocking)', {
+    externalSessionId, sessionId: session.sessionId,
+    error: error instanceof Error ? error.message : String(error)
+  });
+}
+```
+
+- [x] **Step 3: Tests**
+
+- `SessionStore.findActiveSessions`: filters to active sessions for the requested agent; skips unreadable files; returns `[]` when the sessions dir is missing.
+- `DesktopTelemetryRuntime` (`restart reconciliation of already-active sessions`, 9 cases): a session already idle past the timeout at restart is finalized immediately with `reason: 'desktop-daemon-restart-stale'`; a not-yet-stale session is re-seeded and is later finalized via the normal `reason: 'desktop-inactive-timeout'` path; a regression guard confirms `poll()` alone (no reconciliation) never finalizes the stale session, locking in the reproduction of the original gap; an integration test confirms `start()` actually calls reconciliation before scheduling the poll loop; a no-op case (nothing persisted); cross-agent isolation (an active `claude` CLI session in the same sessions dir is left untouched); a defensive case for a persisted session missing `externalSessionId`; multiple concurrently open sessions reconciled independently in one pass (one stale, one not); and the QA-driven failure-isolation case — one session's `finalizeSession` rejecting does not abort reconciliation of the next session or propagate out of `start()`.
+- Also closed a pre-existing wiring-coverage gap flagged in `spec.md`'s Testing section and the original ticket's acceptance criteria ("no such assertion exists today, even for codex/pi"): added `onSessionStart` → reconciliation wiring tests for `codex.plugin.ts` (new describe block in `codex.plugin.lifecycle.test.ts`) and `pi.plugin.ts` (new `pi.plugin.lifecycle.test.ts`), so all eight plugins with this fallback (6 from Tasks 1-6 + codex + pi) now have wiring-level coverage, not just the generic reconciliation utility.
+
+- [x] **Step 4: Verify**
+
+Run: `npx tsc --noEmit`, `npm run lint`, `npm run build`, `npm run license-check`, `npm run validate:secrets`, `npx vitest run --project unit`, `npx vitest run --project cli`.
+Result: typecheck, lint, build, license-check, secrets scan all clean. Unit project: 12 failed / 4776 total — same 4 pre-existing failing files as Task 7's baseline (`AgentCLI-model-source.test.ts`, `extensions-scan.test.ts`, `providers-core.test.ts`, `pi.extensions-scan.test.ts`), none touched by this change. Integration (`cli`) project: pre-existing `sso-claude-plugin.test.ts` failures (same baseline as Task 7) plus one flaky `self-update.test.ts` failure that passed on retry in isolation on both `main` and this branch — confirmed network-timing flakiness, not a regression. (`--project agent` was also tried; its ~15 failures all require a live CodeMie backend matching the installed CLI version and real network access, which this sandbox doesn't have — out of scope for this change and not part of the project's `ci` script.) Targeted suites (`DesktopTelemetryRuntime.test.ts` 26, `SessionStore.index.test.ts`, `core-misc.test.ts`, `codex.plugin.lifecycle.test.ts`, `pi.plugin.lifecycle.test.ts`, full `src/telemetry` + `src/agents/core/session`) all pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/agents/core/session/SessionStore.ts src/telemetry/runtime/DesktopTelemetryRuntime.ts \
+        src/agents/core/session/__tests__/SessionStore.index.test.ts \
+        src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts
+git commit -m "fix(telemetry): reconcile stranded claude-desktop sessions on daemon restart"
+```

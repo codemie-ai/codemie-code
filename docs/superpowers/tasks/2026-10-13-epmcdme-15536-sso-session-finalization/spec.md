@@ -79,3 +79,9 @@ No existing test, for either already-wired plugin (`codex` or `pi`), asserts tha
 - The `codemie analytics --export json` active-session-exclusion claim from the original ticket text — investigated, does not reproduce on current code.
 - Any change to the inactivity threshold / lookback defaults in `reconcileStaleSessions`.
 - Documentation updates to `.ai-run/guides/integration/external-integrations.md` (currently documents the codex-only path) — flagged as a follow-up for a knowledge-harvester pass, not bundled into this fix.
+
+## Follow-up (2026-10-15): Claude Desktop restart-reconciliation gap
+
+Reported after this fix shipped, and confirmed by reproduction against current code: `claude-desktop` sessions have no agent plugin and no `onSessionStart`, so none of Patterns A/B above reach them (see Investigation Findings in the work item for why Desktop was called out of scope originally). They are finalized only by `DesktopTelemetryRuntime` inside the proxy daemon, whose session tracking is in-memory only and does not survive a hard `kill -9` + restart — a session already idle at kill time is never rediscovered through the normal poll path and stays `status: "active"` forever.
+
+Fixed as an addendum (Task 8 in `plan.md`): `DesktopTelemetryRuntime.start()` now reconciles persisted `active` sessions for its client type from `~/.codemie/sessions/` before the first poll, finalizing anything already past `inactivityTimeoutMs` immediately (`reason: "desktop-daemon-restart-stale"`) and re-seeding `trackedSessions` for anything not yet stale. Backed by a new `SessionStore.findActiveSessions(agentName)`. This is additive — it does not change the Pattern A/B plugins, `reconcileStaleSessions`, or any of the acceptance criteria above.

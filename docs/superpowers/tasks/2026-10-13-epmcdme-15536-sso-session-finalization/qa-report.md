@@ -37,3 +37,28 @@ Both failure families were cross-checked against a clean `origin/main` worktree 
 ## Drift signal
 
 No. Implementation matches spec.md exactly: `onSessionStart` method names, `reconcileStaleSessions` call signature `(agentName, env, buildHookConfig)`, and the Pattern A/B split all match what spec.md and plan.md specified.
+
+## Follow-up — Claude Desktop restart reconciliation (2026-10-15)
+
+**Scope**: Task 8 in `plan.md` (`SessionStore.findActiveSessions`, `DesktopTelemetryRuntime.reconcilePersistedSessions`), plus a QA-driven failure-isolation fix (see below) and new wiring tests for `codex`/`pi` closing a pre-existing coverage gap from the original acceptance criteria.
+
+| Gate | Status | Command | Notes |
+|---|---|---|---|
+| typecheck | PASS | `npx tsc --noEmit` | No diagnostics. |
+| lint | PASS | `npm run lint` | Zero errors, zero warnings. |
+| build | PASS | `npm run build` | `dist/` rebuilt successfully. |
+| license-check | PASS | `npm run license-check` | No missing/stale headers. |
+| secrets scan | PASS | `npm run validate:secrets` | No leaks found. |
+| unit (full project) | PASS* | `npx vitest run --project unit` | 12 failed / 4776 total, same 4 pre-existing files as the original run above (`AgentCLI-model-source.test.ts`, `extensions-scan.test.ts`, `providers-core.test.ts`, `pi.extensions-scan.test.ts`) — none touched by this change; failure count/content unchanged from the baseline recorded earlier in this report. |
+| integration (`cli` project) | PASS* | `npx vitest run --project cli` | 5 failed / 288 total: the same `sso-claude-plugin.test.ts` baseline failures from the original run, plus one `self-update.test.ts` failure that re-ran green in isolation on both `main` and this branch — network-timing flakiness in that test, not a regression. |
+| `agent` project (exploratory, not part of `npm run ci`) | SKIPPED (environment) | `npx vitest run --project agent` | ~15 failures, all requiring a live CodeMie backend compatible with the installed CLI version plus real network access — unavailable in this sandbox, unrelated to any file touched by this ticket. |
+
+\* Marked PASS on the same basis as the original run: failures are the identical pre-existing baseline (or confirmed-flaky/environmental), not regressions from this change.
+
+**QA finding and fix — finalization failures must not block startup**: adversarial testing (forcing `SessionSyncer.sync()` to reject during a restart finalization) found that an unhandled `finalizeSession` rejection inside `reconcilePersistedSessions()` would propagate through `start()` and fail daemon startup entirely (`proxy-daemon.ts`'s outer catch calls `process.exit(1)`) — a single stranded session with a transient network/SSO issue would have taken down the whole proxy daemon, which is worse than the original stuck-session bug. Fixed by wrapping the `finalizeSession` call in its own try/catch (log-and-continue), matching the non-blocking convention used everywhere else in this reconciliation path. Regression test: `does not let one failed finalization abort reconciliation of the rest, or crash start()` in `DesktopTelemetryRuntime.test.ts`.
+
+**Coverage gap closed**: the original ticket's acceptance criteria flagged that no wiring-level test asserted `onSessionStart` actually invokes reconciliation, "even for codex/pi" — this held through the Task 1-7 delivery (the 6 new plugins got wiring tests; codex/pi did not). Added `onSessionStart` → reconciliation wiring tests for both (`codex.plugin.lifecycle.test.ts`, new `pi.plugin.lifecycle.test.ts`), so all 8 plugins with this fallback now have equivalent coverage.
+
+**Targeted suites** (all passing): `DesktopTelemetryRuntime.test.ts` (26 tests, including 9 restart-reconciliation cases), `SessionStore.index.test.ts`, `core-misc.test.ts`, `codex.plugin.lifecycle.test.ts`, `pi.plugin.lifecycle.test.ts`, full `src/telemetry` + `src/agents/core/session`.
+
+**Drift signal**: No. The Desktop fix remains additive — no change to any Pattern A/B plugin, `reconcileStaleSessions`, or `hook.ts`. The codex/pi additions are new tests only, no production code changed in those two plugins.
