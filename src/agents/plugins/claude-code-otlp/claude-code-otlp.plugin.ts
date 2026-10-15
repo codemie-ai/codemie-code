@@ -11,6 +11,7 @@ import type {
   UserPromptSubmitHookSpecificOutput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
@@ -170,8 +171,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       decision: 'block',
       reason: [
         `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
-        "A browser sign-in window has been opened automatically.",
-        "Complete the sign-in, then re-send your prompt.",
+        describeLogin(authResult.loginOutcome),
       ].join("\n"),
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
