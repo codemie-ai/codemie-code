@@ -54,6 +54,7 @@ export class DesktopTelemetryRuntime {
   ) {}
 
   async start(): Promise<void> {
+    await this.reconcilePersistedSessions();
     await this.poll();
     this.timer = setInterval(() => {
       this.poll().catch((error) => {
@@ -83,6 +84,59 @@ export class DesktopTelemetryRuntime {
     await this.poll();
   }
 
+
+  /**
+   * `trackedSessions` is in-memory only, so a hard-killed daemon starts the next run with
+   * no memory of sessions it was tracking. poll() only (re)tracks a session once new
+   * activity lands after `startedAt` — a session already idle when the daemon died would
+   * otherwise never be rediscovered and would stay `active` forever. Seed tracking from
+   * disk instead: finalize anything already past the idle timeout immediately, and hand
+   * the rest to the normal poll-driven idle check.
+   */
+  private async reconcilePersistedSessions(): Promise<void> {
+    const activeSessions = await this.sessionStore.findActiveSessions(this.config.clientType);
+    if (activeSessions.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const session of activeSessions) {
+      const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
+      if (!externalSessionId) {
+        continue;
+      }
+
+      const lastSeenActivityAt = session.runtimeCheckpoint?.lastSeenActivityAt ?? session.startTime;
+      const inactiveForMs = now - lastSeenActivityAt;
+
+      if (inactiveForMs >= this.config.inactivityTimeoutMs) {
+        logger.info('[desktop-telemetry] Finalizing session stranded by a previous daemon', {
+          externalSessionId,
+          sessionId: session.sessionId,
+          inactiveForMs,
+        });
+        // One session's finalization (sync, metric send) must never abort the rest, and
+        // must never propagate out of start() — a single bad network/SSO blip here would
+        // otherwise stop the whole daemon from starting, which is strictly worse than the
+        // stale-session gap this method exists to close.
+        try {
+          await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale');
+        } catch (error) {
+          logger.warn('[desktop-telemetry] Failed to finalize stranded session (non-blocking)', {
+            externalSessionId,
+            sessionId: session.sessionId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        continue;
+      }
+
+      this.trackedSessions.set(externalSessionId, {
+        codemieSessionId: session.sessionId,
+        lastSeenActivityAt
+      });
+    }
+  }
 
   private async poll(): Promise<void> {
     if (this.isPolling) {

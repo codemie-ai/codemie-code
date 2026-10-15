@@ -157,6 +157,47 @@ export class SessionStore {
   }
 
   /**
+   * Find persisted sessions of `agentName` still marked `active`.
+   *
+   * Used by long-running local telemetry runtimes (e.g. the Claude Desktop
+   * poller) to reconcile sessions a previous process left open across a
+   * restart, since their in-memory tracking does not survive the restart.
+   */
+  async findActiveSessions(agentName: string): Promise<Session[]> {
+    const sessionsDir = getCodemiePath('sessions');
+    if (!existsSync(sessionsDir)) {
+      return [];
+    }
+
+    const active: Session[] = [];
+
+    try {
+      const files = await readdir(sessionsDir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+
+        const filePath = join(sessionsDir, file);
+        try {
+          const session = JSON.parse(await readFile(filePath, 'utf-8')) as Session;
+          if (session.agentName === agentName && session.status === 'active') {
+            active.push(session);
+          }
+        } catch (error) {
+          logger.debug('[SessionStore] Skipping unreadable session file during active session scan', {
+            filePath,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      const errorContext = createErrorContext(error, { agent: agentName });
+      logger.error('[SessionStore] Failed active session scan', formatErrorForLog(errorContext));
+    }
+
+    return active;
+  }
+
+  /**
    * Update session status and reason
    */
   async updateSessionStatus(sessionId: string, status: Session['status'], reason?: string): Promise<void> {
