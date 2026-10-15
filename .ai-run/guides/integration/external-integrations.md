@@ -15,6 +15,7 @@
 | OpenCode | Open-source AI assistant | SSO/API Key | Via CodeMie proxy |
 | MCP Servers | Remote MCP tool servers | OAuth 2.0 (auto) | `codemie-mcp-proxy` |
 | Enterprise SSO | Corporate auth | SAML/OAuth | `SSO_BASE_URL` |
+| OTLP hook ingestion | Coding tool's own native hook/telemetry events → analytics pipeline | Via CodeMie proxy daemon | `codemie hook --agent <adapter-name>` |
 
 ---
 
@@ -277,6 +278,12 @@ Claude Code injects `!bash` commands as synthetic `type:'user'` messages. The pr
 
 ---
 
+## OTLP Hook-Event Ingestion (`OtlpAgentAdapter`)
+
+A separate, agent-agnostic integration from the above: each coding tool that exposes its own native hook/telemetry surface (Claude Code today; e.g. a future Cursor integration) gets one `OtlpAgentAdapter` plugin (`src/agents/plugins/<name>/`) that turns those events into CodeMie analytics via `codemie hook --agent <adapter-name>` → proxy daemon spool → analytics API. The dispatch contract, how to add a new native event to an adapter, and how to wire up a new tool are **not** duplicated here — see `docs/ARCHITECTURE-OTLP-PLUGIN.md`. `claude-code-otlp` (`src/agents/plugins/claude-code-otlp/`) is the current reference implementation.
+
+---
+
 ## skills.sh Wrapper (`codemie skills`)
 
 Catalog-agnostic thin wrapper around the upstream `skills` npm CLI. Discovery, ranking, and source classification are out of scope for this CLI.
@@ -331,6 +338,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 
 - Provider plugins: `src/providers/plugins/`
 - Provider core types: `src/providers/core/types.ts`
+- OTLP hook-event adapters: `docs/ARCHITECTURE-OTLP-PLUGIN.md`
 - OpenCode plugin: `src/agents/plugins/opencode/`
 - Codex plugin: `src/agents/plugins/codex/`
 - Claude plugin: `src/agents/plugins/claude/`

@@ -24,8 +24,14 @@ const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a
 
 export interface OtlpHookSpoolData {
   agentName: string;
-  raw: string;
-  timestamp: number;
+  /** The complete wire-ready event, built at hook time by the adapter. */
+  hookEvent: string;
+}
+
+/** One hook invocation's batch, as the hook process POSTs it. */
+export interface OtlpHookBatchRequest {
+  agentName: string;
+  hookEvents: Record<string, unknown>[];
 }
 
 function sendError(res: ServerResponse, status: number, type: string, message: string): true {
@@ -153,6 +159,10 @@ class OtlpInterceptor implements ProxyInterceptor {
     return false;
   }
 
+  /**
+   * One hook invocation's batch, appended to the spool as one write so the client's
+   * commit decision (advance its transcript cursor or not) can be a single boolean.
+   */
   private async handleHooks(ctx: ProxyContext, res: ServerResponse): Promise<true> {
     if (!ctx.metadata.gatewayKeyValidated) {
       logger.warn('[otlp-ingest] Rejected hooks request: gateway key not validated');
@@ -163,49 +173,61 @@ class OtlpInterceptor implements ProxyInterceptor {
       return sendError(res, 400, 'invalid_request_error', 'Empty body');
     }
 
-    const rawOtlpHookSpoolData = ctx.requestBody.toString('utf-8');
-
-    let otlpHookSpoolData: OtlpHookSpoolData;
-
+    let batch: OtlpHookBatchRequest;
     try {
-      otlpHookSpoolData = JSON.parse(rawOtlpHookSpoolData) as OtlpHookSpoolData;
+      batch = JSON.parse(ctx.requestBody.toString('utf-8')) as OtlpHookBatchRequest;
     } catch {
       return sendError(res, 400, 'invalid_request_error', 'Invalid JSON');
+    }
+
+    if (!Array.isArray(batch.hookEvents)) {
+      return sendError(res, 400, 'invalid_request_error', 'Missing hookEvents array');
     }
 
     // Validate agentName - dynamic import avoids circular dependency
     try {
       const { AgentRegistry } = await import('../../../../../agents/registry.js');
-      if (!AgentRegistry.getAnalyticsAgent(otlpHookSpoolData.agentName)) {
+      if (!AgentRegistry.getAnalyticsAgent(batch.agentName)) {
         return sendError(res, 400, 'invalid_request_error', 'Unrecognized agentName');
       }
     } catch {
       return sendError(res, 400, 'invalid_request_error', 'Agent validation failed');
     }
 
-    // Extract session_id from raw hook JSON
+    // A batch is one hook invocation, so it is single-session. Events without a
+    // session_id are discarded individually; a batch mixing more than one non-empty
+    // session_id is rejected whole, so the client's commit stays all-or-nothing.
     let sessionId = '';
-    try {
-      const hookEvent = JSON.parse(otlpHookSpoolData.raw) as Record<string, unknown>;
-      sessionId = String(hookEvent['session_id'] ?? '');
-    } catch { /* ignore */ }
+    const lines: string[] = [];
+    for (const event of batch.hookEvents) {
+      const eventSessionId = String((event as Record<string, unknown> | null)?.['session_id'] ?? '');
+      if (!eventSessionId) {
+        logger.debug('[otlp-ingest] hooks: no session_id in hookEvent, discarding');
+        continue;
+      }
+      if (!sessionId) {
+        sessionId = eventSessionId;
+      } else if (sessionId !== eventSessionId) {
+        return sendError(res, 400, 'invalid_request_error', 'Mixed session_id in one batch');
+      }
+      const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event) };
+      lines.push(JSON.stringify(spoolRecord));
+    }
 
-    if (!sessionId) {
-      // No session id — log and accept without spooling
-      logger.debug('[otlp-ingest] hooks: no session_id in raw, discarding');
+    if (lines.length === 0) {
+      // Every event lacked a session_id — nothing to retry, so accept without spooling.
       res.statusCode = 202;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ accepted: true }));
       return true;
     }
 
-    const line = rawOtlpHookSpoolData + '\n';
     try {
-      await appendSpool(sessionId, 'hooks', line);
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
-      // Still respond 202 — data loss is logged but we don't block the hook
+      return sendError(res, 500, 'api_error', 'Failed to persist hooks batch');
     }
 
     res.statusCode = 202;
