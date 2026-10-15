@@ -341,7 +341,7 @@ export class AgentCLI {
 
               if (!reauthed) {
                 console.log(chalk.yellow('⚠️  CodeMie analytics authentication is invalid — session metrics will not be uploaded.'));
-                console.log(chalk.white(`  Re-authenticate later with: codemie profile login --url ${config.codeMieUrl}\n`));
+                console.log(chalk.white('  Re-authenticate later with: codemie profile login\n'));
                 logger.warn(`Analytics auth invalid for ${config.codeMieUrl}: ${analyticsAuth.error}`);
               }
             } else {
