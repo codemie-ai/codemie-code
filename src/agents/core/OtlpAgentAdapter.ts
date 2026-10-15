@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { extractRepository } from '@/utils/paths.js';
 import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveStoryFor } from './story-resolver.js';
@@ -166,7 +167,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       type: typeof explicitType === 'string' && explicitType.length > 0 ? explicitType : this.resolveEventType(hookEvent),
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
-      cwd: ctx.cwd,
+      cwd: extractRepository(ctx.cwd),
       prompt_body: this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
       event_id: randomUUID(),
