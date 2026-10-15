@@ -93,8 +93,13 @@ function navigateJsonPath(
   jsonPath: string,
   cwd: string
 ): Record<string, unknown> | undefined {
-  // Replace {cwd} with actual path
-  const resolvedPath = jsonPath.replace('{cwd}', cwd);
+  // Claude Code's own `~/.claude.json` stores project keys with forward slashes even on
+  // Windows (confirmed empirically: the hook's own `cwd` arrives as `C:\Repositories\foo`,
+  // the stored `projects` key is `C:/Repositories/foo`) — normalize before substitution, or
+  // a `{cwd}`-keyed lookup (e.g. `claude.plugin.ts`'s `projects.{cwd}.mcpServers`) silently
+  // misses every project on Windows.
+  const normalizedCwd = cwd.split('\\').join('/');
+  const resolvedPath = jsonPath.replace('{cwd}', normalizedCwd);
   const parts = resolvedPath.split('.');
 
   let current: unknown = obj;

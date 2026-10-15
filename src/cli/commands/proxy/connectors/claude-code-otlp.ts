@@ -210,6 +210,7 @@ export const HOOK_EVENTS = [
   'StopFailure',
   'SessionEnd',
   'UserPromptSubmit',
+  'UserPromptExpansion',
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
