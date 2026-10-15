@@ -47,7 +47,7 @@
       "duration_ms": 241516,
       "command": "npx vitest run --project unit",
       "exit_code": 1,
-      "notes": "1 failure in forwarder.test.ts; forwarder.ts has unrelated uncommitted local changes (URL resolves to localhost:8080)"
+      "notes": "SUPERSEDED: original run failed 1 test in forwarder.test.ts, attributed to uncommitted local forwarder.ts edits. Re-run on clean tree at dc88e6f7 with CODEMIE_* unset: PASS (344 files, 5119 tests passed, 2 skipped). See qa-rerun-notes.md"
     },
     {
       "id": "integration",
@@ -56,7 +56,7 @@
       "duration_ms": 224175,
       "command": "npx vitest run --project cli",
       "exit_code": 1,
-      "notes": "15 failures, mostly hook/test timeouts in spawned CLI tests; likely environmental"
+      "notes": "SUPERSEDED: original run failed (15 failures, hook/test timeouts in spawned CLI tests). Re-run on clean tree at dc88e6f7 with CODEMIE_* unset: PASS (37 files, 278 tests passed, 10 skipped). Agent project (tests/integration/agent-*) not run: Claude agent install timed out. See qa-rerun-notes.md"
     },
     {
       "id": "commitlint",
