@@ -231,6 +231,18 @@ describe('buildUsageTotals', () => {
     expect(totals).toHaveLength(1);
     expect(totals[0]).toMatchObject({ thinking_tokens: 10 });
   });
+
+  it('keeps thinking_tokens null when every request in the group has none, rather than summing to 0', () => {
+    const reqs: OpenUsageRequest[] = [
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 100, thinkingTokens: null }),
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 50, thinkingTokens: null }),
+    ];
+
+    const totals = buildUsageTotals(reqs);
+
+    expect(totals).toHaveLength(1);
+    expect(totals[0]).toMatchObject({ output_tokens: 150, thinking_tokens: null });
+  });
 });
 
 describe('buildSubagentUsageEvent', () => {
