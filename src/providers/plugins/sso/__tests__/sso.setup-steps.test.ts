@@ -75,7 +75,7 @@ describe('SSOSetupSteps platform URL resolution', () => {
       mockGetStoredCredentials.mockResolvedValue(null);
       const result = await SSOSetupSteps.validateAuth!({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W } as never);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain(`codemie profile login --url ${P}`);
+      expect(result.error).toContain('codemie profile login');
     });
 
     it('errors when no URL is configured', async () => {

@@ -99,7 +99,7 @@ export class CodeMieProxy {
         if (!credentials) {
           throw new AuthenticationError(
             `SSO credentials not found for ${this.config.targetApiUrl}. ` +
-            `Please run: codemie profile login --url ${this.config.targetApiUrl}`
+            'Please run: codemie profile login'
           );
         }
       }
@@ -111,7 +111,7 @@ export class CodeMieProxy {
       syncCredentials = await sso.getStoredCredentials(this.config.syncCodeMieUrl);
       if (!syncCredentials) {
         logger.debug(
-          `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login --url ${this.config.syncCodeMieUrl}`
+          `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login`
         );
       }
     }

@@ -20,7 +20,7 @@ export async function prepareDaemonLaunch(config: LoadedConfig, profile: string)
     throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
   }
 
-  await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
+  await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl, config.provider);
 
   await Promise.allSettled([
     syncRegisteredSkills(profile, process.cwd()),
