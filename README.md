@@ -66,6 +66,20 @@ npx @codemieai/code install claude --supported
 
 ## Installation
 
+### System Requirements
+
+Before installing, verify the following:
+
+| Requirement | Details |
+|---|---|
+| Node.js | `>=20.0.0` |
+| npm | Required for the npm fallback and local/project installation methods; ships with Node.js |
+| Operating System | Windows, macOS, Linux, or WSL |
+| Network access | Access to `registry.npmjs.org`, or an enterprise npm mirror that exposes the `@codemieai` scope |
+| npm permissions | A user-writable global npm prefix is recommended for `npm install -g`; when global npm is not writable, the bootstrap installers configure a user-local prefix automatically |
+
+Confirm the installed Node.js version with `node --version` before proceeding. Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-kimi`, etc.) additionally require a **global** installation — see [Local/Project npm Installation](#localproject-npm-installation).
+
 ### Native Bootstrap Installers
 
 For Windows and macOS, CodeMie ships two installer options:
