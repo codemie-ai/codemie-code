@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { link, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
@@ -53,17 +53,29 @@ async function removeLock(lockPath: string): Promise<void> {
   }
 }
 
-/** Atomically creates the lock; returns false if it already exists. */
+/**
+ * Atomically creates the lock; returns false if it already exists.
+ * Writes the full content to a private temp file first, then publishes it
+ * with `link` (fails EEXIST like `wx`, but atomically — a concurrent reader
+ * can never observe the lock path existing with partial/empty content, which
+ * a plain `writeFile(path, data, { flag: 'wx' })` cannot guarantee: open and
+ * write are separate syscalls, so another caller can read an empty file in
+ * between, decide the lock is corrupt, and steal it from the real owner).
+ */
 async function tryCreateLock(lockPath: string): Promise<boolean> {
   const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
+  const tmpPath = `${lockPath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
+    await writeFile(tmpPath, JSON.stringify(lock));
+    await link(tmpPath, lockPath);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       return false;
     }
     throw error;
+  } finally {
+    await unlink(tmpPath).catch(() => {});
   }
 }
 
