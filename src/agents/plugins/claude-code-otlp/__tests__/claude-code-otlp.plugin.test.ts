@@ -8,6 +8,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
   detectGitHeadSha: vi.fn(async () => 'abc123def456'),
+  detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/utils/config.js', () => ({
@@ -21,9 +22,26 @@ vi.mock('@/utils/logger.js', () => ({
 
 const resolveClientVersionMock = vi.fn();
 const openMainTranscriptPassMock = vi.fn();
+const openSessionStartPassMock = vi.fn();
 const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
 const readSubagentMetaMock = vi.fn();
+const resolveSessionEnvFieldsMock = vi.fn();
+
+/** Mirrors `resolveSessionEnvFields`'s real "echo configured_model/permission_mode back" shape. */
+const SESSION_ENV_FIELDS_STUB = {
+  provider: 'anthropic',
+  api_host: 'api.anthropic.com',
+  effort: '',
+  output_style: '',
+  plugins: {},
+  mcp_servers: [],
+  os: 'linux',
+  arch: 'x64',
+  node_version: 'v20.0.0',
+  timezone: 'UTC',
+  hostname_hash: 'deadbeef',
+};
 
 vi.mock('../client-version-cache.js', () => ({
   resolveClientVersion: resolveClientVersionMock,
@@ -31,6 +49,7 @@ vi.mock('../client-version-cache.js', () => ({
 
 vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: openMainTranscriptPassMock,
+  openSessionStartPass: openSessionStartPassMock,
   openSubagentPass: openSubagentPassMock,
   openSessionEndPass: openSessionEndPassMock,
 }));
@@ -39,9 +58,13 @@ vi.mock('../transcript/subagent-usage.js', () => ({
   readSubagentMeta: readSubagentMetaMock,
 }));
 
+vi.mock('../event-fields/session-env-fields.js', () => ({
+  resolveSessionEnvFields: resolveSessionEnvFieldsMock,
+}));
+
 import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
-import { detectGitHeadSha } from '@/utils/processes.js';
+import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 
 // Deferred past the mock-backing consts above: a static import of the plugin would be
 // hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
@@ -57,6 +80,16 @@ function emptyPass(): { events: Record<string, unknown>[]; finalize: ReturnType<
   return { events: [], finalize: vi.fn(async () => {}) };
 }
 
+/** `openSessionEndPass`'s own return shape also carries `gitHeadStart`/`sessionStartedAt`. */
+function emptySessionEndPass(): {
+  events: Record<string, unknown>[];
+  finalize: ReturnType<typeof vi.fn>;
+  gitHeadStart: string;
+  sessionStartedAt: string;
+} {
+  return { ...emptyPass(), gitHeadStart: '', sessionStartedAt: '' };
+}
+
 /** Every event sent in the batch call (there is at most one call per processOtlpEvent). */
 function forwardedEvents(): Record<string, unknown>[] {
   return vi.mocked(forwardOtlpEventsToSpool).mock.calls[0]?.[0] ?? [];
@@ -70,6 +103,12 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     vi.clearAllMocks();
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
+    openSessionStartPassMock.mockResolvedValue(emptyPass());
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
   });
 
   it('does nothing for untracked projects, for every event', async () => {
@@ -117,9 +156,15 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSubagentPassMock.mockResolvedValue(emptyPass());
-    openSessionEndPassMock.mockResolvedValue(emptyPass());
+    openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
     readSubagentMetaMock.mockResolvedValue({});
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
   });
 
   afterEach(() => {
@@ -221,14 +266,24 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   beforeEach(() => {
     openMainTranscriptPassMock.mockReset();
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openSessionStartPassMock.mockReset();
+    openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSubagentPassMock.mockReset();
     openSubagentPassMock.mockResolvedValue(emptyPass());
     openSessionEndPassMock.mockReset();
-    openSessionEndPassMock.mockResolvedValue(emptyPass());
+    openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
     readSubagentMetaMock.mockReset();
     readSubagentMetaMock.mockResolvedValue({});
     resolveClientVersionMock.mockReset();
     resolveClientVersionMock.mockResolvedValue('2.1.23');
+    resolveSessionEnvFieldsMock.mockReset();
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
+    vi.mocked(detectGitCommitsByAuthor).mockReset();
+    vi.mocked(detectGitCommitsByAuthor).mockResolvedValue([]);
     forwardOtlpEventsToSpool.mockReset();
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     vi.mocked(isProjectTracked).mockResolvedValue(true);
@@ -576,8 +631,15 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSubagentPassMock.mockResolvedValue(emptyPass());
-    openSessionEndPassMock.mockResolvedValue(emptyPass());
+    openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
+    vi.mocked(detectGitCommitsByAuthor).mockResolvedValue([]);
   });
 
   const typeFor = async (name: string): Promise<unknown> => {
@@ -604,6 +666,7 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     ['SubagentStop', 'agent.subagent.stop'],
     ['PreCompact', 'agent.session.compact'],
     ['Notification', 'agent.notification'],
+    ['UserPromptExpansion', 'agent.skill.dispatch'],
   ])('maps %s to %s', async (hookName, expectedType) => {
     expect(await typeFor(hookName)).toBe(expectedType);
   });
@@ -631,6 +694,183 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     await plugin.processOtlpEvent(event('Stop'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
     const types = forwardedEvents().map((r) => r['type']);
     expect(types).toEqual(['agent.session.stop', 'agent.usage.request']);
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+  });
+
+  it('copies command_name into skill_name for a slash-command expansion (ticket fields only)', async () => {
+    const raw = JSON.stringify({
+      session_id: 's',
+      transcript_path: '',
+      cwd: '/x',
+      hook_event_name: 'UserPromptExpansion',
+      expansion_type: 'slash_command',
+      command_name: 'superpowers:brainstorming',
+      command_args: 'how are you?',
+      command_source: 'plugin',
+      prompt: '/superpowers:brainstorming how are you?',
+    });
+
+    await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.type).toBe('agent.skill.dispatch');
+    expect(forwarded.skill_name).toBe('superpowers:brainstorming');
+    expect(forwarded.command_name).toBe('superpowers:brainstorming');
+  });
+
+  it('also copies command_name into skill_name for an mcp_prompt expansion (no expansion_type gating)', async () => {
+    const raw = JSON.stringify({
+      session_id: 's',
+      transcript_path: '',
+      cwd: '/x',
+      hook_event_name: 'UserPromptExpansion',
+      expansion_type: 'mcp_prompt',
+      command_name: 'some-mcp-prompt',
+      command_args: '',
+      prompt: 'expanded text',
+    });
+
+    await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.skill_name).toBe('some-mcp-prompt');
+    expect(forwarded.command_name).toBe('some-mcp-prompt');
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    openSessionStartPassMock.mockResolvedValue(emptyPass());
+    resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: model,
+      permission_mode: permissionMode,
+    }));
+  });
+
+  it('forwards agent.session.env as a second record alongside agent.session.start, carrying every resolved field', async () => {
+    const raw = JSON.stringify({
+      session_id: 's',
+      transcript_path: '',
+      cwd: '/x',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+      model: 'claude-opus-5',
+      permission_mode: 'acceptEdits',
+    });
+
+    await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const forwarded = forwardedEvents();
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded[0].type).toBe('agent.session.start');
+    expect(forwarded[1]).toMatchObject({
+      type: 'agent.session.env',
+      session_id: 's',
+      configured_model: 'claude-opus-5',
+      permission_mode: 'acceptEdits',
+      ...SESSION_ENV_FIELDS_STUB,
+    });
+  });
+
+  it('passes the hook cwd and model into resolveSessionEnvFields', async () => {
+    await plugin.processOtlpEvent(
+      JSON.stringify({
+        session_id: 's',
+        transcript_path: '',
+        cwd: '/repo',
+        hook_event_name: 'SessionStart',
+        model: 'claude-sonnet-5',
+      }),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+
+    expect(resolveSessionEnvFieldsMock).toHaveBeenCalledWith('/repo', 'claude-sonnet-5', '');
+  });
+
+  it('opens the SessionStart pass with the resolved git_head_start and wires its finalize into the ForwardDecision', async () => {
+    const pass = emptyPass();
+    openSessionStartPassMock.mockResolvedValue(pass);
+
+    await plugin.processOtlpEvent(event('SessionStart'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openSessionStartPassMock).toHaveBeenCalledWith('s', 'abc123def456');
+    expect(pass.finalize).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    openSessionEndPassMock.mockResolvedValue({
+      events: [],
+      finalize: vi.fn(async () => {}),
+      gitHeadStart: 'sha-start-111',
+      sessionStartedAt: '2026-10-01T00:00:00.000Z',
+    });
+    vi.mocked(detectGitCommitsByAuthor).mockResolvedValue([]);
+  });
+
+  const sessionEndEvent = () =>
+    JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/repo', hook_event_name: 'SessionEnd', reason: 'other' });
+
+  it('forwards agent.git.snapshot with git_head_start/end and git_commits, alongside agent.session.end', async () => {
+    vi.mocked(detectGitCommitsByAuthor).mockResolvedValue([
+      { sha: 'c1', time: '2026-10-01T01:00:00.000Z', files: 2, added: 10, removed: 1 },
+    ]);
+
+    await plugin.processOtlpEvent(sessionEndEvent(), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const forwarded = forwardedEvents();
+    expect(forwarded[0].type).toBe('agent.session.end');
+    const snapshot = forwarded.find((e) => e.type === 'agent.git.snapshot');
+    expect(snapshot).toMatchObject({
+      type: 'agent.git.snapshot',
+      session_id: 's',
+      git_head_start: 'sha-start-111',
+      git_head_end: 'abc123def456',
+      git_commits: [{ sha: 'c1', time: '2026-10-01T01:00:00.000Z', files: 2, added: 10, removed: 1 }],
+    });
+    expect(typeof snapshot?.git_email).toBe('string');
+  });
+
+  it('passes the pass-opener session start time into detectGitCommitsByAuthor', async () => {
+    await plugin.processOtlpEvent(sessionEndEvent(), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(detectGitCommitsByAuthor).toHaveBeenCalledWith('/repo', '2026-10-01T00:00:00.000Z', expect.any(String));
+  });
+
+  it('falls back to an empty git_head_start when SessionStart never persisted one', async () => {
+    openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
+
+    await plugin.processOtlpEvent(sessionEndEvent(), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const snapshot = forwardedEvents().find((e) => e.type === 'agent.git.snapshot');
+    expect(snapshot?.git_head_start).toBe('');
   });
 });
 

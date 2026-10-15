@@ -47,6 +47,8 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
+  gitHeadStart: string;
+  sessionStartedAt: string;
 }
 
 /**
@@ -59,6 +61,8 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
+    gitHeadStart: '',
+    sessionStartedAt: '',
   };
 }
 

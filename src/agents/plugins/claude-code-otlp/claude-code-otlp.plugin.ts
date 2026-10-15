@@ -10,6 +10,7 @@ import type {
   StopFailureHookInput,
   StopHookInput,
   SubagentStopHookInput,
+  UserPromptExpansionHookInput,
   UserPromptSubmitHookInput,
   UserPromptSubmitHookSpecificOutput,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -19,12 +20,17 @@ import { parsePromptFields } from '@/agents/core/ticket-parser.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
 import { resolveIdentityCandidateFields } from '@/agents/core/event-fields/identity-fields.js';
-import { resolveGitHeadFields } from '@/agents/core/event-fields/repo-fields.js';
+import {
+  resolveGitCommitFields,
+  resolveGitHeadFields,
+  type GitCommitSummary,
+} from '@/agents/core/event-fields/repo-fields.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
   openMainTranscriptPass,
+  openSessionStartPass,
   openSubagentPass,
   openSessionEndPass,
   type SubagentFile,
@@ -32,6 +38,7 @@ import {
 import { readSubagentMeta } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
+import { resolveSessionEnvFields, type SessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import { resolveToolContextFields, resolveToolDiffFields } from './event-fields/tool-fields.js';
 
@@ -41,6 +48,7 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   StopFailure: 'agent.turn.error',
   SessionEnd: 'agent.session.end',
   UserPromptSubmit: 'agent.prompt.submit',
+  UserPromptExpansion: 'agent.skill.dispatch',
   PreToolUse: 'agent.tool.start',
   PostToolUse: 'agent.tool.end',
   PostToolUseFailure: 'agent.tool.error',
@@ -89,6 +97,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     if (hookInput.hook_event_name === 'UserPromptSubmit') {
       return await this.onUserPromptSubmit(hookInput);
     }
+    if (hookInput.hook_event_name === 'UserPromptExpansion') {
+      return await this.onUserPromptExpansion(hookInput);
+    }
     if (hookInput.hook_event_name === 'PreToolUse') {
       return await this.onPreToolUse(hookInput);
     }
@@ -118,18 +129,32 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
    * Enriches the session start with opt-in fields (not stamped on other events). The hook payload is
    * spread first so a same-named payload key can never override a resolved value. `model` is passed
    * through verbatim and is '' when the payload omits it (e.g. `clear`).
+   *
+   * Also emits `agent.session.env`. `openSessionStartPass` records `git_head_start`/the session's
+   * wall-clock start time into the parse state — same commit-after-send contract as every other
+   * trigger (`pass.finalize`), so `onSessionEndEvent` only ever reads back a value that was
+   * actually persisted after a successful send, never persisted ahead of it.
    */
   private async onSessionStart(hookInput: SessionStartHookInput): Promise<ClaudeForwardDecision> {
     const context: OtlpHookContext = { cwd: hookInput.cwd };
-    const [envFields, identityCandidateFields, gitHeadStart] = await Promise.all([
+    const model = readOptionalString(hookInput, 'model') ?? '';
+    const permissionMode = hookInput.permission_mode ?? '';
+    const [envFields, identityCandidateFields, gitHeadStart, sessionEnvFields] = await Promise.all([
       resolveEnvFields(),
       resolveIdentityCandidateFields(context),
       resolveGitHeadFields(context, 'start'),
+      resolveSessionEnvFields(hookInput.cwd, model, permissionMode),
     ]);
-    const model = readOptionalString(hookInput, 'model');
+    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start);
+
+    const sessionEnvEvent = buildSessionEnvEvent(hookInput.session_id, sessionEnvFields);
     return {
       decision: 'forward',
-      payload: [{ ...hookInput, ...envFields, ...identityCandidateFields, ...gitHeadStart, model: model ?? '' }],
+      payload: [
+        { ...hookInput, ...envFields, ...identityCandidateFields, ...gitHeadStart, model },
+        sessionEnvEvent,
+      ],
+      finalize: pass.finalize,
     };
   }
 
@@ -152,17 +177,34 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ClaudeForwardDecision> {
-    const [pass, gitHeadEnd] = await Promise.all([
+    const [pass, gitHeadEnd, identityCandidateFields] = await Promise.all([
       openSessionEndPass(hookInput.session_id, hookInput.transcript_path, hookInput.cwd),
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+      resolveIdentityCandidateFields({ cwd: hookInput.cwd }),
     ]);
+    const gitCommitFields = await resolveGitCommitFields(
+      hookInput.cwd,
+      pass.sessionStartedAt,
+      identityCandidateFields.git_email
+    );
+    const gitSnapshotEvent = buildGitSnapshotEvent(hookInput.session_id, {
+      gitHeadStart: pass.gitHeadStart,
+      gitHeadEnd: gitHeadEnd.git_head_end,
+      gitEmail: identityCandidateFields.git_email,
+      gitCommits: gitCommitFields.git_commits,
+    });
+
     // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
     return {
       decision: 'forward',
-      payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events],
+      payload: [{ ...hookInput, ...gitHeadEnd }, gitSnapshotEvent, ...pass.events],
       finalize: pass.finalize,
       retryOnce: true,
     };
+  }
+
+  private async onUserPromptExpansion(hookInput: UserPromptExpansionHookInput): Promise<ClaudeForwardDecision> {
+    return { decision: 'forward', payload: [{ ...hookInput, skill_name: hookInput.command_name }] };
   }
 
   private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
@@ -243,6 +285,27 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 }
 
+function buildGitSnapshotEvent(
+  sessionId: string,
+  input: { gitHeadStart: string; gitHeadEnd: string; gitEmail: string; gitCommits: GitCommitSummary[] }
+): Record<string, unknown> {
+  return {
+    type: 'agent.git.snapshot',
+    session_id: sessionId,
+    git_head_start: input.gitHeadStart,
+    git_head_end: input.gitHeadEnd,
+    git_email: input.gitEmail,
+    git_commits: input.gitCommits,
+  };
+}
+
+function buildSessionEnvEvent(sessionId: string, fields: SessionEnvFields): Record<string, unknown> {
+  return {
+    type: 'agent.session.env',
+    session_id: sessionId,
+    ...fields,
+  };
+}
 
 /**
  * Reads a string field not declared on the SDK's `HookInput` typings (e.g. `tool_use_id` on

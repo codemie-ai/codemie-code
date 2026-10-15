@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import {
   openMainTranscriptPass,
+  openSessionStartPass,
   openSubagentPass,
   openSessionEndPass,
   type MainTranscriptTrigger,
@@ -1020,5 +1021,39 @@ describe('commit-after-send: finalize(accepted)', () => {
     saveSpy.mockRestore();
     const release = await parseState.acquireParseStateLock(sessionId); // would hang if still held
     await release();
+  });
+});
+
+describe('openSessionStartPass', () => {
+  it('derives no events of its own', async () => {
+    const pass = await openSessionStartPass('session-start-no-events', 'sha-start');
+    expect(pass.events).toEqual([]);
+    await pass.finalize(true);
+  });
+
+  it('finalize(true) persists git_head_start/sessionStartedAt so a later SessionEnd reads them back', async () => {
+    const sessionId = 'session-start-accepted';
+    const transcriptPath = writeTranscript('transcript-session-start-accepted.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-abc123');
+    await startPass.finalize(true);
+
+    const endPass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
+    expect(endPass.gitHeadStart).toBe('sha-abc123');
+    expect(endPass.sessionStartedAt).not.toBe('');
+    await endPass.finalize(true);
+  });
+
+  it('finalize(false) persists nothing, so a later SessionEnd falls back to empty start fields', async () => {
+    const sessionId = 'session-start-rejected';
+    const transcriptPath = writeTranscript('transcript-session-start-rejected.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-abc123');
+    await startPass.finalize(false); // the send failed — nothing committed
+
+    const endPass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
+    expect(endPass.gitHeadStart).toBe('');
+    expect(endPass.sessionStartedAt).toBe('');
+    await endPass.finalize(true);
   });
 });

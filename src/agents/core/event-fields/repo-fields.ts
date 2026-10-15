@@ -1,7 +1,10 @@
 import { logger } from '@/utils/logger.js';
-import { detectGitBranch, detectGitHeadSha, detectGitRemoteRepo } from '@/utils/processes.js';
+import { detectGitBranch, detectGitCommitsByAuthor, detectGitHeadSha, detectGitRemoteRepo } from '@/utils/processes.js';
+import type { GitCommitSummary } from '@/utils/processes.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveStoryFor } from '../story-resolver.js';
+
+export type { GitCommitSummary };
 
 /** Git and story fields, resolved from the hook's cwd and prompt. Common to every event. */
 export interface RepoFields {
@@ -58,4 +61,23 @@ export async function resolveGitHeadFields<W extends 'start' | 'end'>(
 ): Promise<GitHeadFields<W>> {
   const sha = await resolveHeadSha(cwd);
   return (which === 'start' ? { git_head_start: sha } : { git_head_end: sha }) as GitHeadFields<W>;
+}
+
+/** Opt-in for `agent.git.snapshot`: commits by `authorEmail` since `sinceIso`, metadata only. */
+export interface GitCommitFields {
+  git_commits: GitCommitSummary[];
+}
+
+/** A failed lookup yields an empty list, never a dropped event. */
+export async function resolveGitCommitFields(
+  cwd: string,
+  sinceIso: string,
+  authorEmail: string
+): Promise<GitCommitFields> {
+  try {
+    return { git_commits: await detectGitCommitsByAuthor(cwd, sinceIso, authorEmail) };
+  } catch (error) {
+    logger.debug(`[event-fields] git commit resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { git_commits: [] };
+  }
 }

@@ -1,12 +1,16 @@
 /**
- * Main-transcript trigger orchestration for the `Stop`, `PreCompact`, `SessionEnd`, and
- * `StopFailure` hook events.
+ * Main-transcript trigger orchestration for the `SessionStart`, `Stop`, `PreCompact`,
+ * `SessionEnd`, `StopFailure`, and `SubagentStop` hook events.
  *
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
  * (`./parse-state.js`), reads only the transcript lines appended since the last persisted
  * `mainOffset` (`./transcript-reader.js`), derives/merges `agent.usage.request` records for
  * those new lines (`./usage-request.js`), and returns one JSON string per completed request
- * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event.
+ * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event. `SessionStart`
+ * ({@link openSessionStartPass}) and `SubagentStop` ({@link openSubagentPass}) derive no
+ * events of their own here — the former only records this session's starting point for
+ * `agent.git.snapshot` to read back later, the latter derives/aggregates usage for its own
+ * subagent transcript.
  *
  * Commit-after-send: the exported `open*Pass` functions acquire the per-session parse-state
  * lock, load state, derive in memory, and return `{ events, finalize }` *without* persisting
@@ -422,6 +426,30 @@ function finalizeOf(
 }
 
 /**
+ * Open a commit-after-send pass for one `SessionStart` hook fire: records this session's
+ * starting point (`gitHeadStart`, wall-clock `sessionStartedAt`) into parse state, under the
+ * same lock and the same commit-only-on-accepted-send discipline every other pass here uses —
+ * persisted only once the `agent.session.start`/`agent.session.env` batch actually lands.
+ * `SessionEnd` (a later, separate CLI process) reads both back via {@link openSessionEndPass}
+ * for `agent.git.snapshot`. Derives no events of its own (`events` is always `[]`).
+ */
+export async function openSessionStartPass(sessionId: string, gitHeadStart: string): Promise<TranscriptPass> {
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    state.gitHeadStart = gitHeadStart;
+    state.sessionStartedAt = new Date().toISOString();
+    return { events: [], finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
+  }
+}
+
+/**
  * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
  * events plus a `finalize` that commits only on an accepted send (see the module doc).
@@ -684,11 +712,21 @@ export async function openSubagentPass(sessionId: string, subagentFile: Subagent
  * leave `openRequests`/`subagentOffsets` half-mutated and committed, but it also never blocks the
  * other subagents or the main events already derived.
  */
+export interface SessionEndPass extends TranscriptPass {
+  /** `TranscriptParseState.gitHeadStart`/`sessionStartedAt`, read back from the same locked load
+   *  above — `agent.git.snapshot`'s inputs, written once at `SessionStart` by
+   *  {@link openSessionStartPass}. `''` on a failed/empty pass, same as every other field here. */
+  gitHeadStart: string;
+  sessionStartedAt: string;
+}
+
+const EMPTY_SESSION_END_PASS: SessionEndPass = { ...EMPTY_PASS, gitHeadStart: '', sessionStartedAt: '' };
+
 export async function openSessionEndPass(
   sessionId: string,
   transcriptPath: string,
   cwd: string
-): Promise<TranscriptPass> {
+): Promise<SessionEndPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
@@ -713,11 +751,16 @@ export async function openSessionEndPass(
       }
     }
 
-    return { events, finalize: finalizeOf(sessionId, state, release) };
+    return {
+      events,
+      finalize: finalizeOf(sessionId, state, release),
+      gitHeadStart: state.gitHeadStart,
+      sessionStartedAt: state.sessionStartedAt,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionEnd pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_PASS;
+    return EMPTY_SESSION_END_PASS;
   }
 }

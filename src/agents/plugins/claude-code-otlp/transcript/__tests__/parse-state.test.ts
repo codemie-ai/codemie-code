@@ -50,6 +50,8 @@ describe('createParseState', () => {
       openRequests: {},
       activeSkill: '',
       branchCounts: {},
+      gitHeadStart: '',
+      sessionStartedAt: '',
     });
   });
 });
@@ -104,6 +106,8 @@ describe('loadParseState', () => {
       openRequests: { 'req1::claude-3-5-sonnet': openRequest },
       activeSkill: 'brainstorming',
       branchCounts: { main: 3, feature: 1 },
+      gitHeadStart: 'abc123def456',
+      sessionStartedAt: '2026-10-01T00:00:00.000Z',
     };
 
     await saveParseState('session-roundtrip', state);
