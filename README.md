@@ -75,7 +75,7 @@ Before installing, verify the following:
 | Node.js | `>=20.0.0` |
 | npm | Required for the npm fallback and local/project installation methods; ships with Node.js |
 | Operating System | Windows, macOS, Linux, or WSL |
-| Network access | Access to `registry.npmjs.org`, or an enterprise npm mirror that exposes the `@codemieai` scope |
+| Network access | Access to `registry.npmjs.org` (or an enterprise npm mirror that exposes the `@codemieai` scope) **and** to GitHub Releases (`github.com`, `objects.githubusercontent.com`) — some native dependencies (e.g. `keytar`) fetch prebuilt binaries from there via `prebuild-install` |
 | npm permissions | A user-writable global npm prefix is recommended for `npm install -g`; when global npm is not writable, the bootstrap installers configure a user-local prefix automatically |
 
 Confirm the installed Node.js version with `node --version` before proceeding. Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, `codemie-kimi`, etc.) additionally require a **global** installation — see [Local/Project npm Installation](#localproject-npm-installation).
