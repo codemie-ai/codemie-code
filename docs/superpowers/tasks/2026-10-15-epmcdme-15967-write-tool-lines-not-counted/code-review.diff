@@ -1,0 +1,134 @@
+diff --git a/docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/spec.md b/docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/spec.md
+index 56ea336..40d943f 100644
+--- a/docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/spec.md
++++ b/docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/spec.md
+@@ -126,7 +126,7 @@ Reading is read-only here: **nothing in this stage writes that file.** A command
+   - `workflow_run`/`worktree` (`agent.subagent.usage`) have no identified source in this codebase's transcript handling or the `.meta.json` sidecar. The external data-model doc names a `workflows/<runId>/` sidecar directory as the source, but a direct check across every local session directory found no such directory in any sampled session — the gap stands; worth revisiting with the data-model doc's owner.
+   - `title` (`agent.session.summary`) has no identified source in a real transcript, top-level or nested, and the data-model doc doesn't name one either — unresolved on both sides.
+ - **Known limitations, accepted as-is for this sub-stage:**
+-  - `lines_added`/`lines_removed` (`agent.session.summary`) always emit `0`. An `Edit`/`Write` tool_use's `input` carries the *proposed* edit, not a diff stat, so no reliable added/removed line count can be derived from it without re-implementing diffing — out of scope for this sub-stage.
++  - `lines_added`/`lines_removed` (`agent.session.summary`) are derived from the applied `toolUseResult` on each `Edit`/`Write` tool call (not the *proposed* `tool_use.input`, since an edit could fail): `structuredPatch` for `Edit`, and `type === 'create'` plus `content` for `Write`. Both are counted as of EPMCDME-15967. Values stay `null` until at least one such result is seen; they do not reflect files created via Bash (heredoc, scripts) — that remains out of scope pending the git snapshot in sub-stage 1.2.
+   - `scope_kind: 'skill'` (`agent.usage.request`) is never emitted. No reliable in-transcript signal for "this turn is inside a skill context" was found, so every main-transcript usage record is unconditionally scoped `'main'`. `state.activeSkill` stays tracked-but-unused, available for a later task that identifies a real signal.
+   - `started_at`/`ended_at` (`agent.session.summary`) are close approximations, not the literal `SessionStart`/`SessionEnd` hook payload timestamps: `started_at` is the main transcript's own first parsed line timestamp, and `ended_at` is `Date.now()` at parse time. Threading the actual hook timestamps through would require widening every `collectMainTranscriptEvents` call site's signature; deferred.
+   - `commands_in_order` (`agent.session.summary`) contains the right distinct slash-command names but not a true chronological sequence — it is `Object.keys()` of `commandInvocations`, an unordered count map. No chronological invocation order is available anywhere in `NamedInvocationCounts` to draw from. A genuine mismatch with the field's name, documented rather than fabricated.
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+index ee906e5..f5de336 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+@@ -328,6 +328,11 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
+     { toolUseResult: { structuredPatch: [{ lines: [' ctx', '-old', '+new1', '+new2'] }] } }
+   );
+ 
++  const writeResult = userLine(
++    [{ type: 'tool_result', tool_use_id: 't2', content: 'ok' }],
++    { toolUseResult: { type: 'create', content: 'line1\nline2\nline3\nline4\nline5', structuredPatch: [], originalFile: null } }
++  );
++
+   it('derives lines, turns, commands, compactions, versions, title and branch from the transcript', async () => {
+     const summary = await runFinalSummary('session-signals', [
+       JSON.stringify({ type: 'ai-title', aiTitle: 'First title' }),
+@@ -393,6 +398,28 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
+     expect(summary.lines_added).toBe(4);
+     expect(summary.lines_removed).toBe(2);
+   });
++
++  it("counts a Write result's content lines alongside a later Edit's diff (the ticket's exact repro)", async () => {
++    const summary = await runFinalSummary('session-write-then-edit', [writeResult, editResult]);
++    expect(summary.lines_added).toBe(7); // 5 (Write content) + 2 (Edit's structuredPatch added lines)
++    expect(summary.lines_removed).toBe(1);
++  });
++
++  it('sums multiple Write and Edit results cumulatively across a recompute', async () => {
++    const sessionId = 'session-mixed-cumulative';
++    const transcriptPath = writeTranscript('transcript-mixed-cumulative.jsonl', [writeResult, editResult]);
++    await mainEvents(sessionId, transcriptPath, 'Stop');
++
++    writeFileSync(
++      transcriptPath,
++      [writeResult, editResult, writeResult, editResult].map((l) => l + '\n').join('')
++    );
++    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'SessionEnd'));
++    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
++
++    expect(summary.lines_added).toBe(14); // 2 x (5 Write + 2 Edit)
++    expect(summary.lines_removed).toBe(2); // 2 x 1 Edit
++  });
+ });
+ 
+ describe('openMainTranscriptPass — branch_counts', () => {
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+index 2c7132f..4bf4966 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+@@ -82,6 +82,23 @@ describe('collectEditLineStats', () => {
+     };
+     expect(collectEditLineStats([line])).toEqual({ linesAdded: 1, linesRemoved: 0 });
+   });
++
++  it('counts a Write result that also carries an empty structuredPatch (the real transcript shape)', () => {
++    const write = (content: string): SignalLine => ({
++      type: 'user',
++      toolUseResult: { type: 'create', content, structuredPatch: [], originalFile: null },
++    });
++    expect(collectEditLineStats([write('a\nb\nc\nd\ne')])).toEqual({ linesAdded: 5, linesRemoved: 0 });
++    expect(collectEditLineStats([write('')])).toEqual({ linesAdded: 0, linesRemoved: 0 });
++  });
++
++  it('still counts an Edit result (structuredPatch, no type field) as a diff, not a create', () => {
++    const edit: SignalLine = {
++      type: 'user',
++      toolUseResult: { structuredPatch: [{ lines: ['-old', '+new'] }] },
++    };
++    expect(collectEditLineStats([edit])).toEqual({ linesAdded: 1, linesRemoved: 1 });
++  });
+ });
+ 
+ describe('countTurns', () => {
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts b/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
+index 20deb4c..866a5eb 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts
+@@ -194,8 +194,10 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
+  *   flag (the same pattern `claude.session.ts`/`claude.metrics-processor.ts` already use for
+  *   tool-use_id → error lookups) when one is found; otherwise a tool call's `.errors` stays 0.
+  * - Lines added/removed come from the applied diff on the `tool_result` line
+- *   (`toolUseResult.structuredPatch`, or a `create` result's `content`), not from the `tool_use`
+- *   input, which only carries the *proposed* edit. They stay `null` until one such result is seen.
++ *   (`toolUseResult.structuredPatch` for Edit, or a `create` result's `content` for Write — the two
++ *   fields are not mutually exclusive on a real Write result, so `type === 'create'` is checked
++ *   first), not from the `tool_use` input, which only carries the *proposed* edit. They stay `null`
++ *   until one such result is seen.
+  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
+  *   fires before the boundary line exists.
+  */
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+index b33be9e..8aabee7 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+@@ -78,7 +78,9 @@ function countContentLines(content: string): number {
+  *
+  * Claude Code attaches the applied change to the user line carrying the `tool_result`:
+  * `toolUseResult.structuredPatch` for edits, and `toolUseResult.type === 'create'` plus the file
+- * `content` for new files. A failed edit has neither, so only applied edits are counted.
++ * `content` for new files — a real Write result carries both `type: 'create'` and an *empty*
++ * `structuredPatch` simultaneously, so `type === 'create'` is checked first. A failed edit has
++ * neither, so only applied edits are counted.
+  */
+ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStats {
+   let linesAdded: number | null = null;
+@@ -95,12 +97,12 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
+ 
+     let added: number | null = null;
+     let removed = 0;
+-    if (Array.isArray(structuredPatch)) {
++    if (type === 'create' && typeof content === 'string') {
++      added = countContentLines(content);
++    } else if (Array.isArray(structuredPatch)) {
+       const counts = countPatchLines(structuredPatch);
+       added = counts.added;
+       removed = counts.removed;
+-    } else if (type === 'create' && typeof content === 'string') {
+-      added = countContentLines(content);
+     }
+     if (added === null) continue;
+ 

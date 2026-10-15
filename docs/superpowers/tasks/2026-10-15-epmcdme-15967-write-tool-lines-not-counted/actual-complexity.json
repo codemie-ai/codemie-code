@@ -1,0 +1,67 @@
+{
+  "task": "Fixed collectEditLineStats branch ordering in session-signals.ts so Write-tool results (type:'create' + empty structuredPatch) count content lines instead of 0, corrected two stale doc comments (session-signals.ts, orchestrator.ts), added regression tests for the real-world dual-field shape, and reconciled the stale mutual-exclusivity note in spec.md.",
+  "generated": "2026-10-15T12:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "collectEditLineStats (session-signals.ts), orchestrator.ts doc-comment correction, spec.md doc reconciliation, regression tests (session-signals.test.ts, orchestrator.test.ts)",
+      "layers": "Agent-Tool (claude-code-otlp transcript signal processing)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Reordering the branch condition in collectEditLineStats changes previously-reported linesAdded/linesRemoved for Write-tool results in the agent.session.summary analytics event; no security, auth, or persistence risk",
+      "mitigation": "Regression test added covering the real-world dual-field shape (type:'create' plus empty structuredPatch); change is a single localized branch reorder, trivially revertible"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 5,
+      "modified_file_list": [
+        "docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/spec.md",
+        "src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts",
+        "src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts",
+        "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+        "src/agents/plugins/claude-code-otlp/transcript/session-signals.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1",
+        "src/agents/plugins/claude-code-otlp/transcript",
+        "src/agents/plugins/claude-code-otlp/transcript/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 11,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "5 files modified (session-signals.ts fix, orchestrator.ts doc-comment correction, two test files, spec.md reconciliation) across 2 directories (docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/ and src/agents/plugins/claude-code-otlp/transcript/, including its __tests__ subdir); no new files created — lands exactly on the M threshold (5-7 modified files)." },
+    { "dimension": "component_scope", "reason": "The only logic change is a branch reorder inside a single function, collectEditLineStats; orchestrator.ts and spec.md edits are doc-comment/spec-text only, and the two test files extend existing describe blocks rather than introducing new components — a self-contained, single-component fix within one layer." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
