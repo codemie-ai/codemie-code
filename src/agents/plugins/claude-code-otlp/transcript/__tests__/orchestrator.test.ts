@@ -328,6 +328,11 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     { toolUseResult: { structuredPatch: [{ lines: [' ctx', '-old', '+new1', '+new2'] }] } }
   );
 
+  const writeResult = userLine(
+    [{ type: 'tool_result', tool_use_id: 't2', content: 'ok' }],
+    { toolUseResult: { type: 'create', content: 'line1\nline2\nline3\nline4\nline5', structuredPatch: [], originalFile: null } }
+  );
+
   it('derives lines, turns, commands, compactions, versions, title and branch from the transcript', async () => {
     const summary = await runFinalSummary('session-signals', [
       JSON.stringify({ type: 'ai-title', aiTitle: 'First title' }),
@@ -392,6 +397,28 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     expect(summary.turns).toBe(2);
     expect(summary.lines_added).toBe(4);
     expect(summary.lines_removed).toBe(2);
+  });
+
+  it("counts a Write result's content lines alongside a later Edit's diff (the ticket's exact repro)", async () => {
+    const summary = await runFinalSummary('session-write-then-edit', [writeResult, editResult]);
+    expect(summary.lines_added).toBe(7); // 5 (Write content) + 2 (Edit's structuredPatch added lines)
+    expect(summary.lines_removed).toBe(1);
+  });
+
+  it('sums multiple Write and Edit results cumulatively across a recompute', async () => {
+    const sessionId = 'session-mixed-cumulative';
+    const transcriptPath = writeTranscript('transcript-mixed-cumulative.jsonl', [writeResult, editResult]);
+    await mainEvents(sessionId, transcriptPath, 'Stop');
+
+    writeFileSync(
+      transcriptPath,
+      [writeResult, editResult, writeResult, editResult].map((l) => l + '\n').join('')
+    );
+    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'SessionEnd'));
+    const summary = events.filter((e) => e.type === 'agent.session.summary')[0];
+
+    expect(summary.lines_added).toBe(14); // 2 x (5 Write + 2 Edit)
+    expect(summary.lines_removed).toBe(2); // 2 x 1 Edit
   });
 });
 

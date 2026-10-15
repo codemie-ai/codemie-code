@@ -78,7 +78,9 @@ function countContentLines(content: string): number {
  *
  * Claude Code attaches the applied change to the user line carrying the `tool_result`:
  * `toolUseResult.structuredPatch` for edits, and `toolUseResult.type === 'create'` plus the file
- * `content` for new files. A failed edit has neither, so only applied edits are counted.
+ * `content` for new files — a real Write result carries both `type: 'create'` and an *empty*
+ * `structuredPatch` simultaneously, so `type === 'create'` is checked first. A failed edit has
+ * neither, so only applied edits are counted.
  */
 export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStats {
   let linesAdded: number | null = null;
@@ -95,12 +97,12 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
 
     let added: number | null = null;
     let removed = 0;
-    if (Array.isArray(structuredPatch)) {
+    if (type === 'create' && typeof content === 'string') {
+      added = countContentLines(content);
+    } else if (Array.isArray(structuredPatch)) {
       const counts = countPatchLines(structuredPatch);
       added = counts.added;
       removed = counts.removed;
-    } else if (type === 'create' && typeof content === 'string') {
-      added = countContentLines(content);
     }
     if (added === null) continue;
 

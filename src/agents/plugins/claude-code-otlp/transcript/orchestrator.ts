@@ -194,8 +194,10 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
  *   flag (the same pattern `claude.session.ts`/`claude.metrics-processor.ts` already use for
  *   tool-use_id → error lookups) when one is found; otherwise a tool call's `.errors` stays 0.
  * - Lines added/removed come from the applied diff on the `tool_result` line
- *   (`toolUseResult.structuredPatch`, or a `create` result's `content`), not from the `tool_use`
- *   input, which only carries the *proposed* edit. They stay `null` until one such result is seen.
+ *   (`toolUseResult.structuredPatch` for Edit, or a `create` result's `content` for Write — the two
+ *   fields are not mutually exclusive on a real Write result, so `type === 'create'` is checked
+ *   first), not from the `tool_use` input, which only carries the *proposed* edit. They stay `null`
+ *   until one such result is seen.
  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
  *   fires before the boundary line exists.
  */
