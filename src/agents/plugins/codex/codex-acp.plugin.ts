@@ -1,6 +1,40 @@
 import type { AgentMetadata } from '../../core/types.js';
 import type { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { CodexPlugin, CodexPluginMetadata } from './codex.plugin.js';
+import { readFile, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { logger } from '../../../utils/logger.js';
+
+/**
+ * Point CODEX_HOME's config.toml at the generated model catalog (or drop a stale pointer).
+ *
+ * codex-acp builds its model list from Codex's app-server, which only honors
+ * `model_catalog_json` from the config.toml layer — the same key passed through
+ * CODEX_CONFIG is ignored, so the picker would show Codex's full bundled catalog
+ * instead of the profile's narrowed one. The key must sit above any `[table]`
+ * header to be top-level; the rest of the file (e.g. trusted-project tables Codex
+ * writes itself) is left untouched.
+ */
+export async function syncModelCatalogToConfigToml(codexHome: string, catalogPath: string | undefined): Promise<void> {
+  const configPath = join(codexHome, 'config.toml');
+  let current = '';
+  try {
+    current = await readFile(configPath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  const firstTable = current.search(/^\s*\[/m);
+  const preamble = firstTable === -1 ? current : current.slice(0, firstTable);
+  const rest = firstTable === -1 ? '' : current.slice(firstTable);
+  const cleaned = preamble.replace(/^model_catalog_json\s*=.*\r?\n?/m, '');
+  const line = catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}\n` : '';
+  const next = line + cleaned + rest;
+
+  if (next !== current) {
+    await writeFile(configPath, next, 'utf-8');
+  }
+}
 
 /**
  * Codex ACP Plugin Metadata
@@ -123,6 +157,14 @@ export const CodexAcpPluginMetadata: AgentMetadata = {
           }
         }
         env.CODEX_CONFIG = JSON.stringify(merged);
+      }
+
+      if (env.CODEX_HOME) {
+        try {
+          await syncModelCatalogToConfigToml(env.CODEX_HOME, env.CODEMIE_CODEX_MODEL_CATALOG_JSON);
+        } catch (error) {
+          logger.warn('[codex-acp] Could not sync model catalog into CODEX_HOME/config.toml', { error });
+        }
       }
 
       return env;
