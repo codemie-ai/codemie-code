@@ -32,6 +32,12 @@ import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { acquireParseStateLock, loadParseState, saveParseState, type TranscriptParseState } from './parse-state.js';
+import {
+  resolveSessionEnvFields,
+  resolveVolatileSessionEnvFields,
+  sessionEnvFieldsEqual,
+  type SessionEnvFields,
+} from '../event-fields/session-env-fields.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent, usageRequestKey } from './usage-request.js';
 import {
@@ -431,21 +437,116 @@ function finalizeOf(
  * same lock and the same commit-only-on-accepted-send discipline every other pass here uses —
  * persisted only once the `agent.session.start`/`agent.session.env` batch actually lands.
  * `SessionEnd` (a later, separate CLI process) reads both back via {@link openSessionEndPass}
- * for `agent.git.snapshot`. Derives no events of its own (`events` is always `[]`).
+ * for `agent.git.snapshot`. Also records `sessionEnvFields` as the baseline
+ * {@link openSessionEnvCheckPass} diffs against later in the session. Derives no events of its
+ * own (`events` is always `[]`).
  */
-export async function openSessionStartPass(sessionId: string, gitHeadStart: string): Promise<TranscriptPass> {
+export async function openSessionStartPass(
+  sessionId: string,
+  gitHeadStart: string,
+  sessionEnvFields: SessionEnvFields
+): Promise<TranscriptPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     state.gitHeadStart = gitHeadStart;
     state.sessionStartedAt = new Date().toISOString();
+    state.lastSessionEnvFields = sessionEnvFields;
     return { events: [], finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
     return EMPTY_PASS;
+  }
+}
+
+/** Inputs a trigger hook can supply for one {@link openSessionEnvCheckPass} call. */
+export interface SessionEnvCheckInput {
+  /** The firing hook's own `effort?.level ?? ''` / `permission_mode ?? ''` — free, no I/O. */
+  effort: string;
+  permissionMode: string;
+  /**
+   * Present only on triggers willing to pay for a full recompute (`PostModelSwitch`,
+   * `ConfigChange`) — `output_style`/`plugins`/`mcp_servers`/`provider`/`api_host` are only
+   * re-read from disk/env when this is set. `configuredModel` is optional because
+   * `ConfigChangeHookInput` doesn't carry a model at all; omitting it keeps whatever the last
+   * snapshot already had (`PostModelSwitch`'s `to_model` always provides it explicitly).
+   */
+  full?: { cwd: string; configuredModel?: string };
+}
+
+export interface SessionEnvCheckResult {
+  /** The full, updated snapshot to send as a new `agent.session.env` record — `null` when
+   *  nothing actually changed (the common case), or when there's no baseline to diff against
+   *  yet and this call can't build one either (a cheap-only check with no prior `SessionStart`). */
+  sessionEnvFields: SessionEnvFields | null;
+  finalize: (accepted: boolean) => Promise<void>;
+}
+
+const NOOP_FINALIZE = async (): Promise<void> => {};
+
+/**
+ * Open a commit-after-send pass that recomputes a subset of `agent.session.env`'s fields,
+ * diffs the result against `state.lastSessionEnvFields`, and — only when something actually
+ * changed — returns the full updated snapshot for the caller to send as a new record. Same
+ * acquire/diff/finalize shape as every other pass here: nothing is persisted until
+ * `finalize(accepted)` confirms the send landed.
+ *
+ * Deliberately a *separate* pass (its own lock acquisition) rather than folded into
+ * `openMainTranscriptPass`/`openSubagentPass`/`openSessionEndPass`'s existing signatures — those
+ * three are called from `Stop`/`PreCompact`/`StopFailure`/`SessionEnd`/`SubagentStop` and already
+ * serialize correctly against this pass through the same per-session lock; keeping this
+ * standalone avoids widening four existing call sites just to thread `effort`/`permissionMode`
+ * through them.
+ *
+ * Without `input.full` (the cheap path, called from every main/subagent trigger above): merges
+ * `effort`/`permission_mode`/`os`/`arch`/`node_version`/`timezone`/`hostname_hash` onto the last
+ * snapshot — no file I/O. Returns `null` immediately if there's no prior snapshot to merge onto
+ * (nothing sensible to build from cheap fields alone).
+ *
+ * With `input.full` (from `onPostModelSwitch`/`onConfigChange`): re-resolves everything via
+ * {@link resolveSessionEnvFields}, falling back to the last snapshot's `configured_model` when
+ * the trigger didn't supply one. Builds and emits a fresh baseline even with no prior snapshot.
+ */
+export async function openSessionEnvCheckPass(
+  sessionId: string,
+  input: SessionEnvCheckInput
+): Promise<SessionEnvCheckResult> {
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const last = state.lastSessionEnvFields;
+
+    if (!last && !input.full) {
+      await release();
+      return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
+    }
+
+    let candidate: SessionEnvFields;
+    if (input.full) {
+      const configuredModel = input.full.configuredModel ?? last?.configured_model ?? '';
+      const resolved = await resolveSessionEnvFields(input.full.cwd, configuredModel, input.permissionMode);
+      candidate = { ...resolved, effort: input.effort, permission_mode: input.permissionMode };
+    } else {
+      const volatile = await resolveVolatileSessionEnvFields(input.effort, input.permissionMode);
+      candidate = { ...last!, ...volatile };
+    }
+
+    if (last && sessionEnvFieldsEqual(last, candidate)) {
+      await release();
+      return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
+    }
+
+    state.lastSessionEnvFields = candidate;
+    return { sessionEnvFields: candidate, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] session-env check pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
   }
 }
 

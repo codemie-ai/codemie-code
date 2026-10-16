@@ -52,6 +52,7 @@ describe('createParseState', () => {
       branchCounts: {},
       gitHeadStart: '',
       sessionStartedAt: '',
+      lastSessionEnvFields: null,
     });
   });
 });
@@ -108,6 +109,7 @@ describe('loadParseState', () => {
       branchCounts: { main: 3, feature: 1 },
       gitHeadStart: 'abc123def456',
       sessionStartedAt: '2026-10-01T00:00:00.000Z',
+      lastSessionEnvFields: null,
     };
 
     await saveParseState('session-roundtrip', state);

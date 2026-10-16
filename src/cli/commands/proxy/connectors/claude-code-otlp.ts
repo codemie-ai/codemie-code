@@ -103,6 +103,8 @@ export const HOOK_EVENTS = [
   'SubagentStop',
   'PreCompact',
   'Notification',
+  'PostModelSwitch',
+  'ConfigChange',
 ] as const satisfies readonly HookEvent[];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';

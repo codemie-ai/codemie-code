@@ -11,6 +11,7 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
+import type { SessionEnvFields } from '../event-fields/session-env-fields.js';
 
 export interface OpenUsageRequest {
   /** API request id (`req_...`); `''` when the transcript has none (e.g. behind the proxy). */
@@ -49,6 +50,7 @@ export interface TranscriptParseState {
   branchCounts: Record<string, number>;
   gitHeadStart: string;
   sessionStartedAt: string;
+  lastSessionEnvFields: SessionEnvFields | null;
 }
 
 /**
@@ -63,6 +65,7 @@ export function createParseState(): TranscriptParseState {
     branchCounts: {},
     gitHeadStart: '',
     sessionStartedAt: '',
+    lastSessionEnvFields: null,
   };
 }
 

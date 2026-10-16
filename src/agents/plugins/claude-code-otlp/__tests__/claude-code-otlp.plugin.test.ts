@@ -23,6 +23,7 @@ vi.mock('@/utils/logger.js', () => ({
 const resolveClientVersionMock = vi.fn();
 const openMainTranscriptPassMock = vi.fn();
 const openSessionStartPassMock = vi.fn();
+const openSessionEnvCheckPassMock = vi.fn();
 const openSubagentPassMock = vi.fn();
 const openSessionEndPassMock = vi.fn();
 const readSubagentMetaMock = vi.fn();
@@ -50,6 +51,7 @@ vi.mock('../client-version-cache.js', () => ({
 vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: openMainTranscriptPassMock,
   openSessionStartPass: openSessionStartPassMock,
+  openSessionEnvCheckPass: openSessionEnvCheckPassMock,
   openSubagentPass: openSubagentPassMock,
   openSessionEndPass: openSessionEndPassMock,
 }));
@@ -78,6 +80,12 @@ const event = (name: string) => JSON.stringify({ session_id: 's', transcript_pat
 /** A pass with no derived events and a no-op finalize — the default "nothing to add" stub. */
 function emptyPass(): { events: Record<string, unknown>[]; finalize: ReturnType<typeof vi.fn> } {
   return { events: [], finalize: vi.fn(async () => {}) };
+}
+
+/** `openSessionEnvCheckPass`'s "nothing changed" default — the common case for every test here
+ *  that isn't specifically exercising env-change detection. */
+function emptyEnvCheck(): { sessionEnvFields: null; finalize: ReturnType<typeof vi.fn> } {
+  return { sessionEnvFields: null, finalize: vi.fn(async () => {}) };
 }
 
 /** `openSessionEndPass`'s own return shape also carries `gitHeadStart`/`sessionStartedAt`. */
@@ -157,6 +165,7 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockResolvedValue(emptyPass());
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockResolvedValue(emptyPass());
     openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
     readSubagentMetaMock.mockResolvedValue({});
@@ -268,6 +277,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockReset();
     openSessionStartPassMock.mockResolvedValue(emptyPass());
+    openSessionEnvCheckPassMock.mockReset();
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockReset();
     openSubagentPassMock.mockResolvedValue(emptyPass());
     openSessionEndPassMock.mockReset();
@@ -632,6 +643,7 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockResolvedValue(emptyPass());
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockResolvedValue(emptyPass());
     openSessionEndPassMock.mockResolvedValue(emptySessionEndPass());
     resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
@@ -812,7 +824,11 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
 
     await plugin.processOtlpEvent(event('SessionStart'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(openSessionStartPassMock).toHaveBeenCalledWith('s', 'abc123def456');
+    expect(openSessionStartPassMock).toHaveBeenCalledWith(
+      's',
+      'abc123def456',
+      expect.objectContaining({ configured_model: '', permission_mode: '' })
+    );
     expect(pass.finalize).toHaveBeenCalledWith(true);
   });
 });
@@ -832,6 +848,7 @@ describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
       gitHeadStart: 'sha-start-111',
       sessionStartedAt: '2026-10-01T00:00:00.000Z',
     });
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     vi.mocked(detectGitCommitsByAuthor).mockResolvedValue([]);
   });
 
@@ -895,6 +912,7 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
   });
 
   it('stamps command_name, story_marker, ticket_mentions and prompt_length', async () => {

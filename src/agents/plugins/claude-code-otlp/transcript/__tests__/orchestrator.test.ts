@@ -20,9 +20,24 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
+
+const { resolveSessionEnvFieldsMock, resolveVolatileSessionEnvFieldsMock } = vi.hoisted(() => ({
+  resolveSessionEnvFieldsMock: vi.fn(),
+  resolveVolatileSessionEnvFieldsMock: vi.fn(),
+}));
+
+// Mocked so `openSessionEnvCheckPass` tests control exactly what a "full" vs. "cheap" recompute
+// returns, instead of this file's real settings/plugin/MCP files leaking into the result.
+vi.mock('../../event-fields/session-env-fields.js', () => ({
+  resolveSessionEnvFields: resolveSessionEnvFieldsMock,
+  resolveVolatileSessionEnvFields: resolveVolatileSessionEnvFieldsMock,
+  sessionEnvFieldsEqual: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b),
+}));
+
 import {
   openMainTranscriptPass,
   openSessionStartPass,
+  openSessionEnvCheckPass,
   openSubagentPass,
   openSessionEndPass,
   type MainTranscriptTrigger,
@@ -1024,9 +1039,25 @@ describe('commit-after-send: finalize(accepted)', () => {
   });
 });
 
+const sessionEnvFixture = {
+  provider: 'anthropic',
+  api_host: 'api.anthropic.com',
+  configured_model: 'claude-sonnet-5',
+  effort: '',
+  permission_mode: 'auto',
+  output_style: '',
+  plugins: {},
+  mcp_servers: [] as string[],
+  os: 'linux',
+  arch: 'x64',
+  node_version: 'v20.0.0',
+  timezone: 'UTC',
+  hostname_hash: 'deadbeef',
+};
+
 describe('openSessionStartPass', () => {
   it('derives no events of its own', async () => {
-    const pass = await openSessionStartPass('session-start-no-events', 'sha-start');
+    const pass = await openSessionStartPass('session-start-no-events', 'sha-start', sessionEnvFixture);
     expect(pass.events).toEqual([]);
     await pass.finalize(true);
   });
@@ -1035,7 +1066,7 @@ describe('openSessionStartPass', () => {
     const sessionId = 'session-start-accepted';
     const transcriptPath = writeTranscript('transcript-session-start-accepted.jsonl', [noUsageLine('uuid-main')]);
 
-    const startPass = await openSessionStartPass(sessionId, 'sha-abc123');
+    const startPass = await openSessionStartPass(sessionId, 'sha-abc123', sessionEnvFixture);
     await startPass.finalize(true);
 
     const endPass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
@@ -1048,12 +1079,152 @@ describe('openSessionStartPass', () => {
     const sessionId = 'session-start-rejected';
     const transcriptPath = writeTranscript('transcript-session-start-rejected.jsonl', [noUsageLine('uuid-main')]);
 
-    const startPass = await openSessionStartPass(sessionId, 'sha-abc123');
+    const startPass = await openSessionStartPass(sessionId, 'sha-abc123', sessionEnvFixture);
     await startPass.finalize(false); // the send failed — nothing committed
 
     const endPass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
     expect(endPass.gitHeadStart).toBe('');
     expect(endPass.sessionStartedAt).toBe('');
     await endPass.finalize(true);
+  });
+
+  it('also records the sessionEnvFields baseline for a later openSessionEnvCheckPass to diff against', async () => {
+    const sessionId = 'session-start-env-baseline';
+    const startPass = await openSessionStartPass(sessionId, 'sha-abc123', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    // Nothing changed relative to the baseline just recorded -> cheap check finds no diff.
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: sessionEnvFixture.effort,
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+    const check = await openSessionEnvCheckPass(sessionId, {
+      effort: sessionEnvFixture.effort,
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    expect(check.sessionEnvFields).toBeNull();
+    await check.finalize(true);
+  });
+});
+
+describe('openSessionEnvCheckPass', () => {
+  beforeEach(() => {
+    resolveSessionEnvFieldsMock.mockReset();
+    resolveVolatileSessionEnvFieldsMock.mockReset();
+  });
+
+  it('returns null without recomputing anything when there is no baseline and no full input', async () => {
+    const check = await openSessionEnvCheckPass('session-env-no-baseline', {
+      effort: '',
+      permissionMode: 'auto',
+    });
+
+    expect(check.sessionEnvFields).toBeNull();
+    expect(resolveVolatileSessionEnvFieldsMock).not.toHaveBeenCalled();
+    expect(resolveSessionEnvFieldsMock).not.toHaveBeenCalled();
+    await check.finalize(true);
+  });
+
+  it('cheap path: merges a changed effort onto the baseline and persists only on finalize(true)', async () => {
+    const sessionId = 'session-env-cheap-change';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const check = await openSessionEnvCheckPass(sessionId, { effort: 'high', permissionMode: sessionEnvFixture.permission_mode });
+    expect(check.sessionEnvFields).toMatchObject({ effort: 'high', configured_model: sessionEnvFixture.configured_model });
+    await check.finalize(true);
+
+    // A later check against the SAME now-persisted value finds no further diff.
+    const second = await openSessionEnvCheckPass(sessionId, { effort: 'high', permissionMode: sessionEnvFixture.permission_mode });
+    expect(second.sessionEnvFields).toBeNull();
+    await second.finalize(true);
+  });
+
+  it('cheap path: finalize(false) leaves the baseline untouched, so the next check still sees the old diff', async () => {
+    const sessionId = 'session-env-cheap-rejected';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const first = await openSessionEnvCheckPass(sessionId, { effort: 'high', permissionMode: sessionEnvFixture.permission_mode });
+    expect(first.sessionEnvFields).not.toBeNull();
+    await first.finalize(false); // send failed — nothing committed
+
+    const second = await openSessionEnvCheckPass(sessionId, { effort: 'high', permissionMode: sessionEnvFixture.permission_mode });
+    expect(second.sessionEnvFields).not.toBeNull(); // still a diff against the un-updated baseline
+    await second.finalize(true);
+  });
+
+  it('full path: builds a fresh baseline even with no prior snapshot, and always emits it', async () => {
+    resolveSessionEnvFieldsMock.mockResolvedValue({ ...sessionEnvFixture, configured_model: 'claude-opus-5' });
+
+    const check = await openSessionEnvCheckPass('session-env-full-no-baseline', {
+      effort: '',
+      permissionMode: 'auto',
+      full: { cwd: '/repo', configuredModel: 'claude-opus-5' },
+    });
+
+    expect(check.sessionEnvFields).toMatchObject({ configured_model: 'claude-opus-5' });
+    expect(resolveSessionEnvFieldsMock).toHaveBeenCalledWith('/repo', 'claude-opus-5', 'auto');
+    await check.finalize(true);
+  });
+
+  it('full path: falls back to the last snapshot\'s configured_model when the trigger supplies none (ConfigChange)', async () => {
+    const sessionId = 'session-env-full-fallback-model';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveSessionEnvFieldsMock.mockResolvedValue({ ...sessionEnvFixture, output_style: 'concise' });
+
+    const check = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: sessionEnvFixture.permission_mode,
+      full: { cwd: '/repo' }, // no configuredModel - ConfigChange doesn't carry one
+    });
+
+    expect(resolveSessionEnvFieldsMock).toHaveBeenCalledWith('/repo', sessionEnvFixture.configured_model, sessionEnvFixture.permission_mode);
+    expect(check.sessionEnvFields).toMatchObject({ output_style: 'concise' });
+    await check.finalize(true);
+  });
+
+  it('full path: returns null when the full recompute matches the existing baseline exactly', async () => {
+    const sessionId = 'session-env-full-unchanged';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveSessionEnvFieldsMock.mockResolvedValue({ ...sessionEnvFixture, effort: '', permission_mode: sessionEnvFixture.permission_mode });
+
+    const check = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: sessionEnvFixture.permission_mode,
+      full: { cwd: '/repo', configuredModel: sessionEnvFixture.configured_model },
+    });
+
+    expect(check.sessionEnvFields).toBeNull();
+    await check.finalize(true);
   });
 });
