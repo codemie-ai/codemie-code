@@ -1021,7 +1021,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     if (!cookieHeader) {
       if (syncApiUrl) {
         logger.info(
-          `[hook:SessionStart] CodeMie analytics sync is configured for ${syncApiUrl}, but no stored credentials were found. Run: codemie profile login --url ${ssoUrl}`
+          `[hook:SessionStart] CodeMie analytics sync is configured for ${syncApiUrl}, but no stored credentials were found. Run: codemie profile login`
         );
       } else {
         logger.info(`[hook:SessionStart] No SSO credentials available for ${ssoUrl}`);
