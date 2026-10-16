@@ -31,12 +31,17 @@ if (isHookProcess) {
 const { MigrationRunner } = await import('../dist/migrations/index.js');
 const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js');
 
+// `codemie completion <shell>` prints a script on stdout that callers source
+// (`source <(codemie completion zsh)`). Every startup message must be silenced
+// for that invocation, exactly like --version/--task/--help below.
+const isCompletionInvocation = process.argv[2] === 'completion';
+
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
   if (await MigrationRunner.hasPending()) {
     await MigrationRunner.runPending({
-      silent: isHookProcess  // Show migration messages to user, except in a hook
+      silent: isHookProcess || isCompletionInvocation  // Keep hook and completion output clean
     });
   }
 } catch (error) {
@@ -52,7 +57,7 @@ try {
 // Skip in test environments to avoid timeouts and network calls during testing
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment && !isHookProcess) {
+if (!isTestEnvironment && !isHookProcess && !isCompletionInvocation) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -66,7 +71,7 @@ if (!isTestEnvironment && !isHookProcess) {
 // invocations with their own output contract (--version/-V/--task/--help);
 // a hook process (`hook`, `sound`) never reaches it. A skipped notice writes
 // no marker, so it shows on the next run in a terminal.
-if (!isTestEnvironment && !isHookProcess) {
+if (!isTestEnvironment && !isHookProcess && !isCompletionInvocation) {
   try {
     const { readFileSync } = await import('node:fs');
     const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');
