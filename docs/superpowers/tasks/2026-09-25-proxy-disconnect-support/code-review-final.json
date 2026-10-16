@@ -1,0 +1,97 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran cleanly with no failures or truncation, and a spec was present, but one blocking finding needs a human decision (CR-001: which layer should recover gateway keys stranded by a failed-org-fetch first connect) which forces confidence to low. Five findings are blocking: a marker/gateway-key divergence that can permanently strand secrets in Claude Desktop's config (CR-001, decision_needed), a non-transactional config/marker write pair in removeDesktopConfig (CR-002), a stable/Insiders partial-write masked as total failure in both VS Code connectors (CR-003), the spec's explicit printSummary reporting shape not adopted in disconnect-orchestrator.ts (CR-004), and missing CLI-parser-level test coverage for the three new disconnect flags (CR-005). Five other lens claims were verified against source and dismissed as non-issues (readManagedMcpState already catches the empty-marker JSON.parse failure; missing restart reminder, cross-module writeAtomically import, and sequential-await dispatch are cosmetic/non-blocking; the unsupported-platform swallow mirrors pre-existing connect behavior); zero findings were deferred.",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [
+    { "kind": "spec", "item": "Claude Desktop disconnect: no-op if marker absent/empty or config file missing", "status": "pass", "notes": "removeDesktopConfig returns { removed: false, configPath: null } for both cases" },
+    { "kind": "spec", "item": "Claude Desktop disconnect: reconcile managedMcpServers with empty managed set, preserving untouched user entries", "status": "pass", "notes": "desktop.ts calls reconcileManagedMcpServers(existing.managedMcpServers, [], managedNames)" },
+    { "kind": "spec", "item": "Claude Desktop disconnect: delete full CodeMie-written top-level key set", "status": "pass", "notes": "INFERENCE_KEYS, inferenceModels, coworkEgressAllowedHosts deleted; managedMcpServers dropped only when empty" },
+    { "kind": "spec", "item": "Claude Desktop disconnect: write atomically, then clear marker state file", "status": "pass", "notes": "Sequence confirmed, but see CR-002: the two writes are not transactional" },
+    { "kind": "spec", "item": "Claude Desktop disconnect: no .codemie-backup fallback", "status": "pass", "notes": "removeDesktopConfig has no backup logic" },
+    { "kind": "spec", "item": "VS Code Copilot Chat disconnect: resolve both stable/Insiders paths unconditionally, no --insiders flag", "status": "pass", "notes": "removeVsCodeLanguageModelsConfig loops [false, true]; no --insiders option on disconnect" },
+    { "kind": "spec", "item": "VS Code Copilot Chat disconnect: filter isManagedProvider entry per location, write atomically", "status": "pass", "notes": "Confirmed, but see CR-003: an Insiders write failure after stable success is misreported" },
+    { "kind": "spec", "item": "VS Code Copilot Chat disconnect: removed:false only if neither location had a match", "status": "pass", "notes": "removedAny only true on an actual filter change; missing product dir treated as no-op" },
+    { "kind": "spec", "item": "VS Code Claude Code disconnect: resolve both stable/Insiders settings.json paths, no --insiders flag", "status": "pass", "notes": "removeVsCodeClaudeCodeConfig loops [false, true]; no --insiders on disconnect CLI" },
+    { "kind": "spec", "item": "VS Code Claude Code disconnect: strip only the two managed env-var entries via jsonc-parser modify/applyEdits", "status": "pass", "notes": "Uses modify()/applyEdits() with detected formatting options, not JSON.parse/re-serialize" },
+    { "kind": "spec", "item": "VS Code Claude Code disconnect: removed:false only if neither location had a matching entry", "status": "pass", "notes": "removedAny only flips true when a managed entry was actually stripped" },
+    { "kind": "story-ac", "item": "disconnect subcommand gains --claude-desktop, --vscode, --vscode-claude-code flags mirroring connect's four flags", "status": "pass", "notes": "index.ts adds the three options; see CR-005 for a CLI-parser test gap on them" },
+    { "kind": "spec", "item": "DisconnectTargets interface grows to four booleans, no insiders field", "status": "pass", "notes": "disconnect-orchestrator.ts adds claudeDesktop/vscode/vscodeClaudeCode/codexDesktop, no insiders field" },
+    { "kind": "spec", "item": "No-target invocation prints updated four-target DISCONNECT_TARGET_LIST", "status": "pass", "notes": "DISCONNECT_TARGET_LIST lists all four flags" },
+    { "kind": "story-ac", "item": "Any combination of the four target flags runs independently and reports a per-target line", "status": "pass", "notes": "Each target dispatched via its own run* function with an independent try/catch" },
+    { "kind": "spec", "item": "disconnect-orchestrator adopts connect-orchestrator's TargetResult/printSummary shape", "status": "partial", "notes": "TargetResult interface reused, but no printSummary() added; per-target lines print inline instead — CR-004" },
+    { "kind": "story-ac", "item": "process.exitCode = 1 iff at least one target's removal threw", "status": "pass", "notes": "process.exitCode = 1 set only when results.some(r => !r.ok)" },
+    { "kind": "spec", "item": "--codex-desktop behavior is unchanged", "status": "pass", "notes": "runCodexDesktop preserves the existing logic verbatim, only wrapped to return TargetResult" },
+    { "kind": "spec", "item": "No --insiders flag on disconnect", "status": "pass", "notes": "Confirmed absent on the disconnect command and both remove* functions" },
+    { "kind": "spec", "item": "No --force flag for disconnect (Non-Goals)", "status": "pass", "notes": "Confirmed absent on the disconnect command" },
+    { "kind": "spec", "item": "No migration of existing marker-file formats (Non-Goals)", "status": "pass", "notes": "readManagedMcpState parsing logic unchanged, only its export visibility changed" },
+    { "kind": "spec", "item": "Export readManagedMcpState from desktop.ts", "status": "pass", "notes": "desktop.ts changes 'async function' to 'export async function readManagedMcpState'" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "All 5 commit subjects follow <type>(<scope>): <subject> with type feat and scope proxy, imperative mood, under subject-max-length" },
+    { "kind": "code-quality", "status": "pass", "notes": ".js-extension ESM imports, explicit return types, kebab-case filenames, JSDoc on public APIs, logger.debug/warn via sanitizeLogArgs, functions under the 50-line guideline" },
+    { "kind": "security", "status": "na", "notes": "No security guide present and no security ArtifactRef supplied; no standard to adjudicate against. No concrete guide-independent security issue observed: secrets consistently pass through sanitizeLogArgs" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 857,
+      "title": "Marker not seeded on failed org fetch",
+      "problem": "writeDesktopConfig only writes the managed-MCP marker when orgFetchSucceeded is true (desktop.ts:857-860, 923-925), but it unconditionally writes the gateway keys (inferenceProvider/inferenceGatewayBaseUrl/inferenceGatewayApiKey/inferenceGatewayAuthScheme) to the config file regardless of fetch outcome (desktop.ts:899-906). If the org catalog fetch fails on a user's very first `connect --claude-desktop`, no marker file is ever created.",
+      "impact": "removeDesktopConfig's first check (`managedNames.length === 0`) then always short-circuits to `removed: false` for that install, so `disconnect --claude-desktop` reports 'nothing to disconnect' forever while the gateway API key and base URL remain in the Claude Desktop config on disk — a secret-retention gap the new disconnect feature was meant to close.",
+      "recommendation": "Needs a product decision: either always write the marker (even as an empty managed-MCP list) whenever gateway keys are written, or have removeDesktopConfig detect gateway-key presence independently of the MCP marker so a failed-fetch-then-disconnect scenario is still recoverable."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 985,
+      "title": "removeDesktopConfig write/clear not transactional",
+      "problem": "removeDesktopConfig writes the stripped config via writeAtomically(configPath, ...) and then, as a second independent call, clears the marker via writeAtomically(statePath, ''). There is no rollback or combined transaction between the two writes.",
+      "impact": "If the config write succeeds but the marker clear throws (disk full, permissions change mid-run, process kill), the config is already stripped but the marker still lists the old managed names — the next disconnect run's readManagedMcpState believes managed entries still exist and re-runs reconciliation against an already-clean config, and a later connect's previouslyManagedNames union carries stale names forward.",
+      "recommendation": "Clear the marker before, or as part of the same failure-handling path as, the config write (e.g. write the marker first, or catch-and-retry so a partial failure leaves a consistent state), mirroring the write-ahead-then-narrow marker discipline writeDesktopConfig already uses for connect."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/vscode.ts",
+      "line": 339,
+      "title": "Insiders-location failure masks stable-location success",
+      "problem": "removeVsCodeLanguageModelsConfig (vscode.ts:339-354) and removeVsCodeClaudeCodeConfig (vscode-claude-code.ts:262-296) loop over [stable, insiders]; if writeAtomically throws on the second (Insiders) iteration after the stable location already succeeded, the exception propagates out of the function, discarding the fact that removedAny was already true for the stable location.",
+      "impact": "disconnect-orchestrator.ts's runVscode/runVscodeClaudeCode catch the thrown error and print a flat '✗ ... — <message>' failure line even though the stable-location file was already updated on disk — the user is told disconnect failed when it partially succeeded, and a re-run masks this further because the stable location now short-circuits as already-clean.",
+      "recommendation": "Wrap each loop iteration's read/filter/write in its own try/catch, accumulate per-location errors, and still return removed: true (with an error summary) when at least one location succeeded, in both vscode.ts and vscode-claude-code.ts."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/disconnect-orchestrator.ts",
+      "line": 134,
+      "title": "disconnect-orchestrator doesn't adopt printSummary shape",
+      "problem": "spec.md explicitly requires disconnect-orchestrator.ts to 'adopt connect-orchestrator.ts's TargetResult/printSummary convention rather than keep disconnect's ad hoc single-target prints' (spec.md:104-108). The diff reuses the TargetResult interface and collects results into an array (disconnect-orchestrator.ts:134), but never defines or calls a printSummary() function — each target's line is still printed inline inside its own runClaudeDesktop/runVscode/runVscodeClaudeCode/runCodexDesktop function.",
+      "impact": "Per-target success/failure information is emitted, but the specific reporting convention the spec names as the required pattern — a consolidated summary block after all targets run, matching connect's output shape — was not implemented, leaving disconnect's output inconsistent with connect's and with what the spec calls out as the intended shape.",
+      "recommendation": "Add a printSummary(results: TargetResult[]) function mirroring connect-orchestrator.ts's, move the inline per-target print statements out of the run* functions (or keep them silent and rely on printSummary), and call printSummary(results) at the end of disconnectTargets."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 319,
+      "title": "No CLI-parser-level test for new disconnect flags",
+      "problem": "index.ts wires --claude-desktop/--vscode/--vscode-claude-code on the disconnect command (lines 319-321, 331-334) the same way --codex-desktop already is, but connect-wiring.test.ts only exercises the disconnect command's Commander parsing end-to-end for --codex-desktop (lines 205-211); the three new flags are only covered by disconnect-orchestrator.test.ts calling disconnectTargets({targets:{...}}) directly, bypassing option parsing entirely.",
+      "impact": "If any of the three new option strings and their destructured opts.* property names ever drift (rename, kebab-case typo), 'codemie proxy disconnect --claude-desktop' (etc.) would silently fall through to the no-target path and do nothing, and no existing test would catch it.",
+      "recommendation": "Add parseAsync-based tests for --claude-desktop, --vscode, and --vscode-claude-code on the disconnect command, mirroring the existing --codex-desktop test at connect-wiring.test.ts:205-211."
+    }
+  ]
+}

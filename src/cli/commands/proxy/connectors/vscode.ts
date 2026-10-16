@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { fetchTenantModelDescriptors } from './tenant-catalog.js';
 import {
   buildDefaultVsCodeCapability,
@@ -310,4 +312,55 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
   }
 
   return { configPath, requiresSecretConfiguration, modelCount: models.length };
+}
+
+/**
+ * Remove the CodeMie provider entry from VS Code Copilot Chat's language model
+ * config, at both the stable and Insiders locations. A missing product dir
+ * (edition not installed) is treated as nothing-to-do for that location, not
+ * propagated — `getVsCodeLanguageModelsPath` throws `ConfigurationError` in
+ * that case. A genuinely corrupt config at a resolved path still throws, via
+ * `readProviders`'s own `ConfigurationError`.
+ */
+export async function removeVsCodeLanguageModelsConfig(): Promise<{ removed: boolean; error?: string }> {
+  let removedAny = false;
+  const failures: string[] = [];
+
+  for (const insiders of [false, true]) {
+    let configPath: string;
+    try {
+      configPath = getVsCodeLanguageModelsPath(insiders);
+    } catch (error) {
+      if (error instanceof ConfigurationError) continue;
+      throw error;
+    }
+
+    // Each location is isolated end to end (read through write): a failure at
+    // one location (e.g. Insiders) must not discard an already-successful
+    // removal at the other (e.g. stable), and must not prevent the other
+    // location from even being attempted.
+    try {
+      const providers = await readProviders(configPath);
+      const filtered = providers.filter((provider) => !isManagedProvider(provider));
+      if (filtered.length === providers.length) continue;
+
+      await writeAtomically(configPath, `${JSON.stringify(filtered, null, '\t')}\n`);
+      removedAny = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        '[proxy] Failed to update VS Code Copilot Chat config at one location during disconnect',
+        ...sanitizeLogArgs({ configPath, insiders, error: message })
+      );
+      failures.push(`${insiders ? 'Insiders' : 'stable'} (${configPath}): ${message}`);
+    }
+  }
+
+  if (failures.length > 0 && !removedAny) {
+    throw new ConfigurationError(
+      `Failed to update VS Code language model configuration: ${failures.join('; ')}`
+    );
+  }
+
+  return failures.length > 0 ? { removed: removedAny, error: failures.join('; ') } : { removed: removedAny };
 }
