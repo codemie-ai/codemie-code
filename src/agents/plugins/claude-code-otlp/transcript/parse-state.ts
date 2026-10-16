@@ -11,6 +11,7 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
+import type { SessionEnvFields } from '../event-fields/session-env-fields.js';
 
 export interface OpenUsageRequest {
   /** API request id (`req_...`); `''` when the transcript has none (e.g. behind the proxy). */
@@ -47,6 +48,14 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
+  gitHeadStart: string;
+  sessionStartedAt: string;
+  lastSessionEnvFields: SessionEnvFields | null;
+  /** The `end` timestamp of the last `compact_boundary` line reported as `agent.session.compact.done`
+   *  — `''` when none yet. Not an offset: `openPostCompactPass` scans the whole transcript for
+   *  `compact_boundary` lines independently of `mainOffset`, since a sibling hook can advance
+   *  `mainOffset` past one without ever looking for it. */
+  lastCompactionEnd: string;
 }
 
 /**
@@ -59,6 +68,10 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
+    gitHeadStart: '',
+    sessionStartedAt: '',
+    lastSessionEnvFields: null,
+    lastCompactionEnd: '',
   };
 }
 

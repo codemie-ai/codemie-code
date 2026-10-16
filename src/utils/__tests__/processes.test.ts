@@ -596,3 +596,70 @@ describe('npm utility', () => {
     });
   });
 });
+
+describe('detectGitCommitsByAuthor', () => {
+  let execSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    execSpy = vi.spyOn(exec, 'exec');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('parses multiple commits with numstat into commit summaries', async () => {
+    execSpy.mockResolvedValue({
+      code: 0,
+      stdout:
+        '\x1eaaa111\x1f2026-10-01T10:00:00+00:00\n' +
+        '3\t1\tsrc/a.ts\n' +
+        '0\t0\tsrc/b.ts\n' +
+        '\x1ebbb222\x1f2026-10-02T11:00:00+00:00\n' +
+        '5\t0\tsrc/c.ts\n',
+      stderr: '',
+    });
+
+    const { detectGitCommitsByAuthor } = await import('../processes.js');
+    const commits = await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', 'dev@example.com');
+
+    expect(commits).toEqual([
+      { sha: 'aaa111', time: '2026-10-01T10:00:00+00:00', files: 2, added: 3, removed: 1 },
+      { sha: 'bbb222', time: '2026-10-02T11:00:00+00:00', files: 1, added: 5, removed: 0 },
+    ]);
+    expect(execSpy).toHaveBeenCalledWith(
+      'git',
+      ['log', '--since=2026-10-01T00:00:00Z', '--author=dev@example.com', '--numstat', expect.stringContaining('--format=')],
+      expect.objectContaining({ cwd: '/repo' })
+    );
+  });
+
+  it('counts a binary file ("-" numstat) as a changed file with zero lines +/-', async () => {
+    execSpy.mockResolvedValue({
+      code: 0,
+      stdout: '\x1eccc333\x1f2026-10-03T00:00:00Z\n-\t-\tassets/image.png\n',
+      stderr: '',
+    });
+
+    const { detectGitCommitsByAuthor } = await import('../processes.js');
+    const commits = await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', 'dev@example.com');
+
+    expect(commits).toEqual([{ sha: 'ccc333', time: '2026-10-03T00:00:00Z', files: 1, added: 0, removed: 0 }]);
+  });
+
+  it('returns [] when git exits non-zero (e.g. not a git repo)', async () => {
+    execSpy.mockResolvedValue({ code: 128, stdout: '', stderr: 'fatal: not a git repository' });
+
+    const { detectGitCommitsByAuthor } = await import('../processes.js');
+    expect(await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', 'dev@example.com')).toEqual([]);
+  });
+
+  it('returns [] without running git when any input is empty', async () => {
+    const { detectGitCommitsByAuthor } = await import('../processes.js');
+
+    expect(await detectGitCommitsByAuthor('', '2026-10-01T00:00:00Z', 'dev@example.com')).toEqual([]);
+    expect(await detectGitCommitsByAuthor('/repo', '', 'dev@example.com')).toEqual([]);
+    expect(await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', '')).toEqual([]);
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+});

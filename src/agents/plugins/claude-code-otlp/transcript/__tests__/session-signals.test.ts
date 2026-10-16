@@ -5,11 +5,13 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  buildCompactionDoneEvent,
   collectClientVersions,
   collectCompactions,
   collectEditLineStats,
   countTurns,
   latestTitle,
+  type Compaction,
   type SignalLine,
 } from '../session-signals.js';
 
@@ -216,6 +218,30 @@ describe('collectCompactions', () => {
       post_tokens: null,
       dropped_tokens: null,
       trigger: '',
+    });
+  });
+});
+
+describe('buildCompactionDoneEvent', () => {
+  it('builds agent.session.compact.done from a Compaction, using its end as the record timestamp', () => {
+    const compaction: Compaction = {
+      start: '2026-10-01T00:09:00.000Z',
+      end: '2026-10-01T00:10:00.000Z',
+      duration_ms: 60_000,
+      trigger: 'auto',
+      pre_tokens: 1000,
+      post_tokens: 300,
+      dropped_tokens: 700,
+    };
+
+    expect(buildCompactionDoneEvent('sid-1', compaction)).toEqual({
+      type: 'agent.session.compact.done',
+      session_id: 'sid-1',
+      pre_tokens: 1000,
+      post_tokens: 300,
+      dropped_tokens: 700,
+      duration_ms: 60_000,
+      timestamp: '2026-10-01T00:10:00.000Z',
     });
   });
 });

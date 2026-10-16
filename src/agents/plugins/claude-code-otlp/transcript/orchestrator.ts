@@ -1,12 +1,18 @@
 /**
- * Main-transcript trigger orchestration for the `Stop`, `PreCompact`, `SessionEnd`, and
- * `StopFailure` hook events.
+ * Main-transcript trigger orchestration for the `SessionStart`, `Stop`, `PreCompact`,
+ * `PostCompact`, `SessionEnd`, `StopFailure`, and `SubagentStop` hook events.
  *
  * Each hook fire is a fresh CLI process, so this module reloads persisted parse state
  * (`./parse-state.js`), reads only the transcript lines appended since the last persisted
  * `mainOffset` (`./transcript-reader.js`), derives/merges `agent.usage.request` records for
  * those new lines (`./usage-request.js`), and returns one JSON string per completed request
- * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event.
+ * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event. `SessionStart`
+ * ({@link openSessionStartPass}) and `SubagentStop` ({@link openSubagentPass}) derive no
+ * events of their own here — the former only records this session's starting point for
+ * `agent.git.snapshot` to read back later, the latter derives/aggregates usage for its own
+ * subagent transcript. `PostCompact` ({@link openPostCompactPass}) is its own case — see its
+ * doc comment — because the `compact_boundary` line it reports on is not reliably present yet
+ * when the hook fires.
  *
  * Commit-after-send: the exported `open*Pass` functions acquire the per-session parse-state
  * lock, load state, derive in memory, and return `{ events, finalize }` *without* persisting
@@ -28,6 +34,12 @@ import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { acquireParseStateLock, loadParseState, saveParseState, type TranscriptParseState } from './parse-state.js';
+import {
+  resolveSessionEnvFields,
+  resolveVolatileSessionEnvFields,
+  sessionEnvFieldsEqual,
+  type SessionEnvFields,
+} from '../event-fields/session-env-fields.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent, usageRequestKey } from './usage-request.js';
 import {
@@ -41,11 +53,13 @@ import {
   extractOrderedNamedInvocations,
 } from '@/agents/plugins/claude/session/claude-named-invocations.js';
 import {
+  buildCompactionDoneEvent,
   collectClientVersions,
   collectCompactions,
   collectEditLineStats,
   countTurns,
   latestTitle,
+  type Compaction,
   type SignalLine,
 } from './session-signals.js';
 import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from './subagent-usage.js';
@@ -54,7 +68,7 @@ import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from '.
 // the pass openers from this one module.
 export type { SubagentFile };
 
-export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
+export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'PostCompact' | 'SessionEnd' | 'StopFailure';
 
 /** One hook invocation's derived events, with the deferred commit described above. */
 export interface TranscriptPass {
@@ -63,6 +77,90 @@ export interface TranscriptPass {
 }
 
 const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
+
+/**
+ * How long `openPostCompactPass` waits (lock-free) for a still-landing `compact_boundary` line.
+ * `PostCompact` fires before Claude Code has necessarily flushed that line to disk — observed lag
+ * ranges from under a second up to ~9s, since Claude Code appears to buffer the whole
+ * post-compaction segment and flush it in one shot at a later internal checkpoint, not
+ * progressively. The `PostCompact` hook entry is configured `async` (see
+ * `connectors/claude-code-otlp.ts`) specifically so this wait never blocks Claude Code or the
+ * user's own turn.
+ */
+const POST_COMPACT_WAIT_BUDGET_MS = 60_000;
+const COMPACTION_POLL_INTERVAL_MS = 100;
+
+/**
+ * Reads the whole transcript and returns the newest `compact_boundary` line found, if any.
+ *
+ * Deliberately not scoped to `state.mainOffset`: a sibling hook for the same session (e.g. the
+ * `Stop` that resumes the turn right after compaction) can advance `mainOffset` past the boundary
+ * line's position while `openPostCompactPass` is still waiting — nothing else in this module ever
+ * looks for `compact_boundary`, so that line is never actually consumed by it, but relying on
+ * `mainOffset` as a starting point would still miss it.
+ */
+async function findLatestCompaction(transcriptPath: string): Promise<Compaction | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(transcriptPath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+
+  const lines: SignalLine[] = [];
+  for (const rawLine of raw.split('\n')) {
+    if (!rawLine.trim()) continue;
+    try {
+      lines.push(JSON.parse(rawLine) as SignalLine);
+    } catch {
+      // Skip malformed lines rather than aborting the whole scan.
+    }
+  }
+
+  const compactions = collectCompactions(lines);
+  return compactions.length > 0 ? compactions[compactions.length - 1] : undefined;
+}
+
+/**
+ * `candidate` counts as newer than `lastEnd` when its own `end` parses to a later instant, or
+ * `lastEnd` is empty (no compaction reported yet this session). A `candidate` with no parseable
+ * `end` is never newer — nothing to dedupe against reliably.
+ */
+function isCompactionNewer(candidate: Compaction, lastEnd: string): boolean {
+  const candidateMs = Date.parse(candidate.end);
+  if (!Number.isFinite(candidateMs)) return false;
+  if (!lastEnd) return true;
+  const lastMs = Date.parse(lastEnd);
+  return !Number.isFinite(lastMs) || candidateMs > lastMs;
+}
+
+/**
+ * Lock-free: polls {@link findLatestCompaction} every {@link COMPACTION_POLL_INTERVAL_MS} until a
+ * compaction newer than `afterEnd` shows up or `waitBudgetMs` expires, holding no lock the whole
+ * time — unlike the rest of this module's passes, which hold the per-session lock from acquire
+ * through commit. That is exactly the point here: `openPostCompactPass`'s caller is the only thing
+ * that would otherwise be blocked by it, and this wait is deliberately much longer than every
+ * other pass's own work, so holding the lock across it would stall any sibling hook for the same
+ * session (e.g. the next `Stop`) for no reason — the eventual authoritative check happens later,
+ * briefly, under the lock.
+ */
+async function waitForNewCompaction(
+  transcriptPath: string,
+  afterEnd: string,
+  waitBudgetMs: number
+): Promise<Compaction | undefined> {
+  const deadline = Date.now() + waitBudgetMs;
+
+  for (;;) {
+    const latest = await findLatestCompaction(transcriptPath);
+    if (latest && isCompactionNewer(latest, afterEnd)) return latest;
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return undefined;
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(COMPACTION_POLL_INTERVAL_MS, remainingMs)));
+  }
+}
 
 interface ContentBlock {
   type?: string;
@@ -293,10 +391,10 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 }
 
 /**
- * Derive the spool-bound events for one `Stop`/`PreCompact`/`SessionEnd`/`StopFailure` hook fire,
- * mutating `state` in memory. Does not persist anything — the caller (a pass opener below) owns
- * the commit, so several passes can share one in-memory `state` under one lock (see
- * `openSessionEndPass`).
+ * Derive the spool-bound events for one `Stop`/`PreCompact`/`PostCompact`/`SessionEnd`/
+ * `StopFailure` hook fire, mutating `state` in memory. Does not persist anything — the caller (a
+ * pass opener below) owns the commit, so several passes can share one in-memory `state` under
+ * one lock (see `openSessionEndPass`).
  *
  * - Reads only the lines appended since `state.mainOffset`.
  * - Derives/merges `agent.usage.request` records for those new lines into `state.openRequests`,
@@ -323,9 +421,10 @@ async function deriveMainEvents(
   sessionId: string,
   transcriptPath: string,
   trigger: MainTranscriptTrigger
-): Promise<Record<string, unknown>[]> {
+): Promise<{ events: Record<string, unknown>[] }> {
   const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
+  const events: Record<string, unknown>[] = [];
   const touchedKeys = new Set<string>();
   for (const line of lines) {
     let rawGitBranch = '';
@@ -368,7 +467,6 @@ async function deriveMainEvents(
   }
   state.mainOffset = nextOffset;
 
-  const events: Record<string, unknown>[] = [];
   for (const key of touchedKeys) {
     events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
   }
@@ -393,7 +491,7 @@ async function deriveMainEvents(
     events.push(summaryEvent);
   }
 
-  return events;
+  return { events };
 }
 
 /**
@@ -422,6 +520,125 @@ function finalizeOf(
 }
 
 /**
+ * Open a commit-after-send pass for one `SessionStart` hook fire: records this session's
+ * starting point (`gitHeadStart`, wall-clock `sessionStartedAt`) into parse state, under the
+ * same lock and the same commit-only-on-accepted-send discipline every other pass here uses —
+ * persisted only once the `agent.session.start`/`agent.session.env` batch actually lands.
+ * `SessionEnd` (a later, separate CLI process) reads both back via {@link openSessionEndPass}
+ * for `agent.git.snapshot`. Also records `sessionEnvFields` as the baseline
+ * {@link openSessionEnvCheckPass} diffs against later in the session. Derives no events of its
+ * own (`events` is always `[]`).
+ */
+export async function openSessionStartPass(
+  sessionId: string,
+  gitHeadStart: string,
+  sessionEnvFields: SessionEnvFields
+): Promise<TranscriptPass> {
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    state.gitHeadStart = gitHeadStart;
+    state.sessionStartedAt = new Date().toISOString();
+    state.lastSessionEnvFields = sessionEnvFields;
+    return { events: [], finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
+  }
+}
+
+/** Inputs a trigger hook can supply for one {@link openSessionEnvCheckPass} call. */
+export interface SessionEnvCheckInput {
+  /** The firing hook's own `effort?.level ?? ''` / `permission_mode ?? ''` — free, no I/O. */
+  effort: string;
+  permissionMode: string;
+  /**
+   * Present only on triggers willing to pay for a full recompute (`PostModelSwitch`,
+   * `ConfigChange`) — `output_style`/`plugins`/`mcp_servers`/`provider`/`api_host` are only
+   * re-read from disk/env when this is set. `configuredModel` is optional because
+   * `ConfigChangeHookInput` doesn't carry a model at all; omitting it keeps whatever the last
+   * snapshot already had (`PostModelSwitch`'s `to_model` always provides it explicitly).
+   */
+  full?: { cwd: string; configuredModel?: string };
+}
+
+export interface SessionEnvCheckResult {
+  /** The full, updated snapshot to send as a new `agent.session.env` record — `null` when
+   *  nothing actually changed (the common case), or when there's no baseline to diff against
+   *  yet and this call can't build one either (a cheap-only check with no prior `SessionStart`). */
+  sessionEnvFields: SessionEnvFields | null;
+  finalize: (accepted: boolean) => Promise<void>;
+}
+
+const NOOP_FINALIZE = async (): Promise<void> => {};
+
+/**
+ * Open a commit-after-send pass that recomputes a subset of `agent.session.env`'s fields,
+ * diffs the result against `state.lastSessionEnvFields`, and — only when something actually
+ * changed — returns the full updated snapshot for the caller to send as a new record. Same
+ * acquire/diff/finalize shape as every other pass here: nothing is persisted until
+ * `finalize(accepted)` confirms the send landed.
+ *
+ * Deliberately a *separate* pass (its own lock acquisition) rather than folded into
+ * `openMainTranscriptPass`/`openSubagentPass`/`openSessionEndPass`'s existing signatures — those
+ * three are called from `Stop`/`PreCompact`/`StopFailure`/`SessionEnd`/`SubagentStop` and already
+ * serialize correctly against this pass through the same per-session lock; keeping this
+ * standalone avoids widening four existing call sites just to thread `effort`/`permissionMode`
+ * through them.
+ *
+ * Without `input.full` (the cheap path, called from every main/subagent trigger above): merges
+ * `effort`/`permission_mode`/`os`/`arch`/`node_version`/`timezone`/`hostname_hash` onto the last
+ * snapshot — no file I/O. Returns `null` immediately if there's no prior snapshot to merge onto
+ * (nothing sensible to build from cheap fields alone).
+ *
+ * With `input.full` (from `onPostModelSwitch`/`onConfigChange`): re-resolves everything via
+ * {@link resolveSessionEnvFields}, falling back to the last snapshot's `configured_model` when
+ * the trigger didn't supply one. Builds and emits a fresh baseline even with no prior snapshot.
+ */
+export async function openSessionEnvCheckPass(
+  sessionId: string,
+  input: SessionEnvCheckInput
+): Promise<SessionEnvCheckResult> {
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const last = state.lastSessionEnvFields;
+
+    if (!last && !input.full) {
+      await release();
+      return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
+    }
+
+    let candidate: SessionEnvFields;
+    if (input.full) {
+      const configuredModel = input.full.configuredModel ?? last?.configured_model ?? '';
+      const resolved = await resolveSessionEnvFields(input.full.cwd, configuredModel, input.permissionMode);
+      candidate = { ...resolved, effort: input.effort, permission_mode: input.permissionMode };
+    } else {
+      const volatile = await resolveVolatileSessionEnvFields(input.effort, input.permissionMode);
+      candidate = { ...last!, ...volatile };
+    }
+
+    if (last && sessionEnvFieldsEqual(last, candidate)) {
+      await release();
+      return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
+    }
+
+    state.lastSessionEnvFields = candidate;
+    return { sessionEnvFields: candidate, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] session-env check pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
+  }
+}
+
+/**
  * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
  * events plus a `finalize` that commits only on an accepted send (see the module doc).
@@ -429,6 +646,8 @@ function finalizeOf(
  * On any failure — including a lock-wait timeout — releases whatever lock it holds and returns
  * an empty pass, so the caller still forwards the raw hook event with no `finalize` (existing
  * behaviour: the next hook resumes from the last saved offsets).
+ *
+ * `PostCompact` never calls this — see {@link openPostCompactPass}.
  */
 export async function openMainTranscriptPass(
   sessionId: string,
@@ -439,11 +658,69 @@ export async function openMainTranscriptPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+
     return { events, finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] main transcript pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
+    await release?.();
+    return EMPTY_PASS;
+  }
+}
+
+/**
+ * Open the commit-after-send pass for one `PostCompact` hook fire.
+ *
+ * Unlike every other pass in this module, this one does *not* hold the per-session lock for its
+ * whole duration. `PostCompact` can fire before Claude Code has flushed the `compact_boundary`
+ * line it reports on (see {@link POST_COMPACT_WAIT_BUDGET_MS}), so waiting for it — up to a full
+ * minute — would otherwise stall every sibling hook for the same session (a concurrently-running
+ * subagent's `SubagentStop`, or the `Stop` that resumes the turn right after compaction) behind
+ * the lock for no reason. Instead:
+ *
+ * 1. A lock-free peek at the persisted `lastCompactionEnd` marker, then a lock-free
+ *    {@link waitForNewCompaction} poll (returns immediately if the boundary is already there —
+ *    the common case when compaction finished well before this hook ran).
+ * 2. Only once that resolves (found, or the budget ran out) does it acquire the lock — briefly,
+ *    like every other pass — reload fresh state, run the normal {@link deriveMainEvents} for
+ *    `agent.usage.request`, and re-check for a compaction newer than the now-fresh
+ *    `state.lastCompactionEnd` (not reusing the lock-free peek's possibly-stale value). A sibling
+ *    hook may have advanced `state.mainOffset` past the boundary line while this was waiting —
+ *    harmless, since {@link findLatestCompaction} never relies on `mainOffset`.
+ *
+ * The hook entry is also configured `async` (`connectors/claude-code-otlp.ts`) so Claude Code
+ * itself never waits on this either.
+ */
+export async function openPostCompactPass(
+  sessionId: string,
+  transcriptPath: string,
+  waitBudgetMs: number = POST_COMPACT_WAIT_BUDGET_MS
+): Promise<TranscriptPass> {
+  const peekState = await loadParseState(sessionId);
+  const foundDuringWait = await waitForNewCompaction(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
+
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await acquireParseStateLock(sessionId);
+    const state = await loadParseState(sessionId);
+    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
+
+    const latest = foundDuringWait ?? (await findLatestCompaction(transcriptPath));
+    if (latest && isCompactionNewer(latest, state.lastCompactionEnd)) {
+      events.push(buildCompactionDoneEvent(sessionId, latest));
+      state.lastCompactionEnd = latest.end;
+    } else {
+      logger.warn(
+        '[claude-code-otlp] compact_boundary not found after PostCompact wait',
+        ...sanitizeLogArgs({ sessionId, waitBudgetMs })
+      );
+    }
+
+    return { events, finalize: finalizeOf(sessionId, state, release) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.debug('[claude-code-otlp] PostCompact pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
     return EMPTY_PASS;
   }
@@ -684,16 +961,26 @@ export async function openSubagentPass(sessionId: string, subagentFile: Subagent
  * leave `openRequests`/`subagentOffsets` half-mutated and committed, but it also never blocks the
  * other subagents or the main events already derived.
  */
+export interface SessionEndPass extends TranscriptPass {
+  /** `TranscriptParseState.gitHeadStart`/`sessionStartedAt`, read back from the same locked load
+   *  above — `agent.git.snapshot`'s inputs, written once at `SessionStart` by
+   *  {@link openSessionStartPass}. `''` on a failed/empty pass, same as every other field here. */
+  gitHeadStart: string;
+  sessionStartedAt: string;
+}
+
+const EMPTY_SESSION_END_PASS: SessionEndPass = { ...EMPTY_PASS, gitHeadStart: '', sessionStartedAt: '' };
+
 export async function openSessionEndPass(
   sessionId: string,
   transcriptPath: string,
   cwd: string
-): Promise<TranscriptPass> {
+): Promise<SessionEndPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
+    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
 
     const subagentFiles = await findSubagentFiles(transcriptPath);
     for (const rawFile of subagentFiles) {
@@ -713,11 +1000,16 @@ export async function openSessionEndPass(
       }
     }
 
-    return { events, finalize: finalizeOf(sessionId, state, release) };
+    return {
+      events,
+      finalize: finalizeOf(sessionId, state, release),
+      gitHeadStart: state.gitHeadStart,
+      sessionStartedAt: state.sessionStartedAt,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionEnd pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_PASS;
+    return EMPTY_SESSION_END_PASS;
   }
 }
