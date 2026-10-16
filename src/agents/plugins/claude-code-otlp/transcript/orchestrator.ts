@@ -535,12 +535,24 @@ function finalizeOf(
  * same `sessionId`. Only the first fire — the one that finds no start recorded yet — sets
  * `gitHeadStart`/`sessionStartedAt`; later fires leave the already-persisted real session start
  * untouched, so `agent.git.snapshot`'s commit window always spans the whole session.
+ *
+ * `sessionEnvFields` is merged onto the prior `lastSessionEnvFields` snapshot rather than
+ * overwriting it outright: a later fire's payload never carries `effort` (SDK contract), so
+ * `effort` always carries forward from the prior snapshot when one exists; `permission_mode` and
+ * `configured_model` prefer the fresh payload's own non-empty value, else fall back to the prior
+ * snapshot's. With no prior snapshot (the true first fire), the freshly resolved fields are used
+ * as-is. The merged result is both persisted and returned, so the caller sends exactly what gets
+ * recorded as the new baseline.
  */
+export interface SessionStartPass extends TranscriptPass {
+  sessionEnvFields: SessionEnvFields;
+}
+
 export async function openSessionStartPass(
   sessionId: string,
   gitHeadStart: string,
   sessionEnvFields: SessionEnvFields
-): Promise<TranscriptPass> {
+): Promise<SessionStartPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
@@ -551,13 +563,22 @@ export async function openSessionStartPass(
     if (!state.sessionStartedAt) {
       state.sessionStartedAt = new Date().toISOString();
     }
-    state.lastSessionEnvFields = sessionEnvFields;
-    return { events: [], finalize: finalizeOf(sessionId, state, release) };
+    const last = state.lastSessionEnvFields;
+    const merged: SessionEnvFields = last
+      ? {
+          ...sessionEnvFields,
+          effort: last.effort,
+          permission_mode: sessionEnvFields.permission_mode || last.permission_mode,
+          configured_model: sessionEnvFields.configured_model || last.configured_model,
+        }
+      : sessionEnvFields;
+    state.lastSessionEnvFields = merged;
+    return { events: [], finalize: finalizeOf(sessionId, state, release), sessionEnvFields: merged };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return EMPTY_PASS;
+    return { ...EMPTY_PASS, sessionEnvFields };
   }
 }
 

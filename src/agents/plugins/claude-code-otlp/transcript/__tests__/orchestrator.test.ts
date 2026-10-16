@@ -1393,6 +1393,76 @@ describe('openSessionStartPass', () => {
     expect(check.sessionEnvFields).toBeNull();
     await check.finalize(true);
   });
+
+  it('a later SessionStart fire merges onto the prior lastSessionEnvFields snapshot instead of overwriting it', async () => {
+    const sessionId = 'session-start-env-merge';
+    const firstFields = { ...sessionEnvFixture, effort: 'high', permission_mode: 'acceptEdits', configured_model: 'claude-opus-5' };
+    const firstPass = await openSessionStartPass(sessionId, 'sha-1', firstFields);
+    expect(firstPass.sessionEnvFields).toEqual(firstFields); // first fire: unchanged
+    await firstPass.finalize(true);
+
+    // Resume fire: fresh payload has empty effort/permission_mode/configured_model.
+    const resumeFields = { ...sessionEnvFixture, effort: '', permission_mode: '', configured_model: '' };
+    const secondPass = await openSessionStartPass(sessionId, 'sha-2', resumeFields);
+    expect(secondPass.sessionEnvFields).toMatchObject({
+      effort: 'high',
+      permission_mode: 'acceptEdits',
+      configured_model: 'claude-opus-5',
+    });
+    await secondPass.finalize(true);
+  });
+
+  it('a later SessionStart fire prefers its own non-empty permission_mode/configured_model over the prior snapshot', async () => {
+    const sessionId = 'session-start-env-merge-prefers-own';
+    const firstFields = { ...sessionEnvFixture, effort: 'high', permission_mode: 'acceptEdits', configured_model: 'claude-opus-5' };
+    const firstPass = await openSessionStartPass(sessionId, 'sha-1', firstFields);
+    await firstPass.finalize(true);
+
+    const switchedFields = { ...sessionEnvFixture, effort: '', permission_mode: 'plan', configured_model: 'claude-sonnet-5' };
+    const secondPass = await openSessionStartPass(sessionId, 'sha-2', switchedFields);
+    expect(secondPass.sessionEnvFields).toMatchObject({
+      effort: 'high', // still carried forward: SessionStart payload never has it
+      permission_mode: 'plan', // fresh payload's own non-empty value wins
+      configured_model: 'claude-sonnet-5',
+    });
+    await secondPass.finalize(true);
+  });
+
+  it('a Stop immediately after a compact/resume SessionStart finds no diff against the merged snapshot (no duplicate agent.session.env)', async () => {
+    // End-to-end proof of ticket Expected-Result bullet 3: SessionStart's merge must leave the
+    // baseline already correct, so the very next Stop's cheap check (openSessionEnvCheckPass,
+    // no `full`) reports no change and therefore no second agent.session.env is ever built.
+    const sessionId = 'session-start-env-merge-then-stop';
+    const firstFields = { ...sessionEnvFixture, effort: 'high', permission_mode: 'acceptEdits', configured_model: 'claude-opus-5' };
+    const firstPass = await openSessionStartPass(sessionId, 'sha-1', firstFields);
+    await firstPass.finalize(true);
+
+    // Compact/resume fire: fresh payload has empty effort/permission_mode/configured_model —
+    // openSessionStartPass must merge these back onto `last` (same scenario as the first test above).
+    const resumeFields = { ...sessionEnvFixture, effort: '', permission_mode: '', configured_model: '' };
+    const secondPass = await openSessionStartPass(sessionId, 'sha-2', resumeFields);
+    expect(secondPass.sessionEnvFields).toMatchObject({
+      effort: 'high',
+      permission_mode: 'acceptEdits',
+      configured_model: 'claude-opus-5',
+    });
+    await secondPass.finalize(true);
+
+    // Stop fires next, reporting the SAME real effort/permission_mode SessionStart's merge
+    // already correctly captured — exactly what a genuine "nothing changed" Stop looks like.
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: 'acceptEdits',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+    const stopCheck = await openSessionEnvCheckPass(sessionId, { effort: 'high', permissionMode: 'acceptEdits' });
+    expect(stopCheck.sessionEnvFields).toBeNull(); // sessionEnvFieldsEqual found no diff: no second agent.session.env
+    await stopCheck.finalize(true);
+  });
 });
 
 describe('openSessionEnvCheckPass', () => {
