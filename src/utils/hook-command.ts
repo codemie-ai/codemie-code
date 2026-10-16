@@ -127,3 +127,31 @@ export function rewriteHooksCommandTree(node: unknown, binary: string): boolean 
 
   return false;
 }
+
+/**
+ * Build a copy of a hooks structure in which every entry whose `command` starts with the
+ * bare `codemie` token is in exec form: `command` is the node binary and `args` holds the
+ * CLI script followed by the original arguments. Other values are copied unchanged.
+ *
+ * @param node - Hooks structure or any nested value
+ * @param nodePath - Absolute path of the node executable
+ * @param scriptPath - Absolute path of `bin/codemie.js`
+ * @returns Deep copy with forward-slash, unquoted paths
+ */
+export function toExecFormHooks(node: unknown, nodePath: string, scriptPath: string): unknown {
+  if (Array.isArray(node)) return node.map((item) => toExecFormHooks(item, nodePath, scriptPath));
+  if (!node || typeof node !== 'object') return node;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    out[key] = toExecFormHooks(value, nodePath, scriptPath);
+  }
+  if (typeof out.command === 'string') {
+    const [first, ...rest] = out.command.split(/\s+/).filter(Boolean);
+    if (first === 'codemie') {
+      out.command = toForwardSlash(nodePath);
+      out.args = [toForwardSlash(scriptPath), ...rest];
+    }
+  }
+  return out;
+}

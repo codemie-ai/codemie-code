@@ -35,6 +35,7 @@ describe('ClaudePluginInstaller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetAllMocks();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
     installer = new ClaudePluginInstaller(mockMetadata);
   });
 

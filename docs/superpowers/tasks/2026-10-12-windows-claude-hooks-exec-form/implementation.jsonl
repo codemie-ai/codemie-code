@@ -1,0 +1,2 @@
+{"task_id":"1","status":"done","commit":"f3370b3","test_command":"npx vitest run src/utils/__tests__/hook-command.test.ts"}
+{"task_id":"2","status":"done","commit":"de0266d","test_command":"npx vitest run src/agents/plugins/claude/__tests__ src/agents/core/extension/__tests__ src/agents/plugins/gemini/__tests__ tests/integration/sso-claude-plugin.test.ts"}

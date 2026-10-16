@@ -13,8 +13,13 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { isDeepStrictEqual } from 'util';
+import { access, readFile, writeFile } from 'fs/promises';
+import { constants } from 'fs';
 import { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { AgentMetadata } from '../../core/types.js';
+import { logger } from '../../../utils/logger.js';
+import { getDirname } from '../../../utils/paths.js';
 
 /**
  * Re-export result type for backward compatibility
@@ -70,5 +75,51 @@ export class ClaudePluginInstaller extends BaseExtensionInstaller {
    */
   protected getCriticalFiles(): string[] {
     return ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'README.md'];
+  }
+
+  /**
+   * Get the CodeMie CLI entry script of this package
+   * @returns Absolute path of bin/codemie.js
+   */
+  protected getCodemieScriptPath(): string {
+    return join(getDirname(import.meta.url), '../../../../bin/codemie.js');
+  }
+
+  /**
+   * On Windows, keep the installed hooks file in exec form: generated from the bundled
+   * hooks with the current node binary and CLI script, and written only when the
+   * installed content differs. Does nothing on other platforms. Failures are logged
+   * and leave the installed file as it was.
+   *
+   * @param targetPath - Installed plugin directory
+   */
+  protected async refreshInstalledHooks(targetPath: string): Promise<void> {
+    if (process.platform !== 'win32') return;
+
+    try {
+      const { toExecFormHooks } = await import('../../../utils/hook-command.js');
+      const scriptPath = this.getCodemieScriptPath();
+      await access(scriptPath, constants.R_OK);
+      const bundled: unknown = JSON.parse(
+        await readFile(join(this.getSourcePath(), 'hooks', 'hooks.json'), 'utf-8')
+      );
+      const expected = toExecFormHooks(bundled, process.execPath, scriptPath);
+
+      const hooksFile = join(targetPath, 'hooks', 'hooks.json');
+      let installed: unknown;
+      try {
+        installed = JSON.parse(await readFile(hooksFile, 'utf-8'));
+      } catch {
+        // A missing or unparseable installed file counts as different.
+      }
+
+      if (!isDeepStrictEqual(installed, expected)) {
+        await writeFile(hooksFile, JSON.stringify(expected, null, 2), 'utf-8');
+        logger.info(`[${this.agentName}] Refreshed hook commands to exec form`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[${this.agentName}] Could not refresh hook commands (non-fatal): ${msg}`);
+    }
   }
 }

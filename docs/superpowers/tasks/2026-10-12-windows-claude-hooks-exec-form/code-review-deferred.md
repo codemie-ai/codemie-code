@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-10-12-windows-claude-hooks-exec-form (2026-10-13)
+
+- **Exec-form hooks.json not restored on non-Windows** — `src/agents/plugins/claude/claude.plugin-installer.ts:97` — a non-win32 run that finds an installed hooks.json holding Windows exec-form paths (a home directory shared between Windows and another OS) returns early and leaves the file as it is until the plugin version changes, so every hook fails there. Pre-existing: the installed file already carried a machine-specific absolute shim path written by `localizeInstalledHooks`, with the same cross-OS failure, and the task keeps non-Windows behaviour unchanged.

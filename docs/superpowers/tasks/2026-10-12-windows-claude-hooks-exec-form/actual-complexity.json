@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "generated": "2026-10-13T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 6,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components in two areas: the hook-command utility gains an exec-form generator, BaseExtensionInstaller gains a refresh step that runs on every successful install, and ClaudePluginInstaller overrides it for Windows. The 'touches core shared utilities' red flag was considered and not applied: both shared-code changes are additive (a new pure function, a default no-op template hook), so no other agent's install behavior changes. The 14/15 boundary was resolved lower because Technical Risk is M and the existing localizeInstalledHooks / rewriteHooksCommandTree pair covers more than half the implementation."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Close precedent exists in the shell-form hook localization, but exec form (node binary as command, CLI script and arguments as args) is a new output shape that depends on Claude Code honouring args in hook entries, and the behavior is Windows-only. Failures are caught and logged, the installed file is left untouched on error, and a write happens only when content differs, so rollback is trivial. Edge cases are covered with the existing platform-spy test pattern, so no defensive-test bump."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files, 402 insertions, no deletions: three source files (utility, base installer, Claude installer) and three test files, one of them new. Roughly 60 lines are production code; the rest is test coverage."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

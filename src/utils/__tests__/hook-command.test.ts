@@ -125,3 +125,88 @@ describe('hook-command resolver', () => {
     expect(rewriteHooksCommandTree(null, '/abs/codemie')).toBe(false);
   });
 });
+
+describe('toExecFormHooks', () => {
+  const nodePath = '/usr/bin/node';
+  const scriptPath = '/opt/codemie/bin/codemie.js';
+
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('turns a codemie command into node plus script and arguments, keeping other fields', async () => {
+    const { toExecFormHooks } = await import('../hook-command.js');
+    const result = toExecFormHooks(
+      [
+        { type: 'command', command: 'codemie hook', timeout: 60 },
+        { type: 'command', command: 'codemie sound SessionStart' },
+      ],
+      nodePath,
+      scriptPath,
+    );
+    expect(result).toEqual([
+      { type: 'command', command: nodePath, args: [scriptPath, 'hook'], timeout: 60 },
+      { type: 'command', command: nodePath, args: [scriptPath, 'sound', 'SessionStart'] },
+    ]);
+  });
+
+  it('writes backslash paths containing a space forward-slashed and unquoted', async () => {
+    const { toExecFormHooks } = await import('../hook-command.js');
+    const winNode = 'C:\\Program Files\\nodejs\\node.exe';
+    const winScript = 'C:\\Users\\my user\\npm\\bin\\codemie.js';
+    const result = toExecFormHooks({ type: 'command', command: 'codemie hook' }, winNode, winScript);
+    expect(result).toEqual({
+      type: 'command',
+      command: winNode.replaceAll('\\', '/'),
+      args: [winScript.replaceAll('\\', '/'), 'hook'],
+    });
+  });
+
+  it('copies non-codemie entries, the description and the event structure unchanged', async () => {
+    const { toExecFormHooks } = await import('../hook-command.js');
+    const input = {
+      description: 'CodeMie hooks',
+      hooks: {
+        SessionStart: [
+          {
+            matcher: '*',
+            hooks: [
+              { type: 'command', command: 'echo hi' },
+              { type: 'command', command: 'codemie-claude hook', timeout: 5 },
+            ],
+          },
+        ],
+        Stop: [{ hooks: [{ type: 'command', command: 'codemie hook' }] }],
+      },
+    };
+    const result = toExecFormHooks(input, nodePath, scriptPath) as typeof input;
+    expect(result.description).toBe(input.description);
+    expect(result.hooks.SessionStart).toEqual(input.hooks.SessionStart);
+    expect(Object.keys(result.hooks)).toEqual(['SessionStart', 'Stop']);
+    expect(result.hooks.Stop).toEqual([
+      { hooks: [{ type: 'command', command: nodePath, args: [scriptPath, 'hook'] }] },
+    ]);
+  });
+
+  it('ignores extra whitespace and gives a bare codemie command the script alone', async () => {
+    const { toExecFormHooks } = await import('../hook-command.js');
+    expect(toExecFormHooks({ command: 'codemie  hook ' }, nodePath, scriptPath)).toEqual({
+      command: nodePath,
+      args: [scriptPath, 'hook'],
+    });
+    expect(toExecFormHooks({ command: 'codemie' }, nodePath, scriptPath)).toEqual({
+      command: nodePath,
+      args: [scriptPath],
+    });
+  });
+
+  it('does not modify its input', async () => {
+    const { toExecFormHooks } = await import('../hook-command.js');
+    const input = {
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 60 }] }] },
+    };
+    const before = structuredClone(input);
+    toExecFormHooks(input, nodePath, scriptPath);
+    expect(input).toEqual(before);
+  });
+});
