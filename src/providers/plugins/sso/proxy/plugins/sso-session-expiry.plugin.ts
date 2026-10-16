@@ -2,12 +2,18 @@
  * SSO Session Expiry Detector
  * Priority: 11 (directly after SSOAuthPlugin/JWTAuthPlugin)
  *
- * SOLID: Single responsibility = detect the confirmed oauth2-proxy
- * session-expiry redirect (302/303 to /oauth2/start) and, only when the
- * proxy's own stored SSO credential is at/past its known expiry, replace
- * the relayed response with a parseable 401 and kick off PR #624's
- * existing re-auth plumbing instead of letting the downstream agent write
- * a `<synthetic>` turn.
+ * SOLID: Single responsibility = detect the oauth2-proxy session-expiry
+ * redirect (302/303 to /oauth2/start) and replace the relayed response
+ * with a parseable 401, kicking off PR #624's existing re-auth plumbing,
+ * instead of letting the downstream agent write a `<synthetic>` turn.
+ *
+ * Acts on the redirect signature alone — a server-side session revoke
+ * (e.g. signing out of all sessions, or an admin-forced revoke) does not
+ * change the local JWT's own `exp` claim, so requiring the local
+ * credential to also look expired would miss the primary real-world
+ * trigger for this bug (confirmed by live reproduction on 2026-10-16).
+ * Nothing else has ever been observed to produce this exact redirect, so
+ * no secondary confirming signal is needed before acting on it.
  *
  * This plugin never touches sso.auth-gate.ts, sso.detached-login.ts, or
  * analytics-auth-status.ts — it only calls their existing exported
@@ -17,16 +23,12 @@
 import type { IncomingMessage } from 'http';
 import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
-import { SSOCredentials } from '../../../../core/types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 import { logger } from '../../../../../utils/logger.js';
 import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
-/** Local-clock tolerance so a slow machine clock cannot read an already
- * server-expired token as still fresh. */
-const CLOCK_SKEW_TOLERANCE_MS = 10_000;
 
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
@@ -38,14 +40,14 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
     if (!context.credentials || !('cookies' in context.credentials)) {
       return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: JWT profiles unaffected
     }
-    return new SSOSessionExpiryInterceptor(context.credentials as SSOCredentials, context.config.targetApiUrl);
+    return new SSOSessionExpiryInterceptor(context.config.targetApiUrl);
   }
 }
 
 class SSOSessionExpiryInterceptor implements ProxyInterceptor {
   name = 'sso-session-expiry';
 
-  constructor(private readonly credentials: SSOCredentials, private readonly targetApiUrl: string) {}
+  constructor(private readonly targetApiUrl: string) {}
 
   async onUpstreamResponse(
     _context: ProxyContext,
@@ -58,10 +60,6 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       typeof location === 'string' &&
       location.includes(OAUTH2_START_MARKER);
     if (!isOauthRedirect) return response;
-
-    const expiresAt = this.credentials.expiresAt;
-    const confirmedExpired = expiresAt !== undefined && Date.now() >= expiresAt - CLOCK_SKEW_TOLERANCE_MS;
-    if (!confirmedExpired) return response;
 
     let outcome: DetachedLoginOutcome | undefined;
     let failedStep: string | undefined;

@@ -87,7 +87,7 @@ describe('SSOSessionExpiryPlugin', () => {
     expect(interceptor.onUpstreamResponse).toBeUndefined();
   });
 
-  it('replaces a confirmed-expired oauth2-proxy redirect with a parseable 401 and triggers re-auth', async () => {
+  it('replaces an oauth2-proxy session-expiry redirect with a parseable 401 and triggers re-auth', async () => {
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
       createPluginContext({
         cookies: { session: 'abc' },
@@ -126,7 +126,11 @@ describe('SSOSessionExpiryPlugin', () => {
     expect(startDetachedSsoLogin).toHaveBeenCalledWith(TARGET_API_URL);
   });
 
-  it('passes through unchanged when the redirect signature matches but the credential is still fresh', async () => {
+  it('also replaces the redirect with a 401 when the local credential still looks fresh', async () => {
+    // Confirmed by live reproduction (2026-10-16): a server-side session revoke
+    // (e.g. signing out of all sessions) does not change the local JWT's own
+    // `exp` claim, so this is the PRIMARY real-world trigger for this bug, not
+    // an edge case to exclude. Nothing else produces this exact redirect.
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
       createPluginContext({
         cookies: { session: 'abc' },
@@ -140,12 +144,12 @@ describe('SSOSessionExpiryPlugin', () => {
 
     const result = await interceptor.onUpstreamResponse!(context, original, tools);
 
-    expect(result).toBe(original);
-    expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
-    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    expect(result.statusCode).toBe(401);
+    expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
   });
 
-  it('passes through unchanged when the redirect signature matches but expiresAt is undefined', async () => {
+  it('also replaces the redirect with a 401 when expiresAt is undefined', async () => {
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
       createPluginContext({
         cookies: { session: 'abc' },
@@ -159,9 +163,9 @@ describe('SSOSessionExpiryPlugin', () => {
 
     const result = await interceptor.onUpstreamResponse!(context, original, tools);
 
-    expect(result).toBe(original);
-    expect(markAnalyticsAuthInvalid).not.toHaveBeenCalled();
-    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+    expect(result.statusCode).toBe(401);
+    expect(markAnalyticsAuthInvalid).toHaveBeenCalledTimes(1);
+    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
   });
 
   it('passes through a non-redirect infra error (e.g. 503) unchanged without relabeling it as session expiry', async () => {
@@ -202,26 +206,6 @@ describe('SSOSessionExpiryPlugin', () => {
       ((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toString('utf-8')
     );
     expect(body.error.message).toBe(`CodeMie SSO session expired. ${describeLogin('started')}`);
-  });
-
-  it('treats a credential within clock-skew tolerance of expiry as confirmed-expired', async () => {
-    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
-      createPluginContext({
-        cookies: { session: 'abc' },
-        apiUrl: TARGET_API_URL,
-        // Not yet past expiresAt by wall-clock, but within a small tolerance window:
-        // a locally slow clock must not read this as "still fresh".
-        expiresAt: Date.now() + 3_000,
-      })
-    );
-    const context = createProxyContext();
-    const tools = createTools();
-    const original = response(302, { location: 'https://x/oauth2/start?rd=%2F' });
-
-    const result = await interceptor.onUpstreamResponse!(context, original, tools);
-
-    expect(result.statusCode).toBe(401);
-    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a synthetic 401 (not the raw redirect) when re-auth plumbing rejects, and logs which step failed', async () => {
