@@ -7,10 +7,11 @@
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
-import { ProxyContext } from '../proxy-types.js';
+import { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
+import { getStoredPlatformCredentials } from '../../../../core/codemie-auth-helpers.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -24,7 +25,7 @@ export class SSOAuthPlugin implements ProxyPlugin {
       return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(context.credentials as SSOCredentials);
+    return new SSOAuthInterceptor(context.credentials as SSOCredentials, context.config);
   }
 }
 
@@ -39,7 +40,34 @@ class NoOpInterceptor implements ProxyInterceptor {
 class SSOAuthInterceptor implements ProxyInterceptor {
   name = 'sso-auth';
 
-  constructor(private credentials: SSOCredentials) {}
+  /**
+   * Last known-good credentials. Starts as the daemon-startup snapshot and
+   * is replaced on every request by whatever the credential store currently
+   * holds — a long-lived proxy daemon otherwise keeps injecting the cookies
+   * it had at startup forever, so a successful browser re-login never takes
+   * effect without restarting the daemon (EPMCDME-15316).
+   */
+  private current: SSOCredentials;
+
+  constructor(initialCredentials: SSOCredentials, private readonly config: ProxyConfig) {
+    this.current = initialCredentials;
+  }
+
+  private async refreshCredentials(): Promise<void> {
+    try {
+      const stored = await getStoredPlatformCredentials({
+        provider: this.config.provider,
+        baseUrl: this.config.targetApiUrl,
+        codeMieUrl: this.config.syncCodeMieUrl,
+      });
+      if (stored?.credentials) {
+        this.current = stored.credentials;
+      }
+      // No fresher credentials found yet: keep using the last known-good ones.
+    } catch (error) {
+      logger.debug(`[${this.name}] Failed to re-read stored SSO credentials; using the last known-good snapshot`, error);
+    }
+  }
 
   private hasInvalidHeaderChars(value: string): boolean {
     // RFC 7230 field-vchar / obs-text; disallow control chars except HTAB.
@@ -53,10 +81,12 @@ class SSOAuthInterceptor implements ProxyInterceptor {
   }
 
   async onRequest(context: ProxyContext): Promise<void> {
+    await this.refreshCredentials();
+
     const invalidCookieKeys: string[] = [];
     const cookiePairs: string[] = [];
 
-    for (const [key, value] of Object.entries(this.credentials.cookies)) {
+    for (const [key, value] of Object.entries(this.current.cookies)) {
       const safeKey = String(key).trim();
       const safeValue = String(value);
       if (!safeKey || this.hasInvalidHeaderChars(safeKey) || this.hasInvalidHeaderChars(safeValue)) {
@@ -85,8 +115,8 @@ class SSOAuthInterceptor implements ProxyInterceptor {
     context.headers['cookie'] = cookieHeader;
 
     logger.debug(`[${this.name}] Injected SSO cookies:`, {
-      cookieCount: Object.keys(this.credentials.cookies).length,
-      cookieNames: Object.keys(this.credentials.cookies),
+      cookieCount: Object.keys(this.current.cookies).length,
+      cookieNames: Object.keys(this.current.cookies),
       headerLength: cookieHeader.length
     });
   }
