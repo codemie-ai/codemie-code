@@ -5,6 +5,7 @@ import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus } from './session-status.js';
 import { OTEL_STREAMS } from './spool-paths.js';
 import { hasPendingData, readSpoolState } from './spool-state.js';
+import { applyProjectPolicyLocked } from './spool-io.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 import { areCredentialsStale } from './auth-state.js';
@@ -37,6 +38,22 @@ export async function processSessionTick(
     }
 
     const spool = await readSpoolState(sessionId, status);
+
+    // Project policy, before the completeness gate and the same one the snapshots apply: a
+    // conflicted or unbound session sends nothing, so a hooks-only session that would never reach
+    // the forwarder snapshots is discarded here. The one exception is the hooks prefix sealed while
+    // the session was bound: it is flushed hooks-only at once, with no wait for OTLP that will
+    // never be sent. Locked code: no updateStatus/advanceCursor (the lock is not reentrant).
+    const policy = await applyProjectPolicyLocked(sessionId, status);
+    if (policy.sealed) {
+      shouldForward = true;
+      hooksOnly = true;
+      return;
+    }
+    if (policy.state !== 'bound' && policy.state !== 'undecided') {
+      return;
+    }
+
     const decision = gateDecision(spool, status);
     const pending = hasPendingData(spool);
 

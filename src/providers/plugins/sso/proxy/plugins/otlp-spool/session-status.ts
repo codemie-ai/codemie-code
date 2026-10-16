@@ -1,9 +1,21 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { SPOOL_STREAMS, spoolRoot, statusFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
+import { parseProjectSeal } from './session-project.js';
 
 /** Byte offsets that have been acknowledged by the backend, per stream. */
 export type SessionCursors = Record<SpoolStream, number>;
+
+/**
+ * The hooks prefix `[0, hooksEnd)` was written while the session was bound to `project`.
+ * Set once, in the status write that records the conflict; read back only through
+ * `parseProjectSeal`, which fails closed.
+ */
+export interface ProjectSeal {
+  v: 1;
+  project: string;
+  hooksEnd: number;
+}
 
 export interface SessionStatus {
   /**
@@ -19,6 +31,14 @@ export interface SessionStatus {
    * for any bytes that are still pending or appended afterwards.
    */
   endedAt?: number;
+  /** Project bound to the session: first usable name seen on a hook, original spelling, set once. */
+  project?: string;
+  /** Distinct project names seen once the session became ambiguous. Sticky: nothing is sent. */
+  projectConflict?: string[];
+  /** Only with `projectConflict` and a bound `project`: the hooks prefix that is still provably that project's. */
+  projectSeal?: ProjectSeal;
+  /** The on-disk hooks were scanned for a project (legacy recovery) or there was nothing to scan. */
+  projectScanned?: true;
 }
 
 export function createStatus(): SessionStatus {
@@ -48,6 +68,21 @@ function normalizeStatus(raw: unknown): SessionStatus {
   const endedAt = toOffset(source['endedAt']);
   if (endedAt > 0) {
     status.endedAt = endedAt;
+  }
+  const project = source['project'];
+  if (typeof project === 'string' && project.length > 0) {
+    status.project = project;
+  }
+  const conflict = source['projectConflict'];
+  if (Array.isArray(conflict) && conflict.length > 0 && conflict.every((n) => typeof n === 'string')) {
+    status.projectConflict = (conflict as string[]).slice(0, 8);
+  }
+  const seal = parseProjectSeal(source['projectSeal'], status.projectConflict);
+  if (seal) {
+    status.projectSeal = seal;
+  }
+  if (source['projectScanned'] === true) {
+    status.projectScanned = true;
   }
 
   return status;

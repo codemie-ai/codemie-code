@@ -4,12 +4,14 @@ const snapshotPendingHookRecordsMock = vi.fn();
 const snapshotPendingBytesMock = vi.fn();
 const advanceCursorMock = vi.fn();
 const markSessionEndedMock = vi.fn();
+const isSendAllowedMock = vi.fn();
 const readStateMock = vi.fn();
 const fetchMock = vi.fn();
 
 vi.mock('../spool-io.js', () => ({
   snapshotPendingHookRecords: snapshotPendingHookRecordsMock,
   snapshotPendingBytes: snapshotPendingBytesMock,
+  isSendAllowed: isSendAllowedMock,
 }));
 vi.mock('../session-status.js', () => ({
   advanceCursor: advanceCursorMock,
@@ -81,7 +83,10 @@ describe('forwardSession (hooks)', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
     readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    isSendAllowedMock.mockResolvedValue(true);
+    snapshotPendingBytesMock.mockResolvedValue(null);
     snapshotPendingHookRecordsMock.mockResolvedValue({
+      project: 'Proj A',
       records: [spoolLine({ type: 'agent.session.end', session_id: 's1' })],
       cursor: 10,
       byteLength: 100,
@@ -139,7 +144,7 @@ describe('forwardSession (hooks)', () => {
   });
 
   it('advances the cursor without a request when every line is malformed', async () => {
-    snapshotPendingHookRecordsMock.mockResolvedValue({ records: ['nope'], cursor: 5, byteLength: 4 });
+    snapshotPendingHookRecordsMock.mockResolvedValue({ project: 'Proj A', records: ['nope'], cursor: 5, byteLength: 4 });
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', true, credentials);
@@ -150,6 +155,7 @@ describe('forwardSession (hooks)', () => {
 
   it('does not mark the session ended for a batch without a session end', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue({
+      project: 'Proj A',
       records: [spoolLine({ type: 'agent.tool.end', session_id: 's1' })],
       cursor: 0,
       byteLength: 10,
@@ -160,5 +166,156 @@ describe('forwardSession (hooks)', () => {
     await forwardSession('s1', true, credentials);
 
     expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('forwardSession (project header)', () => {
+  const hooksBatch = {
+    project: 'Proj A',
+    records: [spoolLine({ type: 'agent.tool.end', session_id: 's1' })],
+    cursor: 0,
+    byteLength: 10,
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    isSendAllowedMock.mockResolvedValue(true);
+    snapshotPendingHookRecordsMock.mockResolvedValue(hooksBatch);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) => ({
+      project: 'Proj A',
+      cursor: 4,
+      bytes: Buffer.from(`${stream}-bytes`),
+    }));
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends X-CodeMie-Project on hooks, logs, metrics and traces', async () => {
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const urls = fetchMock.mock.calls.map(([url]) => String(url).split('/').pop());
+    expect(urls).toEqual(['event-hooks', 'logs', 'metrics', 'traces']);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init.headers['X-CodeMie-Project']).toBe('Proj A');
+      expect(init.headers['Content-Type']).toBeDefined();
+    }
+    expect(fetchMock.mock.calls[1][1].body.toString()).toBe('logs-bytes');
+  });
+
+  it('sends nothing when the snapshots are null', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockResolvedValue(null);
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch when the project is no longer sendable', async () => {
+    isSendAllowedMock.mockResolvedValue(false);
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(isSendAllowedMock).toHaveBeenNthCalledWith(1, 's1', 'hooks', 'Proj A', { cursor: 0, end: 10, filtered: false });
+  });
+
+  it('checks every OTLP stream under its own name and byte range, so a hooks-only seal cannot cover it', async () => {
+    isSendAllowedMock.mockImplementation(async (_s: string, stream: string) => stream === 'hooks');
+    snapshotPendingBytesMock.mockResolvedValue({ project: 'Proj A', cursor: 4, bytes: Buffer.alloc(10) });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(isSendAllowedMock).toHaveBeenCalledWith('s1', 'logs', 'Proj A', { cursor: 4, end: 14, filtered: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the hooks batch only
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/event-hooks');
+    expect(advanceCursorMock).not.toHaveBeenCalledWith('s1', 'logs', expect.anything());
+  });
+
+  it('tells the pre-send check whether the batch was built through the sealed-project filter', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      project: 'Proj A',
+      records: [spoolLine({ type: 'agent.tool.end', session_id: 's1' })],
+      cursor: 0,
+      byteLength: 50,
+      dropped: 0,
+      filtered: true,
+    });
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(isSendAllowedMock).toHaveBeenCalledWith('s1', 'hooks', 'Proj A', { cursor: 0, end: 50, filtered: true });
+  });
+
+  it('advances over a sealed batch with nothing provable to send, without a request', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      project: 'Proj A',
+      records: [],
+      cursor: 0,
+      byteLength: 50,
+      dropped: 2,
+    });
+    fetchMock.mockReset();
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 50);
+  });
+
+  it('does not re-POST after a 401 once the project stopped being sendable', async () => {
+    isSendAllowedMock.mockResolvedValueOnce(true).mockResolvedValue(false);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('counts a BE 200 discard as done and does not mark credentials stale', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"accepted":0,"dropped":2,"reason":"project_context_conflict"}',
+    });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 10);
+    expect(areCredentialsStale()).toBe(false);
+  });
+
+  it('keeps the cursor on a 503 and does not mark credentials stale', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(false);
   });
 });

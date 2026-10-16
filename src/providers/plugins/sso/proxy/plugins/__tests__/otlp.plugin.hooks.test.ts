@@ -8,7 +8,9 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
-const appendSpoolMock = vi.fn(async (_sessionId: string, _stream: string, _data: string) => {});
+const appendSpoolMock = vi.fn(
+  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
+);
 vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock }));
 
 const getAnalyticsAgentMock = vi.fn((name: string) => (name === 'claude-code-otlp' ? { name } : undefined));
@@ -146,6 +148,26 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
       return JSON.parse(spoolRecord.hookEvent) as Record<string, unknown>;
     });
     expect(decoded.map((e) => e['n'])).toEqual([1, 2, 3]);
+  });
+
+  it('passes the project names of the spooled events as the fourth argument', async () => {
+    const res = await postHooks({
+      agentName: 'claude-code-otlp',
+      hookEvents: [
+        hookEvent('s1', { codemie_project_name: 'A' }),
+        hookEvent('s1', { raw: { codemie_project_name: 'B' } }),
+        hookEvent('s1'),
+        { type: 'agent.event', codemie_project_name: 'dropped (no session_id)' },
+      ],
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock.mock.calls[0][3]).toEqual(['A', 'B']);
+  });
+
+  it('passes an empty name list when no event carries a project name', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    expect(appendSpoolMock.mock.calls[0][3]).toEqual([]);
   });
 
   it('answers 500, not 202, when the spool write fails', async () => {

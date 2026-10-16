@@ -9,6 +9,7 @@ import { listSessionIds } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
+import { hookEventProjectNames } from './otlp-spool/session-project.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 
 /**
@@ -199,6 +200,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     // session_id is rejected whole, so the client's commit stays all-or-nothing.
     let sessionId = '';
     const lines: string[] = [];
+    const projectNames: string[] = [];
     for (const event of batch.hookEvents) {
       const eventSessionId = String((event as Record<string, unknown> | null)?.['session_id'] ?? '');
       if (!eventSessionId) {
@@ -212,6 +214,7 @@ class OtlpInterceptor implements ProxyInterceptor {
       }
       const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event) };
       lines.push(JSON.stringify(spoolRecord));
+      projectNames.push(...hookEventProjectNames(event));
     }
 
     if (lines.length === 0) {
@@ -223,7 +226,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n');
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
