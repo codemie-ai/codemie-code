@@ -155,11 +155,14 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
 }
 
 /** Keep only records this session's own window can plausibly own: untimed ones (existing
- * earliest-owner fallback) or ones before `windowEnd` (this session's own observed end).
+ * earliest-owner fallback) or ones at-or-before `windowEnd` (this session's own observed end).
+ * The bound is inclusive because `windowEnd` is itself derived as the max ts across the
+ * session's own messages (native-loader.ts), so that session's own final usage record
+ * commonly has `ts === windowEnd` and must not be dropped by its own window.
  * `windowEnd` undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
 function withinWindow(records: UsageRecord[], windowEnd: number | undefined): UsageRecord[] {
   if (windowEnd === undefined) return records;
-  return records.filter((r) => r.ts === null || r.ts < windowEnd);
+  return records.filter((r) => r.ts === null || r.ts <= windowEnd);
 }
 
 /**

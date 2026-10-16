@@ -524,6 +524,38 @@ describe('enrichCosts', () => {
     expect(summary.totalCostUSD).toBeCloseTo(21, 6);
   });
 
+  it('keeps a session\'s own final turn when its ts exactly equals its own observedEnd (CR-002)', async () => {
+    const base = 1_780_000_000_000;
+    // observedEnd is this session's own endEvent.endTime, which — for a real native-loader
+    // capture — equals the max ts across the session's own messages. The session's final
+    // turn below is built to land exactly on that boundary.
+    const session = {
+      sessionId: 'solo',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 20_000 } },
+      deltas: [],
+    };
+    const firstTurn = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-first',
+      message: { id: 'msg-first', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const finalTurn = {
+      timestamp: new Date(base + 20_000).toISOString(), // ts === observedEnd exactly
+      requestId: 'req-final',
+      message: { id: 'msg-final', model: 'claude-sonnet-4-5', usage: { input_tokens: 2_000_000, output_tokens: 0 } },
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/solo.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [firstTurn, finalTurn] }) as never,
+    };
+    const { index } = await enrichCosts([session] as never[], deps);
+    expect(index.get('solo')!.tokens.total).toBe(3_000_000); // both turns counted, including the boundary one
+    expect(index.get('solo')!.costUSD).toBeCloseTo(9, 6);
+  });
+
   it('reports an upper-bound observedEnd (display only) for an open session sharing a file', async () => {
     const base = 1_780_000_000_000;
     const sessionEarlier = {

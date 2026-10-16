@@ -105,6 +105,32 @@ interface ParsedEntry {
   observedEnd?: number;
 }
 
+/**
+ * Cosmetic upper bound for an OPEN session (no own observedEnd) that shares its native log
+ * file with other sessions: the next sibling's startTime within that shared-file group
+ * (`ordered` must already be startTime-sorted, so filtering it preserves that order), or now
+ * if it's the last in the group. Display only — never fed into the dedup `windowEnd`.
+ */
+function computeReportedObservedEnd(ordered: ParsedEntry[]): Map<string, number> {
+  const reportedObservedEnd = new Map<string, number>();
+  const byFilePath = new Map<string, ParsedEntry[]>();
+  for (const entry of ordered) {
+    if (!entry.filePath) continue;
+    const group = byFilePath.get(entry.filePath);
+    if (group) group.push(entry);
+    else byFilePath.set(entry.filePath, [entry]);
+  }
+  for (const group of byFilePath.values()) {
+    if (group.length < 2) continue;
+    group.forEach((entry, i) => {
+      if (entry.observedEnd !== undefined) return;
+      const next = group[i + 1];
+      reportedObservedEnd.set(entry.sessionId, next ? next.startTime : Date.now());
+    });
+  }
+  return reportedObservedEnd;
+}
+
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
@@ -411,27 +437,7 @@ export async function enrichCosts(
   // turns into resumed/forked logs, so the same response appears in many files. Then price.
   const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
   const seen = new Set<string>();
-
-  // Cosmetic upper bound for an OPEN session (no own observedEnd) that shares its native log
-  // file with other sessions: the next sibling's startTime within that shared-file group
-  // (`ordered` is already startTime-sorted, so filtering it preserves that order), or now if
-  // it's the last in the group. Display only — never fed into the dedup `windowEnd` above.
-  const reportedObservedEnd = new Map<string, number>();
-  const byFilePath = new Map<string, ParsedEntry[]>();
-  for (const entry of ordered) {
-    if (!entry.filePath) continue;
-    const group = byFilePath.get(entry.filePath);
-    if (group) group.push(entry);
-    else byFilePath.set(entry.filePath, [entry]);
-  }
-  for (const group of byFilePath.values()) {
-    if (group.length < 2) continue;
-    group.forEach((entry, i) => {
-      if (entry.observedEnd !== undefined) return;
-      const next = group[i + 1];
-      reportedObservedEnd.set(entry.sessionId, next ? next.startTime : Date.now());
-    });
-  }
+  const reportedObservedEnd = computeReportedObservedEnd(ordered);
 
   const index: SessionCostIndex = new Map();
   const unpriced = new Set<string>();
