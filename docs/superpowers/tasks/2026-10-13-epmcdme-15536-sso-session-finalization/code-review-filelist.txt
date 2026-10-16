@@ -1,0 +1,12 @@
+src/agents/plugins/__tests__/codemie-code.plugin.lifecycle.test.ts
+src/agents/plugins/claude/__tests__/claude.plugin.lifecycle.test.ts
+src/agents/plugins/claude/claude.plugin.ts
+src/agents/plugins/codemie-code.plugin.ts
+src/agents/plugins/copilot-cli/__tests__/copilot-cli.plugin.lifecycle.test.ts
+src/agents/plugins/copilot-cli/copilot-cli.plugin.ts
+src/agents/plugins/gemini/__tests__/gemini.plugin.lifecycle.test.ts
+src/agents/plugins/gemini/gemini.plugin.ts
+src/agents/plugins/kimi/__tests__/kimi.plugin.lifecycle.test.ts
+src/agents/plugins/kimi/kimi.plugin.ts
+src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts
+src/agents/plugins/opencode/opencode.plugin.ts

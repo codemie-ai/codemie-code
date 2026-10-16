@@ -22,10 +22,16 @@ vi.mock('fs/promises', () => ({
   mkdir: vi.fn(),
 }));
 
-function sessionFile(sessionId: string, agentName: string, externalSessionId?: string): string {
+function sessionFile(
+  sessionId: string,
+  agentName: string,
+  externalSessionId?: string,
+  status: string = 'active',
+): string {
   return JSON.stringify({
     sessionId,
     agentName,
+    status,
     ...(externalSessionId ? { runtimeCheckpoint: { externalSessionId } } : {}),
   });
 }
@@ -78,5 +84,53 @@ describe('SessionStore.indexSessionsByExternalId', () => {
     const index = await new SessionStore().indexSessionsByExternalId('claude-desktop');
 
     expect(index.size).toBe(0);
+  });
+});
+
+describe('SessionStore.findActiveSessions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns only active sessions for the requested agent', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    const files: Record<string, string> = {
+      'a.json': sessionFile('a', 'claude-desktop', 'local_1', 'active'),
+      'b.json': sessionFile('b', 'claude-desktop', 'local_2', 'completed'),
+      'c.json': sessionFile('c', 'claude', 'local_3', 'active'),
+      'notes.txt': 'ignored',
+    };
+    vi.mocked(readdir).mockResolvedValue(Object.keys(files) as never);
+    vi.mocked(readFile).mockImplementation((async (path: string) =>
+      files[basename(path)]) as never);
+
+    const { SessionStore } = await import('../SessionStore.js');
+    const active = await new SessionStore().findActiveSessions('claude-desktop');
+
+    expect(active.map((session) => session.sessionId)).toEqual(['a']);
+  });
+
+  it('skips unreadable session files instead of failing the scan', async () => {
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['broken.json', 'ok.json'] as never);
+    vi.mocked(readFile).mockImplementation((async (path: string) => {
+      if (path.endsWith('broken.json')) return '{not json';
+      return sessionFile('ok', 'claude-desktop', 'local_ok', 'active');
+    }) as never);
+
+    const { SessionStore } = await import('../SessionStore.js');
+    const active = await new SessionStore().findActiveSessions('claude-desktop');
+
+    expect(active.map((session) => session.sessionId)).toEqual(['ok']);
+  });
+
+  it('returns an empty list when the sessions directory does not exist', async () => {
+    const { existsSync } = await import('fs');
+    vi.mocked(existsSync).mockReturnValueOnce(false);
+
+    const { SessionStore } = await import('../SessionStore.js');
+    const active = await new SessionStore().findActiveSessions('claude-desktop');
+
+    expect(active).toEqual([]);
   });
 });

@@ -18,6 +18,7 @@ import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../core/temp-config.js';
 import { ensureSessionFile } from '../core/session/ensure-session.js';
+import { reconcileStaleSessions } from '../core/session/stale-session-reconciliation.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -244,6 +245,11 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[codemie-code] SessionStart hook failed (non-blocking): ${msg}`);
       }
+
+      void reconcileStaleSessions('codemie-code', env, buildHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[codemie-code] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
     },
 
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {

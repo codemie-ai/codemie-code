@@ -6,6 +6,7 @@ const mockSendSessionEnd = vi.fn().mockResolvedValue(undefined);
 const mockSync = vi.fn().mockResolvedValue({ message: 'ok' });
 const mockIndexSessionsByExternalId = vi.fn();
 const mockFindSessionByExternalId = vi.fn().mockResolvedValue(null);
+const mockFindActiveSessions = vi.fn();
 
 // Persisted sessions shared by every SessionStore instance, so a new runtime instance sees
 // what a previous one saved — the same as a restarted daemon reading ~/.codemie/sessions.
@@ -46,6 +47,7 @@ vi.mock('@/agents/core/session/SessionStore.js', () => ({
   SessionStore: vi.fn(function (this: Record<string, unknown>) {
     this.findSessionByExternalId = mockFindSessionByExternalId;
     this.indexSessionsByExternalId = mockIndexSessionsByExternalId;
+    this.findActiveSessions = mockFindActiveSessions;
     this.saveSession = vi.fn(async (session: Session) => {
       persistedSessions.set(session.sessionId, structuredClone(session));
     });
@@ -209,6 +211,12 @@ function sessionIdFor(externalSessionId: string): string | undefined {
   return indexPersistedSessions(config.clientType).get(externalSessionId);
 }
 
+function findActiveSessions(agentName: string): Session[] {
+  return [...persistedSessions.values()].filter(
+    (session) => session.agentName === agentName && session.status === 'active'
+  );
+}
+
 /** Runs `count` poll ticks, advancing the clock by one poll interval before each. */
 async function pollTicks(runtime: DesktopTelemetryRuntime, count: number): Promise<void> {
   for (let tick = 0; tick < count; tick++) {
@@ -235,6 +243,9 @@ describe('DesktopTelemetryRuntime', () => {
     desktopSessions = new Map();
     mockIndexSessionsByExternalId.mockImplementation(async (agentName: string) =>
       indexPersistedSessions(agentName)
+    );
+    mockFindActiveSessions.mockImplementation(async (agentName: string) =>
+      findActiveSessions(agentName)
     );
   });
 
@@ -355,6 +366,190 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(adapter.processParsedSession).not.toHaveBeenCalled();
       expect(sessionIdFor('ext-idle')).toBeUndefined();
+    });
+  });
+
+  describe('restart reconciliation of already-active sessions', () => {
+    it('finalizes a session that was already idle past the timeout when the daemon died', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      // The daemon is hard-killed and only restarted after the session has already been
+      // idle longer than the timeout; Desktop reports no activity in between.
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (restartedDaemon as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const session = persistedSessions.get(sessionId)!;
+      expect(session.status).toBe('completed');
+      expect(session.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('re-tracks a not-yet-stale session so the normal idle timeout still finalizes it later', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      // Restart shortly after the last activity, well within the idle timeout.
+      vi.setSystemTime(Date.now() + 60_000);
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (restartedDaemon as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(persistedSessions.get(sessionId)!.status).toBe('active');
+
+      // No further Desktop activity ever arrives. poll()'s own discovery would never
+      // re-surface this session (its last activity predates the new startedAt), so only
+      // the seeded trackedSessions entry lets the regular idle check catch it.
+      await pollTicks(restartedDaemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const session = persistedSessions.get(sessionId)!;
+      expect(session.status).toBe('completed');
+      expect(session.reason).toBe('desktop-inactive-timeout');
+    });
+
+    it('never finalizes a stale session through poll() alone, without restart reconciliation', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      // Mirrors the pre-fix daemon: a fresh runtime driven only by poll(), the same way
+      // startDaemon()/pollTicks() exercise every other test in this file.
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await pollTicks(restartedDaemon, 5);
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(persistedSessions.get(sessionId)!.status).toBe('active');
+    });
+
+    it('runs reconciliation from start() before scheduling the poll loop', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await restartedDaemon.start();
+      await restartedDaemon.stop();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const session = persistedSessions.get(sessionId)!;
+      expect(session.status).toBe('completed');
+      expect(session.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('does nothing when there are no persisted active sessions', async () => {
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+
+      await expect((runtime as any).reconcilePersistedSessions()).resolves.toBeUndefined();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+    });
+
+    it('ignores active sessions belonging to a different agent', async () => {
+      persistedSessions.set('other-agent-session', {
+        sessionId: 'other-agent-session',
+        agentName: 'claude',
+        provider: 'ai-run-sso',
+        startTime: T0,
+        workingDirectory: '/tmp/other',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'claude-ext-1', lastSeenActivityAt: T0 }
+      });
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(persistedSessions.get('other-agent-session')!.status).toBe('active');
+    });
+
+    it('skips a persisted active session with no externalSessionId instead of throwing', async () => {
+      persistedSessions.set('no-external-id', {
+        sessionId: 'no-external-id',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        startTime: T0,
+        workingDirectory: '/tmp/no-ext',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 }
+      });
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+
+      await expect((runtime as any).reconcilePersistedSessions()).resolves.toBeUndefined();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(persistedSessions.get('no-external-id')!.status).toBe('active');
+    });
+
+    it('handles several concurrently open sessions independently in the same reconciliation pass', async () => {
+      openDesktopChat('ext-stale', 1, T0);
+      openDesktopChat('ext-fresh', 1, T0);
+      const firstDaemon = await startDaemon(createAdapter());
+      const staleId = sessionIdFor('ext-stale')!;
+      const freshId = sessionIdFor('ext-fresh')!;
+
+      // ext-fresh gets new activity (persisting a bumped lastSeenActivityAt) right
+      // before the restart; ext-stale gets none.
+      vi.setSystemTime(Date.now() + 60_000);
+      appendMessages('ext-fresh', 1);
+      await pollTicks(firstDaemon, 1);
+      mockSendSessionEnd.mockClear();
+
+      // Restart long enough after T0 that ext-stale is already past the timeout, but
+      // shortly enough after ext-fresh's bumped activity that it is not.
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS - 30_000);
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (restartedDaemon as any).reconcilePersistedSessions();
+
+      expect(persistedSessions.get(staleId)!.status).toBe('completed');
+      expect(persistedSessions.get(staleId)!.reason).toBe('desktop-daemon-restart-stale');
+      expect(persistedSessions.get(freshId)!.status).toBe('active');
+
+      await pollTicks(restartedDaemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(persistedSessions.get(freshId)!.status).toBe('completed');
+      expect(persistedSessions.get(freshId)!.reason).toBe('desktop-inactive-timeout');
+    });
+
+    it('does not let one failed finalization abort reconciliation of the rest, or crash start()', async () => {
+      openDesktopChat('ext-bad', 1, T0);
+      openDesktopChat('ext-ok', 1, T0);
+      await startDaemon(createAdapter());
+      const badId = sessionIdFor('ext-bad')!;
+      const okId = sessionIdFor('ext-ok')!;
+      mockSendSessionEnd.mockClear();
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      // Simulates a transient failure (network blip, SSO cookie hiccup) while finalizing
+      // the first stranded session found during reconciliation.
+      mockSync.mockRejectedValueOnce(new Error('network blip'));
+
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await expect(restartedDaemon.start()).resolves.toBeUndefined();
+      await restartedDaemon.stop();
+
+      // finalizeSession persists status='completed' before attempting sync, so the failing
+      // session's record isn't wedged — but its sync() rejection means sendSessionEnd is
+      // never reached for it. The key assertion is that the failure was isolated: it didn't
+      // stop start() from completing, and the next session in the same pass still finalized
+      // normally end-to-end.
+      expect(persistedSessions.get(badId)!.status).toBe('completed');
+      expect(persistedSessions.get(okId)!.status).toBe('completed');
+      expect(persistedSessions.get(okId)!.reason).toBe('desktop-daemon-restart-stale');
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
     });
   });
 

@@ -17,6 +17,7 @@ const processEvent = vi.fn();
 const startIncrementalSync = vi.fn();
 const stopIncrementalSync = vi.fn();
 const ensureSessionFile = vi.fn();
+const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
 
 vi.mock('../../../../cli/commands/hook.js', () => ({ processEvent }));
 vi.mock('../opencode.incremental-sync.js', () => ({
@@ -24,6 +25,7 @@ vi.mock('../opencode.incremental-sync.js', () => ({
   stopOpenCodeIncrementalSync: stopIncrementalSync,
 }));
 vi.mock('../../../core/session/ensure-session.js', () => ({ ensureSessionFile }));
+vi.mock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
 vi.mock('../opencode.paths.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../opencode.paths.js')>()),
   getOpenCodeDbPath: () => '/data/opencode/opencode.db',
@@ -94,29 +96,22 @@ describe('OpenCode onSessionStart', () => {
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
   });
 
-  it('tags processEvent and buildContext with CODEMIE_CLIENT_TYPE when set (e.g. by opencode-acp)', async () => {
-    // OpenCodeAcpPluginMetadata inherits onSessionStart verbatim and relies on
-    // BaseAgentAdapter setting env.CODEMIE_CLIENT_TYPE from its own ssoConfig —
-    // regression guard for the hardcoded OPENCODE_CLIENT_TYPE this replaced.
-    const env = { ...baseEnv(), CODEMIE_CLIENT_TYPE: 'codemie-opencode-acp' };
+  it('reconciles stale opencode sessions on start', async () => {
+    const env = baseEnv();
 
     await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
 
-    const [, config] = processEvent.mock.calls[0];
-    expect(config.clientType).toBe('codemie-opencode-acp');
-
-    const options = startIncrementalSync.mock.calls[0][0];
-    expect(options.buildContext().clientType).toBe('codemie-opencode-acp');
+    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
+    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('opencode');
+    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
   });
 
-  it('falls back to codemie-opencode when CODEMIE_CLIENT_TYPE is unset (unchanged plain-OpenCode behavior)', async () => {
-    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv());
+  it('does not throw when reconciliation rejects', async () => {
+    reconcileStaleSessions.mockRejectedValueOnce(new Error('boom'));
 
-    const [, config] = processEvent.mock.calls[0];
-    expect(config.clientType).toBe('codemie-opencode');
-
-    const options = startIncrementalSync.mock.calls[0][0];
-    expect(options.buildContext().clientType).toBe('codemie-opencode');
+    await expect(
+      OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv())
+    ).resolves.toBeUndefined();
   });
 });
 
