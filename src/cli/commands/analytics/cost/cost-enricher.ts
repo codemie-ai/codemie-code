@@ -430,7 +430,7 @@ export async function enrichCosts(
       // fallback runs only when there are no records (SDK rollup / gemini / no-reader), paths
       // that never touch `seen`, so there is no double-dedup. The same `records` are reused
       // below to attribute cost to `skill` dispatches within their time window.
-      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen) : [];
+      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, entry.observedEnd) : [];
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
@@ -443,7 +443,7 @@ export async function enrichCosts(
           }
         }
       } else {
-        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen) : new Map<string, TokenUsage>();
+        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, entry.observedEnd) : new Map<string, TokenUsage>();
       }
     } catch (e) {
       // One malformed log must not abort the whole report — degrade to "no usage" for this

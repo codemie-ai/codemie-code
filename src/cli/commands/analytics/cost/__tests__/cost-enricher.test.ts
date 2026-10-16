@@ -424,6 +424,51 @@ describe('enrichCosts', () => {
     expect(index.get('B')!.costUSD).toBe(0); // replay deduped
     expect(summary.totalCostUSD).toBeCloseTo(3, 6);
   });
+
+  it('bounds each session to its own observedEnd so a later session keeps its own turns in a shared log (EPMCDME-15316 Root Cause A)', async () => {
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 60_000 } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [],
+    };
+    // One turn made during session A's own window, two turns made during session B's own
+    // window — all three physically live in the one shared (resumed/continued) log file.
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/shared-resumed.jsonl', // same path for both sessions
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // B genuinely has 2 turns (1M tokens) inside its own time window, independent of A.
+    expect(index.get('B')!.tokens.total).toBe(1_000_000);
+    expect(index.get('B')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('A')!.tokens.total).toBe(1_000_000);
+    expect(summary.totalCostUSD).toBeCloseTo(6, 6); // total is preserved either way
+  });
 });
 
 describe('enrichCosts — dispatch cost attribution', () => {

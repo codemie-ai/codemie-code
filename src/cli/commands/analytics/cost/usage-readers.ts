@@ -154,6 +154,14 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
   return out;
 }
 
+/** Keep only records this session's own window can plausibly own: untimed ones (existing
+ * earliest-owner fallback) or ones before `windowEnd` (this session's own observed end).
+ * `windowEnd` undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
+function withinWindow(records: UsageRecord[], windowEnd: number | undefined): UsageRecord[] {
+  if (windowEnd === undefined) return records;
+  return records.filter((r) => r.ts === null || r.ts < windowEnd);
+}
+
 /**
  * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`),
  * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
@@ -856,7 +864,7 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
  * fresh set to disable cross-session dedup). When a Claude session carries an authoritative
  * SDK `modelUsage` rollup (audit.jsonl), that is used as-is (session-local, no cross-file dup).
  */
-export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageMap {
+export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>, windowEnd?: number): UsageMap {
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
     return readGemini(parsed);
@@ -877,7 +885,7 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractPiUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
@@ -888,7 +896,7 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
       return rollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractClaudeUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
@@ -903,17 +911,17 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
  * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-supported agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */
-export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageRecord[] {
+export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>, windowEnd?: number): UsageRecord[] {
   const a = agentName.toLowerCase();
   if (a === 'kimi') {
     // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
     return extractKimiUsageRecords(parsed);
   }
   if (isCodexFamilyAgent(a)) {
-    return takeUnseenRecords(extractCodexUsageRecords(parsed), seen);
+    return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd), seen);
   }
   if (a === 'pi') {
-    return takeUnseenRecords(extractPiUsageRecords(parsed), seen);
+    return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
@@ -921,7 +929,7 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
   if (readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
-  return takeUnseenRecords(extractClaudeUsageRecords(parsed), seen);
+  return takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen);
 }
 
 /** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */
