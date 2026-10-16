@@ -82,6 +82,23 @@ describe('collectEditLineStats', () => {
     };
     expect(collectEditLineStats([line])).toEqual({ linesAdded: 1, linesRemoved: 0 });
   });
+
+  it('counts a Write result that also carries an empty structuredPatch (the real transcript shape)', () => {
+    const write = (content: string): SignalLine => ({
+      type: 'user',
+      toolUseResult: { type: 'create', content, structuredPatch: [], originalFile: null },
+    });
+    expect(collectEditLineStats([write('a\nb\nc\nd\ne')])).toEqual({ linesAdded: 5, linesRemoved: 0 });
+    expect(collectEditLineStats([write('')])).toEqual({ linesAdded: 0, linesRemoved: 0 });
+  });
+
+  it('still counts an Edit result (structuredPatch, no type field) as a diff, not a create', () => {
+    const edit: SignalLine = {
+      type: 'user',
+      toolUseResult: { structuredPatch: [{ lines: ['-old', '+new'] }] },
+    };
+    expect(collectEditLineStats([edit])).toEqual({ linesAdded: 1, linesRemoved: 1 });
+  });
 });
 
 describe('countTurns', () => {
