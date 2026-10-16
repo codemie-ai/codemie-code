@@ -118,7 +118,7 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
-    ...(capture && Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
+    ...(Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
   };
 }
 

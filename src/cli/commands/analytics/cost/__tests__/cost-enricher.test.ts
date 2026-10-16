@@ -40,6 +40,16 @@ describe('enrichCosts', () => {
     expect(JSON.stringify(index.get('captured'))).not.toContain('PRIVATE_CAPTURE_BODY');
   });
 
+  it('populates observedEnd from a real endEvent even without an internal capture', async () => {
+    const start = 1_700_000_000_000;
+    const { index } = await enrichCosts([{
+      sessionId: 's1', deltas: [],
+      startEvent: { agentName: 'claude', data: { startTime: start } },
+      endEvent: { data: { endTime: start + 9_000 } },
+    }] as never[], baseDeps);
+    expect(index.get('s1')!.observedEnd).toBe(start + 9_000);
+  });
+
   it('labels repriced SDK usage as an estimate without manufacturing a capture time', async () => {
     const { index } = await enrichCosts(raw, { ...baseDeps, parseNative: async () => ({
       sessionId: 's1', agentName: 'claude-desktop', metadata: {}, messages: [{ type: 'result', modelUsage: { 'claude-sonnet-5': { inputTokens: 1_000_000 } } }],
