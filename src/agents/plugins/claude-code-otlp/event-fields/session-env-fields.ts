@@ -139,6 +139,71 @@ function hashHostname(): string {
 }
 
 /**
+ * The subset of `agent.session.env` fields cheap enough to recheck on *any* hook that happens to
+ * carry `effort`/`permission_mode` (no file I/O — just the hook's own payload plus a few
+ * syscalls). Shared by {@link resolveSessionEnvFields} (which hardcodes `effort: ''` for its own
+ * `SessionStart` caller, per the SDK's contract) and `transcript/orchestrator.ts`'s
+ * `openSessionEnvCheckPass`, which recomputes exactly these fields on `Stop`/`SubagentStop`/etc.
+ * without re-reading any settings/plugin/MCP files.
+ */
+export interface VolatileSessionEnvFields {
+  effort: string;
+  permission_mode: string;
+  os: string;
+  arch: string;
+  node_version: string;
+  timezone: string;
+  hostname_hash: string;
+}
+
+/** Never throws; an unavailable value is an empty string. */
+export async function resolveVolatileSessionEnvFields(
+  effort: string,
+  permissionMode: string
+): Promise<VolatileSessionEnvFields> {
+  const envFields = await resolveEnvFields();
+  return {
+    effort,
+    permission_mode: permissionMode,
+    os: envFields.os,
+    arch: os.arch(),
+    node_version: process.version,
+    timezone: envFields.timezone,
+    hostname_hash: hashHostname(),
+  };
+}
+
+function pluginsEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  return aKeys.length === bKeys.length && aKeys.every((key, i) => key === bKeys[i] && a[key] === b[key]);
+}
+
+/**
+ * Field-by-field equality — deliberately not `JSON.stringify` comparison, so a harmless key-order
+ * difference between two independently-constructed objects can never register as a false change.
+ * `mcp_servers` compares by index since `getMCPConfigSummary` always returns it pre-sorted.
+ */
+export function sessionEnvFieldsEqual(a: SessionEnvFields, b: SessionEnvFields): boolean {
+  return (
+    a.provider === b.provider &&
+    a.api_host === b.api_host &&
+    a.configured_model === b.configured_model &&
+    a.effort === b.effort &&
+    a.permission_mode === b.permission_mode &&
+    a.output_style === b.output_style &&
+    a.os === b.os &&
+    a.arch === b.arch &&
+    a.node_version === b.node_version &&
+    a.timezone === b.timezone &&
+    a.hostname_hash === b.hostname_hash &&
+    pluginsEqual(a.plugins, b.plugins) &&
+    a.mcp_servers.length === b.mcp_servers.length &&
+    a.mcp_servers.every((name, i) => name === b.mcp_servers[i])
+  );
+}
+
+/**
  * Builds every field for `agent.session.env`. Never throws: any
  * individual lookup failure degrades that field to its empty default.
  */
@@ -148,15 +213,14 @@ export async function resolveSessionEnvFields(
   permissionMode: string
 ): Promise<SessionEnvFields> {
   try {
-    const [{ provider, api_host }, outputStyle, enabledPluginKeys, mcpSummary, envFields] = await Promise.all([
+    const [{ provider, api_host }, outputStyle, enabledPluginKeys, mcpSummary, volatile] = await Promise.all([
       Promise.resolve(resolveProviderAndHost()),
       resolveOutputStyle(cwd),
       resolveEnabledPluginKeys(cwd),
       getMCPConfigSummary(ClaudePluginMetadata.mcpConfig, cwd),
-      // Same resolver `onSessionStart` already calls for `agent.session.start`'s own `os`/
-      // `timezone` — reused here rather than reimplemented, so the two records in one
-      // `SessionStart` fire never compute these independently.
-      resolveEnvFields(),
+      // Absent on session-lifecycle hooks per the SDK's own BaseHookInput contract (only present
+      // on tool-use-context hooks), so `effort` is hardcoded `''` here — not fabricated.
+      resolveVolatileSessionEnvFields('', permissionMode),
     ]);
     const plugins = await resolvePluginVersions(cwd, enabledPluginKeys);
 
@@ -164,18 +228,10 @@ export async function resolveSessionEnvFields(
       provider,
       api_host,
       configured_model: configuredModel,
-      // Absent on session-lifecycle hooks per the SDK's own BaseHookInput contract (only
-      // present on tool-use-context hooks) — left empty here, not fabricated.
-      effort: '',
-      permission_mode: permissionMode,
       output_style: outputStyle,
       plugins,
       mcp_servers: mcpSummary.serverNames,
-      os: envFields.os,
-      arch: os.arch(),
-      node_version: process.version,
-      timezone: envFields.timezone,
-      hostname_hash: hashHostname(),
+      ...volatile,
     };
   } catch (error) {
     logger.debug(`[claude-code-otlp] session-env field resolution failed: ${error instanceof Error ? error.message : String(error)}`);

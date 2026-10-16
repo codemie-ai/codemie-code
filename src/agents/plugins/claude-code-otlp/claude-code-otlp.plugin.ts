@@ -1,7 +1,9 @@
 
 import { basename } from 'node:path';
 import type {
+  ConfigChangeHookInput,
   HookInput,
+  PostModelSwitchHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
@@ -32,6 +34,7 @@ import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
   openMainTranscriptPass,
+  openSessionEnvCheckPass,
   openSessionStartPass,
   openSubagentPass,
   openSessionEndPass,
@@ -127,6 +130,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     if (hookInput.hook_event_name === 'SubagentStart') {
       return await this.onSubagentStartEvent(hookInput);
     }
+    if (hookInput.hook_event_name === 'PostModelSwitch') {
+      return await this.onPostModelSwitch(hookInput);
+    }
+    if (hookInput.hook_event_name === 'ConfigChange') {
+      return await this.onConfigChange(hookInput);
+    }
 
     return { decision: 'forward', payload: [hookInput] };
   }
@@ -165,7 +174,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       resolveGitHeadFields(context, 'start'),
       resolveSessionEnvFields(hookInput.cwd, model, permissionMode),
     ]);
-    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start);
+    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
 
     const sessionEnvEvent = buildSessionEnvEvent(hookInput.session_id, sessionEnvFields);
     return {
@@ -179,28 +188,48 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
-    const [pass, gitHeadEnd] = await Promise.all([
+    const [pass, gitHeadEnd, envCheck] = await Promise.all([
       openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop'),
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
+      this.checkSessionEnv(hookInput),
     ]);
-    return { decision: 'forward', payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events], finalize: pass.finalize };
+    return {
+      decision: 'forward',
+      payload: [{ ...hookInput, ...gitHeadEnd }, ...envCheck.events, ...pass.events],
+      finalize: composeFinalize(pass.finalize, envCheck.finalize),
+    };
   }
 
   private async onPreCompactEvent(hookInput: PreCompactHookInput): Promise<ClaudeForwardDecision> {
-    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'PreCompact');
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
+    const [pass, envCheck] = await Promise.all([
+      openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'PreCompact'),
+      this.checkSessionEnv(hookInput),
+    ]);
+    return {
+      decision: 'forward',
+      payload: [hookInput, ...envCheck.events, ...pass.events],
+      finalize: composeFinalize(pass.finalize, envCheck.finalize),
+    };
   }
 
   private async onStopFailureEvent(hookInput: StopFailureHookInput): Promise<ClaudeForwardDecision> {
-    const pass = await openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'StopFailure');
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
+    const [pass, envCheck] = await Promise.all([
+      openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'StopFailure'),
+      this.checkSessionEnv(hookInput),
+    ]);
+    return {
+      decision: 'forward',
+      payload: [hookInput, ...envCheck.events, ...pass.events],
+      finalize: composeFinalize(pass.finalize, envCheck.finalize),
+    };
   }
 
   private async onSessionEndEvent(hookInput: SessionEndHookInput): Promise<ClaudeForwardDecision> {
-    const [pass, gitHeadEnd, identityCandidateFields] = await Promise.all([
+    const [pass, gitHeadEnd, identityCandidateFields, envCheck] = await Promise.all([
       openSessionEndPass(hookInput.session_id, hookInput.transcript_path, hookInput.cwd),
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
       resolveIdentityCandidateFields({ cwd: hookInput.cwd }),
+      this.checkSessionEnv(hookInput),
     ]);
     const gitCommitFields = await resolveGitCommitFields(
       hookInput.cwd,
@@ -217,14 +246,63 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
     return {
       decision: 'forward',
-      payload: [{ ...hookInput, ...gitHeadEnd }, gitSnapshotEvent, ...pass.events],
-      finalize: pass.finalize,
+      payload: [{ ...hookInput, ...gitHeadEnd }, gitSnapshotEvent, ...envCheck.events, ...pass.events],
+      finalize: composeFinalize(pass.finalize, envCheck.finalize),
       retryOnce: true,
     };
   }
 
   private async onUserPromptExpansion(hookInput: UserPromptExpansionHookInput): Promise<ClaudeForwardDecision> {
     return { decision: 'forward', payload: [{ ...hookInput, skill_name: hookInput.command_name }] };
+  }
+
+  /**
+   * `/model` always changes `agent.session.env`'s `configured_model`, and might as well pay for
+   * a full recompute while it's at it (rare hook, I/O cost is a non-issue) in case something else
+   * drifted too. The native `PostModelSwitch`/`ConfigChange` events are never forwarded
+   * themselves — only the derived `agent.session.env`, if anything actually changed.
+   */
+  private async onPostModelSwitch(hookInput: PostModelSwitchHookInput): Promise<ClaudeForwardDecision> {
+    const check = await openSessionEnvCheckPass(hookInput.session_id, {
+      effort: hookInput.effort?.level ?? '',
+      permissionMode: hookInput.permission_mode ?? '',
+      full: { cwd: hookInput.cwd, configuredModel: hookInput.to_model },
+    });
+    if (!check.sessionEnvFields) {
+      return { decision: 'forward', payload: [], finalize: check.finalize };
+    }
+    return {
+      decision: 'forward',
+      payload: [buildSessionEnvEvent(hookInput.session_id, check.sessionEnvFields)],
+      finalize: check.finalize,
+    };
+  }
+
+  /**
+   * `source: 'skills'` is a skill-*content* edit (e.g. a `SKILL.md` change) — never env-relevant,
+   * so it's skipped before touching any lock or file. Every other source
+   * (`user_settings`/`project_settings`/`local_settings`/`policy_settings`) is where
+   * `outputStyle`/`enabledPlugins` actually live, so those get a full recompute.
+   * `configuredModel` is omitted — `ConfigChangeHookInput` doesn't carry one — so
+   * `openSessionEnvCheckPass` falls back to the last snapshot's value.
+   */
+  private async onConfigChange(hookInput: ConfigChangeHookInput): Promise<ClaudeForwardDecision> {
+    if (hookInput.source === 'skills') {
+      return { decision: 'forward', payload: [] };
+    }
+    const check = await openSessionEnvCheckPass(hookInput.session_id, {
+      effort: hookInput.effort?.level ?? '',
+      permissionMode: hookInput.permission_mode ?? '',
+      full: { cwd: hookInput.cwd },
+    });
+    if (!check.sessionEnvFields) {
+      return { decision: 'forward', payload: [], finalize: check.finalize };
+    }
+    return {
+      decision: 'forward',
+      payload: [buildSessionEnvEvent(hookInput.session_id, check.sessionEnvFields)],
+      finalize: check.finalize,
+    };
   }
 
   private async onSubagentStopEvent(hookInput: SubagentStopHookInput): Promise<ClaudeForwardDecision> {
@@ -261,14 +339,21 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       skillName: marker.skillName,
     };
 
-    const pass = await openSubagentPass(hookInput.session_id, subagentFile);
+    const [pass, envCheck] = await Promise.all([
+      openSubagentPass(hookInput.session_id, subagentFile),
+      this.checkSessionEnv(hookInput),
+    ]);
     const stopFields = resolveSubagentStopFields(subagentFile, pass.events);
     const stopPayload = {
       ...hookInput,
       ...stopFields,
       ...(marker.skillName ? { skill_name: marker.skillName } : {}),
     };
-    return { decision: 'forward', payload: [stopPayload, ...pass.events], finalize: pass.finalize };
+    return {
+      decision: 'forward',
+      payload: [stopPayload, ...envCheck.events, ...pass.events],
+      finalize: composeFinalize(pass.finalize, envCheck.finalize),
+    };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
@@ -317,6 +402,28 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
     return { decision: 'forward', payload: [{ ...hookInput, ...contextFields, ...diffFields }] };
   }
+
+    /**
+   * The cheap half of env-change detection (no file I/O): merges the firing hook's own
+   * `effort`/`permission_mode` plus a fresh `os`/`arch`/`node_version`/`timezone`/`hostname_hash`
+   * onto the session's last `agent.session.env` snapshot, and returns a ready-to-append `events`
+   * array (one record, or none when nothing changed) plus the `finalize` to compose into the
+   * caller's own. Shared by every `Stop`/`PreCompact`/`StopFailure`/`SessionEnd`/`SubagentStop`
+   * handler — see `openSessionEnvCheckPass`'s own doc for why this stays a separate pass instead
+   * of widening those handlers' existing pass-opener calls.
+   */
+  private async checkSessionEnv(
+    hookInput: Pick<HookInput, 'session_id' | 'effort' | 'permission_mode'>
+  ): Promise<{ events: Record<string, unknown>[]; finalize: (accepted: boolean) => Promise<void> }> {
+    const check = await openSessionEnvCheckPass(hookInput.session_id, {
+      effort: hookInput.effort?.level ?? '',
+      permissionMode: hookInput.permission_mode ?? '',
+    });
+    return {
+      events: check.sessionEnvFields ? [buildSessionEnvEvent(hookInput.session_id, check.sessionEnvFields)] : [],
+      finalize: check.finalize,
+    };
+  }
 }
 
 function buildGitSnapshotEvent(
@@ -338,6 +445,20 @@ function buildSessionEnvEvent(sessionId: string, fields: SessionEnvFields): Reco
     type: 'agent.session.env',
     session_id: sessionId,
     ...fields,
+  };
+}
+
+/**
+ * Combines two independent `finalize` callbacks (e.g. a transcript pass and the separate
+ * `openSessionEnvCheckPass`) into one, so a `ForwardDecision` only ever carries a single
+ * `finalize`. Both run with the same `accepted` outcome; each owns releasing its own lock.
+ */
+function composeFinalize(
+  a: (accepted: boolean) => Promise<void>,
+  b: (accepted: boolean) => Promise<void>
+): (accepted: boolean) => Promise<void> {
+  return async (accepted: boolean) => {
+    await Promise.all([a(accepted), b(accepted)]);
   };
 }
 
