@@ -848,6 +848,14 @@ export class AgentCLI {
   }
 
   /**
+   * Expose the built commander program so it can be introspected (used by
+   * `codemie completion` to generate launcher completions).
+   */
+  getProgram(): Command {
+    return this.program;
+  }
+
+  /**
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {

@@ -28,6 +28,23 @@ codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
 ```
 
+## Shell Completions
+
+`codemie completion <shell>` prints a self-contained completion script covering the `codemie` tree and every interactive `codemie-<agent>` launcher:
+
+```bash
+source <(codemie completion zsh)    # bash / zsh
+codemie completion fish | source    # fish
+```
+
+Persist it by adding the same line to your shell rc file (fish users can drop it into the completions directory instead):
+
+```bash
+codemie completion fish > ~/.config/fish/completions/codemie.fish
+```
+
+Completions cover subcommands, options, and enumerable values (agents, profiles, providers, workflow ids, documentation tools, output formats). The script is generated from a snapshot of the installed CLI, so re-run the `source` command after upgrading CodeMie — and after adding a profile — to refresh the value list.
+
 ## Codebase Memory Commands
 
 ```bash

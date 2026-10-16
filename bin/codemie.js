@@ -18,12 +18,17 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
+// `codemie completion <shell>` prints a script on stdout that callers source
+// (`source <(codemie completion zsh)`). Every startup message must be silenced
+// for that invocation, exactly like --version/--task/--help below.
+const isCompletionInvocation = process.argv[2] === 'completion';
+
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
   if (await MigrationRunner.hasPending()) {
     await MigrationRunner.runPending({
-      silent: false  // Show migration messages to user
+      silent: isCompletionInvocation  // Keep stdout clean when sourced
     });
   }
 } catch (error) {
@@ -35,7 +40,7 @@ try {
 // Skip in test environments to avoid timeouts and network calls during testing
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment) {
+if (!isTestEnvironment && !isCompletionInvocation) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -50,7 +55,7 @@ if (!isTestEnvironment) {
 const skipNoticeArgs = new Set(['--version', '-V', '--task', '--help']);
 const hasOutputContractArg = process.argv.slice(2).some(arg => skipNoticeArgs.has(arg));
 const isInteractiveTerminal = process.stdout.isTTY !== false; // undefined -> treat as TTY
-if (!isTestEnvironment && isInteractiveTerminal && !hasOutputContractArg) {
+if (!isTestEnvironment && isInteractiveTerminal && !hasOutputContractArg && !isCompletionInvocation) {
   try {
     const { readFileSync } = await import('node:fs');
     const { default: chalk } = await import('chalk');
