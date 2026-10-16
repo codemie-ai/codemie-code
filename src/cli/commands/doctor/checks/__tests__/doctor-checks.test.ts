@@ -295,6 +295,45 @@ describe('AgentsCheck', () => {
     ]);
   });
 
+  it('does not warn when the agent has no pinned supported version (latest)', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        displayName: 'OpenCode CLI',
+        getVersion: async () => '1.18.34',
+        checkVersionCompatibility: async () => ({
+          compatible: true,
+          installedVersion: '1.18.34',
+          supportedVersion: 'latest',
+          isNewer: false,
+          hasUpdate: false,
+          isBelowMinimum: false,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toEqual([{ status: 'ok', message: 'OpenCode CLI (1.18.34)' }]);
+  });
+
+  it('warns when a pinned supported version is outdated', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        displayName: 'Kimi Code',
+        getVersion: async () => '2.1.1',
+        checkVersionCompatibility: async () => ({
+          compatible: false,
+          installedVersion: '2.1.1',
+          supportedVersion: '0.42.0',
+          isNewer: true,
+          hasUpdate: false,
+          isBelowMinimum: false,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details[0].status).toBe('warn');
+    expect(result.details[0].message).toContain('CodeMie recommends v0.42.0');
+  });
+
   it('warns for agents installed via the deprecated npm method', async () => {
     h.getInstalledAgentsMock.mockResolvedValue([
       {
