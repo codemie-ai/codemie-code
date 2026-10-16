@@ -224,7 +224,7 @@ describe('enrichCosts', () => {
     ] as never[];
     const deps: EnricherDeps = {
       resolveAgentName: () => 'claude',
-      loadAgentSessionFile: async () => '/fake/log.jsonl',
+      loadAgentSessionFile: async (r) => `/fake/${r.sessionId}.jsonl`,
       parseNative: async (_agent, _file, sid) =>
         ({
           sessionId: sid,
@@ -400,7 +400,7 @@ describe('enrichCosts', () => {
     ] as never[];
     const deps: EnricherDeps = {
       resolveAgentName: () => 'claude',
-      loadAgentSessionFile: async () => '/fake/log.jsonl',
+      loadAgentSessionFile: async (r) => `/fake/${r.sessionId}.jsonl`,
       parseNative: async (_agent, _file, sid) =>
         sid === 'A'
           ? ({
@@ -704,7 +704,7 @@ describe('enrichCosts — nested Claude ownership', () => {
   it('never reintroduces another session’s accepted responses into agent allocations', async () => {
     const replay = response('shared', 1, 100);
     const sessions = ['first', 'second', 'third'].map((sessionId, index) => ({ sessionId, startEvent: { agentName: 'claude', data: { startTime: index } }, deltas: [] }));
-    const { index } = await enrichCosts(sessions as never[], { ...baseDeps, parseNative: async (_agent, _file, sessionId) => ({
+    const { index } = await enrichCosts(sessions as never[], { ...baseDeps, loadAgentSessionFile: async (r) => `/fake/${r.sessionId}.jsonl`, parseNative: async (_agent, _file, sessionId) => ({
       sessionId, agentName: 'claude', metadata: {},
       messages: sessionId === 'first' ? [replay] : [invoke('a', 0)],
       subagents: sessionId === 'first' ? [] : [{ agentId: 'child', toolUseId: 'a', parentAgentId: 'root', filePath: '/fake/child.jsonl', messages: [replay, ...(sessionId === 'second' ? [response('fresh', 2, 7)] : [])] }],
@@ -877,5 +877,65 @@ describe('enrichCosts — routing classifier cost', () => {
     expect(c.routingCostKnown).toBeUndefined();
     expect(c.classifierCostUSD).toBeUndefined();
     expect(c.costUSD).toBeCloseTo(3, 6);
+  });
+});
+
+describe('enrichCosts — sessions resumed onto one shared log', () => {
+  const T0 = Date.parse('2026-06-08T10:00:00Z');
+  const T1 = Date.parse('2026-06-08T11:00:00Z');
+  const msg = (id: string, ts: number) => ({
+    timestamp: new Date(ts).toISOString(), requestId: 'r-' + id,
+    message: { id, model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+  });
+  const log = {
+    sessionId: 'x', agentName: 'claude', metadata: {},
+    messages: [
+      msg('m1', T0 + 1000), msg('m2', T1 - 1000), msg('m3', T1 + 1000),
+      { timestamp: new Date(T1 + 2000).toISOString(), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tu1', name: 'Skill', input: { skill: 'late' } }] } },
+    ],
+  };
+  const deps: EnricherDeps = {
+    resolveAgentName: () => 'claude',
+    loadAgentSessionFile: async () => '/fake/shared.jsonl',
+    parseNative: async () => structuredClone(log) as never,
+  };
+  const oldRaw = { sessionId: 'old', startEvent: { agentName: 'claude', data: { startTime: T0 } }, deltas: [] };
+  const newRaw = { sessionId: 'new', startEvent: { agentName: 'claude', data: { startTime: T1 } }, deltas: [] };
+
+  it('splits the shared log by start-time window with no loss or double count', async () => {
+    const { index } = await enrichCosts([newRaw, oldRaw] as never[], deps);
+    expect(index.get('old')!.tokens.input).toBe(2_000_000);
+    expect(index.get('new')!.tokens.input).toBe(1_000_000);
+    expect(index.get('old')!.dispatches ?? []).toHaveLength(0);
+    expect(index.get('new')!.dispatches ?? []).toHaveLength(1);
+  });
+
+  it('lone resumed session counts only its window when the older sibling is passed as boundary', async () => {
+    const { index } = await enrichCosts([newRaw] as never[], deps, [oldRaw] as never[]);
+    expect(index.get('new')!.tokens.input).toBe(1_000_000);
+  });
+
+  it('gives tied start times disjoint windows (sessionId tie-break)', async () => {
+    const a = { ...oldRaw, sessionId: 'a', startEvent: { agentName: 'claude', data: { startTime: T0 } } };
+    const b = { ...oldRaw, sessionId: 'b', startEvent: { agentName: 'claude', data: { startTime: T0 } } };
+    const { index } = await enrichCosts([b, a, newRaw] as never[], deps);
+    expect(index.get('a')?.tokens.input ?? 0).toBe(0);
+    expect(index.get('b')!.tokens.input).toBe(2_000_000);
+    expect(index.get('new')!.tokens.input).toBe(1_000_000);
+  });
+
+  it('solo session on a log keeps records earlier than its start time', async () => {
+    const solo = { sessionId: 'solo', startEvent: { agentName: 'claude', data: { startTime: T1 + 5000 } }, deltas: [] };
+    const { index } = await enrichCosts([solo] as never[], deps);
+    expect(index.get('solo')!.tokens.input).toBe(3_000_000);
+  });
+
+  it('resolves agent and start time from top-level fields when startEvent is absent', async () => {
+    const a = { sessionId: 'a', agentName: 'claude', startTime: T0, deltas: [] };
+    const b = { sessionId: 'b', agentName: 'claude', startTime: T1, deltas: [] };
+    expect(realDeps.resolveAgentName(a as never)).toBe('claude');
+    const { index } = await enrichCosts([b, a] as never[], deps);
+    expect(index.get('a')!.tokens.input).toBe(2_000_000);
+    expect(index.get('b')!.tokens.input).toBe(1_000_000);
   });
 });

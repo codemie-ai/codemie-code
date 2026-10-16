@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14673-Wrong-analytics-stats-after-using-resume-command-in-codemie-claude",
+  "head": "ec75759bbb26ef72e0606c83377e7e21155cae13",
+  "runner": "npm",
+  "started_at": "2026-10-13T12:17:35.829Z",
+  "completed_at": "2026-10-13T12:21:55.830Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9471,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 34345,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 20382,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 23544,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 91683,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 58950,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 4227,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\"; stage changes to scan locally (CI scans unconditionally)."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3498,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {
+    "unit": "+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\RATIGI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-36384-1791887060024.json\",\n    \"--model=claude-opus-5\",\n    \"-p\",\n    \"hi\",\n  ]\n\n ❯ src/providers/core/__tests__/providers-core.test.ts:442:64\n    440|       process.env.CODEMIE_MODEL = 'claude-sonnet-5';\n    441|       const args = ['--model=claude-opus-5', '-p', 'hi'];\n    442|       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(ar…\n       |                                                                ^\n    443|     });\n    444|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯\n\n FAIL  |unit| src/providers/core/__tests__/providers-core.test.ts > defaultAgentHooks > claude.enrichArgs > ignores a blank CODEMIE_MODEL\nAssertionError: expected [ '--settings', …(3) ] to be [ '-p', 'hi' ] // Object.is equality\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\RATIGI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-36384-1791887060024.json\",\n    \"-p\",\n    \"hi\",\n  ]\n\n ❯ src/providers/core/__tests__/providers-core.test.ts:451:64\n    449|       process.env.CODEMIE_MODEL = '   ';\n    450|       const args = ['-p', 'hi'];\n    451|       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(ar…\n       |                                                                ^\n    452|     });\n    453|   });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯\n\n\n Test Files  3 failed | 325 passed (328)\n      Tests  10 failed | 4815 passed | 2 skipped (4827)\n   Start at  16:18:59\n   Duration  88.01s (transform 54.14s, setup 0ms, import 212.50s, tests 130.36s, environment 104ms)\n\n",
+    "integration": "+   \"--model\",\n+   \"claude-sonnet-5[1m]\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:183:28\n    181|\n    182|       // Verify args unchanged\n    183|       expect(enrichedArgs).toEqual(args);\n       |                            ^\n    184|\n    185|       // Verify --plugin-dir NOT injected\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install → inject\nAssertionError: expected [ '--settings', …(7) ] to deeply equal [ '--plugin-dir', …(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\RATIGI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-36384-1791887060024.json\",\n+   \"--model\",\n+   \"claude-sonnet-5[1m]\",\n    \"--plugin-dir\",\n    \"C:\\\\Users\\\\RATIGI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-test-claude-plugin\\\\claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '…\n       |                            ^\n    234|     });\n    235|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  4 failed | 274 passed | 10 skipped (288)\n   Start at  16:20:32\n   Duration  54.73s (transform 23.31s, setup 0ms, import 45.21s, tests 299.95s, environment 9ms)\n\n"
+  }
+}

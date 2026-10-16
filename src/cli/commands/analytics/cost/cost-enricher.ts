@@ -16,7 +16,7 @@ import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown, costForUsage } from './cost-calculator.js';
 import { lookupPrice, resolvePrice } from '@/utils/pricing.js';
-import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, extractModelIdentityTimeline, type UsageRecord, type ModelIdentityEvent } from './usage-readers.js';
+import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, extractModelIdentityTimeline, type UsageRecord, type ModelIdentityEvent, type UsageWindow } from './usage-readers.js';
 import { extractDispatchResult } from './dispatch-extractor.js';
 import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
 import { enrichSkillDispatchCost } from './dispatch-allocation.js';
@@ -59,7 +59,7 @@ function resolveSessionAdapter(agentName: string): SessionAdapter | null {
 }
 
 export const realDeps: EnricherDeps = {
-  resolveAgentName: (raw) => raw.startEvent?.agentName ?? '',
+  resolveAgentName: (raw) => raw.startEvent?.agentName ?? raw.agentName ?? '',
   async loadAgentSessionFile(raw) {
     // Native-discovered sessions carry their log path directly (no CodeMie correlation file).
     if (raw.agentSessionFile) {
@@ -105,6 +105,45 @@ interface ParsedEntry {
   observedEnd?: number;
 }
 
+function rawStartTime(raw: RawSessionData): number {
+  return raw.startEvent?.data?.startTime ?? raw.startTime ?? 0;
+}
+
+/**
+ * Per-session usage windows for sessions sharing one native log (a resumed session appends to
+ * the same file). A session owns `[its start, next sibling's start)`; the first on a file also
+ * keeps untimed records. `endTime` is deliberately unused (unreliable). `extraSiblings` only
+ * contribute boundaries.
+ */
+async function buildWindows(
+  ordered: ParsedEntry[],
+  extraSiblings: RawSessionData[],
+  deps: EnricherDeps
+): Promise<Map<string, UsageWindow>> {
+  const byFile = new Map<string, Array<{ sessionId: string; startTime: number; own: boolean }>>();
+  const add = (filePath: string | null, sessionId: string, startTime: number, own: boolean): void => {
+    if (!filePath) return;
+    const list = byFile.get(filePath) ?? [];
+    list.push({ sessionId, startTime, own });
+    byFile.set(filePath, list);
+  };
+  for (const e of ordered) add(e.filePath, e.sessionId, e.startTime, true);
+  const ownIds = new Set(ordered.map((e) => e.sessionId));
+  for (const raw of extraSiblings) {
+    if (ownIds.has(raw.sessionId)) continue;
+    add(await deps.loadAgentSessionFile(raw), raw.sessionId, rawStartTime(raw), false);
+  }
+  const windows = new Map<string, UsageWindow>();
+  for (const list of byFile.values()) {
+    if (list.length < 2) continue; // solo session: no window, keep every record
+    list.sort((a, b) => a.startTime - b.startTime || (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
+    list.forEach((s, i) => {
+      if (s.own) windows.set(s.sessionId, { from: s.startTime, to: list[i + 1]?.startTime ?? Infinity, keepUntimed: i === 0 });
+    });
+  }
+  return windows;
+}
+
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
@@ -114,7 +153,7 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const parsed = capture?.parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
-    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
+    sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: rawStartTime(raw),
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
@@ -401,7 +440,8 @@ function enrichDispatchCosts(
 
 export async function enrichCosts(
   sessions: RawSessionData[],
-  deps: EnricherDeps = realDeps
+  deps: EnricherDeps = realDeps,
+  extraSiblings: RawSessionData[] = []
 ): Promise<{ index: SessionCostIndex; summary: CostSummary }> {
   // Phase 1: parse every native log concurrently.
   const parsedEntries = await mapWithConcurrency(sessions, 16, (raw) => parseOne(raw, deps));
@@ -411,6 +451,7 @@ export async function enrichCosts(
   // turns into resumed/forked logs, so the same response appears in many files. Then price.
   const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
   const seen = new Set<string>();
+  const windows = await buildWindows(ordered, extraSiblings, deps);
 
   const index: SessionCostIndex = new Map();
   const unpriced = new Set<string>();
@@ -420,6 +461,7 @@ export async function enrichCosts(
   let pricedSessions = 0;
 
   for (const entry of ordered) {
+    const window = windows.get(entry.sessionId);
     let usageByModel: Map<string, TokenUsage>;
     let series: CostSeriesPoint[] = [];
     let records: UsageRecord[] = [];
@@ -430,7 +472,7 @@ export async function enrichCosts(
       // fallback runs only when there are no records (SDK rollup / gemini / no-reader), paths
       // that never touch `seen`, so there is no double-dedup. The same `records` are reused
       // below to attribute cost to `skill` dispatches within their time window.
-      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen) : [];
+      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, window) : [];
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
@@ -443,7 +485,7 @@ export async function enrichCosts(
           }
         }
       } else {
-        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen) : new Map<string, TokenUsage>();
+        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, window) : new Map<string, TokenUsage>();
       }
     } catch (e) {
       // One malformed log must not abort the whole report — degrade to "no usage" for this
@@ -514,7 +556,11 @@ export async function enrichCosts(
       }
 
       try {
-        const { events: dispatches, complete } = extractDispatchResult(entry.parsed, entry.agentName);
+        const extracted = extractDispatchResult(entry.parsed, entry.agentName);
+        const { complete } = extracted;
+        const dispatches = window
+          ? extracted.events.filter((d) => (window.keepUntimed || d.start >= window.from) && d.start < window.to)
+          : extracted.events;
         if (['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) {
           enrichClaudeDispatchCosts(dispatches, entry.parsed, records, cost);
           cost.dispatchesComplete = complete;

@@ -131,6 +131,9 @@ export interface RawSessionData {
    * `completed_`-prefixed metadata).
    */
   agentSessionFile?: string;
+  /** Top-level fallbacks for session files that carry no `startEvent`. */
+  agentName?: string;
+  startTime?: number;
   /** Internal native-log snapshot; never serialized into report data. */
   [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }

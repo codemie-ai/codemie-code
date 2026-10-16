@@ -135,14 +135,22 @@ function appendDedupedRecord(records: UsageRecord[], keyed: Map<string, UsageRec
   }
 }
 
+/** Half-open `[from, to)` ms window a session may claim from a log shared with sibling sessions. */
+export interface UsageWindow { from: number; to: number; keepUntimed: boolean }
+
 /**
  * Records whose dedup key no earlier session has claimed, marking each survivor as claimed.
  * Order is preserved. `seen` is shared across every session in a run, so the EARLIEST session
  * owns a response that several transcripts replay.
  */
-function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageRecord[] {
+function takeUnseenRecords(records: UsageRecord[], seen: Set<string>, window?: UsageWindow): UsageRecord[] {
   const out: UsageRecord[] = [];
   for (const record of records) {
+    // Out-of-window records are skipped BEFORE claiming their key, so a sibling session
+    // whose window covers them can still own them.
+    if (window && (record.ts == null ? !window.keepUntimed : record.ts < window.from || record.ts >= window.to)) {
+      continue;
+    }
     if (record.key !== null) {
       if (seen.has(record.key)) {
         continue; // duplicate API response replayed into another session file
@@ -856,7 +864,7 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
  * fresh set to disable cross-session dedup). When a Claude session carries an authoritative
  * SDK `modelUsage` rollup (audit.jsonl), that is used as-is (session-local, no cross-file dup).
  */
-export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageMap {
+export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>, window?: UsageWindow): UsageMap {
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
     return readGemini(parsed);
@@ -877,7 +885,7 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractPiUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(extractPiUsageRecords(parsed), seen, window)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
@@ -888,7 +896,7 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
       return rollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
-    for (const r of takeUnseenRecords(extractClaudeUsageRecords(parsed), seen)) {
+    for (const r of takeUnseenRecords(extractClaudeUsageRecords(parsed), seen, window)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
@@ -903,17 +911,17 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
  * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-supported agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */
-export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageRecord[] {
+export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>, window?: UsageWindow): UsageRecord[] {
   const a = agentName.toLowerCase();
   if (a === 'kimi') {
     // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
     return extractKimiUsageRecords(parsed);
   }
   if (isCodexFamilyAgent(a)) {
-    return takeUnseenRecords(extractCodexUsageRecords(parsed), seen);
+    return takeUnseenRecords(extractCodexUsageRecords(parsed), seen, window);
   }
   if (a === 'pi') {
-    return takeUnseenRecords(extractPiUsageRecords(parsed), seen);
+    return takeUnseenRecords(extractPiUsageRecords(parsed), seen, window);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
@@ -921,7 +929,7 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
   if (readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
-  return takeUnseenRecords(extractClaudeUsageRecords(parsed), seen);
+  return takeUnseenRecords(extractClaudeUsageRecords(parsed), seen, window);
 }
 
 /** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */
