@@ -53,6 +53,7 @@ describe('createParseState', () => {
       gitHeadStart: '',
       sessionStartedAt: '',
       lastSessionEnvFields: null,
+      lastCompactionEnd: '',
     });
   });
 });
@@ -110,6 +111,7 @@ describe('loadParseState', () => {
       gitHeadStart: 'abc123def456',
       sessionStartedAt: '2026-10-01T00:00:00.000Z',
       lastSessionEnvFields: null,
+      lastCompactionEnd: '2026-10-01T00:10:00.000Z',
     };
 
     await saveParseState('session-roundtrip', state);

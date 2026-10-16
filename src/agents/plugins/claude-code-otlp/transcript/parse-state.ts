@@ -51,6 +51,11 @@ export interface TranscriptParseState {
   gitHeadStart: string;
   sessionStartedAt: string;
   lastSessionEnvFields: SessionEnvFields | null;
+  /** The `end` timestamp of the last `compact_boundary` line reported as `agent.session.compact.done`
+   *  — `''` when none yet. Not an offset: `openPostCompactPass` scans the whole transcript for
+   *  `compact_boundary` lines independently of `mainOffset`, since a sibling hook can advance
+   *  `mainOffset` past one without ever looking for it. */
+  lastCompactionEnd: string;
 }
 
 /**
@@ -66,6 +71,7 @@ export function createParseState(): TranscriptParseState {
     gitHeadStart: '',
     sessionStartedAt: '',
     lastSessionEnvFields: null,
+    lastCompactionEnd: '',
   };
 }
 

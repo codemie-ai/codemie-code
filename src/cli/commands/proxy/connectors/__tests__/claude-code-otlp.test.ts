@@ -11,6 +11,7 @@ import {
   CODEMIE_COMMAND_MARKER,
   CODEMIE_ENV_KEYS,
   CODEMIE_HOOK_TIMEOUT_SECONDS,
+  CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
@@ -74,10 +75,20 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
   };
 }
 
-function codemieHookGroup() {
+/** `eventName` defaults to '' (never `'PostCompact'`) so every existing single-event call site
+ *  keeps getting the standard, synchronous entry unchanged. */
+function codemieHookGroup(eventName: string = '') {
+  const isPostCompact = eventName === 'PostCompact';
   return {
     matcher: '',
-    hooks: [{ type: 'command', command: `codemie ${CODEMIE_COMMAND_MARKER}`, timeout: CODEMIE_HOOK_TIMEOUT_SECONDS }],
+    hooks: [
+      {
+        type: 'command',
+        command: `codemie ${CODEMIE_COMMAND_MARKER}`,
+        timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+        ...(isPostCompact ? { async: true } : {}),
+      },
+    ],
   };
 }
 
@@ -131,17 +142,27 @@ describe('claude-code-otlp connector', () => {
         expect(settings.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
 
         for (const event of HOOK_EVENTS) {
-          expect(settings.hooks[event]).toEqual([codemieHookGroup()]);
+          expect(settings.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
       });
 
-      it('writes every hook entry without an async field, so Claude Code runs all of them synchronously', async () => {
+      it('writes every hook entry without an async field, except PostCompact, so Claude Code runs the rest synchronously', async () => {
         await writeClaudeCodeOtlpConfig();
 
         const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
         for (const event of HOOK_EVENTS) {
+          if (event === 'PostCompact') continue;
           expect(settings.hooks[event][0].hooks[0].async).toBeUndefined();
+          expect(settings.hooks[event][0].hooks[0].timeout).toBe(CODEMIE_HOOK_TIMEOUT_SECONDS);
         }
+      });
+
+      it('writes PostCompact as async with the longer timeout, so it never blocks Claude Code or the user\'s turn', async () => {
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        expect(settings.hooks.PostCompact[0].hooks[0].async).toBe(true);
+        expect(settings.hooks.PostCompact[0].hooks[0].timeout).toBe(CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS);
       });
 
       it('writes to the user-level settings and tracks the project root when scope is "project"', async () => {
@@ -464,7 +485,7 @@ describe('claude-code-otlp connector', () => {
         const merged = await readJson(settingsPath);
         expect(merged.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
         for (const event of HOOK_EVENTS) {
-          expect(merged.hooks[event]).toEqual([codemieHookGroup()]);
+          expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
       });
 
@@ -1254,7 +1275,7 @@ describe('claude-code-otlp connector', () => {
       const merged = await readJson(settingsPath);
       expect(merged.hooks.SomeRetiredEvent).toBeUndefined();
       for (const event of HOOK_EVENTS) {
-        expect(merged.hooks[event]).toEqual([codemieHookGroup()]);
+        expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
       }
     });
 

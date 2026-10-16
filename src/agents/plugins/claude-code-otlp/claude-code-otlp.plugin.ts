@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import type {
   ConfigChangeHookInput,
   HookInput,
+  PostCompactHookInput,
   PostModelSwitchHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
@@ -34,6 +35,7 @@ import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
   openMainTranscriptPass,
+  openPostCompactPass,
   openSessionEnvCheckPass,
   openSessionStartPass,
   openSubagentPass,
@@ -117,6 +119,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
     if (hookInput.hook_event_name === 'PreCompact') {
       return await this.onPreCompactEvent(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PostCompact') {
+      return await this.onPostCompactEvent(hookInput);
     }
     if (hookInput.hook_event_name === 'StopFailure') {
       return await this.onStopFailureEvent(hookInput);
@@ -209,6 +214,23 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       decision: 'forward',
       payload: [hookInput, ...envCheck.events, ...pass.events],
       finalize: composeFinalize(pass.finalize, envCheck.finalize),
+    };
+  }
+
+  /**
+   * `openPostCompactPass` does the detection work itself, including the bounded, lock-free wait
+   * for a still-landing `compact_boundary` line — see its own doc comment. The native
+   * `PostCompact` hook event is never forwarded, same as `onPostModelSwitch`/`onConfigChange`:
+   * only the derived `agent.session.compact.done` record goes out, if one was found. Forwarding
+   * the raw hook too would double-emit it, since `buildCompactionDoneEvent` already sets its own
+   * explicit `type`.
+   */
+  private async onPostCompactEvent(hookInput: PostCompactHookInput): Promise<ClaudeForwardDecision> {
+    const pass = await openPostCompactPass(hookInput.session_id, hookInput.transcript_path);
+    return {
+      decision: 'forward',
+      payload: pass.events,
+      finalize: pass.finalize,
     };
   }
 

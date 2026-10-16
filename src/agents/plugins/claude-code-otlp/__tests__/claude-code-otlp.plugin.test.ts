@@ -22,6 +22,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 const resolveClientVersionMock = vi.fn();
 const openMainTranscriptPassMock = vi.fn();
+const openPostCompactPassMock = vi.fn();
 const openSessionStartPassMock = vi.fn();
 const openSessionEnvCheckPassMock = vi.fn();
 const openSubagentPassMock = vi.fn();
@@ -52,6 +53,7 @@ vi.mock('../client-version-cache.js', () => ({
 
 vi.mock('../transcript/orchestrator.js', () => ({
   openMainTranscriptPass: openMainTranscriptPassMock,
+  openPostCompactPass: openPostCompactPassMock,
   openSessionStartPass: openSessionStartPassMock,
   openSessionEnvCheckPass: openSessionEnvCheckPassMock,
   openSubagentPass: openSubagentPassMock,
@@ -168,6 +170,7 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openPostCompactPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockResolvedValue(emptyPass());
@@ -280,6 +283,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   beforeEach(() => {
     openMainTranscriptPassMock.mockReset();
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openPostCompactPassMock.mockReset();
+    openPostCompactPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockReset();
     openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSessionEnvCheckPassMock.mockReset();
@@ -326,6 +331,40 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
     }
   );
+
+  it('invokes openPostCompactPass with the session/transcript on PostCompact, and forwards only its derived events', async () => {
+    const compactDoneEvent = {
+      type: 'agent.session.compact.done',
+      session_id: 'sid-1',
+      pre_tokens: 1000,
+      post_tokens: 300,
+      dropped_tokens: 700,
+      duration_ms: 60_000,
+      timestamp: '2026-10-01T00:10:00.000Z',
+    };
+    openPostCompactPassMock.mockResolvedValue({ events: [compactDoneEvent], finalize: vi.fn(async () => {}) });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostCompact', trigger: 'auto' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(openPostCompactPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl');
+    const forwarded = forwardedEvents();
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]).toMatchObject(compactDoneEvent);
+    // The native PostCompact hook event itself is never forwarded.
+    expect(forwarded[0].hook_event_name).toBeUndefined();
+  });
+
+  it('forwards nothing for PostCompact when openPostCompactPass finds no new compaction', async () => {
+    openPostCompactPassMock.mockResolvedValue(emptyPass());
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(hookEvent({ hook_event_name: 'PostCompact', trigger: 'manual' }));
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
 
   it('invokes openSessionEndPass with the session/transcript/cwd on SessionEnd, and sets retryOnce', async () => {
     const plugin = new ClaudeCodeOtlpPlugin();
@@ -770,6 +809,7 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
+    openPostCompactPassMock.mockResolvedValue(emptyPass());
     openSessionStartPassMock.mockResolvedValue(emptyPass());
     openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
     openSubagentPassMock.mockResolvedValue(emptyPass());
@@ -811,6 +851,15 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     ['UserPromptExpansion', 'agent.skill.dispatch'],
   ])('maps %s to %s', async (hookName, expectedType) => {
     expect(await typeFor(hookName)).toBe(expectedType);
+  });
+
+  it('maps PostCompact to agent.session.compact.done only via its derived record, never the raw hook', async () => {
+    openPostCompactPassMock.mockResolvedValue({
+      events: [{ type: 'agent.session.compact.done', session_id: 's' }],
+      finalize: vi.fn(async () => {}),
+    });
+    await plugin.processOtlpEvent(event('PostCompact'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(forwardedEvents()[0]['type']).toBe('agent.session.compact.done');
   });
 
   it('maps UserPromptSubmit to agent.prompt.submit', async () => {
