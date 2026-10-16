@@ -7,7 +7,8 @@ import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
-import { compareVersions, isValidSemanticVersion } from '../../utils/version-utils.js';
+import { compareVersions, isValidSemanticVersion, extractVersion } from '../../utils/version-utils.js';
+import { isLiveTrackedAgent, isVersionChecksEnabled, resolveSupportedVersionDetailed } from '../../agents/core/version-resolution.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -30,20 +31,16 @@ interface UpdateCheckResult {
   npmPackage: string;
 }
 
-/**
- * Extract semver version from a string that may contain extra text
- * e.g., "2.0.76 (Claude Code)" -> "2.0.76"
- *       "v1.2.3-beta" -> "1.2.3"
- */
-function extractVersion(versionString: string): string | null {
-  const match = versionString.match(/v?(\d+\.\d+\.\d+)/);
-  return match ? match[1] : null;
-}
+// Returned when an installed agent could not be checked because its latest-version lookup
+// failed (offline, registry error, timeout) — as opposed to `null`: nothing to check.
+const LOOKUP_FAILED = 'lookup-failed' as const;
 
 /**
  * Check a single agent for available updates
  */
-async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResult | null> {
+async function checkAgentForUpdate(
+  agent: AgentAdapter
+): Promise<UpdateCheckResult | typeof LOOKUP_FAILED | null> {
   // Check if installed
   const installed = await agent.isInstalled();
   if (!installed) {
@@ -56,29 +53,6 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Special handling for Claude (uses native installer, not npm)
-  if (agent.name === 'claude' && agent.checkVersionCompatibility) {
-    const compat = await agent.checkVersionCompatibility();
-    const supportedVersion = compat.supportedVersion;
-    const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
-
-    // Validate versions before comparing
-    const cleanSupported = extractVersion(supportedVersion);
-    if (!cleanSupported) return null;
-
-    // Check if update available (current < supported)
-    const hasUpdate = compareVersions(cleanCurrentVersion, cleanSupported) < 0;
-
-    return {
-      name: agent.name,
-      displayName: agent.displayName,
-      currentVersion: cleanCurrentVersion,
-      latestVersion: cleanSupported,
-      hasUpdate,
-      npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
-    };
-  }
-
   // Special handling for built-in agent (codemie-code) — uses CLI package version
   if (agent.metadata.isBuiltIn) {
     const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
@@ -86,7 +60,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     if (!cliVersion) return null;
 
     const latestVersion = await npm.getLatestVersion(CLI_PACKAGE_NAME);
-    if (!latestVersion) return null;
+    if (!latestVersion) return LOOKUP_FAILED;
 
     // Validate both versions before comparing
     if (!isValidSemanticVersion(cliVersion) || !isValidSemanticVersion(latestVersion)) {
@@ -112,10 +86,28 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Get latest version from npm
-  const latestVersion = await npm.getLatestVersion(npmPackage);
+  // Live-tracked agents go through the tracked-version resolver (fetched fresh — the user asked
+  // to check now — and written back to the cache); others (opencode, pi) query npm directly.
+  // A non-current result is the stale fallback, so skip rather than offer it.
+  let latestVersion: string | null | undefined;
+  if (isLiveTrackedAgent(agent.name)) {
+    // Skipped on purpose while checks are off (the caller explains it) — not a failed lookup.
+    if (!(await isVersionChecksEnabled())) {
+      return null;
+    }
+    const resolved = await resolveSupportedVersionDetailed({
+      agentName: agent.name,
+      npmPackage,
+      fallbackSupportedVersion: agent.metadata.supportedVersion,
+      minimumSupportedVersion: agent.metadata.minimumSupportedVersion,
+      bypassCache: true,
+    });
+    latestVersion = resolved.isCurrent ? resolved.version : null;
+  } else {
+    latestVersion = await npm.getLatestVersion(npmPackage);
+  }
   if (!latestVersion) {
-    return null;
+    return LOOKUP_FAILED;
   }
 
   // Extract clean versions for comparison and display
@@ -142,24 +134,28 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
 }
 
 /**
- * Check all installed agents for updates
+ * Check all installed agents for updates. `unchecked` lists the installed agents whose
+ * latest-version lookup failed, so they are reported rather than silently dropped.
  */
-async function checkAllAgentsForUpdates(): Promise<UpdateCheckResult[]> {
+async function checkAllAgentsForUpdates(): Promise<{ results: UpdateCheckResult[]; unchecked: string[] }> {
   const agents = AgentRegistry.getManageableAgents();
   const results: UpdateCheckResult[] = [];
+  const unchecked: string[] = [];
 
   // Check all agents in parallel
   const checks = await Promise.all(
-    agents.map(agent => checkAgentForUpdate(agent))
+    agents.map(async agent => ({ agent, result: await checkAgentForUpdate(agent) }))
   );
 
-  for (const result of checks) {
-    if (result) {
+  for (const { agent, result } of checks) {
+    if (result === LOOKUP_FAILED) {
+      unchecked.push(agent.displayName);
+    } else if (result) {
       results.push(result);
     }
   }
 
-  return results;
+  return { results, unchecked };
 }
 
 /**
@@ -209,9 +205,10 @@ async function promptAgentSelection(outdated: UpdateCheckResult[]): Promise<stri
  * Update a single agent
  */
 async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<void> {
-  // Special handling for Claude (uses native installer)
+  // Special handling for Claude (uses native installer). Install the exact version the check
+  // offered rather than re-resolving 'supported', which could read a different cached value.
   if (agent.name === 'claude' && agent.installVersion) {
-    await agent.installVersion('supported');
+    await agent.installVersion(latestVersion);
   } else if (agent.metadata.isBuiltIn) {
     // Special handling for built-in agent — update the CLI package
     await npm.installGlobal(CLI_PACKAGE_NAME, { version: latestVersion, force: true });
@@ -250,6 +247,7 @@ export function createUpdateCommand(): Command {
           console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
         }
 
+        const versionChecksEnabled = await isVersionChecksEnabled();
         const checkOnly = options?.check ?? false;
 
         // Case 1: Update specific agent
@@ -275,22 +273,32 @@ export function createUpdateCommand(): Command {
             return;
           }
 
+          if (!versionChecksEnabled && isLiveTrackedAgent(agent.name)) {
+            console.log(
+              chalk.dim(
+                `Version checks are disabled (versionChecks.enabled=false) — skipping the update check for ${agent.displayName}.`
+              )
+            );
+            console.log(chalk.dim(`To install the newest release anyway: codemie install ${agent.name} latest`));
+            return;
+          }
+
           const spinner = ora(`Checking ${agent.displayName} for updates...`).start();
 
           const result = await checkAgentForUpdate(agent);
 
-          if (!result) {
+          if (!result || result === LOOKUP_FAILED) {
             spinner.warn(`Could not check ${agent.displayName} for updates`);
             return;
           }
 
           if (!result.hasUpdate) {
-            // For Claude, clarify it's the latest supported version (not absolute latest)
-            if (agent.name === 'claude') {
-              spinner.succeed(`${agent.displayName} is already up to date with latest verified version by CodeMie (${result.currentVersion})`);
-            } else {
-              spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
-            }
+            // Live-tracked agents resolve against a cached npm lookup rather than an absolute
+            // "latest", so make that distinction explicit instead of a bare "up to date".
+            const upToDateMessage = isLiveTrackedAgent(agent.name)
+              ? `${agent.displayName} is already up to date — no newer version available (${result.currentVersion})`
+              : `${agent.displayName} is already up to date (${result.currentVersion})`;
+            spinner.succeed(upToDateMessage);
             return;
           }
 
@@ -319,9 +327,30 @@ export function createUpdateCommand(): Command {
         }
 
         // Case 2: Check/update all agents
+        if (!versionChecksEnabled) {
+          console.log(
+            chalk.dim('Version checks are disabled (versionChecks.enabled=false) — live-tracked agents are skipped.\n')
+          );
+        }
         const spinner = ora('Checking for updates...').start();
 
-        const results = await checkAllAgentsForUpdates();
+        const { results, unchecked } = await checkAllAgentsForUpdates();
+        const reportUnchecked = (): void => {
+          for (const name of unchecked) {
+            console.log(chalk.yellow(`⚠ Could not check ${name} for updates`));
+          }
+        };
+
+        if (results.length === 0 && unchecked.length > 0) {
+          spinner.stop();
+          reportUnchecked();
+          return;
+        }
+
+        if (results.length === 0 && !versionChecksEnabled) {
+          spinner.info('Nothing to check — live-tracked agents are skipped while version checks are disabled');
+          return;
+        }
 
         if (results.length === 0) {
           spinner.info('No updatable agents installed');
@@ -334,6 +363,7 @@ export function createUpdateCommand(): Command {
 
         // Display status
         displayUpdateStatus(results);
+        reportUnchecked();
 
         // Filter to agents with updates
         const outdated = results.filter(r => r.hasUpdate);

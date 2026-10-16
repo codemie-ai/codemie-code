@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "generated": "2026-10-07T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 18,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Targeted fixes across about 6 existing components in 3 layers: the version-cache and npm-registry shared utilities, version-resolution plus BaseAgentAdapter and types in the agent core, and the install and setup CLI commands. No new abstractions; the work extends the existing live-version-tracking design from PR #576. Base M, bumped to L because it touches core shared utilities (version-cache, npm-registry) that every live-tracked agent and command uses."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The changes are security-sensitive. The cache key no longer embeds the registry URL (which can carry credentials): it uses the URL origin plus a SHA-256 hash, and legacy raw-URL keys are dropped when the cache loads, so the next save removes them from disk. When a configured npm proxy is invalid, the lookup now fails instead of quietly going direct, and the proxy value is never logged. The closest existing pattern (sanitizeLogArgs-style log scrubbing) does not cover secrets stored in persisted cache keys or the no-direct-fallback rule, so Technical Risk was bumped from M to L. The rest (guarded minimum comparison, AgentInstallationError when the registry latest is below the minimum, setup warning) follows established patterns and is easy to roll back."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "The diffstat reports 18 files changed (472 insertions, 28 deletions), which maps to XXL (16+) on the actual-mode scale. The count is inflated by tests and docs: 9 test files, 2 docs files (CONFIGURATION.md and the PR #576 spec) and 7 source files across src/utils, src/agents/core and src/cli/commands. The source footprint alone would score about L."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The work comes from specific, itemized code-review findings (round 4 and 5) on an existing PR, each with a clear expected behavior. No open design decisions."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: security requirement. Registry credentials must never reach the persisted version-cache keys, and a configured npm proxy must not be silently bypassed. The existing log-sanitization pattern does not cover either case.",
+    "Component Scope bumped from M to L: touches core shared utilities (src/utils/version-cache.ts, src/utils/npm-registry.ts) used by every live-tracked agent, install, setup and update."
+  ],
+  "split_recommendation": null
+}

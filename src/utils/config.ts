@@ -620,7 +620,8 @@ export class ConfigLoader {
     'assistants',
     'skillsSearchUrl',
     'claudeAutocompactPct',
-    'metrics'
+    'metrics',
+    'versionChecks'
   ];
 
   /**

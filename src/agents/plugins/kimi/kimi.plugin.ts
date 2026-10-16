@@ -2,6 +2,7 @@ import type { AgentConfig, AgentMetadata, HookTransformer } from '../../core/typ
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { resolveSupportedInstallVersion } from '../../core/version-resolution.js';
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
 import { KimiSessionAdapter } from './kimi.session.js';
@@ -20,9 +21,11 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-// Recommended version (one non-blocking notice on mismatch) and the hard gate
-// below which the agent refuses to launch. Rule: the minimum is the previously
-// recommended version — when bumping the former, move its old value to the latter.
+// KIMI_SUPPORTED_VERSION only marks Kimi as version-checked: the tracked version
+// is resolved live from npm (see `LIVE_TRACKED_AGENT_NAMES`) and this value is
+// never presented as current, so it needs no bumping. The minimum is the hard
+// gate below which the agent refuses to launch; maintained by hand — raise it
+// when an older Kimi version stops working with CodeMie.
 const KIMI_SUPPORTED_VERSION = '0.42.0';
 const KIMI_MINIMUM_SUPPORTED_VERSION = '0.16.0';
 const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
@@ -324,9 +327,12 @@ export class KimiPlugin extends BaseAgentAdapter {
       }
     }
 
-    // Fall back to command in PATH
+    // Fall back to command in PATH. On Windows an npm install is a .cmd shim, which spawn() can
+    // only run through a shell (same as Codex and Gemini).
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
       return parseVersion(result.stdout);
     } catch {
       return null;
@@ -334,16 +340,17 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   override async installVersion(version?: string): Promise<string | null> {
-    // Resolve 'supported' to the version from metadata
+    // Resolve 'supported' to the live tracked version. When that's unknown it
+    // resolves to the 'latest' channel, which the native installer takes as undefined.
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!this.metadata.supportedVersion) {
-        throw new AgentInstallationError(
-          this.metadata.name,
-          'No supported version defined in metadata',
-        );
-      }
-      resolvedVersion = this.metadata.supportedVersion;
+      const resolved = await resolveSupportedInstallVersion({
+        agentName: this.metadata.name,
+        npmPackage: this.metadata.npmPackage,
+        fallbackSupportedVersion: this.metadata.supportedVersion,
+        minimumSupportedVersion: this.metadata.minimumSupportedVersion,
+      });
+      resolvedVersion = resolved === 'latest' ? undefined : resolved;
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,
