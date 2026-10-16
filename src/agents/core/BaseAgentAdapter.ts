@@ -608,12 +608,33 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       syncRegisteredSkills(profileName, process.cwd()).catch(() => {});
     }
 
+    // Shared cleanup: stop proxy and flush analytics. beforeRun can reject a
+    // configuration before the child and its usual exit cleanup exist.
+    const cleanup = async (): Promise<void> => {
+      if (this.proxy) {
+        logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
+        await this.proxy.stop();
+        this.proxy = null;
+        logger.debug(`[${this.displayName}] Proxy cleanup complete`);
+      }
+    };
+
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
 
     // Lifecycle hook: beforeRun (provider-aware)
     // Can override or extend env transformations, setup config files
-    env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+    try {
+      env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+    } catch (error) {
+      try {
+        await cleanup();
+      } catch (cleanupError) {
+        logger.error(`[${this.displayName}] Proxy cleanup after beforeRun rejection failed`,
+          createErrorContext(cleanupError, { agent: this.metadata.name }));
+      }
+      throw error;
+    }
 
     if (runOptions?.dryRun) {
       try {
@@ -652,15 +673,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Central reasoning-effort injection (Approach A).
     // Runs after enrichArgs and transformFlags so args are in their final form.
+    // An agent may veto injection per run via reasoningEffort.shouldApply
+    // (e.g. opencode on a v2 binary, whose `run` has no --variant flag).
+    // A veto skips injection silently from core's side — the veto warns itself.
     if (this.metadata.reasoningEffort && env.CODEMIE_REASONING_EFFORT) {
-      const { applyReasoningEffort } = await import('./reasoning-effort.js');
-      transformedArgs = applyReasoningEffort(
-        transformedArgs,
-        env,
-        this.metadata.reasoningEffort,
-        env.CODEMIE_REASONING_EFFORT,
-        this.metadata.name,
-      ).args;
+      const gate = this.metadata.reasoningEffort.shouldApply;
+      const apply = gate ? await gate(transformedArgs, env) : true;
+      if (apply) {
+        const { applyReasoningEffort } = await import('./reasoning-effort.js');
+        transformedArgs = applyReasoningEffort(
+          transformedArgs,
+          env,
+          this.metadata.reasoningEffort,
+          env.CODEMIE_REASONING_EFFORT,
+          this.metadata.name,
+        ).args;
+      }
     } else if (env.CODEMIE_REASONING_EFFORT) {
       // Agent declared no reasoningEffort block — warn and continue (spec §6.4).
       logger.warn(`[${this.metadata.name}] --reasoning-effort is set but not supported; ignoring`);
@@ -718,16 +746,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     logger.debug('=== End Configuration ===');
-
-    // Shared cleanup: stop proxy and flush analytics
-    const cleanup = async () => {
-      if (this.proxy) {
-        logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
-        await this.proxy.stop();
-        this.proxy = null;
-        logger.debug(`[${this.displayName}] Proxy cleanup complete`);
-      }
-    };
 
     // Run the session-end hook, then release the proxy. The hook is agent- and
     // provider-supplied and is not guaranteed to guard its own body; letting it

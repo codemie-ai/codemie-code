@@ -49,8 +49,33 @@ const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
   /gpt-6(?!\d)/,      // gpt-6-* / gpt-6.* (e.g. gpt-6-luna, gpt-6.1-sol, openai.gpt-6-luna, chatgpt-6.1-sol) — Responses API for built-in tools; (?!\d) keeps gpt-60-style ids out while staying ready for 6.2+
 ];
 
+/**
+ * Lowest GPT major treated as Responses-only without an explicit pattern.
+ *
+ * The list above names every family the proxy currently serves. When a new
+ * Responses-only major is deployed before the list is updated, routing it to
+ * chat-completions fails at request time with no warning at config-generation
+ * time, so any single-digit major at or beyond this one is treated as
+ * Responses-only. Two-digit majors stay out for the same reason the `(?!\d)`
+ * guards above exclude `gpt-60`: an explicit pattern must claim them
+ * deliberately rather than by accident.
+ */
+const RESPONSES_FAMILY_MIN_MAJOR = 6;
+
+/**
+ * Decide whether a model must be sent to POST /v1/responses.
+ *
+ * This is the single point where endpoint routing is decided: the converted
+ * configs are what getChatCompletionsModelConfigs() / getResponsesApiModelConfigs()
+ * split on, and the v2 emission copies the per-model `package` override from that
+ * split. A flag set on a fallback config elsewhere cannot influence it — the
+ * fallback result is only read for providerOptions and the `model:` reference.
+ */
 function isResponsesApiModel(id: string): boolean {
-  return RESPONSES_API_MODEL_PATTERNS.some(p => p.test(id));
+  if (RESPONSES_API_MODEL_PATTERNS.some(p => p.test(id))) return true;
+
+  const major = /gpt-(\d)(?!\d)/.exec(id);
+  return major ? Number(major[1]) >= RESPONSES_FAMILY_MIN_MAJOR : false;
 }
 
 // ── Family detection ─────────────────────────────────────────────────────────

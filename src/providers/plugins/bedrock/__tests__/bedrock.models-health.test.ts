@@ -289,29 +289,78 @@ describe('BedrockHealthCheck', () => {
 });
 
 describe('toBedrockModelId (bedrock.utils)', () => {
-  it('returns the id unchanged when it already contains "anthropic."', () => {
-    const arn = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+  it('returns ARNs unchanged', () => {
+    const arn = 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0';
     expect(toBedrockModelId(arn)).toBe(arn);
+  });
+
+  it('returns ids that already carry a provider segment unchanged', () => {
     expect(toBedrockModelId('anthropic.claude-x', 'eu-west-1')).toBe('anthropic.claude-x');
+    expect(toBedrockModelId('amazon.nova-pro-v1:0')).toBe('amazon.nova-pro-v1:0');
+    expect(toBedrockModelId('meta.llama3-70b-instruct-v1:0')).toBe('meta.llama3-70b-instruct-v1:0');
   });
 
-  it('defaults to the "us" prefix when no region is given', () => {
-    expect(toBedrockModelId('claude-opus-4-6')).toBe('us.anthropic.claude-opus-4-6-v1:0');
+  it('returns ids that already carry a routing geography unchanged', () => {
+    const id = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+    expect(toBedrockModelId(id)).toBe(id);
+    expect(toBedrockModelId(id, 'eu-west-1')).toBe(id);
+    expect(toBedrockModelId('global.anthropic.claude-sonnet-4-6')).toBe('global.anthropic.claude-sonnet-4-6');
   });
 
-  it('maps eu* regions to the "eu" prefix', () => {
-    expect(toBedrockModelId('claude-opus-4-6', 'eu-west-1')).toBe('eu.anthropic.claude-opus-4-6-v1:0');
+  it('preserves the US geography default when no region is given', () => {
+    expect(toBedrockModelId('claude-sonnet-4-6')).toBe('us.anthropic.claude-sonnet-4-6');
   });
 
-  it('maps ap* regions to the "ap" prefix', () => {
-    expect(toBedrockModelId('claude-sonnet', 'ap-southeast-2')).toBe('ap.anthropic.claude-sonnet-v1:0');
+  it('never invents a version suffix', () => {
+    // `anthropic.claude-sonnet-4-6` and `anthropic.claude-opus-4-6-v1` are the published
+    // ids; appending `-v1:0` produces an id AWS rejects.
+    expect(toBedrockModelId('claude-sonnet-4-6', 'us-east-1')).toBe('us.anthropic.claude-sonnet-4-6');
+    expect(toBedrockModelId('claude-opus-4-6', 'us-east-1')).toBe('us.anthropic.claude-opus-4-6');
   });
 
-  it('maps us* regions to the "us" prefix', () => {
-    expect(toBedrockModelId('claude-haiku', 'us-east-1')).toBe('us.anthropic.claude-haiku-v1:0');
+  it('keeps a suffix the caller already typed', () => {
+    expect(toBedrockModelId('claude-sonnet-4-5-20250929-v1:0', 'us-east-1'))
+      .toBe('us.anthropic.claude-sonnet-4-5-20250929-v1:0');
+    expect(toBedrockModelId('claude-opus-4-6-v1', 'us-east-1')).toBe('us.anthropic.claude-opus-4-6-v1');
   });
 
-  it('falls back to "us" for any other region (e.g. ca-central-1)', () => {
-    expect(toBedrockModelId('claude-x', 'ca-central-1')).toBe('us.anthropic.claude-x-v1:0');
+  it('maps eu* regions to the "eu." geography', () => {
+    expect(toBedrockModelId('claude-opus-4-6', 'eu-west-1')).toBe('eu.anthropic.claude-opus-4-6');
+  });
+
+  it('maps Tokyo and Osaka to the "jp." geography', () => {
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-northeast-1')).toBe('jp.anthropic.claude-opus-4-6');
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-northeast-3')).toBe('jp.anthropic.claude-opus-4-6');
+  });
+
+  it('maps Sydney and Melbourne to the "au." geography', () => {
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-southeast-2')).toBe('au.anthropic.claude-opus-4-6');
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-southeast-4')).toBe('au.anthropic.claude-opus-4-6');
+  });
+
+  it('maps the rest of APAC to "apac." and Australia to "au."', () => {
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-south-1')).toBe('apac.anthropic.claude-opus-4-6');
+    expect(toBedrockModelId('claude-opus-4-6', 'ap-southeast-1')).toBe('apac.anthropic.claude-opus-4-6');
+    expect(toBedrockModelId('claude-opus-4-6', 'au-east-1')).toBe('au.anthropic.claude-opus-4-6');
+  });
+
+  it('maps us*, us-gov-* and ca-* to the "us." geography', () => {
+    expect(toBedrockModelId('claude-haiku', 'us-east-1')).toBe('us.anthropic.claude-haiku');
+    expect(toBedrockModelId('claude-haiku', 'us-gov-west-1')).toBe('us.anthropic.claude-haiku');
+    expect(toBedrockModelId('claude-haiku', 'ca-central-1')).toBe('us.anthropic.claude-haiku');
+  });
+
+  it('falls back to "us." for a region outside every known geography', () => {
+    expect(toBedrockModelId('claude-opus-4-6', 'sa-east-1')).toBe('us.anthropic.claude-opus-4-6');
+  });
+
+  it('leaves bare non-Claude names untouched — there is no provider segment to infer', () => {
+    expect(toBedrockModelId('nova-pro', 'us-east-1')).toBe('nova-pro');
+    expect(toBedrockModelId('llama3-70b-instruct', 'us-east-1')).toBe('llama3-70b-instruct');
+  });
+
+  it('handles an empty or blank id', () => {
+    expect(toBedrockModelId('')).toBe('');
+    expect(toBedrockModelId('   ', 'us-east-1')).toBe('');
   });
 });

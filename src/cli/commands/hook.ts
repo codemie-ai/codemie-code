@@ -55,6 +55,12 @@ export interface HookProcessingConfig {
   agentName: string;
   /** CodeMie session ID */
   sessionId: string;
+  /**
+   * Agent-owned ID used only to select the transcript during extraction.
+   * Programmatic lifecycle events may keep a different session_id for their
+   * started/completed correlation; this must not replace that lifecycle ID.
+   */
+  sourceSessionId?: string;
   /** Provider name (e.g., 'ai-run-sso') */
   provider?: string;
   /** API base URL */
@@ -384,7 +390,11 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
       return;
     }
 
-    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
+    // Lifecycle session_id stays unchanged for start/end metrics and uploads.
+    // Multi-session storage needs the discovered source ID for extraction, not
+    // the CodeMie UUID carried by in-process SessionEnd events.
+    const sourceSessionId = config?.sourceSessionId ?? event.session_id;
+    const context = await buildProcessingContext(sessionId, sourceSessionId, agentSessionFiles[0], config);
 
     // Process every transcript file. Per-file entry deduplication inside the
     // adapter prevents forked/copied history from being double-counted.

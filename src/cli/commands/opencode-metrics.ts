@@ -25,10 +25,13 @@ export function createOpencodeMetricsCommand(): Command {
     .option('-v, --verbose', 'Show detailed processing output')
     .action(async (options) => {
       try {
-        const { getOpenCodeStoragePath } = await import('../../agents/plugins/opencode/opencode.paths.js');
+        const { getOpenCodeStoragePath, getOpenCodeDbPath } = await import('../../agents/plugins/opencode/opencode.paths.js');
         const storagePath = getOpenCodeStoragePath();
+        const dbPath = await getOpenCodeDbPath();
 
-        if (!storagePath) {
+        // SQLite-only installations have opencode.db but may never create the
+        // legacy storage/ tree. Either backend is sufficient for this command.
+        if (!storagePath && !dbPath) {
           console.error(chalk.red('OpenCode storage not found.'));
           console.log(chalk.dim('Expected location: ~/.local/share/opencode/storage/ (Linux)'));
           console.log(chalk.dim('                  ~/Library/Application Support/opencode/storage/ (macOS)'));
@@ -36,15 +39,15 @@ export function createOpencodeMetricsCommand(): Command {
         }
 
         if (options.verbose) {
-          console.log(chalk.dim(`Storage path: ${storagePath}`));
+          console.log(chalk.dim(`Storage path: ${dbPath ?? storagePath}`));
         }
 
         if (options.session) {
           // Process specific session
-          await processSpecificSession(storagePath, options.session, options.verbose);
+          await processSpecificSession(storagePath, dbPath, options.session, options.verbose);
         } else if (options.discover) {
           // Discover and process all
-          await discoverAndProcessSessions(storagePath, options.verbose);
+          await discoverAndProcessSessions(options.verbose);
         } else {
           console.log(chalk.yellow('Use --session <id> or --discover to process OpenCode sessions'));
           console.log('');
@@ -70,10 +73,31 @@ export function createOpencodeMetricsCommand(): Command {
  * Process a specific OpenCode session by ID
  */
 async function processSpecificSession(
-  storagePath: string,
+  storagePath: string | null,
+  dbPath: string | null,
   sessionId: string,
   verbose: boolean
 ): Promise<void> {
+  if (dbPath) {
+    const { readSessionsFromDb } = await import('../../agents/plugins/opencode/opencode.sqlite-reader.js');
+    // An explicitly requested session may be older than discovery's 30-day
+    // window. Exact-ID lookup bypasses age filtering, not database read errors.
+    const sessions = await readSessionsFromDb(dbPath, { sessionId });
+    if (sessions.length > 0) {
+      console.log(chalk.blue(`Found session: ${sessionId}`));
+      if (verbose) console.log(chalk.dim(`  Path: ${dbPath}`));
+      await processSession(dbPath, sessionId, verbose);
+      return;
+    }
+  }
+
+  // A database and legacy JSON can coexist after migration. Search files only
+  // after a successful DB lookup found no match; a DB failure must surface.
+  if (!storagePath) {
+    console.error(chalk.red(`Session ${sessionId} not found in OpenCode storage`));
+    process.exit(1);
+  }
+
   const sessionDir = join(storagePath, 'session');
 
   if (!existsSync(sessionDir)) {
@@ -110,7 +134,7 @@ async function processSpecificSession(
       }
 
       // Process the session
-      await processSession(storagePath, sessionPath, sessionId, verbose);
+      await processSession(sessionPath, sessionId, verbose);
       return;
     }
   }
@@ -124,7 +148,6 @@ async function processSpecificSession(
  * Discover and process all OpenCode sessions
  */
 async function discoverAndProcessSessions(
-  storagePath: string,
   verbose: boolean
 ): Promise<void> {
   const { OpenCodeSessionAdapter } = await import('../../agents/plugins/opencode/opencode.session.js');
@@ -156,7 +179,6 @@ async function discoverAndProcessSessions(
 
     try {
       const result = await processSession(
-        storagePath,
         sessionDesc.filePath,
         sessionDesc.sessionId,
         verbose
@@ -188,7 +210,6 @@ async function discoverAndProcessSessions(
  * Process a single session and write metrics
  */
 async function processSession(
-  _storagePath: string,
   sessionPath: string,
   sessionId: string,
   verbose: boolean
@@ -198,8 +219,11 @@ async function processSession(
 
   const adapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
 
-  // Parse and process the session
-  const parsedSession = await adapter.parseSessionFile(sessionPath, sessionId);
+  // Every SQLite descriptor points to the same .db file, so the path alone
+  // cannot identify the conversation. In this manual command sessionId is the
+  // OpenCode ID (not a CodeMie UUID): pass it as both output and source identity.
+  // File-backed parsing obtains the source identity from JSON as before.
+  const parsedSession = await adapter.parseSessionFile(sessionPath, sessionId, sessionId);
 
   // Run the metrics processor directly
   const { OpenCodeMetricsProcessor } = await import('../../agents/plugins/opencode/session/processors/opencode.metrics-processor.js');

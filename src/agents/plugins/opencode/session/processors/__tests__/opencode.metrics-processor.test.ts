@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { OpenCodeMetricsProcessor, countDiffLines } from '../opencode.metrics-processor.js';
 import { getSessionMetricsPath } from '../../../../../core/session/session-config.js';
 import type { ParsedSession } from '../../../../../core/session/BaseSessionAdapter.js';
@@ -138,8 +139,7 @@ describe('OpenCodeMetricsProcessor', () => {
       })],
     }));
 
-    // OpenCode never emits numeric additions/deletions, so the old code that
-    // read file.additions produced zeros for every edit.
+    // The retained v1 filediff path has no numeric additions/deletions.
     expect(fileOps(deltas)[0]).toMatchObject({ type: 'edit', linesAdded: 3, linesRemoved: 1 });
   });
 
@@ -283,5 +283,114 @@ describe('OpenCodeMetricsProcessor', () => {
       expect(delta).not.toHaveProperty('tokens');
       expect(delta).not.toHaveProperty('cost');
     }
+  });
+
+  describe('F5-8 v2 file-diff metadata', () => {
+    const patch = '@@ -1,1 +1,2 @@\n+one\n+two\n-old';
+
+    it.each(['edit', 'patch', 'apply_patch'])('maps v2 statuses and numeric counts through real %s deltas', async tool => {
+      const files = [
+        { file: join('src', 'added.ts'), status: 'added', additions: 7, deletions: 0, patch },
+        { file: join('src', 'modified.ts'), status: 'modified', additions: 4, deletions: 3, patch },
+        { file: join('src', 'deleted.ts'), status: 'deleted', additions: 0, deletions: 9, patch },
+      ];
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('v2', tool, { status: 'completed', input: {}, metadata: { files } })],
+      }));
+      expect(fileOps(deltas)).toEqual([
+        { type: 'write', path: files[0].file, linesAdded: 7 },
+        { type: 'edit', path: files[1].file, linesAdded: 4, linesRemoved: 3 },
+        { type: 'delete', path: files[2].file, linesRemoved: 9 },
+      ]);
+      expect(deltas[0].recordId).toBe('msg-a:call-v2');
+      expect(deltas[0].toolStatus).toEqual({ [tool]: { success: 1, failure: 0 } });
+    });
+
+    it.each([
+      [0, 0, undefined, undefined],
+      [0, undefined, undefined, 1],
+      [undefined, 0, 2, undefined],
+      [undefined, undefined, 2, 1],
+      [-1, 6, 2, 6],
+      [8, -1, 8, 1],
+      ['5', 1.5, 2, 1],
+      [null, NaN, 2, 1],
+      [Infinity, -Infinity, 2, 1],
+    ])('validates counts independently: additions=%j deletions=%j', async (additions, deletions, linesAdded, linesRemoved) => {
+      const file = join('src', 'counts.ts');
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('counts', 'edit', {
+          status: 'completed', input: {},
+          metadata: { files: [{ file, status: 'modified', additions, deletions, patch }] },
+        })],
+      }));
+      const operation = fileOps(deltas)[0];
+      expect(operation).toMatchObject({ type: 'edit', path: file });
+      expect(operation.linesAdded).toBe(linesAdded);
+      expect(operation.linesRemoved).toBe(linesRemoved);
+    });
+
+    it('does not invent counts when both numbers and patch are absent', async () => {
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('empty', 'patch', {
+          status: 'completed', metadata: { files: [{ file: 'empty.ts', status: 'modified' }] },
+        })],
+      }));
+      expect(fileOps(deltas)).toEqual([{ type: 'edit', path: 'empty.ts' }]);
+    });
+
+    it.each(['patch', 'apply_patch'])('keeps legacy %s precedence and supports mixed lists', async tool => {
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('mixed', tool, {
+          status: 'completed', metadata: { files: [
+            { filePath: 'legacy.ts', file: 'ignored-v2.ts', type: 'delete', status: 'added', additions: 99, patch },
+            { relativePath: 'relative.ts', type: 'add', patch },
+            { file: 'v2.ts', status: 'modified', additions: 5, deletions: 6 },
+            null, [], 'not a file', 42, {}, { file: '' }, { file: 7, status: 'added' },
+            { file: 'bad-status.ts', status: 'renamed' },
+          ] },
+        })],
+      }));
+      expect(fileOps(deltas)).toEqual([
+        { type: 'delete', path: 'legacy.ts', linesAdded: 2, linesRemoved: 1 },
+        { type: 'write', path: 'relative.ts', linesAdded: 2, linesRemoved: 1 },
+        { type: 'edit', path: 'v2.ts', linesAdded: 5, linesRemoved: 6 },
+      ]);
+    });
+
+    it.each(['filediff', 'diff'])('preserves legacy edit %s over v2 files', async field => {
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('legacy', 'edit', {
+          status: 'completed', input: { filePath: 'legacy.ts' }, metadata: {
+            [field]: field === 'filediff' ? { patch } : patch,
+            files: [{ file: 'ignored.ts', status: 'added', additions: 99 }],
+          },
+        })],
+      }));
+      expect(fileOps(deltas)).toEqual([{ type: 'edit', path: 'legacy.ts', linesAdded: 2, linesRemoved: 1 }]);
+    });
+
+    it.each([{ files: [] }, { files: [null, {}, { file: 'bad.ts', status: 'unknown' }] }, { files: null }])('keeps the existing edit fallback for invalid/empty files %j', async ({ files }) => {
+      const deltas = await run(buildSession([assistantMessage], {
+        'msg-a': [toolPart('invalid', 'edit', { status: 'completed', input: { filePath: 'fallback.ts' }, metadata: { files } })],
+      }));
+      expect(fileOps(deltas)).toEqual([{ type: 'edit', path: 'fallback.ts' }]);
+    });
+
+    it('keeps v2 pending/failed tools out of file metrics and remains idempotent', async () => {
+      const metadata = { files: [{ file: 'new.ts', status: 'added', additions: 2, deletions: 0 }] };
+      const session = buildSession([assistantMessage], {
+        'msg-a': [
+          toolPart('done', 'patch', { status: 'completed', metadata }),
+          toolPart('running', 'patch', { status: 'running', metadata }),
+          toolPart('failed', 'patch', { status: 'error', metadata, error: 'failed' }),
+        ],
+      });
+      const first = await run(session);
+      const second = await run(session);
+      expect(second).toEqual(first);
+      expect(fileOps(second)).toEqual([{ type: 'write', path: 'new.ts', linesAdded: 2 }]);
+      expect(second.map(delta => delta.recordId)).toEqual(['msg-a:call-done', 'msg-a:call-failed']);
+    });
   });
 });

@@ -228,3 +228,43 @@ describe('GPT-6 → Responses API routing', () => {
     expect(OPENCODE_MODEL_CONFIGS['gpt-6-sol']!.limit.context).toBe(1050000);
   });
 });
+
+// ── Unknown future majors ────────────────────────────────────────────────────
+//
+// The name patterns enumerate the families the proxy currently serves. A
+// Responses-only major deployed before the list is updated used to be routed to
+// chat-completions and fail at request time with no warning at config-generation
+// time, so any single-digit GPT major at or beyond 6 is treated as Responses-only.
+
+describe('Unknown future GPT majors → Responses API routing', () => {
+  let convertApiModelToOpenCodeConfig: typeof import('../opencode/opencode-dynamic-models.js').convertApiModelToOpenCodeConfig;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ({ convertApiModelToOpenCodeConfig } = await import('../opencode/opencode-dynamic-models.js'));
+  });
+
+  it('routes an unlisted gpt-7 id to Responses API', () => {
+    expect(convertApiModelToOpenCodeConfig(makeLlmModel('gpt-7-preview')).use_responses_api).toBe(true);
+  });
+
+  it('routes an unlisted vendor-prefixed gpt-8 id to Responses API', () => {
+    expect(convertApiModelToOpenCodeConfig(makeLlmModel('openai.gpt-8-codex')).use_responses_api).toBe(true);
+  });
+
+  it('routes an unlisted gpt-6 variant to Responses API', () => {
+    expect(convertApiModelToOpenCodeConfig(makeLlmModel('gpt-6.9-unknown-luna')).use_responses_api).toBe(true);
+  });
+
+  it('leaves two-digit majors out so an explicit pattern must claim them', () => {
+    // Same reason the (?!\d) guards exclude gpt-60: a new major of that shape is
+    // claimed deliberately, never by accident.
+    expect(convertApiModelToOpenCodeConfig(makeLlmModel('gpt-60')).use_responses_api).toBeUndefined();
+  });
+
+  it('still routes older and non-GPT families to chat completions', () => {
+    for (const id of ['gpt-4o-mini', 'gpt-5', 'claude-4-5-sonnet', 'gemini-2.5-pro', 'o3-mini', 'qwen3-coder']) {
+      expect(convertApiModelToOpenCodeConfig(makeLlmModel(id)).use_responses_api).toBeUndefined();
+    }
+  });
+});

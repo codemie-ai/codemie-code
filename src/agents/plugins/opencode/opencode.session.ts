@@ -9,7 +9,7 @@ import type {
   OpenCodeSession,
   OpenCodeMessage,
 } from './opencode-message-types.js';
-import { getOpenCodeSessionsPath, getOpenCodeDbPath } from './opencode.paths.js';
+import { getOpenCodeSessionsPath, getOpenCodeDbPath, type OpenCodePathContext } from './opencode.paths.js';
 import {
   isSqliteAvailable,
   readSessionsFromDb,
@@ -78,11 +78,19 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
   readonly agentName = 'opencode';
   private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
+  constructor(
+    private readonly metadata: AgentMetadata,
+    private readonly pathContext: OpenCodePathContext = {},
+  ) {
     if (!metadata.dataPaths?.home) {
       throw new Error('Agent metadata must provide dataPaths.home');
     }
     this.initializeProcessors();
+  }
+
+  /** Use the adapter's own binary, not a different opencode executable on PATH. */
+  private getPathContext(): OpenCodePathContext {
+    return { command: this.metadata.cliCommand, ...this.pathContext };
   }
 
   /**
@@ -115,8 +123,9 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     sessionId: string,
     openCodeSessionId?: string
   ): Promise<ParsedSession> {
-    // Route to SQLite parsing if filePath points to a .db file
-    if (filePath.endsWith('.db')) {
+    // OPENCODE_DB may use a filename without .db; descriptors still need to
+    // route to SQLite rather than attempting to parse the database as JSON.
+    if (filePath.endsWith('.db') || filePath === await getOpenCodeDbPath(this.getPathContext())) {
       return this.parseSessionFromDb(filePath, sessionId, openCodeSessionId);
     }
 
@@ -187,9 +196,11 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * Reads session, messages, and all parts in bulk from opencode.db.
    *
    * @param openCodeSessionId - OpenCode's own `ses_*` id when known. The plugin
-   *   Stop hook supplies it via ProcessingContext.agentSessionId; the in-process
-   *   SessionEnd path cannot (OpenCode's id does not exist when the CodeMie
-   *   session record is created), so selection falls back to a cwd match.
+   *   Stop hook supplies it via ProcessingContext.agentSessionId; in-process
+   *   SessionEnd supplies the discovered descriptor's id separately from its
+   *   lifecycle UUID. Manual metrics processing also supplies the descriptor id.
+   *   Explicit ids are authoritative: missing rows fail rather than selecting
+   *   another conversation, and their creation date does not restrict lookup.
    */
   private async parseSessionFromDb(
     dbPath: string,
@@ -199,7 +210,12 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     try {
       logger.debug(`[opencode-adapter] Parsing session ${sessionId} from SQLite: ${dbPath}`);
 
-      const sessions = await readSessionsFromDb(dbPath, { maxAgeDays: 1 });
+      // The one-day window bounds heuristic lookup for lifecycle callers that
+      // lack an OpenCode id. Reusing it for manual/hook exact-ID lookup would
+      // exclude older sessions and even long-running sessions created days ago.
+      const sessions = await readSessionsFromDb(dbPath, openCodeSessionId
+        ? { sessionId: openCodeSessionId }
+        : { maxAgeDays: 1 });
       const session = this.selectSessionFromDb(sessions, openCodeSessionId);
       if (!session) {
         throw new Error(`Session ${sessionId} not found in SQLite DB: ${dbPath}`);
@@ -271,13 +287,13 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     sessions: OpenCodeSession[],
     openCodeSessionId?: string
   ): OpenCodeSession | undefined {
-    // 1. Exact match on OpenCode's own id (plugin Stop path).
-    if (openCodeSessionId?.startsWith('ses_')) {
-      const exact = sessions.find(s => s.id === openCodeSessionId);
-      if (exact) return exact;
+    // An explicit identity must never fall back to a different conversation:
+    // that would write another session's metrics under the requested identity.
+    if (openCodeSessionId) {
+      return sessions.find(s => s.id === openCodeSessionId);
     }
 
-    // 2. Newest session started in this working directory (in-process SessionEnd path).
+    // 2. Working-directory match for callers without an explicit source ID.
     const cwd = process.cwd().replace(/\/+$/, '');
     const byCwd = sessions.find(s => s.directory.replace(/\/+$/, '') === cwd);
     if (byCwd) return byCwd;
@@ -399,9 +415,9 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       logger.debug(`[opencode-adapter] Processing session ${sessionId} with ${this.processors.length} processors`);
 
       // 1. Parse session once.
-      //    context.agentSessionId is OpenCode's ses_* id on the plugin Stop path
-      //    and the CodeMie UUID on the in-process SessionEnd path; the adapter
-      //    distinguishes them by prefix.
+      //    Callers supply OpenCode's source id in context.agentSessionId. The
+      //    output/lifecycle UUID remains sessionId; an explicit source id is
+      //    never interpreted by prefix or replaced with another conversation.
       const parsedSession = await this.parseSessionFile(
         filePath,
         sessionId,
@@ -476,7 +492,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    */
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
     // SQLite-first detection: check if opencode.db exists and sqlite3 CLI is available
-    const dbPath = getOpenCodeDbPath();
+    const pathContext = this.getPathContext();
+    const dbPath = await getOpenCodeDbPath(pathContext);
     if (dbPath && await isSqliteAvailable()) {
       logger.debug(`[opencode-discovery] Using SQLite storage: ${dbPath}`);
       try {
@@ -511,7 +528,10 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     }
 
     // File-based discovery (legacy fallback)
-    const sessionsPath = getOpenCodeSessionsPath();
+    const sessionsPath = getOpenCodeSessionsPath(
+      { ...process.env, ...pathContext.env },
+      pathContext.dataDir,
+    );
 
     if (!sessionsPath) {
       logger.debug('[opencode-discovery] Sessions path not found (OpenCode not installed?)');
