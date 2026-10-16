@@ -181,7 +181,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     ]);
     const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
 
-    const sessionEnvEvent = buildSessionEnvEvent(hookInput.session_id, sessionEnvFields);
+    const sessionEnvEvent = buildSessionEnvEvent(hookInput.session_id, pass.sessionEnvFields);
     return {
       decision: 'forward',
       payload: [

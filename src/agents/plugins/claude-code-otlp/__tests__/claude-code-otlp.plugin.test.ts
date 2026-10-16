@@ -949,7 +949,14 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     vi.mocked(isProjectTracked).mockResolvedValue(true);
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
-    openSessionStartPassMock.mockResolvedValue(emptyPass());
+    // Default: openSessionStartPass echoes back whatever sessionEnvFields it was given, as if
+    // there were no prior snapshot to merge onto — matches real first-fire behavior and keeps
+    // the pre-existing tests in this block (which assert against the raw resolved fields)
+    // passing unchanged.
+    openSessionStartPassMock.mockImplementation(async (_sessionId: string, _gitHeadStart: string, fields: unknown) => ({
+      ...emptyPass(),
+      sessionEnvFields: fields,
+    }));
     resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
       ...SESSION_ENV_FIELDS_STUB,
       configured_model: model,
@@ -1009,6 +1016,26 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
       expect.objectContaining({ configured_model: '', permission_mode: '' })
     );
     expect(pass.finalize).toHaveBeenCalledWith(true);
+  });
+
+  it("sends the SessionStart pass's merged sessionEnvFields, not the raw resolveSessionEnvFields output", async () => {
+    const mergedFields = {
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: 'claude-opus-5',
+      effort: 'high', // carried forward by openSessionStartPass; never in the raw payload
+      permission_mode: 'acceptEdits',
+    };
+    openSessionStartPassMock.mockResolvedValue({ events: [], finalize: vi.fn(async () => {}), sessionEnvFields: mergedFields });
+    resolveSessionEnvFieldsMock.mockResolvedValue({ ...SESSION_ENV_FIELDS_STUB, configured_model: '', permission_mode: '' });
+
+    await plugin.processOtlpEvent(
+      JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: 'SessionStart', source: 'resume' }),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+
+    const forwarded = forwardedEvents();
+    const envEvent = forwarded.find((e) => e.type === 'agent.session.env');
+    expect(envEvent).toMatchObject({ configured_model: 'claude-opus-5', effort: 'high', permission_mode: 'acceptEdits' });
   });
 });
 
