@@ -4,7 +4,8 @@
  * Discovers and parses Pi JSONL session files, then runs the metrics processor.
  */
 
-import { open, readFile, readdir, stat } from 'fs/promises';
+import { open, readFile, readdir, stat, type FileHandle } from 'fs/promises';
+import { homedir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
@@ -55,38 +56,47 @@ async function subdirectoriesOf(root: string): Promise<string[]> {
 /**
  * Every project's session directory, for an unscoped (analytics) listing.
  *
- * Pi transcripts live under TWO roots, and a listing that reads one of them is blind to
- * whichever half of the user's usage lives in the other:
+ * Pi transcripts live under THREE roots, and a listing that reads only some of them is blind
+ * to whichever part of the user's usage lives in the others:
  *
  *  - `<cwd>/.pi/codemie/agent/sessions` — where CodeMie points Pi (`beforeRun` sets
  *    `PI_CODING_AGENT_DIR`), so every MANAGED run lands here. In practice it holds exactly
  *    one directory, the project's own.
  *  - `~/.pi/agent/sessions` — Pi's own default (upstream `getDefaultSessionDir`), so every
- *    BARE `pi` run lands here. Native discovery exists precisely to report those runs, and
- *    this is the only root that has them.
+ *    BARE `pi` run lands here.
+ *  - `~/.omp/agent/sessions` — the oh-my-pi fork's default, where every bare `omp` run lands.
+ *    Its project directories are named differently from Pi's encoded-cwd buckets, which is why
+ *    projects are found by enumeration rather than by deriving a directory name from a cwd.
  *
- * Both use the same one-directory-per-cwd layout, so a root's subdirectories ARE the projects.
+ * All use a one-directory-per-project layout, so a root's subdirectories ARE the projects.
  * A directory the user pointed Pi at explicitly (`PI_CODING_AGENT_SESSION_DIR`, or `sessionDir`
  * in settings) is not part of that layout — its siblings are arbitrary directories that have
- * nothing to do with Pi — so a custom resolution stays alone.
+ * nothing to do with Pi — so it replaces the two Pi roots. It does not replace the oh-my-pi
+ * root: Pi's settings say nothing about where `omp` writes.
  */
 async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<string[]> {
   const { sessionDir, isCustom } = resolution;
-  if (isCustom) {
-    return [sessionDir];
-  }
+  const ompRoot = join(homedir(), '.omp', 'agent', 'sessions');
 
   const dirs: string[] = [];
   const seen = new Set<string>();
-  for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
-    for (const dir of await subdirectoriesOf(root)) {
-      const key = resolve(dir);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      dirs.push(dir);
+  const add = (dir: string): void => {
+    const key = resolve(dir);
+    if (seen.has(key)) return;
+    seen.add(key);
+    dirs.push(dir);
+  };
+
+  if (isCustom) {
+    add(sessionDir);
+  } else {
+    for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
+      for (const dir of await subdirectoriesOf(root)) add(dir);
     }
   }
-  // Both roots unreadable — fall back to the project's own directory.
+  for (const dir of await subdirectoriesOf(ompRoot)) add(dir);
+
+  // Every root unreadable — fall back to the project's own directory.
   return dirs.length > 0 ? dirs : [sessionDir];
 }
 import {
@@ -225,18 +235,24 @@ export class PiSessionAdapter implements SessionAdapter {
 
   private static readonly HEADER_READ_BYTES = 65536;
 
+  /**
+   * The transcript's `session` header — its first record, or the first one after oh-my-pi's
+   * leading `title` records (`omp` reserves line 1 for a padded, rewritable title). Any other
+   * record before the header means the file is not a Pi transcript.
+   */
   private async readSessionHeader(filePath: string): Promise<PiSessionHeader | undefined> {
-    let handle: import('fs/promises').FileHandle | undefined;
+    let handle: FileHandle | undefined;
     try {
       handle = await open(filePath, 'r');
       const buffer = Buffer.alloc(PiSessionAdapter.HEADER_READ_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, PiSessionAdapter.HEADER_READ_BYTES, 0);
       if (bytesRead === 0) return undefined;
-      const firstLine = buffer.toString('utf-8', 0, bytesRead).split('\n')[0]?.trim();
-      if (!firstLine) return undefined;
-      const parsed = JSON.parse(firstLine);
-      if (isPiSessionHeader(parsed)) {
-        return parsed;
+      for (const line of buffer.toString('utf-8', 0, bytesRead).split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) return undefined;
+        const parsed = JSON.parse(trimmed);
+        if (parsed?.type === 'title') continue;
+        return isPiSessionHeader(parsed) ? parsed : undefined;
       }
     } catch {
       // ignore — malformed header is handled by caller
