@@ -202,6 +202,10 @@ export interface LlmModel {
    * on older backends.
    */
   max_input_tokens?: number;
+  /** Maximum output tokens (LiteLLM `model_info.max_output_tokens`). Absent on virtual routers. */
+  max_output_tokens?: number;
+  /** `true` on image-generation deployments, which do not serve chat completions. */
+  supports_image_generation?: boolean;
   /**
    * The model's maximum output tokens (LiteLLM `model_info.max_output_tokens`).
    */
