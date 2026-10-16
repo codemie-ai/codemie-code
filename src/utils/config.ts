@@ -27,6 +27,17 @@ export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, Co
 export { StorageScope };
 
 /**
+ * Normalize a profile's model list at read time.
+ *
+ * `models` is additive and optional; a missing `models` field means
+ * "single-model profile" and is read as `[model]`, so every consumer can rely
+ * on a normalized array without a config migration.
+ */
+export function resolveProfileModels(profile: Pick<ProviderProfile, 'model' | 'models'>): string[] {
+  return profile.models?.length ? profile.models : profile.model ? [profile.model] : [];
+}
+
+/**
  * Unified configuration loader with priority system:
  * CLI args > Env vars > Project config > Global config > Defaults
  *
@@ -766,6 +777,59 @@ export class ConfigLoader {
   }
 
   /**
+   * Switch the active profile's active model in place.
+   *
+   * Unlike switchProfile (which repoints activeProfile at a different
+   * profile), this patches the currently active profile's own `model` field
+   * (and, when tierOverrides is given, the three Claude tier fields) without
+   * touching `models`, `reasoningEffort`, credentials, or workspace. Writes
+   * to whichever scope (local/global) the active profile's definition
+   * actually lives in.
+   */
+  static async switchActiveProfileModel(
+    modelId: string,
+    workingDir: string = process.cwd(),
+    tierOverrides?: { haikuModel?: string; sonnetModel?: string; opusModel?: string }
+  ): Promise<{ profileName: string }> {
+    const activeProfileName = await this.getActiveProfileName(workingDir);
+    if (!activeProfileName) {
+      throw new Error('No active profile found. Run: codemie setup');
+    }
+
+    const applyMutation = (profile: ProviderProfile): void => {
+      profile.model = modelId;
+      if (tierOverrides) {
+        profile.haikuModel = tierOverrides.haikuModel;
+        profile.sonnetModel = tierOverrides.sonnetModel;
+        profile.opusModel = tierOverrides.opusModel;
+      }
+    };
+
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const config = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(config) && config.profiles[activeProfileName]) {
+        applyMutation(config.profiles[activeProfileName]);
+        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+        return { profileName: activeProfileName };
+      }
+    }
+
+    // Falls back to global when there's no local config, or the active
+    // profile's definition does not live in the local config.
+    const globalConfig = await this.loadMultiProviderConfig();
+    if (!globalConfig.profiles[activeProfileName]) {
+      throw new Error(`Active profile "${activeProfileName}" not found.`);
+    }
+    applyMutation(globalConfig.profiles[activeProfileName]);
+    await this.saveMultiProviderConfig(globalConfig);
+    return { profileName: activeProfileName };
+  }
+
+  /**
    * List all profiles
    * Returns profiles from both local (if exists) and global configs
    */
@@ -1492,6 +1556,8 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    const profileModels = resolveProfileModels(config);
+    if (profileModels.length >= 2) env.CODEMIE_PROFILE_MODELS = profileModels.join(',');
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     // Always emit tier model vars — even when absent — so stale shell values are
     // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).

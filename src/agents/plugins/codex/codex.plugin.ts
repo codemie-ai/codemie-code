@@ -52,6 +52,7 @@ import { ConfigurationError } from '../../../utils/errors.js';
 import { CodexSessionAdapter } from './codex.session.js';
 import {
   assertExplicitCodexModelAllowed,
+  filterAvailableModelsToProfile,
   isCodexCompatibleModelName,
   resolveCodexModel,
 } from './codex-models.js';
@@ -522,7 +523,8 @@ export class CodexPlugin extends BaseAgentAdapter {
           ids.unshift(env.CODEMIE_MODEL);
         }
         if (ids.length > 0) {
-          env.CODEMIE_CODEX_AVAILABLE_MODELS = ids.join(',');
+          const filteredIds = filterAvailableModelsToProfile(ids, env);
+          env.CODEMIE_CODEX_AVAILABLE_MODELS = filteredIds.join(',');
         }
       } catch (error) {
         logger.debug('[codex] Failed to list Ollama models; keeping configured model only', error);
@@ -539,7 +541,7 @@ export class CodexPlugin extends BaseAgentAdapter {
         );
       }
 
-      env.CODEMIE_CODEX_AVAILABLE_MODELS = env.CODEMIE_MODEL;
+      env.CODEMIE_CODEX_AVAILABLE_MODELS = filterAvailableModelsToProfile([env.CODEMIE_MODEL], env).join(',');
       await super.setupProxy(env);
       return;
     }
@@ -547,7 +549,7 @@ export class CodexPlugin extends BaseAgentAdapter {
     const resolution = await resolveCodexModel(env);
 
     env.CODEMIE_MODEL = resolution.selectedModel;
-    env.CODEMIE_CODEX_AVAILABLE_MODELS = resolution.availableModels.join(',');
+    env.CODEMIE_CODEX_AVAILABLE_MODELS = filterAvailableModelsToProfile(resolution.availableModels, env).join(',');
     if (resolution.catalogPath) {
       env.CODEMIE_CODEX_MODEL_CATALOG_JSON = resolution.catalogPath;
     }

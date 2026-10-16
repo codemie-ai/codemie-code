@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "branch": "feature/EPMCDME-15639",
+  "head": "1bcf4c31ea00062a389b8869e1441939276102bc",
+  "runner": "npm",
+  "started_at": "2026-10-14T16:29:39+02:00",
+  "completed_at": "2026-10-14T17:05:00+02:00",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 53400,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 389538,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "eslint {src,tests}/**/*.ts src/agents/plugins/pi/extension/*.js --max-warnings=0; zero errors, zero warnings."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 147906,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 54380,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 303172,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "2/4892 tests failed: src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts and src/providers/plugins/sso/session/processors/conversations/__tests__/syncProcessor-incremental-persistence.test.ts, both timing-sensitive async-race assertions in src/providers/plugins/sso/** — not touched by this branch's diff (origin/main...HEAD). Re-running just those 2 files in isolation (diagnostic only, not a recorded gate) passed cleanly 14/14, consistent with flakiness under full-suite parallel scheduling rather than a regression from this branch. Not re-run as the recorded gate result per the literal exit code from this invocation."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 204995,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "10/38 files, 13/288 tests failed with 'Hook timed out' in beforeAll for help/version/profile/workflow/error-handling/list/doctor-windows/self-update, plus 11 real assertion failures in skills.test.ts (wrong exit codes, e.g. expected 7 got 1). Root cause isolated by direct repro outside vitest: `CODEMIE_HOME=<fresh dir> node ./bin/codemie.js list` hangs indefinitely after printing its full output (confirmed via `timeout 15 ... list` -> exit 124); `--help` and `profile` exit cleanly alone, so the hang is specific to `list` and appears to starve sibling CLI-spawning test files that run in parallel. Re-ran the full gate once more in isolation with no other gates running concurrently and got the same 10 failed files / 13 failed tests, ruling out contention from this run's own background processes as the cause. tests/integration/agent-setup.test.ts (present in this branch's diff) was not exercised by this gate — vitest.config.ts excludes tests/integration/agent-*.test.ts from the 'cli' project; it only runs under the 'agent' project, which this run deliberately did not execute per task constraints (its globalSetup performs a native Claude CLI install that can hang). This gate doubles as CI's test-windows job (same `vitest run --project cli` command) since this run executed on win32."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 84149,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script printed \"No staged changes to scan\" — scripts/validate-secrets.js only scans `git diff --staged`, and nothing is staged in this working tree. To enable locally: `git add` the branch's changed files before running. Real coverage of this branch's diff is provided by the 'secrets-diff' CI-sourced gate below."
+    },
+    {
+      "id": "secrets-diff",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 12527,
+      "command": "git diff 9963dc8a2c54baa87fd9494cdd170bf9a4852eac...HEAD | docker run --rm -i -v \"$(pwd)/.gitleaks.toml:/gitleaks.toml\" ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Added because the guide's 'secrets' gate only scans staged changes (self-skipped above) while CI's gitleaks-action scans the full PR diff unconditionally; mirrors that scope with the same gitleaks image/.gitleaks.toml. First attempt (not recorded) failed with a tooling error, not a scan finding: Git-Bash/MSYS mangled the `-v` volume path; re-ran with MSYS_NO_PATHCONV=1 and got 'no leaks found' scanning ~133KB."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12722,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only, per guide; 0 problems, 0 warnings."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 7649,
+      "command": "npx commitlint --from 9963dc8a2c54baa87fd9494cdd170bf9a4852eac --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Added because CI's validate-commits job lints the full PR range (base...HEAD), not just the last commit. All commits in merge_base...HEAD pass."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 4778,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: \"lint-staged could not find any staged files.\" Nothing is staged in this working tree. Its sub-commands (eslint --max-warnings=0, vitest related) are already covered in full by the standalone lint and unit gates above. To exercise this hook for real, stage the branch's changes first."
+    },
+    {
+      "id": "commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "command": "commitlint --edit \"$1\"",
+      "notes": "Runs against COMMIT_EDITMSG during an actual `git commit`; no commit is being made in this run. Equivalent coverage already provided by commitlint-last and commitlint-range above."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "gh pr view \"$PR_NUMBER\" ... | npx commitlint --verbose",
+      "notes": "CI's validate-commits job also lints the PR title via commitlint, but that step requires an open PR (gh + GITHUB_TOKEN + PR number) which does not exist yet at this stage; not runnable locally."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run check:pre-commit",
+      "notes": "Composite of `typecheck && lint`; both already run individually above as standalone gates. Not re-run to avoid duplicating the same work."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run ci",
+      "notes": "Composite of license-check, lint, build, vitest unit, vitest cli; all already run individually above as standalone gates. Not re-run to avoid duplicating the same work."
+    }
+  ],
+  "failures": {
+    "unit": "FAIL  |unit| src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts > transparent VS Code proxy integration > forwards SSE bytes incrementally and unchanged for /v1/responses\nAssertionError: expected true to be false // Object.is equality\n\n- Expected\n+ Received\n\n- false\n+ true\n\n ❯ src/providers/plugins/sso/proxy/__tests__/transparent-vscode-proxy.integration.test.ts:171:30\n    169|       const first = await reader.read();\n    170|\n    171|       expect(upstreamClosed).toBe(false);\n       |                              ^\n    172|       const received = [Buffer.from(first.value ?? []).toString('utf-8…\n    173|       while (true) {\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/providers/plugins/sso/session/processors/conversations/__tests__/syncProcessor-incremental-persistence.test.ts > createSyncProcessor — incremental persistence and deferral > persists each payload outcome immediately and defers the rest when aborted mid-loop\nAssertionError: expected [ 'success', 'pending', …(3) ] to deeply equal [ 'success', 'success', …(3) ]\n\n- Expected\n+ Received\n\n  [\n    \"success\",\n-   \"success\",\n+   \"pending\",\n    \"pending\",\n    \"pending\",\n    \"pending\",\n  ]\n\n ❯ src/providers/plugins/sso/session/processors/conversations/__tests__/syncProcessor-incremental-persistence.test.ts:120:28\n    118|     expect(midLoopStatuses[0]).toEqual(['success', 'pending', 'pending…\n    119|     // Final state: 2 success, 3 still pending for the next run\n    120|     expect(readStatuses()).toEqual(['success', 'success', 'pending', '…\n       |                            ^\n    121|   });\n    122|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  2 failed | 341 passed (343)\n      Tests  2 failed | 4888 passed | 2 skipped (4892)\n   Start at  16:46:29\n   Duration  294.57s (transform 267.35s, setup 0ms, import 923.32s, tests 527.92s, environment 166ms)",
+    "integration": "       |                             ^\n    234|     expect(result.stdout).toContain('[{\"skill\":\"foo\"}]');\n    235|     const [invocation] = readInvocations();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/20]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > propagates upstream non-zero exit codes (not collapsed to 1)\nAssertionError: expected 1 to be 7 // Object.is equality\n\n- Expected\n+ Received\n\n- 7\n+ 1\n\n ❯ tests/integration/cli-commands/skills.test.ts:243:29\n    241|       STUB_EXIT_CODE: '7',\n    242|     });\n    243|     expect(result.exitCode).toBe(7);\n       |                             ^\n    244|   });\n    245|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/20]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > classifies CODEMIE_SKILL_EGRESS_BLOCKED stderr as egress_blocked exit code\nAssertionError: expected 1 to be 7 // Object.is equality\n\n- Expected\n+ Received\n\n- 7\n+ 1\n\n ❯ tests/integration/cli-commands/skills.test.ts:254:29\n    252|       STUB_STDERR: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',\n    253|     });\n    254|     expect(result.exitCode).toBe(7);\n       |                             ^\n    255|     expect(result.stderr).toContain('CODEMIE_SKILL_EGRESS_BLOCKED');\n    256|   });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/20]⎯\n\n\n Test Files  10 failed | 27 passed | 1 skipped (38)\n      Tests  13 failed | 258 passed | 17 skipped (288)\n   Start at  16:55:34\n   Duration  196.50s (transform 72.50s, setup 0ms, import 121.97s, tests 798.16s, environment 53ms)"
+  }
+}

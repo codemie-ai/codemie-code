@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "task": "Let SSO/JWT/LiteLLM/Bedrock/Ollama profiles hold multiple models chosen via a multi-select step in codemie setup (with a default), add `codemie models switch [model-id]` to persistently change the active profile's active model (refreshing Claude helper tiers and preserving other settings), and mark profile/active models in `codemie models list`, while keeping legacy single-model profiles working.",
+  "generated": "2026-10-06T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "About seven components across five subsystems: (1) the setup wizard model step (single-choice list replaced by multi-select plus default, custom-entry and Ollama-search merge, pre-selection on update); (2) ConfigLoader persistence and load (saveProfile, initProjectConfig, the local/global merge of a list-valued field, validate, exportProviderEnvVars); (3) ProviderProfile types; (4) the models command (new switch subcommand plus list marking); (5) profile display and status; (6) AgentCLI launch and compatibility messaging; (7) agent-plugin model resolution (Claude tier refresh and auto-heal, Codex ranking), plus Ollama per-model install. The new abstractions are a per-profile model list and a multi-select model picker. The 'core shared utilities' (ConfigLoader, which is exposed API) and 'multiple workflows/agents' red flags are the signals that set the base at XL. I did not stack them: XXL is reserved for cross-service or cross-system work, and this is one CLI repo. That matches the project L anchor profile-provider-decoupling, which scored comparable ConfigLoader, schema and multi-workflow work at XL without stacking. Applying the flags literally would give XXL, for a total of 24, still L."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "There is no exact precedent for a multi-model profile. The closest patterns are the profile switch command (it swaps whole profiles, not models), the inquirer checkbox in update.ts, and autoSelectModelTiers, which can be reused for the tier refresh. The open problem is at launch: the CODEMIE_MODEL_SOURCE semantics label a persisted model 'default', so Claude auto-heal and Codex ranking are free to replace it. A switched model that is still in the catalog must not be replaced, but a retired one still must be, which likely needs a new source distinction in a launch-critical path. To meet the 'settings preserved, profile stays where stored' acceptance criterion, three existing write-path hazards must be fixed: saveProfile replaces the profile wholesale, initProjectConfig overwrites the whole local file, and on update the storage location comes from hasLocalConfig. Base is L. The edge-case auto-bump raises it to XL: the acceptance criteria list error and variant paths (empty selection, an ID not in the profile, a single-model profile, removing the active model on update, a retired model, a --model override not persisting, the compatibility-error hint, legacy profiles), and setup.ts, models.ts and the profile switch have no unit-test templates; the only wizard coverage is the SSO-gated PTY TC-029, which also pins the prompt text. This disagrees with the anchor profile-provider-decoupling (technical risk L), where the risk was an established-pattern data migration. Here the migration is optional, but the auto-heal semantics are new."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "About 11-15 modified source files: setup.ts, config.ts, env/types.ts, models.ts, profile/display.ts, utils/profile.ts, AgentCLI.ts, setup-ui.ts, ollama.setup-steps.ts, Claude model/tier resolution, Codex model resolution, possibly providers/core/types.ts, and the TC-029 prompt assertion. Four docs also change: CONFIGURATION.md, COMMANDS.md, the project-config guide and ARCHITECTURE-CONFIGURATION.md. New files are 2-4: a switch command/helper, a multi-select picker helper, and optionally a migration. These span src/cli, src/utils, src/env, src/agents, src/providers and docs, which is consistent with the story's own estimate of 12-16 files and the anchor's 14. The data-migration bump is not applied because legacy single-model profiles can be normalized at read time. If design chooses a numbered migration, technical risk and file change estimate each rise by one (total 25, still L)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four layers are touched. UI/CLI: the setup wizard, models switch and list, and profile status. Service: ConfigLoader resolution and AgentCLI model-source handling. DB-Persistence: the global and local codemie-cli.config.json profile schema gains a model list plus an active model. External/agent integration: launch-time model resolution in the Claude and Codex plugins, and per-model fetch and install for providers. That is three to four layers including a persistence schema change, the L criterion. The 'significant schema change' red flag is not applied because the field is additive and the scalar `model` can be kept for the ~20 existing consumers. The story is well specified: 22 acceptance criteria, an explicit out-of-scope list, and every open question resolved. Requirements clarity is therefore S, one band below the anchor's M, which was scored while its schema was still undecided."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): the acceptance criteria list specific error and variant cases (empty selection, unknown model ID, single-model profile, removing the active model on update, retired model, --model not persisting, compatibility hint, legacy profile), and no unit-test template exists for the touched setup wizard, models command or profile switch code"
+  ],
+  "split_recommendation": null
+}

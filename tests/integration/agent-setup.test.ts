@@ -104,13 +104,16 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       const projectLine = await proc.waitFor(/Selected project:/i, 15_000);
       const selectedProject = projectLine.match(/Selected project:\s*(\S+)/i)?.[1];
 
-      // ── Step 7: Model selection → first option ──────────────────────────────────
-      // Match the model prompt itself: earlier list prompts (storage scope, provider)
-      // also print "(Use arrow keys)", and waitFor scans all prior lines, so a bare
-      // match resolves at once and the Enter lands while the integrations/models
-      // spinners are still discarding stdin.
-      await proc.waitFor(/Choose a model.*\(Use arrow keys\)/i, 30_000);
+      // ── Step 7: Model selection → check first option, confirm ───────────────────
+      // The model picker is now a checkbox (multi-select): match its own message
+      // text ("Choose models (N available):") rather than the old single-choice
+      // list's "(Use arrow keys)" hint. Space toggles the first (highlighted)
+      // choice, then Enter confirms — a single checked model skips the
+      // follow-up "which model should be active?" prompt entirely.
+      await proc.waitFor(/Choose models.*available/i, 30_000);
       await new Promise(r => setTimeout(r, 500));
+      proc.write(' ');
+      await new Promise(r => setTimeout(r, 200));
       proc.write('\r');
 
       // ── Step 8: Profile name → clear default, type test name ────────────────────

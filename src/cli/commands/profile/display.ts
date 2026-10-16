@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import type { AuthStatus } from '../../../providers/core/types.js';
 import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
+import { resolveProfileModels } from '../../../utils/config.js';
 
 /**
  * Profile information for display
@@ -33,10 +34,13 @@ export class ProfileDisplay {
   static format(info: ProfileInfo, workspaceCodeMieUrl?: string): string {
     const { name, active, profile, source } = info;
 
+    const otherModels = resolveProfileModels(profile).filter(id => id !== profile.model);
+
     const baseInfo = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
+      otherModels,
       codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       isActive: active
     });
@@ -114,10 +118,13 @@ export class ProfileDisplay {
         }
       : undefined;
 
+    const otherModels = resolveProfileModels(profile).filter(id => id !== profile.model);
+
     const formatted = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
+      otherModels,
       codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       authStatus: authStatusDisplay,
       isActive: active

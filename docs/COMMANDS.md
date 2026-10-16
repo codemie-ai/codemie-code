@@ -621,6 +621,35 @@ For profiles using AI/Run CodeMie SSO provider:
 - `status` - Shows active profile with auth status, prompts for re-auth if invalid
 - `refresh` - Re-authenticates with existing SSO configuration
 
+## Model Management Commands
+
+List the active provider's catalog, and switch the active profile's active
+model in place when the profile holds more than one.
+
+```bash
+codemie models list                  # List all models for the current provider configuration
+codemie models switch                # Pick interactively from the active profile's own models
+codemie models switch <model-id>     # Switch directly to a known model id
+```
+
+**`codemie models list`** fetches the live catalog for the active provider. Rows
+belonging to the active profile's own model list are marked `(profile)`, and the
+one currently active is marked `(active)` — this is purely a display hint; the
+full catalog is always shown.
+
+**`codemie models switch`** only ever touches the active profile's own `models`
+list (never the full provider catalog), and only writes the profile's `model`
+field (plus Claude's haiku/sonnet/opus tiers, when applicable) — never
+credentials, `reasoningEffort`, or workspace settings:
+- With no argument, it prompts you to pick from the profile's own models.
+- With an unknown `<model-id>`, it fails loudly (non-zero exit), lists the
+  profile's real models, and writes nothing.
+- A single-model profile (or an `anthropic-subscription`/`moonshot-subscription`
+  profile, which only ever supports one model) is a documented no-op — run
+  `codemie setup` → "Update an existing profile" to add more models first.
+- It never takes a `--profile` flag — to switch models on a different profile,
+  switch to it first with `codemie profile switch`.
+
 ## Analytics Commands
 
 Track and analyze your AI agent usage across all agents.

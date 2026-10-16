@@ -132,10 +132,17 @@ interface ConfigWithSources {
   "activeProfile": "default",
   "profiles": {
     "default": { "provider": "bedrock", "authMethod": "sso", "model": "claude-3-5-sonnet", "awsRegion": "us-east-1" },
-    "work":    { "provider": "sso", "codeMieProject": "work-project" }
+    "work":    { "provider": "sso", "codeMieProject": "work-project", "model": "claude-sonnet-5", "models": ["claude-sonnet-5", "gpt-5.6-terra"] }
   }
 }
 ```
+
+`models` is optional and additive — a profile with no `models` field (like
+`default` above) is read as having exactly `[model]`; it needs no migration.
+When present, it always includes the active `model`. `codemie models switch`
+changes which of a profile's `models` is active (writing `model` in place);
+Claude/Codex/OpenCode/Pi's in-session model menus narrow to a profile's
+`models` list via `CODEMIE_PROFILE_MODELS` when it has 2+ entries.
 
 ---
 

@@ -473,11 +473,18 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     currentModel && rankedIds.includes(currentModel)
       ? currentModel
       : catalogModels[0].id;
+
+  // CODEMIE_PROFILE_MODELS must narrow native Codex's own /model picker, not just
+  // --model flag validation (CODEMIE_CODEX_AVAILABLE_MODELS / assertExplicitCodexModelAllowed
+  // in codex.plugin.ts) — the picker is driven entirely by this catalog file
+  // (model_catalog_json), which filterAvailableModelsToProfile never touches.
+  const pickerModels = filterCatalogModelsToProfile(catalogModels, selectedModel, env);
+
   const catalogPath = await writeCatalogFile(
     // Codex marks the first row as its default, so the selected model leads (keeping the marker
     // on the model actually in use), then routers, then the rest; `priority` is the position.
     buildCodexCatalog(
-      orderModelsForPicker(catalogModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
+      orderModelsForPicker(pickerModels, (entry) => entry.model, (entry) => entry.id === selectedModel),
       buildModelLabelIndex(rawModels))
   );
 
@@ -493,6 +500,80 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     catalogPath,
     availableModels: rankedIds,
   };
+}
+
+/**
+ * Narrow an available-model id list to the active profile's own models
+ * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has 2+
+ * models), keeping the configured CODEMIE_MODEL even when it is missing from
+ * the allowed list (CR-003) — setupProxy assigns env.CODEMIE_MODEL right
+ * before calling this, so a retirement-healed active model must survive the
+ * narrowing the same way OpenCode's filterToAllowed and Pi's
+ * filterEntriesToProfile already keep theirs. Falls back to the unfiltered
+ * list (with a warning — CR-004) when the env var is unset or the
+ * allowed-CSV intersection is empty, so Codex's --model validation never
+ * ends up with zero usable models (AC22).
+ */
+export function filterAvailableModelsToProfile(
+  availableModels: string[],
+  env: NodeJS.ProcessEnv
+): string[] {
+  if (!env.CODEMIE_PROFILE_MODELS) {
+    return availableModels;
+  }
+  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
+  const filtered = availableModels.filter(id => allowed.has(id));
+
+  if (filtered.length === 0) {
+    logger.warn(
+      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the available models — showing the full catalog instead'
+    );
+    return availableModels;
+  }
+
+  const configuredModel = env.CODEMIE_MODEL;
+  if (configuredModel && !filtered.includes(configuredModel) && availableModels.includes(configuredModel)) {
+    return [...filtered, configuredModel];
+  }
+
+  return filtered;
+}
+
+/**
+ * Narrow the ranked catalog entries used to build Codex's on-disk model_catalog_json —
+ * the file native Codex's own /model picker renders from (codex.plugin.ts passes it via
+ * `--config model_catalog_json=...`) — to the active profile's own models. Mirrors
+ * filterAvailableModelsToProfile's semantics (CR-003 keep-selected, CR-004/AC22
+ * empty-intersection fallback) but operates on RankedModel entries by `.id` instead of a
+ * plain id list, since this is a separate artifact from CODEMIE_CODEX_AVAILABLE_MODELS
+ * (which only gates --model flag validation, never the picker).
+ */
+function filterCatalogModelsToProfile(
+  catalogModels: RankedModel[],
+  selectedModel: string,
+  env: NodeJS.ProcessEnv
+): RankedModel[] {
+  if (!env.CODEMIE_PROFILE_MODELS) {
+    return catalogModels;
+  }
+  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
+  const filtered = catalogModels.filter(entry => allowed.has(entry.id));
+
+  if (filtered.length === 0) {
+    logger.warn(
+      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the catalog models — showing the full catalog in the /model picker instead'
+    );
+    return catalogModels;
+  }
+
+  if (!filtered.some(entry => entry.id === selectedModel)) {
+    const selectedEntry = catalogModels.find(entry => entry.id === selectedModel);
+    if (selectedEntry) {
+      return [...filtered, selectedEntry];
+    }
+  }
+
+  return filtered;
 }
 
 export function assertExplicitCodexModelAllowed(model: string, availableModels: string[]): void {

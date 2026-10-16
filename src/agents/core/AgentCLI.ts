@@ -4,7 +4,7 @@ import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
-import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import { ConfigLoader, CodeMieConfigOptions, resolveProfileModels } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -718,6 +718,13 @@ export class AgentCLI {
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
         console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
         console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
+
+        // When the active profile has 2+ models, point at the in-place switch
+        // command too — it's narrower than --model (only ever offers this
+        // profile's own list) and persists, unlike the one-off override above.
+        if (resolveProfileModels(config).length >= 2) {
+          console.log(chalk.white('  Or run: ') + chalk.cyan('codemie models switch') + chalk.white(' to pick a compatible model from this profile.'));
+        }
       } else {
         console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }

@@ -299,6 +299,13 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
 
     env.CODEMIE_COPILOT_AVAILABLE_MODELS = availableModels.join(',');
 
+    if (env.CODEMIE_PROFILE_MODELS) {
+      console.warn(
+        '[codemie-copilot] This profile has multiple models, but GitHub Copilot CLI has no in-session model switcher — ' +
+        'it always launches with the active model only. Run `codemie models switch` and relaunch to use a different one.'
+      );
+    }
+
     await super.setupProxy(env);
   }
 
