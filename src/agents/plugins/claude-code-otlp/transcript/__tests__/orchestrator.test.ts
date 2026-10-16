@@ -15,8 +15,8 @@
  * never touch the real `~/.codemie`.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
@@ -36,6 +36,7 @@ vi.mock('../../event-fields/session-env-fields.js', () => ({
 
 import {
   openMainTranscriptPass,
+  openPostCompactPass,
   openSessionStartPass,
   openSessionEnvCheckPass,
   openSubagentPass,
@@ -326,6 +327,179 @@ describe('openMainTranscriptPass — compactions', () => {
 
     expect(summary.compaction_count).toBe(1);
     expect(summary.compaction_pre_tokens).toBe(1000);
+  });
+
+  it('surfaces a new boundary line as an agent.session.compact.done record, via openPostCompactPass only', async () => {
+    const sessionId = 'session-compaction-done';
+    const transcriptPath = writeTranscript('transcript-compaction-done.jsonl', [
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+    ]);
+
+    const pass = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+    await pass.finalize(true);
+
+    expect(pass.events).toEqual([
+      {
+        type: 'agent.session.compact.done',
+        session_id: sessionId,
+        pre_tokens: 1000,
+        post_tokens: 300,
+        dropped_tokens: 700,
+        duration_ms: 60_000,
+        timestamp: '2026-10-01T00:10:00.000Z',
+      },
+    ]);
+  });
+
+  it('never surfaces agent.session.compact.done on Stop/PreCompact/StopFailure/SessionEnd — only openPostCompactPass derives it', async () => {
+    const boundaryLine = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: '2026-10-01T00:10:00.000Z',
+      compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+    });
+
+    for (const trigger of ['Stop', 'PreCompact', 'StopFailure', 'SessionEnd'] as const) {
+      const sessionId = `session-compaction-not-done-${trigger}`;
+      const transcriptPath = writeTranscript(`transcript-compaction-not-done-${trigger}.jsonl`, [boundaryLine]);
+
+      const pass = await openMainTranscriptPass(sessionId, transcriptPath, trigger);
+      await pass.finalize(true);
+
+      expect(pass.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+    }
+  });
+
+  it('does not re-surface agent.session.compact.done for a boundary line already reported by an earlier PostCompact pass', async () => {
+    const sessionId = 'session-compaction-done-once';
+    const transcriptPath = writeTranscript('transcript-compaction-done-once.jsonl', [
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+    ]);
+
+    const first = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+    await first.finalize(true);
+    expect(first.events.some((e) => e.type === 'agent.session.compact.done')).toBe(true);
+
+    const second = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+    await second.finalize(true);
+    expect(second.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+  });
+
+  it('reports a second, later compaction without re-reporting the first', async () => {
+    const sessionId = 'session-compaction-twice';
+    const transcriptPath = writeTranscript('transcript-compaction-twice.jsonl', [
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+    ]);
+
+    const first = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+    await first.finalize(true);
+    expect(first.events.filter((e) => e.type === 'agent.session.compact.done')).toHaveLength(1);
+
+    appendFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:20:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 2000, postTokens: 500, durationMs: 30_000 },
+      }) + '\n'
+    );
+
+    const second = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+    await second.finalize(true);
+    const secondDone = second.events.filter((e) => e.type === 'agent.session.compact.done');
+    expect(secondDone).toHaveLength(1);
+    expect(secondDone[0].timestamp).toBe('2026-10-01T00:20:00.000Z');
+  });
+
+  it('waits (lock-free) past a compact_boundary line that lands just after PostCompact fires, rather than missing it', async () => {
+    const sessionId = 'session-compaction-race';
+    const transcriptPath = writeTranscript('transcript-compaction-race.jsonl', []);
+
+    const passPromise = openPostCompactPass(sessionId, transcriptPath, 2_000);
+
+    // The boundary line lands on disk shortly after the hook fires — after the pass's first,
+    // immediate read already came up empty, but well inside the polling wait budget.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    appendFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }) + '\n'
+    );
+
+    const pass = await passPromise;
+    await pass.finalize(true);
+
+    expect(pass.events).toEqual([
+      {
+        type: 'agent.session.compact.done',
+        session_id: sessionId,
+        pre_tokens: 1000,
+        post_tokens: 300,
+        dropped_tokens: 700,
+        duration_ms: 60_000,
+        timestamp: '2026-10-01T00:10:00.000Z',
+      },
+    ]);
+  });
+
+  it('gives up quietly — no synthetic/duplicate event — once the wait budget is exhausted with no boundary line ever appearing', async () => {
+    const sessionId = 'session-compaction-never';
+    const transcriptPath = writeTranscript('transcript-compaction-never.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+    ]);
+
+    // A tiny real budget — the boundary line never shows up in this test either way, so this just
+    // keeps the test fast instead of waiting out the full production budget.
+    const pass = await openPostCompactPass(sessionId, transcriptPath, 50);
+    await pass.finalize(true);
+
+    // The one usage line is still reported; no agent.session.compact.done shows up anywhere.
+    expect(pass.events).toHaveLength(1);
+    expect(pass.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+  });
+
+  it('does not hold the per-session lock during the lock-free wait, so a sibling pass is never blocked by it', async () => {
+    const sessionId = 'session-compaction-no-lock-contention';
+    const transcriptPath = writeTranscript('transcript-compaction-no-lock-contention.jsonl', []);
+
+    // No boundary line ever appears, so openPostCompactPass spends its whole wait budget
+    // lock-free. A sibling openMainTranscriptPass for the same session must still complete
+    // promptly instead of queueing behind it.
+    const postCompactPromise = openPostCompactPass(sessionId, transcriptPath, 300);
+
+    const siblingTranscriptPath = writeTranscript('transcript-compaction-no-lock-contention-sibling.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+    ]);
+    const started = Date.now();
+    const sibling = await openMainTranscriptPass(sessionId, siblingTranscriptPath, 'Stop');
+    await sibling.finalize(true);
+    const siblingDurationMs = Date.now() - started;
+
+    expect(siblingDurationMs).toBeLessThan(300);
+    expect(sibling.events.some((e) => e.type === 'agent.usage.request')).toBe(true);
+
+    const postCompactPass = await postCompactPromise;
+    await postCompactPass.finalize(true);
   });
 });
 
