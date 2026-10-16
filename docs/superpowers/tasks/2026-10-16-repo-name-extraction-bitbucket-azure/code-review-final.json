@@ -1,0 +1,51 @@
+{
+  "decision": "request-changes",
+  "rationale": "Blind and verification-gap lenses did not run (compact profile); both ran lenses were parseable and nothing was truncated. Acceptance is partial on the 'unparseable remote behaviour unchanged' criterion because a lone '~' segment now yields an empty/bogus name, and one degenerate legacy visualstudio.com path returns a bare org. 0 deferred, 0 dismissed.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "HTTPS Bitbucket scm/PROJ/repo -> proj/repo", "status": "pass", "notes": "scm strip + lowercase; tested" },
+    { "kind": "story-ac", "item": "HTTPS personal repo -> jdoe/repo", "status": "pass", "notes": "scm and ~ dropped; tested" },
+    { "kind": "story-ac", "item": "SSH Bitbucket remotes -> proj/repo, jdoe/repo", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "Whole result lower-cased", "status": "pass", "notes": "final toLowerCase; tested" },
+    { "kind": "story-ac", "item": "~ elsewhere preserved", "status": "pass", "notes": "only leading char of first segment stripped; tested" },
+    { "kind": "story-ac", "item": "org.visualstudio.com/Proj/_git/repo -> org/proj/repo", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "DefaultCollection dropped", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "vs-ssh.visualstudio.com v3 form", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "dev.azure.com unchanged apart from lower-casing", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "scm preserved on non-Bitbucket shapes", "status": "pass", "notes": "two-segment, SSH, non-leading tested" },
+    { "kind": "story-ac", "item": "_git/v3 preserved on non-Azure hosts", "status": "pass", "notes": "tested" },
+    { "kind": "story-ac", "item": "Unparseable remote behaviour unchanged", "status": "partial", "notes": "https://example.com/ untested; lone '~' segment yields empty segment" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "standards audit not run for this profile" },
+    { "kind": "code-quality", "status": "na", "notes": "standards audit not run for this profile" },
+    { "kind": "security", "status": "na", "notes": "standards audit not run for this profile" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/processes.ts",
+      "line": 446,
+      "title": "Legacy visualstudio.com path with no repo returns bare org",
+      "problem": "For a *.visualstudio.com HTTPS remote whose path contains only _git and/or DefaultCollection, rest is empty and result becomes [org], so a bare org name is returned instead of an owner/repo-shaped value or undefined.",
+      "impact": "Malformed or degenerate remotes yield a name lacking owner/repo shape, grouping analytics wrongly. Reachability is confirmed in code but requires an unusual remote.",
+      "recommendation": "After computing rest, return undefined when rest.length === 0."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/utils/processes.ts",
+      "line": 459,
+      "title": "Lone '~' first segment yields empty repo name",
+      "problem": "The leading-tilde strip slices result[0] unconditionally, so a first segment of exactly '~' becomes an empty string. Result is '' or '/repo' and the result.length === 0 guard does not catch it. This also leaves the story criterion 'unparseable remote behaviour unchanged' partial (acceptance lens), since previously such input returned '~'-based or undefined output.",
+      "impact": "A bogus empty or leading-slash repo name is emitted instead of undefined or the prior value. Required acceptance criterion is only partially met.",
+      "recommendation": "Strip only when result[0].length > 1 (e.g. if (result[0].startsWith('~') && result[0].length > 1)), and return undefined when the final joined value is empty. Add a test for https://example.com/ and a lone '~' segment."
+    }
+  ]
+}

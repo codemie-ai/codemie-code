@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-16T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Extends one parser (parseGitRemoteUrl) with well-defined URL variants (Bitbucket scm/~, legacy visualstudio.com, lower-casing); minor edge decisions only." },
+    { "dimension": "technical_risk", "reason": "Existing parser pattern is extended; pure string parsing with no auth, I/O or performance impact; edge cases covered by table-style tests in processes-git.test.ts." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

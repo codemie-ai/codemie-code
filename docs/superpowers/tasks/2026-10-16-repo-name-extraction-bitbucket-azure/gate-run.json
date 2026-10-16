@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15655_repo-name-extraction",
+  "head": "76ffa4c4e604bdb058330a382b5e2175ec882d2b",
+  "runner": "npm",
+  "started_at": "2026-10-16T13:50:00Z",
+  "completed_at": "2026-10-16T14:08:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10736,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 53493,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 19213,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 33910,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 169141,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "12 failed/5234 passed in 5 files: AgentCLI-model-source, providers-core (claude.enrichArgs), codex/opencode/pi incremental-sync. Failures are outside changed files (src/utils/processes.ts and its test); appear environment-dependent (local env/profile leakage, e.g. CODEMIE_MODEL_SOURCE=env, real profile baseUrl, --settings vs --plugin-dir, skills subprocess). Not verified against clean checkout (git stash disallowed)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 144241,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "15 failed/269 passed in 3 files: skills-integration, sso-claude-plugin, cli-commands/skills. Failures are outside changed files (src/utils/processes.ts and its test); appear environment-dependent (local env/profile leakage, e.g. CODEMIE_MODEL_SOURCE=env, real profile baseUrl, --settings vs --plugin-dir, skills subprocess). Not verified against clean checkout (git stash disallowed)."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 5962,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output 'No staged changes to scan' - nothing scanned (changes unstaged); CI scans for real."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Operates on staged files only; nothing staged. Lint and typecheck run in full instead."
+    }
+  ],
+  "failures": {
+    "unit": "See unit failures: 12 tests, 5 files (none touch processes.ts)",
+    "integration": "15 tests, 3 files (none touch processes.ts)"
+  }
+}
