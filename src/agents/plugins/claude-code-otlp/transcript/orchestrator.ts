@@ -528,6 +528,12 @@ function finalizeOf(
  * for `agent.git.snapshot`. Also records `sessionEnvFields` as the baseline
  * {@link openSessionEnvCheckPass} diffs against later in the session. Derives no events of its
  * own (`events` is always `[]`).
+ *
+ * First-write-wins: Claude Code fires `SessionStart` again later in the same session (e.g.
+ * `source: 'compact'` after `/compact`, `source: 'resume'` on `claude -c`), always under the
+ * same `sessionId`. Only the first fire — the one that finds no start recorded yet — sets
+ * `gitHeadStart`/`sessionStartedAt`; later fires leave the already-persisted real session start
+ * untouched, so `agent.git.snapshot`'s commit window always spans the whole session.
  */
 export async function openSessionStartPass(
   sessionId: string,
@@ -538,8 +544,12 @@ export async function openSessionStartPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    state.gitHeadStart = gitHeadStart;
-    state.sessionStartedAt = new Date().toISOString();
+    if (!state.gitHeadStart) {
+      state.gitHeadStart = gitHeadStart;
+    }
+    if (!state.sessionStartedAt) {
+      state.sessionStartedAt = new Date().toISOString();
+    }
     state.lastSessionEnvFields = sessionEnvFields;
     return { events: [], finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {

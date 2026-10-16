@@ -1262,6 +1262,31 @@ describe('openSessionStartPass', () => {
     await endPass.finalize(true);
   });
 
+  it('a later SessionStart fire (e.g. source: compact/resume) does not overwrite the real session start', async () => {
+    const sessionId = 'session-start-second-fire';
+    const transcriptPath = writeTranscript('transcript-session-start-second-fire.jsonl', [noUsageLine('uuid-main')]);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const firstPass = await openSessionStartPass(sessionId, 'sha-real-start', sessionEnvFixture);
+      await firstPass.finalize(true);
+
+      // A later SessionStart fire for the SAME session (compact/resume) resolves a different
+      // HEAD and a later wall-clock time — neither should replace what was recorded first.
+      vi.setSystemTime(new Date('2026-01-01T01:00:00.000Z'));
+      const secondPass = await openSessionStartPass(sessionId, 'sha-after-compact', sessionEnvFixture);
+      await secondPass.finalize(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const endPass = await openSessionEndPass(sessionId, transcriptPath, '/repo');
+    expect(endPass.gitHeadStart).toBe('sha-real-start');
+    expect(endPass.sessionStartedAt).toBe('2026-01-01T00:00:00.000Z');
+    await endPass.finalize(true);
+  });
+
   it('also records the sessionEnvFields baseline for a later openSessionEnvCheckPass to diff against', async () => {
     const sessionId = 'session-start-env-baseline';
     const startPass = await openSessionStartPass(sessionId, 'sha-abc123', sessionEnvFixture);
