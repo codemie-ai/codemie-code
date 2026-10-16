@@ -22,6 +22,9 @@
  */
 const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})/;
 
+/** Leading provider namespace, e.g. `openai.`, `azure.` or `azure_openai/`. */
+const PROVIDER_PREFIX_PATTERN = /^[a-z_]+[./]/i;
+
 /** Identity of a model, independent of which dated deployment carries it. */
 interface ModelIdentity {
   major: number;
@@ -47,7 +50,7 @@ export interface CodexModelResolution {
  * for `gpt-5`.
  */
 function parseIdentity(name: string): ModelIdentity | null {
-  const lower = name.trim().toLowerCase();
+  const lower = name.trim().toLowerCase().replace(PROVIDER_PREFIX_PATTERN, '');
   const dateMatch = lower.match(DEPLOYMENT_DATE_PATTERN);
   const withoutDate = dateMatch ? lower.slice(0, dateMatch.index) : lower;
 
@@ -88,7 +91,7 @@ const COMPATIBLE_NAME_PATTERN = /codex|^gpt[-._]?5(?:[-._]|\b)|^gpt[-._]?6(?:[-.
  */
 export function isCodexServableDeployment(name: string): boolean {
   if (INCOMPATIBLE_NAME_PATTERN.test(name)) return false;
-  return COMPATIBLE_NAME_PATTERN.test(name);
+  return COMPATIBLE_NAME_PATTERN.test(name.trim().replace(PROVIDER_PREFIX_PATTERN, ''));
 }
 
 /**
