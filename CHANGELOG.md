@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- `codemie analytics --include-external` now finds oh-my-pi (`omp`) sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record
+- Native (untracked) Pi and oh-my-pi sessions now report tool calls, skills and sub-agents; oh-my-pi `/skill:` prompts, `skill://` loads and `task` dispatches are recognized, and `sdlc-factory/…`, `sdlc-standard`, `sdlc-doctor` and `sdlc-status` mark a session as CodeMie AI Factory
+
 ## [0.16.6] - 2026-11-05
 
 ### Added

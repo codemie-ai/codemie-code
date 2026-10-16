@@ -222,3 +222,65 @@ describe('extractPiNamedInvocations', () => {
     expect(result).toEqual({ skillInvocations: {}, agentInvocations: {}, commandInvocations: {} });
   });
 });
+
+describe('extractPiNamedInvocations — oh-my-pi shapes', () => {
+  function skillPrompt(id: string, name: string): Record<string, unknown> {
+    return { type: 'custom_message', customType: 'skill-prompt', id, details: { name, path: `/skills/${name}/SKILL.md` } };
+  }
+
+  function readResult(id: string, url: string, resolvedPath: string, isError = false): Record<string, unknown> {
+    return {
+      type: 'message',
+      id,
+      message: {
+        role: 'toolResult',
+        toolCallId: `call-${id}`,
+        toolName: 'read',
+        content: [],
+        isError,
+        details: { resolvedPath, meta: { source: { type: 'internal', value: url } } },
+      },
+    };
+  }
+
+  function taskCall(id: string, args: Record<string, unknown>): Record<string, unknown> {
+    const entry = subagentCall(id, args) as { message: { content: Array<Record<string, unknown>> } };
+    entry.message.content[0].name = 'task';
+    return entry;
+  }
+
+  it('counts a /skill: prompt by the name it carries', () => {
+    const { skillInvocations } = extractPiNamedInvocations([skillPrompt('p1', 'sdlc-light'), skillPrompt('p2', 'sdlc-light')]);
+    expect(skillInvocations).toEqual({ 'sdlc-light': 2 });
+  });
+
+  it('counts a skill the model loads, but not the skill\'s other files or a failed read', () => {
+    const { skillInvocations } = extractPiNamedInvocations([
+      readResult('r1', 'skill://herdr', '/skills/herdr/SKILL.md'),
+      readResult('r2', 'skill://sdlc-factory/code-review/SKILL.md', '/skills/code-review/SKILL.md'),
+      readResult('r3', 'skill://herdr/references/panes.md', '/skills/herdr/references/panes.md'),
+      readResult('r4', 'skill://missing', '/skills/missing/SKILL.md', true),
+    ]);
+    expect(skillInvocations).toEqual({ herdr: 1, 'sdlc-factory/code-review': 1 });
+  });
+
+  it('does not count the model re-reading a skill the user just invoked, until the next prompt', () => {
+    const { skillInvocations } = extractPiNamedInvocations([
+      skillPrompt('p1', 'babysit-mr'),
+      readResult('r1', 'skill://babysit-mr', '/skills/babysit-mr/SKILL.md'),
+      userEntry('u1', 'check again'),
+      readResult('r2', 'skill://babysit-mr', '/skills/babysit-mr/SKILL.md'),
+    ]);
+    expect(skillInvocations).toEqual({ 'babysit-mr': 2 });
+  });
+
+  it('counts each task entry under its agent, defaulting to the task agent', () => {
+    const { agentInvocations } = extractPiNamedInvocations([
+      taskCall('t1', { tasks: [{ agent: 'plan-writer', task: 'plan' }, { task: 'explore' }] }),
+      taskCall('t2', { tasks: JSON.stringify([{ agent: 'plan-writer' }]) }),
+      taskCall('t3', { agent: 'scout', task: 'flat call with batching disabled' }),
+      taskCall('t4', { tasks: '{not json' }),
+    ]);
+    expect(agentInvocations).toEqual({ 'plan-writer': 2, task: 1, scout: 1 });
+  });
+});

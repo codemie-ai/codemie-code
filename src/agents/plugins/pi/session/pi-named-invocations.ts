@@ -14,6 +14,16 @@
  *             transcript can recover it. Those counts come from the run ledger, which the
  *             CodeMie extension records from inside Pi at input time.
  *
+ * oh-my-pi (`omp`) writes the same transcript format but records these differently:
+ *
+ * - `/skill:<name>` becomes a `custom_message` entry with `customType: 'skill-prompt'` and the
+ *   name in `details.name`, rather than a wrapper inside the user message.
+ * - A skill the model loads itself is a `read` of `skill://<name>`; its `toolResult` names the
+ *   resolved `SKILL.md`. Reads of a skill's other files (`references/…`, `scripts/…`) are not
+ *   invocations and do not count.
+ * - A delegated agent is a `task` tool call; each entry of `arguments.tasks` names its agent,
+ *   and an entry without one runs the default `task` agent.
+ *
  * @see ../pi.extension.ts — PiRunLedger.commandInvocations
  */
 
@@ -23,6 +33,7 @@ import {
   extractPiToolCalls,
   isPiAssistantMessage,
   isPiMessageEntry,
+  isPiToolResultMessage,
   isPiUserMessage,
   type PiEntry,
   type PiUserMessage,
@@ -32,6 +43,16 @@ export type { NamedInvocationCounts };
 
 /** Name of the tool `pi-subagents` registers for delegating to a child agent. */
 const SUBAGENT_TOOL = 'subagent';
+
+/** oh-my-pi's delegation tool, and the agent an entry of its `tasks` runs when it names none. */
+const OMP_TASK_TOOL = 'task';
+const OMP_DEFAULT_TASK_AGENT = 'task';
+
+/** oh-my-pi's `customType` for the entry a user `/skill:<name>` command expands into. */
+const OMP_SKILL_PROMPT = 'skill-prompt';
+
+/** `skill://<name>[/SKILL.md]` — oh-my-pi stores the URL with any `:selector` already peeled. */
+const OMP_SKILL_URL = /^skill:\/\/(.+?)(?:\/SKILL\.md)?$/;
 
 /**
  * The opening of Pi's skill wrapper, which only Pi itself writes (`_expandSkillCommand` in
@@ -189,6 +210,56 @@ function subagentNames(args: Record<string, unknown> | undefined): string[] {
 }
 
 /**
+ * Agent names launched by one oh-my-pi `task` call: one per `tasks[]` entry. omp also accepts
+ * `tasks` as a JSON-encoded string, and a flat `{agent, task}` call when batching is disabled.
+ */
+function ompTaskAgents(args: Record<string, unknown> | undefined): string[] {
+  let tasks: unknown = args?.tasks;
+  if (typeof tasks === 'string') {
+    try {
+      tasks = JSON.parse(tasks);
+    } catch {
+      return [];
+    }
+  }
+  if (tasks === undefined && typeof args?.task === 'string') {
+    tasks = [args];
+  }
+  if (!Array.isArray(tasks)) {
+    return [];
+  }
+  return tasks
+    .filter((task): task is Record<string, unknown> => !!task && typeof task === 'object')
+    .map((task) => (typeof task.agent === 'string' && task.agent.trim() ? task.agent.trim() : OMP_DEFAULT_TASK_AGENT));
+}
+
+/** The `details` object an oh-my-pi entry or tool result carries, if any. */
+function detailsOf(value: object): object | undefined {
+  return 'details' in value && value.details && typeof value.details === 'object' ? value.details : undefined;
+}
+
+/** The skill name an oh-my-pi `skill-prompt` entry carries, if `raw` is one. */
+function ompSkillPromptName(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  if (!('type' in raw) || raw.type !== 'custom_message') return undefined;
+  if (!('customType' in raw) || raw.customType !== OMP_SKILL_PROMPT) return undefined;
+  const details = detailsOf(raw);
+  const name = details && 'name' in details ? details.name : undefined;
+  return typeof name === 'string' && name.trim() ? name.trim() : undefined;
+}
+
+/** The skill a successful oh-my-pi `read` loaded, when it resolved to that skill's `SKILL.md`. */
+function ompSkillReadName(result: object): string | undefined {
+  const details = detailsOf(result);
+  if (!details || !('resolvedPath' in details) || typeof details.resolvedPath !== 'string') return undefined;
+  if (!details.resolvedPath.endsWith('/SKILL.md')) return undefined;
+  const meta = 'meta' in details ? details.meta : undefined;
+  const source = meta && typeof meta === 'object' && 'source' in meta ? meta.source : undefined;
+  const url = source && typeof source === 'object' && 'value' in source ? source.value : undefined;
+  return typeof url === 'string' ? OMP_SKILL_URL.exec(url)?.[1] : undefined;
+}
+
+/**
  * Extract skill and agent name counts from Pi session entries.
  *
  * Safe against missing or malformed fields — anything that is not a recognized shape is
@@ -197,8 +268,18 @@ function subagentNames(args: Record<string, unknown> | undefined): string[] {
 export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInvocationCounts {
   const skillInvocations: Record<string, number> = {};
   const agentInvocations: Record<string, number> = {};
+  // A `/skill:x` prompt already injected the skill, so the model re-reading `skill://x` before
+  // the next user message is the same invocation, not a second one.
+  let promptedThisTurn: string | undefined;
 
   for (const raw of entries) {
+    const promptedSkill = ompSkillPromptName(raw);
+    if (promptedSkill) {
+      bump(skillInvocations, promptedSkill);
+      promptedThisTurn = promptedSkill;
+      continue;
+    }
+
     const entry = raw as PiEntry;
     if (!isPiMessageEntry(entry)) {
       continue;
@@ -206,6 +287,7 @@ export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInv
     const message = entry.message;
 
     if (isPiUserMessage(message)) {
+      promptedThisTurn = undefined;
       for (const text of userTextBlocks(message)) {
         const { name } = parseSkillWrapper(text);
         if (name) bump(skillInvocations, name);
@@ -215,11 +297,18 @@ export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInv
 
     if (isPiAssistantMessage(message)) {
       for (const toolCall of extractPiToolCalls(message)) {
-        if (toolCall.name !== SUBAGENT_TOOL) continue;
-        for (const agent of subagentNames(toolCall.arguments)) {
-          bump(agentInvocations, agent);
+        if (toolCall.name === SUBAGENT_TOOL) {
+          for (const agent of subagentNames(toolCall.arguments)) bump(agentInvocations, agent);
+        } else if (toolCall.name === OMP_TASK_TOOL) {
+          for (const agent of ompTaskAgents(toolCall.arguments)) bump(agentInvocations, agent);
         }
       }
+      continue;
+    }
+
+    if (isPiToolResultMessage(message) && message.toolName === 'read' && message.isError !== true) {
+      const loaded = ompSkillReadName(message);
+      if (loaded && loaded !== promptedThisTurn) bump(skillInvocations, loaded);
     }
   }
 

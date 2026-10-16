@@ -243,7 +243,9 @@ describe('discoverSessions — unscoped listing', () => {
 
   it('does not treat a custom session directory as one project among siblings', async () => {
     // `PI_CODING_AGENT_SESSION_DIR` is not part of the per-cwd layout, so its neighbours are
-    // arbitrary directories with nothing to do with Pi.
+    // arbitrary directories with nothing to do with Pi. It says nothing about oh-my-pi's root.
+    const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
+    const restoreHome = redirectHomeDir(home);
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(projectDir);
     try {
       makeTranscript('mine.jsonl', { cwd: '/some/other/repo' });
@@ -252,15 +254,47 @@ describe('discoverSessions — unscoped listing', () => {
         join(sibling, 'stranger.jsonl'),
         `${JSON.stringify({ type: 'session', version: 3, id: 'stranger', timestamp: new Date().toISOString(), cwd: '/elsewhere' })}\n`
       );
+      makeProjectTranscript(join(home, '.omp', 'agent', 'sessions'), '-omp-project', 'omp.jsonl', '/omp/repo');
 
       const found = await new PiSessionAdapter(PiPluginMetadata).discoverSessions({
         env: { PI_CODING_AGENT_SESSION_DIR: sessionDir },
       });
 
       rmSync(sibling, { recursive: true, force: true });
-      expect(found.map((s) => s.sessionId)).toEqual(['mine']);
+      expect(found.map((s) => s.sessionId).sort()).toEqual(['mine', 'omp']);
     } finally {
       cwdSpy.mockRestore();
+      restoreHome();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('reads oh-my-pi transcripts, whose session header follows a title record', async () => {
+    const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
+    const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
+    const restoreHome = redirectHomeDir(home);
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(here);
+    try {
+      const dir = join(home, '.omp', 'agent', 'sessions', '-omp-project');
+      mkdirSync(dir, { recursive: true });
+      const header = { type: 'session', version: 3, id: 'omp-1', timestamp: new Date().toISOString(), cwd: '/omp/repo' };
+      const title = { type: 'title', v: 1, title: 'Fix things', updatedAt: new Date().toISOString(), pad: '    ' };
+      writeFileSync(join(dir, 'titled.jsonl'), `${JSON.stringify(title)}\n${JSON.stringify(header)}\n`);
+      // Only a title may precede the header; any other record still disqualifies the file.
+      writeFileSync(
+        join(dir, 'foreign.jsonl'),
+        `${JSON.stringify({ type: 'note' })}\n${JSON.stringify({ ...header, id: 'foreign' })}\n`
+      );
+
+      const found = await new PiSessionAdapter(PiPluginMetadata).discoverSessions({});
+
+      expect(found.map((s) => s.sessionId)).toEqual(['omp-1']);
+      expect(found[0]?.projectPath).toBe('/omp/repo');
+    } finally {
+      cwdSpy.mockRestore();
+      restoreHome();
+      rmSync(here, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

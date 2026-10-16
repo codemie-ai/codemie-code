@@ -25,6 +25,14 @@ describe('detectSessionSource', () => {
     expect(detectSessionSource(session({ command: ['sdlc-autonomous'] }))).toBe('CodeMie AI Factory');
   });
 
+  it('recognizes the slash-namespaced and bare skill names oh-my-pi records', () => {
+    expect(detectSessionSource(session({ skill: ['sdlc-factory/code-review'] }))).toBe('CodeMie AI Factory');
+    for (const skill of ['sdlc-standard', 'sdlc-doctor', 'sdlc-status']) {
+      expect(detectSessionSource(session({ skill: [skill] }))).toBe('CodeMie AI Factory');
+    }
+    expect(detectSessionSource(session({ skill: ['superpowers/using-superpowers'] }))).toBe('Superpowers');
+  });
+
   it('labels a session with a superpowers skill as Superpowers when no sdlc-factory signal is present', () => {
     expect(detectSessionSource(session({ skill: ['superpowers:test-driven-development'] }))).toBe('Superpowers');
   });

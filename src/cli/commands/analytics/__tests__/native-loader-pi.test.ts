@@ -151,6 +151,33 @@ describe('synthesizePiRawSession', () => {
     expect(synthesizePiRawSession('pi', descriptor, conversation).deltas[0].tools).toEqual({});
   });
 
+  it('derives tools, skills and agents from the transcript when the adapter supplies none', () => {
+    const call = (id: string, name: string, args: Record<string, unknown>): unknown =>
+      assistantEntry(id, '2026-08-07T08:15:45.000Z', 'gpt-5', {
+        content: [{ type: 'toolCall', id: `c-${id}`, name, arguments: args }],
+      });
+    const result = (id: string, callId: string, toolName: string, isError: boolean, details?: unknown): unknown =>
+      entry('message', id, '2026-08-07T08:15:50.000Z', {
+        message: { role: 'toolResult', toolCallId: callId, toolName, content: [], isError, details, timestamp: 1 },
+      });
+    const parsed = piParsed([
+      entry('custom_message', 'p1', '2026-08-07T08:15:40.000Z', { customType: 'skill-prompt', details: { name: 'sdlc-light' } }),
+      call('a1', 'read', { path: 'skill://qa-gates' }),
+      result('r1', 'c-a1', 'read', false, { resolvedPath: '/s/qa-gates/SKILL.md', meta: { source: { value: 'skill://qa-gates' } } }),
+      call('a2', 'bash', { command: 'false' }),
+      result('r2', 'c-a2', 'bash', true),
+      result('r3', 'c-a2', 'bash', true), // a duplicate result never counts twice
+      call('a3', 'task', { tasks: [{ agent: 'plan-writer', task: 'plan' }] }),
+    ]);
+
+    const [delta] = synthesizePiRawSession('pi', descriptor, parsed).deltas;
+
+    expect(delta.tools).toEqual({ read: 1, bash: 1 });
+    expect(delta.toolStatus).toEqual({ read: { success: 1, failure: 0 }, bash: { success: 0, failure: 1 } });
+    expect(delta.skillInvocations).toEqual({ 'sdlc-light': 1, 'qa-gates': 1 });
+    expect(delta.agentInvocations).toEqual({ 'plan-writer': 1 });
+  });
+
   it('reports no git branch, because Pi records none anywhere in a v3 transcript', () => {
     // Characterization, not a bug: the v3 header carries id/timestamp/cwd/parentSession only,
     // and no entry carries a branch either. Native Pi sessions therefore bucket under
