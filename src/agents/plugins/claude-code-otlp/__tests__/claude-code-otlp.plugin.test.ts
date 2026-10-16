@@ -356,6 +356,54 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 
+  it('forwards skill_name on SubagentStop when the meta sidecar names a forked skill', async () => {
+    readSubagentMetaMock.mockResolvedValue({ spawnDepth: 1, description: '/code-review', name: 'code-review' });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-6.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
+  });
+
+  it('does not add skill_name on SubagentStop for a regular (non-skill) agent dispatch', async () => {
+    readSubagentMetaMock.mockResolvedValue({ spawnDepth: 0, description: 'Explore the repo' });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStop',
+        agent_transcript_path: '/tmp/agent-sub-7.jsonl',
+        agent_type: 'Explore',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents()[0]).not.toHaveProperty('skill_name');
+  });
+
+  it('forwards skill_name on SubagentStart when the meta sidecar names a forked skill', async () => {
+    readSubagentMetaMock.mockResolvedValue({ spawnDepth: 1, description: '/code-review', name: 'code-review' });
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const rawEvent = JSON.stringify(
+      hookEvent({
+        hook_event_name: 'SubagentStart',
+        agent_transcript_path: '/tmp/agent-sub-6.jsonl',
+        agent_type: 'general-purpose',
+      })
+    );
+
+    await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'code-review' });
+  });
+
   it('forwards every event a pass returns (the raw event plus any derived events) as one batch, in order', async () => {
     const derivedUsageEvent = { type: 'agent.usage.request' };
     const derivedSummaryEvent = { type: 'agent.session.summary' };

@@ -38,6 +38,9 @@ interface SubagentMeta {
   agentType?: string;
   spawnDepth?: number;
   description?: string;
+  /** The forked skill's name, when this subagent is actually a slash-command-invoked skill run
+   *  in the background (EPMCDME-15968) — absent for a regular agent dispatch. */
+  name?: string;
 }
 
 /**
@@ -53,6 +56,7 @@ export async function readSubagentMeta(jsonlFilePath: string): Promise<SubagentM
     if (typeof metaRaw.agentType === 'string') meta.agentType = metaRaw.agentType;
     if (typeof metaRaw.spawnDepth === 'number') meta.spawnDepth = metaRaw.spawnDepth;
     if (typeof metaRaw.description === 'string') meta.description = metaRaw.description;
+    if (typeof metaRaw.name === 'string') meta.name = metaRaw.name;
   } catch {
     // sidecar absent or malformed — proceed without it.
   }

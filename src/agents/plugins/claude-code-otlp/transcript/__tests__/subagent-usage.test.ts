@@ -185,6 +185,20 @@ describe('readSubagentMeta', () => {
     const meta = await readSubagentMeta('C:/nonexistent/agent-ghost.jsonl');
     expect(meta).toEqual({});
   });
+
+  it("parses the skill name from a forked-skill subagent's meta sidecar", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'codemie-subagent-meta-'));
+    const jsonlPath = join(tmpDir, 'agent-x2.jsonl');
+    await writeFile(jsonlPath, '');
+    await writeFile(
+      join(tmpDir, 'agent-x2.meta.json'),
+      JSON.stringify({ agentType: 'general-purpose', name: 'code-review', spawnDepth: 1, description: '/code-review' })
+    );
+
+    const meta = await readSubagentMeta(jsonlPath);
+
+    expect(meta.name).toBe('code-review');
+  });
 });
 
 describe('buildUsageTotals', () => {

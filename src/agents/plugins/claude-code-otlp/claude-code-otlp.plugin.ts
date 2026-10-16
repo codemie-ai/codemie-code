@@ -92,8 +92,22 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     if (hookInput.hook_event_name === 'SubagentStop') {
       return await this.onSubagentStopEvent(hookInput);
     }
+    if (hookInput.hook_event_name === 'SubagentStart') {
+      return await this.onSubagentStartEvent(hookInput);
+    }
 
     return { decision: 'forward', payload: [hookInput] };
+  }
+
+  private async onSubagentStartEvent(hookInput: HookInput): Promise<ClaudeForwardDecision> {
+    const agentTranscriptPath = readOptionalString(hookInput, 'agent_transcript_path');
+    if (!agentTranscriptPath) {
+      return { decision: 'forward', payload: [hookInput] };
+    }
+
+    const meta = await readSubagentMeta(agentTranscriptPath);
+    const payload = meta.name ? { ...hookInput, skill_name: meta.name } : hookInput;
+    return { decision: 'forward', payload: [payload] };
   }
 
   private async onStopEvent(hookInput: StopHookInput): Promise<ClaudeForwardDecision> {
@@ -143,7 +157,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     };
 
     const pass = await openSubagentPass(hookInput.session_id, subagentFile);
-    return { decision: 'forward', payload: [hookInput, ...pass.events], finalize: pass.finalize };
+    const stopPayload = meta.name ? { ...hookInput, skill_name: meta.name } : hookInput;
+    return { decision: 'forward', payload: [stopPayload, ...pass.events], finalize: pass.finalize };
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
