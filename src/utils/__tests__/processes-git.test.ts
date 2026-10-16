@@ -75,11 +75,11 @@ describe('detectGitRemoteRepo', () => {
     expect(await detectGitRemoteRepo('/repo')).toBe('qa-top/qa-sub/qa-subsub/deep-svc');
   });
 
-  it('normalizes Azure DevOps HTTPS and SSH remotes of the same repo to one identical name, decoding %20', async () => {
+  it('normalizes Azure DevOps HTTPS and SSH remotes of the same repo to one identical lower-cased name, decoding %20', async () => {
     mockExecAsync.mockResolvedValueOnce({ stdout: 'https://qaorg@dev.azure.com/qaorg/QA%20Project/_git/qa-ado-repo\n', stderr: '' });
-    expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/QA Project/qa-ado-repo');
+    expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/qa project/qa-ado-repo');
     mockExecAsync.mockResolvedValueOnce({ stdout: 'git@ssh.dev.azure.com:v3/qaorg/QAProject/qa-ado-repo\n', stderr: '' });
-    expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/QAProject/qa-ado-repo');
+    expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/qaproject/qa-ado-repo');
   });
 
   it('does not strip _git/v3 on non-Azure hosts, strips only a trailing .git, and returns undefined on malformed input', async () => {
@@ -108,5 +108,74 @@ describe('detectGitRemoteRepo', () => {
   it('degrades a malformed %-escape to the raw segment instead of discarding the parse', async () => {
     mockExecAsync.mockResolvedValueOnce({ stdout: 'https://github.com/org/bad%2.git\n', stderr: '' });
     expect(await detectGitRemoteRepo('/repo')).toBe('org/bad%2');
+  });
+});
+
+describe('detectGitRemoteRepo - Bitbucket Server/DC and legacy Azure DevOps remotes', () => {
+  beforeEach(() => {
+    mockExecAsync.mockReset();
+  });
+
+  it.each([
+    ['HTTPS scm project', 'https://bitbucket.example.com/scm/PROJ/repo.git', 'proj/repo'],
+    ['HTTPS scm personal repo drops scm and ~', 'https://bitbucket.example.com/scm/~jdoe/repo.git', 'jdoe/repo'],
+    ['HTTPS scm with user@ and :8443 port', 'https://user@bitbucket.example.com:8443/scm/PROJ/repo.git', 'proj/repo'],
+    ['SSH project', 'ssh://git@bitbucket.example.com:7999/PROJ/repo.git', 'proj/repo'],
+    ['SSH personal repo drops ~', 'ssh://git@bitbucket.example.com:7999/~jdoe/repo.git', 'jdoe/repo'],
+    ['scp-style project', 'git@bitbucket.example.com:PROJ/repo.git', 'proj/repo'],
+    ['scp-style personal repo drops ~', 'git@bitbucket.example.com:~jdoe/repo.git', 'jdoe/repo'],
+  ])('Bitbucket: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
+  it.each([
+    ['visualstudio.com HTTPS', 'https://org.visualstudio.com/Proj/_git/repo', 'org/proj/repo'],
+    ['visualstudio.com HTTPS with user@', 'https://org@org.visualstudio.com/Proj/_git/repo', 'org/proj/repo'],
+    ['visualstudio.com HTTPS DefaultCollection dropped', 'https://org.visualstudio.com/DefaultCollection/Proj/_git/repo', 'org/proj/repo'],
+    ['vs-ssh.visualstudio.com SSH', 'org@vs-ssh.visualstudio.com:v3/org/Proj/repo', 'org/proj/repo'],
+    ['dev.azure.com unchanged', 'https://dev.azure.com/org/Proj/_git/repo', 'org/proj/repo'],
+    ['uppercase host is lower-cased', 'https://ORG.VISUALSTUDIO.COM/Proj/_git/repo', 'org/proj/repo'],
+    ['malformed %-escape keeps raw segment', 'https://dev.azure.com/org/bad%2', 'org/bad%2'],
+  ])('Azure DevOps: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
+  it.each([
+    ['two-segment scm on github', 'https://github.com/scm/repo.git', 'scm/repo'],
+    ['SSH leading scm group', 'git@gitlab.example.com:scm/team/repo.git', 'scm/team/repo'],
+    ['scm not the leading segment', 'https://bitbucket.example.com/bitbucket/scm/PROJ/repo.git', 'bitbucket/scm/proj/repo'],
+    ['~ not at start of first segment is preserved', 'https://example.com/group/a~b/repo.git', 'group/a~b/repo'],
+    ['_git/v3 kept on non-Azure host (v3 path)', 'https://gitlab.example.com/group/v3/_git.git', 'group/v3/_git'],
+    ['_git kept on non-Azure host', 'https://git.example.com/team/_git/repo.git', 'team/_git/repo'],
+    ['lone ~ segment is kept', 'https://bitbucket.example.com/~/repo.git', '~/repo'],
+    ['lone ~ as only segment is kept', 'https://example.com/~', '~'],
+  ])('guards: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
+  it.each([
+    ['visualstudio.com _git only', 'https://org.visualstudio.com/_git'],
+    ['visualstudio.com DefaultCollection only', 'https://org.visualstudio.com/DefaultCollection'],
+    ['visualstudio.com DefaultCollection/_git only', 'https://org.visualstudio.com/DefaultCollection/_git'],
+  ])('returns undefined without a repo path: %s', async (_label, url) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBeUndefined();
+  });
+});
+
+describe('detectGitRemoteRepo - lower-casing', () => {
+  beforeEach(() => {
+    mockExecAsync.mockReset();
+  });
+
+  it.each([
+    ['generic host', 'https://github.com/MyOrg/MyRepo.git', 'myorg/myrepo'],
+    ['bare filesystem fallback', '/Home/User/Repo.git', 'user/repo'],
+  ])('lower-cases the result: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
   });
 });

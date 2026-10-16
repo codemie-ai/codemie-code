@@ -1,0 +1,2 @@
+{"task_id":"1","status":"done","commit":"76ffa4c4 (uncommitted, per policy)","test_command":"npm run typecheck && npm run lint"}
+{"task_id":"tests-bitbucket-azure","status":"done","commit":"uncommitted","test_command":"npx vitest run src/utils/__tests__/processes-git.test.ts"}
