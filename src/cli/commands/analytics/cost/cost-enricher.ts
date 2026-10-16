@@ -412,6 +412,27 @@ export async function enrichCosts(
   const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
   const seen = new Set<string>();
 
+  // Cosmetic upper bound for an OPEN session (no own observedEnd) that shares its native log
+  // file with other sessions: the next sibling's startTime within that shared-file group
+  // (`ordered` is already startTime-sorted, so filtering it preserves that order), or now if
+  // it's the last in the group. Display only — never fed into the dedup `windowEnd` above.
+  const reportedObservedEnd = new Map<string, number>();
+  const byFilePath = new Map<string, ParsedEntry[]>();
+  for (const entry of ordered) {
+    if (!entry.filePath) continue;
+    const group = byFilePath.get(entry.filePath);
+    if (group) group.push(entry);
+    else byFilePath.set(entry.filePath, [entry]);
+  }
+  for (const group of byFilePath.values()) {
+    if (group.length < 2) continue;
+    group.forEach((entry, i) => {
+      if (entry.observedEnd !== undefined) return;
+      const next = group[i + 1];
+      reportedObservedEnd.set(entry.sessionId, next ? next.startTime : Date.now());
+    });
+  }
+
   const index: SessionCostIndex = new Map();
   const unpriced = new Set<string>();
   const estimated = new Set<string>();
@@ -457,6 +478,7 @@ export async function enrichCosts(
     if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
     if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
     if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;
+    else if (reportedObservedEnd.has(entry.sessionId)) cost.observedEnd = reportedObservedEnd.get(entry.sessionId);
     if (cost.priced) {
       cost.costSource = 'native-estimate';
       cost.costBasis = 'standard-api-tokens';

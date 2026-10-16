@@ -523,6 +523,30 @@ describe('enrichCosts', () => {
     expect(index.get('3')!.costUSD).toBeCloseTo(12, 6);
     expect(summary.totalCostUSD).toBeCloseTo(21, 6);
   });
+
+  it('reports an upper-bound observedEnd (display only) for an open session sharing a file', async () => {
+    const base = 1_780_000_000_000;
+    const sessionEarlier = {
+      sessionId: 'earlier',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [],
+    };
+    const sessionLater = {
+      sessionId: 'later',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      deltas: [],
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/open-shared.jsonl', // same path for both — neither has endEvent
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [] }) as never,
+    };
+    const { index } = await enrichCosts([sessionEarlier, sessionLater] as never[], deps);
+    expect(index.get('earlier')!.observedEnd).toBe(base + 60_000); // next sibling's startTime
+    expect(index.get('later')!.observedEnd).toBeTypeOf('number');
+    expect(index.get('later')!.observedEnd!).toBeGreaterThanOrEqual(base + 60_000); // >= own startTime
+  });
 });
 
 describe('enrichCosts — dispatch cost attribution', () => {
