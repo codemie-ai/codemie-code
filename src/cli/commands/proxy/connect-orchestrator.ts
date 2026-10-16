@@ -53,6 +53,7 @@ import {
 } from './claude-code-otlp-flow.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
+import { writeOmpExtension } from './connectors/omp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { isProcessAlive } from '@/utils/processes.js';
@@ -73,6 +74,7 @@ export interface ConnectTargets {
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
+  omp?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -101,6 +103,7 @@ export type EffectiveClientType =
   | 'claude-desktop'
   | 'vscode-byok'
   | 'codex-desktop'
+  | 'codemie-daemon'
   | typeof CLAUDE_CODE_OTLP_AGENT_NAME
   | typeof COPILOT_CHAT_OTLP_AGENT_NAME
   | typeof COPILOT_CLI_OTLP_AGENT_NAME;
@@ -118,6 +121,7 @@ export interface DaemonIdentity {
     | { telemetryMode: 'claude-desktop' }
     | { clientType: 'vscode-byok' }
     | { clientType: 'codex-desktop' }
+    | { clientType: 'codemie-daemon' }
     | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CHAT_OTLP_AGENT_NAME }
     | { clientType: typeof COPILOT_CLI_OTLP_AGENT_NAME };
@@ -149,6 +153,11 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
+  }
+  // omp alone uses the generic identity `codemie proxy start` already spawns: it needs no
+  // client-specific request normalization, and a new client value would change attribution.
+  if (targets.omp && !targets.vscode) {
+    return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }
@@ -334,6 +343,7 @@ const TARGET_LIST = [
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
+  '  --omp                  oh-my-pi (installs a live CodeMie model catalog extension)',
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
   `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
   `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
@@ -341,6 +351,7 @@ const TARGET_LIST = [
   'Examples:',
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
+  '  codemie proxy connect --omp',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
@@ -353,7 +364,7 @@ const TARGET_LIST = [
 function hasAnyTarget(t: ConnectTargets): boolean {
   return Boolean(
     t.claudeDesktop || t.claudeCodeOtlp || t.copilotChatOtlp || t.copilotCliOtlp ||
-    t.vscode || t.vscodeClaudeCode || t.codexDesktop
+    t.vscode || t.vscodeClaudeCode || t.codexDesktop || t.omp
   );
 }
 
@@ -368,6 +379,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
+  if (t.omp) { flags.push('--omp'); labels.push('oh-my-pi'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }
@@ -765,6 +777,27 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
   }
 }
 
+async function runOmp(force: boolean): Promise<TargetResult> {
+  const label = 'oh-my-pi';
+  try {
+    const result = await writeOmpExtension({ force });
+    console.log(chalk.green(
+      result.changed
+        ? `\u2713 oh-my-pi extension installed (${result.path})`
+        : `\u2713 oh-my-pi extension already up to date (${result.path})`
+    ));
+    console.log(chalk.dim('  Providers codemie (OpenAI wire) and codemie-claude (Anthropic wire) list the'));
+    console.log(chalk.dim('  same catalog as `codemie models list`, with cost and context limits.'));
+    console.log(chalk.dim('  Set CODEMIE_OMP_BASE_URL to send inference through another local proxy hop.'));
+    console.log(chalk.yellow('  Restart omp, or run `omp models refresh`, to load the catalog.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] oh-my-pi configuration failed', ...sanitizeLogArgs({ error: message }));
+    return { label, ok: false, error: message };
+  }
+}
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
   const activeTargets: ConnectTargets = { ...targets };
@@ -933,6 +966,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   }
   if (targets.copilotCliOtlp) {
     results.push(await runCopilotCliOtlp({ scope: opts.scope }));
+  }
+  if (activeTargets.omp) {
+    results.push(await runOmp(Boolean(opts.force)));
   }
 
   const anyFailed = results.some((r) => !r.ok);

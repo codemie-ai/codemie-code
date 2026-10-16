@@ -36,9 +36,10 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "build": "tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline",
+    "build": "tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline && npm run bundle-omp-extension",
     "copy-plugin": "node scripts/copy-plugins.js",
     "bundle-statusline": "node scripts/bundle-statusline.mjs",
+    "bundle-omp-extension": "node scripts/bundle-omp-extension.mjs",
     "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
     "dev": "tsc --watch",
     "test": "vitest run --project unit && vitest run --project cli && vitest run --project agent",
