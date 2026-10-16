@@ -1,0 +1,4 @@
+{"task_id":"1","status":"done","commit":"57d76eb4","test_command":"npx vitest run src/cli/commands/analytics/cost/__tests__/cost-enricher.test.ts"}
+{"task_id":"2","status":"done","commit":"e2f32bfa","test_command":"npx vitest run src/cli/commands/analytics/cost/__tests__/cost-enricher.test.ts src/cli/commands/analytics/cost/__tests__/usage-readers.test.ts"}
+{"task_id":"3","status":"done","commit":"df24d2a6","test_command":"npx vitest run src/cli/commands/analytics/cost/__tests__/cost-enricher.test.ts"}
+{"task_id":"4","status":"done","commit":"89729155","test_command":"npx vitest run src/cli/commands/analytics/cost/__tests__/cost-enricher.test.ts"}

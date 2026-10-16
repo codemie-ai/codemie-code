@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "generated": "2026-10-16T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 4,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches cost-enricher.ts (session-window computation and the enrichCosts orchestration loop), usage-readers.ts (new withinWindow filter threaded through gatherUsageDeduped/gatherDedupedUsageRecords), and model-normalizer.ts (bare-Bedrock-id normalization) — all funneling through the single shared cost-enrichment pipeline that every agent plugin (claude, claude-desktop, codex family, gemini, kimi, pi, copilot-cli) relies on for billing. The windowEnd parameter change is read by multiple agent-specific dedup code paths (Claude and Pi explicitly), so this is a change that affects multiple agent workflows at once, not a single isolated component."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent in the codebase for per-session-window, cross-session dedup filtering of billing-sensitive usage records (observedEnd-bounded candidate windows, cosmetic upper-bound reporting for open sessions sharing a file). The initial implementation needed a documented follow-up 'code-review fix-up' pass (3 files, 64 insertions / 23 deletions) to correct edge cases, which is direct evidence of real correctness risk in this area (financial/cost-accuracy data), even though no security or schema-migration surface is involved."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: the windowEnd/dedup change affects the shared cost-enrichment pipeline used by multiple agent workflows (claude, claude-desktop, codex family, gemini, kimi, pi, copilot-cli), not a single self-contained component."
+  ],
+  "split_recommendation": null
+}

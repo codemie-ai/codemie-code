@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "branch": "epmcdme-15316-expired-sso-session",
+  "head": "3b8b94d26c2241ec09d1580c69f0d5e0d5fedf82",
+  "runner": "npm",
+  "started_at": "2026-10-16T14:42:00Z",
+  "completed_at": "2026-10-16T15:00:30Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3238,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15310,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8194,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also enforced by .husky/pre-commit (hook) as a separate step; same command, no local gap."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12501,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 62190,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "6 spec files / 14 tests failed, all traced to ambient CODEMIE_* environment variables (CODEMIE_URL, CODEMIE_BASE_URL, CODEMIE_PROFILE_CONFIG, CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS, etc.) leaking into the test process from this agent's own live CodeMie Code / SSO session shell -- not caused by the diffed files. Verified by rerunning the same 6 spec files with every CODEMIE_* var unset: 106/106 tests pass. A clean shell (and CI, which has no such vars) would see this gate PASS. This machine is win32, so this run also stands in for CI's test-windows job."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 36360,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "1 spec file / 4 tests failed (tests/integration/sso-claude-plugin.test.ts), traced to the same ambient-environment leak as the unit gate (CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS / CODEMIE_MODEL inject extra --settings/--model argv flags the assertions did not expect). Verified by rerunning the file with every CODEMIE_* var unset: 14/14 tests pass. This machine is win32, so this run also stands in for CI's test-windows job."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1237,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: scans only the staged git diff; nothing was staged in this working tree. Script printed exactly: \"No staged changes to scan\". To enable locally: git add the pending changes, then rerun. As a one-off verification, the changes were staged, Gitleaks was run against the full diff (\"no leaks found\", ~88KB scanned), and the index was reset back to the original unstaged state afterward. CI's gitleaks-action (secrets-detection job) scans the PR diff unconditionally regardless of local staging state, using the same .gitleaks.toml."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1623,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Guide gate only validates HEAD~1..HEAD (the latest commit). CI's validate-commits job validates the full PR range instead; see the ci-sourced commitlint-pr-range gate below, which covers that mismatch."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24222,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0,
+      "notes": "Composite of the typecheck and lint gates already run individually above; included because the guide lists it as its own gate."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 91561,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Composite of license-check && lint && build && vitest(unit) && vitest(cli). Failed at the vitest(unit) stage for the same ambient CODEMIE_* environment-leak reason as the standalone unit gate; the && chain stopped there, so vitest(cli) was not exercised by this invocation (see the standalone integration gate above for that result)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1545,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: \"lint-staged could not find any staged files.\" Step 1 of .husky/pre-commit; runs eslint and vitest related scoped to staged .ts files only. Nothing is staged in this working tree. To enable locally: stage the changed files (git add) or run a real git commit, which triggers the hook."
+    },
+    {
+      "id": "commitlint-pr-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1419,
+      "command": "npx commitlint --from 97fbac29afef1ef1a31397df59199f0fed00a179 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI-sourced: .github/workflows/ci.yml validate-commits job lints every commit in the PR range (base-sha..HEAD), stricter than the guide's HEAD~1-only commitlint gate. All 6 commits on this branch pass."
+    },
+    {
+      "id": "pr-title-validation",
+      "source": "ci",
+      "status": "N/A",
+      "notes": "CI-sourced: validate-commits job also lints the PR title via gh pr view --json title + commitlint, requiring a live PR number and GITHUB_TOKEN against an open GitHub PR. Not reachable from this local checkout (no PR exists yet)."
+    }
+  ],
+  "failures": {
+    "unit": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://codemie.lab.epam.com/code-assistant-api\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:58:35\n     56|\n     57|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     58|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     59|   });\n     60|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/14]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": undefined,\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:75:20\n     73|     const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso'…\n     74|\n     75|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n     76|     expect(getStoredCredentials).not.toHaveBeenCalled();\n     77|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/14]⎯\n\n\n Test Files  6 failed | 349 passed (355)\n      Tests  14 failed | 5249 passed | 2 skipped (5265)\n   Start at  17:46:00\n   Duration  62.19s (transform 139.90s, setup 0ms, import 353.62s, tests 219.68s, environment 157ms)\n\n",
+    "integration": "+   \"--model\",\n+   \"claude-sonnet-5[1m]\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:183:28\n    181|\n    182|       // Verify args unchanged\n    183|       expect(enrichedArgs).toEqual(args);\n       |                            ^\n    184|\n    185|       // Verify --plugin-dir NOT injected\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install → inject\nAssertionError: expected [ '--settings', …(7) ] to deeply equal [ '--plugin-dir', …(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"C:\\\\Users\\\\VITALI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-claude-model-picker-config-43108-1792147943402.json\",\n+   \"--model\",\n+   \"claude-sonnet-5[1m]\",\n    \"--plugin-dir\",\n    \"C:\\\\Users\\\\VITALI~1\\\\AppData\\\\Local\\\\Temp\\\\codemie-test-claude-plugin\\\\claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n ❯ tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '…\n       |                            ^\n    234|     });\n    235|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  4 failed | 274 passed | 10 skipped (288)\n   Start at  17:48:32\n   Duration  36.36s (transform 48.76s, setup 0ms, import 66.52s, tests 240.61s, environment 10ms)\n\n",
+    "full-ci": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://codemie.lab.epam.com/code-assistant-api\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:58:35\n     56|\n     57|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     58|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     59|   });\n     60|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/15]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": undefined,\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:75:20\n     73|     const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso'…\n     74|\n     75|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n     76|     expect(getStoredCredentials).not.toHaveBeenCalled();\n     77|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/15]⎯\n\n\n Test Files  6 failed | 349 passed (355)\n      Tests  15 failed | 5248 passed | 2 skipped (5265)\n   Start at  17:52:05\n   Duration  57.13s (transform 124.63s, setup 0ms, import 309.50s, tests 209.92s, environment 102ms)\n\n"
+  }
+}
