@@ -23,8 +23,8 @@ import { resolveHomeDir } from '../../../utils/paths.js';
 // Recommended version (one non-blocking notice on mismatch) and the hard gate
 // below which the agent refuses to launch. Rule: the minimum is the previously
 // recommended version — when bumping the former, move its old value to the latter.
-const KIMI_SUPPORTED_VERSION = '0.42.0';
-const KIMI_MINIMUM_SUPPORTED_VERSION = '0.16.0';
+const KIMI_SUPPORTED_VERSION = '2.1.1';
+const KIMI_MINIMUM_SUPPORTED_VERSION = '0.42.0';
 const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
 
 const KIMI_INSTALLER_URLS = {
@@ -191,6 +191,9 @@ export class KimiPlugin extends BaseAgentAdapter {
         version,
         {
           timeout: 300000,
+          // install.ps1 reads its version from env; install.sh takes it positionally
+          // and rejects both at once, so set env on Windows only.
+          env: process.platform === 'win32' && version ? { KIMI_VERSION: version } : undefined,
           verifyCommand: this.metadata.cliCommand || undefined,
           verifyPath:
             process.platform === 'win32' ? undefined : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),

@@ -322,6 +322,44 @@ describe('AgentsCheck', () => {
     expect(displayed).toEqual([{ status: 'ok', message: 'Gemini (2.0.0)' }]);
     expect(result.details).toHaveLength(1);
   });
+
+  it('reports ok when the installed version matches a pinned supportedVersion', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        displayName: 'Kimi Code',
+        getVersion: async () => '2.1.1',
+        checkVersionCompatibility: async () => ({
+          isBelowMinimum: false,
+          supportedVersion: '2.1.1',
+          minimumSupportedVersion: '0.42.0',
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toEqual([{ status: 'ok', message: 'Kimi Code (2.1.1)' }]);
+  });
+
+  it('warns when the installed version no longer matches a pinned supportedVersion', async () => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        displayName: 'Kimi Code',
+        getVersion: async () => '0.42.0',
+        checkVersionCompatibility: async () => ({
+          isBelowMinimum: false,
+          supportedVersion: '2.1.1',
+          minimumSupportedVersion: '0.42.0',
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details).toEqual([
+      {
+        status: 'warn',
+        message: 'Kimi Code (0.42.0) - CodeMie recommends v2.1.1',
+        hint: expect.stringContaining('--supported'),
+      },
+    ]);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────────────
