@@ -469,6 +469,60 @@ describe('enrichCosts', () => {
     expect(index.get('A')!.tokens.total).toBe(1_000_000);
     expect(summary.totalCostUSD).toBeCloseTo(6, 6); // total is preserved either way
   });
+
+  it('bounds a middle session in a three-session shared-file chain, not just a two-session open tail', async () => {
+    const base = 1_780_000_000_000;
+    // Session 1 ends before session 2 starts; session 2 ends before session 3 starts;
+    // session 3 is open (no endEvent) — all three share one appended log file.
+    const session1 = {
+      sessionId: '1',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const session2 = {
+      sessionId: '2',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      endEvent: { data: { endTime: base + 90_000 } },
+      deltas: [],
+    };
+    const session3 = {
+      sessionId: '3',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [],
+    };
+    // One uniquely-keyed real turn inside each session's own window.
+    const turn1 = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-1',
+      message: { id: 'msg-1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    const turn2 = {
+      timestamp: new Date(base + 70_000).toISOString(),
+      requestId: 'req-2',
+      message: { id: 'msg-2', model: 'claude-sonnet-4-5', usage: { input_tokens: 2_000_000, output_tokens: 0 } },
+    };
+    const turn3 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-3',
+      message: { id: 'msg-3', model: 'claude-sonnet-4-5', usage: { input_tokens: 4_000_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turn1, turn2, turn3];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/three-way-shared.jsonl', // same path for all three
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([session1, session2, session3] as never[], deps);
+    expect(index.get('1')!.tokens.total).toBe(1_000_000);
+    expect(index.get('1')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('2')!.tokens.total).toBe(2_000_000);
+    expect(index.get('2')!.costUSD).toBeCloseTo(6, 6);
+    expect(index.get('3')!.tokens.total).toBe(4_000_000);
+    expect(index.get('3')!.costUSD).toBeCloseTo(12, 6);
+    expect(summary.totalCostUSD).toBeCloseTo(21, 6);
+  });
 });
 
 describe('enrichCosts — dispatch cost attribution', () => {
