@@ -43,20 +43,22 @@ function hasSubstring(names: string[], substrings: string[]): boolean {
   return names.some((n) => substrings.some((s) => n.includes(s)));
 }
 
-// Unnamespaced slash commands from the external sdlc-factory skill bundle — distinct
-// from the namespaced `sdlc-factory:` prefix seen on skill/agent invocations.
-const SDLC_FACTORY_COMMANDS = ['sdlc-light', 'sdlc-task', 'sdlc-autonomous'];
+// Unnamespaced skill/command names from the external sdlc-factory bundle — distinct from the
+// namespaced form seen on skill/agent invocations. Claude namespaces with `sdlc-factory:`,
+// oh-my-pi with `sdlc-factory/`.
+const SDLC_FACTORY_COMMANDS = ['sdlc-light', 'sdlc-standard', 'sdlc-task', 'sdlc-autonomous', 'sdlc-doctor', 'sdlc-status'];
 
 export const SESSION_SOURCE_DETECTORS: SessionSourceDetector[] = [
   {
     name: 'sdlc-factory',
     label: 'CodeMie AI Factory',
-    matches: (names) => hasPrefix(names, 'sdlc-factory:') || hasExact(names, SDLC_FACTORY_COMMANDS),
+    matches: (names) =>
+      hasPrefix(names, 'sdlc-factory:') || hasPrefix(names, 'sdlc-factory/') || hasExact(names, SDLC_FACTORY_COMMANDS),
   },
   {
     name: 'superpowers',
     label: 'Superpowers',
-    matches: (names) => hasPrefix(names, 'superpowers:'),
+    matches: (names) => hasPrefix(names, 'superpowers:') || hasPrefix(names, 'superpowers/'),
   },
   {
     name: 'openspec',

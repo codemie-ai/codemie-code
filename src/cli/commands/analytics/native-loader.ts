@@ -29,6 +29,14 @@ import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
 import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
+import { extractPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
+import {
+  extractPiToolCalls,
+  isPiAssistantMessage,
+  isPiMessageEntry,
+  isPiToolResultMessage,
+  type PiEntry,
+} from '../../../agents/plugins/pi/pi.types.js';
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
@@ -525,6 +533,34 @@ function countPiTurns(lines: PiSessionLine[]): number {
 }
 
 /**
+ * Per-tool call counts and outcomes. A call is counted when its `toolResult` arrives, so a call
+ * still running (or cut off) when the transcript ends is not reported — the same rule the
+ * managed path's metrics processor applies.
+ */
+function piToolStats(lines: readonly unknown[]): Pick<NonNullable<ParsedSession['metrics']>, 'tools' | 'toolStatus'> {
+  const callNames = new Map<string, string>();
+  const tools: Record<string, number> = {};
+  const toolStatus: Record<string, { success: number; failure: number }> = {};
+  for (const raw of lines) {
+    const entry = raw as PiEntry;
+    if (!isPiMessageEntry(entry)) continue;
+    const message = entry.message;
+    if (isPiAssistantMessage(message)) {
+      for (const call of extractPiToolCalls(message)) callNames.set(call.id, call.name);
+    } else if (isPiToolResultMessage(message)) {
+      const name = callNames.get(message.toolCallId);
+      if (!name) continue;
+      callNames.delete(message.toolCallId);
+      tools[name] = (tools[name] ?? 0) + 1;
+      const status = (toolStatus[name] ??= { success: 0, failure: 0 });
+      if (message.isError === true) status.failure++;
+      else status.success++;
+    }
+  }
+  return { tools, toolStatus };
+}
+
+/**
  * Synthesize {@link RawSessionData} from a parsed Pi session (v3 JSONL — neither Claude- nor
  * Codex-shaped: entries are `{type, id, parentId, timestamp, message}` envelopes).
  *
@@ -554,7 +590,21 @@ export function synthesizePiRawSession(
     .map((l) => l.message?.responseModel ?? l.message?.model)
     .filter((m): m is string => !!m);
 
-  return buildNativeRawSession(agentName, descriptor, parsed, {
+  // The Pi adapter attaches no metrics today, so derive them from the fork-deduplicated lines —
+  // otherwise every native Pi session reports zero tools, skills and agents. Anything the
+  // adapter does supply wins.
+  const { skillInvocations, agentInvocations } = extractPiNamedInvocations(lines);
+  const withMetrics: ParsedSession = {
+    ...parsed,
+    metrics: {
+      ...piToolStats(lines),
+      ...(Object.keys(skillInvocations).length > 0 && { skillInvocations }),
+      ...(Object.keys(agentInvocations).length > 0 && { agentInvocations }),
+      ...parsed.metrics,
+    },
+  };
+
+  return buildNativeRawSession(agentName, descriptor, withMetrics, {
     // The adapter reads cwd from the transcript's own session header, which is authoritative:
     // `--session <path>` can run Pi under a directory other than the one it was launched from.
     cwd: meta?.projectPath ?? descriptor.projectPath ?? 'Unknown',
