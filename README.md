@@ -624,6 +624,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
 codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
+codemie proxy connect --omp                                  # oh-my-pi: live CodeMie model catalog
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -635,6 +636,7 @@ Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
 codemie proxy disconnect --codex-desktop
+codemie proxy disconnect --omp
 ```
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.

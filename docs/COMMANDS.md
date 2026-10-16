@@ -90,6 +90,8 @@ codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
 codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
+codemie proxy connect --omp              # Give oh-my-pi the live CodeMie model catalog
+codemie proxy disconnect --omp           # Remove the CodeMie oh-my-pi extension
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
@@ -314,6 +316,36 @@ The daemon keeps running — it may still be serving other connected targets. St
 #### Codex home: app versus CLI
 
 The `codemie-codex` CLI agent isolates its own state under `~/.codex/codemie/home`, while the desktop app uses the default `~/.codex`. That is deliberate, so running the CLI never disturbs the app. The consequence is that the two surfaces have separate sessions, history and settings; the same conversation will not appear in both. If you set `CODEX_HOME` yourself, the connector honours it and prints the config path it resolved.
+
+### oh-my-pi (omp)
+
+Give [oh-my-pi](https://github.com/can1357/oh-my-pi) the models of the active CodeMie profile — the same list `codemie models list` prints — with their cost, context window, output cap, and image input:
+
+```bash
+codemie proxy connect --omp
+codemie proxy connect --omp --profile work
+```
+
+The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/codemie-models.js` (`PI_CODING_AGENT_DIR` and `PI_CONFIG_DIR` are honoured the way omp honours them). omp loads it on startup, and it registers two providers whose model lists are fetched live from the proxy daemon's `/v1/llm_models?include_all=true`:
+
+| omp provider | Wire | Models |
+|---|---|---|
+| `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything except Claude |
+| `codemie-claude` | Anthropic Messages | `claude-*`, including Claude routers |
+
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` on every refresh, so it follows a daemon restart; if the daemon is down, omp keeps its last cached roster.
+
+To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
+
+When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. Combined with other targets, the higher-priority target owns the daemon and the extension uses that daemon.
+
+`--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
+
+```bash
+codemie proxy disconnect --omp
+```
+
+Disconnect deletes the extension only if CodeMie installed it. Restart omp to drop the two providers.
 
 ### Global Options
 
