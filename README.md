@@ -585,7 +585,19 @@ codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
 codemie proxy <cmd>      # Manage the local CodeMie proxy and its integrations
 codemie codebase ui      # Start and open Codebase Memory graph UI
 codemie doctor           # Health check and diagnostics
+codemie completion zsh   # Print shell completion script (bash | zsh | fish)
 ```
+
+### Shell Completions
+
+Enable completions for the `codemie` CLI and the `codemie-<agent>` launchers:
+
+```bash
+source <(codemie completion zsh)    # bash / zsh
+codemie completion fish | source    # fish
+```
+
+Add the line to your shell rc file to persist it. The script is generated from a snapshot of the installed CLI, so re-run it after upgrading CodeMie or adding a profile.
 
 ### Analytics for a separate Claude Code profile
 
