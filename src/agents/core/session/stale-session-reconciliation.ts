@@ -43,6 +43,12 @@ export interface StaleSession {
   sessionId: string;
   startTime: number;
   lastActivityMs: number;
+  // The agent's own hook-reported session id (session.correlation.agentSessionId), distinct
+  // from `sessionId` (CodeMie's internal UUID). A live SessionStart for claude/gemini/kimi
+  // sends the start metric under this id (hook.ts's `event.session_id`); omitting it from the
+  // synthetic SessionEnd would pair the end metric under the wrong id and strand the session
+  // as open on the analytics backend.
+  agentSessionId?: string;
 }
 
 export interface SessionEndEventLike {
@@ -121,6 +127,7 @@ export async function findStaleSessions(
       sessionId: session.sessionId,
       startTime: session.startTime,
       lastActivityMs: lastActivity,
+      agentSessionId: session.correlation?.agentSessionId,
     });
   }
 
@@ -157,7 +164,10 @@ export async function reconcileStaleSessions(
     try {
       const event: SessionEndEventLike = {
         hook_event_name: 'SessionEnd',
-        session_id: entry.sessionId,
+        // Prefer the agent's own native id — the SessionStart metric was sent under it, so
+        // the SessionEnd metric must be too, or the two never pair up on the analytics
+        // backend. Fall back to the CodeMie id only when no native id was ever recorded.
+        session_id: entry.agentSessionId ?? entry.sessionId,
         transcript_path: '',
         permission_mode: 'default',
         cwd: process.cwd(),

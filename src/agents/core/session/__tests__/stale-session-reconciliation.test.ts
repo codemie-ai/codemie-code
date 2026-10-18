@@ -23,13 +23,20 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn(),
 }));
 
-function strandedSessionFile(sessionId: string, agentName: string, lastSyncAt: number, startTime: number): string {
+function strandedSessionFile(
+  sessionId: string,
+  agentName: string,
+  lastSyncAt: number,
+  startTime: number,
+  agentSessionId?: string
+): string {
   return JSON.stringify({
     sessionId,
     agentName,
     status: 'active',
     startTime,
     sync: { metrics: { lastSyncAt } },
+    ...(agentSessionId && { correlation: { status: 'matched', agentSessionId, retryCount: 0 } }),
   });
 }
 
@@ -66,6 +73,59 @@ describe('reconcileStaleSessions endTime threading', () => {
     expect(event.session_id).toBe('stranded-1');
     expect(event.endTime).toBe(lastActivity);
     expect(event.endTime).not.toBe(now);
+  });
+
+  it('synthesizes a SessionEnd under the native agentSessionId, not the CodeMie session id, when one was recorded', async () => {
+    const now = Date.now();
+    const lastActivity = now - 2 * 60 * 60 * 1000;
+    const startTime = lastActivity - 10 * 60 * 1000;
+
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['stranded-2.json'] as never);
+    vi.mocked(readFile).mockResolvedValue(
+      strandedSessionFile('stranded-2', 'claude', lastActivity, startTime, 'native-claude-id-xyz') as never
+    );
+
+    const { reconcileStaleSessions } = await import('../stale-session-reconciliation.js');
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+
+    await reconcileStaleSessions(
+      'claude',
+      {} as NodeJS.ProcessEnv,
+      (_env, sessionId) => ({ agentName: 'claude', sessionId }),
+      { processEvent, now }
+    );
+
+    const [event] = processEvent.mock.calls[0] as [{ session_id: string }];
+    // The live SessionStart metric for this agent went out under the native id — the
+    // SessionEnd must match it, or the two never pair up on the analytics backend.
+    expect(event.session_id).toBe('native-claude-id-xyz');
+    expect(event.session_id).not.toBe('stranded-2');
+  });
+
+  it('falls back to the CodeMie session id when no native agentSessionId was recorded', async () => {
+    const now = Date.now();
+    const lastActivity = now - 2 * 60 * 60 * 1000;
+    const startTime = lastActivity - 10 * 60 * 1000;
+
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['stranded-3.json'] as never);
+    vi.mocked(readFile).mockResolvedValue(
+      strandedSessionFile('stranded-3', 'codex', lastActivity, startTime) as never
+    );
+
+    const { reconcileStaleSessions } = await import('../stale-session-reconciliation.js');
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+
+    await reconcileStaleSessions(
+      'codex',
+      {} as NodeJS.ProcessEnv,
+      (_env, sessionId) => ({ agentName: 'codex', sessionId }),
+      { processEvent, now }
+    );
+
+    const [event] = processEvent.mock.calls[0] as [{ session_id: string }];
+    expect(event.session_id).toBe('stranded-3');
   });
 
   it('never calls processEvent when nothing is stale, so no synthetic event is built', async () => {
