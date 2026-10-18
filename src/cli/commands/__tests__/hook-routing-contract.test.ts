@@ -244,6 +244,58 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(typeof saved.endTime).toBe('number');
     });
 
+    it('SessionEnd with explicit endTime stamps session.endTime there, not at processing time (reconciler threading)', async () => {
+      const sessionId = `route-end-explicit-${process.pid}`;
+      const claudeId = 'claude-end-explicit-1';
+      createdSessions.add([sessionId, claudeId]);
+      writeActiveSession(sessionId);
+
+      // Simulates a stale-session-reconciliation synthetic event: the session's real last
+      // activity was 2h ago, long before this process noticed and finalized it.
+      const explicitEndTime = Date.now() - 2 * 60 * 60 * 1000;
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'SessionEnd',
+        permission_mode: 'default',
+        cwd: TMP,
+        reason: 'interrupted',
+        endTime: explicitEndTime,
+      } as unknown as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, sessionId });
+
+      const saved = JSON.parse(readFileSync(completedPath(sessionId), 'utf-8'));
+      expect(saved.endTime).toBe(explicitEndTime);
+      expect(saved.endTime).not.toBe(saved.startTime); // sanity: it actually used the explicit value
+    });
+
+    it('SessionEnd with explicit endTime accumulates active duration up to that timestamp, not real time', async () => {
+      const sessionId = `route-end-activedur-${process.pid}`;
+      const claudeId = 'claude-end-activedur-1';
+      createdSessions.add([sessionId, claudeId]);
+      // Process was killed mid-turn 3h ago: activityStartedAt is stale on disk.
+      const activityStartedAt = Date.now() - 3 * 60 * 60 * 1000;
+      writeActiveSession(sessionId, { startTime: activityStartedAt, activityStartedAt, activeDurationMs: 0 });
+
+      // Reconciliation determined the session's real last activity was 1h after the turn
+      // started, not "now" (which would bill the full 3h dead-process gap as active time).
+      const explicitEndTime = activityStartedAt + 60 * 60 * 1000;
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'SessionEnd',
+        permission_mode: 'default',
+        cwd: TMP,
+        reason: 'interrupted',
+        endTime: explicitEndTime,
+      } as unknown as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, sessionId });
+
+      const saved = JSON.parse(readFileSync(completedPath(sessionId), 'utf-8'));
+      expect(saved.activeDurationMs).toBe(60 * 60 * 1000);
+      expect(saved.endTime).toBe(explicitEndTime);
+    });
+
     it('UserPromptSubmit → handleUserPromptSubmit starts activity tracking (sets activityStartedAt)', async () => {
       const sessionId = `route-ups-${process.pid}`;
       const claudeId = 'claude-ups-1';

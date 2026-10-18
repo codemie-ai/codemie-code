@@ -52,6 +52,10 @@ export interface SessionEndEventLike {
   permission_mode: string;
   cwd: string;
   reason: string;
+  // Last real activity timestamp for the stranded session, not when reconciliation happens
+  // to run — without it, `handleSessionEnd` would stamp endTime/activeDurationMs at "now"
+  // and bill the entire dead-process gap as session duration.
+  endTime?: number;
 }
 
 export type ProcessEventFn = (
@@ -158,6 +162,7 @@ export async function reconcileStaleSessions(
         permission_mode: 'default',
         cwd: process.cwd(),
         reason: 'interrupted',
+        endTime: entry.lastActivityMs,
       };
       await processEvent(event, buildHookConfig(env, entry.sessionId));
       reconciled++;

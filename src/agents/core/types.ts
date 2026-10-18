@@ -684,6 +684,10 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  // SessionEnd only, set by synthetic events from stale-session reconciliation: the
+  // session's real last-activity timestamp, so finalization doesn't bill the dead-process
+  // gap between that activity and whenever reconciliation runs as session duration.
+  endTime?: number;
 }
 
 // Forward declaration for extension installer

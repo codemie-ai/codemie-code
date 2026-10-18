@@ -388,6 +388,26 @@ describe('DesktopTelemetryRuntime', () => {
       expect(session.reason).toBe('desktop-daemon-restart-stale');
     });
 
+    it('stamps endTime at the last known activity, not at reconciliation time', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      // The daemon is hard-killed right after the session's last real activity (T0) and
+      // only restarts well past the inactivity timeout — reconciliation must not blame the
+      // dead-daemon gap on the session itself.
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + 60_000);
+      const restartedDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (restartedDaemon as any).reconcilePersistedSessions();
+
+      const session = persistedSessions.get(sessionId)!;
+      expect(session.endTime).toBe(T0);
+
+      const [, , , durationMs] = mockSendSessionEnd.mock.calls[0];
+      expect(durationMs).toBe(0);
+    });
+
     it('re-tracks a not-yet-stale session so the normal idle timeout still finalizes it later', async () => {
       openDesktopChat('ext-1', 2, T0);
       await startDaemon(createAdapter());
@@ -687,6 +707,20 @@ describe('DesktopTelemetryRuntime', () => {
       const session = persistedSessions.get(sessionIdFor('ext-1')!)!;
       expect(session.status).toBe('completed');
       expect(session.reason).toBe('desktop-inactive-timeout');
+    });
+
+    it('stamps endTime at the last known activity, not at the time the timeout check runs', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      mockSendSessionEnd.mockClear();
+
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      const session = persistedSessions.get(sessionIdFor('ext-1')!)!;
+      expect(session.endTime).toBe(T0);
+      expect(session.endTime).toBeLessThan(Date.now());
     });
 
     it('keeps a session alive while Desktop reports activity without transcript writes', async () => {

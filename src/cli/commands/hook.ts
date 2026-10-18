@@ -32,6 +32,10 @@ export interface SessionEndEvent extends BaseHookEvent {
   hook_event_name: 'SessionEnd';
   reason: string;                  // e.g., "exit", "logout"
   cwd: string;                     // Always present for SessionEnd
+  // Last real activity timestamp, set only by synthetic SessionEnd events (stale-session
+  // reconciliation). A live SessionEnd from the running agent leaves this undefined, so
+  // every duration calculation below defaults to Date.now() as before.
+  endTime?: number;
 }
 
 /**
@@ -219,7 +223,7 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   logger.info(`[hook:SessionEnd] ${JSON.stringify(event)}`);
 
   // 0. Final activity accumulation (handles edge case: session ends without Stop)
-  await accumulateActiveDuration(sessionId);
+  await accumulateActiveDuration(sessionId, event.endTime);
 
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
   await performIncrementalSync(event, 'SessionEnd', sessionId, config);
@@ -512,13 +516,14 @@ async function startActivityTracking(sessionId: string): Promise<void> {
  * Called on Stop/SessionEnd to mark the end of active time
  *
  * @param sessionId - The CodeMie session ID
+ * @param asOf - Timestamp to treat as "now"; defaults to Date.now() for a live hook
  * @returns The duration accumulated in this call (0 if no active period)
  */
-async function accumulateActiveDuration(sessionId: string): Promise<number> {
+async function accumulateActiveDuration(sessionId: string, asOf?: number): Promise<number> {
   try {
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     const sessionStore = new SessionStore();
-    return await sessionStore.accumulateActiveDuration(sessionId);
+    return await sessionStore.accumulateActiveDuration(sessionId, asOf);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.warn(`[hook] Failed to accumulate active duration: ${errorMessage}`);
@@ -1100,7 +1105,7 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
     const status = 'completed';
 
     // Update session status and reason
-    await sessionStore.updateSessionStatus(sessionId, status, event.reason);
+    await sessionStore.updateSessionStatus(sessionId, status, event.reason, event.endTime);
 
     logger.info(
       `[hook:SessionEnd] Session status updated: id=${sessionId} status=${status} reason=${event.reason}`
@@ -1238,8 +1243,10 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       return;
     }
 
-    // Calculate durations
-    const wallClockDurationMs = Date.now() - session.startTime;
+    // Calculate durations. `session.endTime` is set by updateSessionStatus just before this
+    // runs (step 2 above), so it already reflects the real end-of-activity timestamp for a
+    // reconciled/synthetic SessionEnd rather than the time this function happens to run.
+    const wallClockDurationMs = Math.max(0, (session.endTime ?? Date.now()) - session.startTime);
     const activeDurationMs = session.activeDurationMs || undefined;
 
     // Build status object with reason from event

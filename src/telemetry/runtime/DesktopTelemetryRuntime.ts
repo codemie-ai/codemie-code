@@ -120,7 +120,7 @@ export class DesktopTelemetryRuntime {
         // otherwise stop the whole daemon from starting, which is strictly worse than the
         // stale-session gap this method exists to close.
         try {
-          await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale');
+          await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale', lastSeenActivityAt);
         } catch (error) {
           logger.warn('[desktop-telemetry] Failed to finalize stranded session (non-blocking)', {
             externalSessionId,
@@ -212,7 +212,7 @@ export class DesktopTelemetryRuntime {
           inactiveForMs,
           codemieSessionId: tracked.codemieSessionId,
         });
-        await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout');
+        await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout', tracked.lastSeenActivityAt);
         this.trackedSessions.delete(externalSessionId);
       }
     } finally {
@@ -346,7 +346,7 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  private async finalizeSession(sessionId: string, reason: string): Promise<void> {
+  private async finalizeSession(sessionId: string, reason: string, endTime: number = Date.now()): Promise<void> {
     const session = await this.sessionStore.loadSession(sessionId);
     if (!session || session.status === 'completed') {
       return;
@@ -354,7 +354,7 @@ export class DesktopTelemetryRuntime {
 
     session.status = 'completed';
     session.reason = reason;
-    session.endTime = Date.now();
+    session.endTime = endTime;
     await this.sessionStore.saveSession(session);
 
     const externalSessionId = session.runtimeCheckpoint?.externalSessionId;

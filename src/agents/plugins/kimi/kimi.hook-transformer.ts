@@ -50,6 +50,10 @@ export class KimiHookTransformer implements HookTransformer {
       transformed.stop_hook_active = payload.stop_hook_active;
     }
 
+    if (typeof payload.endTime === 'number') {
+      transformed.endTime = payload.endTime;
+    }
+
     return transformed;
   }
 }
