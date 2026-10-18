@@ -70,6 +70,33 @@ export type ProcessEventFn = (
 ) => Promise<void>;
 
 /**
+ * Canonical env -> HookProcessingConfig mapping for stale-session reconciliation.
+ * Mirrors the env-var keys hook.ts's getConfigValue maps to HookProcessingConfig
+ * fields. BaseAgentAdapter.run() sets CODEMIE_AGENT and CODEMIE_CLIENT_TYPE from
+ * this.metadata before onSessionStart runs, so both are always present here —
+ * no per-agent literal fallback needed (that fallback is what let the ACP
+ * variants silently reconcile their base agent's sessions under the wrong name).
+ */
+export function buildReconciliationHookConfig(
+  env: NodeJS.ProcessEnv,
+  sessionId: string,
+): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT!,
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: env.CODEMIE_CLIENT_TYPE,
+  };
+}
+
+/**
  * Find sessions of `agentName` in `~/.codemie/sessions/` that look stranded.
  */
 export async function findStaleSessions(

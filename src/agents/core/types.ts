@@ -344,6 +344,16 @@ export interface AgentMetadata {
    */
   sessionAnalyticsReport?: boolean;
 
+  /**
+   * When false, BaseAgentAdapter.run() skips the generic stale-session
+   * reconciliation pass it runs for every agent after onSessionStart (see
+   * reconcileStaleSessions in session/stale-session-reconciliation.ts).
+   * Default true — an agent that keeps no `~/.codemie/sessions/{id}.json`
+   * records gets a harmless no-op scan, so this only needs setting for an
+   * agent that wants to opt out explicitly.
+   */
+  staleSessionReconciliation?: boolean;
+
   // === Metrics Configuration ===
   /**
    * Metrics collection configuration for this agent

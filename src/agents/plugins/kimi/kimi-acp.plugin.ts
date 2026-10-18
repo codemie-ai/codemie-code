@@ -10,6 +10,8 @@ export const KimiAcpPluginMetadata: AgentMetadata = {
   flagMappings: {},
   ssoConfig: { enabled: true, clientType: 'codemie-kimi-acp' },
   lifecycle: {
+    // onSessionStart (stale-session reconciliation) unchanged — keep it, only override enrichArgs.
+    ...KimiPluginMetadata.lifecycle,
     enrichArgs: (args) => ['acp', ...args],
   },
   postInstallHints: [

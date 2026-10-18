@@ -4,14 +4,15 @@ vi.mock('../../core/BaseAgentAdapter.js', () => ({
   BaseAgentAdapter: class { metadata: unknown; constructor(metadata: unknown) { this.metadata = metadata; } },
 }));
 
-describe('CodeMieCodePluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
+// Stale-session reconciliation used to be wired here too; it is now centralized
+// in BaseAgentAdapter.run() for every agent (see EPMCDME-15536), so this file
+// only covers codemie-code's own onSessionStart wiring (the SessionStart event).
+describe('CodeMieCodePluginMetadata.lifecycle.onSessionStart', () => {
   beforeEach(() => {
     vi.resetModules();
   });
 
-  it('reconciles stale codemie-code sessions on start, alongside the existing SessionStart call', async () => {
-    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
-    vi.doMock('../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
+  it('emits a SessionStart lifecycle event', async () => {
     const processEvent = vi.fn().mockResolvedValue(undefined);
     vi.doMock('../../../cli/commands/hook.js', () => ({ processEvent }));
 
@@ -21,15 +22,12 @@ describe('CodeMieCodePluginMetadata.lifecycle.onSessionStart — stale-session r
     await CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
 
     expect(processEvent).toHaveBeenCalledTimes(1);
-    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
-    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('codemie-code');
-    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
   });
 
-  it('does not throw when reconciliation rejects', async () => {
-    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
-    vi.doMock('../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
-    vi.doMock('../../../cli/commands/hook.js', () => ({ processEvent: vi.fn().mockResolvedValue(undefined) }));
+  it('does not throw when the SessionStart hook rejects', async () => {
+    vi.doMock('../../../cli/commands/hook.js', () => ({
+      processEvent: vi.fn().mockRejectedValue(new Error('boom')),
+    }));
 
     const { CodeMieCodePluginMetadata } = await import('../codemie-code.plugin.js');
 

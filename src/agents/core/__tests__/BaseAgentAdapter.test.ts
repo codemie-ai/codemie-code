@@ -78,6 +78,14 @@ vi.mock('../lifecycle-helpers.js', () => ({
   executeAfterRun:       vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('../session/stale-session-reconciliation.js', () => ({
+  reconcileStaleSessions: vi.fn(() => Promise.resolve({ reconciled: 0, failed: 0 })),
+  buildReconciliationHookConfig: vi.fn((env: NodeJS.ProcessEnv, sessionId: string) => ({
+    agentName: env.CODEMIE_AGENT,
+    sessionId,
+  })),
+}));
+
 vi.mock('../flag-transform.js', () => ({
   transformFlags: vi.fn((_args: any, _mappings: any) => _args),
 }));
@@ -684,6 +692,76 @@ describe('BaseAgentAdapter', () => {
 
       expect(mockProxyStop).toHaveBeenCalledOnce();
       expect((adapter as any).proxy).toBeNull();
+    });
+  });
+
+  // Stale-session reconciliation used to be copy-pasted into each plugin's own
+  // onSessionStart, each binding reconcileStaleSessions to a hardcoded agent-name
+  // literal. An ACP variant (e.g. claude-acp) inherits its base plugin's
+  // onSessionStart via lifecycle spread but runs with CODEMIE_AGENT='claude-acp'
+  // (BaseAgentAdapter sets it from metadata.name), so the literal scan key meant
+  // it reconciled claude's sessions, never its own (see EPMCDME-15536). It is now
+  // a single call here, driven by this.metadata.name, so every current and future
+  // agent variant is correct automatically.
+  describe('run() — stale-session reconciliation', () => {
+    class ReconciliationTestAdapter extends BaseAgentAdapter {}
+
+    const baseMetadata: AgentMetadata = {
+      name: 'claude-acp',
+      displayName: 'Claude Code ACP',
+      description: 'Stale-session reconciliation tests',
+      npmPackage: null,
+      cliCommand: 'claude-agent-acp',
+      envMapping: {},
+      supportedProviders: ['ai-run-sso'],
+      silentMode: true,
+      ssoConfig: { enabled: true, clientType: 'codemie-claude-acp' },
+    };
+
+    beforeEach(async () => {
+      vi.clearAllMocks();
+      delete process.env['CODEMIE_PROVIDER'];
+      const { reconcileStaleSessions } = await import('../session/stale-session-reconciliation.js');
+      vi.mocked(reconcileStaleSessions).mockResolvedValue({ reconciled: 0, failed: 0 });
+    });
+
+    it('scans/reconciles under metadata.name, not a hardcoded literal (regression: ACP variants)', async () => {
+      const adapter = new ReconciliationTestAdapter(baseMetadata);
+
+      await adapter.run([], {});
+
+      const { reconcileStaleSessions, buildReconciliationHookConfig } = await import(
+        '../session/stale-session-reconciliation.js'
+      );
+      expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(reconcileStaleSessions).mock.calls[0][0]).toBe('claude-acp');
+      expect(vi.mocked(reconcileStaleSessions).mock.calls[0][2]).toBe(buildReconciliationHookConfig);
+    });
+
+    it('runs by default when staleSessionReconciliation is unset', async () => {
+      const adapter = new ReconciliationTestAdapter({ ...baseMetadata, staleSessionReconciliation: undefined });
+
+      await adapter.run([], {});
+
+      const { reconcileStaleSessions } = await import('../session/stale-session-reconciliation.js');
+      expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips reconciliation entirely when staleSessionReconciliation is false', async () => {
+      const adapter = new ReconciliationTestAdapter({ ...baseMetadata, staleSessionReconciliation: false });
+
+      await adapter.run([], {});
+
+      const { reconcileStaleSessions } = await import('../session/stale-session-reconciliation.js');
+      expect(reconcileStaleSessions).not.toHaveBeenCalled();
+    });
+
+    it('does not fail run() when reconciliation rejects (fire-and-forget)', async () => {
+      const { reconcileStaleSessions } = await import('../session/stale-session-reconciliation.js');
+      vi.mocked(reconcileStaleSessions).mockRejectedValue(new Error('boom'));
+      const adapter = new ReconciliationTestAdapter(baseMetadata);
+
+      await expect(adapter.run([], {})).resolves.toBeUndefined();
     });
   });
 });

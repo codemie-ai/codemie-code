@@ -4,8 +4,6 @@ import type {
   ResumeOwnershipResult,
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
-import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
@@ -32,26 +30,6 @@ import {
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
 let statuslineManagedThisSession = false;
-
-/**
- * Build a hook config object from environment variables.
- * Used by onSessionStart for stale-session reconciliation.
- */
-function buildClaudeHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
-  return {
-    agentName: env.CODEMIE_AGENT || 'claude',
-    sessionId,
-    provider: env.CODEMIE_PROVIDER,
-    apiBaseUrl: env.CODEMIE_BASE_URL,
-    ssoUrl: env.CODEMIE_URL,
-    syncApiUrl: env.CODEMIE_SYNC_API_URL,
-    version: env.CODEMIE_CLI_VERSION,
-    profileName: env.CODEMIE_PROFILE_NAME,
-    project: env.CODEMIE_PROJECT,
-    model: env.CODEMIE_MODEL,
-    clientType: 'codemie-claude',
-  };
-}
 
 /**
  * Recommended Claude Code version — the one CodeMie verifies against.
@@ -570,16 +548,6 @@ export const ClaudePluginMetadata: AgentMetadata = {
       }
 
       return env;
-    },
-
-    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
-      // Claude's native hooks.json -> `codemie hook` -> handleSessionStart already
-      // reliably creates the session record on every real launch, so this must
-      // NOT also call processEvent(SessionStart) — only reconcile stranded ones.
-      void reconcileStaleSessions('claude', env, buildClaudeHookConfig).catch((error) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[claude] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
     },
 
     // Clean up injected statusLine from settings.json after the session ends

@@ -146,3 +146,36 @@ describe('reconcileStaleSessions endTime threading', () => {
     expect(processEvent).not.toHaveBeenCalled();
   });
 });
+
+describe('buildReconciliationHookConfig', () => {
+  it('reads agentName and clientType from env, with no literal fallback', async () => {
+    const { buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
+
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_AGENT: 'claude-acp',
+      CODEMIE_CLIENT_TYPE: 'codemie-claude-acp',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'https://proxy.example.com',
+      CODEMIE_URL: 'https://sso.example.com',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com',
+      CODEMIE_CLI_VERSION: '1.2.3',
+      CODEMIE_PROFILE_NAME: 'work',
+      CODEMIE_PROJECT: 'codemie-code',
+      CODEMIE_MODEL: 'claude-sonnet-5',
+    };
+
+    expect(buildReconciliationHookConfig(env, 'sid-1')).toEqual({
+      agentName: 'claude-acp',
+      sessionId: 'sid-1',
+      provider: 'ai-run-sso',
+      apiBaseUrl: 'https://proxy.example.com',
+      ssoUrl: 'https://sso.example.com',
+      syncApiUrl: 'https://sync.example.com',
+      version: '1.2.3',
+      profileName: 'work',
+      project: 'codemie-code',
+      model: 'claude-sonnet-5',
+      clientType: 'codemie-claude-acp',
+    });
+  });
+});

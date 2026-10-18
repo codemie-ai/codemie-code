@@ -28,6 +28,10 @@ import {
   executeOnSessionEnd,
   executeAfterRun
 } from './lifecycle-helpers.js';
+import {
+  reconcileStaleSessions,
+  buildReconciliationHookConfig,
+} from './session/stale-session-reconciliation.js';
 import { redactSecrets } from './config-redaction.js';
 import { extractGeneratedConfig } from './print-config.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
@@ -572,6 +576,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Lifecycle hook: session start (provider-aware)
     await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
+
+    // Stale-session reconciliation: agent-generic, so it runs once here for every
+    // agent instead of being copy-pasted into each plugin's onSessionStart (that
+    // drifted — see EPMCDME-15536). Deliberately NOT part of metadata.lifecycle:
+    // resolveHook lets a provider's agent-specific hook replace the agent's default
+    // lifecycle hook outright (lifecycle-helpers.ts), which would silently drop this
+    // if it lived there instead.
+    if (this.metadata.staleSessionReconciliation !== false) {
+      void reconcileStaleSessions(this.metadata.name, env, buildReconciliationHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[${this.metadata.name}] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
+    }
 
     // Show welcome message with session info (skip in silent mode)
     if (!this.metadata.silentMode) {

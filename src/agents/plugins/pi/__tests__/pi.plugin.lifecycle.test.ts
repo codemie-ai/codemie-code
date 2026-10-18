@@ -11,49 +11,20 @@ vi.mock('../pi.incremental-sync.js', () => ({
   stopPiIncrementalSync,
 }));
 
-describe('PiPluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
+// Stale-session reconciliation used to be wired here too; it is now centralized
+// in BaseAgentAdapter.run() for every agent (see EPMCDME-15536), so this file
+// only covers pi's own onSessionStart wiring (the SessionStart event and the
+// incremental-sync timer).
+describe('PiPluginMetadata.lifecycle.onSessionStart', () => {
   beforeEach(() => {
     startPiIncrementalSync.mockReset();
     stopPiIncrementalSync.mockReset();
     vi.resetModules();
   });
 
-  it('reconciles stale pi sessions on start, alongside the existing SessionStart call', async () => {
+  it('starts the incremental-sync timer', async () => {
     const processEvent = vi.fn().mockResolvedValue(undefined);
     vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
-    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
-    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
-
-    const { PiPluginMetadata } = await import('../pi.plugin.js');
-    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'pi', CODEMIE_PROVIDER: 'ai-run-sso' };
-
-    await PiPluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
-
-    expect(processEvent).toHaveBeenCalledTimes(1);
-    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
-    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('pi');
-    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
-    expect(typeof reconcileStaleSessions.mock.calls[0][2]).toBe('function');
-  });
-
-  it('does not throw when reconciliation rejects', async () => {
-    const processEvent = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
-    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
-    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
-
-    const { PiPluginMetadata } = await import('../pi.plugin.js');
-
-    await expect(
-      PiPluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'pi' })
-    ).resolves.toBeUndefined();
-  });
-
-  it('still starts the incremental-sync timer when reconciliation is in flight', async () => {
-    const processEvent = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
-    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
-    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
 
     const { PiPluginMetadata } = await import('../pi.plugin.js');
     await PiPluginMetadata.lifecycle!.onSessionStart!('sid-3', { CODEMIE_AGENT: 'pi' });

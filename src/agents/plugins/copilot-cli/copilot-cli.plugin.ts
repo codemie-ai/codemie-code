@@ -5,7 +5,6 @@ import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { commandExists, exec } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
 import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
@@ -171,11 +170,6 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`[copilot-cli] SessionStart hook failed (non-blocking): ${message}`);
       }
-
-      void reconcileStaleSessions('copilot-cli', env, buildCopilotHookConfig).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.debug(`[copilot-cli] Stale-session reconciliation failed (non-blocking): ${message}`);
-      });
     },
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
       assertCopilotProviderSupported(config);

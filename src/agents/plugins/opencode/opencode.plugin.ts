@@ -15,7 +15,6 @@ import {
 } from './opencode.incremental-sync.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
 import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
 import { ensureSessionFile } from '../../core/session/ensure-session.js';
@@ -81,12 +80,12 @@ function buildMergedHooks(env: NodeJS.ProcessEnv): Record<string, unknown[]> {
  * metadata.ssoConfig.clientType for every agent) rather than the fixed
  * OPENCODE_CLIENT_TYPE constant, so that plugins extending OpenCodePlugin with
  * a different clientType (e.g. opencode-acp's 'codemie-opencode-acp') are
- * tagged correctly in telemetry. Falls back to OPENCODE_CLIENT_TYPE to
- * preserve behavior for plain OpenCode / any caller that doesn't set the env var.
+ * tagged correctly in telemetry. BaseAgentAdapter always sets both env vars
+ * before this runs, so no fallback is needed.
  */
 function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
   return {
-    agentName: env.CODEMIE_AGENT || 'opencode',
+    agentName: env.CODEMIE_AGENT!,
     sessionId,
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
@@ -95,7 +94,7 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
-    clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
+    clientType: env.CODEMIE_CLIENT_TYPE,
   };
 }
 
@@ -228,11 +227,6 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         logger.error(`[opencode] SessionStart hook failed (non-blocking): ${msg}`);
       }
 
-      void reconcileStaleSessions('opencode', env, buildHookConfig).catch((error) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[opencode] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
-
       // Failsafe path for metrics and conversations: everything it reads is
       // already durable in opencode.db, so deltas keep flowing even if the
       // injected plugin never loads.
@@ -245,7 +239,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
           sessionId,
           apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
           cookies: '',
-          clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
+          clientType: env.CODEMIE_CLIENT_TYPE!,
           version: env.CODEMIE_CLI_VERSION || '0.0.0',
           dryRun: false,
           gitBranch: env.CODEMIE_GIT_BRANCH,
