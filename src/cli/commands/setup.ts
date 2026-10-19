@@ -330,16 +330,14 @@ export async function handlePluginSetup(
         // A selected harness the provider offers no compatible model for is a dead end:
         // explain, and never save. Without a catalog only a provider the harness does not
         // support is known to be unsatisfiable (no typed id can ever cover it).
-        const deadEnd = harnessCtx
-          ? [...new Set([
-            ...unsupportedProviderHarnesses(harnessCtx.harnesses, providerName),
-            ...(models.length > 0
-              ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
-              : [])
-          ])]
+        const unsupported = harnessCtx ? unsupportedProviderHarnesses(harnessCtx.harnesses, providerName) : [];
+        const noModel = harnessCtx && models.length > 0
+          ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
+            .filter(h => !unsupported.includes(h))
           : [];
+        const deadEnd = harnesses.filter(h => unsupported.includes(h) || noModel.includes(h));
         if (deadEnd.length > 0) {
-          const action = await promptForHarnessDeadEnd(deadEnd, providerName);
+          const action = await promptForHarnessDeadEnd({ unsupported, uncovered: noModel }, providerName);
           if (action === 'change') {
             harnesses = await promptForHarnesses(harnesses);
             continue;
@@ -615,10 +613,20 @@ export async function promptForHarnesses(existing?: string[]): Promise<string[]>
   return Array.isArray(harnesses) ? harnesses : [];
 }
 
-async function promptForHarnessDeadEnd(harnesses: string[], provider: string): Promise<'change' | 'cancel'> {
-  console.log(chalk.yellow(
-    `\n⚠ Provider "${provider}" offers no model that works with ${formatHarnessList(harnesses)}.`
-  ));
+async function promptForHarnessDeadEnd(
+  stuck: { unsupported: string[]; uncovered: string[] },
+  provider: string
+): Promise<'change' | 'cancel'> {
+  if (stuck.unsupported.length > 0) {
+    console.log(chalk.yellow(
+      `\n⚠ Provider "${provider}" is not supported by ${formatHarnessList(stuck.unsupported)}.`
+    ));
+  }
+  if (stuck.uncovered.length > 0) {
+    console.log(chalk.yellow(
+      `\n⚠ Provider "${provider}" offers no model that works with ${formatHarnessList(stuck.uncovered)}.`
+    ));
+  }
   const { action } = await inquirer.prompt([
     {
       type: 'list',
@@ -815,7 +823,7 @@ async function promptForManualOrSearchModel(
   const stuck = harnessCtx ? unsupportedProviderHarnesses(harnessCtx.harnesses, harnessCtx.provider) : [];
   if (stuck.length > 0) {
     throw new ConfigurationError(
-      `Provider "${harnessCtx?.provider}" offers no model that works with ${formatHarnessList(stuck)} - change the selected agents or the provider`
+      `Provider "${harnessCtx?.provider}" is not supported by ${formatHarnessList(stuck)} - change the selected agents or the provider`
     );
   }
 
@@ -832,7 +840,9 @@ async function promptForManualOrSearchModel(
       ? recommended.find(m => compatibleHarnesses(targets, m, opts).length > 0)
       : recommended[0] || 'gpt-5.5';
     const message = uncovered.length > 0
-      ? `Enter a model for ${uncovered.join(', ')}:`
+      ? (uncovered.length > 1
+        ? `Still no model for ${uncovered.join(', ')} - enter one (it covers whichever it fits):`
+        : `Enter a model for ${uncovered[0]}:`)
       : 'Enter model name manually:';
 
     const id = await enterOneModel(providerTemplate, setupSteps, credentials, message, defaultModel);

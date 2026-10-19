@@ -458,6 +458,20 @@ describe('handlePluginSetup (harness-compatible models, EPMCDME-15641)', () => {
     expect(configMock.saveProfile).not.toHaveBeenCalled();
   });
 
+  it('names every provider-unsupported and every uncovered agent in the dead-end warning', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    installFakeAgents({ codex: ['litellm'], opencode: ['litellm'] });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['claude', 'codex', 'opencode'] })
+      .mockResolvedValueOnce({ action: 'cancel' });
+
+    await handlePluginSetup('other-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    const output = log.mock.calls.flat().join('\n');
+    expect(output).toContain('is not supported by "codex", "opencode"');
+    expect(output).toContain('offers no model that works with "claude"');
+  });
+
   it('tells the user which agents have no model rules before the agent step', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     promptMock
