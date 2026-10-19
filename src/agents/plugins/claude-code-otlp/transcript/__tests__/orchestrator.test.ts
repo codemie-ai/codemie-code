@@ -1558,6 +1558,54 @@ describe('openSessionEnvCheckPass', () => {
     await second.finalize(true);
   });
 
+  it('cheap path: an empty effort/permissionMode input (PreCompact/SessionEnd payload shape) keeps the baseline, not blanks it', async () => {
+    const sessionId = 'session-env-cheap-empty-payload';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    // Mirrors resolveVolatileSessionEnvFields's real pass-through behavior for a payload
+    // that carries neither field (PreCompact/SessionEnd never populate them).
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: '',
+      permission_mode: '',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const check = await openSessionEnvCheckPass(sessionId, { effort: '', permissionMode: '' });
+
+    expect(check.sessionEnvFields).toBeNull();
+    await check.finalize(true);
+  });
+
+  it('cheap path: an empty effort/permissionMode input still lets a genuinely changed volatile field through', async () => {
+    const sessionId = 'session-env-cheap-empty-payload-other-change';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: '',
+      permission_mode: '',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: 'Antarctica/Troll', // genuinely changed, unrelated to effort/permission_mode
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const check = await openSessionEnvCheckPass(sessionId, { effort: '', permissionMode: '' });
+
+    expect(check.sessionEnvFields).toMatchObject({
+      effort: sessionEnvFixture.effort,
+      permission_mode: sessionEnvFixture.permission_mode,
+      timezone: 'Antarctica/Troll',
+    });
+    await check.finalize(true);
+  });
+
   it('full path: builds a fresh baseline even with no prior snapshot, and always emits it', async () => {
     resolveSessionEnvFieldsMock.mockResolvedValue({ ...sessionEnvFixture, configured_model: 'claude-opus-5' });
 
@@ -1587,6 +1635,34 @@ describe('openSessionEnvCheckPass', () => {
 
     expect(resolveSessionEnvFieldsMock).toHaveBeenCalledWith('/repo', sessionEnvFixture.configured_model, sessionEnvFixture.permission_mode);
     expect(check.sessionEnvFields).toMatchObject({ output_style: 'concise' });
+    await check.finalize(true);
+  });
+
+  it('full path: an empty effort/permissionMode input (PostModelSwitch/ConfigChange payload shape) keeps the baseline, not blanks it', async () => {
+    const sessionId = 'session-env-full-empty-payload';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    // ConfigChange/PostModelSwitch can fire with no effort/permission_mode in the hook payload;
+    // the full recompute itself still surfaces some other genuinely changed field (output_style).
+    resolveSessionEnvFieldsMock.mockResolvedValue({
+      ...sessionEnvFixture,
+      effort: '',
+      permission_mode: '',
+      output_style: 'concise',
+    });
+
+    const check = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: '',
+      full: { cwd: '/repo', configuredModel: sessionEnvFixture.configured_model },
+    });
+
+    expect(check.sessionEnvFields).toMatchObject({
+      effort: sessionEnvFixture.effort,
+      permission_mode: sessionEnvFixture.permission_mode,
+      output_style: 'concise',
+    });
     await check.finalize(true);
   });
 
@@ -1755,6 +1831,60 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
 
     expect(elapsedMs).toBeLessThan(2_000);
     expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ effort: 'high' });
+    await pass.finalize(true);
+  });
+
+  it('openSessionEndPass with an empty-payload envCheck (SessionEnd never carries effort/permission_mode) appends no agent.session.env record', async () => {
+    const sessionId = 'session-envcheck-sessionend-empty-payload';
+    const transcriptPath = writeTranscript('transcript-envcheck-sessionend-empty-payload.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: '',
+      permission_mode: '',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const pass = await openSessionEndPass(sessionId, transcriptPath, '/repo', {
+      effort: '',
+      permissionMode: '',
+    });
+
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toBeUndefined();
+    await pass.finalize(true);
+  });
+
+  it('openSubagentPass with an empty-payload envCheck (SubagentStop may carry neither field) appends no agent.session.env record', async () => {
+    const sessionId = 'session-envcheck-subagent-empty-payload';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10 }),
+    ]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: '',
+      permission_mode: '',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const pass = await openSubagentPass(sessionId, file, {
+      effort: '',
+      permissionMode: '',
+    });
+
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toBeUndefined();
     await pass.finalize(true);
   });
 
