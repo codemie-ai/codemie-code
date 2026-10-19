@@ -162,6 +162,52 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions[0].deltas).toHaveLength(1);
   });
 
+  it('includes both an active session with deltas and a reconciled completed_ session with deltas', () => {
+    const activeSessionId = '11111111-1111-4111-8111-111111111111';
+    const reconciledSessionId = '22222222-2222-4222-8222-222222222222';
+
+    writeFileSync(
+      join(dir, `${activeSessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        status: 'active',
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+      })
+    );
+    writeFileSync(
+      join(dir, `${activeSessionId}_metrics.jsonl`),
+      JSON.stringify({ recordId: 'delta-active', sessionId: activeSessionId, syncStatus: 'synced', gitBranch: 'main' }) + '\n'
+    );
+
+    writeFileSync(
+      join(dir, `completed_${reconciledSessionId}.json`),
+      JSON.stringify({
+        startTime: 2000,
+        endTime: 3000,
+        status: 'completed',
+        reason: 'interrupted',
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+      })
+    );
+    writeFileSync(
+      join(dir, `completed_${reconciledSessionId}_metrics.jsonl`),
+      JSON.stringify({ recordId: 'delta-reconciled', sessionId: reconciledSessionId, syncStatus: 'synced', gitBranch: 'main' }) + '\n'
+    );
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions();
+
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual(
+      [activeSessionId, reconciledSessionId].sort()
+    );
+    expect(sessions.find((s) => s.sessionId === activeSessionId)?.deltas).toHaveLength(1);
+    expect(sessions.find((s) => s.sessionId === reconciledSessionId)?.deltas).toHaveLength(1);
+  });
+
   it('populates agentSessionFile from correlation.agentSessionFile for a completed_ session', () => {
     const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
     const agentSessionFile = '/home/user/.claude/projects/proj/native-log.jsonl';

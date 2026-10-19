@@ -1,10 +1,33 @@
 # EPMCDME-15536: Stale-Session Reconciliation Fallback Implementation Plan
 
+> **Historical plan note (2026-10-19):** this plan describes the original six-plugin wiring approach. The current code intentionally supersedes part of it: reconciliation is now centralized in `BaseAgentAdapter.run()`, generic hook-managed CLI sessions carry heartbeat-based liveness, and session records persist analytics routing context for reconciliation. Keep the completed task detail for audit history, but do not use the Pattern A/B section below as the current architecture source of truth.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Wire the existing `reconcileStaleSessions` fallback utility into the six agent plugins that are missing it (`claude`, `gemini`, `kimi`, `codemie-code`, `opencode`, `copilot-cli`), so a session stuck `status: "active"` forever (no clean `SessionEnd`) gets finalized the next time that plugin starts a new session — exactly as already happens for `codex` and `pi`.
 
-**Architecture:** Two mechanical patterns, both reusing `reconcileStaleSessions` from `src/agents/core/session/stale-session-reconciliation.ts` unmodified. Pattern A (`claude`, `gemini`, `kimi`): add a brand-new `onSessionStart` lifecycle method (these plugins have none today) that calls *only* `reconcileStaleSessions` — never `processEvent(SessionStart)`, since their native hook manifests already create the session record reliably. Pattern B (`codemie-code`, `opencode`, `copilot-cli`): insert one `reconcileStaleSessions` call into each plugin's existing `onSessionStart`, alongside its existing `processEvent(SessionStart)` call.
+**Architecture (historical, superseded):** Two mechanical patterns, both reusing `reconcileStaleSessions` from `src/agents/core/session/stale-session-reconciliation.ts` unmodified. Pattern A (`claude`, `gemini`, `kimi`): add a brand-new `onSessionStart` lifecycle method (these plugins have none today) that calls *only* `reconcileStaleSessions` — never `processEvent(SessionStart)`, since their native hook manifests already create the session record reliably. Pattern B (`codemie-code`, `opencode`, `copilot-cli`): insert one `reconcileStaleSessions` call into each plugin's existing `onSessionStart`, alongside its existing `processEvent(SessionStart)` call.
+
+## 2026-10-19 addendum — current architecture
+
+The original rollout above fixed the "missing wiring" gap, but later review found two correctness problems:
+
+1. a quiet but still-open terminal could be reconciled as stale after 30 minutes because generic hook-managed sessions had no liveness signal beyond transcript/sync activity;
+2. stale finalization reused the current launch's URL/profile context instead of the stranded session's own routing context.
+
+Current implementation:
+
+- `BaseAgentAdapter.run()` calls `reconcileStaleSessions(null, env, buildReconciliationHookConfig)` once per launch for all generic hook-managed agents;
+- `BaseAgentAdapter.run()` also refreshes a per-session heartbeat written to `session.liveness.lastHeartbeatAt`;
+- `findStaleSessions()` reconciles only after both activity and heartbeat have gone stale;
+- `createSessionRecord()` / `ensureSessionFile()` persist `analyticsContext` (`apiBaseUrl`, `ssoUrl`, `syncApiUrl`, `profileName`);
+- `buildReconciliationHookConfig()` and the synthetic `SessionEnd` event now prefer the stale session's own persisted routing context and `workingDirectory`.
+
+Relevant files:
+
+- `src/agents/core/BaseAgentAdapter.ts`
+- `src/agents/core/session/{types.ts,SessionStore.ts,ensure-session.ts,stale-session-reconciliation.ts}`
+- `src/cli/commands/hook.ts`
 
 **Tech Stack:** TypeScript, Vitest 4.x (`vi.doMock`/dynamic-import or top-level `vi.mock`, per each file's existing convention).
 
@@ -15,7 +38,7 @@
 - Never duplicate `processEvent({ hook_event_name: 'SessionStart', ... })` in `claude`/`gemini`/`kimi`'s new `onSessionStart` — their native hook manifests already create the session record via the shared `codemie hook` → `handleSessionStart` path. Duplicating it double-fires session creation.
 - `reconcileStaleSessions` calls are always fire-and-forget: `void reconcileStaleSessions(...).catch((error) => logger.debug(...))` — never awaited, never allowed to throw into `onSessionStart`.
 - Do not modify `src/agents/core/session/stale-session-reconciliation.ts`, `src/cli/commands/hook.ts`, or any native hook manifest/installer (`hooks.json`, Gemini's `eventNameMapping`, Kimi's `kimi.hook-config-injector.ts`).
-- Rely on `reconcileStaleSessions`'s defaults (30 min inactivity threshold, 24h lookback) — no overrides.
+- Rely on `reconcileStaleSessions`'s defaults (30 min staleness threshold, no age cap / no 24h lookback) — no overrides.
 - Do not touch `codex` or `pi`'s files; their existing tests must keep passing unmodified.
 
 ## Review Focus

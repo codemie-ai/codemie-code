@@ -1,5 +1,7 @@
 # Spec — EPMCDME-15536: Wire stale-session reconciliation into all plugins missing it
 
+> **Historical spec note (2026-10-19):** this document captures the original six-plugin rollout. The current implementation has intentionally evolved beyond it: reconciliation is now centralized in `BaseAgentAdapter.run()`, generic hook-managed CLI sessions carry a heartbeat-based liveness lease, and session records persist their original analytics routing context so stale finalization reuses the session's own URLs/profile rather than the current launch's env.
+
 **Ticket:** [EPMCDME-15536](https://jiraeu.epam.com/browse/EPMCDME-15536) — [CLI Analitics] SSO-proxied session lifecycle prevents analytics collection and reporting
 **Local work item:** `docs/superpowers/work-items/EPMCDME-15536.md`
 **Complexity:** M (18/36), Story Points: 3
@@ -10,7 +12,7 @@ Sessions for several agent plugins permanently stay `status: "active"` with no `
 
 Confirmed on this machine: 10 of 36 local sessions, all `provider: "ai-run-sso"`, `agentName: "claude"`, stuck `status: "active"` with no `endTime`, some for 13+ days.
 
-This codebase already has a fallback for exactly this failure mode — `reconcileStaleSessions` (`src/agents/core/session/stale-session-reconciliation.ts`) — which synthesizes a `SessionEnd` event with `reason: "interrupted"` for stranded sessions of an agent's own kind, called from that agent's `onSessionStart`. It is currently wired up only for `codex` and `pi`. Six plugins have the same unaddressed gap:
+At investigation time, this codebase already had a fallback for exactly this failure mode — `reconcileStaleSessions` (`src/agents/core/session/stale-session-reconciliation.ts`) — which synthesized a `SessionEnd` event with `reason: "interrupted"` for stranded sessions of an agent's own kind, called from that agent's `onSessionStart`. It was then wired only for `codex` and `pi`. Six plugins had the same unaddressed gap:
 
 - `claude.plugin.ts`, `gemini.plugin.ts`, `kimi.plugin.ts` — no `onSessionStart`/`onSessionEnd` lifecycle hooks at all today.
 - `codemie-code.plugin.ts`, `opencode/opencode.plugin.ts`, `copilot-cli/copilot-cli.plugin.ts` — already have `onSessionStart`/`onSessionEnd`, but neither calls `reconcileStaleSessions`.
@@ -79,6 +81,17 @@ No existing test, for either already-wired plugin (`codex` or `pi`), asserts tha
 - The `codemie analytics --export json` active-session-exclusion claim from the original ticket text — investigated, does not reproduce on current code.
 - Any change to the inactivity threshold / lookback defaults in `reconcileStaleSessions`.
 - Documentation updates to `.ai-run/guides/integration/external-integrations.md` (currently documents the codex-only path) — flagged as a follow-up for a knowledge-harvester pass, not bundled into this fix.
+
+## Follow-up hardening implemented after this spec
+
+The shipped code now goes beyond the original per-plugin plan:
+
+- reconciliation runs once from `BaseAgentAdapter.run()` with `agentName: null`, sweeping all generic hook-managed sessions instead of relying on six independent plugin hook sites;
+- generic hook-managed sessions persist `liveness.lastHeartbeatAt`, refreshed by the owning CLI process, so a quiet-but-still-open terminal is not falsely finalized;
+- session records persist `analyticsContext` (`apiBaseUrl`, `ssoUrl`, `syncApiUrl`, `profileName`), and reconciliation prefers that persisted context over the current launch env;
+- the synthetic `SessionEnd` event uses the stale session's own `workingDirectory` for `cwd`.
+
+These changes intentionally drift from the original "don't modify `stale-session-reconciliation.ts` / `hook.ts`" constraint because review uncovered correctness gaps the initial rollout did not address.
 
 ## Follow-up (2026-10-15): Claude Desktop restart-reconciliation gap
 

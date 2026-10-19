@@ -235,6 +235,8 @@ One flag, `--export [format]`, covers every output. It is optional-valued: bare 
 
 `ReportPayload` (`{ meta, sessions }`) is the **only** JSON schema `codemie analytics` writes — there is no separate cost-less export format. `html`, `json`, and `both` are the only accepted `--export` values; anything else is rejected with an invalid-format error.
 
+**Which sessions are included?** The dashboard and `--export json` read the same local session set. A session is included when it has real recorded usage data (metrics deltas, or equivalent cost/log-derived usage) that survives the analytics filters; session `status` alone does not decide inclusion. That means an **active** session with recorded deltas is included, and a session that was later **reconciled/finalized** after a missed native `SessionEnd` is included too. True zero-activity sessions are still omitted by design, and native sessions CodeMie did not launch remain excluded unless you pass `--include-external`.
+
 **`-o, --output <path>`** — one flag for choosing where files go:
 
 - **No `-o`.** Files go to the current directory under the default names below, with a home/tmp fallback if the current directory turns out not to be writable (e.g. a read-only volume).

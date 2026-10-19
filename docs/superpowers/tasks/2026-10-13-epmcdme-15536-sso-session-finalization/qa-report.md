@@ -38,6 +38,29 @@ Both failure families were cross-checked against a clean `origin/main` worktree 
 
 No. Implementation matches spec.md exactly: `onSessionStart` method names, `reconcileStaleSessions` call signature `(agentName, env, buildHookConfig)`, and the Pattern A/B split all match what spec.md and plan.md specified.
 
+## Follow-up — CLI reconciliation hardening (2026-10-19)
+
+Later review surfaced two correctness gaps the original Pattern A/B rollout did not cover:
+
+1. **False stale on idle live terminals** — a second launch could finalize a still-open session as `interrupted` after 30 minutes of quiet because generic hook-managed sessions had no liveness heartbeat.
+2. **Wrong routing/profile context on reconciliation** — stale finalization reused the current launch's `apiBaseUrl` / `ssoUrl` / `syncApiUrl` / `profileName`, and synthetic `SessionEnd.cwd` used `process.cwd()`, rather than the stranded session's own persisted context.
+
+**Fix shipped**:
+
+- `BaseAgentAdapter.run()` now owns generic hook-managed reconciliation centrally and writes a per-session heartbeat (`session.liveness.lastHeartbeatAt`);
+- stale detection now uses the latest trustworthy sign of life (`max(real last activity, heartbeat)`);
+- `hook.ts` / `ensure-session.ts` now persist `analyticsContext` on the session record;
+- reconciliation reuses that persisted routing/profile context and the stale session's `workingDirectory`.
+
+**Targeted verification**:
+
+| Gate | Status | Command | Notes |
+|---|---|---|---|
+| typecheck | PASS | `npm run typecheck` | No diagnostics after the heartbeat + analytics-context changes. |
+| unit (targeted) | PASS | `npx vitest run src/agents/core/session/__tests__/SessionStore.liveness.test.ts src/agents/core/session/__tests__/SessionStore.endTime.test.ts src/agents/core/session/__tests__/stale-session-reconciliation.test.ts src/agents/core/__tests__/BaseAgentAdapter.test.ts src/agents/plugins/opencode/__tests__/opencode-session-record.test.ts` | 5 files, 83 tests passing. Covers heartbeat persistence, endTime threading, working-directory preservation, analytics-context preference, BaseAgentAdapter centralized sweep, and ensure-session persistence. |
+
+**Drift signal**: Yes — intentional and correct. The new implementation no longer matches the original "Pattern A/B only, no changes to `stale-session-reconciliation.ts` / `hook.ts`" constraint because review proved that design still allowed false stale finalization and cross-profile reconciliation drift. The docs/spec for this task are retained as historical delivery artifacts, with addenda marking the current architecture.
+
 ## Follow-up — Claude Desktop restart reconciliation (2026-10-15)
 
 **Scope**: Task 8 in `plan.md` (`SessionStore.findActiveSessions`, `DesktopTelemetryRuntime.reconcilePersistedSessions`), plus a QA-driven failure-isolation fix (see below) and new wiring tests for `codex`/`pi` closing a pre-existing coverage gap from the original acceptance criteria.
