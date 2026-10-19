@@ -67,6 +67,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     return HOOK_EVENT_TYPE_MAP[String(event['codemieEventName'] ?? '')] ?? 'agent.event';
   }
 
+  protected requiresSpoolAcceptance(input: CopilotCliHookInput): boolean {
+    return ENFORCED_EVENTS.has(input.codemieEventName);
+  }
+
   protected async evaluate(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     if (input.codemieEventName === 'userPromptTransformed') {
       return this.onEnforcedEvent(input, 'userPromptTransformed');

@@ -86,6 +86,10 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
   }
 
+  protected requiresSpoolAcceptance(input: CopilotChatHookInput): boolean {
+    return ENFORCED_EVENTS.has(input.hook_event_name);
+  }
+
   protected async evaluate(hookInput: CopilotChatHookInput): Promise<ChatForwardDecision> {
     if (!ENFORCED_EVENTS.has(hookInput.hook_event_name)) {
       return { decision: 'forward', payload: [hookInput] };
