@@ -13,10 +13,14 @@
 export const TICKET_RE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?!\d)/gi;
 
 /**
- * Explicit marker-phrase pattern: `story: X` or `ticket #X`, case-insensitive on the marker
- * word, with an optional `:`/`#` separator and optional surrounding whitespace.
+ * Explicit marker-phrase pattern: `story: X`, `story #X`, or `ticket: X`,
+ * case-insensitive on the marker word. A `:` or `#` separator is required
+ * so ordinary wording like `user story X` does not override the branch tier.
+ * The captured id itself already covers both cases via its own
+ * `[A-Za-z]`/`[A-Za-z0-9]` ranges — the result is still upper-cased before
+ * returning, consistent with every other regex-derived tier in this module.
  */
-const MARKER_RE = /(?:story|ticket)\s*[:#]?\s*([A-Za-z][A-Za-z0-9]+-\d+)/i;
+const MARKER_RE = /\b(?:story|ticket)\b\s*[:#]\s*([A-Za-z][A-Za-z0-9]+-\d+)/i;
 
 /** Upper bound on `ticket_mentions`, so a pasted log cannot bloat the event. */
 const MAX_TICKET_MENTIONS = 20;
