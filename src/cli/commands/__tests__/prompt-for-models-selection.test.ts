@@ -184,6 +184,27 @@ describe('promptForModelsSelection', () => {
       expect((seen[1][0] as { message: string }).message).toContain('codex');
     });
 
+    it('rejects a checkbox selection that leaves agents uncovered before asking for the active model, naming all of them', async () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const seen = queueAnswers([
+        { selectedModels: ['claude-sonnet-4'] },
+        { selectedModels: ['claude-sonnet-4', 'gpt-5.4', 'gemini-2.5-pro'] },
+        { activeModel: 'gpt-5.4' }
+      ]);
+
+      const result = await promptForModelsSelection(
+        ['claude-sonnet-4', 'gpt-5.4', 'gemini-2.5-pro'], undefined, undefined, undefined, undefined, undefined,
+        { harnesses: ['claude', 'codex', 'gemini'] }
+      );
+
+      expect(result.models).toEqual(['claude-sonnet-4', 'gpt-5.4', 'gemini-2.5-pro']);
+      expect(seen).toHaveLength(3);
+      expect((seen[2][0] as { name: string }).name).toBe('activeModel');
+      const printed = log.mock.calls.map(c => String(c[0])).join('\n');
+      expect(printed).toContain('"codex"');
+      expect(printed).toContain('"gemini"');
+    });
+
     it('warns and requires confirmation for a catalog-less model incompatible with every harness', async () => {
       vi.spyOn(console, 'log').mockImplementation(() => {});
       queueAnswers([

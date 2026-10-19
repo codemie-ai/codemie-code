@@ -8,6 +8,7 @@ import {
   harnessAnnotations,
   compatibleHarnesses,
   uncoveredHarness,
+  uncoveredHarnesses,
   unsupportedProviderHarness,
   routerAcceptedModels,
 } from '../model-compat.js';
@@ -149,6 +150,16 @@ describe('uncoveredHarness', () => {
 
   it('counts a confirmed model as coverage', () => {
     expect(uncoveredHarness(['codex'], ['claude-x'], { confirmedModels: ['claude-x'] })).toBeUndefined();
+  });
+});
+
+describe('uncoveredHarnesses', () => {
+  it('names every harness that has no non-incompatible model', () => {
+    expect(uncoveredHarnesses(['claude', 'codex'], ['llama-3'])).toEqual(['claude', 'codex']);
+  });
+
+  it('returns an empty list when every harness is covered', () => {
+    expect(uncoveredHarnesses(['claude', 'codex'], ['claude-sonnet-4', 'gpt-5.4'])).toEqual([]);
   });
 });
 

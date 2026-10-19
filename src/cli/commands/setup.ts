@@ -22,9 +22,13 @@ import {
   getClassifierAgents,
   getOfferedHarnesses,
   routerAcceptedModels,
-  uncoveredHarness,
-  unsupportedProviderHarness
+  uncoveredHarnesses,
+  unsupportedProviderHarnesses
 } from '../../agents/core/model-compat.js';
+import {
+  HARNESS_CHECKBOX_PROMPT,
+  HarnessCheckboxPrompt
+} from './shared/harness-checkbox-prompt.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
 
@@ -327,10 +331,10 @@ export async function handlePluginSetup(
         // support is known to be unsatisfiable (no typed id can ever cover it).
         const deadEnd = harnessCtx
           ? (models.length > 0
-            ? uncoveredHarness(harnessCtx.harnesses, models, { provider: providerName, isRouter })
-            : unsupportedProviderHarness(harnessCtx.harnesses, providerName))
-          : undefined;
-        if (deadEnd) {
+            ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
+            : unsupportedProviderHarnesses(harnessCtx.harnesses, providerName))
+          : [];
+        if (deadEnd.length > 0) {
           const action = await promptForHarnessDeadEnd(deadEnd, providerName);
           if (action === 'change') {
             harnesses = await promptForHarnesses(harnesses);
@@ -356,16 +360,14 @@ export async function handlePluginSetup(
 
         // Coverage gate: every selected harness needs at least one non-incompatible model.
         const uncovered = harnessCtx
-          ? uncoveredHarness(harnessCtx.harnesses, selectedModels, {
+          ? uncoveredHarnesses(harnessCtx.harnesses, selectedModels, {
             provider: providerName,
             confirmedModels,
             isRouter
           })
-          : undefined;
-        if (!uncovered) break;
-        console.log(chalk.red(
-          `✗ No selected model works with "${uncovered}". Add a model for ${uncovered} (or remove it from the selected agents) to continue.`
-        ));
+          : [];
+        if (uncovered.length === 0) break;
+        console.log(chalk.red(uncoveredHarnessesMessage(uncovered)));
         existingModels = selectedModels;
       }
     }
@@ -400,15 +402,15 @@ export async function handlePluginSetup(
 
         // Failed installs can remove the last model a harness had.
         const uncoveredAfterInstall = harnessCtx
-          ? uncoveredHarness(harnessCtx.harnesses, selectedModels, {
+          ? uncoveredHarnesses(harnessCtx.harnesses, selectedModels, {
             provider: providerName,
             confirmedModels,
             isRouter: harnessCtx.isRouter
           })
-          : undefined;
-        if (uncoveredAfterInstall) {
+          : [];
+        if (uncoveredAfterInstall.length > 0) {
           throw new ConfigurationError(
-            `No installed model works with "${uncoveredAfterInstall}" - profile not saved`
+            `No installed model works with ${formatHarnessList(uncoveredAfterInstall)} - profile not saved`
           );
         }
       }
@@ -602,9 +604,9 @@ export async function promptForHarnesses(existing?: string[]): Promise<string[]>
   return Array.isArray(harnesses) ? harnesses : [];
 }
 
-async function promptForHarnessDeadEnd(harness: string, provider: string): Promise<'change' | 'cancel'> {
+async function promptForHarnessDeadEnd(harnesses: string[], provider: string): Promise<'change' | 'cancel'> {
   console.log(chalk.yellow(
-    `\n⚠ Provider "${provider}" offers no model that works with "${harness}".`
+    `\n⚠ Provider "${provider}" offers no model that works with ${formatHarnessList(harnesses)}.`
   ));
   const { action } = await inquirer.prompt([
     {
@@ -620,12 +622,24 @@ async function promptForHarnessDeadEnd(harness: string, provider: string): Promi
   return action === 'change' ? 'change' : 'cancel';
 }
 
-/** Dim "[codex, claude · unverified]" suffix naming the selected harnesses a model works with. */
-function harnessLabel(id: string, ctx: HarnessModelContext, confirmed: Set<string>): string {
+/** Registers the live-highlighting checkbox once; false when inquirer cannot register prompts. */
+function registerHarnessCheckbox(): boolean {
+  const registrar = inquirer as unknown as { registerPrompt?: (name: string, prompt: unknown) => void };
+  if (typeof registrar.registerPrompt !== 'function') return false;
+  registrar.registerPrompt(HARNESS_CHECKBOX_PROMPT, HarnessCheckboxPrompt);
+  return true;
+}
+
+/**
+ * Dim "[codex, claude · unverified]" suffix naming the selected harnesses a model works with.
+ * Agents in `missing` (no checked model covers them yet) are highlighted.
+ */
+function harnessLabel(id: string, ctx: HarnessModelContext, confirmed: Set<string>, missing: string[] = []): string {
   const opts = { provider: ctx.provider, confirmedModels: [...confirmed], isRouter: ctx.isRouter };
   const works = compatibleHarnesses(ctx.harnesses, id, opts);
   const unverified = works.some(h => classifyModelForAgent(h, id, opts) === 'unverified');
-  return chalk.dim(`  [${works.join(', ')}${unverified ? ' · unverified' : ''}]`);
+  const names = works.map(h => (missing.includes(h) ? chalk.bgYellow(chalk.black(h)) : chalk.dim(h)));
+  return chalk.dim('  [') + names.join(chalk.dim(', ')) + chalk.dim(`${unverified ? ' · unverified' : ''}]`);
 }
 
 /** Put the label on the first line of a (possibly multi-line) choice name. */
@@ -664,6 +678,18 @@ async function acceptTypedModel(
     return true;
   }
   return false;
+}
+
+/** Quoted, comma-separated agent names for messages: "codex", "gemini". */
+function formatHarnessList(harnesses: string[]): string {
+  return harnesses.map(h => `"${h}"`).join(', ');
+}
+
+/** One message naming every selected agent that still lacks a compatible model. */
+function uncoveredHarnessesMessage(uncovered: string[]): string {
+  return `✗ No selected model works with ${formatHarnessList(uncovered)}. ` +
+    `Add a model for ${uncovered.length > 1 ? 'each of them' : uncovered[0]} (or remove ` +
+    `${uncovered.length > 1 ? 'them' : 'it'} from the selected agents) to continue.`;
 }
 
 /**
@@ -775,10 +801,10 @@ async function promptForManualOrSearchModel(
   const picked: string[] = harnessCtx ? preselected.filter(id => confirmed.has(id)) : [];
 
   // No typed id can cover a harness the provider does not support: fail instead of re-asking forever.
-  const stuck = harnessCtx ? unsupportedProviderHarness(harnessCtx.harnesses, harnessCtx.provider) : undefined;
-  if (stuck) {
+  const stuck = harnessCtx ? unsupportedProviderHarnesses(harnessCtx.harnesses, harnessCtx.provider) : [];
+  if (stuck.length > 0) {
     throw new ConfigurationError(
-      `Provider "${harnessCtx?.provider}" offers no model that works with "${stuck}" - change the selected agents or the provider`
+      `Provider "${harnessCtx?.provider}" offers no model that works with ${formatHarnessList(stuck)} - change the selected agents or the provider`
     );
   }
 
@@ -786,16 +812,16 @@ async function promptForManualOrSearchModel(
   for (;;) {
     const opts = { provider: harnessCtx?.provider, confirmedModels: [...confirmed], isRouter: harnessCtx?.isRouter };
     const uncovered = harnessCtx && picked.length > 0
-      ? uncoveredHarness(harnessCtx.harnesses, picked, opts)
-      : undefined;
-    if (asked && picked.length > 0 && !uncovered) break;
+      ? uncoveredHarnesses(harnessCtx.harnesses, picked, opts)
+      : [];
+    if (asked && picked.length > 0 && uncovered.length === 0) break;
 
-    const targets = uncovered ? [uncovered] : harnessCtx?.harnesses;
+    const targets = uncovered.length > 0 ? uncovered : harnessCtx?.harnesses;
     const defaultModel = harnessCtx && targets
       ? recommended.find(m => compatibleHarnesses(targets, m, opts).length > 0)
       : recommended[0] || 'gpt-5.5';
-    const message = uncovered
-      ? `Enter a model for ${uncovered}:`
+    const message = uncovered.length > 0
+      ? `Enter a model for ${uncovered.join(', ')}:`
       : 'Enter model name manually:';
 
     const id = await enterOneModel(providerTemplate, setupSteps, credentials, message, defaultModel);
@@ -919,9 +945,21 @@ export async function promptForModelsSelection(
   let checked = new Set<string>(preselected ?? []);
 
   for (;;) {
-    const baseChoices = getAllModelChoices(models.filter(isVisible), providerTemplate, recommendedOverrideIds).map(choice => ({
+    const plainChoices = getAllModelChoices(models.filter(isVisible), providerTemplate, recommendedOverrideIds);
+    const plainNames = new Map<string, string>(plainChoices.map(choice => [choice.value, choice.name]));
+    const coverageOpts = (): { provider?: string; confirmedModels: string[]; isRouter?: (id: string) => boolean } => ({
+      provider: harnessCtx?.provider,
+      confirmedModels: [...confirmed],
+      isRouter: harnessCtx?.isRouter
+    });
+    const baseChoices = plainChoices.map(choice => ({
       ...choice,
-      name: harnessCtx ? withHarnessLabel(choice.name, harnessLabel(choice.value, harnessCtx, confirmed)) : choice.name,
+      name: harnessCtx
+        ? withHarnessLabel(
+          choice.name,
+          harnessLabel(choice.value, harnessCtx, confirmed, uncoveredHarnesses(harnessCtx.harnesses, [...checked], coverageOpts()))
+        )
+        : choice.name,
       checked: checked.has(choice.value)
     }));
     const choices = [
@@ -930,9 +968,22 @@ export async function promptForModelsSelection(
       ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
     ];
 
+    // With a harness context the rows re-label live: agents no checked model covers are highlighted.
+    const liveRows = harnessCtx && registerHarnessCheckbox()
+      ? {
+        type: HARNESS_CHECKBOX_PROMPT,
+        missingFor: (picked: string[]): string[] =>
+          uncoveredHarnesses(harnessCtx.harnesses, picked.filter(id => id !== 'custom' && id !== 'search'), coverageOpts()),
+        liveLabel: (value: string, missing: string[]): string | undefined => {
+          const plain = plainNames.get(value);
+          return plain === undefined ? undefined : withHarnessLabel(plain, harnessLabel(value, harnessCtx, confirmed, missing));
+        }
+      }
+      : { type: 'checkbox' };
+
     const { selectedModels } = await inquirer.prompt([
       {
-        type: 'checkbox',
+        ...liveRows,
         name: 'selectedModels',
         message: `Choose models (${models.length} available):`,
         choices,
@@ -982,6 +1033,20 @@ export async function promptForModelsSelection(
     if (alreadyChecked.length === 0) {
       // AC5: an empty confirmation re-prompts rather than returning.
       checked = new Set();
+      continue;
+    }
+
+    // Check coverage here, before the active-model prompt, and name every agent still missing a model.
+    const missing = harnessCtx
+      ? uncoveredHarnesses(harnessCtx.harnesses, alreadyChecked, {
+        provider: harnessCtx.provider,
+        confirmedModels: [...confirmed],
+        isRouter: harnessCtx.isRouter
+      })
+      : [];
+    if (missing.length > 0) {
+      console.log(chalk.red(uncoveredHarnessesMessage(missing)));
+      checked = new Set(alreadyChecked);
       continue;
     }
 

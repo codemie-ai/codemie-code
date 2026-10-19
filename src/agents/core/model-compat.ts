@@ -56,28 +56,42 @@ export function compatibleHarnesses(harnesses: string[], id: string, opts: Model
   return harnesses.filter((h) => classifyModelForAgent(h, id, opts) !== 'incompatible');
 }
 
+/** Coverage gate: every harness with no non-`incompatible` model among `models`. */
+export function uncoveredHarnesses(
+  harnesses: string[],
+  models: string[],
+  opts: ModelCompatOptions = {}
+): string[] {
+  return harnesses.filter(
+    (h) => !models.some((m) => classifyModelForAgent(h, m, opts) !== 'incompatible')
+  );
+}
+
 /** Coverage gate: first harness with no non-`incompatible` model among `models`, if any. */
 export function uncoveredHarness(
   harnesses: string[],
   models: string[],
   opts: ModelCompatOptions = {}
 ): string | undefined {
-  return harnesses.find(
-    (h) => !models.some((m) => classifyModelForAgent(h, m, opts) !== 'incompatible')
-  );
+  return uncoveredHarnesses(harnesses, models, opts)[0];
 }
 
 /**
- * First harness (with a classifier) whose non-empty `supportedProviders` excludes `provider`.
+ * Harnesses (with a classifier) whose non-empty `supportedProviders` excludes `provider`.
  * No model id can ever make such a harness work on this provider.
  */
-export function unsupportedProviderHarness(harnesses: string[], provider: string | undefined): string | undefined {
-  if (!provider) return undefined;
-  return harnesses.find((h) => {
+export function unsupportedProviderHarnesses(harnesses: string[], provider: string | undefined): string[] {
+  if (!provider) return [];
+  return harnesses.filter((h) => {
     const metadata = resolveAgent(h)?.metadata;
     const supported = metadata?.supportedProviders;
     return Boolean(metadata?.classifyModel && supported?.length && !supported.includes(provider));
   });
+}
+
+/** First harness from {@link unsupportedProviderHarnesses}, if any. */
+export function unsupportedProviderHarness(harnesses: string[], provider: string | undefined): string | undefined {
+  return unsupportedProviderHarnesses(harnesses, provider)[0];
 }
 
 /**
