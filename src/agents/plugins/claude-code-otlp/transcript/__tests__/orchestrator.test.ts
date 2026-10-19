@@ -1581,3 +1581,186 @@ describe('openSessionEnvCheckPass', () => {
     await check.finalize(true);
   });
 });
+
+/**
+ * Regression coverage: these hooks used to run their own pass and a separate
+ * `openSessionEnvCheckPass` concurrently, both acquiring the same per-session lock from the same
+ * process — the second acquisition always stalled for the full `LOCK_WAIT_BUDGET_MS`. The fix
+ * folds the env-check into the sibling pass's own already-held lock via `envCheck`.
+ */
+describe('envCheck fold-in — single lock acquisition (regression for the Stop/env-check deadlock)', () => {
+  beforeEach(() => {
+    resolveSessionEnvFieldsMock.mockReset();
+    resolveVolatileSessionEnvFieldsMock.mockReset();
+  });
+
+  it('openMainTranscriptPass appends a changed agent.session.env record derived from envCheck, resolving almost instantly (no second lock wait)', async () => {
+    const sessionId = 'session-envcheck-stop-changed';
+    const transcriptPath = writeTranscript('transcript-envcheck-stop-changed.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const started = Date.now();
+    const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    const elapsedMs = Date.now() - started;
+
+    // The old double-lock-acquisition bug stalled for the full 10s LOCK_WAIT_BUDGET_MS on every
+    // Stop; a single acquisition resolves immediately regardless of machine speed.
+    expect(elapsedMs).toBeLessThan(2_000);
+
+    const envEvent = pass.events.find((e) => e.type === 'agent.session.env');
+    expect(envEvent).toMatchObject({ session_id: sessionId, effort: 'high' });
+
+    await pass.finalize(true);
+
+    const { acquireParseStateLock } = await import('../parse-state.js');
+    const release = await acquireParseStateLock(sessionId); // would hang if the pass's lock leaked
+    await release();
+  });
+
+  it('openMainTranscriptPass omits the agent.session.env record when envCheck finds nothing changed', async () => {
+    const sessionId = 'session-envcheck-stop-unchanged';
+    const transcriptPath = writeTranscript('transcript-envcheck-stop-unchanged.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: sessionEnvFixture.effort,
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: sessionEnvFixture.effort,
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+
+    expect(pass.events.some((e) => e.type === 'agent.session.env')).toBe(false);
+    await pass.finalize(true);
+  });
+
+  it('a hook fire with no envCheck argument (PostCompact-style callers) behaves exactly as before — no agent.session.env ever appended', async () => {
+    const sessionId = 'session-envcheck-omitted';
+    const transcriptPath = writeTranscript('transcript-envcheck-omitted.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop');
+
+    expect(pass.events.some((e) => e.type === 'agent.session.env')).toBe(false);
+    expect(resolveVolatileSessionEnvFieldsMock).not.toHaveBeenCalled();
+    await pass.finalize(true);
+  });
+
+  it('openSubagentPass folds envCheck into its own already-held lock and appends the changed record', async () => {
+    const sessionId = 'session-envcheck-subagent';
+    const file = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10 }),
+    ]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const started = Date.now();
+    const pass = await openSubagentPass(sessionId, file, {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    const elapsedMs = Date.now() - started;
+
+    expect(elapsedMs).toBeLessThan(2_000);
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ effort: 'high' });
+    await pass.finalize(true);
+  });
+
+  it('openSessionEndPass folds envCheck into its own already-held lock and appends the changed record', async () => {
+    const sessionId = 'session-envcheck-sessionend';
+    const transcriptPath = writeTranscript('transcript-envcheck-sessionend.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const started = Date.now();
+    const pass = await openSessionEndPass(sessionId, transcriptPath, '/repo', {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    const elapsedMs = Date.now() - started;
+
+    expect(elapsedMs).toBeLessThan(2_000);
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ effort: 'high' });
+    await pass.finalize(true);
+  });
+
+  it('finalize(false) leaves lastSessionEnvFields untouched, so the next check still sees the old diff (commit-after-send holds for the folded-in check too)', async () => {
+    const sessionId = 'session-envcheck-rejected';
+    const transcriptPath = writeTranscript('transcript-envcheck-rejected.jsonl', [noUsageLine('uuid-main')]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high',
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const first = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    expect(first.events.some((e) => e.type === 'agent.session.env')).toBe(true);
+    await first.finalize(false); // the send failed — nothing committed
+
+    const second = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    expect(second.events.some((e) => e.type === 'agent.session.env')).toBe(true); // still a diff
+    await second.finalize(true);
+  });
+});

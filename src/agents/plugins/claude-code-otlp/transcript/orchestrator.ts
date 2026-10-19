@@ -582,7 +582,7 @@ export async function openSessionStartPass(
   }
 }
 
-/** Inputs a trigger hook can supply for one {@link openSessionEnvCheckPass} call. */
+/** Inputs a trigger hook can supply for one env-check (standalone or folded into a sibling pass). */
 export interface SessionEnvCheckInput {
   /** The firing hook's own `effort?.level ?? ''` / `permission_mode ?? ''` — free, no I/O. */
   effort: string;
@@ -608,27 +608,50 @@ export interface SessionEnvCheckResult {
 const NOOP_FINALIZE = async (): Promise<void> => {};
 
 /**
- * Open a commit-after-send pass that recomputes a subset of `agent.session.env`'s fields,
- * diffs the result against `state.lastSessionEnvFields`, and — only when something actually
- * changed — returns the full updated snapshot for the caller to send as a new record. Same
- * acquire/diff/finalize shape as every other pass here: nothing is persisted until
- * `finalize(accepted)` confirms the send landed.
- *
- * Deliberately a *separate* pass (its own lock acquisition) rather than folded into
- * `openMainTranscriptPass`/`openSubagentPass`/`openSessionEndPass`'s existing signatures — those
- * three are called from `Stop`/`PreCompact`/`StopFailure`/`SessionEnd`/`SubagentStop` and already
- * serialize correctly against this pass through the same per-session lock; keeping this
- * standalone avoids widening four existing call sites just to thread `effort`/`permissionMode`
- * through them.
- *
- * Without `input.full` (the cheap path, called from every main/subagent trigger above): merges
- * `effort`/`permission_mode`/`os`/`arch`/`node_version`/`timezone`/`hostname_hash` onto the last
- * snapshot — no file I/O. Returns `null` immediately if there's no prior snapshot to merge onto
- * (nothing sensible to build from cheap fields alone).
- *
- * With `input.full` (from `onPostModelSwitch`/`onConfigChange`): re-resolves everything via
- * {@link resolveSessionEnvFields}, falling back to the last snapshot's `configured_model` when
- * the trigger didn't supply one. Builds and emits a fresh baseline even with no prior snapshot.
+ * Diffs a recomputed `agent.session.env` snapshot against `state.lastSessionEnvFields`, mutating
+ * it and returning the new snapshot only when something changed (`null` otherwise). No lock/load
+ * of its own — the caller must already hold the per-session lock for `state`.
+ */
+async function computeSessionEnvUpdate(
+  state: TranscriptParseState,
+  input: SessionEnvCheckInput
+): Promise<SessionEnvFields | null> {
+  const last = state.lastSessionEnvFields;
+  if (!last && !input.full) {
+    return null;
+  }
+
+  let candidate: SessionEnvFields;
+  if (input.full) {
+    const configuredModel = input.full.configuredModel ?? last?.configured_model ?? '';
+    const resolved = await resolveSessionEnvFields(input.full.cwd, configuredModel, input.permissionMode);
+    candidate = { ...resolved, effort: input.effort, permission_mode: input.permissionMode };
+  } else {
+    const volatile = await resolveVolatileSessionEnvFields(input.effort, input.permissionMode);
+    candidate = { ...last!, ...volatile };
+  }
+
+  if (last && sessionEnvFieldsEqual(last, candidate)) {
+    return null;
+  }
+
+  state.lastSessionEnvFields = candidate;
+  return candidate;
+}
+
+/** `{ type: 'agent.session.env', session_id, ...fields }` — the one shape every env-check caller sends. */
+export function buildSessionEnvEvent(sessionId: string, fields: SessionEnvFields): Record<string, unknown> {
+  return {
+    type: 'agent.session.env',
+    session_id: sessionId,
+    ...fields,
+  };
+}
+
+/**
+ * Standalone commit-after-send pass for an env-check with no sibling pass to fold into
+ * (`onPostModelSwitch`/`onConfigChange`). Every other trigger folds the check into its own
+ * already-held lock instead of acquiring this one a second time.
  */
 export async function openSessionEnvCheckPass(
   sessionId: string,
@@ -638,29 +661,13 @@ export async function openSessionEnvCheckPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const last = state.lastSessionEnvFields;
+    const candidate = await computeSessionEnvUpdate(state, input);
 
-    if (!last && !input.full) {
+    if (!candidate) {
       await release();
       return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
     }
 
-    let candidate: SessionEnvFields;
-    if (input.full) {
-      const configuredModel = input.full.configuredModel ?? last?.configured_model ?? '';
-      const resolved = await resolveSessionEnvFields(input.full.cwd, configuredModel, input.permissionMode);
-      candidate = { ...resolved, effort: input.effort, permission_mode: input.permissionMode };
-    } else {
-      const volatile = await resolveVolatileSessionEnvFields(input.effort, input.permissionMode);
-      candidate = { ...last!, ...volatile };
-    }
-
-    if (last && sessionEnvFieldsEqual(last, candidate)) {
-      await release();
-      return { sessionEnvFields: null, finalize: NOOP_FINALIZE };
-    }
-
-    state.lastSessionEnvFields = candidate;
     return { sessionEnvFields: candidate, finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -675,6 +682,9 @@ export async function openSessionEnvCheckPass(
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
  * events plus a `finalize` that commits only on an accepted send (see the module doc).
  *
+ * `envCheck`, when given, diffs against this same already-loaded `state` and appends a fresh
+ * `agent.session.env` record to `events` when something changed.
+ *
  * On any failure — including a lock-wait timeout — releases whatever lock it holds and returns
  * an empty pass, so the caller still forwards the raw hook event with no `finalize` (existing
  * behaviour: the next hook resumes from the last saved offsets).
@@ -684,13 +694,19 @@ export async function openSessionEnvCheckPass(
 export async function openMainTranscriptPass(
   sessionId: string,
   transcriptPath: string,
-  trigger: MainTranscriptTrigger
+  trigger: MainTranscriptTrigger,
+  envCheck?: SessionEnvCheckInput
 ): Promise<TranscriptPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const { events } = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+
+    if (envCheck) {
+      const updated = await computeSessionEnvUpdate(state, envCheck);
+      if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
+    }
 
     return { events, finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {
@@ -967,14 +983,25 @@ async function deriveSubagentEvents(
 
 /**
  * Open a commit-after-send pass for one `SubagentStop` hook fire. Same acquire/derive/finalize
- * shape as {@link openMainTranscriptPass}, for {@link deriveSubagentEvents}.
+ * shape as {@link openMainTranscriptPass}, for {@link deriveSubagentEvents}, with the same
+ * optional `envCheck` folding.
  */
-export async function openSubagentPass(sessionId: string, subagentFile: SubagentFile): Promise<TranscriptPass> {
+export async function openSubagentPass(
+  sessionId: string,
+  subagentFile: SubagentFile,
+  envCheck?: SessionEnvCheckInput
+): Promise<TranscriptPass> {
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveSubagentEvents(state, sessionId, subagentFile);
+
+    if (envCheck) {
+      const updated = await computeSessionEnvUpdate(state, envCheck);
+      if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
+    }
+
     return { events, finalize: finalizeOf(sessionId, state, release) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -998,7 +1025,8 @@ export async function openSubagentPass(sessionId: string, subagentFile: Subagent
  * per-collector isolation separate passes would give it, so each subagent derivation first
  * snapshots `state` and restores it if that one subagent throws — a failing subagent can never
  * leave `openRequests`/`subagentOffsets` half-mutated and committed, but it also never blocks the
- * other subagents or the main events already derived.
+ * other subagents or the main events already derived. `envCheck` is folded in the same way as
+ * {@link openMainTranscriptPass}.
  */
 export interface SessionEndPass extends TranscriptPass {
   /** `TranscriptParseState.gitHeadStart`/`sessionStartedAt`, read back from the same locked load
@@ -1013,7 +1041,8 @@ const EMPTY_SESSION_END_PASS: SessionEndPass = { ...EMPTY_PASS, gitHeadStart: ''
 export async function openSessionEndPass(
   sessionId: string,
   transcriptPath: string,
-  cwd: string
+  cwd: string,
+  envCheck?: SessionEnvCheckInput
 ): Promise<SessionEndPass> {
   let release: (() => Promise<void>) | undefined;
   try {
@@ -1037,6 +1066,11 @@ export async function openSessionEndPass(
         const msg = err instanceof Error ? err.message : String(err);
         logger.debug('[claude-code-otlp] SessionEnd subagent backstop failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
       }
+    }
+
+    if (envCheck) {
+      const updated = await computeSessionEnvUpdate(state, envCheck);
+      if (updated) events.push(buildSessionEnvEvent(sessionId, updated));
     }
 
     return {

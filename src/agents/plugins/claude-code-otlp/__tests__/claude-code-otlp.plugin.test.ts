@@ -58,6 +58,11 @@ vi.mock('../transcript/orchestrator.js', () => ({
   openSessionEnvCheckPass: openSessionEnvCheckPassMock,
   openSubagentPass: openSubagentPassMock,
   openSessionEndPass: openSessionEndPassMock,
+  buildSessionEnvEvent: (sessionId: string, fields: Record<string, unknown>) => ({
+    type: 'agent.session.env',
+    session_id: sessionId,
+    ...fields,
+  }),
 }));
 
 vi.mock('../transcript/subagent-usage.js', () => ({
@@ -103,6 +108,10 @@ function emptySessionEndPass(): {
 } {
   return { ...emptyPass(), gitHeadStart: '', sessionStartedAt: '' };
 }
+
+/** The `SessionEnvCheckInput` every handler below derives from a hook payload with no
+ *  `effort`/`permission_mode` of its own — the common case in this file's fixtures. */
+const NO_ENV_CHECK = { effort: '', permissionMode: '' };
 
 /** Every event sent in the batch call (there is at most one call per processOtlpEvent). */
 function forwardedEvents(): Record<string, unknown>[] {
@@ -326,7 +335,12 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
       await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-      expect(openMainTranscriptPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', hookEventName);
+      expect(openMainTranscriptPassMock).toHaveBeenCalledWith(
+        'sid-1',
+        '/tmp/transcript.jsonl',
+        hookEventName,
+        NO_ENV_CHECK
+      );
       const [forwarded] = forwardedEvents();
       expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
     }
@@ -373,7 +387,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(openSessionEndPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', '/repo');
+    expect(openSessionEndPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', '/repo', NO_ENV_CHECK);
     const [forwarded] = forwardedEvents();
     expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
   });
@@ -523,13 +537,17 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(openSubagentPassMock).toHaveBeenCalledWith('sid-1', {
-      agentId: 'sub-1',
-      filePath: '/tmp/agent-sub-1.jsonl',
-      toolUseId: 'tu-1',
-      agentType: 'explore',
-      cwd: '/repo',
-    });
+    expect(openSubagentPassMock).toHaveBeenCalledWith(
+      'sid-1',
+      {
+        agentId: 'sub-1',
+        filePath: '/tmp/agent-sub-1.jsonl',
+        toolUseId: 'tu-1',
+        agentType: 'explore',
+        cwd: '/repo',
+      },
+      NO_ENV_CHECK
+    );
   });
 
   it('derives agent_id from the sidecar filename on SubagentStop when agent_id is absent', async () => {
@@ -544,7 +562,11 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(openSubagentPassMock).toHaveBeenCalledWith('sid-1', expect.objectContaining({ agentId: 'sub-2' }));
+    expect(openSubagentPassMock).toHaveBeenCalledWith(
+      'sid-1',
+      expect.objectContaining({ agentId: 'sub-2' }),
+      NO_ENV_CHECK
+    );
   });
 
   it('never derives an empty agentId, even from a degenerate transcript path with no agent_id (CR-001 regression)', async () => {
@@ -582,15 +604,19 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(readSubagentMetaMock).toHaveBeenCalledWith('/tmp/agent-sub-3.jsonl');
-    expect(openSubagentPassMock).toHaveBeenCalledWith('sid-1', {
-      agentId: 'sub-3',
-      filePath: '/tmp/agent-sub-3.jsonl',
-      toolUseId: 'tu-sidecar',
-      agentType: 'explore',
-      spawnDepth: 2,
-      description: 'task',
-      cwd: '/repo',
-    });
+    expect(openSubagentPassMock).toHaveBeenCalledWith(
+      'sid-1',
+      {
+        agentId: 'sub-3',
+        filePath: '/tmp/agent-sub-3.jsonl',
+        toolUseId: 'tu-sidecar',
+        agentType: 'explore',
+        spawnDepth: 2,
+        description: 'task',
+        cwd: '/repo',
+      },
+      NO_ENV_CHECK
+    );
   });
 
   it('stamps description/tool_use_id/spawn_depth/worktree/started_at/duration_ms on the forwarded agent.subagent.stop event', async () => {
