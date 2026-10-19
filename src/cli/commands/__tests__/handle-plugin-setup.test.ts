@@ -47,7 +47,23 @@ const providerRegistryMock = vi.hoisted(() => ({
 }));
 vi.mock('../../../providers/index.js', () => ({ ProviderRegistry: providerRegistryMock }));
 
-const agentRegistryMock = vi.hoisted(() => ({ getAgent: vi.fn().mockReturnValue(undefined) }));
+// Fake agents: claude/codex classify by name (via the real shared rule), opencode is unrestricted.
+const fakeAgents = vi.hoisted(() => {
+  const mk = (name: string, family?: RegExp, supportedProviders: string[] = []) => ({
+    name,
+    metadata: {
+      name,
+      displayName: `Display ${name}`,
+      supportedProviders,
+      ...(family ? { classifyModel: { family } } : {})
+    }
+  });
+  return [mk('claude', /claude/i), mk('codex', /gpt/i), mk('opencode')];
+});
+const agentRegistryMock = vi.hoisted(() => ({
+  getAgent: vi.fn(),
+  getAllAgents: vi.fn()
+}));
 vi.mock('../../../agents/registry.js', () => ({ AgentRegistry: agentRegistryMock }));
 
 vi.mock('../../../utils/logger.js', () => ({
@@ -63,7 +79,26 @@ vi.mock('../../../providers/integration/setup-ui.js', () => ({
   getAllModelChoices: (models: string[]) => models.map(m => ({ name: m, value: m }))
 }));
 
+import { classifyWithPredicate } from '../../../agents/core/model-classify.js';
 import { handlePluginSetup } from '../setup.js';
+
+function installFakeAgents(supportedProviders: Record<string, string[]> = {}): void {
+  const agents = fakeAgents.map(a => {
+    const family = (a.metadata as { classifyModel?: { family: RegExp } }).classifyModel?.family;
+    return {
+      ...a,
+      metadata: {
+        ...a.metadata,
+        supportedProviders: supportedProviders[a.name] ?? a.metadata.supportedProviders,
+        classifyModel: family
+          ? (id: string, ctx?: { isRouter?: boolean }) => classifyWithPredicate(i => family.test(i), id, ctx)
+          : undefined
+      }
+    };
+  });
+  agentRegistryMock.getAgent.mockImplementation((n: string) => agents.find(a => a.name === n));
+  agentRegistryMock.getAllAgents.mockReturnValue(agents);
+}
 
 describe('handlePluginSetup (multi-model wiring)', () => {
   beforeEach(() => {
@@ -71,7 +106,7 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     configMock.saveProfile.mockResolvedValue(undefined);
     configMock.getProfile.mockResolvedValue(null);
     providerRegistryMock.getProvider.mockReturnValue(undefined);
-    agentRegistryMock.getAgent.mockReturnValue(undefined);
+    installFakeAgents();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -87,6 +122,7 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     };
 
     promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
       .mockResolvedValueOnce({ selectedModels: ['a', 'b'] })
       .mockResolvedValueOnce({ activeModel: 'a' });
 
@@ -111,12 +147,13 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     };
 
     promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
       .mockResolvedValueOnce({ selectedModels: ['x', 'y'] })
       .mockResolvedValueOnce({ activeModel: 'x' });
 
     await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
 
-    const checkboxQuestion = promptMock.mock.calls[0][0][0] as {
+    const checkboxQuestion = promptMock.mock.calls[1][0][0] as {
       choices: Array<{ value: string; checked?: boolean }>;
     };
     const choiceX = checkboxQuestion.choices.find(c => c.value === 'x');
@@ -142,12 +179,13 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     };
 
     promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
       .mockResolvedValueOnce({ selectedModels: ['x', 'y'] })
       .mockResolvedValueOnce({ activeModel: 'y' });
 
     await handlePluginSetup('test-provider', setupSteps, 'test-profile', true, 'global');
 
-    const activeModelQuestion = promptMock.mock.calls[1][0][0] as { default?: string };
+    const activeModelQuestion = promptMock.mock.calls[2][0][0] as { default?: string };
     expect(activeModelQuestion.default).toBe('y');
   });
 
@@ -167,6 +205,7 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     };
 
     promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
       .mockResolvedValueOnce({ selectedModels: ['a', 'b', 'c'] })
       .mockResolvedValueOnce({ activeModel: 'a' });
 
@@ -183,3 +222,195 @@ describe('handlePluginSetup (multi-model wiring)', () => {
     expect(savedConfig.models).toEqual(['a', 'c']);
   });
 });
+
+describe('handlePluginSetup (harness-compatible models, EPMCDME-15641)', () => {
+  const baseSteps = (models: string[]) => ({
+    getCredentials: vi.fn().mockResolvedValue({}),
+    fetchModels: vi.fn().mockResolvedValue(models),
+    buildConfig: vi.fn((_credentials: unknown, model: string) => ({ provider: 'test', model }))
+  });
+  type Q = { name: string; message?: string; choices?: Array<{ name: string; value: string }> };
+  const questionOf = (call: number): Q => promptMock.mock.calls[call][0][0] as Q;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    configMock.saveProfile.mockResolvedValue(undefined);
+    configMock.getProfile.mockResolvedValue(null);
+    providerRegistryMock.getProvider.mockReturnValue(undefined);
+    installFakeAgents();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('offers the registry agents as a required harness checkbox before the model step', async () => {
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
+      .mockResolvedValueOnce({ selectedModels: ['a'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['a', 'b']), 'p', true, 'global');
+
+    const q = questionOf(0) as Q & { type?: string; validate?: (v: string[]) => unknown };
+    expect(q.name).toBe('harnesses');
+    expect(q.type).toBe('checkbox');
+    expect(q.choices?.map(c => c.value)).toEqual(['claude', 'codex', 'opencode']);
+    expect(q.validate?.([])).not.toBe(true);
+    expect(q.validate?.(['claude'])).toBe(true);
+  });
+
+  it('hides models incompatible with every selected harness and labels the rest', async () => {
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['claude-sonnet-4', 'gpt-5.4']), 'p', true, 'global');
+
+    const choices = questionOf(1).choices ?? [];
+    expect(choices.map(c => c.value)).toEqual(['gpt-5.4', 'custom']);
+    expect(choices[0].name).toContain('codex');
+
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.harnesses).toEqual(['codex']);
+    expect(saved.model).toBe('gpt-5.4');
+  });
+
+  it('keeps every model and skips the gate when only unrestricted harnesses are selected', async () => {
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
+      .mockResolvedValueOnce({ selectedModels: ['claude-sonnet-4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['claude-sonnet-4', 'gpt-5.4']), 'p', true, 'global');
+
+    expect((questionOf(1).choices ?? []).map(c => c.value)).toEqual(['claude-sonnet-4', 'gpt-5.4', 'custom']);
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.harnesses).toEqual(['opencode']);
+    expect(saved.confirmedModels).toBeUndefined();
+  });
+
+  it('persists harnesses even for a single-model profile', async () => {
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['claude'] })
+      .mockResolvedValueOnce({ selectedModels: ['claude-sonnet-4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['claude-sonnet-4']), 'p', true, 'global');
+
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.models).toBeUndefined();
+    expect(saved.harnesses).toEqual(['claude']);
+  });
+
+  it('skips the harness step and saves no harnesses when the provider auto-selects the model', async () => {
+    const steps = { ...baseSteps(['claude-sonnet-4']), selectModel: vi.fn().mockResolvedValue('claude-sonnet-4') };
+
+    await handlePluginSetup('test-provider', steps, 'p', true, 'global');
+
+    expect(promptMock).not.toHaveBeenCalled();
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.harnesses).toBeUndefined();
+  });
+
+  it('pre-selects the existing profile harnesses on an update', async () => {
+    configMock.getProfile.mockResolvedValue({ model: 'gpt-5.4', harnesses: ['codex'] });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    const checked = (questionOf(0).choices as Array<{ value: string; checked?: boolean }>)
+      .filter(c => c.checked).map(c => c.value);
+    expect(checked).toEqual(['codex']);
+  });
+
+  it('warns on a custom model incompatible with every harness, and stores a confirmed id in confirmedModels', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'custom'] })
+      .mockResolvedValueOnce({ customModel: 'claude-x' })
+      .mockResolvedValueOnce({ confirmIncompatible: true })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'claude-x'] })
+      .mockResolvedValueOnce({ activeModel: 'gpt-5.4' });
+
+    await handlePluginSetup('test-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    expect(logSpy.mock.calls.flat().join('\n')).toMatch(/claude-x[\s\S]*codex/);
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.models).toEqual(['gpt-5.4', 'claude-x']);
+    expect(saved.confirmedModels).toEqual(['claude-x']);
+  });
+
+  it('drops a custom model the user does not confirm', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'custom'] })
+      .mockResolvedValueOnce({ customModel: 'claude-x' })
+      .mockResolvedValueOnce({ confirmIncompatible: false })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.models).toBeUndefined();
+    expect(saved.confirmedModels).toBeUndefined();
+  });
+
+  it('refuses an update that removes the only model for a harness, naming that harness', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    configMock.getProfile.mockResolvedValue({
+      model: 'gpt-5.4', models: ['gpt-5.4', 'claude-sonnet-4'], harnesses: ['codex', 'claude']
+    });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex', 'claude'] })
+      .mockResolvedValueOnce({ selectedModels: ['claude-sonnet-4'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'claude-sonnet-4'] })
+      .mockResolvedValueOnce({ activeModel: 'claude-sonnet-4' });
+
+    await handlePluginSetup('test-provider', baseSteps(['gpt-5.4', 'claude-sonnet-4']), 'p', true, 'global');
+
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('codex');
+    expect(configMock.saveProfile).toHaveBeenCalledTimes(1);
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.models).toEqual(['gpt-5.4', 'claude-sonnet-4']);
+  });
+
+  it('refuses to save when a harness has no compatible model at all, and lets the user change harnesses', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ action: 'cancel' });
+
+    await handlePluginSetup('test-provider', baseSteps(['claude-sonnet-4']), 'p', true, 'global');
+
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('codex');
+    expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it('loops back to the harness step when the user chooses to change harnesses', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ action: 'change' })
+      .mockResolvedValueOnce({ harnesses: ['claude'] })
+      .mockResolvedValueOnce({ selectedModels: ['claude-sonnet-4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['claude-sonnet-4']), 'p', true, 'global');
+
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.harnesses).toEqual(['claude']);
+  });
+
+  it('treats a provider outside a harness supportedProviders as having no compatible model', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    installFakeAgents({ codex: ['litellm'] });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ action: 'cancel' });
+
+    await handlePluginSetup('other-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+});
+

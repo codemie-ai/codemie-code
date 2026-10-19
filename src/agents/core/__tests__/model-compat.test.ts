@@ -4,6 +4,7 @@ import {
   classifyWithPredicate,
   classifyModelForAgent,
   getClassifierAgents,
+  getOfferedHarnesses,
   compatibleHarnesses,
   uncoveredHarness,
 } from '../model-compat.js';
@@ -11,11 +12,18 @@ import {
 const isClaude = (id: string) => /claude/i.test(id);
 const isGpt = (id: string) => /gpt/i.test(id);
 
-function fakeAgent(name: string, predicate?: (id: string) => boolean, supportedProviders: string[] = []) {
+function fakeAgent(
+  name: string,
+  predicate?: (id: string) => boolean,
+  supportedProviders: string[] = [],
+  extra: Record<string, unknown> = {}
+) {
   return {
     name,
     metadata: {
       name,
+      displayName: `Display ${name}`,
+      ...extra,
       supportedProviders,
       ...(predicate
         ? { classifyModel: (id: string, ctx?: { isRouter?: boolean }) => classifyWithPredicate(predicate, id, ctx) }
@@ -29,6 +37,9 @@ const agents = new Map([
   ['codex', fakeAgent('codex', isGpt, ['litellm', 'ai-run-sso'])],
   ['codex-acp', fakeAgent('codex-acp', isGpt, ['litellm', 'ai-run-sso'])],
   ['opencode', fakeAgent('opencode', undefined, ['litellm'])],
+  ['pi', fakeAgent('pi')],
+  ['openwiki', fakeAgent('openwiki')],
+  ['copilot-cli', fakeAgent('copilot-cli', undefined, [], { analyticsOnly: true })],
 ]);
 
 beforeEach(() => {
@@ -99,6 +110,17 @@ describe('classifyModelForAgent', () => {
 describe('getClassifierAgents', () => {
   it('lists base agents that define a classifier, without ACP variants', () => {
     expect(getClassifierAgents()).toEqual(['claude', 'codex']);
+  });
+});
+
+describe('getOfferedHarnesses', () => {
+  it('offers base agents in a stable order, folding ACP and excluding openwiki and analytics-only agents', () => {
+    expect(getOfferedHarnesses()).toEqual([
+      { name: 'claude', displayName: 'Display claude' },
+      { name: 'codex', displayName: 'Display codex' },
+      { name: 'opencode', displayName: 'Display opencode' },
+      { name: 'pi', displayName: 'Display pi' },
+    ]);
   });
 });
 

@@ -66,3 +66,28 @@ export function uncoveredHarness(
     (h) => !models.some((m) => classifyModelForAgent(h, m, opts) !== 'incompatible')
   );
 }
+
+export interface HarnessChoice {
+  name: string;
+  displayName: string;
+}
+
+// Agents a user actually runs with a profile, in display order. Anything else registered is
+// appended, except ACP variants (folded into their base), analytics-only agents (copilot-cli)
+// and docs tooling (openwiki).
+const HARNESS_ORDER = ['claude', 'codex', 'gemini', 'kimi', 'opencode', 'pi', 'codemie-code'];
+const NOT_HARNESSES = new Set(['openwiki', 'copilot-cli']);
+
+/** Agents offered by the setup harness step, derived from AgentRegistry metadata. */
+export function getOfferedHarnesses(): HarnessChoice[] {
+  const candidates = AgentRegistry.getAllAgents()
+    .map((a) => a.metadata)
+    .filter((m) => !m.name.endsWith('-acp') && !m.analyticsOnly && !NOT_HARNESSES.has(m.name));
+  const rank = (name: string): number => {
+    const i = HARNESS_ORDER.indexOf(name);
+    return i === -1 ? HARNESS_ORDER.length : i;
+  };
+  return candidates
+    .sort((a, b) => rank(a.name) - rank(b.name))
+    .map((m) => ({ name: m.name, displayName: m.displayName }));
+}

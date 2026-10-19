@@ -166,4 +166,48 @@ describe('promptForModelsSelection', () => {
     const activeModelQuestion = seen[1][0] as { default?: string };
     expect(activeModelQuestion.default).toBe('a');
   });
+
+  describe('with a harness context (EPMCDME-15641)', () => {
+    const ctx = { harnesses: ['claude', 'codex'] };
+
+    it('accepts a compatible typed model silently on a catalog-less provider and asks for the uncovered harness', async () => {
+      const seen = queueAnswers([
+        { manualModel: 'claude-sonnet-4-5' },
+        { manualModel: 'gpt-5.4' },
+        { activeModel: 'gpt-5.4' }
+      ]);
+
+      const result = await promptForModelsSelection([], undefined, undefined, undefined, undefined, undefined, ctx);
+
+      expect(result).toEqual({ models: ['claude-sonnet-4-5', 'gpt-5.4'], activeModel: 'gpt-5.4' });
+      expect((seen[1][0] as { message: string }).message).toContain('codex');
+    });
+
+    it('warns and requires confirmation for a catalog-less model incompatible with every harness', async () => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      queueAnswers([
+        { manualModel: 'llama-3' },
+        { confirmIncompatible: true }
+      ]);
+
+      const result = await promptForModelsSelection([], undefined, undefined, undefined, undefined, undefined, { harnesses: ['codex'] });
+
+      expect(result).toEqual({ models: ['llama-3'], activeModel: 'llama-3', confirmedModels: ['llama-3'] });
+    });
+
+    it('labels active-model choices with the harnesses each model works with without restricting them', async () => {
+      const seen = queueAnswers([
+        { selectedModels: ['claude-sonnet-4-5', 'gpt-5.4'] },
+        { activeModel: 'claude-sonnet-4-5' }
+      ]);
+
+      await promptForModelsSelection(['claude-sonnet-4-5', 'gpt-5.4'], undefined, undefined, undefined, undefined, undefined, ctx);
+
+      const choices = (seen[1][0] as { choices: Array<{ name: string; value: string }> }).choices;
+      expect(choices.map(c => c.value)).toEqual(['claude-sonnet-4-5', 'gpt-5.4']);
+      expect(choices[0].name).toContain('claude');
+      expect(choices[0].name).not.toContain('codex');
+      expect(choices[1].name).toContain('codex');
+    });
+  });
 });

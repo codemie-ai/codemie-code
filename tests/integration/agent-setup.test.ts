@@ -104,6 +104,15 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       const projectLine = await proc.waitFor(/Selected project:/i, 15_000);
       const selectedProject = projectLine.match(/Selected project:\s*(\S+)/i)?.[1];
 
+      // ── Step 6.5: Harness selection → check the first agent (claude), confirm ───
+      // New multi-select ("Which agents will use this profile?"): at least one agent is
+      // required, and the model list below is filtered to what that agent can run.
+      await proc.waitFor(/Which agents will use this profile/i, 30_000);
+      await new Promise(r => setTimeout(r, 500));
+      proc.write(' ');
+      await new Promise(r => setTimeout(r, 200));
+      proc.write('\r');
+
       // ── Step 7: Model selection → check first option, confirm ───────────────────
       // The model picker is now a checkbox (multi-select): match its own message
       // text ("Choose models (N available):") rather than the old single-choice
@@ -164,6 +173,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       );
 
       expect(cfg.workspace?.codeMieProject, 'setup must not write the shared workspace project').toBeUndefined();
+
+      // Harness step: the first agent offered (claude) was persisted with the profile
+      expect(profile!.harnesses, 'harnesses must record the selected agent').toEqual(['claude']);
 
       // Step 9 verification: profile was activated
       expect(cfg.activeProfile, 'activeProfile must be set to the new profile').toBe(
