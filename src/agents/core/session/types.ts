@@ -137,6 +137,7 @@ export interface RuntimeCheckpoint {
 export interface Session {
   sessionId: string; // CodeMie session ID (UUID)
   agentName: string; // 'claude', 'gemini'
+  clientType?: string; // Telemetry/export client identity active for this session
   provider: string; // 'ai-run-sso', etc.
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   model?: string; // Model active for the session at start/re-entry

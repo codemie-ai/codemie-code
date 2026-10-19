@@ -773,6 +773,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
   try {
     // Get metadata from config or environment
     const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config);
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
@@ -838,6 +839,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       if (model) {
         existing.model = model;
       }
+      if (clientType) {
+        existing.clientType = clientType;
+      }
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -877,6 +881,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const session = {
       sessionId,
       agentName,
+      ...(clientType && { clientType }),
       provider,
       ...(project && { project }),
       ...(model && { model }),

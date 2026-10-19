@@ -24,6 +24,7 @@ export async function ensureSessionFile(
     }
 
     const agentName = env.CODEMIE_AGENT || defaultAgentName;
+    const clientType = env.CODEMIE_CLIENT_TYPE;
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const project = env.CODEMIE_PROJECT;
     const workingDirectory = process.cwd();
@@ -52,6 +53,7 @@ export async function ensureSessionFile(
     const session = {
       sessionId,
       agentName,
+      ...(clientType && { clientType }),
       provider,
       ...(project && { project }),
       startTime: estimatedStartTime,

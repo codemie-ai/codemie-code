@@ -701,8 +701,8 @@ describe('BaseAgentAdapter', () => {
   // onSessionStart via lifecycle spread but runs with CODEMIE_AGENT='claude-acp'
   // (BaseAgentAdapter sets it from metadata.name), so the literal scan key meant
   // it reconciled claude's sessions, never its own (see EPMCDME-15536). It is now
-  // a single call here, driven by this.metadata.name, so every current and future
-  // agent variant is correct automatically.
+  // a single call here that sweeps all generic hook-managed agent sessions, while
+  // still using CODEMIE_AGENT from metadata.name as the fallback identity.
   describe('run() — stale-session reconciliation', () => {
     class ReconciliationTestAdapter extends BaseAgentAdapter {}
 
@@ -725,7 +725,7 @@ describe('BaseAgentAdapter', () => {
       vi.mocked(reconcileStaleSessions).mockResolvedValue({ reconciled: 0, failed: 0 });
     });
 
-    it('scans/reconciles under metadata.name, not a hardcoded literal (regression: ACP variants)', async () => {
+    it('sweeps all generic hook-managed sessions, with CODEMIE_AGENT still sourced from metadata.name', async () => {
       const adapter = new ReconciliationTestAdapter(baseMetadata);
 
       await adapter.run([], {});
@@ -734,7 +734,8 @@ describe('BaseAgentAdapter', () => {
         '../session/stale-session-reconciliation.js'
       );
       expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(reconcileStaleSessions).mock.calls[0][0]).toBe('claude-acp');
+      expect(vi.mocked(reconcileStaleSessions).mock.calls[0][0]).toBeNull();
+      expect(vi.mocked(reconcileStaleSessions).mock.calls[0][1]).toMatchObject({ CODEMIE_AGENT: 'claude-acp' });
       expect(vi.mocked(reconcileStaleSessions).mock.calls[0][2]).toBe(buildReconciliationHookConfig);
     });
 

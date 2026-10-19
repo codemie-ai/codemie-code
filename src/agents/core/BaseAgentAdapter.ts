@@ -583,8 +583,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // resolveHook lets a provider's agent-specific hook replace the agent's default
     // lifecycle hook outright (lifecycle-helpers.ts), which would silently drop this
     // if it lived there instead.
+    //
+    // Sweep across generic hook-managed session records (agentName: null), not just
+    // this agent's own records — otherwise a stranded `gemini` session is never
+    // finalized if the user stops launching gemini and only runs other agents later.
+    // Runtime-managed sessions (for example desktop telemetry) are excluded by the
+    // reconciler and keep using their own finalization path.
     if (this.metadata.staleSessionReconciliation !== false) {
-      void reconcileStaleSessions(this.metadata.name, env, buildReconciliationHookConfig).catch((error) => {
+      void reconcileStaleSessions(null, env, buildReconciliationHookConfig).catch((error) => {
         const msg = error instanceof Error ? error.message : String(error);
         logger.debug(`[${this.metadata.name}] Stale-session reconciliation failed (non-blocking): ${msg}`);
       });

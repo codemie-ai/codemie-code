@@ -499,4 +499,83 @@ describe('buildReconciliationHookConfig', () => {
       clientType: 'codemie-gemini',
     });
   });
+
+  it('prefers the stranded session\'s own agentName/clientType over the launching agent (cross-agent sweep)', async () => {
+    const { buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
+
+    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'claude', CODEMIE_CLIENT_TYPE: 'codemie-claude' };
+
+    expect(
+      buildReconciliationHookConfig(env, 'sid-3', { agentName: 'gemini', clientType: 'codemie-gemini-acp' })
+    ).toMatchObject({
+      agentName: 'gemini',
+      clientType: 'codemie-gemini-acp',
+      sessionId: 'sid-3',
+    });
+  });
+});
+
+describe('reconcileStaleSessions — all-agents sweep', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    heldLocks.clear();
+  });
+
+  it('agentName: null reconciles stranded sessions of every agent, each filed under its own agentName/clientType', async () => {
+    const now = Date.now();
+    const lastActivity = now - 2 * 60 * 60 * 1000;
+    const startTime = lastActivity - 10 * 60 * 1000;
+
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['stranded-claude.json', 'stranded-gemini.json'] as never);
+    vi.mocked(readFile).mockImplementation(async (path: unknown) => {
+      if (String(path).endsWith('stranded-claude.json')) {
+        return strandedSessionFile('stranded-claude', 'claude', lastActivity, startTime, undefined, {
+          clientType: 'codemie-claude',
+        }) as never;
+      }
+      return strandedSessionFile('stranded-gemini', 'gemini', lastActivity, startTime, undefined, {
+        clientType: 'codemie-gemini-acp',
+      }) as never;
+    });
+
+    const { reconcileStaleSessions, buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+
+    const result = await reconcileStaleSessions(
+      null,
+      { CODEMIE_AGENT: 'claude', CODEMIE_CLIENT_TYPE: 'codemie-claude' } as NodeJS.ProcessEnv,
+      buildReconciliationHookConfig,
+      { processEvent, now }
+    );
+
+    expect(result).toEqual({ reconciled: 2, failed: 0 });
+    expect(processEvent).toHaveBeenCalledTimes(2);
+
+    const configs = processEvent.mock.calls.map(([, config]) => config as { agentName: string; clientType?: string });
+    expect(configs.find(c => c.agentName === 'gemini')?.clientType).toBe('codemie-gemini-acp');
+    expect(configs.find(c => c.agentName === 'claude')?.clientType).toBe('codemie-claude');
+  });
+
+  it('skips runtime-managed sessions (e.g. desktop telemetry) even when stale by inactivity', async () => {
+    const now = Date.now();
+    const lastActivity = now - 2 * 60 * 60 * 1000;
+    const startTime = lastActivity - 10 * 60 * 1000;
+
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['stranded-claude.json', 'desktop-session.json'] as never);
+    vi.mocked(readFile).mockImplementation(async (path: unknown) => {
+      if (String(path).endsWith('desktop-session.json')) {
+        return strandedSessionFile('desktop-session', 'claude-desktop', lastActivity, startTime, undefined, {
+          runtimeCheckpoint: { externalSessionId: 'ext-1', lastSeenActivityAt: lastActivity },
+        }) as never;
+      }
+      return strandedSessionFile('stranded-claude', 'claude', lastActivity, startTime) as never;
+    });
+
+    const { findStaleSessions } = await import('../stale-session-reconciliation.js');
+    const stale = await findStaleSessions(null, { now });
+
+    expect(stale.map(s => s.sessionId)).toEqual(['stranded-claude']);
+  });
 });

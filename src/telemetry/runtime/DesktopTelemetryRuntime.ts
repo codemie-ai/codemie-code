@@ -325,6 +325,7 @@ export class DesktopTelemetryRuntime {
     const session: Session = {
       sessionId: randomUUID(),
       agentName: this.config.clientType,
+      clientType: this.config.clientType,
       provider: this.config.provider,
       startTime: baselineCutoffMs ?? discovered.createdAt,
       workingDirectory: discovered.workingDirectory,

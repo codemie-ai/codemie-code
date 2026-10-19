@@ -7,8 +7,12 @@
  * `codemie_cli_session_total` lifecycle metric is emitted, so server-side analytics
  * see them as never-finishing.
  *
- * On `onSessionStart`, an agent scans for such stranded sessions of its own kind and
- * synthesises a SessionEnd with `reason: "interrupted"` to finalise them.
+ * On `onSessionStart`, an agent sweeps stranded generic hook-managed sessions across
+ * agents and synthesises a SessionEnd with `reason: "interrupted"` to finalise them.
+ * Scoping the trigger to "this agent launches again" would leave a dead `gemini`
+ * session stranded forever once the user stops launching gemini. Runtime-managed
+ * sessions (for example Desktop telemetry) are excluded here and must finalize
+ * through their own runtime-specific path.
  *
  * Staleness (inactivity alone, no cap on how long a session may have been inactive) is the
  * shared rule in `./stale-session-policy.ts`, also used by the Claude Desktop restart
@@ -38,6 +42,8 @@ export interface ReconcileOptions extends ReconciliationOptions {
 
 export interface StaleSession {
   sessionId: string;
+  agentName: string;
+  clientType?: string;
   startTime: number;
   lastActivityMs: number;
   provider: string;
@@ -84,17 +90,19 @@ const RECONCILIATION_LOCK_STALE_MS = 10 * 60 * 1000;
  * Canonical env -> HookProcessingConfig mapping for stale-session reconciliation.
  * Mirrors the env-var keys hook.ts's getConfigValue maps to HookProcessingConfig
  * fields. BaseAgentAdapter.run() sets CODEMIE_AGENT and CODEMIE_CLIENT_TYPE from
- * this.metadata before onSessionStart runs, so both are always present here —
- * no per-agent literal fallback needed (that fallback is what let the ACP
- * variants silently reconcile their base agent's sessions under the wrong name).
+ * this.metadata before onSessionStart runs, so both are always present here.
+ *
+ * When the reconciler sweeps across agents, the stale session's persisted
+ * agentName/clientType must win over the launching process env or the synthetic
+ * SessionEnd is mislabeled under the wrong agent/client type.
  */
 export function buildReconciliationHookConfig(
   env: NodeJS.ProcessEnv,
   sessionId: string,
-  staleSession?: Pick<StaleSession, 'provider' | 'project' | 'model'>,
+  staleSession?: Pick<StaleSession, 'agentName' | 'clientType' | 'provider' | 'project' | 'model'>,
 ): HookProcessingConfig {
   return {
-    agentName: env.CODEMIE_AGENT!,
+    agentName: staleSession?.agentName ?? env.CODEMIE_AGENT!,
     sessionId,
     provider: staleSession?.provider ?? env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
@@ -104,15 +112,17 @@ export function buildReconciliationHookConfig(
     profileName: env.CODEMIE_PROFILE_NAME,
     project: staleSession?.project ?? env.CODEMIE_PROJECT,
     model: staleSession?.model ?? env.CODEMIE_MODEL,
-    clientType: env.CODEMIE_CLIENT_TYPE,
+    clientType: staleSession?.clientType ?? env.CODEMIE_CLIENT_TYPE,
   };
 }
 
 /**
- * Find sessions of `agentName` in `~/.codemie/sessions/` that look stranded.
+ * Find generic hook-managed sessions in `~/.codemie/sessions/` that look stranded.
+ * Pass `null` to scan across agents; pass an agent name to scope the scan.
+ * Runtime-managed sessions are intentionally skipped here.
  */
 export async function findStaleSessions(
-  agentName: string,
+  agentName: string | null,
   opts: ReconciliationOptions = {},
 ): Promise<StaleSession[]> {
   const now = opts.now ?? Date.now();
@@ -127,7 +137,7 @@ export async function findStaleSessions(
   try {
     entries = await readdir(sessionsDir);
   } catch (error) {
-    logger.debug(`[${agentName}-reconciliation] Failed to read sessions dir`, error);
+    logger.debug(`[${agentName ?? 'all-agents'}-reconciliation] Failed to read sessions dir`, error);
     return [];
   }
 
@@ -145,13 +155,14 @@ export async function findStaleSessions(
       session = JSON.parse(content) as Session;
     } catch (error) {
       logger.debug(
-        `[${agentName}-reconciliation] Skipping unreadable file ${basename(filePath)}`,
+        `[${agentName ?? 'all-agents'}-reconciliation] Skipping unreadable file ${basename(filePath)}`,
         error,
       );
       continue;
     }
 
-    if (session.agentName !== agentName) continue;
+    if (session.runtimeCheckpoint) continue;
+    if (agentName !== null && session.agentName !== agentName) continue;
     if (session.status !== 'active') continue;
     if (typeof session.startTime !== 'number') continue;
 
@@ -160,6 +171,8 @@ export async function findStaleSessions(
 
     stale.push({
       sessionId: session.sessionId,
+      agentName: session.agentName,
+      clientType: session.clientType,
       startTime: session.startTime,
       lastActivityMs: lastActivity,
       provider: session.provider,
@@ -175,18 +188,19 @@ export async function findStaleSessions(
 }
 
 /**
- * Synthesise a SessionEnd for each stale session of `agentName`.
+ * Synthesise a SessionEnd for each stale session found. Pass `null` for
+ * `agentName` to sweep across generic hook-managed sessions of every agent.
  *
  * `processEvent` is injected so tests can drive this without touching the hook
  * module's network and SSO-credential code paths.
  */
 export async function reconcileStaleSessions(
-  agentName: string,
+  agentName: string | null,
   env: NodeJS.ProcessEnv,
   buildHookConfig: (
     env: NodeJS.ProcessEnv,
     sessionId: string,
-    staleSession?: Pick<StaleSession, 'provider' | 'project' | 'model'>
+    staleSession?: Pick<StaleSession, 'agentName' | 'clientType' | 'provider' | 'project' | 'model'>
   ) => HookProcessingConfig,
   opts: ReconcileOptions = {},
 ): Promise<{ reconciled: number; failed: number }> {
@@ -195,8 +209,9 @@ export async function reconcileStaleSessions(
     return { reconciled: 0, failed: 0 };
   }
 
+  const scope = agentName ?? 'all-agents';
   logger.info(
-    `[${agentName}-reconciliation] Found ${stale.length} stranded ${agentName} session(s); reconciling`,
+    `[${scope}-reconciliation] Found ${stale.length} stranded session(s); reconciling`,
   );
 
   const processEvent = opts.processEvent ?? (await loadDefaultProcessEvent());
@@ -207,14 +222,14 @@ export async function reconcileStaleSessions(
   for (const entry of stale) {
     const lock = await acquireReconciliationLock(entry.sessionId);
     if (!lock) {
-      logger.debug(`[${agentName}-reconciliation] Skipping ${entry.sessionId}: another reconciliation is already in progress`);
+      logger.debug(`[${entry.agentName}-reconciliation] Skipping ${entry.sessionId}: another reconciliation is already in progress`);
       continue;
     }
 
     try {
       const current = await loadCurrentSession(entry.sessionId);
       if (!current || current.status !== 'active' || current.endTime !== undefined) {
-        logger.debug(`[${agentName}-reconciliation] Skipping ${entry.sessionId}: session is no longer active`);
+        logger.debug(`[${entry.agentName}-reconciliation] Skipping ${entry.sessionId}: session is no longer active`);
         continue;
       }
 
@@ -233,11 +248,11 @@ export async function reconcileStaleSessions(
       };
       await processEvent(event, buildHookConfig(env, entry.sessionId, entry));
       reconciled++;
-      logger.info(`[${agentName}-reconciliation] Reconciled stranded session ${entry.sessionId}`);
+      logger.info(`[${entry.agentName}-reconciliation] Reconciled stranded session ${entry.sessionId}`);
     } catch (error) {
       failed++;
       const msg = error instanceof Error ? error.message : String(error);
-      logger.warn(`[${agentName}-reconciliation] Failed to reconcile ${entry.sessionId}: ${msg}`);
+      logger.warn(`[${entry.agentName}-reconciliation] Failed to reconcile ${entry.sessionId}: ${msg}`);
     } finally {
       await releaseReconciliationLock(lock);
     }
