@@ -85,7 +85,7 @@ function buildMergedHooks(env: NodeJS.ProcessEnv): Record<string, unknown[]> {
  */
 function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
   return {
-    agentName: env.CODEMIE_AGENT!,
+    agentName: env.CODEMIE_AGENT || 'opencode',
     sessionId,
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
@@ -94,7 +94,7 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
-    clientType: env.CODEMIE_CLIENT_TYPE,
+    clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
   };
 }
 
@@ -239,7 +239,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
           sessionId,
           apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
           cookies: '',
-          clientType: env.CODEMIE_CLIENT_TYPE!,
+          clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
           version: env.CODEMIE_CLI_VERSION || '0.0.0',
           dryRun: false,
           gitBranch: env.CODEMIE_GIT_BRANCH,
