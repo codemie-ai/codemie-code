@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
-import type { ProxyContext } from '../proxy-types.js';
+import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
@@ -10,6 +10,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
+import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
 /**
  * Upper bound on the best-effort flush during proxy shutdown.
@@ -49,7 +50,10 @@ class OtlpInterceptor implements ProxyInterceptor {
   private ticking = false;
   private stopped = false;
 
-  constructor(private readonly credentials?: SSOCredentials | JWTCredentials) {}
+  constructor(
+    private credentials: SSOCredentials | JWTCredentials | undefined,
+    private readonly config: ProxyConfig | undefined
+  ) {}
 
   async onProxyStart(): Promise<void> {
     // Recovery pass for anything a previous process left on disk (crash, or a
@@ -109,7 +113,31 @@ class OtlpInterceptor implements ProxyInterceptor {
   }
 
 
+  /**
+   * Re-reads the credential store when `markCredentialsStale()` is set, so a
+   * successful SSO re-login the user completes while this daemon keeps running
+   * is picked up without a restart. A no-op whenever credentials aren't stale.
+   */
+  private async refreshCredentialsIfStale(): Promise<void> {
+    if (!areCredentialsStale() || !this.config) {
+      return;
+    }
+
+    try {
+      const refreshed = await resolveFreshCredentials(this.config);
+      if (refreshed) {
+        this.credentials = refreshed;
+        clearCredentialsStale();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[otlp-ingest] credential refresh attempt failed', ...sanitizeLogArgs({ err: msg }));
+    }
+  }
+
   private async tick(): Promise<void> {
+    await this.refreshCredentialsIfStale();
+
     const creds = this.credentials;
     if (!creds) {
       return;
@@ -139,6 +167,8 @@ class OtlpInterceptor implements ProxyInterceptor {
     _httpClient: ProxyHTTPClient
   ): Promise<boolean> {
     const { method, url } = ctx;
+
+    void this.refreshCredentialsIfStale();
 
     // Route: POST /v1/analytics/hooks
     if (method === 'POST' && url === '/v1/analytics/hooks') {
@@ -287,7 +317,8 @@ export class OtlpPlugin implements ProxyPlugin {
 
   createInterceptor(context: PluginContext): ProxyInterceptor {
     return new OtlpInterceptor(
-      context.syncCredentials || context.credentials
+      context.syncCredentials || context.credentials,
+      context.config
     );
   }
 }
