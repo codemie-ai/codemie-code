@@ -777,6 +777,10 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
+    const apiBaseUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+    const profileName = getConfigValue('CODEMIE_PROFILE_NAME', config);
 
     if (!agentName || !provider) {
       if (config) {
@@ -842,6 +846,13 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       if (clientType) {
         existing.clientType = clientType;
       }
+      existing.analyticsContext = {
+        ...(existing.analyticsContext ?? {}),
+        ...(apiBaseUrl && { apiBaseUrl }),
+        ...(ssoUrl && { ssoUrl }),
+        ...(syncApiUrl && { syncApiUrl }),
+        ...(profileName && { profileName }),
+      };
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -892,6 +903,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
+      analyticsContext: {
+        ...(apiBaseUrl && { apiBaseUrl }),
+        ...(ssoUrl && { ssoUrl }),
+        ...(syncApiUrl && { syncApiUrl }),
+        ...(profileName && { profileName }),
+      },
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,

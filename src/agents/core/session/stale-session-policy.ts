@@ -7,11 +7,13 @@
  * finalizeSession), but the cutoff math lives here once so the two runtimes cannot silently
  * diverge on the same backlog.
  *
- * Staleness is inactivity alone, with no cap on how long a session may have been inactive.
- * A cap would permanently exempt exactly the sessions most overdue for reconciliation: one
- * abandoned Monday and not restarted into until Wednesday is >24h inactive by the time the
- * next launch finally runs reconciliation, and the longer that gap, the more it needs
- * finalizing, not less.
+ * Staleness is time since the last trustworthy sign of life, with no cap on how long a
+ * session may have been inactive. Different runtimes choose the best available sign of
+ * life (for example transcript activity, sync timestamps, or a CLI heartbeat), but they
+ * all share the same cutoff math here. A cap would permanently exempt exactly the
+ * sessions most overdue for reconciliation: one abandoned Monday and not restarted into
+ * until Wednesday is >24h inactive by the time the next launch finally runs
+ * reconciliation, and the longer that gap, the more it needs finalizing, not less.
  */
 
 export const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;

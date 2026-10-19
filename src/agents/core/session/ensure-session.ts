@@ -27,6 +27,10 @@ export async function ensureSessionFile(
     const clientType = env.CODEMIE_CLIENT_TYPE;
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const project = env.CODEMIE_PROJECT;
+    const apiBaseUrl = env.CODEMIE_BASE_URL;
+    const ssoUrl = env.CODEMIE_URL;
+    const syncApiUrl = env.CODEMIE_SYNC_API_URL;
+    const profileName = env.CODEMIE_PROFILE_NAME;
     const workingDirectory = process.cwd();
 
     // Prefer values already resolved by BaseAgentAdapter (set in env before spawning the agent).
@@ -62,6 +66,12 @@ export async function ensureSessionFile(
       ...(gitBranch && { gitBranch }),
       status: 'completed' as const,
       activeDurationMs: 0,
+      analyticsContext: {
+        ...(apiBaseUrl && { apiBaseUrl }),
+        ...(ssoUrl && { ssoUrl }),
+        ...(syncApiUrl && { syncApiUrl }),
+        ...(profileName && { profileName }),
+      },
       correlation: {
         status: 'matched' as const,
         agentSessionId: 'unknown',

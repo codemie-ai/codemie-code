@@ -17,6 +17,7 @@ import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
+import { hostname } from 'os';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/paths.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
@@ -39,6 +40,8 @@ import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 import { applySystemProxyEnvironment } from '../../utils/system-proxy.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
+
+const SESSION_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /**
  * Base class for all agent adapters
@@ -658,6 +661,57 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // This ensures enrichArgs hook can access variables set by beforeRun
     Object.assign(process.env, env);
 
+    let heartbeatTimer: NodeJS.Timeout | undefined;
+    const startSessionHeartbeat = async (): Promise<void> => {
+      const { SessionStore } = await import('./session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const heartbeatIdentity = {
+        ownerRunId: sessionId,
+        pid: process.pid,
+        host: hostname(),
+      };
+
+      const writeHeartbeat = async (): Promise<boolean> => {
+        return sessionStore.updateSessionLiveness(sessionId, {
+          ...heartbeatIdentity,
+          lastHeartbeatAt: Date.now(),
+        });
+      };
+
+      try {
+        const wroteInitialHeartbeat = await writeHeartbeat();
+        if (!wroteInitialHeartbeat) {
+          return;
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[${this.metadata.name}] Initial session heartbeat failed (non-blocking): ${msg}`);
+        return;
+      }
+
+      heartbeatTimer = setInterval(() => {
+        void writeHeartbeat()
+          .then((written) => {
+            if (!written) {
+              stopSessionHeartbeat();
+            }
+          })
+          .catch((error) => {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.debug(`[${this.metadata.name}] Session heartbeat failed (non-blocking): ${msg}`);
+          });
+      }, SESSION_HEARTBEAT_INTERVAL_MS);
+      heartbeatTimer.unref?.();
+    };
+
+    const stopSessionHeartbeat = (): void => {
+      if (!heartbeatTimer) {
+        return;
+      }
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
+    };
+
     // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     // Must run AFTER beforeRun so env vars are available
@@ -758,6 +812,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // sync, and would leave the exit handler's promise unsettled. Since this now
     // runs on signal exits too, that would happen on every Ctrl+C.
     const endSessionAndCleanup = async (exitCode: number) => {
+      stopSessionHeartbeat();
       try {
         await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
       } catch (error) {
@@ -775,6 +830,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // process.env was already merged at line 430; no second assign needed.
       const agentConfig = this.extractConfig(env);
       logger.debug(`[${this.displayName}] Using built-in handler (no external binary)`);
+      await startSessionHeartbeat();
 
       try {
         // Pass original args (pre-enrichArgs) so the handler can parse its own flags
@@ -799,6 +855,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
+      await startSessionHeartbeat();
+
       // Log command execution
       logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
 

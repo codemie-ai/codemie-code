@@ -54,6 +54,7 @@ function strandedSessionFile(
     agentName,
     status: 'active',
     startTime,
+    workingDirectory: '/tmp/stranded-project',
     sync: { metrics: { lastSyncAt } },
     ...(agentSessionId && { correlation: { status: 'matched', agentSessionId, retryCount: 0 } }),
     ...extra,
@@ -340,6 +341,34 @@ describe('reconcileStaleSessions endTime threading', () => {
     expect(event.transcript_paths).toEqual([transcriptA, transcriptB]);
   });
 
+  it('uses the stranded session working directory for the synthetic SessionEnd cwd, not the current launch cwd', async () => {
+    const now = Date.now();
+    const lastActivity = now - 2 * 60 * 60 * 1000;
+    const startTime = lastActivity - 10 * 60 * 1000;
+
+    const { readdir, readFile } = await import('fs/promises');
+    vi.mocked(readdir).mockResolvedValue(['stranded-cwd.json'] as never);
+    vi.mocked(readFile).mockResolvedValue(
+      strandedSessionFile('stranded-cwd', 'claude', lastActivity, startTime, undefined, {
+        workingDirectory: '/tmp/project-a',
+      }) as never
+    );
+
+    const { reconcileStaleSessions } = await import('../stale-session-reconciliation.js');
+    const processEvent = vi.fn().mockResolvedValue(undefined);
+
+    await reconcileStaleSessions(
+      'claude',
+      {} as NodeJS.ProcessEnv,
+      (_env, sessionId) => ({ agentName: 'claude', sessionId }),
+      { processEvent, now }
+    );
+
+    const [event] = processEvent.mock.calls[0] as [{ cwd: string }];
+    expect(event.cwd).toBe('/tmp/project-a');
+    expect(event.cwd).not.toBe(process.cwd());
+  });
+
   it('skips reconciliation when another launch already holds the per-session reconciliation lock', async () => {
     const now = Date.now();
     const lastActivity = now - 2 * 60 * 60 * 1000;
@@ -463,7 +492,7 @@ describe('buildReconciliationHookConfig', () => {
     });
   });
 
-  it('prefers the stranded session provider/project/model over the current launch env', async () => {
+  it('prefers the stranded session provider/project/model and analytics routing over the current launch env', async () => {
     const { buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
 
     const env: NodeJS.ProcessEnv = {
@@ -484,16 +513,20 @@ describe('buildReconciliationHookConfig', () => {
         provider: 'litellm',
         project: 'old-project',
         model: 'claude-sonnet-5',
+        apiBaseUrl: 'https://old-proxy.example.com',
+        ssoUrl: 'https://old-sso.example.com',
+        syncApiUrl: 'https://old-sync.example.com',
+        profileName: 'old-profile',
       })
     ).toEqual({
       agentName: 'gemini',
       sessionId: 'sid-2',
       provider: 'litellm',
-      apiBaseUrl: 'https://proxy.example.com',
-      ssoUrl: 'https://sso.example.com',
-      syncApiUrl: 'https://sync.example.com',
+      apiBaseUrl: 'https://old-proxy.example.com',
+      ssoUrl: 'https://old-sso.example.com',
+      syncApiUrl: 'https://old-sync.example.com',
       version: '1.2.3',
-      profileName: 'work',
+      profileName: 'old-profile',
       project: 'old-project',
       model: 'claude-sonnet-5',
       clientType: 'codemie-gemini',

@@ -14,10 +14,10 @@
  * sessions (for example Desktop telemetry) are excluded here and must finalize
  * through their own runtime-specific path.
  *
- * Staleness (inactivity alone, no cap on how long a session may have been inactive) is the
- * shared rule in `./stale-session-policy.ts`, also used by the Claude Desktop restart
- * reconciliation in `DesktopTelemetryRuntime`, so the two runtimes cannot silently diverge
- * on the same backlog.
+ * Staleness (time since the last trustworthy sign of life, with no cap on how long a
+ * session may have been inactive) is the shared rule in `./stale-session-policy.ts`,
+ * also used by the Claude Desktop restart reconciliation in `DesktopTelemetryRuntime`,
+ * so the two runtimes cannot silently diverge on the same backlog.
  */
 import { readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -46,9 +46,14 @@ export interface StaleSession {
   clientType?: string;
   startTime: number;
   lastActivityMs: number;
+  workingDirectory: string;
   provider: string;
   project?: string;
   model?: string;
+  apiBaseUrl?: string;
+  ssoUrl?: string;
+  syncApiUrl?: string;
+  profileName?: string;
   // Persisted transcript path for the stranded session. Synthetic SessionEnd must reuse
   // it so handleSessionEnd can run the same final transcript/incremental sync path a live
   // hook would, rather than marking the session completed with its final transcript delta
@@ -99,17 +104,20 @@ const RECONCILIATION_LOCK_STALE_MS = 10 * 60 * 1000;
 export function buildReconciliationHookConfig(
   env: NodeJS.ProcessEnv,
   sessionId: string,
-  staleSession?: Pick<StaleSession, 'agentName' | 'clientType' | 'provider' | 'project' | 'model'>,
+  staleSession?: Pick<
+    StaleSession,
+    'agentName' | 'clientType' | 'provider' | 'project' | 'model' | 'apiBaseUrl' | 'ssoUrl' | 'syncApiUrl' | 'profileName'
+  >,
 ): HookProcessingConfig {
   return {
     agentName: staleSession?.agentName ?? env.CODEMIE_AGENT!,
     sessionId,
     provider: staleSession?.provider ?? env.CODEMIE_PROVIDER,
-    apiBaseUrl: env.CODEMIE_BASE_URL,
-    ssoUrl: env.CODEMIE_URL,
-    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    apiBaseUrl: staleSession?.apiBaseUrl ?? env.CODEMIE_BASE_URL,
+    ssoUrl: staleSession?.ssoUrl ?? env.CODEMIE_URL,
+    syncApiUrl: staleSession?.syncApiUrl ?? env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
-    profileName: env.CODEMIE_PROFILE_NAME,
+    profileName: staleSession?.profileName ?? env.CODEMIE_PROFILE_NAME,
     project: staleSession?.project ?? env.CODEMIE_PROJECT,
     model: staleSession?.model ?? env.CODEMIE_MODEL,
     clientType: staleSession?.clientType ?? env.CODEMIE_CLIENT_TYPE,
@@ -119,7 +127,9 @@ export function buildReconciliationHookConfig(
 /**
  * Find generic hook-managed sessions in `~/.codemie/sessions/` that look stranded.
  * Pass `null` to scan across agents; pass an agent name to scope the scan.
- * Runtime-managed sessions are intentionally skipped here.
+ * Runtime-managed sessions are intentionally skipped here. For hook-managed CLI
+ * sessions, the owning process refreshes a heartbeat while it is alive, so a
+ * long-idle but still-open terminal is not treated as abandoned.
  */
 export async function findStaleSessions(
   agentName: string | null,
@@ -167,7 +177,8 @@ export async function findStaleSessions(
     if (typeof session.startTime !== 'number') continue;
 
     const lastActivity = computeLastActivity(session);
-    if (!isSessionStale({ now, lastActivityMs: lastActivity, inactivityThresholdMs })) continue;
+    const lastKnownAlive = computeLastKnownAlive(session, lastActivity);
+    if (!isSessionStale({ now, lastActivityMs: lastKnownAlive, inactivityThresholdMs })) continue;
 
     stale.push({
       sessionId: session.sessionId,
@@ -175,9 +186,14 @@ export async function findStaleSessions(
       clientType: session.clientType,
       startTime: session.startTime,
       lastActivityMs: lastActivity,
+      workingDirectory: session.workingDirectory,
       provider: session.provider,
       project: session.project,
       model: session.model,
+      apiBaseUrl: session.analyticsContext?.apiBaseUrl,
+      ssoUrl: session.analyticsContext?.ssoUrl,
+      syncApiUrl: session.analyticsContext?.syncApiUrl,
+      profileName: session.analyticsContext?.profileName,
       agentSessionFile: session.correlation?.agentSessionFile,
       agentSessionFiles: session.correlation?.agentSessionFiles,
       agentSessionId: session.correlation?.agentSessionId,
@@ -200,7 +216,10 @@ export async function reconcileStaleSessions(
   buildHookConfig: (
     env: NodeJS.ProcessEnv,
     sessionId: string,
-    staleSession?: Pick<StaleSession, 'agentName' | 'clientType' | 'provider' | 'project' | 'model'>
+    staleSession?: Pick<
+      StaleSession,
+      'agentName' | 'clientType' | 'provider' | 'project' | 'model' | 'apiBaseUrl' | 'ssoUrl' | 'syncApiUrl' | 'profileName'
+    >
   ) => HookProcessingConfig,
   opts: ReconcileOptions = {},
 ): Promise<{ reconciled: number; failed: number }> {
@@ -242,7 +261,7 @@ export async function reconcileStaleSessions(
         transcript_path: entry.agentSessionFile ?? entry.agentSessionFiles?.[0] ?? '',
         ...(entry.agentSessionFiles?.length ? { transcript_paths: entry.agentSessionFiles } : {}),
         permission_mode: 'default',
-        cwd: process.cwd(),
+        cwd: entry.workingDirectory,
         reason: 'interrupted',
         endTime: entry.lastActivityMs,
       };
@@ -281,6 +300,11 @@ function computeLastActivity(session: Session): number {
     candidates.push(conversations.lastSyncAt);
   }
   return candidates.length === 0 ? 0 : Math.max(...candidates);
+}
+
+function computeLastKnownAlive(session: Session, lastActivity: number): number {
+  const lastHeartbeatAt = session.liveness?.lastHeartbeatAt;
+  return typeof lastHeartbeatAt === 'number' ? Math.max(lastActivity, lastHeartbeatAt) : lastActivity;
 }
 
 async function loadDefaultProcessEvent(): Promise<ProcessEventFn> {

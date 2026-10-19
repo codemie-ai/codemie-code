@@ -8,7 +8,7 @@
 import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, basename, join } from 'path';
-import type { Session } from './types.js';
+import type { Session, SessionLiveness } from './types.js';
 import { getSessionPath } from './session-config.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
@@ -224,9 +224,35 @@ export class SessionStore {
     }
     if (status === 'completed' || status === 'recovered' || status === 'failed') {
       session.endTime = endTime;
+      delete session.liveness;
     }
 
     await this.saveSession(session);
+  }
+
+  /**
+   * Refresh the owning process heartbeat for a live hook-managed session.
+   *
+   * Best-effort only: some agents do not persist a generic session file at all, and a
+   * late heartbeat racing with SessionEnd should never resurrect or mutate a terminal
+   * record.
+   */
+  async updateSessionLiveness(sessionId: string, liveness: SessionLiveness): Promise<boolean> {
+    const session = await this.loadSession(sessionId);
+
+    if (!session) {
+      logger.debug(`[SessionStore] Cannot update liveness - session not found: ${sessionId}`);
+      return false;
+    }
+
+    if (session.status !== 'active' || session.endTime !== undefined) {
+      logger.debug(`[SessionStore] Skipping liveness update for non-active session: ${sessionId}`);
+      return false;
+    }
+
+    session.liveness = liveness;
+    await this.saveSession(session);
+    return true;
   }
 
   /**
