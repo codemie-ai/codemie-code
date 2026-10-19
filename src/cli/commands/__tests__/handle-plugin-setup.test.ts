@@ -81,6 +81,7 @@ vi.mock('../../../providers/integration/setup-ui.js', () => ({
 
 import { classifyWithPredicate } from '../../../agents/core/model-classify.js';
 import { handlePluginSetup } from '../setup.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 
 function installFakeAgents(supportedProviders: Record<string, string[]> = {}): void {
   const agents = fakeAgents.map(a => {
@@ -411,6 +412,69 @@ describe('handlePluginSetup (harness-compatible models, EPMCDME-15641)', () => {
     await handlePluginSetup('other-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
 
     expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it('throws a ConfigurationError when failed installs leave a harness without a model', async () => {
+    providerRegistryMock.getProvider.mockReturnValue({ supportsModelInstallation: true });
+    const steps = {
+      ...baseSteps(['gpt-5.4', 'claude-sonnet-4']),
+      installModel: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('pull failed'))
+    };
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex', 'claude'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'claude-sonnet-4'] })
+      .mockResolvedValueOnce({ activeModel: 'gpt-5.4' });
+
+    await expect(handlePluginSetup('test-provider', steps, 'p', true, 'global'))
+      .rejects.toBeInstanceOf(ConfigurationError);
+    expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it('explains the dead end instead of looping when a catalog-less provider is unsupported by a harness', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    installFakeAgents({ codex: ['litellm'] });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ action: 'cancel' });
+
+    await handlePluginSetup('other-provider', baseSteps([]), 'p', true, 'global');
+
+    expect(promptMock).toHaveBeenCalledTimes(2);
+    expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it('offers a catalog-flagged router alias and persists it so launch reports it unverified', async () => {
+    const steps = {
+      ...baseSteps(['gpt-5.4', 'sy-signal-terra-luna']),
+      fetchRouterModels: vi.fn().mockResolvedValue(['sy-signal-terra-luna'])
+    };
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4', 'sy-signal-terra-luna'] })
+      .mockResolvedValueOnce({ activeModel: 'gpt-5.4' });
+
+    await handlePluginSetup('test-provider', steps, 'p', true, 'global');
+
+    expect((questionOf(1).choices ?? []).map(c => c.value)).toContain('sy-signal-terra-luna');
+    const [, saved] = configMock.saveProfile.mock.calls[0];
+    expect(saved.models).toEqual(['gpt-5.4', 'sy-signal-terra-luna']);
+    expect(saved.confirmedModels).toEqual(['sy-signal-terra-luna']);
+  });
+
+  it('carries on without router hints when the router lookup fails', async () => {
+    const steps = {
+      ...baseSteps(['gpt-5.4']),
+      fetchRouterModels: vi.fn().mockRejectedValue(new Error('boom'))
+    };
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['codex'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4'] });
+
+    await handlePluginSetup('test-provider', steps, 'p', true, 'global');
+
+    expect(configMock.saveProfile).toHaveBeenCalledTimes(1);
   });
 });
 

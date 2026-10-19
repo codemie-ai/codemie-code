@@ -16,6 +16,7 @@ import ora from 'ora';
 import type {
   ProviderSetupSteps,
   ProviderCredentials,
+  ModelInfo,
   AuthValidationResult,
   AuthStatus
 } from '../../core/types.js';
@@ -33,6 +34,15 @@ import {
   getPlatformUrl,
   getStoredPlatformCredentials
 } from '../../core/codemie-auth-helpers.js';
+
+function fetchSsoCatalog(credentials: ProviderCredentials): Promise<ModelInfo[]> {
+  const modelProxy = new SSOModelProxy(credentials.baseUrl);
+  return modelProxy.fetchModels({
+    codeMieUrl: credentials.additionalConfig?.codeMieUrl,
+    baseUrl: credentials.baseUrl,
+    cookies: credentials.additionalConfig?.cookies
+  } as CodeMieConfigOptions);
+}
 
 /**
  * SSO setup steps implementation
@@ -184,14 +194,17 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    * Queries SSO API to discover available models
    */
   async fetchModels(credentials: ProviderCredentials): Promise<string[]> {
-    const modelProxy = new SSOModelProxy(credentials.baseUrl);
-    const models = await modelProxy.fetchModels({
-      codeMieUrl: credentials.additionalConfig?.codeMieUrl,
-      baseUrl: credentials.baseUrl,
-      cookies: credentials.additionalConfig?.cookies
-    } as CodeMieConfigOptions);
-
+    const models = await fetchSsoCatalog(credentials);
     return models.map(m => m.id);
+  },
+
+  /**
+   * Catalog entries flagged as routers/aliases (`metadata.isRouter`), so setup can treat an alias
+   * without "router" in its name as unverified rather than incompatible.
+   */
+  async fetchRouterModels(credentials: ProviderCredentials): Promise<string[]> {
+    const models = await fetchSsoCatalog(credentials);
+    return models.filter(m => m.metadata?.isRouter === true).map(m => m.id);
   },
 
   /**

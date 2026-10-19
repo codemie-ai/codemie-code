@@ -29,6 +29,7 @@ vi.mock('ora', () => ({
 }));
 
 import { promptForModelsSelection } from '../setup.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 
 function queueAnswers(answers: Array<Record<string, unknown>>): Record<string, unknown>[][] {
   const seenQuestions: Record<string, unknown>[][] = [];
@@ -193,6 +194,60 @@ describe('promptForModelsSelection', () => {
       const result = await promptForModelsSelection([], undefined, undefined, undefined, undefined, undefined, { harnesses: ['codex'] });
 
       expect(result).toEqual({ models: ['llama-3'], activeModel: 'llama-3', confirmedModels: ['llama-3'] });
+    });
+
+    it('keeps a confirmed typed id that is not in the catalog as a pre-checked choice on a retry', async () => {
+      const seen = queueAnswers([{ selectedModels: ['gpt-5.4', 'llama-3'] }, { activeModel: 'gpt-5.4' }]);
+
+      await promptForModelsSelection(
+        ['gpt-5.4'], undefined, undefined, undefined, ['gpt-5.4', 'llama-3'], undefined,
+        { harnesses: ['codex'], confirmedModels: ['llama-3'] }
+      );
+
+      const choices = (seen[0][0] as { choices: Array<{ value: string; checked?: boolean }> }).choices;
+      expect(choices.find(c => c.value === 'llama-3')?.checked).toBe(true);
+    });
+
+    it('shows and accepts a catalog-flagged router alias that the name rule alone rejects', async () => {
+      const seen = queueAnswers([{ selectedModels: ['sy-signal-terra-luna'] }]);
+
+      const result = await promptForModelsSelection(
+        ['gpt-5.4', 'sy-signal-terra-luna'], undefined, undefined, undefined, undefined, undefined,
+        { harnesses: ['codex'], isRouter: id => id === 'sy-signal-terra-luna' }
+      );
+
+      const choices = (seen[0][0] as { choices: Array<{ name: string; value: string }> }).choices;
+      const alias = choices.find(c => c.value === 'sy-signal-terra-luna');
+      expect(alias?.name).toContain('unverified');
+      expect(result.models).toEqual(['sy-signal-terra-luna']);
+    });
+
+    it('seeds a catalog-less retry with confirmed ids so they are not asked for again', async () => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const seen = queueAnswers([{ manualModel: 'gpt-5.4' }, { activeModel: 'llama-3' }]);
+
+      const result = await promptForModelsSelection(
+        [], undefined, undefined, undefined, ['llama-3'], undefined,
+        { harnesses: ['codex', 'claude'], confirmedModels: ['llama-3'] }
+      );
+
+      // llama-3 (confirmed, unverified) already covers both harnesses, but the user is still asked once
+      // (one model entry plus the active-model pick) and never re-confirms llama-3.
+      expect(seen).toHaveLength(2);
+      expect(seen[0][0].name).toBe('manualModel');
+      expect(result.models).toEqual(['llama-3', 'gpt-5.4']);
+      expect(result.confirmedModels).toEqual(['llama-3']);
+    });
+
+    it('throws instead of looping when no typed id can ever cover a harness on this provider', async () => {
+      queueAnswers([{ manualModel: 'kimi-k2' }]);
+
+      await expect(
+        promptForModelsSelection([], undefined, undefined, undefined, undefined, undefined, {
+          harnesses: ['kimi'],
+          provider: 'litellm'
+        })
+      ).rejects.toBeInstanceOf(ConfigurationError);
     });
 
     it('labels active-model choices with the harnesses each model works with without restricting them', async () => {

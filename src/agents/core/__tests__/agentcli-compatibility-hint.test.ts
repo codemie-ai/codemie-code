@@ -133,6 +133,16 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
     expect(output()).toContain('codemie models switch');
   });
 
+  it('keeps stdout clean on the legacy warning path (ACP/SDK callers parse stdout)', () => {
+    validate(
+      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', models: ['claude-sonnet-4-5', 'gpt-5.4'] }),
+      codex()
+    );
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
   it('skips the check when the model was set by --model or CODEMIE_MODEL', () => {
     const config = cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', harnesses: ['codex'] });
 

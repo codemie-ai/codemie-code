@@ -67,6 +67,40 @@ export function uncoveredHarness(
   );
 }
 
+/**
+ * First harness (with a classifier) whose non-empty `supportedProviders` excludes `provider`.
+ * No model id can ever make such a harness work on this provider.
+ */
+export function unsupportedProviderHarness(harnesses: string[], provider: string | undefined): string | undefined {
+  if (!provider) return undefined;
+  return harnesses.find((h) => {
+    const metadata = resolveAgent(h)?.metadata;
+    const supported = metadata?.supportedProviders;
+    return Boolean(metadata?.classifyModel && supported?.length && !supported.includes(provider));
+  });
+}
+
+/**
+ * Models accepted only because the catalog flags them as routers/aliases: `incompatible` for some
+ * harness by name alone, not `incompatible` once the router hint is applied. Launch has no catalog,
+ * so setup persists these ids in `confirmedModels` and launch then reports them `unverified`.
+ */
+export function routerAcceptedModels(
+  harnesses: string[],
+  models: string[],
+  opts: Pick<ModelCompatOptions, 'provider' | 'isRouter'>
+): string[] {
+  const { isRouter, provider } = opts;
+  if (!isRouter) return [];
+  return models.filter((id) =>
+    harnesses.some(
+      (h) =>
+        classifyModelForAgent(h, id, { provider }) === 'incompatible' &&
+        classifyModelForAgent(h, id, { provider, isRouter }) !== 'incompatible'
+    )
+  );
+}
+
 export interface HarnessProfileInfo {
   harnesses?: string[];
   provider?: string;

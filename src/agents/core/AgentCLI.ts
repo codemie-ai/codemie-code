@@ -790,17 +790,18 @@ export class AgentCLI {
     );
     const hasHarnesses = Boolean(config.harnesses?.length);
 
+    // stderr only: stdout is parsed by ACP/SDK/CI callers, and a legacy profile continues to launch.
     if (hasHarnesses) {
       logger.error(`Active model '${model}' is not compatible with ${name}`);
     } else {
-      console.log(chalk.yellow(`\n⚠ Active model '${model}' does not look compatible with ${name}; it may fail at launch.`));
+      console.error(chalk.yellow(`\n⚠ Active model '${model}' does not look compatible with ${name}; it may fail at launch.`));
     }
 
     if (siblings.length > 0) {
-      console.log(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
-      console.log(chalk.white('Run ') + chalk.cyan('codemie models switch') + chalk.white(' to pick one.'));
+      console.error(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
+      console.error(chalk.white('Run ') + chalk.cyan('codemie models switch') + chalk.white(' to pick one.'));
     } else {
-      console.log(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
+      console.error(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
     }
 
     return !hasHarnesses;

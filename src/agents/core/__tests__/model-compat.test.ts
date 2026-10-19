@@ -8,6 +8,8 @@ import {
   harnessAnnotations,
   compatibleHarnesses,
   uncoveredHarness,
+  unsupportedProviderHarness,
+  routerAcceptedModels,
 } from '../model-compat.js';
 
 const isClaude = (id: string) => /claude/i.test(id);
@@ -172,3 +174,25 @@ describe('harnessAnnotations', () => {
   });
 });
 
+
+describe('unsupportedProviderHarness', () => {
+  it('names the first classifier harness whose supportedProviders exclude the provider', () => {
+    expect(unsupportedProviderHarness(['claude', 'codex'], 'other')).toBe('codex');
+  });
+
+  it('ignores harnesses with an empty supportedProviders list, no classifier, or a supported provider', () => {
+    expect(unsupportedProviderHarness(['claude', 'opencode', 'pi'], 'other')).toBeUndefined();
+    expect(unsupportedProviderHarness(['codex'], 'litellm')).toBeUndefined();
+  });
+});
+
+describe('routerAcceptedModels', () => {
+  it('lists catalog-flagged routers that the name rule alone would reject for a harness', () => {
+    const isRouter = (id: string) => id === 'sy-alias' || id === 'gpt-x';
+    expect(routerAcceptedModels(['codex'], ['sy-alias', 'gpt-x', 'claude-x'], { isRouter })).toEqual(['sy-alias']);
+  });
+
+  it('is empty without a router lookup', () => {
+    expect(routerAcceptedModels(['codex'], ['sy-alias'], {})).toEqual([]);
+  });
+});
