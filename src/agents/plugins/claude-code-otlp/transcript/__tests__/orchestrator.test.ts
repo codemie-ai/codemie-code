@@ -75,6 +75,8 @@ function usageLine(opts: {
   messageId: string;
   requestId?: string;
   outputTokens: number;
+  model?: string;
+  isApiErrorMessage?: boolean;
   gitBranch?: string;
   stopReason?: string;
   timestamp?: string;
@@ -85,10 +87,11 @@ function usageLine(opts: {
     timestamp: opts.timestamp ?? '2026-10-01T00:00:00.000Z',
     uuid: opts.uuid,
     ...(opts.requestId ? { requestId: opts.requestId } : {}),
+    ...(opts.isApiErrorMessage ? { isApiErrorMessage: opts.isApiErrorMessage } : {}),
     message: {
       id: opts.messageId,
       role: 'assistant',
-      model: 'claude-sonnet-4-5-20250929',
+      model: opts.model ?? 'claude-sonnet-4-5-20250929',
       stop_reason: opts.stopReason ?? '',
       usage: {
         input_tokens: 100,
@@ -201,6 +204,29 @@ describe('openMainTranscriptPass — idempotent reparse', () => {
 });
 
 describe('openMainTranscriptPass — Stop trigger', () => {
+  it('flags API-error placeholders and excludes their synthetic model from the session summary', async () => {
+    const sessionId = 'session-synthetic-model';
+    const transcriptPath = writeTranscript('transcript-synthetic-model.jsonl', [
+      usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
+      usageLine({
+        uuid: 'uuid-2',
+        messageId: 'msg-2',
+        outputTokens: 0,
+        model: '<synthetic>',
+        isApiErrorMessage: true,
+      }),
+    ]);
+
+    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'Stop'));
+    const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
+    const summary = events.find((event) => event.type === 'agent.session.summary');
+
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents.find((event) => event.message_id === 'msg-2')?.is_api_error).toBe(true);
+    expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
+    expect(summary?.primary_model).toBe('claude-sonnet-4-5-20250929');
+  });
+
   it('returns one agent.usage.request event per distinct request plus one incremental agent.session.summary', async () => {
 
     const sessionId = 'session-stop-basic';

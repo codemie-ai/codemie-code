@@ -340,6 +340,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
   for (const model of modelByRequestKey.values()) {
+    if (model === '<synthetic>') continue;
     acc.models[model] = (acc.models[model] ?? 0) + 1;
   }
 

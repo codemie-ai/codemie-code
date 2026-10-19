@@ -25,12 +25,12 @@ import type { OpenUsageRequest } from './parse-state.js';
 /**
  * Loose shape of one transcript JSONL line, mirroring `usage-readers.ts`'s `ClaudeRawMessage`
  * plus `message.stop_reason`, `message.usage`'s extra nested groups, and the top-level
- * `gitBranch`/`isApiError`. Not exported — callers only see {@link parseUsageLine}'s result.
+ * `gitBranch`/`isApiErrorMessage`. Not exported — callers only see {@link parseUsageLine}'s result.
  */
 interface TranscriptUsageLine {
   timestamp?: string;
   gitBranch?: string;
-  isApiError?: boolean;
+  isApiErrorMessage?: boolean;
   requestId?: string;
   message?: RoutingHeaderSource & {
     id?: string;
@@ -128,7 +128,7 @@ export function parseUsageLine(
     agentType,
     // Sibling of usage on message, not nested inside it.
     stopReason: parsed.message?.stop_reason ?? '',
-    isApiError: Boolean(parsed.isApiError),
+    isApiError: Boolean(parsed.isApiErrorMessage),
     gitBranch: parsed.gitBranch ?? '',
   };
 }

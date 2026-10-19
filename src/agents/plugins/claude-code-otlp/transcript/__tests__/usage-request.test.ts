@@ -87,7 +87,7 @@ describe('parseUsageLine', () => {
     // stop_reason is a sibling of usage on message, not nested inside usage.
     expect(r.stopReason).toBe('end_turn');
     expect(r.gitBranch).toBe('feature/epmcdme-15301');
-    // No documented source field for isApiError on a real transcript line — defaults false.
+    // Normal transcript lines without isApiErrorMessage default to false.
     expect(r.isApiError).toBe(false);
     expect(r.scopeKind).toBe('main');
     expect(r.scopeName).toBe('');
