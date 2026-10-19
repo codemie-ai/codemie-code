@@ -25,6 +25,7 @@ export type CorrelationStatus = 'pending' | 'matched' | 'failed';
 export interface CorrelationResult {
   status: CorrelationStatus;
   agentSessionFile?: string; // Path to matched file
+  agentSessionFiles?: string[]; // Full set of matched files for multi-transcript agents
   agentSessionId?: string; // Extracted session ID
   detectedAt?: number; // Unix timestamp (ms)
   retryCount: number;
@@ -138,6 +139,7 @@ export interface Session {
   agentName: string; // 'claude', 'gemini'
   provider: string; // 'ai-run-sso', etc.
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
+  model?: string; // Model active for the session at start/re-entry
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
   workingDirectory: string; // CWD where agent was launched

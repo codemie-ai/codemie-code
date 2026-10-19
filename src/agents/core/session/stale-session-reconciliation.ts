@@ -10,26 +10,23 @@
  * On `onSessionStart`, an agent scans for such stranded sessions of its own kind and
  * synthesises a SessionEnd with `reason: "interrupted"` to finalise them.
  *
- * Inactivity threshold defaults to 30 minutes; the lookback window is capped to
- * 24 hours so a first deploy does not emit a burst of synthetic events for ancient
- * stranded sessions.
+ * Staleness (inactivity alone, no cap on how long a session may have been inactive) is the
+ * shared rule in `./stale-session-policy.ts`, also used by the Claude Desktop restart
+ * reconciliation in `DesktopTelemetryRuntime`, so the two runtimes cannot silently diverge
+ * on the same backlog.
  */
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { basename, join } from 'path';
 import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import type { Session } from './types.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
-
-const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
-const DEFAULT_MAX_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+import { isSessionStale, DEFAULT_INACTIVITY_THRESHOLD_MS } from './stale-session-policy.js';
 
 export interface ReconciliationOptions {
   /** Sessions inactive for longer than this are considered stale. */
   inactivityThresholdMs?: number;
-  /** Sessions started before (now - this) are skipped. */
-  maxLookbackMs?: number;
   /** Override clock for tests. */
   now?: number;
 }
@@ -43,6 +40,17 @@ export interface StaleSession {
   sessionId: string;
   startTime: number;
   lastActivityMs: number;
+  provider: string;
+  project?: string;
+  model?: string;
+  // Persisted transcript path for the stranded session. Synthetic SessionEnd must reuse
+  // it so handleSessionEnd can run the same final transcript/incremental sync path a live
+  // hook would, rather than marking the session completed with its final transcript delta
+  // still unsynced.
+  agentSessionFile?: string;
+  // Full transcript set for multi-transcript agents (e.g. Pi /new, /fork). Replaying only
+  // the primary file during reconciliation would miss final deltas written to sibling files.
+  agentSessionFiles?: string[];
   // The agent's own hook-reported session id (session.correlation.agentSessionId), distinct
   // from `sessionId` (CodeMie's internal UUID). A live SessionStart for claude/gemini/kimi
   // sends the start metric under this id (hook.ts's `event.session_id`); omitting it from the
@@ -55,6 +63,7 @@ export interface SessionEndEventLike {
   hook_event_name: 'SessionEnd';
   session_id: string;
   transcript_path: string;
+  transcript_paths?: string[];
   permission_mode: string;
   cwd: string;
   reason: string;
@@ -69,6 +78,8 @@ export type ProcessEventFn = (
   config: HookProcessingConfig,
 ) => Promise<void>;
 
+const RECONCILIATION_LOCK_STALE_MS = 10 * 60 * 1000;
+
 /**
  * Canonical env -> HookProcessingConfig mapping for stale-session reconciliation.
  * Mirrors the env-var keys hook.ts's getConfigValue maps to HookProcessingConfig
@@ -80,18 +91,19 @@ export type ProcessEventFn = (
 export function buildReconciliationHookConfig(
   env: NodeJS.ProcessEnv,
   sessionId: string,
+  staleSession?: Pick<StaleSession, 'provider' | 'project' | 'model'>,
 ): HookProcessingConfig {
   return {
     agentName: env.CODEMIE_AGENT!,
     sessionId,
-    provider: env.CODEMIE_PROVIDER,
+    provider: staleSession?.provider ?? env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
     syncApiUrl: env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
-    project: env.CODEMIE_PROJECT,
-    model: env.CODEMIE_MODEL,
+    project: staleSession?.project ?? env.CODEMIE_PROJECT,
+    model: staleSession?.model ?? env.CODEMIE_MODEL,
     clientType: env.CODEMIE_CLIENT_TYPE,
   };
 }
@@ -105,7 +117,6 @@ export async function findStaleSessions(
 ): Promise<StaleSession[]> {
   const now = opts.now ?? Date.now();
   const inactivityThresholdMs = opts.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS;
-  const maxLookbackMs = opts.maxLookbackMs ?? DEFAULT_MAX_LOOKBACK_MS;
 
   const sessionsDir = getCodemiePath('sessions');
   if (!existsSync(sessionsDir)) {
@@ -121,8 +132,6 @@ export async function findStaleSessions(
   }
 
   const stale: StaleSession[] = [];
-  const cutoffActivity = now - inactivityThresholdMs;
-  const cutoffStart = now - maxLookbackMs;
 
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue;
@@ -145,15 +154,19 @@ export async function findStaleSessions(
     if (session.agentName !== agentName) continue;
     if (session.status !== 'active') continue;
     if (typeof session.startTime !== 'number') continue;
-    if (session.startTime < cutoffStart) continue;
 
     const lastActivity = computeLastActivity(session);
-    if (lastActivity > cutoffActivity) continue;
+    if (!isSessionStale({ now, lastActivityMs: lastActivity, inactivityThresholdMs })) continue;
 
     stale.push({
       sessionId: session.sessionId,
       startTime: session.startTime,
       lastActivityMs: lastActivity,
+      provider: session.provider,
+      project: session.project,
+      model: session.model,
+      agentSessionFile: session.correlation?.agentSessionFile,
+      agentSessionFiles: session.correlation?.agentSessionFiles,
       agentSessionId: session.correlation?.agentSessionId,
     });
   }
@@ -170,7 +183,11 @@ export async function findStaleSessions(
 export async function reconcileStaleSessions(
   agentName: string,
   env: NodeJS.ProcessEnv,
-  buildHookConfig: (env: NodeJS.ProcessEnv, sessionId: string) => HookProcessingConfig,
+  buildHookConfig: (
+    env: NodeJS.ProcessEnv,
+    sessionId: string,
+    staleSession?: Pick<StaleSession, 'provider' | 'project' | 'model'>
+  ) => HookProcessingConfig,
   opts: ReconcileOptions = {},
 ): Promise<{ reconciled: number; failed: number }> {
   const stale = await findStaleSessions(agentName, opts);
@@ -188,26 +205,41 @@ export async function reconcileStaleSessions(
   let failed = 0;
 
   for (const entry of stale) {
+    const lock = await acquireReconciliationLock(entry.sessionId);
+    if (!lock) {
+      logger.debug(`[${agentName}-reconciliation] Skipping ${entry.sessionId}: another reconciliation is already in progress`);
+      continue;
+    }
+
     try {
+      const current = await loadCurrentSession(entry.sessionId);
+      if (!current || current.status !== 'active' || current.endTime !== undefined) {
+        logger.debug(`[${agentName}-reconciliation] Skipping ${entry.sessionId}: session is no longer active`);
+        continue;
+      }
+
       const event: SessionEndEventLike = {
         hook_event_name: 'SessionEnd',
         // Prefer the agent's own native id — the SessionStart metric was sent under it, so
         // the SessionEnd metric must be too, or the two never pair up on the analytics
         // backend. Fall back to the CodeMie id only when no native id was ever recorded.
         session_id: entry.agentSessionId ?? entry.sessionId,
-        transcript_path: '',
+        transcript_path: entry.agentSessionFile ?? entry.agentSessionFiles?.[0] ?? '',
+        ...(entry.agentSessionFiles?.length ? { transcript_paths: entry.agentSessionFiles } : {}),
         permission_mode: 'default',
         cwd: process.cwd(),
         reason: 'interrupted',
         endTime: entry.lastActivityMs,
       };
-      await processEvent(event, buildHookConfig(env, entry.sessionId));
+      await processEvent(event, buildHookConfig(env, entry.sessionId, entry));
       reconciled++;
       logger.info(`[${agentName}-reconciliation] Reconciled stranded session ${entry.sessionId}`);
     } catch (error) {
       failed++;
       const msg = error instanceof Error ? error.message : String(error);
       logger.warn(`[${agentName}-reconciliation] Failed to reconcile ${entry.sessionId}: ${msg}`);
+    } finally {
+      await releaseReconciliationLock(lock);
     }
   }
 
@@ -217,6 +249,11 @@ export async function reconcileStaleSessions(
 function computeLastActivity(session: Session): number {
   const candidates: number[] = [];
   if (typeof session.startTime === 'number') candidates.push(session.startTime);
+  // A process killed mid-turn can strand the freshest signal only in the session file itself:
+  // activityStartedAt is written on UserPromptSubmit before any subsequent metrics/conversation
+  // syncs happen. Reconciliation must treat that as real activity or the synthetic SessionEnd
+  // can stamp endTime before the turn even started and lose activeDurationMs entirely.
+  if (typeof session.activityStartedAt === 'number') candidates.push(session.activityStartedAt);
   const metrics = session.sync?.metrics;
   if (metrics) {
     if (typeof metrics.lastSyncAt === 'number') candidates.push(metrics.lastSyncAt);
@@ -234,4 +271,85 @@ function computeLastActivity(session: Session): number {
 async function loadDefaultProcessEvent(): Promise<ProcessEventFn> {
   const mod = await import('@/cli/commands/hook.js');
   return mod.processEvent as unknown as ProcessEventFn;
+}
+
+function getCompletedSessionPath(sessionId: string): string {
+  return getCodemiePath('sessions', `completed_${sessionId}.json`);
+}
+
+async function loadCurrentSession(sessionId: string): Promise<Session | null> {
+  for (const path of [getCodemiePath('sessions', `${sessionId}.json`), getCompletedSessionPath(sessionId)]) {
+    if (!existsSync(path)) {
+      continue;
+    }
+    try {
+      return JSON.parse(await readFile(path, 'utf-8')) as Session;
+    } catch (error) {
+      logger.debug('[stale-session-reconciliation] Failed to read current session while re-checking state', {
+        sessionId,
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return null;
+}
+
+async function acquireReconciliationLock(sessionId: string): Promise<string | null> {
+  const lockPath = getCodemiePath('sessions', `${sessionId}.reconcile.lock`);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
+      return lockPath;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        throw error;
+      }
+
+      if (!(await isStaleReconciliationLock(lockPath))) {
+        return null;
+      }
+
+      try {
+        await unlink(lockPath);
+      } catch (unlinkError) {
+        if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.debug('[stale-session-reconciliation] Failed to remove stale reconciliation lock', {
+            sessionId,
+            lockPath,
+            error: unlinkError instanceof Error ? unlinkError.message : String(unlinkError),
+          });
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+async function isStaleReconciliationLock(lockPath: string): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs > RECONCILIATION_LOCK_STALE_MS;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return true;
+    }
+    throw error;
+  }
+}
+
+async function releaseReconciliationLock(lockPath: string): Promise<void> {
+  try {
+    await unlink(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.debug('[stale-session-reconciliation] Failed to release reconciliation lock', {
+        lockPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }

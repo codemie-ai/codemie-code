@@ -131,6 +131,7 @@ async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Pr
       ...session.correlation,
       status: 'matched',
       agentSessionFile: ledger.primaryTranscript,
+      agentSessionFiles: ledger.transcripts.length > 0 ? [...ledger.transcripts] : undefined,
       ...(ledger.piSessionId && { agentSessionId: ledger.piSessionId }),
       detectedAt: Date.now(),
     };

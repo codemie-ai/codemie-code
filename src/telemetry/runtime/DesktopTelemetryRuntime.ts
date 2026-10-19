@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { stat } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { isSessionStale } from '@/agents/core/session/stale-session-policy.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
@@ -109,7 +110,13 @@ export class DesktopTelemetryRuntime {
       const lastSeenActivityAt = session.runtimeCheckpoint?.lastSeenActivityAt ?? session.startTime;
       const inactiveForMs = now - lastSeenActivityAt;
 
-      if (inactiveForMs >= this.config.inactivityTimeoutMs) {
+      if (
+        isSessionStale({
+          now,
+          lastActivityMs: lastSeenActivityAt,
+          inactivityThresholdMs: this.config.inactivityTimeoutMs,
+        })
+      ) {
         logger.info('[desktop-telemetry] Finalizing session stranded by a previous daemon', {
           externalSessionId,
           sessionId: session.sessionId,
@@ -352,35 +359,30 @@ export class DesktopTelemetryRuntime {
       return;
     }
 
-    session.status = 'completed';
-    session.reason = reason;
-    session.endTime = endTime;
-    await this.sessionStore.saveSession(session);
-
     const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
     if (externalSessionId) {
+      const sinceMs = Math.max(
+        0,
+        (session.runtimeCheckpoint?.lastSeenActivityAt
+          ?? session.runtimeCheckpoint?.lastDiscoveredAt
+          ?? session.startTime) - this.config.pollIntervalMs
+      );
       try {
-        const sinceMs = Math.max(
-          0,
-          (session.runtimeCheckpoint?.lastSeenActivityAt
-            ?? session.runtimeCheckpoint?.lastDiscoveredAt
-            ?? session.startTime) - this.config.pollIntervalMs
-        );
         const discoveredSessions = await this.adapter.discoverSessions(sinceMs);
         const discovered = discoveredSessions.find(
           candidate => candidate.externalSessionId === externalSessionId
         );
 
-        if (discovered) {
-          await this.processSession(session, discovered);
-        } else {
-          logger.warn('[desktop-telemetry] Failed to rediscover session during finalization', {
+        if (!discovered) {
+          logger.warn('[desktop-telemetry] Failed to rediscover session during finalization; continuing with persisted state', {
             sessionId,
             externalSessionId
           });
+        } else {
+          await this.processSession(session, discovered);
         }
       } catch (error) {
-        logger.warn('[desktop-telemetry] Final transcript processing failed', {
+        logger.warn('[desktop-telemetry] Final transcript processing failed (non-blocking)', {
           sessionId,
           externalSessionId,
           error: error instanceof Error ? error.message : String(error)
@@ -388,15 +390,24 @@ export class DesktopTelemetryRuntime {
       }
     }
 
-    const context = await this.buildProcessingContext(session);
+    const latestSession = await this.sessionStore.loadSession(sessionId) ?? session;
+    const finalizedSession: Session = {
+      ...latestSession,
+      status: 'completed',
+      reason,
+      endTime,
+    };
+
+    const context = await this.buildProcessingContext(finalizedSession);
     await this.syncer.sync(sessionId, context);
-    await this.sendSessionEndMetric(session);
+    await this.sendSessionEndMetric(finalizedSession);
+    await this.sessionStore.saveSession(finalizedSession);
     logger.info('[desktop-telemetry] Session finalized', {
       sessionId,
       reason,
-      repository: session.repository,
-      gitBranch: session.gitBranch,
-      status: session.status,
+      repository: finalizedSession.repository,
+      gitBranch: finalizedSession.gitBranch,
+      status: finalizedSession.status,
     });
   }
 

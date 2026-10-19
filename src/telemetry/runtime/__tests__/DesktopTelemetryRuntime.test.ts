@@ -466,6 +466,137 @@ describe('DesktopTelemetryRuntime', () => {
       expect(session.reason).toBe('desktop-daemon-restart-stale');
     });
 
+    it('finalizes a session whose last activity is far older than 24h — overdue reconciliation is not exempt', async () => {
+      // A session abandoned on Monday and not restarted until Wednesday is exactly the case
+      // this fallback exists to close. A cap that excludes anything inactive for "too long"
+      // would permanently orphan precisely the sessions most overdue for finalization.
+      const THIRTEEN_DAYS_MS = 13 * 24 * 60 * 60 * 1000;
+      const ancientActivity = T0 - THIRTEEN_DAYS_MS;
+      persistedSessions.set('ancient-session', {
+        sessionId: 'ancient-session',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        startTime: ancientActivity,
+        workingDirectory: '/tmp/ancient',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'ext-ancient', lastSeenActivityAt: ancientActivity }
+      });
+
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(persistedSessions.get('ancient-session')!.status).toBe('completed');
+      expect(persistedSessions.get('ancient-session')!.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('does finalize a long-lived session whose startTime is ancient but whose last activity is still within lookback', async () => {
+      const THIRTEEN_DAYS_MS = 13 * 24 * 60 * 60 * 1000;
+      const recentActivity = T0 - 2 * 60 * 60 * 1000;
+      persistedSessions.set('old-but-recently-active-session', {
+        sessionId: 'old-but-recently-active-session',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        startTime: T0 - THIRTEEN_DAYS_MS,
+        workingDirectory: '/tmp/old-but-recent',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 },
+        runtimeCheckpoint: {
+          externalSessionId: 'ext-old-but-recent',
+          lastSeenActivityAt: recentActivity
+        }
+      });
+
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(persistedSessions.get('old-but-recently-active-session')!.status).toBe('completed');
+      expect(persistedSessions.get('old-but-recently-active-session')!.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('finalizes a session abandoned Monday at 09:00, closed at 09:40, and not restarted until Wednesday', async () => {
+      const monday0900 = new Date('2026-10-12T09:00:00Z').getTime();
+      const monday0940 = monday0900 + 40 * 60 * 1000;
+      const wednesday = new Date('2026-10-14T09:00:00Z').getTime(); // ~47h after the session's last activity
+
+      persistedSessions.set('monday-session', {
+        sessionId: 'monday-session',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        startTime: monday0900,
+        workingDirectory: '/tmp/monday',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'ext-monday', lastSeenActivityAt: monday0940 }
+      });
+
+      vi.setSystemTime(wednesday);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(persistedSessions.get('monday-session')!.status).toBe('completed');
+      expect(persistedSessions.get('monday-session')!.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('finalizes a session that legitimately ran for about 23.5h once it goes idle — session age is not a cap on reconciliation', async () => {
+      const twentyThreeAndHalfHours = 23.5 * 60 * 60 * 1000;
+      const startTime = T0 - twentyThreeAndHalfHours;
+      const lastActivity = T0 - 35 * 60 * 1000; // just past the inactivity timeout
+
+      persistedSessions.set('long-running-session', {
+        sessionId: 'long-running-session',
+        agentName: 'claude-desktop',
+        provider: 'ai-run-sso',
+        startTime,
+        workingDirectory: '/tmp/long-running',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', retryCount: 0 },
+        runtimeCheckpoint: { externalSessionId: 'ext-long-running', lastSeenActivityAt: lastActivity }
+      });
+
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).reconcilePersistedSessions();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(persistedSessions.get('long-running-session')!.status).toBe('completed');
+      expect(persistedSessions.get('long-running-session')!.reason).toBe('desktop-daemon-restart-stale');
+    });
+
+    it('keeps finalizing the stranded session no matter how much later the daemon restarts — no point past 24h starts skipping it', async () => {
+      const delays = [25 * 60 * 60 * 1000, 3 * 24 * 60 * 60 * 1000, 14 * 24 * 60 * 60 * 1000];
+
+      for (const delay of delays) {
+        persistedSessions.clear();
+        mockSendSessionEnd.mockClear();
+        persistedSessions.set('repeat-session', {
+          sessionId: 'repeat-session',
+          agentName: 'claude-desktop',
+          provider: 'ai-run-sso',
+          startTime: T0,
+          workingDirectory: '/tmp/repeat',
+          status: 'active',
+          activeDurationMs: 0,
+          correlation: { status: 'matched', retryCount: 0 },
+          runtimeCheckpoint: { externalSessionId: 'ext-repeat', lastSeenActivityAt: T0 }
+        });
+
+        vi.setSystemTime(T0 + delay);
+        const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+        await (runtime as any).reconcilePersistedSessions();
+
+        expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+        expect(persistedSessions.get('repeat-session')!.status).toBe('completed');
+        expect(persistedSessions.get('repeat-session')!.reason).toBe('desktop-daemon-restart-stale');
+      }
+    });
+
     it('does nothing when there are no persisted active sessions', async () => {
       const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
 
@@ -561,14 +692,22 @@ describe('DesktopTelemetryRuntime', () => {
       await expect(restartedDaemon.start()).resolves.toBeUndefined();
       await restartedDaemon.stop();
 
-      // finalizeSession persists status='completed' before attempting sync, so the failing
-      // session's record isn't wedged — but its sync() rejection means sendSessionEnd is
-      // never reached for it. The key assertion is that the failure was isolated: it didn't
-      // stop start() from completing, and the next session in the same pass still finalized
-      // normally end-to-end.
-      expect(persistedSessions.get(badId)!.status).toBe('completed');
+      // A failed finalization must not wedge the record as "completed" before its final
+      // transcript/sync/end-metric path succeeded, or there would be nothing left for the
+      // next daemon start to retry. The failure is still isolated: start() completed, and
+      // the next stale session in the same pass finalized normally end-to-end.
+      expect(persistedSessions.get(badId)!.status).toBe('active');
       expect(persistedSessions.get(okId)!.status).toBe('completed');
       expect(persistedSessions.get(okId)!.reason).toBe('desktop-daemon-restart-stale');
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+
+      mockSendSessionEnd.mockClear();
+      const retryDaemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      await expect(retryDaemon.start()).resolves.toBeUndefined();
+      await retryDaemon.stop();
+
+      expect(persistedSessions.get(badId)!.status).toBe('completed');
+      expect(persistedSessions.get(badId)!.reason).toBe('desktop-daemon-restart-stale');
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
     });
   });

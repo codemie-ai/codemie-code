@@ -87,6 +87,22 @@ describe('SessionStore endTime/asOf threading', () => {
       const saved = readSession(sessionId);
       expect(saved.endTime).toBeUndefined();
     });
+
+    it('does not stretch a session that was last active at 10:00 until a 17:00 reconciliation run', async () => {
+      const tenAm = new Date('2026-10-19T10:00:00.000Z').getTime();
+      const fivePm = new Date('2026-10-19T17:00:00.000Z').getTime();
+      const startTime = tenAm - 30 * 60 * 1000;
+      const sessionId = `endtime-update-${process.pid}-4`;
+      sessionIds.push(sessionId);
+      writeSession(sessionId, { startTime });
+
+      await store.updateSessionStatus(sessionId, 'completed', 'interrupted', tenAm);
+
+      const saved = readSession(sessionId) as { startTime: number; endTime: number };
+      expect(saved.endTime).toBe(tenAm);
+      expect(saved.endTime - saved.startTime).toBe(30 * 60 * 1000);
+      expect(saved.endTime).not.toBe(fivePm);
+    });
   });
 
   describe('accumulateActiveDuration', () => {
@@ -144,6 +160,23 @@ describe('SessionStore endTime/asOf threading', () => {
       const accumulated = await store.accumulateActiveDuration(sessionId);
 
       expect(accumulated).toBeGreaterThanOrEqual(1_000);
+    });
+
+    it('does not bill a process killed mid-turn for the dead-process gap until reconciliation time', async () => {
+      const startTime = new Date('2026-10-18T09:00:00.000Z').getTime();
+      const activityStartedAt = new Date('2026-10-18T09:05:00.000Z').getTime();
+      const lastRealActivity = new Date('2026-10-18T09:06:00.000Z').getTime();
+      const nextLaunch = new Date('2026-10-19T09:06:00.000Z').getTime(); // 24h later
+      const sessionId = `endtime-accum-${process.pid}-5`;
+      sessionIds.push(sessionId);
+      writeSession(sessionId, { startTime, activityStartedAt, activeDurationMs: 0 });
+
+      const accumulated = await store.accumulateActiveDuration(sessionId, lastRealActivity);
+
+      expect(accumulated).toBe(60_000);
+      const saved = readSession(sessionId) as { activeDurationMs: number };
+      expect(saved.activeDurationMs).toBe(60_000);
+      expect(saved.activeDurationMs).not.toBe(nextLaunch - activityStartedAt);
     });
   });
 });

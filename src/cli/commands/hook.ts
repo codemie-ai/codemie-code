@@ -230,11 +230,11 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
 
   // 2. Update session status (moved before network sync: marking the session
   //    completed must not depend on the API sync surviving teardown)
-  await updateSessionStatus(event, sessionId);
+  const alreadyTerminal = await updateSessionStatus(event, sessionId);
 
   // 3. Send session end metrics (only reads the session file, which still exists —
   //    the rename stays last)
-  await sendSessionEndMetrics(event, sessionId, event.session_id, config);
+  await sendSessionEndMetrics(event, sessionId, event.session_id, config, alreadyTerminal);
 
   // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
   //    abortable; unfinished work stays pending for the proxy timer)
@@ -775,6 +775,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const agentName = getConfigValue('CODEMIE_AGENT', config);
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
+    const model = getConfigValue('CODEMIE_MODEL', config);
 
     if (!agentName || !provider) {
       if (config) {
@@ -834,6 +835,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       if (remoteRepository) {
         existing.repository = remoteRepository;
       }
+      if (model) {
+        existing.model = model;
+      }
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -875,6 +879,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       agentName,
       provider,
       ...(project && { project }),
+      ...(model && { model }),
       startTime: Date.now(),
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
@@ -1080,7 +1085,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID
  */
-async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<void> {
+async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<boolean> {
   try {
     // Import session store
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -1091,7 +1096,14 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
 
     if (!session) {
       logger.warn(`[hook:SessionEnd] Session not found: ${sessionId}`);
-      return;
+      return false;
+    }
+
+    if (session.status !== 'active' || session.endTime !== undefined) {
+      logger.info(
+        `[hook:SessionEnd] Session already terminal; preserving existing end state: id=${sessionId} status=${session.status} reason=${session.reason ?? 'unknown'}`
+      );
+      return true;
     }
 
     // Determine status from exit reason
@@ -1110,10 +1122,12 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
     logger.info(
       `[hook:SessionEnd] Session status updated: id=${sessionId} status=${status} reason=${event.reason}`
     );
+    return false;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:SessionEnd] Failed to update session status: ${errorMessage}`);
     // Don't throw - hook should not block agent execution
+    return false;
   }
 }
 
@@ -1211,7 +1225,13 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
  * @param agentSessionId - The agent's session ID (for API)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function sendSessionEndMetrics(
+  event: SessionEndEvent,
+  sessionId: string,
+  agentSessionId: string,
+  config?: HookProcessingConfig,
+  alreadyTerminal: boolean = false
+): Promise<void> {
   try {
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
@@ -1234,6 +1254,11 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 
     if (!session) {
       logger.warn(`[hook:SessionEnd] Session not found for metrics: ${sessionId}`);
+      return;
+    }
+
+    if (alreadyTerminal) {
+      logger.info(`[hook:SessionEnd] Session already terminal; skipping duplicate end metric for ${sessionId}`);
       return;
     }
 

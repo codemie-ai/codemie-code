@@ -207,11 +207,12 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       } as unknown as BaseHookEvent;
       (event as unknown as { source: string }).source = 'startup';
 
-      await processEvent(event, { ...baseConfig, sessionId });
+      await processEvent(event, { ...baseConfig, sessionId, model: 'claude-sonnet-5' });
 
       const saved = JSON.parse(readFileSync(getSessionPath(sessionId), 'utf-8'));
       expect(saved.status).toBe('active');
       expect(saved.agentName).toBe('claude');
+      expect(saved.model).toBe('claude-sonnet-5');
       expect(saved.correlation.status).toBe('matched');
       expect(saved.correlation.agentSessionId).toBe(claudeId);
       expect(saved.correlation.agentSessionFile).toBe(transcript);
