@@ -23,7 +23,11 @@ const warnedDiscards = new Set<string>();
 
 function warnDiscardOnce(sessionId: string, ...args: unknown[]): void {
   if (warnedDiscards.has(sessionId)) return;
-  if (warnedDiscards.size >= MAX_WARNED_SESSIONS) warnedDiscards.clear();
+  if (warnedDiscards.size >= MAX_WARNED_SESSIONS) {
+    // Set iteration order is insertion order: drop the oldest entry, not everyone warned so far.
+    const oldest = warnedDiscards.values().next().value;
+    if (oldest !== undefined) warnedDiscards.delete(oldest);
+  }
   warnedDiscards.add(sessionId);
   logger.warn('[otlp-spool] session project conflict: unsent analytics discarded', ...sanitizeLogArgs(...args));
 }

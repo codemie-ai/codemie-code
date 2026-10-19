@@ -5,9 +5,13 @@ export const MAX_CONFLICT_NAMES = 8;
 
 const blank = (name: string): boolean => name.trim().length === 0;
 
-/** A non-blank name that can travel as an HTTP header value unchanged. */
+/**
+ * A non-blank name that can travel as an HTTP header value unchanged. Restricted to printable
+ * ASCII: `fetch`/`undici` encode a JS string placed in a header byte-for-byte as Latin-1, not
+ * UTF-8, so a non-ASCII name (e.g. "Café") would arrive at the backend corrupted.
+ */
 export function isSendableProjectName(name: string): boolean {
-  return !blank(name) && name === name.trim() && /^[\x20-\x7e\xa1-\xff]+$/.test(name);
+  return !blank(name) && name === name.trim() && /^[\x20-\x7e]+$/.test(name);
 }
 
 /** String values of `codemie_project_name` at the top level and inside `raw` of a hook event. */

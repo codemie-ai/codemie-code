@@ -112,6 +112,9 @@ describe('isSendableProjectName / hookEventProjectNames', () => {
     expect(isSendableProjectName(' A')).toBe(false);
     expect(isSendableProjectName('A\u0000')).toBe(false);
     expect(isSendableProjectName('Проект')).toBe(false);
+    // Latin-1 Supplement: a JS string with these code points is sent as raw Latin-1 bytes by
+    // fetch/undici, not UTF-8, so a name like "Café" would arrive at the backend corrupted.
+    expect(isSendableProjectName('Café')).toBe(false);
   });
 
   it('collects top-level and raw names', () => {
@@ -161,6 +164,15 @@ describe('status persistence', () => {
     expect(status?.project).toBeUndefined();
     expect(status?.projectConflict).toBeUndefined();
     expect(status?.projectScanned).toBeUndefined();
+  });
+
+  it('drops a stored project that is no longer a sendable header value', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(
+      join(state.root, 's2b.status'),
+      JSON.stringify({ cursors: {}, project: 'Café' })
+    );
+    expect((await readStatus('s2b'))?.project).toBeUndefined();
   });
 
   it('reads a status written before the seal existed, and keeps a seal across a cursor advance', async () => {

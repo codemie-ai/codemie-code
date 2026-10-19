@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { SPOOL_STREAMS, spoolRoot, statusFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { parseProjectSeal } from './session-project.js';
+import { isSendableProjectName, MAX_CONFLICT_NAMES, parseProjectSeal } from './session-project.js';
 
 /** Byte offsets that have been acknowledged by the backend, per stream. */
 export type SessionCursors = Record<SpoolStream, number>;
@@ -70,12 +70,12 @@ function normalizeStatus(raw: unknown): SessionStatus {
     status.endedAt = endedAt;
   }
   const project = source['project'];
-  if (typeof project === 'string' && project.length > 0) {
+  if (typeof project === 'string' && isSendableProjectName(project)) {
     status.project = project;
   }
   const conflict = source['projectConflict'];
   if (Array.isArray(conflict) && conflict.length > 0 && conflict.every((n) => typeof n === 'string')) {
-    status.projectConflict = (conflict as string[]).slice(0, 8);
+    status.projectConflict = (conflict as string[]).slice(0, MAX_CONFLICT_NAMES);
   }
   const seal = parseProjectSeal(source['projectSeal'], status.projectConflict);
   if (seal) {
