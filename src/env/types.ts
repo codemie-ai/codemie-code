@@ -67,6 +67,16 @@ export interface ProviderProfile {
    * (see `resolveProfileModels` in `src/utils/config.ts`).
    */
   models?: string[];
+  /**
+   * Base agent names (harnesses) this profile serves, collected by `codemie setup`
+   * (EPMCDME-15641). Absent on legacy profiles, which load unchanged.
+   */
+  harnesses?: string[];
+  /**
+   * Model ids the user explicitly confirmed despite a harness name-rule mismatch (catalog-less
+   * providers). Always a subset of `models`.
+   */
+  confirmedModels?: string[];
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
   reasoningEffort?: CanonicalReasoningEffort;
 

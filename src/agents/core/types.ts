@@ -3,6 +3,7 @@
  */
 
 import type { SessionAdapter } from './session/BaseSessionAdapter.js';
+import type { ModelClassifyContext, ModelCompat } from './model-compat.js';
 
 /**
  * Post-install hint - simple text lines shown after installation
@@ -268,6 +269,11 @@ export interface AgentMetadata {
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
   blockedModelPatterns?: RegExp[]; // Optional: Block certain model patterns
   recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
+  /**
+   * Optional model-compatibility classifier. Absent means the agent is unrestricted: every model
+   * is treated as compatible. Consumed only through `agents/core/model-compat.ts`.
+   */
+  classifyModel?: (modelId: string, ctx?: ModelClassifyContext) => ModelCompat;
 
   // === Proxy Configuration ===
   ssoConfig?: {
