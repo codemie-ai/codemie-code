@@ -1,6 +1,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { HTTPClient } from './base/http-client.js';
+import { ProviderName } from './types.js';
 import type { SSOAuthResult } from './types.js';
 import { ConfigurationError } from '../../utils/errors.js';
 import { isTlsVerificationEnabled } from '../../utils/system-proxy.js';
@@ -31,6 +32,60 @@ export function ensureApiBase(rawUrl: string): string {
     }
   }
   return base;
+}
+
+/**
+ * Providers whose analytics/session routing must use a canonical upstream CodeMie URL
+ * rather than the runtime-local wrapper proxy address that may appear in CODEMIE_BASE_URL.
+ */
+export function usesCanonicalCodeMieAnalyticsRouting(provider?: string): boolean {
+  return provider === ProviderName.AI_RUN_SSO;
+}
+
+export interface AnalyticsContextInput {
+  provider?: string;
+  apiBaseUrl?: string;
+  targetApiUrl?: string;
+  ssoUrl?: string;
+  syncApiUrl?: string;
+  profileName?: string;
+}
+
+export interface AnalyticsContextOutput {
+  apiBaseUrl?: string;
+  ssoUrl?: string;
+  syncApiUrl?: string;
+  profileName?: string;
+}
+
+/**
+ * Normalize the analytics routing context that is safe to persist on a session record.
+ *
+ * For providers that route model traffic through a short-lived local proxy
+ * (`usesCanonicalCodeMieAnalyticsRouting`), persist the canonical upstream CodeMie
+ * API URL instead of the loopback proxy URL so later reconciliation can still reach
+ * the backend after the original wrapper process has exited.
+ */
+export function buildAnalyticsContext(input: AnalyticsContextInput): AnalyticsContextOutput {
+  const { provider, apiBaseUrl, targetApiUrl, ssoUrl, syncApiUrl, profileName } = input;
+
+  if (usesCanonicalCodeMieAnalyticsRouting(provider)) {
+    const canonicalSyncApiUrl = syncApiUrl || (ssoUrl ? ensureApiBase(ssoUrl) : undefined);
+    const canonicalApiBaseUrl = targetApiUrl || canonicalSyncApiUrl || apiBaseUrl;
+    return {
+      ...(canonicalApiBaseUrl && { apiBaseUrl: canonicalApiBaseUrl }),
+      ...(ssoUrl && { ssoUrl }),
+      ...(canonicalSyncApiUrl && { syncApiUrl: canonicalSyncApiUrl }),
+      ...(profileName && { profileName }),
+    };
+  }
+
+  return {
+    ...(apiBaseUrl && { apiBaseUrl }),
+    ...(ssoUrl && { ssoUrl }),
+    ...(syncApiUrl && { syncApiUrl }),
+    ...(profileName && { profileName }),
+  };
 }
 
 export function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {

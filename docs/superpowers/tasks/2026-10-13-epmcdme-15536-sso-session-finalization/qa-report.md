@@ -51,6 +51,7 @@ Later review surfaced two correctness gaps the original Pattern A/B rollout did 
 - stale detection now uses the latest trustworthy sign of life (`max(real last activity, heartbeat)`);
 - `hook.ts` / `ensure-session.ts` now persist `analyticsContext` on the session record;
 - reconciliation reuses that persisted routing/profile context and the stale session's `workingDirectory`.
+- for `ai-run-sso`, the persisted routing now stores the canonical upstream CodeMie API URL rather than the wrapper-local proxy URL; reconciled SessionEnd handling is strict for trusted stored routing — if the remote end metric or pending-data sync fails, local completion is rolled back and the session remains `active`/unrenamed for retry instead of being silently finalized.
 
 **Targeted verification**:
 
@@ -60,6 +61,43 @@ Later review surfaced two correctness gaps the original Pattern A/B rollout did 
 | unit (targeted) | PASS | `npx vitest run src/agents/core/session/__tests__/SessionStore.liveness.test.ts src/agents/core/session/__tests__/SessionStore.endTime.test.ts src/agents/core/session/__tests__/stale-session-reconciliation.test.ts src/agents/core/__tests__/BaseAgentAdapter.test.ts src/agents/plugins/opencode/__tests__/opencode-session-record.test.ts` | 5 files, 83 tests passing. Covers heartbeat persistence, endTime threading, working-directory preservation, analytics-context preference, BaseAgentAdapter centralized sweep, and ensure-session persistence. |
 
 **Drift signal**: Yes — intentional and correct. The new implementation no longer matches the original "Pattern A/B only, no changes to `stale-session-reconciliation.ts` / `hook.ts`" constraint because review proved that design still allowed false stale finalization and cross-profile reconciliation drift. The docs/spec for this task are retained as historical delivery artifacts, with addenda marking the current architecture.
+
+**Review follow-up — short-session metrics artifact question (2026-10-19)**: current code already writes `_metrics.jsonl` for short sessions that actually complete a turn. Evidence:
+
+- `hook.ts` still performs final `performIncrementalSync()` on `SessionEnd` before status update / rename;
+- Claude's `MetricsProcessor` writes one delta per completed assistant message;
+- existing unit coverage `claude.metrics-processor-clear.test.ts` asserts one prompt + one assistant reply yields one delta;
+- existing integration coverage `agent-task-session.test.ts` asserts a real completed task run produces the `completed_<id>_metrics.jsonl` artifact.
+
+Conclusion: the remaining missing-file cases are narrowed to sessions with **no completed turn / no extractable delta** (for example, start→exit, prompt before first assistant completion, or no usable transcript path), which local analytics omits by design unless a separate cost/log fallback applies. If Product accepts that zero-turn boundary, AC7 is satisfied without further code change and the ticket should say so explicitly.
+
+## Follow-up — ai-run-sso cross-profile reconciliation leak (2026-10-19)
+
+External review on the CLI reconciliation hardening above found two correctness gaps it introduced, both specific to `provider: "ai-run-sso"`:
+
+1. **Dead-wrapper loopback leak**: the persisted `analyticsContext.apiBaseUrl` for an `ai-run-sso` session was the per-launch local proxy address (`setupProxy()` rewrites `CODEMIE_BASE_URL` to `http://localhost:<port>` before spawn). Once that wrapper process exits, reconciling the stranded session sent the end metric and any pending delta to a port nothing listens on — `fetch failed` after the full retry budget, with `reconciled: 1` still reported.
+2. **Cross-profile contamination on legacy records**: session records written before `analyticsContext`/`clientType`/`model` were persisted had none of those fields. `buildReconciliationHookConfig`'s field-by-field `??` fallback to the *launching* env sent the stranded session's end metric to whichever other profile/agent happened to launch next — wrong backend, wrong SSO cookies, wrong `codemie_client`, wrong `llm_model`.
+
+Reproduced by running the real `processEvent` for a `claude`/profile-"customer" `SessionStart` (own local proxy), closing that proxy, then calling `reconcileStaleSessions(null, ...)` from a `gemini`/profile-"epam" launch (its own live proxy): the pending delta failed after ~11s of retries against the dead port, and a legacy-shaped record (no `analyticsContext`/`clientType`/`model`) had its end metric and delta both sent to profile "epam"'s proxy under `codemie_client: codemie-gemini` and `llm_model: model-b`.
+
+Existing coverage didn't catch this because the `buildReconciliationHookConfig` tests give `ai-run-sso` a `CODEMIE_SYNC_API_URL` and `https://` base URLs — values the real SSO template never sets.
+
+**Fix shipped**:
+
+- `BaseAgentAdapter.setupProxy()` now captures `CODEMIE_TARGET_API_URL = CODEMIE_BASE_URL` before rewriting the latter to the loopback proxy address, so the real upstream URL survives the proxy swap.
+- `buildAnalyticsContext()` (new, `codemie-auth-helpers.ts`) persists a canonical, non-loopback `apiBaseUrl`/`syncApiUrl` for `ai-run-sso` (`targetApiUrl` → derived from `ssoUrl` → raw `apiBaseUrl`, in that preference order) at session creation (`hook.ts`, `ensure-session.ts`), so new records never store the dead-wrapper address.
+- `buildReconciliationHookConfig()` adds defense-in-depth for records written before this fix: it rejects a stored loopback `apiBaseUrl` (`isLoopbackUrl()`) and re-derives from the stored `ssoUrl`; `clientType` falls back to `codemie-<storedAgentName>` before ever reaching the launching env; and for a stranded session with no trusted routing at all (no `syncApiUrl`/`ssoUrl`/non-loopback `apiBaseUrl`), it sets `skipRemoteSync: true` — `sendSessionEndMetrics`/`syncPendingDataToAPI` now honor that flag and finalize the session locally instead of guessing at a remote endpoint.
+- Fixed a regression the above introduced in the same pass: the canonical-routing logic was gated purely on `provider`, so the no-`staleSession` call shape (a live hook describing its own current env, not a stranded record) also hit it and discarded `syncApiUrl`/`apiBaseUrl` for `ai-run-sso` even though the live env is trustworthy by definition. Canonical routing is now additionally gated on `Boolean(staleSession)`.
+
+**Targeted verification**:
+
+| Gate | Status | Command | Notes |
+|---|---|---|---|
+| typecheck | PASS | `npm run typecheck` | No diagnostics. |
+| unit (targeted) | PASS | `npx vitest run src/agents/core/session/__tests__/stale-session-reconciliation.test.ts` | 21/21, including 2 new cases: canonical-URL derivation from a loopback-proxy'd `ai-run-sso` stale session, and `skipRemoteSync` for a legacy no-`analyticsContext` record — both reconciled from a different launching profile/agent. |
+| unit (regression check) | PASS | `npx vitest run src/agents/core/__tests__/BaseAgentAdapter.test.ts src/providers/core` | 98/106 passing; the 8 failures (`providers-core.test.ts` model-picker `enrichArgs` cases) are pre-existing and unrelated — reproduced identically on `HEAD` via `git stash`. |
+
+**Drift signal**: Yes, additive — this hardens the 2026-10-19 CLI reconciliation fix above against the one provider (`ai-run-sso`) whose live-proxy address is not safe to reuse or fall back to.
 
 ## Follow-up — Claude Desktop restart reconciliation (2026-10-15)
 

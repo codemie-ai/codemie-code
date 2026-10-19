@@ -27,6 +27,7 @@ import type { Session } from './types.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import { isSessionStale, DEFAULT_INACTIVITY_THRESHOLD_MS } from './stale-session-policy.js';
+import { ensureApiBase, usesCanonicalCodeMieAnalyticsRouting } from '@/providers/core/codemie-auth-helpers.js';
 
 export interface ReconciliationOptions {
   /** Sessions inactive for longer than this are considered stale. */
@@ -91,6 +92,17 @@ export type ProcessEventFn = (
 
 const RECONCILIATION_LOCK_STALE_MS = 10 * 60 * 1000;
 
+function inferClientType(agentName?: string): string | undefined {
+  if (!agentName) {
+    return undefined;
+  }
+  return `codemie-${agentName}`;
+}
+
+function isLoopbackUrl(url?: string): boolean {
+  return Boolean(url && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/|$)/i.test(url));
+}
+
 /**
  * Canonical env -> HookProcessingConfig mapping for stale-session reconciliation.
  * Mirrors the env-var keys hook.ts's getConfigValue maps to HookProcessingConfig
@@ -109,18 +121,40 @@ export function buildReconciliationHookConfig(
     'agentName' | 'clientType' | 'provider' | 'project' | 'model' | 'apiBaseUrl' | 'ssoUrl' | 'syncApiUrl' | 'profileName'
   >,
 ): HookProcessingConfig {
+  const provider = staleSession ? staleSession.provider : env.CODEMIE_PROVIDER;
+  // Canonical-routing/loopback handling only applies to a stored (possibly dead)
+  // stranded session. With no staleSession there is nothing to reconcile — this is
+  // a live process describing its own current env — so trust it as-is, the same
+  // way callers did before canonical routing existed.
+  const usesCanonicalRouting = Boolean(staleSession) && usesCanonicalCodeMieAnalyticsRouting(provider);
+  const derivedSyncApiUrl = usesCanonicalRouting
+    ? staleSession!.syncApiUrl ?? (staleSession!.ssoUrl ? ensureApiBase(staleSession!.ssoUrl) : undefined)
+    : staleSession ? staleSession.syncApiUrl : env.CODEMIE_SYNC_API_URL;
+  const hasTrustedStoredRouting = Boolean(
+    staleSession?.syncApiUrl
+      || staleSession?.ssoUrl
+      || (staleSession?.apiBaseUrl && !isLoopbackUrl(staleSession.apiBaseUrl))
+  );
+  const trustedStoredApiBaseUrl = staleSession?.apiBaseUrl && !isLoopbackUrl(staleSession.apiBaseUrl)
+    ? staleSession.apiBaseUrl
+    : undefined;
+
   return {
     agentName: staleSession?.agentName ?? env.CODEMIE_AGENT!,
     sessionId,
-    provider: staleSession?.provider ?? env.CODEMIE_PROVIDER,
-    apiBaseUrl: staleSession?.apiBaseUrl ?? env.CODEMIE_BASE_URL,
-    ssoUrl: staleSession?.ssoUrl ?? env.CODEMIE_URL,
-    syncApiUrl: staleSession?.syncApiUrl ?? env.CODEMIE_SYNC_API_URL,
+    provider,
+    apiBaseUrl: usesCanonicalRouting
+      ? trustedStoredApiBaseUrl ?? derivedSyncApiUrl
+      : staleSession ? staleSession.apiBaseUrl : env.CODEMIE_BASE_URL,
+    ssoUrl: staleSession ? staleSession.ssoUrl : env.CODEMIE_URL,
+    syncApiUrl: derivedSyncApiUrl,
     version: env.CODEMIE_CLI_VERSION,
-    profileName: staleSession?.profileName ?? env.CODEMIE_PROFILE_NAME,
-    project: staleSession?.project ?? env.CODEMIE_PROJECT,
-    model: staleSession?.model ?? env.CODEMIE_MODEL,
-    clientType: staleSession?.clientType ?? env.CODEMIE_CLIENT_TYPE,
+    profileName: staleSession ? staleSession.profileName : env.CODEMIE_PROFILE_NAME,
+    project: staleSession ? staleSession.project : env.CODEMIE_PROJECT,
+    model: staleSession ? staleSession.model : env.CODEMIE_MODEL,
+    clientType: staleSession?.clientType ?? inferClientType(staleSession?.agentName) ?? env.CODEMIE_CLIENT_TYPE,
+    ...(usesCanonicalRouting && !hasTrustedStoredRouting && { skipRemoteSync: true }),
+    ...(usesCanonicalRouting && hasTrustedStoredRouting && { requireRemoteDelivery: true }),
   };
 }
 

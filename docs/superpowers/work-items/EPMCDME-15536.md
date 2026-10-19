@@ -11,6 +11,7 @@
 - 2026-10-13 — Scope expanded by explicit user decision to 6 plugins (see Scope For This Fix below). Re-estimated: M (18/36). Adapter updated Story Points field (`customfield_10004`) to 3 on the live ticket, superseding the prior value.
 - 2026-10-15 — A related-but-distinct gap reported on this branch: `claude-desktop` sessions (the actual Desktop GUI app, correctly out of scope for the finding above) can also stay `status: "active"` forever after a proxy-daemon restart. Investigated, reproduced against current code, and fixed as an addendum — see "Follow-up: Claude Desktop restart-reconciliation gap" below. Not a re-opening of the Investigation Findings' Desktop dismissal: that section is about the *original ticket's* mistaken "Claude Desktop" framing of what were actually `agentName: "claude"` CLI sessions; this is a genuinely separate failure mode in the real Desktop GUI telemetry path.
 - 2026-10-19 — Follow-up hardening: generic hook-managed reconciliation no longer relies on per-plugin `onSessionStart` wiring. It now runs centrally from `BaseAgentAdapter`, uses a per-session heartbeat so an idle-but-still-open terminal is not falsely finalized as `interrupted`, and persists each session's original analytics routing context (`apiBaseUrl`, `ssoUrl`, `syncApiUrl`, `profileName`) plus `workingDirectory` so a stale session is finalized under its own profile/project context rather than whichever profile happened to launch later.
+- 2026-10-19 — Follow-up fix: the routing context persisted above was, for `provider: "ai-run-sso"`, the dead per-launch local proxy address, and legacy records without it fell back to whichever profile/agent launched next — see "Follow-up (2026-10-19): ai-run-sso cross-profile reconciliation leak" below.
 
 ## Summary
 
@@ -28,6 +29,8 @@ Investigated and found NOT to reproduce on current `main` (and on the CLI versio
 
 - The ticket's claim that `codemie analytics --export json` excludes active sessions with real recorded activity. Empirically retested: active sessions with real deltas ARE included; only true zero-activity sessions are excluded (by design, regardless of status). This part of the original ticket description does not hold against current code and is out of scope for this fix.
 - "Claude Desktop" framing: the affected sessions are Claude Code CLI sessions (`agentName: "claude"`, correlated to `~/.claude/projects/.../*.jsonl`) launched via `ai-run-sso`, not the Claude Desktop GUI app.
+
+Follow-up verification requested during review (2026-10-19): short completed sessions with actual turns do still produce metrics artifacts on current code. `handleSessionEnd()` always runs `performIncrementalSync()` before completion/rename, and Claude's `MetricsProcessor` writes one delta per completed assistant message (existing regression: `claude.metrics-processor-clear.test.ts` asserts one prompt + one assistant reply yields one delta; `agent-task-session.test.ts` asserts a real task run produces `completed_<id>_metrics.jsonl`). Therefore the remaining no-`_metrics.jsonl` cases are narrowed to sessions with **no completed turn / no extractable delta** (for example: start then exit, prompt before first assistant completion, or no usable transcript path) rather than "short sessions with activity" in general. If Product accepts those as intentionally zero-turn sessions, AC7 can be considered met by design and that scope boundary should be written explicitly in the ticket/QA notes.
 
 ## Scope For This Fix
 
@@ -73,5 +76,14 @@ Subsequent review found two correctness gaps in the original per-plugin rollout:
 - `createSessionRecord()` / `ensureSessionFile()` now persist `analyticsContext` (`apiBaseUrl`, `ssoUrl`, `syncApiUrl`, `profileName`) on the session record.
 - `buildReconciliationHookConfig()` now prefers the stranded session's persisted routing/profile context over the current launch env.
 - Synthetic `SessionEnd.cwd` now uses the stale session's own `workingDirectory`.
+- For `ai-run-sso`, the persisted analytics routing is now the canonical upstream CodeMie API URL, not the wrapper's localhost proxy URL. Reconciled sessions with trusted stored routing now require remote delivery of the end metric + pending sync before local completion is kept; on delivery failure, `handleSessionEnd()` rolls the session back to `active` and skips the `completed_*` rename so reconciliation can retry later. Legacy SSO sessions with no trusted routing are finalized locally only (`skipRemoteSync`) to avoid cross-instance/profile leakage.
 
 **Files**: `src/agents/core/BaseAgentAdapter.ts`, `src/agents/core/session/{types.ts,SessionStore.ts,ensure-session.ts,stale-session-reconciliation.ts}`, `src/cli/commands/hook.ts`, plus targeted session/reconciliation tests.
+
+## Follow-up (2026-10-19): ai-run-sso cross-profile reconciliation leak
+
+External review found the hardening above didn't account for `ai-run-sso` specifically: its persisted `apiBaseUrl` is a per-launch local proxy address that dies with the wrapper process, and legacy records predating `analyticsContext`/`clientType`/`model` had no persisted routing at all — reconciling either case sent the end metric and pending deltas nowhere (dead port) or to whichever different profile/agent happened to launch next (wrong backend, cookies, `clientType`, model). Reproduced via a direct `processEvent`/`reconcileStaleSessions` repro crossing a `claude`/"customer" stranded session with a `gemini`/"epam" launching env.
+
+**Fix**: `BaseAgentAdapter.setupProxy()` captures the real upstream URL (`CODEMIE_TARGET_API_URL`) before rewriting `CODEMIE_BASE_URL` to the loopback proxy; `buildAnalyticsContext()` persists a canonical non-loopback URL for `ai-run-sso` going forward; `buildReconciliationHookConfig()` rejects a stored loopback URL and re-derives from `ssoUrl`, infers `clientType` from the stored agent name before falling back to the launching env, and sets `skipRemoteSync: true` to finalize locally when a legacy record has no trustworthy routing at all.
+
+**Files**: `src/agents/core/BaseAgentAdapter.ts`, `src/agents/core/session/{ensure-session.ts,stale-session-reconciliation.ts}`, `src/cli/commands/hook.ts`, `src/providers/core/codemie-auth-helpers.ts`, plus `stale-session-reconciliation.test.ts`. Full repro and verification in `qa-report.md`'s matching follow-up.

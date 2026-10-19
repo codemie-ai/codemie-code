@@ -546,6 +546,68 @@ describe('buildReconciliationHookConfig', () => {
       sessionId: 'sid-3',
     });
   });
+
+  it('derives a real ai-run-sso API URL from the stranded session\'s ssoUrl instead of its dead wrapper\'s loopback proxy', async () => {
+    const { buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
+
+    // Instance B (profile "epam") launches gemini and notices a stranded claude
+    // session from instance A (profile "customer"). Instance A's apiBaseUrl is the
+    // now-dead wrapper's local proxy (what setupProxy() rewrites CODEMIE_BASE_URL
+    // to), and the SSO template never sets CODEMIE_SYNC_API_URL, so ssoUrl is the
+    // only trustworthy signal of where instance A's end metric must go.
+    const launchingEnv: NodeJS.ProcessEnv = {
+      CODEMIE_AGENT: 'gemini',
+      CODEMIE_CLIENT_TYPE: 'codemie-gemini',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'http://localhost:54231', // instance B's own live proxy
+      CODEMIE_URL: 'https://epam.codemie.example.com',
+      CODEMIE_PROFILE_NAME: 'epam',
+    };
+
+    const config = buildReconciliationHookConfig(launchingEnv, 'sid-stranded-claude', {
+      agentName: 'claude',
+      clientType: 'codemie-claude',
+      provider: 'ai-run-sso',
+      apiBaseUrl: 'http://localhost:9321', // instance A's dead wrapper proxy
+      ssoUrl: 'https://customer.codemie.example.com',
+      profileName: 'customer',
+    });
+
+    expect(config.apiBaseUrl).toBe('https://customer.codemie.example.com/code-assistant-api');
+    expect(config.syncApiUrl).toBe('https://customer.codemie.example.com/code-assistant-api');
+    expect(config.ssoUrl).toBe('https://customer.codemie.example.com');
+    expect(config.profileName).toBe('customer');
+    expect(config.skipRemoteSync).toBeUndefined();
+  });
+
+  it('skips remote sync for a legacy ai-run-sso record with no persisted analytics routing, instead of borrowing the launching instance\'s live proxy', async () => {
+    const { buildReconciliationHookConfig } = await import('../stale-session-reconciliation.js');
+
+    // Record predates analyticsContext/clientType/model being persisted. Falling
+    // back field-by-field to the launching env would finalize instance A's claude
+    // session through instance B's live gemini proxy, under instance B's cookies,
+    // clientType, and model.
+    const launchingEnv: NodeJS.ProcessEnv = {
+      CODEMIE_AGENT: 'gemini',
+      CODEMIE_CLIENT_TYPE: 'codemie-gemini',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_BASE_URL: 'http://localhost:54231',
+      CODEMIE_URL: 'https://epam.codemie.example.com',
+      CODEMIE_MODEL: 'model-b',
+      CODEMIE_PROFILE_NAME: 'epam',
+    };
+
+    const config = buildReconciliationHookConfig(launchingEnv, 'sid-legacy-claude', {
+      agentName: 'claude',
+      provider: 'ai-run-sso',
+    });
+
+    expect(config.skipRemoteSync).toBe(true);
+    expect(config.clientType).toBe('codemie-claude');
+    expect(config.model).toBeUndefined();
+    expect(config.ssoUrl).toBeUndefined();
+    expect(config.profileName).toBeUndefined();
+  });
 });
 
 describe('reconcileStaleSessions — all-agents sweep', () => {

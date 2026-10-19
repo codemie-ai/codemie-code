@@ -1146,6 +1146,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
+      const targetApiUrl = env.CODEMIE_BASE_URL;
+      if (targetApiUrl) {
+        env.CODEMIE_TARGET_API_URL = targetApiUrl;
+      }
+
       // Build proxy configuration
       const config = this.buildProxyConfig(env);
 

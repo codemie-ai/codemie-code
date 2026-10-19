@@ -1,4 +1,5 @@
 import { logger } from '../../../utils/logger.js';
+import { buildAnalyticsContext } from '../../../providers/core/codemie-auth-helpers.js';
 
 /**
  * Ensure session metadata file exists for SessionSyncer.
@@ -28,6 +29,7 @@ export async function ensureSessionFile(
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const project = env.CODEMIE_PROJECT;
     const apiBaseUrl = env.CODEMIE_BASE_URL;
+    const targetApiUrl = env.CODEMIE_TARGET_API_URL;
     const ssoUrl = env.CODEMIE_URL;
     const syncApiUrl = env.CODEMIE_SYNC_API_URL;
     const profileName = env.CODEMIE_PROFILE_NAME;
@@ -54,6 +56,15 @@ export async function ensureSessionFile(
     // This prevents negative session durations in metrics aggregation
     const estimatedStartTime = Date.now() - 2000;
 
+    const analyticsContext = buildAnalyticsContext({
+      provider,
+      apiBaseUrl,
+      targetApiUrl,
+      ssoUrl,
+      syncApiUrl,
+      profileName,
+    });
+
     const session = {
       sessionId,
       agentName,
@@ -66,12 +77,7 @@ export async function ensureSessionFile(
       ...(gitBranch && { gitBranch }),
       status: 'completed' as const,
       activeDurationMs: 0,
-      analyticsContext: {
-        ...(apiBaseUrl && { apiBaseUrl }),
-        ...(ssoUrl && { ssoUrl }),
-        ...(syncApiUrl && { syncApiUrl }),
-        ...(profileName && { profileName }),
-      },
+      analyticsContext,
       correlation: {
         status: 'matched' as const,
         agentSessionId: 'unknown',

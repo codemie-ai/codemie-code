@@ -19,6 +19,8 @@ At investigation time, this codebase already had a fallback for exactly this fai
 
 **Explicitly out of scope** (investigated separately, does not reproduce on current code): the claim that `codemie analytics --export json` excludes active sessions with real recorded activity. Active sessions with real deltas are already included; only true zero-activity sessions are excluded, by design, regardless of status.
 
+Review follow-up (2026-10-19): the narrower claim that *short completed sessions with real turns* miss `_metrics.jsonl` also does not reproduce on current code. The SessionEnd path still runs final incremental extraction before completion/rename, and the Claude metrics processor emits one delta per completed assistant message; existing tests already cover both the one-turn delta case and end-to-end metrics-file creation. The remaining no-`_metrics.jsonl` cases are sessions with no completed turn / no extractable delta (e.g. start→exit, prompt before first assistant completion, or no usable transcript path). That boundary is important for AC7 interpretation: if Product considers those intentionally zero-turn sessions, no additional fix is required for this ticket.
+
 ## Goal
 
 Every one of the six plugins above gets the same reconciliation safety net `codex` and `pi` already have: a stranded session of that plugin's kind gets finalized (synthetic `SessionEnd`, `reason: "interrupted"`) the next time that plugin starts a new session, instead of staying `active` forever.
@@ -90,8 +92,13 @@ The shipped code now goes beyond the original per-plugin plan:
 - generic hook-managed sessions persist `liveness.lastHeartbeatAt`, refreshed by the owning CLI process, so a quiet-but-still-open terminal is not falsely finalized;
 - session records persist `analyticsContext` (`apiBaseUrl`, `ssoUrl`, `syncApiUrl`, `profileName`), and reconciliation prefers that persisted context over the current launch env;
 - the synthetic `SessionEnd` event uses the stale session's own `workingDirectory` for `cwd`.
+- for `ai-run-sso`, persisted analytics routing is normalized to the canonical upstream CodeMie API URL instead of a transient localhost proxy, and strict reconciled SessionEnd delivery now applies: if the end metric or pending sync cannot be delivered for a stale session that has trusted stored routing, local completion is rolled back and the session stays retryable rather than being renamed to `completed_*`.
 
 These changes intentionally drift from the original "don't modify `stale-session-reconciliation.ts` / `hook.ts`" constraint because review uncovered correctness gaps the initial rollout did not address.
+
+### Follow-up (2026-10-19): ai-run-sso reconciliation routed to a dead or wrong-profile proxy
+
+The `analyticsContext.apiBaseUrl` persisted above was, for `ai-run-sso`, the per-launch *local proxy* address (`setupProxy()` rewrites `CODEMIE_BASE_URL` to it before spawn) — not a CodeMie URL. Reconciling a stranded `ai-run-sso` session therefore either hit a dead port (the launching wrapper already exited) or, for records predating `analyticsContext`/`clientType`/`model`, silently fell back field-by-field to whichever *different* profile/agent happened to launch next, sending the end metric under that profile's cookies, `clientType`, and model. See the matching qa-report.md follow-up for the full repro and fix (`CODEMIE_TARGET_API_URL` captured pre-rewrite, canonical URL derivation from `ssoUrl`, `skipRemoteSync` for untrusted legacy records).
 
 ## Follow-up (2026-10-15): Claude Desktop restart-reconciliation gap
 
