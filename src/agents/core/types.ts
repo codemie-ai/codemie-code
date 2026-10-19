@@ -327,8 +327,10 @@ export interface AgentMetadata {
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
   /**
-   * True for agents CodeMie only reads analytics for and never installs, launches,
-   * or manages (e.g. GitHub Copilot CLI).
+   * True for agents CodeMie only reads analytics for and never installs, launches, or manages.
+   * The managed `copilot-cli` plugin does not qualify (it launches the `copilot` binary); the
+   * hooks-only `copilot-chat-otlp`/`copilot-cli-otlp` collectors are a separate `OtlpAgentAdapter`
+   * registration (see `AgentRegistry`'s `otlpAdapters` map) and are not read through this flag.
    *
    * Such an agent can never carry a CodeMie ownership marker, so the analytics
    * ownership gate must not apply to it — see `isAnalyticsOnlyAgent` in

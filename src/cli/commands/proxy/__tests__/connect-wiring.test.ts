@@ -44,7 +44,15 @@ describe('proxy connect — unified command and deprecated aliases', () => {
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeCodeOtlp: false, claudeDesktop: true, vscode: true, vscodeClaudeCode: true, codexDesktop: false },
+        targets: {
+          claudeCodeOtlp: false,
+          copilotChatOtlp: false,
+          copilotCliOtlp: false,
+          claudeDesktop: true,
+          vscode: true,
+          vscodeClaudeCode: true,
+          codexDesktop: false,
+        },
       })
     );
   });
@@ -175,7 +183,15 @@ describe('deprecated aliases forward their flags under real CLI nesting', () => 
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeCodeOtlp: false, claudeDesktop: false, vscode: true, vscodeClaudeCode: false, codexDesktop: false },
+        targets: {
+          claudeCodeOtlp: false,
+          copilotChatOtlp: false,
+          copilotCliOtlp: false,
+          claudeDesktop: false,
+          vscode: true,
+          vscodeClaudeCode: false,
+          codexDesktop: false,
+        },
         profile: 'p',
       })
     );
@@ -210,7 +226,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, codexDesktop: true},
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: true },
     });
   });
 });
