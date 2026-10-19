@@ -37,7 +37,7 @@ function createAdapter(overrides: Partial<AgentAdapter> = {}): AgentAdapter {
   };
 }
 
-function mockHandleRunDependencies(model: string) {
+function mockHandleRunDependencies(model: string, extraConfig: Record<string, unknown> = {}) {
   vi.spyOn(ConfigLoader, 'load').mockResolvedValue({
     name: 'default',
     provider: 'ai-run-sso',
@@ -48,6 +48,7 @@ function mockHandleRunDependencies(model: string) {
     debug: false,
     allowedDirs: [],
     ignorePatterns: ['node_modules'],
+    ...extraConfig,
   } as Awaited<ReturnType<typeof ConfigLoader.load>>);
   vi.spyOn(ConfigLoader, 'exportProviderEnvVars').mockReturnValue({
     CODEMIE_MODEL: model,
@@ -133,3 +134,49 @@ describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
     );
   });
 });
+
+describe('AgentCLI.handleRun — harness compatibility check is skipped for explicit models (EPMCDME-15641)', () => {
+  type Cli = { handleRun: (args: string[], options: Record<string, unknown>) => Promise<void> };
+  const codexAdapter = (run: AgentAdapter['run']): AgentAdapter => {
+    const base = createAdapter({ run });
+    return { ...base, name: 'codex', displayName: 'Codex', metadata: { ...base.metadata, name: 'codex' } };
+  };
+  const extra = { harnesses: ['claude', 'codex'], models: ['claude-x', 'gpt-5.4'] };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.CODEMIE_MODEL;
+  });
+
+  it('blocks a persisted incompatible active model (exit 1)', async () => {
+    mockHandleRunDependencies('claude-x', extra);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await expect((new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], {})).rejects.toThrow();
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('launches when --model is given, leaving the persisted model untouched', async () => {
+    mockHandleRunDependencies('claude-x', extra);
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await (new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], { model: 'claude-x' });
+
+    expect(run).toHaveBeenCalled();
+  });
+
+  it('launches when CODEMIE_MODEL is set', async () => {
+    mockHandleRunDependencies('claude-x', extra);
+    process.env.CODEMIE_MODEL = 'claude-x';
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await (new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], {});
+
+    expect(run).toHaveBeenCalled();
+  });
+});
+

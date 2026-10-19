@@ -28,6 +28,7 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
+import { classifyModelForAgent } from './model-compat.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -380,7 +381,10 @@ export class AgentCLI {
       }
 
       // Validate provider and model compatibility
-      if (!this.validateCompatibility(config)) {
+      // An explicit --model or CODEMIE_MODEL is the user's own choice for this run: the
+      // persisted-model harness check below does not apply to it.
+      const modelOverridden = Boolean(options.model) || Boolean(process.env.CODEMIE_MODEL);
+      if (!this.validateCompatibility(config, modelOverridden)) {
         process.exit(1);
       }
 
@@ -705,7 +709,7 @@ export class AgentCLI {
   /**
    * Validate provider and model compatibility
    */
-  private validateCompatibility(config: CodeMieConfigOptions): boolean {
+  private validateCompatibility(config: CodeMieConfigOptions, modelOverridden = false): boolean {
     const metadata = this.getAgentMetadata();
     if (!metadata) {
       logger.error(`Unknown agent '${this.adapter.name}'`);
@@ -761,7 +765,45 @@ export class AgentCLI {
       return false;
     }
 
+    // Persisted active model vs the launching harness (EPMCDME-15641). Only a model that
+    // classifies as `incompatible` acts; `unverified` and unrestricted agents print nothing.
+    if (!modelOverridden && config.model) {
+      return this.checkHarnessCompatibility(config, config.model);
+    }
+
     return true;
+  }
+
+  /**
+   * A profile that recorded its harnesses blocks the launch on a mismatch; a legacy profile
+   * (no harnesses) only gets a warning, because nothing was ever validated for it.
+   */
+  private checkHarnessCompatibility(config: CodeMieConfigOptions, model: string): boolean {
+    const opts = { confirmedModels: config.confirmedModels, provider: config.provider };
+    if (classifyModelForAgent(this.adapter.name, model, opts) !== 'incompatible') {
+      return true;
+    }
+
+    const name = this.adapter.displayName;
+    const siblings = resolveProfileModels(config).filter(
+      id => id !== model && classifyModelForAgent(this.adapter.name, id, opts) !== 'incompatible'
+    );
+    const hasHarnesses = Boolean(config.harnesses?.length);
+
+    if (hasHarnesses) {
+      logger.error(`Active model '${model}' is not compatible with ${name}`);
+    } else {
+      console.log(chalk.yellow(`\n⚠ Active model '${model}' does not look compatible with ${name}; it may fail at launch.`));
+    }
+
+    if (siblings.length > 0) {
+      console.log(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
+      console.log(chalk.white('Run ') + chalk.cyan('codemie models switch') + chalk.white(' to pick one.'));
+    } else {
+      console.log(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
+    }
+
+    return !hasHarnesses;
   }
 
   private async promptExternalResume(
