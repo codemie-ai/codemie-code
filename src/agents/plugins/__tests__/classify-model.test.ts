@@ -19,13 +19,16 @@ describe('per-agent classifyModel hooks (via AgentRegistry)', () => {
     ['pi', 'anything', 'compatible'],
     ['codemie-code', 'anything', 'compatible'],
     ['openwiki', 'anything', 'compatible'],
-    ['copilot-cli', 'anything', 'compatible'],
+    ['copilot-cli', 'gpt-5.4', 'compatible'],
+    ['copilot-cli', 'claude-sonnet-4.6', 'compatible'],
+    ['copilot-cli', 'gemini-2.5-pro', 'incompatible'],
+    ['copilot-cli', 'text-embedding-3', 'incompatible'],
   ] as const)('%s + %s is %s', (agent, id, expected) => {
     expect(classifyModelForAgent(agent, id)).toBe(expected);
   });
 
-  it('exposes classifiers only for claude, codex, gemini and kimi', () => {
-    expect(getClassifierAgents().sort()).toEqual(['claude', 'codex', 'gemini', 'kimi']);
+  it('exposes classifiers only for claude, codex, gemini, kimi and copilot-cli', () => {
+    expect(getClassifierAgents().sort()).toEqual(['claude', 'codex', 'copilot-cli', 'gemini', 'kimi']);
   });
 
   it('isClaudeCompatibleModelName rejects non-chat and non-Claude names', () => {

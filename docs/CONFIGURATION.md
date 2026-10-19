@@ -157,10 +157,16 @@ How it works:
   (`anthropic-subscription`, `moonshot-subscription`); no `harnesses` is saved,
   so the profile is treated as legacy.
 - Agents with a model classifier (`classifyModel` in their plugin metadata:
-  `claude`, `codex`, `gemini`, `kimi`) hide models they cannot run. Rows show
-  the selected agents each model works with; router/alias names with no
-  recognizable family are shown as `unverified`. `opencode`, `pi` and
-  `codemie-code` are unrestricted: selecting only those keeps today's behavior.
+  `claude`, `codex`, `gemini`, `kimi`, `copilot-cli`) hide models they cannot
+  run (`copilot-cli` accepts GPT- and Claude-family models). Rows show the
+  selected agents each model works with; router/alias names with no
+  recognizable family are shown as `unverified`. `opencode`, `pi`,
+  `codemie-code` and `openwiki` have no model rules: any model is used as-is,
+  and the agent step prints a note listing them. Selecting only those keeps
+  today's behavior.
+- Independent of model rules, an agent whose `supportedProviders` excludes the
+  profile's provider can never work with it; setup reports it as a dead end
+  (change the agents or cancel) instead of failing at launch.
 - Typed names on catalog-less providers are accepted silently when at least one
   selected agent can run them; otherwise setup warns and asks for confirmation,
   and a confirmed id is stored in `confirmedModels`.

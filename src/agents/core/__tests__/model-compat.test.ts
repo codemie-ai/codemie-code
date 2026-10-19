@@ -10,6 +10,8 @@ import {
   uncoveredHarness,
   uncoveredHarnesses,
   unsupportedProviderHarness,
+  unsupportedProviderHarnesses,
+  getModelRuleFreeAgents,
   routerAcceptedModels,
 } from '../model-compat.js';
 
@@ -131,6 +133,12 @@ describe('getOfferedHarnesses', () => {
   });
 });
 
+describe('getModelRuleFreeAgents', () => {
+  it('lists offered agents without a classifier, in offered order', () => {
+    expect(getModelRuleFreeAgents().map((h) => h.name)).toEqual(['copilot-cli', 'opencode', 'pi', 'openwiki']);
+  });
+});
+
 describe('compatibleHarnesses', () => {
   it('returns only the harnesses the model works with', () => {
     expect(compatibleHarnesses(['claude', 'codex'], 'claude-sonnet-4')).toEqual(['claude']);
@@ -194,9 +202,13 @@ describe('unsupportedProviderHarness', () => {
     expect(unsupportedProviderHarness(['claude', 'codex'], 'other')).toBe('codex');
   });
 
-  it('ignores harnesses with an empty supportedProviders list, no classifier, or a supported provider', () => {
-    expect(unsupportedProviderHarness(['claude', 'opencode', 'pi'], 'other')).toBeUndefined();
+  it('ignores harnesses with an empty supportedProviders list or a supported provider', () => {
+    expect(unsupportedProviderHarness(['claude', 'pi'], 'other')).toBeUndefined();
     expect(unsupportedProviderHarness(['codex'], 'litellm')).toBeUndefined();
+  });
+
+  it('also names classifier-less harnesses whose supportedProviders exclude the provider', () => {
+    expect(unsupportedProviderHarnesses(['claude', 'opencode', 'pi', 'codex'], 'other')).toEqual(['opencode', 'codex']);
   });
 });
 

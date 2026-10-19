@@ -445,6 +445,30 @@ describe('handlePluginSetup (harness-compatible models, EPMCDME-15641)', () => {
     expect(configMock.saveProfile).not.toHaveBeenCalled();
   });
 
+  it('flags a classifier-less harness whose supportedProviders exclude the provider as a dead end', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    installFakeAgents({ opencode: ['litellm'] });
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
+      .mockResolvedValueOnce({ action: 'cancel' });
+
+    await handlePluginSetup('other-provider', baseSteps(['gpt-5.4']), 'p', true, 'global');
+
+    expect(promptMock).toHaveBeenCalledTimes(2);
+    expect(configMock.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it('tells the user which agents have no model rules before the agent step', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['opencode'] })
+      .mockResolvedValueOnce({ selectedModels: ['gpt-5.4'] });
+
+    await handlePluginSetup('test-provider', baseSteps(['gpt-5.4', 'claude-sonnet-4']), 'p', true, 'global');
+
+    expect(log.mock.calls.flat().join('\n')).toContain('No model rules for: opencode');
+  });
+
   it('offers a catalog-flagged router alias and persists it so launch reports it unverified', async () => {
     const steps = {
       ...baseSteps(['gpt-5.4', 'sy-signal-terra-luna']),

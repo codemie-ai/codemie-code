@@ -30,6 +30,12 @@ function resolveAgent(agent: string) {
   return AgentRegistry.getAgent(baseAgentName(agent)) ?? AgentRegistry.getAgent(agent);
 }
 
+/** Offered agents without a `classifyModel` hook: any model is used as-is (provider limits aside). */
+export function getModelRuleFreeAgents(): HarnessChoice[] {
+  const withRules = new Set(getClassifierAgents());
+  return getOfferedHarnesses().filter((h) => !withRules.has(h.name));
+}
+
 /** Base agent names (no `-acp`) that define a `classifyModel` hook. */
 export function getClassifierAgents(): string[] {
   return AgentRegistry.getAllAgents()
@@ -77,7 +83,7 @@ export function uncoveredHarness(
 }
 
 /**
- * Harnesses (with a classifier) whose non-empty `supportedProviders` excludes `provider`.
+ * Harnesses whose non-empty `supportedProviders` excludes `provider`, classifier or not.
  * No model id can ever make such a harness work on this provider.
  */
 export function unsupportedProviderHarnesses(harnesses: string[], provider: string | undefined): string[] {
@@ -85,7 +91,7 @@ export function unsupportedProviderHarnesses(harnesses: string[], provider: stri
   return harnesses.filter((h) => {
     const metadata = resolveAgent(h)?.metadata;
     const supported = metadata?.supportedProviders;
-    return Boolean(metadata?.classifyModel && supported?.length && !supported.includes(provider));
+    return Boolean(supported?.length && !supported.includes(provider));
   });
 }
 

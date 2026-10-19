@@ -20,6 +20,7 @@ import {
   classifyModelForAgent,
   compatibleHarnesses,
   getClassifierAgents,
+  getModelRuleFreeAgents,
   getOfferedHarnesses,
   routerAcceptedModels,
   uncoveredHarnesses,
@@ -330,9 +331,12 @@ export async function handlePluginSetup(
         // explain, and never save. Without a catalog only a provider the harness does not
         // support is known to be unsatisfiable (no typed id can ever cover it).
         const deadEnd = harnessCtx
-          ? (models.length > 0
-            ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
-            : unsupportedProviderHarnesses(harnessCtx.harnesses, providerName))
+          ? [...new Set([
+            ...unsupportedProviderHarnesses(harnessCtx.harnesses, providerName),
+            ...(models.length > 0
+              ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
+              : [])
+          ])]
           : [];
         if (deadEnd.length > 0) {
           const action = await promptForHarnessDeadEnd(deadEnd, providerName);
@@ -581,13 +585,20 @@ function buildHarnessContext(
 ): HarnessModelContext | undefined {
   if (!harnesses || harnesses.length === 0) return undefined;
   const classifiers = getClassifierAgents();
-  if (!harnesses.some(h => classifiers.includes(h))) return undefined;
+  const hasRules = harnesses.some(h => classifiers.includes(h));
+  if (!hasRules && unsupportedProviderHarnesses(harnesses, provider).length === 0) return undefined;
   return { harnesses, provider, confirmedModels, isRouter };
 }
 
 /** Multi-select of the agents (harnesses) the profile will serve; at least one is required. */
 export async function promptForHarnesses(existing?: string[]): Promise<string[]> {
   const offered = getOfferedHarnesses();
+  const ruleFree = getModelRuleFreeAgents();
+  if (ruleFree.length > 0) {
+    console.log(chalk.dim(
+      `No model rules for: ${ruleFree.map(h => h.name).join(', ')} - any selected model is used as-is.`
+    ));
+  }
   const { harnesses } = await inquirer.prompt([
     {
       type: 'checkbox',
