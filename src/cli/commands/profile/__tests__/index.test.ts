@@ -165,6 +165,48 @@ describe('ProfileDisplay — Other models row (multi-model profiles)', () => {
   });
 });
 
+describe('ProfileDisplay — harness annotations (EPMCDME-15641)', () => {
+  const profile = {
+    provider: 'ai-run-sso',
+    model: 'claude-sonnet-4-5',
+    models: ['claude-sonnet-4-5', 'gpt-5.4'],
+    harnesses: ['claude', 'codex'],
+  };
+
+  it('format() shows the harnesses and, per model, the harnesses it works with', () => {
+    const output = ProfileDisplay.format({ name: 'team', active: true, profile });
+
+    expect(output).toContain('Harnesses');
+    expect(output).toContain('claude, codex');
+    expect(output).toMatch(/claude-sonnet-4-5\s*\[claude\]/);
+    expect(output).toMatch(/gpt-5\.4\s*\[codex\]/);
+  });
+
+  it('formatStatus() shows the same harness information', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus({ name: 'team', active: true, profile });
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('Harnesses');
+      expect(rendered).toMatch(/gpt-5\.4\s*\[codex\]/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('renders a legacy profile (no harnesses) with no harness rows or labels', () => {
+    const output = ProfileDisplay.format({
+      name: 'team',
+      active: true,
+      profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b'] },
+    });
+
+    expect(output).not.toContain('Harnesses');
+    expect(output).not.toContain('[claude');
+    expect(output).not.toMatch(/\[[a-z-]+(, [a-z-]+)*\]\s*$/m);
+  });
+});
+
 describe('listProfiles — per-profile resolved identity display (AC8)', () => {
   afterEach(() => {
     vi.clearAllMocks();

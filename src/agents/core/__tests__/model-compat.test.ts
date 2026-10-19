@@ -5,6 +5,7 @@ import {
   classifyModelForAgent,
   getClassifierAgents,
   getOfferedHarnesses,
+  harnessAnnotations,
   compatibleHarnesses,
   uncoveredHarness,
 } from '../model-compat.js';
@@ -148,3 +149,26 @@ describe('uncoveredHarness', () => {
     expect(uncoveredHarness(['codex'], ['claude-x'], { confirmedModels: ['claude-x'] })).toBeUndefined();
   });
 });
+
+describe('harnessAnnotations', () => {
+  it('maps each model id to the profile harnesses it works with', () => {
+    expect(harnessAnnotations({ harnesses: ['claude', 'codex'] }, ['claude-x', 'gpt-5.4'])).toEqual({
+      'claude-x': ['claude'],
+      'gpt-5.4': ['codex'],
+    });
+  });
+
+  it('returns undefined for a legacy profile without harnesses', () => {
+    expect(harnessAnnotations({}, ['claude-x'])).toBeUndefined();
+    expect(harnessAnnotations({ harnesses: [] }, ['claude-x'])).toBeUndefined();
+  });
+
+  it('honors the router lookup and confirmed models', () => {
+    const profile = { harnesses: ['codex'], confirmedModels: ['claude-x'] };
+    expect(harnessAnnotations(profile, ['claude-x', 'sy-alias'], (id) => id === 'sy-alias')).toEqual({
+      'claude-x': ['codex'],
+      'sy-alias': ['codex'],
+    });
+  });
+});
+

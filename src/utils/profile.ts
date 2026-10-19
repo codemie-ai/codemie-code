@@ -20,6 +20,10 @@ export function renderProfileInfo(config: {
   model?: string;
   /** The profile's other models (resolveProfileModels(profile) minus the active model), when it has 2+. */
   otherModels?: string[];
+  /** Harnesses (agents) the profile serves; omitted for legacy profiles. */
+  harnesses?: string[];
+  /** Per-model harnesses it works with (keyed by model id); only with `harnesses`. */
+  modelHarnesses?: Record<string, string[]>;
   codeMieUrl?: string;
   /** Project text incl. its binding (see describeProjectBinding()); omitted → no Project line */
   project?: string;
@@ -54,11 +58,19 @@ export function renderProfileInfo(config: {
   if (config.provider) {
     outputLines.push(formatRow('Provider', config.provider));
   }
+  // Per-model harness suffix, e.g. "gpt-5.4 [codex]". Empty for legacy profiles.
+  const harnessSuffix = (id: string): string => {
+    const works = config.modelHarnesses?.[id];
+    return works ? ` [${works.length > 0 ? works.join(', ') : 'none'}]` : '';
+  };
   if (config.model) {
-    outputLines.push(formatRow('Model', config.model));
+    outputLines.push(formatRow('Model', config.model + harnessSuffix(config.model)));
   }
   if (config.otherModels && config.otherModels.length > 0) {
-    outputLines.push(formatRow('Other models', config.otherModels.join(', ')));
+    outputLines.push(formatRow('Other models', config.otherModels.map(id => id + harnessSuffix(id)).join(', ')));
+  }
+  if (config.harnesses && config.harnesses.length > 0) {
+    outputLines.push(formatRow('Harnesses', config.harnesses.join(', ')));
   }
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));

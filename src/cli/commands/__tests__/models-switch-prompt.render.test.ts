@@ -68,4 +68,31 @@ describe('renderModelSwitchSelectionUI', () => {
     const options = { message: 'm', models, activeModel: 'gpt-5-mini', cursorIndex: 1 };
     expect(renderModelSwitchSelectionUI(options)).toBe(renderModelSwitchSelectionUI(options));
   });
+
+  it('annotates each row with the harnesses it works with when labels are given', () => {
+    const output = renderModelSwitchSelectionUI({
+      message: 'Select a model to switch to:',
+      models: ['claude-x', 'gpt-5.4'],
+      activeModel: 'claude-x',
+      cursorIndex: 0,
+      harnessLabels: { 'claude-x': ['claude'], 'gpt-5.4': ['codex', 'opencode'] },
+    });
+
+    const lines = output.split('\n');
+    expect(lines.find(l => l.includes('claude-x'))).toContain('[claude]');
+    expect(lines.find(l => l.includes('gpt-5.4'))).toContain('[codex, opencode]');
+  });
+
+  it('renders no annotation without labels (legacy profile)', () => {
+    const output = renderModelSwitchSelectionUI({
+      message: 'Select a model to switch to:',
+      models: ['claude-x'],
+      activeModel: 'claude-x',
+      cursorIndex: 0,
+    });
+
+    expect(output).not.toMatch(/\[claude/);
+    expect(output).not.toContain('claude-x]');
+  });
 });
+

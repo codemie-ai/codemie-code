@@ -17,11 +17,24 @@ export interface ModelSwitchSelectionUIOptions {
   models: string[];
   activeModel: string;
   cursorIndex: number;
+  /** Per-model harnesses it works with; omitted for legacy profiles (no annotation). */
+  harnessLabels?: Record<string, string[]>;
 }
 
-function buildModelSelectionRow(modelId: string, activeModel: string, isCursor: boolean): string {
+export function formatHarnessSuffix(harnesses: string[] | undefined): string {
+  if (!harnesses) return '';
+  return chalk.dim(` [${harnesses.length > 0 ? harnesses.join(', ') : 'none'}]`);
+}
+
+function buildModelSelectionRow(
+  modelId: string,
+  activeModel: string,
+  isCursor: boolean,
+  harnesses?: string[]
+): string {
   const isActive = modelId === activeModel;
-  const displayName = isActive ? chalk.green.bold(modelId) : chalk.white(modelId);
+  const displayName =
+    (isActive ? chalk.green.bold(modelId) : chalk.white(modelId)) + formatHarnessSuffix(harnesses);
 
   return buildSingleChoiceRow({
     label: displayName,
@@ -38,6 +51,7 @@ export function renderModelSwitchSelectionUI({
   models,
   activeModel,
   cursorIndex,
+  harnessLabels,
 }: ModelSwitchSelectionUIOptions): string {
   let output = ANSI.CURSOR_HOME_CLEAR;
 
@@ -46,7 +60,7 @@ export function renderModelSwitchSelectionUI({
   output += chalk.dim(message) + '\n\n';
 
   models.forEach((modelId, index) => {
-    output += buildModelSelectionRow(modelId, activeModel, index === cursorIndex) + '\n';
+    output += buildModelSelectionRow(modelId, activeModel, index === cursorIndex, harnessLabels?.[modelId]) + '\n';
   });
 
   output += '\n';
@@ -59,7 +73,11 @@ export function renderModelSwitchSelectionUI({
  * Interactively pick one model from the active profile's own list (never the
  * full provider catalog — see `runModelsSwitch` in models.ts).
  */
-export async function promptModelSwitchSelection(models: string[], activeModel: string): Promise<string> {
+export async function promptModelSwitchSelection(
+  models: string[],
+  activeModel: string,
+  harnessLabels?: Record<string, string[]>
+): Promise<string> {
   const message = 'Select a model to switch to:';
   let cursorIndex = Math.max(0, models.findIndex(id => id === activeModel));
   if (cursorIndex < 0) {
@@ -67,7 +85,7 @@ export async function promptModelSwitchSelection(models: string[], activeModel: 
   }
 
   function render(): void {
-    process.stdout.write(renderModelSwitchSelectionUI({ message, models, activeModel, cursorIndex }));
+    process.stdout.write(renderModelSwitchSelectionUI({ message, models, activeModel, cursorIndex, harnessLabels }));
   }
 
   return new Promise((resolve, reject) => {

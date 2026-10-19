@@ -57,4 +57,33 @@ describe('formatTable — profile model marking', () => {
     expect(rendered).not.toContain('(active)');
     expect(rendered).not.toContain('(profile)');
   });
+
+  it('annotates (profile)/(active) rows with the harnesses each model works with, and no other rows', () => {
+    formatTable(
+      [model('claude-x'), model('gpt-5.4'), model('other')],
+      ['claude-x', 'gpt-5.4'],
+      'claude-x',
+      { 'claude-x': ['claude'], 'gpt-5.4': ['codex'], other: ['codex'] }
+    );
+
+    const lines = allLogs().split('\n');
+    const rowActive = lines.find(l => /^claude-x\s/.test(l));
+    const rowProfile = lines.find(l => /^gpt-5.4\s/.test(l));
+    const rowOther = lines.find(l => /^other\s/.test(l));
+
+    expect(rowActive).toContain('(active)');
+    expect(rowActive).toContain('[claude]');
+    expect(rowProfile).toContain('[codex]');
+    expect(rowOther).not.toContain('[');
+  });
+
+  it('renders identically to before when no harness annotations are given', () => {
+    formatTable([model('a'), model('b')], ['a'], 'a');
+    const without = allLogs();
+    logSpy.mockClear();
+    formatTable([model('a'), model('b')], ['a'], 'a', undefined);
+    expect(allLogs()).toBe(without);
+    expect(without).not.toContain('[');
+  });
 });
+

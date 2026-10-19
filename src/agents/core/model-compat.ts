@@ -67,6 +67,34 @@ export function uncoveredHarness(
   );
 }
 
+export interface HarnessProfileInfo {
+  harnesses?: string[];
+  provider?: string;
+  confirmedModels?: string[];
+}
+
+/**
+ * Per-model list of the profile's harnesses each model works with, for display. Undefined for a
+ * legacy profile (no `harnesses`), so callers render nothing and output stays unchanged.
+ */
+export function harnessAnnotations(
+  profile: HarnessProfileInfo,
+  ids: string[],
+  isRouter?: (modelId: string) => boolean
+): Record<string, string[]> | undefined {
+  if (!profile.harnesses?.length) return undefined;
+  const opts: ModelCompatOptions = {
+    provider: profile.provider,
+    confirmedModels: profile.confirmedModels,
+    isRouter,
+  };
+  const result: Record<string, string[]> = {};
+  for (const id of ids) {
+    result[id] = compatibleHarnesses(profile.harnesses, id, opts);
+  }
+  return result;
+}
+
 export interface HarnessChoice {
   name: string;
   displayName: string;

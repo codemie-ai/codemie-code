@@ -6,7 +6,8 @@ import { logger } from '../../utils/logger.js';
 import type { ModelInfo } from '../../providers/core/types.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { autoSelectModelTiers } from './setup.js';
-import { promptModelSwitchSelection } from './models-switch-prompt.js';
+import { promptModelSwitchSelection, formatHarnessSuffix } from './models-switch-prompt.js';
+import { harnessAnnotations } from '../../agents/core/model-compat.js';
 
 /** Providers whose setup auto-picks the single model they support (no multi-model UX). */
 const SUBSCRIPTION_SINGLE_MODEL_PROVIDERS = new Set(['anthropic-subscription', 'moonshot-subscription']);
@@ -16,7 +17,8 @@ const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
 export function formatTable(
   models: ModelInfo[],
   profileModelIds: string[] = [],
-  activeModelId?: string
+  activeModelId?: string,
+  harnessLabels?: Record<string, string[]>
 ): void {
   // Router aliases (Switchyard virtual routers, LiteLLM auto-router declarations) are
   // free-form custom names and routinely run longer than any concrete deployment id
@@ -60,7 +62,8 @@ export function formatTable(
         : profileModelIds.includes(model.id)
           ? chalk.cyan(' (profile)')
           : '';
-    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + chalk.dim(desc) + tag);
+    const harnesses = tag ? formatHarnessSuffix(harnessLabels?.[model.id]) : '';
+    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + chalk.dim(desc) + tag + harnesses);
   }
 }
 
@@ -134,7 +137,10 @@ export async function runModelsSwitch(
     return;
   }
 
-  const targetModel = modelIdArg ?? (await promptModelSwitchSelection(ids, profile.model ?? ids[0]));
+  const harnessLabels = harnessAnnotations(profile, ids);
+  const targetModel = modelIdArg ?? (await (harnessLabels
+    ? promptModelSwitchSelection(ids, profile.model ?? ids[0], harnessLabels)
+    : promptModelSwitchSelection(ids, profile.model ?? ids[0])));
 
   // Refresh Claude's haiku/sonnet/opus tiers from the live catalog only when
   // this provider backs the Claude agent (same condition setup.ts uses).
@@ -219,7 +225,14 @@ catalog everywhere, exactly as before.
         console.log(chalk.bold(`\nProvider: ${chalk.cyan(provider)}\n`));
         // config already carries the active profile's own model/models fields
         // (ProviderProfile & WorkspaceConfig) — no extra profile lookup needed.
-        formatTable(models, resolveProfileModels(config), config.model);
+        const profileModelIds = resolveProfileModels(config);
+        const routerIds = new Set(models.filter(m => m.metadata?.isRouter === true).map(m => m.id));
+        formatTable(
+          models,
+          profileModelIds,
+          config.model,
+          harnessAnnotations(config, profileModelIds, id => routerIds.has(id))
+        );
         console.log(chalk.dim(`\n${models.length} model(s) available.\n`));
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
