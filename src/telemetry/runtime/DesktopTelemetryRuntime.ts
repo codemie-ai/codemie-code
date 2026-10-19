@@ -48,6 +48,7 @@ export class DesktopTelemetryRuntime {
   private timer?: NodeJS.Timeout;
   private lastPollAt = this.startedAt;
   private isPolling = false;
+  private reconciliationPromise?: Promise<void>;
 
   constructor(
     private readonly adapter: LocalTelemetryAdapter,
@@ -55,7 +56,16 @@ export class DesktopTelemetryRuntime {
   ) {}
 
   async start(): Promise<void> {
-    await this.reconcilePersistedSessions();
+    // Fire-and-forget, mirroring BaseAgentAdapter's reconcileStaleSessions call: a daemon
+    // restart with a few stranded sessions must not make the caller (proxy-daemon's
+    // persistState, gated by the CLI's 5s readiness poll) wait on sync + metric calls that
+    // carry their own 10-30s network timeouts. Reconciliation runs to completion in the
+    // background; stop() awaits it so shutdown never races an in-flight finalize.
+    this.reconciliationPromise = this.reconcilePersistedSessions().catch((error) => {
+      logger.warn('[desktop-telemetry] Startup reconciliation failed (non-blocking)', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
     await this.poll();
     this.timer = setInterval(() => {
       this.poll().catch((error) => {
@@ -69,6 +79,8 @@ export class DesktopTelemetryRuntime {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+
+    await this.reconciliationPromise;
 
     // Final poll to catch sessions whose transcript was written after the last regular poll
     // but before proxy stop (e.g. Code tab sessions where transcript write is async).
@@ -117,6 +129,18 @@ export class DesktopTelemetryRuntime {
           inactivityThresholdMs: this.config.inactivityTimeoutMs,
         })
       ) {
+        // Reconciliation now runs concurrently with poll() rather than before it, so a
+        // session judged stale from the snapshot taken above may have picked up fresh
+        // activity in the meantime — poll() tracks it the moment that happens. Finalizing
+        // it anyway would stamp a live session completed out from under the user.
+        if (this.trackedSessions.has(externalSessionId)) {
+          logger.debug('[desktop-telemetry] Skipping stale finalize: session has fresh activity', {
+            externalSessionId,
+            sessionId: session.sessionId,
+          });
+          continue;
+        }
+
         logger.info('[desktop-telemetry] Finalizing session stranded by a previous daemon', {
           externalSessionId,
           sessionId: session.sessionId,
