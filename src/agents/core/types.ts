@@ -3,7 +3,7 @@
  */
 
 import type { SessionAdapter } from './session/BaseSessionAdapter.js';
-import type { ModelClassifyContext, ModelCompat } from './model-compat.js';
+import type { ModelClassifyContext, ModelCompat } from './model-classify.js';
 
 /**
  * Post-install hint - simple text lines shown after installation

@@ -43,6 +43,7 @@
 
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
@@ -148,6 +149,7 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
   supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama'],
   blockedModelPatterns: [],
+  classifyModel: (id, ctx) => classifyWithPredicate(isCodexCompatibleModelName, id, ctx),
   recommendedModels: ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
 
   ssoConfig: {

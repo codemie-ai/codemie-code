@@ -5,7 +5,8 @@ import type {
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
-import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
+import { isClaudeCompatibleModelName, resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
@@ -172,6 +173,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'ollama'],
   blockedModelPatterns: [],
+  classifyModel: (id, ctx) => classifyWithPredicate(isClaudeCompatibleModelName, id, ctx),
   // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
   // matches it against the live catalog and picks the current latest Sonnet.
   // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
