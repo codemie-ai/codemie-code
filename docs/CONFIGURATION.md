@@ -135,6 +135,49 @@ truth for the *active* model. `models` is purely additive:
   limited to the active profile's own `models` list when it has 2+ entries;
   otherwise they show the full provider catalog as before.
 
+### Harness-Compatible Models
+
+`codemie setup` asks which agents (harnesses) a profile serves and only offers
+models those agents can run. Two optional, additive profile fields record this:
+
+- `harnesses` - base agent names the profile serves, e.g. `["claude", "codex"]`.
+  A profile without `harnesses` is a legacy profile: it loads unchanged and is
+  never rewritten.
+- `confirmedModels` - model ids you explicitly confirmed despite a name-rule
+  mismatch (typed manually on a provider with no model catalog). Always a subset
+  of `models`.
+
+How it works:
+
+- The setup step "Which agents will use this profile?" is a required multi-select
+  (at least one). The offered agents are `claude`, `codex`, `gemini`, `kimi`,
+  `opencode`, `pi` and `codemie-code`; ACP variants are folded into their base
+  agent, and `copilot-cli` (analytics only) and `openwiki` (docs tool) are not
+  offered. On update, the saved `harnesses` are pre-selected.
+- The step is skipped for providers that auto-pick their single model
+  (`anthropic-subscription`, `moonshot-subscription`); no `harnesses` is saved,
+  so the profile is treated as legacy.
+- Agents with a model classifier (`classifyModel` in their plugin metadata:
+  `claude`, `codex`, `gemini`, `kimi`) hide models they cannot run. Rows show
+  the selected agents each model works with; router/alias names with no
+  recognizable family are shown as `unverified`. `opencode`, `pi` and
+  `codemie-code` are unrestricted: selecting only those keeps today's behavior.
+- Typed names on catalog-less providers are accepted silently when at least one
+  selected agent can run them; otherwise setup warns and asks for confirmation,
+  and a confirmed id is stored in `confirmedModels`.
+- Every save (create and update) checks that each selected agent has at least one
+  usable model among the chosen models; otherwise setup names the agent that
+  still needs a model and does not save. If the provider offers no model for a
+  selected agent at all, setup lets you change the agents or cancel.
+- At launch, only the persisted active model is checked (not when `--model` or
+  `CODEMIE_MODEL` is set). A profile with `harnesses` whose active model is
+  incompatible with the launching agent is blocked (exit 1), naming compatible
+  models from the profile and `codemie models switch`, or `codemie setup` when
+  none exists. A legacy profile only prints a warning and continues.
+- `codemie models switch`, `codemie profile status` and the `(profile)`/`(active)`
+  rows of `codemie models list` show which of the profile's agents each model
+  works with. Nothing is shown for legacy profiles.
+
 ## Supported Providers
 
 - **ai-run-sso** - AI/Run CodeMie SSO (unified enterprise gateway)

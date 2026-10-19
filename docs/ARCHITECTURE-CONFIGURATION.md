@@ -371,6 +371,26 @@ codemie-code's dynamic model config, Pi's `models.json`) to narrow it to the
 profile's own models — never persisted, and ignored by the proxy/credential
 path entirely.
 
+### Harness compatibility (profile `harnesses`, `confirmedModels`)
+
+Profiles may record the agents (harnesses) they serve in `harnesses`, plus
+`confirmedModels` for ids the user confirmed despite a name-rule mismatch. Neither
+is exported as an env var; both are additive and a profile without them is legacy.
+
+Compatibility is decided by an optional `classifyModel(modelId, ctx)` hook on
+`AgentMetadata` (`src/agents/core/types.ts`) returning `compatible`,
+`incompatible` or `unverified`. Claude, Codex, Gemini and Kimi implement it by
+wrapping their existing name predicates through `classifyWithPredicate`
+(`src/agents/core/model-classify.ts`, a leaf module so plugins do not import the
+registry). An agent without the hook is unrestricted. CLI code (setup, `models`,
+`profile status`) and `AgentCLI` only use the registry-backed helper
+`src/agents/core/model-compat.ts` (`classifyModelForAgent`, `compatibleHarnesses`,
+`uncoveredHarness`, `harnessAnnotations`) and never import `agents/plugins/*`,
+which keeps CLI -> Registry -> Plugin. `AgentCLI.validateCompatibility` checks the
+persisted active model against the launching agent: it blocks when the profile has
+`harnesses` and only warns for a legacy profile; an explicit `--model` or
+`CODEMIE_MODEL` skips the check.
+
 ### Provider-Specific (SSO)
 
 ```bash

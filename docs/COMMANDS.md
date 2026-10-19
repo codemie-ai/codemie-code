@@ -671,12 +671,16 @@ codemie models switch <model-id>     # Switch directly to a known model id
 belonging to the active profile's own model list are marked `(profile)`, and the
 one currently active is marked `(active)` — this is purely a display hint; the
 full catalog is always shown.
+For a profile that recorded its `harnesses`, those rows also show the agents each
+model works with, e.g. `[claude, codex]`.
 
 **`codemie models switch`** only ever touches the active profile's own `models`
 list (never the full provider catalog), and only writes the profile's `model`
 field (plus Claude's haiku/sonnet/opus tiers, when applicable) — never
 credentials, `reasoningEffort`, or workspace settings:
 - With no argument, it prompts you to pick from the profile's own models.
+  When the profile has `harnesses`, each row is annotated with the agents the
+  model works with (informational; any listed model can be chosen).
 - With an unknown `<model-id>`, it fails loudly (non-zero exit), lists the
   profile's real models, and writes nothing.
 - A single-model profile (or an `anthropic-subscription`/`moonshot-subscription`

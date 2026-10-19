@@ -146,6 +146,15 @@ changes which of a profile's `models` is active (writing `model` in place);
 Claude/Codex/OpenCode/Pi's in-session model menus narrow to a profile's
 `models` list via `CODEMIE_PROFILE_MODELS` when it has 2+ entries.
 
+`harnesses` (base agent names the profile serves, e.g. `["claude", "codex"]`) and
+`confirmedModels` (ids confirmed despite a name-rule mismatch, a subset of
+`models`) are also optional and additive. `codemie setup` collects `harnesses` in
+its "Which agents will use this profile?" step (skipped for `anthropic-subscription`
+and `moonshot-subscription`, which then save none) and only offers models those
+agents can run. A profile without `harnesses` is legacy: it is never migrated, and
+a launch with an incompatible active model only warns. With `harnesses`, that
+launch is blocked, unless `--model` or `CODEMIE_MODEL` overrides the model.
+
 ---
 
 ## Common Patterns
