@@ -43,7 +43,8 @@ const agents = new Map([
   ['opencode', fakeAgent('opencode', undefined, ['litellm'])],
   ['pi', fakeAgent('pi')],
   ['openwiki', fakeAgent('openwiki')],
-  ['copilot-cli', fakeAgent('copilot-cli', undefined, [], { analyticsOnly: true })],
+  ['copilot-cli', fakeAgent('copilot-cli')],
+  ['native-only', fakeAgent('native-only', undefined, [], { analyticsOnly: true })],
 ]);
 
 beforeEach(() => {
@@ -118,12 +119,14 @@ describe('getClassifierAgents', () => {
 });
 
 describe('getOfferedHarnesses', () => {
-  it('offers base agents in a stable order, folding ACP and excluding openwiki and analytics-only agents', () => {
+  it('offers base agents in a stable order, folding ACP and excluding analytics-only agents', () => {
     expect(getOfferedHarnesses()).toEqual([
       { name: 'claude', displayName: 'Display claude' },
       { name: 'codex', displayName: 'Display codex' },
+      { name: 'copilot-cli', displayName: 'Display copilot-cli' },
       { name: 'opencode', displayName: 'Display opencode' },
       { name: 'pi', displayName: 'Display pi' },
+      { name: 'openwiki', displayName: 'Display openwiki' },
     ]);
   });
 });

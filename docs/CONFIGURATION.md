@@ -151,9 +151,8 @@ How it works:
 
 - The setup step "Which agents will use this profile?" is a required multi-select
   (at least one). The offered agents are `claude`, `codex`, `gemini`, `kimi`,
-  `opencode`, `pi` and `codemie-code`; ACP variants are folded into their base
-  agent, and `copilot-cli` (analytics only) and `openwiki` (docs tool) are not
-  offered. On update, the saved `harnesses` are pre-selected.
+  `copilot-cli`, `opencode`, `pi`, `codemie-code` and `openwiki`; ACP variants
+  are folded into their base agent. On update, the saved `harnesses` are pre-selected.
 - The step is skipped for providers that auto-pick their single model
   (`anthropic-subscription`, `moonshot-subscription`); no `harnesses` is saved,
   so the profile is treated as legacy.
