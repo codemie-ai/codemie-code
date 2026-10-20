@@ -1,8 +1,9 @@
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 
-interface CodeMieLlmModel {
+interface CodeMieLlmModel extends Partial<Pick<LlmModel, 'max_input_tokens' | 'max_output_tokens'>> {
   id?: string;
   base_name?: string;
   deployment_name?: string;
@@ -22,6 +23,10 @@ export interface TenantModelDescriptor {
   multimodal?: boolean;
   /** From `features.tools`. */
   toolCalling?: boolean;
+  /** From `max_input_tokens`; set only when a finite number > 0. */
+  maxInputTokens?: number;
+  /** From `max_output_tokens`; set only when a finite number > 0. */
+  maxOutputTokens?: number;
 }
 
 interface ModelsListResponse {
@@ -50,12 +55,18 @@ function extractModelId(model: CodeMieLlmModel): string | undefined {
   return model.id || model.base_name || model.deployment_name;
 }
 
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function toDescriptor(model: CodeMieLlmModel, id: string): TenantModelDescriptor {
   const descriptor: TenantModelDescriptor = { id };
   if (typeof model.label === 'string') descriptor.label = model.label;
   if (typeof model.provider === 'string') descriptor.provider = model.provider;
   if (typeof model.multimodal === 'boolean') descriptor.multimodal = model.multimodal;
   if (typeof model.features?.tools === 'boolean') descriptor.toolCalling = model.features.tools;
+  if (isPositiveFiniteNumber(model.max_input_tokens)) descriptor.maxInputTokens = model.max_input_tokens;
+  if (isPositiveFiniteNumber(model.max_output_tokens)) descriptor.maxOutputTokens = model.max_output_tokens;
   return descriptor;
 }
 

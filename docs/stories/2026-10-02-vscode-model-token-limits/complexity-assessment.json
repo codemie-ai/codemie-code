@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Make codemie proxy connect --vscode resolve model token limits from the tenant catalog API first, then the built-in capability table, then defaults.",
+  "generated": "2026-10-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Three to four components (tenant-catalog parsing, vscode-models table, vscode connector assembly, SSO http-client type) in one repo, with a clear per-field fallback pattern. Scored M, below L. No project calibration example is near this band; the only one is an L-band example." },
+    { "dimension": "file_change_estimate", "reason": "About 4 source files plus 1 doc modified, no new files, so M." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

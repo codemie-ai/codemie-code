@@ -194,12 +194,18 @@ export interface LlmModel {
   };
   forbidden_for_web?: boolean;
   /**
-   * The model's maximum input context window in tokens (LiteLLM `model_info.max_input_tokens`).
-   * On a router this is the minimum window across its tier models, and is absent when any tier is
+   * The model's maximum input tokens (LiteLLM `model_info.max_input_tokens`). This is the whole
+   * context window for some models and only the prompt budget for others, so callers must not
+   * assume it fits alongside the output limit.
+   * On a router this is the minimum across its tier models, and is absent when any tier is
    * unknown. Also absent on catalogs served from static config rather than the LiteLLM proxy, and
    * on older backends.
    */
   max_input_tokens?: number;
+  /**
+   * The model's maximum output tokens (LiteLLM `model_info.max_output_tokens`).
+   */
+  max_output_tokens?: number;
   /**
    * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
    * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself

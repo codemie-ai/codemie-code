@@ -15,7 +15,7 @@ Two distribution models are supported:
    - macOS/Linux/WSL: `install/macos/install.sh`
 
 2. **CodeMie Connect** — a self-contained desktop app:
-   - macOS: `CodeMie-Connect-2.1.0-aarch64.dmg` from the [codemie-connect releases](https://github.com/codemie-ai/codemie-connect/releases)
+   - macOS: the `.dmg` from the [latest codemie-connect release](https://github.com/codemie-ai/codemie-connect/releases/latest)
    - `install/manifest.json` tells installed apps which version is the latest and where to download it.
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require CodeMie Connect.
@@ -116,19 +116,19 @@ npm i -g @anthropic-ai/claude-code@latest   # repeat for each package listed in 
 
 ## macOS Installation
 
-`CodeMie-Connect-2.1.0-aarch64.dmg` is CodeMie Connect, a signed and notarized macOS desktop app for **Apple Silicon (aarch64)** Macs. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background. (An Intel x86_64 build is not shipped.)
+The macOS `.dmg` is CodeMie Connect, a signed and notarized macOS desktop app for **Apple Silicon (aarch64)** Macs. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background. (An Intel x86_64 build is not shipped.)
 
 CodeMie Connect is built and released from a separate repository, [codemie-connect](https://github.com/codemie-ai/codemie-connect/releases).
 
 ### Running CodeMie Connect
 
-Download [`CodeMie-Connect-2.1.0-aarch64.dmg`](https://github.com/codemie-ai/codemie-connect/releases/download/v2.1.0/CodeMie-Connect-2.1.0-aarch64.dmg), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+Download the `.dmg` from the [latest release](https://github.com/codemie-ai/codemie-connect/releases/latest), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
 ### Log File
 
 App output is written to `~/Library/Logs/CodeMie/codemie_wizard.log`. The log persists across runs.
 
-The app checks this repo for updates: `install/manifest.json` holds the latest app version and its download link. This is independent of the `@codemieai/code` npm package version.
+From 2.1.1 the app checks codemie-connect's latest release for updates. `install/manifest.json` stays here for 2.1.0, which reads it from this repo; it points to 2.1.1. App versions are independent of the `@codemieai/code` npm package version.
 
 ## Release Artifacts
 
