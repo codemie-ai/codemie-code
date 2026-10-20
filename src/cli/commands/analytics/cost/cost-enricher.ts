@@ -16,7 +16,18 @@ import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown, costForUsage } from './cost-calculator.js';
 import { lookupPrice, resolvePrice } from '@/utils/pricing.js';
-import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, extractModelIdentityTimeline, type UsageRecord, type ModelIdentityEvent } from './usage-readers.js';
+import {
+  gatherUsageDeduped,
+  gatherDedupedUsageRecords,
+  sumUsageRecords,
+  readCodexSubagentUsage,
+  extractModelIdentityTimeline,
+  extractClaudeUsageRecords,
+  extractCodexUsageRecords,
+  extractPiUsageRecords,
+  type UsageRecord,
+  type ModelIdentityEvent,
+} from './usage-readers.js';
 import { extractDispatchResult } from './dispatch-extractor.js';
 import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
 import { enrichSkillDispatchCost } from './dispatch-allocation.js';
@@ -131,6 +142,33 @@ function computeReportedObservedEnd(ordered: ParsedEntry[]): Map<string, number>
   return reportedObservedEnd;
 }
 
+/**
+ * Max `ts` among a session's own timed usage records — used as a floor for `observedEnd` so
+ * the dedup window can never exclude the session's own usage. Only the agent families whose
+ * `gatherUsageDeduped`/`gatherDedupedUsageRecords` paths apply `windowEnd` need this; others
+ * return undefined (no window ever filters them). Side-effect free: calls the pure `extract*`
+ * readers directly rather than `gatherUsageDeduped`/`gatherDedupedUsageRecords`, which consume
+ * cross-session dedup keys from the shared `seen` set.
+ */
+function maxOwnRecordTs(agentName: string, parsed: ParsedSession): number | undefined {
+  const a = agentName.toLowerCase();
+  let records: UsageRecord[];
+  if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
+    records = extractClaudeUsageRecords(parsed);
+  } else if (isCodexFamilyAgent(a)) {
+    records = extractCodexUsageRecords(parsed);
+  } else if (a === 'pi') {
+    records = extractPiUsageRecords(parsed);
+  } else {
+    return undefined;
+  }
+  let max: number | undefined;
+  for (const r of records) {
+    if (r.ts !== null && (max === undefined || r.ts > max)) max = r.ts;
+  }
+  return max;
+}
+
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
@@ -139,12 +177,21 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const capture = raw[INTERNAL_PARSED_FAMILY];
   const parsed = capture?.parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
+  // The hook-tracked endEvent.data.endTime is a wall-clock stamp (SessionStore.updateSessionStatus,
+  // Date.now() when the Stop hook fires) and can land slightly BEFORE the session's own native
+  // transcript finishes writing its last message. Floor it at the session's own latest usage-
+  // record timestamp so withinWindow (usage-readers.ts) never drops a session's own usage.
+  const rawEndTime = Number.isFinite(raw.endEvent?.data?.endTime) ? raw.endEvent!.data.endTime : undefined;
+  const ownMaxTs = parsed ? maxOwnRecordTs(agentName, parsed) : undefined;
+  const observedEnd = rawEndTime === undefined ? ownMaxTs
+    : ownMaxTs === undefined ? rawEndTime
+    : Math.max(rawEndTime, ownMaxTs);
   return {
     sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
-    ...(Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
+    ...(observedEnd !== undefined && { observedEnd }),
   };
 }
 
