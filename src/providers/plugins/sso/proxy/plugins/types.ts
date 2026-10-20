@@ -11,6 +11,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../../../env/types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
+import type { CredentialRefresher } from './credential-refresh.js';
 
 /**
  * Plugin metadata and lifecycle
@@ -49,6 +50,13 @@ export interface PluginContext {
   logger: typeof logger;
   credentials?: SSOCredentials | JWTCredentials;
   syncCredentials?: SSOCredentials | JWTCredentials;
+  /**
+   * One shared throttled re-reader for the daemon's SSO credentials, built once in
+   * `sso.proxy.ts` and reused by every consumer (auth injection, session sync, model-catalogue
+   * fetch) instead of each constructing its own — see `credential-refresh.ts`. Undefined for a
+   * JWT-authenticated daemon, where there is nothing to re-read.
+   */
+  credentialRefresher?: CredentialRefresher<SSOCredentials>;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }

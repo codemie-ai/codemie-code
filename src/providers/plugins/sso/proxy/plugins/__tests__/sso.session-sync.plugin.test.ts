@@ -32,9 +32,13 @@ vi.mock('../../../session/SessionSyncer.js', () => ({
 // production fallback; individual tests may override to simulate a picked-up re-login.
 const { getStoredPlatformCredentials } = vi.hoisted(() => ({ getStoredPlatformCredentials: vi.fn() }));
 vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCredentials }));
+vi.mock('@/utils/analytics-auth-status.js', () => ({
+  getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
+}));
 
 // Imported after vi.mock is declared (hoisted anyway).
 import { SSOSessionSyncPlugin } from '../sso.session-sync.plugin.js';
+import { CredentialRefresher } from '../credential-refresh.js';
 
 const DEFAULT_INTERVAL = 120000;
 
@@ -48,6 +52,15 @@ const MANAGED_ENV = [
 ] as const;
 
 function buildContext(overrides: Partial<PluginContext> = {}): PluginContext {
+  const credentials = 'credentials' in overrides ? overrides.credentials : { cookies: { auth: 'cookie-value' } } as never;
+  const syncCredentials = overrides.syncCredentials;
+  // sso.proxy.ts builds this once from whichever of credentials/syncCredentials has cookies
+  // and shares it across every consumer in production.
+  const ssoCredentials = syncCredentials && 'cookies' in syncCredentials
+    ? syncCredentials
+    : credentials && 'cookies' in credentials
+      ? credentials
+      : undefined;
   return {
     config: {
       targetApiUrl: 'https://api.example.com',
@@ -59,7 +72,14 @@ function buildContext(overrides: Partial<PluginContext> = {}): PluginContext {
       ...(overrides.config as object)
     },
     logger,
-    credentials: { cookies: { auth: 'cookie-value' } } as never,
+    credentials,
+    credentialRefresher: ssoCredentials
+      ? new CredentialRefresher(ssoCredentials as never, {
+          provider: 'ai-run-sso',
+          baseUrl: 'https://api.example.com',
+          codeMieUrl: undefined,
+        })
+      : undefined,
     ...overrides
   } as PluginContext;
 }

@@ -21,17 +21,11 @@ export class SSOAuthPlugin implements ProxyPlugin {
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
     // Guard: skip if credentials are JWT (not SSO)
-    if (!context.credentials || !('cookies' in context.credentials)) {
+    if (!context.credentialRefresher) {
       return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(
-      new CredentialRefresher(context.credentials as SSOCredentials, {
-        provider: context.config.provider,
-        baseUrl: context.config.targetApiUrl,
-        codeMieUrl: context.config.syncCodeMieUrl,
-      })
-    );
+    return new SSOAuthInterceptor(context.credentialRefresher);
   }
 }
 

@@ -20,6 +20,11 @@ const { fetchCodeMieLlmModels, getStoredPlatformCredentials } = vi.hoisted(() =>
 }));
 vi.mock('../../../sso.http-client.js', () => ({ fetchCodeMieLlmModels }));
 vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCredentials }));
+vi.mock('@/utils/analytics-auth-status.js', () => ({
+  getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
+}));
+
+import { CredentialRefresher } from '../credential-refresh.js';
 
 /** Helper: create a minimal PluginContext */
 function createPluginContext(clientType?: string, model?: string): PluginContext {
@@ -701,9 +706,16 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       vi.useFakeTimers();
       fetchCodeMieLlmModels.mockResolvedValue([{ deployment_name: 'claude-opus-5-deployment', enabled: true }]);
 
+      const credentials = { cookies: { auth: 'stale-cookie' }, apiUrl: 'https://api.anthropic.com' } as never;
       const context: PluginContext = {
         ...createPluginContext('claude-desktop'),
-        credentials: { cookies: { auth: 'stale-cookie' }, apiUrl: 'https://api.anthropic.com' } as never,
+        credentials,
+        // sso.proxy.ts builds this once and shares it across consumers in production.
+        credentialRefresher: new CredentialRefresher(credentials, {
+          provider: 'test',
+          baseUrl: 'https://api.anthropic.com',
+          codeMieUrl: undefined,
+        }),
       };
       const interceptor = await plugin.createInterceptor(context);
 

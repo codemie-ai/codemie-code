@@ -37,6 +37,7 @@ import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
 import { getPluginRegistry } from './plugins/registry.js';
 import { PluginContext, ProxyInterceptor, ResponseMetadata, UpstreamResponseTools } from './plugins/types.js';
+import { CredentialRefresher } from './plugins/credential-refresh.js';
 import './plugins/index.js'; // Auto-register core plugins
 
 /**
@@ -121,6 +122,25 @@ export class CodeMieProxy {
       logger,
       credentials: credentials || undefined,
       syncCredentials: syncCredentials || undefined,
+      // One shared refresher for every consumer (auth injection, session sync, model-catalogue
+      // fetch) instead of each building its own — see credential-refresh.ts and PluginContext.
+      // `credentials` is the main auth method's snapshot (SSO or JWT); `syncCredentials` is a
+      // separately-authenticated analytics-sync login (e.g. JWT main auth + SSO-authenticated
+      // sync endpoint) — whichever one actually has SSO cookies seeds the shared refresher.
+      credentialRefresher: ((): CredentialRefresher<SSOCredentials> | undefined => {
+        const ssoCredentials = credentials && 'cookies' in credentials
+          ? credentials
+          : syncCredentials && 'cookies' in syncCredentials
+            ? syncCredentials
+            : null;
+        return ssoCredentials
+          ? new CredentialRefresher(ssoCredentials as SSOCredentials, {
+              provider: this.config.provider,
+              baseUrl: this.config.targetApiUrl,
+              codeMieUrl: this.config.syncCodeMieUrl,
+            })
+          : undefined;
+      })(),
       profileConfig: this.config.profileConfig
     };
 

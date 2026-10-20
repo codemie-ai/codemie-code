@@ -6,9 +6,13 @@ import { logger } from '../../../../../../utils/logger.js';
 vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
   getStoredPlatformCredentials: vi.fn(),
 }));
+vi.mock('@/utils/analytics-auth-status.js', () => ({
+  getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
+}));
 
 import { SSOAuthPlugin } from '../sso-auth.plugin.js';
 import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
+import { CredentialRefresher } from '../credential-refresh.js';
 
 const TARGET_API_URL = 'https://api.example.com';
 
@@ -21,6 +25,14 @@ function createPluginContext(credentials?: PluginContext['credentials']): Plugin
     },
     logger,
     credentials,
+    // sso.proxy.ts builds this once and shares it across consumers in production.
+    credentialRefresher: credentials && 'cookies' in credentials
+      ? new CredentialRefresher(credentials, {
+          provider: 'ai-run-sso',
+          baseUrl: TARGET_API_URL,
+          codeMieUrl: undefined,
+        })
+      : undefined,
   };
 }
 

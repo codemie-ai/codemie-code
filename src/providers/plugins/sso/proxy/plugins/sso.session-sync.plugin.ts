@@ -69,23 +69,23 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new ConfigurationError('Session sync disabled by configuration');
     }
 
+    // Shared refresher is built in sso.proxy.ts from whichever of credentials/syncCredentials
+    // has cookies — the guard above already confirmed one of them does, so this is always set.
+    if (!context.credentialRefresher) {
+      logger.debug('[SSOSessionSyncPlugin] Skipping: shared credential refresher not available');
+      throw new ConfigurationError('SSO credential refresher not available (session sync disabled)');
+    }
+
     logger.debug('[SSOSessionSyncPlugin] Initializing unified session sync');
 
     // Check if dry-run mode is enabled
     const dryRun = this.isDryRunEnabled(context);
 
-    // Cast credentials to SSOCredentials (already validated above)
-    const ssoCredentials = syncCredentials as SSOCredentials;
-
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
       context.config.syncApiUrl,
       context.config,
-      new CredentialRefresher(ssoCredentials, {
-        provider: context.config.provider,
-        baseUrl: context.config.targetApiUrl,
-        codeMieUrl: context.config.syncCodeMieUrl,
-      }),
+      context.credentialRefresher,
       context.config.clientType,
       context.config.version,
       dryRun

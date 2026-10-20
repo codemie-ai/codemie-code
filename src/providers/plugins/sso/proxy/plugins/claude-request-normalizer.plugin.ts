@@ -199,13 +199,7 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
   private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
 
   constructor(private readonly context: PluginContext) {
-    this.credentials = context.credentials
-      ? new CredentialRefresher(context.credentials, {
-          provider: context.config.provider,
-          baseUrl: context.config.targetApiUrl,
-          codeMieUrl: context.config.syncCodeMieUrl,
-        })
-      : undefined;
+    this.credentials = context.credentialRefresher;
   }
 
   /** Test seam — lets the suite supply a deployment list without a network call. */
