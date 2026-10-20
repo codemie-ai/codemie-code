@@ -1,3 +1,5 @@
+import { countContentLines } from '../content-lines.js';
+
 export interface ToolContextFields {
   file_path: string;
   subagent_type: string;
@@ -37,7 +39,7 @@ export function resolveToolDiffFields(toolName: string, toolInput: unknown, tool
       return { lines_added: counts.added, lines_removed: counts.removed };
     }
     const content = readString(toolInput, 'content');
-    return { lines_added: content ? content.split('\n').length : 0, lines_removed: 0 };
+    return { lines_added: countContentLines(content), lines_removed: 0 };
   }
   return { lines_added: 0, lines_removed: 0 };
 }

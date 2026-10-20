@@ -93,7 +93,7 @@ describe('resolveToolDiffFields', () => {
   });
 
   it('falls back to counting content lines for a Write with an empty structuredPatch (new file)', () => {
-    const fields = resolveToolDiffFields('Write', { content: 'line1\nline2\nline3' }, { structuredPatch: [] });
+    const fields = resolveToolDiffFields('Write', { content: 'line1\nline2\nline3\n' }, { structuredPatch: [] });
     expect(fields).toEqual({ lines_added: 3, lines_removed: 0 });
   });
 
