@@ -31,6 +31,7 @@ import { AuthMethod } from '../../../core/types.js';
 import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
 import { isTlsVerificationEnabled } from '../../../../utils/system-proxy.js';
+import { getStoredPlatformCredentials } from '../../../core/codemie-auth-helpers.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
@@ -87,9 +88,12 @@ export class CodeMieProxy {
       const isSSOProvider = provider?.authType === 'sso';
 
       if (isSSOProvider) {
-        const { CodeMieSSO } = await import('../sso.auth.js');
-        const sso = new CodeMieSSO();
-        credentials = await sso.getStoredCredentials(this.config.targetApiUrl);
+        const stored = await getStoredPlatformCredentials({
+          provider: this.config.provider,
+          baseUrl: this.config.targetApiUrl,
+          codeMieUrl: this.config.syncCodeMieUrl,
+        });
+        credentials = stored?.credentials ?? null;
 
         if (!credentials) {
           throw new AuthenticationError(

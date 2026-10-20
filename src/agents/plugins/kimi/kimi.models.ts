@@ -1,6 +1,6 @@
 import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
-import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
+import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -136,18 +136,17 @@ async function fetchCodeMieModelsForKimi(env: NodeJS.ProcessEnv): Promise<LlmMod
     return fetchCodeMieLlmModels(baseUrl, jwtToken);
   }
 
-  const codeMieUrl = env.CODEMIE_URL;
-  if (codeMieUrl) {
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(codeMieUrl);
-    if (!credentials) {
+  const platformUrl = getPlatformUrlFromEnv(env);
+  if (platformUrl) {
+    const found = await getStoredPlatformCredentialsFromEnv(env);
+    if (!found) {
       throw new ConfigurationError(
-        `SSO credentials not found for ${codeMieUrl}. Run: codemie profile login --url ${codeMieUrl}`
+        `SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`
       );
     }
 
     logger.debug('[kimi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(credentials.apiUrl, credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
   }
 
   return [];

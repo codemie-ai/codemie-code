@@ -402,7 +402,7 @@ export async function detectGitRemoteRepo(cwd: string): Promise<string | undefin
   try {
     const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
     const remoteUrl = stdout.trim();
-    const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+    const match = remoteUrl.match(/[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
     if (match) return `${match[1]}/${match[2]}`;
     return undefined;
   } catch {

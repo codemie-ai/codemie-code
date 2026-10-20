@@ -1,12 +1,22 @@
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import {
+  getAnalyticsPlatformSource,
+  getPlatformUrl,
+  getStoredAnalyticsCredentials,
+} from '@/providers/core/codemie-auth-helpers.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { logger } from '@/utils/logger.js';
 
 export interface AuthGateInput {
   provider?: string;
+  /** Workspace CodeMie URL (CODEMIE_URL); fallback when the profile URL has no login. */
   ssoUrl?: string;
+  /** Active profile URL; defaults to the one in CODEMIE_PROFILE_CONFIG of `env`. */
+  baseUrl?: string;
   syncApiUrl?: string;
   apiKey?: string;
+  /** Environment carrying CODEMIE_PROFILE_CONFIG; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface AuthGateResult {
@@ -28,11 +38,21 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     }
 
     let hasValidAuth = Boolean(input.apiKey);
+    const source = getAnalyticsPlatformSource(input.ssoUrl, input.env, {
+      provider: input.provider,
+      baseUrl: input.baseUrl,
+    });
+    // Profile URL first, workspace URL as fallback — re-auth targets the URL the
+    // profile actually uses, never a different environment's workspace.
+    const loginUrl = getPlatformUrl(source);
 
-    if (!hasValidAuth && input.ssoUrl) {
+    if (!hasValidAuth && loginUrl) {
       try {
-        const credentials = await new CodeMieSSO().getStoredCredentials(input.ssoUrl);
-        hasValidAuth = Boolean(credentials?.cookies);
+        const found = await getStoredAnalyticsCredentials(input.ssoUrl, input.env, {
+          provider: input.provider,
+          baseUrl: input.baseUrl,
+        });
+        hasValidAuth = Boolean(found?.credentials.cookies);
       } catch (error) {
         logger.debug('[sso-auth-gate] Failed to load SSO credentials:', error);
       }
@@ -48,9 +68,9 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
       ? 'no valid CodeMie SSO credentials found'
       : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
 
-    if (!input.apiKey && input.ssoUrl) {
+    if (!input.apiKey && loginUrl) {
       try {
-        await new CodeMieSSO().authenticate({ codeMieUrl: input.ssoUrl, timeout: 120_000, quiet: true });
+        await new CodeMieSSO().authenticate({ codeMieUrl: loginUrl, timeout: 120_000, quiet: true });
       } catch (error) {
         logger.error(`[sso-auth-gate] Failed to re-authenticate: ${(error as Error).message}`);
       }

@@ -87,6 +87,12 @@ export interface HookProcessingConfig {
   skipRemoteSync?: boolean;
   /** For reconciled sessions with trusted routing: require remote delivery or roll back local finalization */
   requireRemoteDelivery?: boolean;
+  /**
+   * Environment carrying CODEMIE_PROFILE_CONFIG (the active profile URL) for
+   * credential lookup; defaults to process.env. In-process callers pass the
+   * agent env, which the main process does not inherit.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -485,9 +491,10 @@ async function buildProcessingContext(
   // such as anthropic-subscription, where CodeMie auth is analytics-only.
   if (ssoUrl && apiUrl && !cookies) {
     try {
-      const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-      const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials(ssoUrl);
+      const { getStoredAnalyticsCredentials } = await import('../../providers/core/codemie-auth-helpers.js');
+      const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
+        provider: getConfigValue('CODEMIE_PROVIDER', config),
+      }))?.credentials;
 
       if (credentials?.cookies) {
         cookies = Object.entries(credentials.cookies)
@@ -591,6 +598,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
       ssoUrl,
       syncApiUrl,
       apiKey: getConfigValue('CODEMIE_API_KEY', config),
+      env: config?.env,
     };
 
     const authResult = await ensureCodeMieSsoAuth(authInput);
@@ -1059,9 +1067,10 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     let cookieHeader = config?.cookies || '';
     if (!cookieHeader && ssoUrl) {
       try {
-        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-        const sso = new CodeMieSSO();
-        const credentials = await sso.getStoredCredentials(ssoUrl);
+        const { getStoredAnalyticsCredentials } = await import('../../providers/core/codemie-auth-helpers.js');
+        const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
+          provider: getConfigValue('CODEMIE_PROVIDER', config),
+        }))?.credentials;
 
         if (credentials?.cookies) {
           cookieHeader = Object.entries(credentials.cookies)
@@ -1364,9 +1373,10 @@ async function sendSessionEndMetrics(
     let cookieHeader = config?.cookies || '';
     if (!cookieHeader && ssoUrl) {
       try {
-        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-        const sso = new CodeMieSSO();
-        const credentials = await sso.getStoredCredentials(ssoUrl);
+        const { getStoredAnalyticsCredentials } = await import('../../providers/core/codemie-auth-helpers.js');
+        const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
+          provider: getConfigValue('CODEMIE_PROVIDER', config),
+        }))?.credentials;
 
         if (credentials?.cookies) {
           cookieHeader = Object.entries(credentials.cookies)
