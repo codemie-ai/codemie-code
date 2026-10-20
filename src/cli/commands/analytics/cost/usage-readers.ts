@@ -12,6 +12,7 @@ import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { logger } from '@/utils/logger.js';
 // Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
 import { parseRoutingHeaders, type RoutingDecision, type RoutingHeaderSource } from '@/utils/routing-headers.mjs';
@@ -926,13 +927,22 @@ export function gatherUsageDeduped(
     // log with others, `parsed` is the ENTIRE shared file, not just this session's own slice.
     // Only trust it when this session is the sole owner of its log file (allowRollup); when
     // unsafe, fall through to the windowed per-message path below instead.
-    const rollup = allowRollup ? readClaudeSdkResult(parsed) : null;
-    if (rollup) {
-      return rollup; // authoritative SDK rollup
+    const sdkRollup = readClaudeSdkResult(parsed);
+    if (allowRollup && sdkRollup) {
+      return sdkRollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
     for (const r of takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen)) {
       accumulate(out, r.model, r.usage);
+    }
+    // A shared-file session whose only usage signal is the (now-distrusted) rollup, with no
+    // per-message records to fall back to, reports 0 usage here rather than double-counting
+    // the rollup across its siblings — the safer of two wrong answers (CR-002), but previously
+    // silent. Surface it so a real loss of billed usage isn't invisible.
+    if (!allowRollup && sdkRollup && out.size === 0) {
+      logger.debug(
+        '[cost] Shared-file SDK rollup present but untrusted (session shares its native log) and no per-message records to fall back to — reporting 0 usage for this session instead of double-counting'
+      );
     }
     return out;
   }
