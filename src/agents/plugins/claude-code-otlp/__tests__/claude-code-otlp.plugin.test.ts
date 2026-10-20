@@ -983,9 +983,10 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     // there were no prior snapshot to merge onto — matches real first-fire behavior and keeps
     // the pre-existing tests in this block (which assert against the raw resolved fields)
     // passing unchanged.
-    openSessionStartPassMock.mockImplementation(async (_sessionId: string, _gitHeadStart: string, fields: unknown) => ({
+    openSessionStartPassMock.mockImplementation(async (_sessionId: string, gitHeadStart: string, fields: unknown) => ({
       ...emptyPass(),
       sessionEnvFields: fields,
+      gitHeadStart,
     }));
     resolveSessionEnvFieldsMock.mockImplementation(async (_cwd: string, model: string, permissionMode: string) => ({
       ...SESSION_ENV_FIELDS_STUB,
@@ -1036,7 +1037,7 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
 
   it('opens the SessionStart pass with the resolved git_head_start and wires its finalize into the ForwardDecision', async () => {
     const pass = emptyPass();
-    openSessionStartPassMock.mockResolvedValue(pass);
+    openSessionStartPassMock.mockResolvedValue({ ...pass, gitHeadStart: 'persisted-start-sha' });
 
     await plugin.processOtlpEvent(event('SessionStart'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
@@ -1045,6 +1046,7 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
       'abc123def456',
       expect.objectContaining({ configured_model: '', permission_mode: '' })
     );
+    expect(forwardedEvents()[0].git_head_start).toBe('persisted-start-sha');
     expect(pass.finalize).toHaveBeenCalledWith(true);
   });
 

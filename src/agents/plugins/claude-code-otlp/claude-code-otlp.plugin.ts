@@ -187,7 +187,14 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     return {
       decision: 'forward',
       payload: [
-        { ...hookInput, ...envFields, ...identityCandidateFields, ...gitHeadStart, model },
+        {
+          ...hookInput,
+          ...envFields,
+          ...identityCandidateFields,
+          ...gitHeadStart,
+          git_head_start: pass.gitHeadStart,
+          model,
+        },
         sessionEnvEvent,
       ],
       finalize: pass.finalize,

@@ -1377,6 +1377,7 @@ describe('openSessionStartPass', () => {
   it('derives no events of its own', async () => {
     const pass = await openSessionStartPass('session-start-no-events', 'sha-start', sessionEnvFixture);
     expect(pass.events).toEqual([]);
+    expect(pass.gitHeadStart).toBe('sha-start');
     await pass.finalize(true);
   });
 
@@ -1420,6 +1421,7 @@ describe('openSessionStartPass', () => {
       // HEAD and a later wall-clock time — neither should replace what was recorded first.
       vi.setSystemTime(new Date('2026-01-01T01:00:00.000Z'));
       const secondPass = await openSessionStartPass(sessionId, 'sha-after-compact', sessionEnvFixture);
+      expect(secondPass.gitHeadStart).toBe('sha-real-start');
       await secondPass.finalize(true);
     } finally {
       vi.useRealTimers();

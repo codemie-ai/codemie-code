@@ -9,10 +9,10 @@
  * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event. `SessionStart`
  * ({@link openSessionStartPass}) and `SubagentStop` ({@link openSubagentPass}) derive no
  * events of their own here — the former only records this session's starting point for
- * `agent.git.snapshot` to read back later, the latter derives/aggregates usage for its own
- * subagent transcript. `PostCompact` ({@link openPostCompactPass}) is its own case — see its
- * doc comment — because the `compact_boundary` line it reports on is not reliably present yet
- * when the hook fires.
+ * `agent.git.snapshot` to read back later. `SubagentStop` derives usage for its own subagent
+ * transcript and may emit `agent.subagent.usage`. `PostCompact` ({@link openPostCompactPass}) is
+ * its own case — see its doc comment — because the `compact_boundary` line it reports on is not
+ * reliably present yet when the hook fires.
  *
  * Commit-after-send: the exported `open*Pass` functions acquire the per-session parse-state
  * lock, load state, derive in memory, and return `{ events, finalize }` *without* persisting
@@ -68,7 +68,8 @@ import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from '.
 // the pass openers from this one module.
 export type { SubagentFile };
 
-export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'PostCompact' | 'SessionEnd' | 'StopFailure';
+export type MainTranscriptTrigger = 'Stop' | 'PreCompact' | 'SessionEnd' | 'StopFailure';
+type MainTranscriptDerivationTrigger = MainTranscriptTrigger | 'PostCompact';
 
 /** One hook invocation's derived events, with the deferred commit described above. */
 export interface TranscriptPass {
@@ -434,8 +435,8 @@ async function deriveMainEvents(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
-  trigger: MainTranscriptTrigger
-): Promise<{ events: Record<string, unknown>[] }> {
+  trigger: MainTranscriptDerivationTrigger
+): Promise<Record<string, unknown>[]> {
   const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
   const events: Record<string, unknown>[] = [];
@@ -506,7 +507,7 @@ async function deriveMainEvents(
     events.push(summaryEvent);
   }
 
-  return { events };
+  return events;
 }
 
 /**
@@ -534,6 +535,11 @@ function finalizeOf(
   };
 }
 
+export interface SessionStartPass extends TranscriptPass {
+  sessionEnvFields: SessionEnvFields;
+  gitHeadStart: string;
+}
+
 /**
  * Open a commit-after-send pass for one `SessionStart` hook fire: records this session's
  * starting point (`gitHeadStart`, wall-clock `sessionStartedAt`) into parse state, under the
@@ -548,7 +554,8 @@ function finalizeOf(
  * `source: 'compact'` after `/compact`, `source: 'resume'` on `claude -c`), always under the
  * same `sessionId`. Only the first fire — the one that finds no start recorded yet — sets
  * `gitHeadStart`/`sessionStartedAt`; later fires leave the already-persisted real session start
- * untouched, so `agent.git.snapshot`'s commit window always spans the whole session.
+ * untouched, so `agent.git.snapshot`'s commit window always spans the whole session. The
+ * returned `gitHeadStart` is the persisted first SHA, so the `agent.session.start` event agrees.
  *
  * `sessionEnvFields` is merged onto the prior `lastSessionEnvFields` snapshot rather than
  * overwriting it outright: a later fire's payload never carries `effort` (SDK contract), so
@@ -558,10 +565,6 @@ function finalizeOf(
  * as-is. The merged result is both persisted and returned, so the caller sends exactly what gets
  * recorded as the new baseline.
  */
-export interface SessionStartPass extends TranscriptPass {
-  sessionEnvFields: SessionEnvFields;
-}
-
 export async function openSessionStartPass(
   sessionId: string,
   gitHeadStart: string,
@@ -587,12 +590,17 @@ export async function openSessionStartPass(
         }
       : sessionEnvFields;
     state.lastSessionEnvFields = merged;
-    return { events: [], finalize: finalizeOf(sessionId, state, release), sessionEnvFields: merged };
+    return {
+      events: [],
+      finalize: finalizeOf(sessionId, state, release),
+      sessionEnvFields: merged,
+      gitHeadStart: state.gitHeadStart,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug('[claude-code-otlp] SessionStart pass failed', ...sanitizeLogArgs({ sessionId, err: msg }));
     await release?.();
-    return { ...EMPTY_PASS, sessionEnvFields };
+    return { ...EMPTY_PASS, sessionEnvFields, gitHeadStart };
   }
 }
 
@@ -726,7 +734,7 @@ export async function openMainTranscriptPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -777,7 +785,7 @@ export async function openPostCompactPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
 
     const newCompactions = (await findCompactions(transcriptPath)).filter((compaction) =>
       isCompactionNewer(compaction, state.lastCompactionEnd)
@@ -1040,6 +1048,16 @@ export async function openSubagentPass(
   }
 }
 
+export interface SessionEndPass extends TranscriptPass {
+  /** `TranscriptParseState.gitHeadStart`/`sessionStartedAt`, read back from the same locked load
+   *  above — `agent.git.snapshot`'s inputs, written once at `SessionStart` by
+   *  {@link openSessionStartPass}. `''` on a failed/empty pass, same as every other field here. */
+  gitHeadStart: string;
+  sessionStartedAt: string;
+}
+
+const EMPTY_SESSION_END_PASS: SessionEndPass = { ...EMPTY_PASS, gitHeadStart: '', sessionStartedAt: '' };
+
 /**
  * Open a commit-after-send pass for one `SessionEnd` hook fire: the main transcript plus the
  * backstop scan over every subagent file discovered for this session (`findSubagentFiles()`),
@@ -1057,16 +1075,6 @@ export async function openSubagentPass(
  * other subagents or the main events already derived. `envCheck` is folded in the same way as
  * {@link openMainTranscriptPass}.
  */
-export interface SessionEndPass extends TranscriptPass {
-  /** `TranscriptParseState.gitHeadStart`/`sessionStartedAt`, read back from the same locked load
-   *  above — `agent.git.snapshot`'s inputs, written once at `SessionStart` by
-   *  {@link openSessionStartPass}. `''` on a failed/empty pass, same as every other field here. */
-  gitHeadStart: string;
-  sessionStartedAt: string;
-}
-
-const EMPTY_SESSION_END_PASS: SessionEndPass = { ...EMPTY_PASS, gitHeadStart: '', sessionStartedAt: '' };
-
 export async function openSessionEndPass(
   sessionId: string,
   transcriptPath: string,
@@ -1077,7 +1085,7 @@ export async function openSessionEndPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const { events } = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
 
     const subagentFiles = await findSubagentFiles(transcriptPath);
     for (const rawFile of subagentFiles) {
