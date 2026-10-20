@@ -103,6 +103,8 @@ describe('detectGitRemoteRepo', () => {
     ['token-only userinfo with no repository path', 'https://ghp_SECRET@github.com'],
     ['host:port with no repository path', 'https://host:8443'],
     ['scheme host with no repository path', 'https://x.visualstudio.com'],
+    ['bare user@host with no scheme, no colon, no path', 'ghp_SECRETTOKEN@github.com'],
+    ['bare user:token@host with no scheme and no path', 'user:TOKEN@github.com'],
   ])('returns undefined instead of leaking credentials: %s', async (_label, url) => {
     mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
     const result = await detectGitRemoteRepo('/repo');
@@ -119,6 +121,29 @@ describe('detectGitRemoteRepo', () => {
   it('keeps the raw escaped segment when decoding would yield a control character', async () => {
     mockExecAsync.mockResolvedValue({ stdout: 'https://host/a/b%0D%0AX-Evil:%201\n', stderr: '' });
     expect(await detectGitRemoteRepo('/repo')).toBe('a/b%0d%0ax-evil:%201');
+  });
+
+  it('keeps the raw escaped segment when decoding would yield a Unicode line separator', async () => {
+    mockExecAsync.mockResolvedValue({ stdout: 'https://host/a/b%E2%80%A8evil\n', stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe('a/b%e2%80%a8evil');
+  });
+
+  it('does not let an encoded slash (%2F) collapse into a real path separator', async () => {
+    mockExecAsync.mockResolvedValueOnce({ stdout: 'https://gitlab.example.com/group/a%2Fb/repo.git\n', stderr: '' });
+    const encoded = await detectGitRemoteRepo('/repo');
+    mockExecAsync.mockResolvedValueOnce({ stdout: 'https://gitlab.example.com/group/a/b/repo.git\n', stderr: '' });
+    const literal = await detectGitRemoteRepo('/repo');
+    expect(encoded).not.toBe(literal);
+    expect(encoded).toBe('group/a%2fb/repo');
+    expect(literal).toBe('group/a/b/repo');
+  });
+
+  it.each([
+    ['file URL with host', 'file://host/home/jdoe/repo.git', 'home/jdoe/repo'],
+    ['file URL triple-slash absolute path', 'file:///home/jdoe/repo.git', 'jdoe/repo'],
+  ])('resolves %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
   });
 
   it('falls back to the last two path segments for a bare filesystem remote', async () => {

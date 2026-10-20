@@ -420,14 +420,13 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   const scpMatch = withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/);
   const match = urlMatch ?? scpMatch;
 
-  // A scheme:// or user@host: remote that did not match above (e.g. no repository path) is not
-  // a filesystem path. Falling through to the bare-filesystem handling below would split its
-  // userinfo/host into the result and leak credentials; bail out instead. `file://` is exempt
-  // since it carries no credentials.
-  if (
-    !match &&
-    (/^(?!file:)\w+:\/\//i.test(withoutGitSuffix) || /^[^/@\\]+@[^:/]+:/.test(withoutGitSuffix))
-  ) {
+  // A scheme:// or user@host[:...] remote that did not match above (e.g. no repository path, or
+  // no colon before the host) is not a filesystem path. Falling through to the bare-filesystem
+  // handling below would split its userinfo/host into the result and leak credentials; bail out
+  // instead. A real filesystem path essentially never contains '@', so that alone is sufficient
+  // to catch every credential-bearing shape, including a bare "user:token@host" with no scheme
+  // and no trailing ":path". `file://` is exempt since it carries no credentials.
+  if (!match && (/^(?!file:)\w+:\/\//i.test(withoutGitSuffix) || withoutGitSuffix.includes('@'))) {
     return undefined;
   }
 
@@ -447,13 +446,18 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
     .map((segment) => {
       try {
         const decoded = decodeURIComponent(segment);
-        // A decoded control character (e.g. %0D%0A, %00) would break a downstream HTTP header
-        // or break argv as a NUL; keep the raw, still-encoded segment instead.
-        const hasControlChar = Array.from(decoded).some((char) => {
-          const code = char.codePointAt(0) ?? 0;
-          return code <= 0x1f || code === 0x7f;
-        });
-        return hasControlChar ? segment : decoded;
+        // A decoded control character (e.g. %0D%0A, %00), or the Unicode line/paragraph
+        // separators U+2028/U+2029, would break a downstream HTTP header, log line or argv;
+        // keep the raw, still-encoded segment instead. Likewise, a decoded '/' (from an encoded
+        // %2F) would silently introduce an extra path level once segments are rejoined, letting
+        // two distinct remotes collide on the same derived name.
+        const hasUnsafeChar =
+          decoded.includes('/') ||
+          Array.from(decoded).some((char) => {
+            const code = char.codePointAt(0) ?? 0;
+            return code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029;
+          });
+        return hasUnsafeChar ? segment : decoded;
       } catch {
         // Malformed %-escape: degrade to the raw segment rather than discarding the parse.
         return segment;
