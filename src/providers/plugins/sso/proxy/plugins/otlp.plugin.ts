@@ -10,6 +10,8 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
+import { CredentialRefresher } from './credential-refresh.js';
+import { clearCredentialsStale } from './otlp-spool/auth-state.js';
 
 /**
  * Upper bound on the best-effort flush during proxy shutdown.
@@ -48,8 +50,9 @@ class OtlpInterceptor implements ProxyInterceptor {
   private sweepHandle?: NodeJS.Timeout;
   private ticking = false;
   private stopped = false;
+  private lastCredentials?: SSOCredentials | JWTCredentials;
 
-  constructor(private readonly credentials?: SSOCredentials | JWTCredentials) {}
+  constructor(private readonly credentials?: CredentialRefresher<SSOCredentials | JWTCredentials>) {}
 
   async onProxyStart(): Promise<void> {
     // Recovery pass for anything a previous process left on disk (crash, or a
@@ -110,9 +113,20 @@ class OtlpInterceptor implements ProxyInterceptor {
 
 
   private async tick(): Promise<void> {
-    const creds = this.credentials;
-    if (!creds) {
+    if (!this.credentials) {
       return;
+    }
+    // Re-read stored credentials (throttled) before each tick, so a browser re-login that
+    // completed between ticks is picked up here too, instead of forwarding forever with the
+    // daemon-startup snapshot (PR #655 review, blocking). Only clear the "forwarding suspended"
+    // latch when the refresh actually returned a DIFFERENT credential object (a real re-read
+    // found something new, not just an unchanged/throttled return) — clearing on every tick
+    // regardless would retry a forward attempt against a still-genuinely-stale credential on
+    // every single tick, defeating markCredentialsStale's whole point.
+    const creds = await this.credentials.refresh();
+    if (creds !== this.lastCredentials) {
+      this.lastCredentials = creds;
+      clearCredentialsStale();
     }
 
     const sessionIds = await listSessionIds();
@@ -286,8 +300,15 @@ export class OtlpPlugin implements ProxyPlugin {
   priority = 10;
 
   createInterceptor(context: PluginContext): ProxyInterceptor {
+    const credentials = context.syncCredentials || context.credentials;
     return new OtlpInterceptor(
-      context.syncCredentials || context.credentials
+      credentials
+        ? new CredentialRefresher(credentials, {
+            provider: context.config.provider,
+            baseUrl: context.config.targetApiUrl,
+            codeMieUrl: context.config.syncCodeMieUrl,
+          })
+        : undefined
     );
   }
 }
