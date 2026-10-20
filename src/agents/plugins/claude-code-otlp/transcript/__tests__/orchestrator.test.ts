@@ -454,6 +454,40 @@ describe('openMainTranscriptPass — compactions', () => {
     expect(secondDone[0].timestamp).toBe('2026-10-01T00:20:00.000Z');
   });
 
+  it('collects each boundary once when another boundary lands during PostCompact with no saved marker', async () => {
+    const sessionId = 'session-compaction-delayed-boundary';
+    const transcriptPath = writeTranscript('transcript-compaction-delayed-boundary.jsonl', [
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:10:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+      }),
+    ]);
+
+    const passPromise = openPostCompactPass(sessionId, transcriptPath, 250);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    appendFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        timestamp: '2026-10-01T00:20:00.000Z',
+        compactMetadata: { trigger: 'auto', preTokens: 2000, postTokens: 500, durationMs: 30_000 },
+      }) + '\n'
+    );
+
+    const pass = await passPromise;
+    await pass.finalize(true);
+
+    const compactDone = pass.events.filter((event) => event.type === 'agent.session.compact.done');
+    expect(compactDone).toHaveLength(2);
+    expect(compactDone.map((event) => event.timestamp)).toEqual([
+      '2026-10-01T00:10:00.000Z',
+      '2026-10-01T00:20:00.000Z',
+    ]);
+  });
+
   it('waits (lock-free) past a compact_boundary line that lands just after PostCompact fires, rather than missing it', async () => {
     const sessionId = 'session-compaction-race';
     const transcriptPath = writeTranscript('transcript-compaction-race.jsonl', []);

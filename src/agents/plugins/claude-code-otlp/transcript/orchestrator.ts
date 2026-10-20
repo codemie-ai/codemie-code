@@ -79,7 +79,7 @@ export interface TranscriptPass {
 const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
 
 /**
- * How long `openPostCompactPass` waits (lock-free) for a still-landing `compact_boundary` line.
+ * Maximum time `openPostCompactPass` waits lock-free for `compact_boundary` lines to land.
  * `PostCompact` fires before Claude Code has necessarily flushed that line to disk — observed lag
  * ranges from under a second up to ~9s, since Claude Code appears to buffer the whole
  * post-compaction segment and flush it in one shot at a later internal checkpoint, not
@@ -89,9 +89,10 @@ const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
  */
 const POST_COMPACT_WAIT_BUDGET_MS = 60_000;
 const COMPACTION_POLL_INTERVAL_MS = 100;
+const COMPACTION_SETTLE_INTERVAL_MS = 10_000;
 
 /**
- * Reads the whole transcript and returns the newest `compact_boundary` line found, if any.
+ * Reads the whole transcript and returns every `compact_boundary` line, in transcript order.
  *
  * Deliberately not scoped to `state.mainOffset`: a sibling hook for the same session (e.g. the
  * `Stop` that resumes the turn right after compaction) can advance `mainOffset` past the boundary
@@ -99,12 +100,12 @@ const COMPACTION_POLL_INTERVAL_MS = 100;
  * looks for `compact_boundary`, so that line is never actually consumed by it, but relying on
  * `mainOffset` as a starting point would still miss it.
  */
-async function findLatestCompaction(transcriptPath: string): Promise<Compaction | undefined> {
+async function findCompactions(transcriptPath: string): Promise<Compaction[]> {
   let raw: string;
   try {
     raw = await readFile(transcriptPath, 'utf-8');
   } catch {
-    return undefined;
+    return [];
   }
 
   const lines: SignalLine[] = [];
@@ -117,8 +118,7 @@ async function findLatestCompaction(transcriptPath: string): Promise<Compaction 
     }
   }
 
-  const compactions = collectCompactions(lines);
-  return compactions.length > 0 ? compactions[compactions.length - 1] : undefined;
+  return collectCompactions(lines);
 }
 
 /**
@@ -135,28 +135,41 @@ function isCompactionNewer(candidate: Compaction, lastEnd: string): boolean {
 }
 
 /**
- * Lock-free: polls {@link findLatestCompaction} every {@link COMPACTION_POLL_INTERVAL_MS} until a
- * compaction newer than `afterEnd` shows up or `waitBudgetMs` expires, holding no lock the whole
- * time — unlike the rest of this module's passes, which hold the per-session lock from acquire
- * through commit. That is exactly the point here: `openPostCompactPass`'s caller is the only thing
- * that would otherwise be blocked by it, and this wait is deliberately much longer than every
- * other pass's own work, so holding the lock across it would stall any sibling hook for the same
- * session (e.g. the next `Stop`) for no reason — the eventual authoritative check happens later,
- * briefly, under the lock.
+ * Lock-free: polls {@link findCompactions} until no new boundaries have appeared for the settle
+ * interval, or `waitBudgetMs` expires. The quiet period gives Claude Code time to flush later
+ * boundaries from the same compaction sequence; the authoritative full scan happens under the
+ * lock afterward.
  */
-async function waitForNewCompaction(
+async function waitForCompactionsToSettle(
   transcriptPath: string,
   afterEnd: string,
   waitBudgetMs: number
-): Promise<Compaction | undefined> {
+): Promise<void> {
   const deadline = Date.now() + waitBudgetMs;
+  let previousSignature: string | undefined;
+  let stableSince: number | undefined;
 
   for (;;) {
-    const latest = await findLatestCompaction(transcriptPath);
-    if (latest && isCompactionNewer(latest, afterEnd)) return latest;
+    const newer = (await findCompactions(transcriptPath)).filter((compaction) =>
+      isCompactionNewer(compaction, afterEnd)
+    );
+    const signature = newer.map((compaction) => compaction.end).join('\n');
+    const now = Date.now();
+
+    if (signature) {
+      if (signature !== previousSignature) {
+        previousSignature = signature;
+        stableSince = now;
+      } else if (stableSince !== undefined && now - stableSince >= COMPACTION_SETTLE_INTERVAL_MS) {
+        return;
+      }
+    } else {
+      previousSignature = undefined;
+      stableSince = undefined;
+    }
 
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return undefined;
+    if (remainingMs <= 0) return;
 
     await new Promise((resolve) => setTimeout(resolve, Math.min(COMPACTION_POLL_INTERVAL_MS, remainingMs)));
   }
@@ -738,14 +751,14 @@ export async function openMainTranscriptPass(
  * the lock for no reason. Instead:
  *
  * 1. A lock-free peek at the persisted `lastCompactionEnd` marker, then a lock-free
- *    {@link waitForNewCompaction} poll (returns immediately if the boundary is already there —
- *    the common case when compaction finished well before this hook ran).
+ *    {@link waitForCompactionsToSettle} poll. It allows a quiet interval after detecting new
+ *    boundaries so delayed lines from the same compaction sequence can be collected together.
  * 2. Only once that resolves (found, or the budget ran out) does it acquire the lock — briefly,
  *    like every other pass — reload fresh state, run the normal {@link deriveMainEvents} for
- *    `agent.usage.request`, and re-check for a compaction newer than the now-fresh
+ *    `agent.usage.request`, and re-check for all compactions newer than the now-fresh
  *    `state.lastCompactionEnd` (not reusing the lock-free peek's possibly-stale value). A sibling
- *    hook may have advanced `state.mainOffset` past the boundary line while this was waiting —
- *    harmless, since {@link findLatestCompaction} never relies on `mainOffset`.
+ *    hook may have advanced `state.mainOffset` past a boundary line while this was waiting —
+ *    harmless, since {@link findCompactions} never relies on `mainOffset`.
  *
  * The hook entry is also configured `async` (`connectors/claude-code-otlp.ts`) so Claude Code
  * itself never waits on this either.
@@ -756,7 +769,7 @@ export async function openPostCompactPass(
   waitBudgetMs: number = POST_COMPACT_WAIT_BUDGET_MS
 ): Promise<TranscriptPass> {
   const peekState = await loadParseState(sessionId);
-  const foundDuringWait = await waitForNewCompaction(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
+  await waitForCompactionsToSettle(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
 
   let release: (() => Promise<void>) | undefined;
   try {
@@ -764,10 +777,14 @@ export async function openPostCompactPass(
     const state = await loadParseState(sessionId);
     const { events } = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
 
-    const latest = foundDuringWait ?? (await findLatestCompaction(transcriptPath));
-    if (latest && isCompactionNewer(latest, state.lastCompactionEnd)) {
-      events.push(buildCompactionDoneEvent(sessionId, latest));
-      state.lastCompactionEnd = latest.end;
+    const newCompactions = (await findCompactions(transcriptPath)).filter((compaction) =>
+      isCompactionNewer(compaction, state.lastCompactionEnd)
+    );
+    for (const compaction of newCompactions) {
+      events.push(buildCompactionDoneEvent(sessionId, compaction));
+    }
+    if (newCompactions.length > 0) {
+      state.lastCompactionEnd = newCompactions[newCompactions.length - 1].end;
     } else {
       logger.warn(
         '[claude-code-otlp] compact_boundary not found after PostCompact wait',
