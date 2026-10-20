@@ -124,6 +124,23 @@ describe('getMCPConfigSummary', () => {
     expect(summary.localServers).toBe(1);
   });
 
+  it('preserves dots in a cwd during a {cwd}-keyed lookup', async () => {
+    writeJson('local/claude-home-dotted-cwd.json', {
+      projects: { '/Users/john.doe/app': { mcpServers: { msgraph: {} } } },
+    });
+    const config: AgentMCPConfig = {
+      local: {
+        path: join(root, 'local', 'claude-home-dotted-cwd.json'),
+        jsonPath: 'projects.{cwd}.mcpServers',
+      },
+    };
+
+    const summary = await getMCPConfigSummary(config, '/Users/john.doe/app');
+
+    expect(summary.localServerNames).toEqual(['msgraph']);
+    expect(summary.localServers).toBe(1);
+  });
+
   it('counts scopes independently and de-duplicates the combined name list', async () => {
     const config: AgentMCPConfig = {
       project: { path: 'opencode.json', jsonPath: 'mcp' },

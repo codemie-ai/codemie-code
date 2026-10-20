@@ -76,8 +76,8 @@ function resolveConfigPath(configPath: string, cwd: string): string {
 // ============================================================================
 
 /**
- * Navigate to a value in a nested object using a dot-separated path
- * Supports {cwd} placeholder replacement
+ * Navigate to a value in a nested object using a dot-separated path.
+ * The {cwd} placeholder is replaced within its path segment so dots in cwd remain part of the key.
  *
  * @param obj - Object to navigate
  * @param jsonPath - Dot-separated path (e.g., 'projects.{cwd}.mcpServers')
@@ -99,8 +99,7 @@ function navigateJsonPath(
   // a `{cwd}`-keyed lookup (e.g. `claude.plugin.ts`'s `projects.{cwd}.mcpServers`) silently
   // misses every project on Windows.
   const normalizedCwd = cwd.split('\\').join('/');
-  const resolvedPath = jsonPath.replace('{cwd}', normalizedCwd);
-  const parts = resolvedPath.split('.');
+  const parts = jsonPath.split('.').map((part) => part.replace('{cwd}', normalizedCwd));
 
   let current: unknown = obj;
 
