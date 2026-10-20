@@ -660,8 +660,29 @@ describe('enrichCosts', () => {
     };
     const { index } = await enrichCosts([sessionEarlier, sessionLater] as never[], deps);
     expect(index.get('earlier')!.observedEnd).toBe(base + 60_000); // next sibling's startTime
+    expect(index.get('earlier')!.observedEndEstimated).toBe(true);
     expect(index.get('later')!.observedEnd).toBeTypeOf('number');
     expect(index.get('later')!.observedEnd!).toBeGreaterThanOrEqual(base + 60_000); // >= own startTime
+    expect(index.get('later')!.observedEndEstimated).toBe(true);
+  });
+
+  it('does not mark a session\'s own confirmed observedEnd as estimated (PR #655 review)', async () => {
+    const base = 1_780_000_000_000;
+    const session = {
+      sessionId: 'closed',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/solo-closed.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: [] }) as never,
+    };
+    const { index } = await enrichCosts([session] as never[], deps);
+    expect(index.get('closed')!.observedEnd).toBe(base + 30_000);
+    expect(index.get('closed')!.observedEndEstimated).toBeUndefined();
   });
 });
 

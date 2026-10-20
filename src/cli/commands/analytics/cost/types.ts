@@ -136,6 +136,17 @@ export interface SessionCost {
   capturedAt?: number;
   observedStart?: number;
   observedEnd?: number;
+  /**
+   * True when `observedEnd` is the cosmetic estimate for an OPEN session sharing a native log
+   * file with siblings (next sibling's startTime, or now if last in the group — see
+   * computeReportedObservedEnd in cost-enricher.ts), not this session's own confirmed end.
+   * Display-only: never fed into the cross-session dedup window. A consumer computing a
+   * duration or report period from `observedEnd` MUST skip that when this is true — the "now
+   * if last in group" case would otherwise make the session's reported duration grow on every
+   * report run, and the "next sibling's startTime" case would otherwise report the session as
+   * having run until a point its own cost attribution does not assume it did.
+   */
+  observedEndEstimated?: boolean;
   /** Native token estimates are distinct from amounts reported by the source itself. */
   costSource?: 'native-estimate' | 'authoritative';
   costBasis?: 'standard-api-tokens' | 'source-reported';

@@ -53,6 +53,9 @@ export interface ReportSessionRecord {
   capturedAt?: number;
   observedStart?: number;
   observedEnd?: number;
+  /** True when `observedEnd` is the cosmetic estimate for an open session sharing a native log
+   * file with siblings, not its own confirmed end — see SessionCost.observedEndEstimated. */
+  observedEndEstimated?: boolean;
   costSource?: 'native-estimate' | 'authoritative';
   /** Source-reported amounts are preserved; native usage is priced at standard API token rates. */
   costBasis?: 'standard-api-tokens' | 'source-reported';

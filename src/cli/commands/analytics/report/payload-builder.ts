@@ -42,7 +42,7 @@ function projectDispatch(dispatch: DispatchEvent): DispatchEvent {
 function projectSnapshot(cost: SessionCost | undefined): Partial<ReportSessionRecord> {
   if (!cost) return {};
   return {
-    ...pickDefined(cost, ['capturedAt', 'observedStart', 'observedEnd', 'costSource', 'costBasis', 'dispatchesComplete',
+    ...pickDefined(cost, ['capturedAt', 'observedStart', 'observedEnd', 'observedEndEstimated', 'costSource', 'costBasis', 'dispatchesComplete',
       'rootOwnCostUSD', 'unlinkedCostUSD', 'unlinkedAgentIds']),
     ...(cost.rootOwnTokens && { rootOwnTokens: projectTokens(cost.rootOwnTokens) }),
     ...(cost.unlinkedTokens && { unlinkedTokens: projectTokens(cost.unlinkedTokens) }),
@@ -92,7 +92,13 @@ export function buildPayload(
         seen.add(s.sessionId);
         const cost = costIndex.get(s.sessionId);
         const startTime = cost?.observedStart !== undefined && Number.isFinite(cost.observedStart) && cost.observedStart > 0 ? cost.observedStart : s.startTime;
-        const durationMs = cost?.observedEnd !== undefined && Number.isFinite(cost.observedEnd) && cost.observedEnd >= startTime
+        // PR #655 review: observedEnd is only safe to derive a duration from when it is this
+        // session's own confirmed end, not the cosmetic estimate for an open session sharing a
+        // log file (observedEndEstimated) — that estimate can be "now" (grows every report run)
+        // or a sibling's startTime (implies a span this session's own cost attribution does not
+        // assume it ran for).
+        const durationMs = cost?.observedEnd !== undefined && !cost.observedEndEstimated
+          && Number.isFinite(cost.observedEnd) && cost.observedEnd >= startTime
           ? cost.observedEnd - startTime : s.duration;
         if (cost?.capturedAt !== undefined && Number.isFinite(cost.capturedAt)) capturedAt = Math.max(capturedAt ?? cost.capturedAt, cost.capturedAt);
         if (Number.isFinite(startTime) && startTime > 0) {

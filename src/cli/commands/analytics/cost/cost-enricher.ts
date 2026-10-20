@@ -621,7 +621,10 @@ export async function enrichCosts(
     if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
     if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
     if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;
-    else if (reportedObservedEnd.has(entry.sessionId)) cost.observedEnd = reportedObservedEnd.get(entry.sessionId);
+    else if (reportedObservedEnd.has(entry.sessionId)) {
+      cost.observedEnd = reportedObservedEnd.get(entry.sessionId);
+      cost.observedEndEstimated = true;
+    }
     if (cost.priced) {
       cost.costSource = 'native-estimate';
       cost.costBasis = 'standard-api-tokens';
