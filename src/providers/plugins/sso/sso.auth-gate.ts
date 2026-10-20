@@ -3,8 +3,9 @@ import {
   getPlatformUrl,
   getStoredAnalyticsCredentials,
 } from '@/providers/core/codemie-auth-helpers.js';
-import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
+import { getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { startDetachedSsoLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
+import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
 
 export interface AuthGateInput {
@@ -22,6 +23,32 @@ export interface AuthGateInput {
 export type AuthGateResult =
   | { ok: true }
   | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined };
+
+/**
+ * The analytics-auth-status marker is a single global file, written by multiple profiles'
+ * processes (MetricsApiClient, SSOSessionExpiryPlugin) with no environment/profile key of their
+ * own (PR #655 review). Without this check, a redirect in one profile's proxy blocks prompts and
+ * opens a sign-in in a session of a different, healthy profile, and the gate's error message
+ * ("metrics endpoint rejected...") describes the wrong profile's problem. `marker.baseUrl` IS
+ * recorded by every writer (see analytics-auth-status.ts), so match it against every URL this
+ * gate call knows about for its OWN profile — matching ANY of them (rather than requiring one
+ * specific field) avoids a false negative from the writers not all normalizing to the same one
+ * of baseUrl/syncApiUrl/loginUrl. No candidate resolved at all (e.g. no SSO configured) ⇒ treat
+ * the marker as still applicable rather than silently ignore a real problem.
+ */
+function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrls: Array<string | undefined>): boolean {
+  if (!marker.baseUrl) {
+    // Old/malformed marker with no key of its own — treat as matching rather than silently
+    // ignore a real problem it might still be reporting.
+    return true;
+  }
+  const known = candidateUrls.filter((u): u is string => Boolean(u));
+  if (known.length === 0) {
+    return true;
+  }
+  const normalizedMarkerUrl = normalizeUrlForKey(marker.baseUrl);
+  return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
+}
 
 /**
  * Cheap, local-only CodeMie SSO auth check.
@@ -62,7 +89,10 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
       }
     }
 
-    const authStatus = await getAnalyticsAuthStatus();
+    const rawAuthStatus = await getAnalyticsAuthStatus();
+    const authStatus = rawAuthStatus && markerAppliesToProfile(rawAuthStatus, [input.baseUrl, input.syncApiUrl, loginUrl])
+      ? rawAuthStatus
+      : null;
 
     if (hasValidAuth && !authStatus) {
       return { ok: true };

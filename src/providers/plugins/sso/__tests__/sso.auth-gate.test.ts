@@ -69,6 +69,28 @@ describe('ensureCodeMieSsoAuth', () => {
     expect(result.loginOutcome).toBe('started');
   });
 
+  it('ignores a marker written for a different profile (PR #655 review: marker not keyed by environment)', async () => {
+    // The marker's own baseUrl (PROD) matches neither this profile's syncApiUrl nor its ssoUrl
+    // (PREVIEW) — a redirect in PROD's proxy must not block or re-login a healthy PREVIEW session.
+    getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401', baseUrl: PROD } as never);
+
+    const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso', ssoUrl: PREVIEW, syncApiUrl: PREVIEW });
+
+    expect(result).toEqual({ ok: true });
+    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('still applies a marker with no baseUrl of its own (old format, never crashes)', async () => {
+    getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401' } as never); // no baseUrl field at all
+
+    const result = await ensureCodeMieSsoAuth(configured);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('rejected the stored credentials');
+  });
+
   it('blocks without starting a sign-in when the provider is SSO but no url is configured', async () => {
     const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso' });
 
