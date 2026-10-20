@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { link, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
@@ -98,13 +99,33 @@ async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
  * a plain `writeFile(path, data, { flag: 'wx' })` cannot guarantee: open and
  * write are separate syscalls, so another caller can read an empty file in
  * between, decide the lock is corrupt, and steal it from the real owner).
+ *
+ * The temp filename includes a `randomUUID()`, not just pid+timestamp: several requests
+ * redirected at once race into this same process's event loop, and `${pid}.${Date.now()}`
+ * alone collides when two such calls land in the same millisecond — the second `writeFile`
+ * overwrites the first caller's temp file, and the first caller's own `finally`-block `unlink`
+ * then deletes it out from under the second caller's still-pending `link()`.
+ *
+ * `link()` is not supported on every filesystem (observed: some network/SMB home directories,
+ * and Windows configurations without hard-link support) — EPERM/ENOTSUP/EXDEV there falls back
+ * to a plain exclusive-create write, which loses the "never observe partial content" guarantee
+ * above but keeps the lock usable where `link()` cannot be used at all.
  */
 async function tryCreateLock(lockPath: string): Promise<boolean> {
   const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
-  const tmpPath = `${lockPath}.${process.pid}.${Date.now()}.tmp`;
+  const tmpPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(tmpPath, JSON.stringify(lock));
-    await link(tmpPath, lockPath);
+    try {
+      await link(tmpPath, lockPath);
+    } catch (linkError) {
+      const code = (linkError as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EXDEV') {
+        await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
+      } else {
+        throw linkError;
+      }
+    }
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
