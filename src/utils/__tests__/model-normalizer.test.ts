@@ -30,6 +30,13 @@ describe('normalizeModelName', () => {
     );
   });
 
+  it('extracts the model from a bare Bedrock on-demand id with no region prefix (EPMCDME-15316)', () => {
+    // Through ai-run-sso, the background/small model comes back with no region segment at all.
+    expect(normalizeModelName('anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+  });
+
   it('strips the Kimi Code vendor prefix', () => {
     expect(normalizeModelName('kimi-code/kimi-for-coding')).toBe('kimi-for-coding');
     expect(normalizeModelName('kimi-code/kimi-k2')).toBe('kimi-k2');
