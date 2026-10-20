@@ -86,6 +86,25 @@ describe('startDetachedSsoLogin', () => {
     expect(spawnDetached).toHaveBeenCalledTimes(1);
   });
 
+  it('reports cooldown within 30s of a successful sign-in, even though its process has already exited (PR #655 review)', async () => {
+    // The sign-in child's own process has exited after succeeding (isProcessAlive => false),
+    // and its startedAt could be from well before the 30s window — succeededAt is the only
+    // signal that a login just completed and repeated redirects should be damped.
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('cooldown');
+    expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('starts a new sign-in once the post-success cooldown has elapsed', async () => {
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
   it('replaces a lock with a live pid older than 150s', async () => {
     await writeLock({ pid: 1, startedAt: Date.now() - 151_000 });
     vi.mocked(isProcessAlive).mockReturnValue(true);
@@ -151,12 +170,16 @@ describe('releaseLoginLockOnSuccess', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it('removes an owned lock', async () => {
-    await writeLock({ pid: process.pid, startedAt: Date.now() });
+  it('stamps an owned lock as succeeded rather than removing it (PR #655 review: damp repeated sign-ins)', async () => {
+    const startedAt = Date.now();
+    await writeLock({ pid: process.pid, startedAt });
 
     await releaseLoginLockOnSuccess();
 
-    expect(await exists(lockPath())).toBe(false);
+    expect(await exists(lockPath())).toBe(true);
+    const lock = JSON.parse(await readFile(lockPath(), 'utf-8'));
+    expect(lock).toMatchObject({ pid: process.pid, startedAt });
+    expect(lock.succeededAt).toBeTypeOf('number');
   });
 
   it('leaves a lock owned by another process untouched', async () => {

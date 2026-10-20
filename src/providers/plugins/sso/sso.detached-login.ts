@@ -22,6 +22,8 @@ const ORPHANED_TMP_MAX_AGE_MS = 60_000;
 interface LoginLock {
   pid: number;
   startedAt: number;
+  /** Epoch millis when this lock's own sign-in succeeded, if it has (see releaseLoginLockOnSuccess). */
+  succeededAt?: number;
 }
 
 function getLockPath(): string {
@@ -34,7 +36,11 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
     if (typeof lock?.pid !== 'number' || typeof lock.startedAt !== 'number') {
       return null;
     }
-    return { pid: lock.pid, startedAt: lock.startedAt };
+    return {
+      pid: lock.pid,
+      startedAt: lock.startedAt,
+      ...(typeof lock.succeededAt === 'number' && { succeededAt: lock.succeededAt }),
+    };
   } catch {
     return null;
   }
@@ -147,6 +153,14 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
 
     const existing = await readLock(lockPath);
     if (existing) {
+      // A successful sign-in's own process has already exited (isProcessAlive below is false),
+      // so without this check a burst of still-ongoing redirects (the session-sync/OTLP/model-
+      // catalogue gap this PR doesn't close, or any misconfiguration) would open a new browser
+      // window after every single one of them. Damp repeated sign-ins for a short cooldown
+      // after the most recent success instead (PR #655 review).
+      if (existing.succeededAt !== undefined && Date.now() - existing.succeededAt < COOLDOWN_MS) {
+        return 'cooldown';
+      }
       const age = Date.now() - existing.startedAt;
       if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
         return 'in-progress';
@@ -169,16 +183,21 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
 }
 
 /**
- * Called by the detached sign-in process after a successful sign-in, so the next
- * expiry can sign in immediately. Only the lock's owner removes it. After a
- * failure the lock is left in place and expires on its own (cooldown).
+ * Called by the detached sign-in process after a successful sign-in. Only the lock's owner may
+ * update it. Marks the lock as succeeded (stamping `succeededAt`) rather than removing it
+ * outright: a bare removal let every subsequent redirected response open a brand new browser
+ * sign-in immediately, so a burst of still-ongoing redirects (e.g. the other proxied-request
+ * consumers that don't yet pick up fresh credentials, or any other misconfiguration) opened the
+ * browser again after every single one of them (PR #655 review). `acquireLock` damps repeated
+ * sign-ins for `COOLDOWN_MS` after `succeededAt`; after that window the lock is treated as stale
+ * and replaced, so a genuinely NEW expiry later is never blocked for longer than one cooldown.
  */
 export async function releaseLoginLockOnSuccess(): Promise<void> {
   try {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
-      await removeLock(lockPath);
+      await writeFile(lockPath, JSON.stringify({ ...lock, succeededAt: Date.now() } satisfies LoginLock));
     }
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to release lock:', error);
@@ -188,7 +207,8 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
 /**
  * Start a browser SSO sign-in in a detached process without waiting for it.
  * A lock file prevents concurrent sign-ins and enforces a cooldown after a
- * failed attempt. Never throws.
+ * failed attempt — or after a successful one (see releaseLoginLockOnSuccess).
+ * Never throws.
  */
 export async function startDetachedSsoLogin(codeMieUrl: string): Promise<DetachedLoginOutcome> {
   const lockPath = getLockPath();
