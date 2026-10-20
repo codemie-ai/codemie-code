@@ -45,6 +45,15 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
   version = '1.0.0';
   priority = 11;
 
+  /**
+   * PR #655 review asked whether this should skip `startDetachedSsoLogin` when an API key is
+   * configured, the way `sso.auth-gate.ts`'s own `!input.apiKey` guard does for the
+   * `UserPromptSubmit` hook path. It cannot: `CodeMieProxy.start()` (sso.proxy.ts) resolves
+   * `authMethod` to exactly one of JWT or SSO once at daemon startup, mutually exclusively — an
+   * API-key/JWT profile's `PluginContext.credentials` never has a `cookies` key, so the guard
+   * below already makes this plugin a permanent no-op for it. There is no code path where this
+   * interceptor's `onUpstreamResponse` runs AND an API key is the active auth method.
+   */
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
     if (!context.credentials || !('cookies' in context.credentials)) {
       return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: JWT profiles unaffected
