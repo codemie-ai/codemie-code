@@ -1743,6 +1743,36 @@ describe('openSessionEnvCheckPass', () => {
     await check.finalize(true);
   });
 
+  it('PostModelSwitch clears the previous effort when the new model has no effort level', async () => {
+    const sessionId = 'session-env-model-switch-clears-effort';
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', {
+      ...sessionEnvFixture,
+      effort: 'high',
+    });
+    await startPass.finalize(true);
+
+    resolveSessionEnvFieldsMock.mockResolvedValue({
+      ...sessionEnvFixture,
+      configured_model: 'claude-sonnet-5',
+    });
+
+    const check = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: sessionEnvFixture.permission_mode,
+      full: {
+        cwd: '/repo',
+        configuredModel: 'claude-sonnet-5',
+        replaceEffort: true,
+      },
+    });
+
+    expect(check.sessionEnvFields).toMatchObject({
+      configured_model: 'claude-sonnet-5',
+      effort: '',
+    });
+    await check.finalize(true);
+  });
+
   it('full path: returns null when the full recompute matches the existing baseline exactly', async () => {
     const sessionId = 'session-env-full-unchanged';
     const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);

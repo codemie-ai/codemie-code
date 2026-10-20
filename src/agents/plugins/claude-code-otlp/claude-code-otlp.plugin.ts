@@ -309,7 +309,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const check = await openSessionEnvCheckPass(hookInput.session_id, {
       effort: hookInput.effort?.level ?? '',
       permissionMode: hookInput.permission_mode ?? '',
-      full: { cwd: hookInput.cwd, configuredModel: hookInput.to_model },
+      full: { cwd: hookInput.cwd, configuredModel: hookInput.to_model, replaceEffort: true },
     });
     if (!check.sessionEnvFields) {
       return { decision: 'forward', payload: [], finalize: check.finalize };

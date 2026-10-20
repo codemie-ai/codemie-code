@@ -408,6 +408,21 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(record['error']).toHaveLength(300);
     });
 
+    it('normalizes effort objects to their level and omits malformed values', async () => {
+      await run({
+        payload: [
+          { effort: { level: 'high' } },
+          { effort: { unsupported: true } },
+        ],
+      });
+
+      const [valid, malformed] = forwarded();
+      expect(valid['effort']).toBe('high');
+      expect((valid['raw'] as Record<string, unknown>)['effort']).toBe('high');
+      expect(malformed).not.toHaveProperty('effort');
+      expect(malformed).not.toHaveProperty('raw.effort');
+    });
+
     it('does not add truncated fields to events that lack them, and prompt_body is empty', async () => {
       await run({ payload: [{ a: 1 }] });
       const record = forwarded()[0];

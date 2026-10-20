@@ -159,6 +159,15 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /** Truncates the free-text fields; a nested `raw` is dropped so it cannot bypass the limits. */
   private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
     const limited: Record<string, unknown> = { ...hookEvent };
+    const effort = limited['effort'];
+    if (typeof effort === 'object' && effort !== null && !Array.isArray(effort)) {
+      const level: unknown = Reflect.get(effort, 'level');
+      if (typeof level === 'string') {
+        limited['effort'] = level;
+      } else {
+        delete limited['effort'];
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
       limited['prompt'] = this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS);
     }

@@ -617,8 +617,10 @@ export interface SessionEnvCheckInput {
    * re-read from disk/env when this is set. `configuredModel` is optional because
    * `ConfigChangeHookInput` doesn't carry a model at all; omitting it keeps whatever the last
    * snapshot already had (`PostModelSwitch`'s `to_model` always provides it explicitly).
+   * `replaceEffort` is set for `PostModelSwitch`: an empty effort then clears the previous value
+   * because the new model may not support effort. `ConfigChange` leaves it unset.
    */
-  full?: { cwd: string; configuredModel?: string };
+  full?: { cwd: string; configuredModel?: string; replaceEffort?: boolean };
 }
 
 export interface SessionEnvCheckResult {
@@ -640,7 +642,7 @@ async function computeSessionEnvUpdate(
   input: SessionEnvCheckInput
 ): Promise<SessionEnvFields | null> {
   const last = state.lastSessionEnvFields;
-  const full = input.full ?? (!last && input.cwd ? { cwd: input.cwd } : undefined);
+  const full = input.full ?? (!last && input.cwd ? { cwd: input.cwd, replaceEffort: false } : undefined);
   if (!last && !full) {
     return null;
   }
@@ -651,7 +653,7 @@ async function computeSessionEnvUpdate(
     const resolved = await resolveSessionEnvFields(full.cwd, configuredModel, input.permissionMode);
     candidate = {
       ...resolved,
-      effort: input.effort || last?.effort || '',
+      effort: full.replaceEffort ? input.effort : input.effort || last?.effort || '',
       permission_mode: input.permissionMode || last?.permission_mode || '',
     };
   } else {
