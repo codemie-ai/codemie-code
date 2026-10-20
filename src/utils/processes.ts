@@ -417,6 +417,10 @@ export async function npxRun(
  */
 function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   const withoutGitSuffix = remoteUrl.replace(/[?#].*$/, '').replace(/\.git$/i, '');
+  // The userinfo group `[^@/]+@` stops at the first unencoded '@' or '/'. Git requires those to
+  // be percent-encoded in a URL, but if a caller's password contains one anyway, part of the
+  // password (everything after that character) ends up read as host/path instead of being
+  // dropped, e.g. "https://user:p@ss@host/org/repo" -> "ss@host/org/repo" rather than "org/repo".
   const urlMatch = withoutGitSuffix.match(/^(\w+):\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
   // SSH scp-style remotes come in two shapes: "user@host:path" and, for an `ssh_config` Host
   // alias with no explicit user (e.g. "github-work:org/repo.git"), bare "host:path". The alias
