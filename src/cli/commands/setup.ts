@@ -835,6 +835,13 @@ async function promptForManualOrSearchModel(
       : [];
     if (asked && picked.length > 0 && uncovered.length === 0) break;
 
+    // Say why we are asking again; the first prompt needs no explanation.
+    if (asked && uncovered.length > 0) {
+      console.log(chalk.yellow(
+        `✗ No entered model works with ${formatHarnessList(uncovered)}. Every selected agent needs at least one model.`
+      ));
+    }
+
     const targets = uncovered.length > 0 ? uncovered : harnessCtx?.harnesses;
     const defaultModel = harnessCtx && targets
       ? recommended.find(m => compatibleHarnesses(targets, m, opts).length > 0)

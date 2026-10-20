@@ -472,6 +472,21 @@ describe('handlePluginSetup (harness-compatible models, EPMCDME-15641)', () => {
     expect(output).toContain('offers no model that works with "claude"');
   });
 
+  it('explains why the manual model prompt repeats while an agent is still uncovered', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    promptMock
+      .mockResolvedValueOnce({ harnesses: ['claude', 'codex'] })
+      .mockResolvedValueOnce({ manualModel: 'claude-sonnet-4' })
+      .mockResolvedValueOnce({ manualModel: 'gpt-5.4' })
+      .mockResolvedValueOnce({ activeModel: 'gpt-5.4' });
+
+    await handlePluginSetup('test-provider', baseSteps([]), 'p', true, 'global');
+
+    const output = log.mock.calls.flat().join('\n');
+    expect(output).toContain('No entered model works with "codex"');
+    expect(output.match(/No entered model works with/g)).toHaveLength(1);
+  });
+
   it('tells the user which agents have no model rules before the agent step', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     promptMock
