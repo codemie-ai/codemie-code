@@ -53,7 +53,23 @@ class SSOAuthInterceptor implements ProxyInterceptor {
     this.current = initialCredentials;
   }
 
+  /**
+   * Skip the disk/keychain re-read while the currently-held credential is still known-fresh
+   * (`expiresAt` in the future): a long multi-turn session would otherwise pay an OS-keychain
+   * IPC call plus a file read/decrypt on every single proxied request. Once the credential is
+   * at/past its own expiry — or its freshness is unknown (`expiresAt` undefined) — re-read on
+   * every request, same as before this guard, so a successful browser re-login still takes
+   * effect immediately without a daemon restart (EPMCDME-15316).
+   */
+  private isKnownFresh(): boolean {
+    const expiresAt = this.current.expiresAt;
+    return expiresAt !== undefined && Date.now() < expiresAt;
+  }
+
   private async refreshCredentials(): Promise<void> {
+    if (this.isKnownFresh()) {
+      return;
+    }
     try {
       const stored = await getStoredPlatformCredentials({
         provider: this.config.provider,

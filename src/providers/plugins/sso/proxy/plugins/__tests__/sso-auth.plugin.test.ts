@@ -98,13 +98,16 @@ describe('SSOAuthPlugin', () => {
 
   it('keeps using the last known-good credentials when a refresh attempt throws', async () => {
     vi.mocked(getStoredPlatformCredentials).mockRejectedValue(new Error('disk read failed'));
+    // expiresAt in the past: a fresh (not-yet-expired) credential would skip the re-read
+    // entirely, so this must be expired to actually exercise the throwing refresh path.
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
-      createPluginContext({ cookies: { session: 'startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000 })
+      createPluginContext({ cookies: { session: 'startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() - 1000 })
     );
     const context = createProxyContext();
 
     await interceptor.onRequest!(context);
 
+    expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(1);
     expect(context.headers['cookie']).toBe('session=startup-value');
   });
 
