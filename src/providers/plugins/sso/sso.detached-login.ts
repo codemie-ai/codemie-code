@@ -152,15 +152,18 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
     }
 
     const existing = await readLock(lockPath);
-    if (existing) {
-      // A successful sign-in's own process has already exited (isProcessAlive below is false),
-      // so without this check a burst of still-ongoing redirects (the session-sync/OTLP/model-
-      // catalogue gap this PR doesn't close, or any misconfiguration) would open a new browser
-      // window after every single one of them. Damp repeated sign-ins for a short cooldown
-      // after the most recent success instead (PR #655 review).
-      if (existing.succeededAt !== undefined && Date.now() - existing.succeededAt < COOLDOWN_MS) {
+    if (existing?.succeededAt !== undefined) {
+      // This attempt already resolved (succeeded) — never fall into the isProcessAlive/
+      // LOCK_MAX_AGE_MS branch below, which is for an UNRESOLVED attempt only. Without this
+      // split, a succeeded sign-in whose process lingers past COOLDOWN_MS but still within
+      // LOCK_MAX_AGE_MS (150s) would be misread as "still in progress", extending the intended
+      // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
+      // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
+      if (Date.now() - existing.succeededAt < COOLDOWN_MS) {
         return 'cooldown';
       }
+      // Cooldown elapsed: fall through to the stale/corrupt replace path below.
+    } else if (existing) {
       const age = Date.now() - existing.startedAt;
       if (age < LOCK_MAX_AGE_MS && isProcessAlive(existing.pid)) {
         return 'in-progress';

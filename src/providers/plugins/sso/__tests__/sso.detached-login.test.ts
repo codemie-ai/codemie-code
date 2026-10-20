@@ -105,6 +105,18 @@ describe('startDetachedSsoLogin', () => {
     expect(spawnDetached).toHaveBeenCalledTimes(1);
   });
 
+  it('starts a new sign-in once the cooldown elapses even if the succeeded process is still lingering (caught by blind review)', async () => {
+    // A succeeded lock's own age (startedAt) and live pid must NOT fall through to the
+    // isProcessAlive/LOCK_MAX_AGE_MS "in-progress" branch — that branch is for an unresolved
+    // attempt, not a succeeded-but-slow-to-exit one. Without that split, this would wrongly
+    // report 'in-progress' for up to 150s instead of releasing after the 30s cooldown.
+    vi.mocked(isProcessAlive).mockReturnValue(true); // the succeeded process hasn't exited yet
+    await writeLock({ pid: 1, startedAt: Date.now() - 40_000, succeededAt: Date.now() - 31_000 });
+
+    expect(await startDetachedSsoLogin(URL_)).toBe('started');
+    expect(spawnDetached).toHaveBeenCalledTimes(1);
+  });
+
   it('replaces a lock with a live pid older than 150s', async () => {
     await writeLock({ pid: 1, startedAt: Date.now() - 151_000 });
     vi.mocked(isProcessAlive).mockReturnValue(true);
