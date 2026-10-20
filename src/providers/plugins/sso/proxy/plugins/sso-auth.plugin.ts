@@ -13,6 +13,12 @@ import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
 import { getStoredPlatformCredentials } from '../../../../core/codemie-auth-helpers.js';
 
+/**
+ * Minimum time between stored-credential re-reads. See SSOAuthInterceptor.isThrottled for why
+ * this is a flat time window rather than gated on the credential's own `expiresAt`.
+ */
+const CREDENTIAL_REFRESH_INTERVAL_MS = 5000;
+
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
   name = 'SSO Authentication';
@@ -48,28 +54,36 @@ class SSOAuthInterceptor implements ProxyInterceptor {
    * effect without restarting the daemon (EPMCDME-15316).
    */
   private current: SSOCredentials;
+  private lastRefreshedAt = 0;
 
   constructor(initialCredentials: SSOCredentials, private readonly config: ProxyConfig) {
     this.current = initialCredentials;
   }
 
   /**
-   * Skip the disk/keychain re-read while the currently-held credential is still known-fresh
-   * (`expiresAt` in the future): a long multi-turn session would otherwise pay an OS-keychain
-   * IPC call plus a file read/decrypt on every single proxied request. Once the credential is
-   * at/past its own expiry — or its freshness is unknown (`expiresAt` undefined) — re-read on
-   * every request, same as before this guard, so a successful browser re-login still takes
-   * effect immediately without a daemon restart (EPMCDME-15316).
+   * Throttle the disk/keychain re-read to once per CREDENTIAL_REFRESH_INTERVAL_MS, rather than
+   * once per request: a long multi-turn session would otherwise pay an OS-keychain IPC call plus
+   * a file read/decrypt on every single proxied request.
+   *
+   * Deliberately NOT gated on `this.current.expiresAt` being in the future: SSOSessionExpiryPlugin
+   * (sso-session-expiry.plugin.ts) acts on the oauth2-proxy redirect signature ALONE, because a
+   * server-side session revoke does not change the local JWT's own `exp` claim — that plugin's own
+   * header comment calls this out as the primary real-world trigger. An expiresAt-based skip would
+   * treat a revoked-but-not-yet-expired credential as "fresh" forever and never pick up the fresh
+   * cookies a revoke-triggered re-login writes to disk, reopening the very "stuck until daemon
+   * restart" bug this interceptor exists to fix. The TTL is safe against that same scenario because
+   * a real browser re-login takes far longer than CREDENTIAL_REFRESH_INTERVAL_MS to complete, so by
+   * the time it does, the next proxied request is guaranteed to re-read.
    */
-  private isKnownFresh(): boolean {
-    const expiresAt = this.current.expiresAt;
-    return expiresAt !== undefined && Date.now() < expiresAt;
+  private isThrottled(): boolean {
+    return Date.now() - this.lastRefreshedAt < CREDENTIAL_REFRESH_INTERVAL_MS;
   }
 
   private async refreshCredentials(): Promise<void> {
-    if (this.isKnownFresh()) {
+    if (this.isThrottled()) {
       return;
     }
+    this.lastRefreshedAt = Date.now();
     try {
       const stored = await getStoredPlatformCredentials({
         provider: this.config.provider,

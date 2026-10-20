@@ -65,11 +65,18 @@ describe('SSOAuthPlugin', () => {
     expect(context.headers['cookie']).toBe('session=startup-value');
   });
 
-  it('re-reads credentials from the store on each request, picking up a fresh re-login without a daemon restart', async () => {
+  it('re-reads credentials from the store once the refresh throttle window elapses, picking up a fresh re-login without a daemon restart', async () => {
     // Regression test for the retry-loop bug (EPMCDME-15316): a successful
     // browser re-login writes fresh cookies to disk, but the interceptor was
     // injecting the stale startup-time snapshot forever, so every subsequent
     // request kept getting redirected and kept re-triggering the login flow.
+    // The re-read is throttled (CREDENTIAL_REFRESH_INTERVAL_MS in sso-auth.plugin.ts)
+    // rather than gated on the credential's own `expiresAt` — a server-side revoke
+    // does not change the local JWT's exp, so an expiresAt-based skip would never
+    // pick up this re-login's fresh cookies. Advance real time past the throttle
+    // window between requests to exercise that re-read, matching how a real
+    // browser re-login (which takes far longer than the throttle window) plays out.
+    vi.useFakeTimers();
     vi.mocked(getStoredPlatformCredentials)
       .mockResolvedValueOnce(null) // first request: no fresher credentials yet
       .mockResolvedValueOnce({     // second request: the browser login just completed
@@ -77,12 +84,14 @@ describe('SSOAuthPlugin', () => {
         url: TARGET_API_URL,
       });
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
-      createPluginContext({ cookies: { session: 'stale-startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() - 1000 })
+      createPluginContext({ cookies: { session: 'stale-startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000 })
     );
 
     const first = createProxyContext();
     await interceptor.onRequest!(first);
     expect(first.headers['cookie']).toBe('session=stale-startup-value');
+
+    vi.advanceTimersByTime(6000); // past CREDENTIAL_REFRESH_INTERVAL_MS (5000ms)
 
     const second = createProxyContext();
     await interceptor.onRequest!(second);
@@ -94,14 +103,25 @@ describe('SSOAuthPlugin', () => {
       baseUrl: TARGET_API_URL,
       codeMieUrl: undefined,
     });
+    vi.useRealTimers();
+  });
+
+  it('does not re-read credentials from the store on a second request within the throttle window', async () => {
+    vi.mocked(getStoredPlatformCredentials).mockResolvedValue(null);
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: { session: 'startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000 })
+    );
+
+    await interceptor.onRequest!(createProxyContext());
+    await interceptor.onRequest!(createProxyContext());
+
+    expect(getStoredPlatformCredentials).toHaveBeenCalledTimes(1);
   });
 
   it('keeps using the last known-good credentials when a refresh attempt throws', async () => {
     vi.mocked(getStoredPlatformCredentials).mockRejectedValue(new Error('disk read failed'));
-    // expiresAt in the past: a fresh (not-yet-expired) credential would skip the re-read
-    // entirely, so this must be expired to actually exercise the throwing refresh path.
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(
-      createPluginContext({ cookies: { session: 'startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() - 1000 })
+      createPluginContext({ cookies: { session: 'startup-value' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000 })
     );
     const context = createProxyContext();
 
