@@ -143,14 +143,19 @@ function computeReportedObservedEnd(ordered: ParsedEntry[]): Map<string, number>
 }
 
 /**
- * Max `ts` among a session's own timed usage records — used as a floor for `observedEnd` so
- * the dedup window can never exclude the session's own usage. Only the agent families whose
- * `gatherUsageDeduped`/`gatherDedupedUsageRecords` paths apply `windowEnd` need this; others
- * return undefined (no window ever filters them). Side-effect free: calls the pure `extract*`
- * readers directly rather than `gatherUsageDeduped`/`gatherDedupedUsageRecords`, which consume
- * cross-session dedup keys from the shared `seen` set.
+ * Max `ts` among a session's own timed usage records, below `upperBoundExclusive` when given —
+ * used as a floor for `observedEnd` so the dedup window can never exclude the session's own
+ * usage. `upperBoundExclusive` is the next sibling's `startTime` when this session shares its
+ * native log file with a later one: without that clamp, a record that physically belongs to the
+ * LATER session (same shared/appended file) would otherwise raise THIS session's floor past it,
+ * reopening the cross-session-theft bug this `observedEnd`-windowing exists to prevent (Root
+ * Cause A). Only the agent families whose `gatherUsageDeduped`/`gatherDedupedUsageRecords` paths
+ * apply `windowEnd` need this; others return undefined (no window ever filters them).
+ * Side-effect free: calls the pure `extract*` readers directly rather than
+ * `gatherUsageDeduped`/`gatherDedupedUsageRecords`, which consume cross-session dedup keys from
+ * the shared `seen` set.
  */
-function maxOwnRecordTs(agentName: string, parsed: ParsedSession): number | undefined {
+function maxOwnRecordTs(agentName: string, parsed: ParsedSession, upperBoundExclusive?: number): number | undefined {
   const a = agentName.toLowerCase();
   let records: UsageRecord[];
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
@@ -164,9 +169,55 @@ function maxOwnRecordTs(agentName: string, parsed: ParsedSession): number | unde
   }
   let max: number | undefined;
   for (const r of records) {
-    if (r.ts !== null && (max === undefined || r.ts > max)) max = r.ts;
+    if (r.ts === null) continue;
+    if (upperBoundExclusive !== undefined && r.ts >= upperBoundExclusive) continue;
+    if (max === undefined || r.ts > max) max = r.ts;
   }
   return max;
+}
+
+/**
+ * Next sibling's `startTime` for every entry that shares its native log file with at least one
+ * other session (`ordered` must already be startTime-sorted). Absent for a session with no
+ * shared-file sibling after it (not shared at all, or last/open in its group) — the floor in
+ * {@link maxOwnRecordTs} is then unbounded, which is safe precisely because there is no later
+ * session in the same file left to protect.
+ */
+function computeNextSiblingStart(ordered: ParsedEntry[]): Map<string, number> {
+  const nextSiblingStart = new Map<string, number>();
+  const byFilePath = new Map<string, ParsedEntry[]>();
+  for (const entry of ordered) {
+    if (!entry.filePath) continue;
+    const group = byFilePath.get(entry.filePath);
+    if (group) group.push(entry);
+    else byFilePath.set(entry.filePath, [entry]);
+  }
+  for (const group of byFilePath.values()) {
+    if (group.length < 2) continue;
+    group.forEach((entry, i) => {
+      const next = group[i + 1];
+      if (next) nextSiblingStart.set(entry.sessionId, next.startTime);
+    });
+  }
+  return nextSiblingStart;
+}
+
+/**
+ * This session's own `observedEnd`, floored at its own latest usage-record timestamp (clamped
+ * to stay before a shared-file sibling's `startTime`, if any — see {@link maxOwnRecordTs}).
+ * The hook-tracked `raw.endEvent.data.endTime` is a wall-clock stamp
+ * (`SessionStore.updateSessionStatus`, `Date.now()` when the Stop hook fires) that can land
+ * slightly BEFORE the session's own native transcript finishes writing its last message; this
+ * floor stops `withinWindow` (usage-readers.ts) from dropping that session's own usage over the
+ * race. Only applied when the session already has its own `observedEnd` — a session with none
+ * keeps today's "no filtering" behavior unchanged (see Root Cause A's design notes).
+ */
+function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefined): number | undefined {
+  if (entry.observedEnd === undefined) {
+    return undefined;
+  }
+  const floor = entry.parsed ? maxOwnRecordTs(entry.agentName, entry.parsed, nextSiblingStart) : undefined;
+  return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
 }
 
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
@@ -177,21 +228,12 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const capture = raw[INTERNAL_PARSED_FAMILY];
   const parsed = capture?.parsed
     ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
-  // The hook-tracked endEvent.data.endTime is a wall-clock stamp (SessionStore.updateSessionStatus,
-  // Date.now() when the Stop hook fires) and can land slightly BEFORE the session's own native
-  // transcript finishes writing its last message. Floor it at the session's own latest usage-
-  // record timestamp so withinWindow (usage-readers.ts) never drops a session's own usage.
-  const rawEndTime = Number.isFinite(raw.endEvent?.data?.endTime) ? raw.endEvent!.data.endTime : undefined;
-  const ownMaxTs = parsed ? maxOwnRecordTs(agentName, parsed) : undefined;
-  const observedEnd = rawEndTime === undefined ? ownMaxTs
-    : ownMaxTs === undefined ? rawEndTime
-    : Math.max(rawEndTime, ownMaxTs);
   return {
     sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
     ...(capture && Number.isFinite(capture.capturedAt) && { capturedAt: capture.capturedAt }),
     ...(capture && Number.isFinite(raw.startEvent?.data?.startTime) && { observedStart: raw.startEvent!.data.startTime }),
-    ...(observedEnd !== undefined && { observedEnd }),
+    ...(Number.isFinite(raw.endEvent?.data?.endTime) && { observedEnd: raw.endEvent!.data.endTime }),
   };
 }
 
@@ -485,6 +527,7 @@ export async function enrichCosts(
   const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
   const seen = new Set<string>();
   const reportedObservedEnd = computeReportedObservedEnd(ordered);
+  const nextSiblingStart = computeNextSiblingStart(ordered);
 
   const index: SessionCostIndex = new Map();
   const unpriced = new Set<string>();
@@ -497,6 +540,9 @@ export async function enrichCosts(
     let usageByModel: Map<string, TokenUsage>;
     let series: CostSeriesPoint[] = [];
     let records: UsageRecord[] = [];
+    // Dedup window bound: this session's own observedEnd, floored at its own latest usage-record
+    // timestamp (clamped before any shared-file sibling's startTime) — see floorObservedEnd.
+    const windowEnd = floorObservedEnd(entry, nextSiblingStart.get(entry.sessionId));
     try {
       // Gather ordered, deduped records ONCE per session (consumes keys in `seen`). When there
       // are records (Claude per-message path) sum them for the map + build the series from the
@@ -504,7 +550,7 @@ export async function enrichCosts(
       // fallback runs only when there are no records (SDK rollup / gemini / no-reader), paths
       // that never touch `seen`, so there is no double-dedup. The same `records` are reused
       // below to attribute cost to `skill` dispatches within their time window.
-      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, entry.observedEnd) : [];
+      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen, windowEnd) : [];
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
@@ -517,7 +563,7 @@ export async function enrichCosts(
           }
         }
       } else {
-        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, entry.observedEnd) : new Map<string, TokenUsage>();
+        usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen, windowEnd) : new Map<string, TokenUsage>();
       }
     } catch (e) {
       // One malformed log must not abort the whole report — degrade to "no usage" for this
