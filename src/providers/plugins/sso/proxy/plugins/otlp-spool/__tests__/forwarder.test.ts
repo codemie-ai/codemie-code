@@ -129,6 +129,32 @@ describe('forwardSession (hooks)', () => {
     expect(areCredentialsStale()).toBe(true);
   });
 
+  it('treats repeated 302 login redirects as expired credentials without following them', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 302 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(true);
+  });
+
+  it('leaves a 301 redirect pending without marking credentials stale', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 301 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(false);
+  });
+
   it('leaves the cursor untouched on a non-auth failure', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500 });
     const { forwardSession } = await import('../forwarder.js');
