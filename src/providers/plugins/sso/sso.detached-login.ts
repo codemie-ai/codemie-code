@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { link, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { link, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
@@ -10,6 +10,13 @@ export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'fai
 const LOCK_MAX_AGE_MS = 150_000;
 const COOLDOWN_MS = 30_000;
 const UNREADABLE_LOCK_GRACE_MS = 5_000;
+/**
+ * Minimum age before `sweepOrphanedTmpFiles` removes a `tryCreateLock` tmp file. Far longer
+ * than a `writeFile`+`link` pair ever takes, so a tmp file from an in-flight call elsewhere is
+ * never touched — only one orphaned by a crash between `link()` succeeding and its own
+ * `finally`-block `unlink()` running gets swept.
+ */
+const ORPHANED_TMP_MAX_AGE_MS = 60_000;
 
 interface LoginLock {
   pid: number;
@@ -54,6 +61,36 @@ async function removeLock(lockPath: string): Promise<void> {
 }
 
 /**
+ * Best-effort cleanup of `<lockPath>.<pid>.<ts>.tmp` files left behind by a `tryCreateLock` call
+ * that crashed (killed process, OOM) between `link()` publishing the lock and its own `finally`
+ * block's `unlink()` running — the only way such a tmp file can outlive its own call. Only
+ * removes files older than `ORPHANED_TMP_MAX_AGE_MS` so an in-flight call's own tmp file, on
+ * another process, is never touched.
+ */
+async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
+  try {
+    const dir = dirname(lockPath);
+    const prefix = `${basename(lockPath)}.`;
+    for (const entry of await readdir(dir)) {
+      if (!entry.startsWith(prefix) || !entry.endsWith('.tmp')) {
+        continue;
+      }
+      const tmpPath = join(dir, entry);
+      try {
+        const { mtimeMs } = await stat(tmpPath);
+        if (Date.now() - mtimeMs > ORPHANED_TMP_MAX_AGE_MS) {
+          await unlink(tmpPath).catch(() => {});
+        }
+      } catch {
+        // Already gone or unreadable — ignore.
+      }
+    }
+  } catch (error) {
+    logger.debug('[sso-detached-login] Failed to sweep orphaned lock tmp files:', error);
+  }
+}
+
+/**
  * Atomically creates the lock; returns false if it already exists.
  * Writes the full content to a private temp file first, then publishes it
  * with `link` (fails EEXIST like `wx`, but atomically — a concurrent reader
@@ -81,6 +118,7 @@ async function tryCreateLock(lockPath: string): Promise<boolean> {
 
 /** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
 async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | null> {
+  await sweepOrphanedTmpFiles(lockPath);
   try {
     if (await tryCreateLock(lockPath)) {
       return null;
