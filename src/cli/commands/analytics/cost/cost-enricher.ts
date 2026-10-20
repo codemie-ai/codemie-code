@@ -558,7 +558,7 @@ export async function enrichCosts(
         // parent's per-turn records (parent transcript only). Fold them into the session total
         // here so sub-agent spend is counted; the per-turn series stays parent-only by design.
         if (entry.parsed && isCodexFamilyAgent(entry.agentName)) {
-          for (const [model, usage] of readCodexSubagentUsage(entry.parsed)) {
+          for (const [model, usage] of readCodexSubagentUsage(entry.parsed, windowEnd)) {
             usageByModel.set(model, usageByModel.has(model) ? addUsage(usageByModel.get(model)!, usage) : usage);
           }
         }

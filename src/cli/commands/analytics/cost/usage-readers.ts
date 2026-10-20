@@ -555,14 +555,27 @@ function readCodex(parsed: ParsedSession): UsageMap {
  * per-turn records ({@link extractCodexUsageRecords}); this returns just the linked child rollouts
  * so callers on the per-turn path can fold sub-agent spend into the session/run total without
  * touching the parent-only series.
+ *
+ * `windowEnd`, when given, excludes a sub-agent rollout line timestamped after it before taking
+ * the "last" `total_token_usage` — the same bound {@link extractCodexUsageRecords}'s caller
+ * applies to the parent transcript, kept consistent here even though sub-agent rollout files are
+ * linked to one parent dispatch (via `toolUseId` within that session's own parse) and are not
+ * currently known to be shared across sessions the way a resumed top-level log is.
  */
-export function readCodexSubagentUsage(parsed: ParsedSession): UsageMap {
+export function readCodexSubagentUsage(parsed: ParsedSession, windowEnd?: number): UsageMap {
   const out: UsageMap = new Map();
   for (const sub of parsed.subagents ?? []) {
     if (!Array.isArray(sub.messages)) {
       continue;
     }
-    const subParsed = { ...parsed, messages: sub.messages, subagents: undefined } as ParsedSession;
+    const messages = windowEnd === undefined
+      ? sub.messages
+      : sub.messages.filter((m) => {
+          const line = m as CodexRolloutLine;
+          const ts = line.timestamp ? Date.parse(line.timestamp) : NaN;
+          return !Number.isFinite(ts) || ts <= windowEnd;
+        });
+    const subParsed = { ...parsed, messages, subagents: undefined } as ParsedSession;
     for (const [model, usage] of readCodex(subParsed)) {
       accumulate(out, model, usage);
     }
