@@ -944,6 +944,10 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
     expect(forwarded.type).toBe('agent.skill.dispatch');
     expect(forwarded.skill_name).toBe('superpowers:brainstorming');
     expect(forwarded.command_name).toBe('superpowers:brainstorming');
+    expect(forwarded).not.toHaveProperty('command_args');
+    expect(forwarded).not.toHaveProperty('prompt');
+    expect(forwarded.raw).not.toHaveProperty('command_args');
+    expect(forwarded.raw).not.toHaveProperty('prompt');
   });
 
   it('also copies command_name into skill_name for an mcp_prompt expansion (no expansion_type gating)', async () => {

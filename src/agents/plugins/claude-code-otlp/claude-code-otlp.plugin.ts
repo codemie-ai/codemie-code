@@ -279,7 +279,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onUserPromptExpansion(hookInput: UserPromptExpansionHookInput): Promise<ClaudeForwardDecision> {
-    return { decision: 'forward', payload: [{ ...hookInput, skill_name: hookInput.command_name }] };
+    return {
+      decision: 'forward',
+      payload: [{
+        session_id: hookInput.session_id,
+        hook_event_name: hookInput.hook_event_name,
+        expansion_type: hookInput.expansion_type,
+        command_name: hookInput.command_name,
+        command_source: hookInput.command_source,
+        skill_name: hookInput.command_name,
+      }],
+    };
   }
 
   /**
