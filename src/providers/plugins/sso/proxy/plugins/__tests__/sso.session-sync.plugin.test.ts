@@ -26,6 +26,13 @@ vi.mock('../../../session/SessionSyncer.js', () => ({
   SessionSyncer: SessionSyncerMock
 }));
 
+// CredentialRefresher (shared with sso-auth.plugin.ts) re-reads stored credentials from disk/
+// keychain — mock it out so this suite stays pure unit (no real I/O, no fake-timer interaction
+// with a real pending promise). Defaults to "no fresher credentials found" (null), same as the
+// production fallback; individual tests may override to simulate a picked-up re-login.
+const { getStoredPlatformCredentials } = vi.hoisted(() => ({ getStoredPlatformCredentials: vi.fn() }));
+vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCredentials }));
+
 // Imported after vi.mock is declared (hoisted anyway).
 import { SSOSessionSyncPlugin } from '../sso.session-sync.plugin.js';
 
@@ -79,6 +86,8 @@ describe('SSOSessionSyncPlugin', () => {
       processorResults: {},
       failedProcessors: []
     });
+    getStoredPlatformCredentials.mockReset();
+    getStoredPlatformCredentials.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -157,6 +166,30 @@ describe('SSOSessionSyncPlugin', () => {
       });
       const interceptor = await plugin.createInterceptor(ctx);
       expect(interceptor.name).toBe('sso-session-sync');
+    });
+  });
+
+  describe('credential refresh (PR #655 review: picks up a re-login, not just the LLM-request path)', () => {
+    it('rebuilds the cookie header from a freshly re-read credential before each sync tick', async () => {
+      vi.useFakeTimers();
+      // First tick: no fresher credentials found yet — keeps the startup-snapshot cookie.
+      getStoredPlatformCredentials.mockResolvedValueOnce(null);
+      const interceptor = await plugin.createInterceptor(buildContext());
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=cookie-value' });
+
+      // A browser re-login completed between ticks — the throttle window (5s) has long since
+      // elapsed by the next 120s tick, so the next sync must pick up the fresh cookie.
+      getStoredPlatformCredentials.mockResolvedValueOnce({
+        credentials: { cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' },
+        url: 'https://api.example.com',
+      });
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[1][1]).toMatchObject({ cookies: 'auth=fresh-after-relogin' });
+
+      await interceptor.onProxyStop?.();
     });
   });
 
