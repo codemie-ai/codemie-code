@@ -412,15 +412,102 @@ export async function npxRun(
  * Works with GitHub, GitLab, Bitbucket, and self-hosted instances.
  *
  * @param cwd - Working directory path
- * @returns Repository in "owner/repo" format, or undefined if no remote is configured
+ * @returns Repository in lower-cased "owner/repo" format, or undefined if no remote is configured
  */
+function parseGitRemoteUrl(remoteUrl: string): string | undefined {
+  const withoutGitSuffix = remoteUrl.replace(/[?#].*$/, '').replace(/\.git$/, '');
+  const urlMatch = withoutGitSuffix.match(/^(\w+):\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
+  const scpMatch = withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/);
+  const match = urlMatch ?? scpMatch;
+
+  // A scheme:// or user@host: remote that did not match above (e.g. no repository path) is not
+  // a filesystem path. Falling through to the bare-filesystem handling below would split its
+  // userinfo/host into the result and leak credentials; bail out instead. `file://` is exempt
+  // since it carries no credentials.
+  if (
+    !match &&
+    (/^(?!file:)\w+:\/\//i.test(withoutGitSuffix) || /^[^/@\\]+@[^:/]+:/.test(withoutGitSuffix))
+  ) {
+    return undefined;
+  }
+
+  // Bare filesystem remote (e.g. "/home/user/repo.git", "../repo.git"): neither the
+  // scheme:// form nor the scp-style user@host: form applies, so there is no host and the
+  // whole (suffix-stripped) string is the path to split on.
+  const [scheme, host, path]: Array<string | undefined> = urlMatch
+    ? [urlMatch[1], urlMatch[2], urlMatch[3]]
+    : scpMatch
+      ? [undefined, scpMatch[1], scpMatch[2]]
+      : [undefined, undefined, withoutGitSuffix];
+  const hostname = host?.replace(/:\d+$/, '').toLowerCase();
+
+  const segments = (path as string)
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        const decoded = decodeURIComponent(segment);
+        // A decoded control character (e.g. %0D%0A, %00) would break a downstream HTTP header
+        // or break argv as a NUL; keep the raw, still-encoded segment instead.
+        const hasControlChar = Array.from(decoded).some((char) => {
+          const code = char.codePointAt(0) ?? 0;
+          return code <= 0x1f || code === 0x7f;
+        });
+        return hasControlChar ? segment : decoded;
+      } catch {
+        // Malformed %-escape: degrade to the raw segment rather than discarding the parse.
+        return segment;
+      }
+    });
+
+  const isAzureDevOps = hostname === 'dev.azure.com' || hostname === 'ssh.dev.azure.com';
+  const isLegacyVsSsh = hostname === 'vs-ssh.visualstudio.com';
+  const isLegacyVsHttps =
+    !!hostname && hostname.endsWith('.visualstudio.com') && !isLegacyVsSsh;
+
+  let result: string[];
+  if (isAzureDevOps || isLegacyVsSsh) {
+    result = segments.filter((segment, index) => segment !== '_git' && !(index === 0 && segment === 'v3'));
+  } else if (isLegacyVsHttps) {
+    // Organization lives in the hostname (org.visualstudio.com); casing is normalised by the final lower-casing.
+    const org = (host as string).replace(/:\d+$/, '').split('.')[0];
+    const rest = segments.filter(
+      (segment, index) =>
+        segment !== '_git' && !(index === 0 && segment.toLowerCase() === 'defaultcollection')
+    );
+    if (rest.length === 0) return undefined;
+    result = [org, ...rest];
+  } else if (
+    segments.length >= 3 &&
+    segments[0] === 'scm' &&
+    (scheme?.toLowerCase() === 'http' || scheme?.toLowerCase() === 'https')
+  ) {
+    // Bitbucket Server/DC HTTPS clone URLs prefix the path with "scm/".
+    result = segments.slice(1);
+  } else {
+    result = segments;
+  }
+
+  // Bitbucket personal repositories use "~user" as the project key.
+  if (result.length > 0 && result[0].length > 1 && result[0].startsWith('~')) {
+    result = [result[0].slice(1), ...result.slice(1)];
+  }
+
+  // A lone "~" with nothing else is not a useful repository name.
+  if (result.length === 1 && result[0] === '~') return undefined;
+
+  if (result.length === 0) return undefined;
+
+  // Best-effort fallback for the bare-filesystem shape: restore the prior behavior of
+  // using only the last two path segments (owner/repo), rather than the full path.
+  const joined = match ? result.join('/') : result.slice(-2).join('/');
+  return joined ? joined.toLowerCase() : undefined;
+}
+
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
   try {
     const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
-    const remoteUrl = stdout.trim();
-    const match = remoteUrl.match(/[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
-    if (match) return `${match[1]}/${match[2]}`;
-    return undefined;
+    return parseGitRemoteUrl(stdout.trim());
   } catch {
     return undefined;
   }
