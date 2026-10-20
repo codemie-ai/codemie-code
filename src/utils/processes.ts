@@ -407,17 +407,25 @@ export async function npxRun(
 // ============================================================================
 
 /**
- * Detect canonical repository identifier from git remote origin URL.
- * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
- * Works with GitHub, GitLab, Bitbucket, and self-hosted instances.
+ * Parse a git remote origin URL into a canonical, lower-cased repository identifier.
+ * Supports HTTPS/SSH `scheme://` URLs, SCP-style and SSH-alias remotes (`user@host:path`,
+ * `host:path`), and bare filesystem paths; strips Azure DevOps's `_git`/`v3` markers and a
+ * Bitbucket Server `scm/` context-path prefix; preserves arbitrary-depth GitLab subgroups.
  *
- * @param cwd - Working directory path
- * @returns Repository in lower-cased "owner/repo" format, or undefined if no remote is configured
+ * @param remoteUrl - The raw remote URL, as returned by `git remote get-url origin`
+ * @returns The repository identifier, or undefined if the URL carries no usable repository path
  */
 function parseGitRemoteUrl(remoteUrl: string): string | undefined {
-  const withoutGitSuffix = remoteUrl.replace(/[?#].*$/, '').replace(/\.git$/, '');
+  const withoutGitSuffix = remoteUrl.replace(/[?#].*$/, '').replace(/\.git$/i, '');
   const urlMatch = withoutGitSuffix.match(/^(\w+):\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/);
-  const scpMatch = withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/);
+  // SSH scp-style remotes come in two shapes: "user@host:path" and, for an `ssh_config` Host
+  // alias with no explicit user (e.g. "github-work:org/repo.git"), bare "host:path". The alias
+  // form requires a 2+ character host (so a single-letter Windows drive like "C:\..." is still
+  // treated as a filesystem path) and forbids both "scheme://" and any '@' in the remainder, so
+  // it never swallows a credential-bearing or scheme-qualified remote.
+  const scpMatch =
+    withoutGitSuffix.match(/^[^/@]+@([^:]+):(.+)$/) ??
+    withoutGitSuffix.match(/^([^/@\\:]{2,}):(?!\/\/)([^@]+)$/);
   const match = urlMatch ?? scpMatch;
 
   // A scheme:// or user@host[:...] remote that did not match above (e.g. no repository path, or
@@ -440,22 +448,26 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
       : [undefined, undefined, withoutGitSuffix];
   const hostname = host?.replace(/:\d+$/, '').toLowerCase();
 
+  // A matched URL/SCP remote uses POSIX-style '/' exclusively. An unmatched, bare-filesystem
+  // remote may be a Windows absolute or UNC path, so split on either separator there, or it
+  // would come out as one giant segment instead of being reduced to the last two.
   const segments = (path as string)
-    .split('/')
+    .split(match ? '/' : /[/\\]/)
     .filter(Boolean)
     .map((segment) => {
       try {
         const decoded = decodeURIComponent(segment);
-        // A decoded control character (e.g. %0D%0A, %00), or the Unicode line/paragraph
-        // separators U+2028/U+2029, would break a downstream HTTP header, log line or argv;
-        // keep the raw, still-encoded segment instead. Likewise, a decoded '/' (from an encoded
-        // %2F) would silently introduce an extra path level once segments are rejoined, letting
-        // two distinct remotes collide on the same derived name.
+        // A decoded control character (e.g. %0D%0A, %00), any character outside Latin-1
+        // (code > 0xFF — including the Unicode line/paragraph separators U+2028/U+2029), would
+        // break a downstream HTTP header (Node's http.request only accepts Latin-1 header
+        // values), a log line, or argv; keep the raw, still-encoded segment instead. Likewise, a
+        // decoded '/' (from an encoded %2F) would silently introduce an extra path level once
+        // segments are rejoined, letting two distinct remotes collide on the same derived name.
         const hasUnsafeChar =
           decoded.includes('/') ||
           Array.from(decoded).some((char) => {
             const code = char.codePointAt(0) ?? 0;
-            return code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029;
+            return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code > 0xff;
           });
         return hasUnsafeChar ? segment : decoded;
       } catch {
@@ -481,15 +493,18 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
     );
     if (rest.length === 0) return undefined;
     result = [org, ...rest];
-  } else if (
-    segments.length >= 3 &&
-    segments[0] === 'scm' &&
-    (scheme?.toLowerCase() === 'http' || scheme?.toLowerCase() === 'https')
-  ) {
-    // Bitbucket Server/DC HTTPS clone URLs prefix the path with "scm/".
-    result = segments.slice(1);
   } else {
-    result = segments;
+    // Bitbucket Server/DC HTTPS clone URLs prefix the repository path with "scm/", which may
+    // itself sit under a context path (e.g. "bitbucket/scm/PROJ/repo" for an install mounted at
+    // "/bitbucket"). Strip up to the first "scm" segment that still has at least a project and a
+    // repo segment after it, so both the context-path and root-mounted forms converge on
+    // "PROJ/repo" the way the matching SSH remote already does. A GitLab group literally named
+    // "scm" on an http(s) remote is a known, accepted false positive.
+    const isHttpScheme = scheme?.toLowerCase() === 'http' || scheme?.toLowerCase() === 'https';
+    const scmIndex = isHttpScheme
+      ? segments.findIndex((segment, index) => segment === 'scm' && segments.length - index - 1 >= 2)
+      : -1;
+    result = scmIndex === -1 ? segments : segments.slice(scmIndex + 1);
   }
 
   // Bitbucket personal repositories use "~user" as the project key.
@@ -508,6 +523,15 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   return joined ? joined.toLowerCase() : undefined;
 }
 
+/**
+ * Detect the canonical repository identifier from a working directory's git `origin` remote.
+ * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
+ * Works with GitHub, GitLab, Bitbucket, Azure DevOps and self-hosted instances.
+ *
+ * @param cwd - Working directory path
+ * @returns Repository in lower-cased "owner/repo" format (or a longer path for subgroups/Azure
+ *   DevOps projects), or undefined if no remote is configured
+ */
 export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
   try {
     const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });

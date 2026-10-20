@@ -75,11 +75,18 @@ describe('detectGitRemoteRepo', () => {
     expect(await detectGitRemoteRepo('/repo')).toBe('qa-top/qa-sub/qa-subsub/deep-svc');
   });
 
-  it('normalizes Azure DevOps HTTPS and SSH remotes of the same repo to one identical lower-cased name, decoding %20', async () => {
-    mockExecAsync.mockResolvedValueOnce({ stdout: 'https://qaorg@dev.azure.com/qaorg/QA%20Project/_git/qa-ado-repo\n', stderr: '' });
+  it('decodes %20 in an Azure DevOps HTTPS remote', async () => {
+    mockExecAsync.mockResolvedValue({ stdout: 'https://qaorg@dev.azure.com/qaorg/QA%20Project/_git/qa-ado-repo\n', stderr: '' });
     expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/qa project/qa-ado-repo');
+  });
+
+  it('converges the HTTPS and SSH remotes of the same Azure DevOps repo on one identical lower-cased name', async () => {
+    mockExecAsync.mockResolvedValueOnce({ stdout: 'https://qaorg@dev.azure.com/qaorg/QAProject/_git/qa-ado-repo\n', stderr: '' });
+    const https = await detectGitRemoteRepo('/repo');
     mockExecAsync.mockResolvedValueOnce({ stdout: 'git@ssh.dev.azure.com:v3/qaorg/QAProject/qa-ado-repo\n', stderr: '' });
-    expect(await detectGitRemoteRepo('/repo')).toBe('qaorg/qaproject/qa-ado-repo');
+    const ssh = await detectGitRemoteRepo('/repo');
+    expect(https).toBe('qaorg/qaproject/qa-ado-repo');
+    expect(ssh).toBe(https);
   });
 
   it('does not strip _git/v3 on non-Azure hosts, strips only a trailing .git, and returns undefined on malformed input', async () => {
@@ -138,6 +145,39 @@ describe('detectGitRemoteRepo', () => {
     expect(literal).toBe('group/a/b/repo');
   });
 
+  it('keeps the raw escaped segment when decoding would yield a non-Latin-1 character', async () => {
+    // Node's http.request only accepts Latin-1 header values; a decoded Cyrillic project name
+    // would break every proxied request carrying this value as X-CodeMie-Repository.
+    mockExecAsync.mockResolvedValue({
+      stdout: 'https://dev.azure.com/org/%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82/_git/repo\n',
+      stderr: ''
+    });
+    const result = await detectGitRemoteRepo('/repo');
+    expect(result).toBe('org/%d0%9f%d1%80%d0%be%d0%b5%d0%ba%d1%82/repo');
+    expect(Array.from(result ?? '').every((char) => (char.codePointAt(0) ?? 0) <= 0xff)).toBe(true);
+  });
+
+  it.each([
+    ['SSH config Host alias, scp-style', 'github-work:org/repo.git', 'org/repo'],
+    ['SSH config Host alias matching a real hostname', 'github.com:org/repo', 'org/repo'],
+  ])('resolves an SSH config Host-alias remote without a user: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
+  it.each([
+    ['Windows absolute path', 'C:\\Users\\jdoe\\src\\repo.git', 'src/repo'],
+    ['UNC path', '\\\\server\\share\\jdoe\\repo.git', 'jdoe/repo'],
+  ])('reduces a Windows/UNC filesystem remote to its last two segments: %s', async (_label, url, expected) => {
+    mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+
+  it('strips an uppercase .GIT suffix', async () => {
+    mockExecAsync.mockResolvedValue({ stdout: 'https://github.com/org/repo.GIT\n', stderr: '' });
+    expect(await detectGitRemoteRepo('/repo')).toBe('org/repo');
+  });
+
   it.each([
     ['file URL with host', 'file://host/home/jdoe/repo.git', 'home/jdoe/repo'],
     ['file URL triple-slash absolute path', 'file:///home/jdoe/repo.git', 'jdoe/repo'],
@@ -193,9 +233,9 @@ describe('detectGitRemoteRepo - Bitbucket Server/DC and legacy Azure DevOps remo
   it.each([
     ['two-segment scm on github', 'https://github.com/scm/repo.git', 'scm/repo'],
     ['SSH leading scm group', 'git@gitlab.example.com:scm/team/repo.git', 'scm/team/repo'],
-    // Deliberate placeholder: this is also the shape of Bitbucket Server under a context path.
-    // Supporting that later reverses this expectation; keep it a conscious choice.
-    ['scm not the leading segment', 'https://bitbucket.example.com/bitbucket/scm/PROJ/repo.git', 'bitbucket/scm/proj/repo'],
+    // Bitbucket Server/DC installed under a context path: the http(s) "scm" marker is stripped
+    // wherever it sits, so this converges with the root-mounted and SSH forms on "proj/repo".
+    ['scm not the leading segment (context-path install)', 'https://bitbucket.example.com/bitbucket/scm/PROJ/repo.git', 'proj/repo'],
     ['~ not at start of first segment is preserved', 'https://example.com/group/a~b/repo.git', 'group/a~b/repo'],
     ['_git/v3 kept on non-Azure host (v3 path)', 'https://gitlab.example.com/group/v3/_git.git', 'group/v3/_git'],
     // Deliberate placeholder: this is also the shape of self-hosted Azure DevOps Server / TFS
