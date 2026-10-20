@@ -70,12 +70,13 @@ function resolveHookEntry(eventName: string): { exec: string; args: string[]; ti
   };
 }
 
-function buildHookFileContent(): Record<string, unknown> {
-  const file: Record<string, unknown> = {};
+/** Copilot CLI hook config: `version` must be the literal 1 and events live under `hooks`. */
+export function buildHookFileContent(): Record<string, unknown> {
+  const hooks: Record<string, unknown> = {};
   for (const eventName of CLI_HOOK_EVENT_NAMES) {
-    file[eventName] = [resolveHookEntry(eventName)];
+    hooks[eventName] = [resolveHookEntry(eventName)];
   }
-  return file;
+  return { version: 1, hooks };
 }
 
 async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
