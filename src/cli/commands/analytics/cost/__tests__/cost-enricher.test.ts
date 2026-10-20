@@ -425,6 +425,90 @@ describe('enrichCosts', () => {
     expect(summary.totalCostUSD).toBeCloseTo(3, 6);
   });
 
+  it('CR-001: an earlier session that crashed (no endEvent) does not swallow a later, cleanly-closed session sharing its file', async () => {
+    const base = 1_780_000_000_000;
+    // Session A crashed/was killed — it never emits an endEvent. Session B resumed later
+    // (e.g. after the crash) and completed normally, so it DOES have a real endEvent.
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      endEvent: { data: { endTime: base + 180_000 } },
+      deltas: [],
+    };
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    // These two turns are chronologically B's own (after B's startTime) and physically live
+    // in the one shared (resumed) log file, same as A's turn above.
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/crashed-then-resumed.jsonl', // same path for both
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // Without the fix, A (processed first, unbounded since it has no observedEnd) greedily
+    // takes all 3 unseen records, leaving B with $0 — this PR's own headline bug, shifted to
+    // the open/crashed-earlier-sibling case.
+    expect(index.get('A')!.tokens.total).toBe(1_000_000);
+    expect(index.get('A')!.costUSD).toBeCloseTo(3, 6);
+    expect(index.get('B')!.tokens.total).toBe(1_000_000);
+    expect(index.get('B')!.costUSD).toBeCloseTo(3, 6);
+    expect(summary.totalCostUSD).toBeCloseTo(6, 6);
+  });
+
+  it('CR-002: an SDK modelUsage rollup is not trusted for a session sharing its native log file (would double-count)', async () => {
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      endEvent: { data: { endTime: base + 30_000 } },
+      deltas: [],
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 60_000 } },
+      endEvent: { data: { endTime: base + 90_000 } },
+      deltas: [],
+    };
+    // Each headless/SDK run appended its own authoritative `result` rollup to the ONE shared
+    // transcript file — `parsed.messages` is identical (the whole file) for both sessions.
+    const resultA = { type: 'result', modelUsage: { 'claude-sonnet-4-5': { inputTokens: 1_000_000, outputTokens: 0 } } };
+    const resultB = { type: 'result', modelUsage: { 'claude-sonnet-4-5': { inputTokens: 2_000_000, outputTokens: 0 } } };
+    const fullSharedFile = [resultA, resultB];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/shared-sdk-rollups.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // Without the fix, both A and B would call readClaudeSdkResult() on the SAME whole-file
+    // `parsed` and each report the COMBINED total (3M tokens each) instead of their own slice.
+    // With no per-message records to dedup/window in this fixture, the safe behavior is to
+    // treat an unprotectable shared-file rollup as "no usage" (0) rather than double-count it.
+    expect(index.get('A')!.tokens.total).toBe(0);
+    expect(index.get('B')!.tokens.total).toBe(0);
+  });
+
   it('bounds each session to its own observedEnd so a later session keeps its own turns in a shared log (EPMCDME-15316 Root Cause A)', async () => {
     const base = 1_780_000_000_000;
     const sessionA = {

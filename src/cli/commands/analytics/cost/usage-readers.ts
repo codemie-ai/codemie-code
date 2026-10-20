@@ -878,9 +878,19 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
  * Per-model usage for the cost enricher, deduping Claude API responses across sessions
  * by `(message.id, requestId)`. `seen` is shared across all sessions in a run (pass a
  * fresh set to disable cross-session dedup). When a Claude session carries an authoritative
- * SDK `modelUsage` rollup (audit.jsonl), that is used as-is (session-local, no cross-file dup).
+ * SDK `modelUsage` rollup (audit.jsonl) AND `allowRollup` is true, that is used as-is. Callers
+ * MUST pass `allowRollup: false` when this session's native log is shared with other sessions
+ * (resumed/continued into one file) — the rollup is a whole-file aggregate, not a per-session
+ * one, so trusting it for a shared file would let every sharing session report the same
+ * combined total instead of its own slice.
  */
-export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, seen: Set<string>, windowEnd?: number): UsageMap {
+export function gatherUsageDeduped(
+  agentName: string,
+  parsed: ParsedSession,
+  seen: Set<string>,
+  windowEnd?: number,
+  allowRollup = true
+): UsageMap {
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
     return readGemini(parsed);
@@ -907,7 +917,11 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
     return out;
   }
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
-    const rollup = readClaudeSdkResult(parsed);
+    // The rollup sums every `result` message in `parsed` — for a session sharing its native
+    // log with others, `parsed` is the ENTIRE shared file, not just this session's own slice.
+    // Only trust it when this session is the sole owner of its log file (allowRollup); when
+    // unsafe, fall through to the windowed per-message path below instead.
+    const rollup = allowRollup ? readClaudeSdkResult(parsed) : null;
     if (rollup) {
       return rollup; // authoritative SDK rollup
     }
@@ -927,7 +941,13 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
  * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-supported agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */
-export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>, windowEnd?: number): UsageRecord[] {
+export function gatherDedupedUsageRecords(
+  agentName: string,
+  parsed: ParsedSession,
+  seen: Set<string>,
+  windowEnd?: number,
+  allowRollup = true
+): UsageRecord[] {
   const a = agentName.toLowerCase();
   if (a === 'kimi') {
     // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
@@ -942,7 +962,7 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
   }
-  if (readClaudeSdkResult(parsed)) {
+  if (allowRollup && readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
   return takeUnseenRecords(withinWindow(extractClaudeUsageRecords(parsed), windowEnd), seen);
