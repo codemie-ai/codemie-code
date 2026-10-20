@@ -15,9 +15,18 @@
  * Nothing else has ever been observed to produce this exact redirect, so
  * no secondary confirming signal is needed before acting on it.
  *
- * This plugin never touches sso.auth-gate.ts, sso.detached-login.ts, or
- * analytics-auth-status.ts — it only calls their existing exported
- * functions, reusing the shared lock file/marker those already own.
+ * KNOWN GAP: detection relies ONLY on this exact 302/303-to-/oauth2/start signature. Two other
+ * gateway rejection shapes bypass it silently (no marker written, no re-login triggered, no
+ * failing test): a plain 401, and an HTML 200 (the latter is already handled on the metrics
+ * path — see metrics-api-client.ts). There are now three independent classifiers of "SSO
+ * session rejected" in this codebase (metrics-api-client.ts: 401/403/HTML; the OTLP forwarder:
+ * 401/403; this plugin: 302 to /oauth2/start) with no shared `isSessionRejection()`. A follow-up
+ * could unify them; for this PR, this comment states the assumption instead.
+ *
+ * This plugin's own code never touches sso.auth-gate.ts or analytics-auth-status.ts — it only
+ * calls their existing exported functions, reusing the shared lock file/marker those already
+ * own. (sso.detached-login.ts's lock-creation race is fixed by a separate commit in this PR —
+ * this plugin itself still only calls that module's exports, never modifies it.)
  */
 
 import type { IncomingMessage } from 'http';

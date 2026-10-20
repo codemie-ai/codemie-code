@@ -156,9 +156,14 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
 
 /** Keep only records this session's own window can plausibly own: untimed ones (existing
  * earliest-owner fallback) or ones at-or-before `windowEnd` (this session's own observed end).
- * The bound is inclusive because `windowEnd` is itself derived as the max ts across the
- * session's own messages (native-loader.ts), so that session's own final usage record
- * commonly has `ts === windowEnd` and must not be dropped by its own window.
+ * The bound is inclusive because `windowEnd` can be the max ts across the session's own
+ * messages (for a native-loader-synthesized session, or the floored case in
+ * cost-enricher.ts's floorObservedEnd), so that session's own final usage record commonly has
+ * `ts === windowEnd` and must not be dropped by its own window. For an ordinary hook-tracked
+ * session `windowEnd` is instead the CodeMie session's own `endTime` (data-loader.ts), and for
+ * an OTel-synced one the latest event time (otel-loader.ts) — three different clocks, not all
+ * of them already equal to a message's own ts, but the inclusive bound is harmless either way
+ * (it only ever widens, never narrows, what a session's own window admits).
  * `windowEnd` undefined ⇒ no filtering, preserving today's behavior for an unbounded session. */
 function withinWindow(records: UsageRecord[], windowEnd: number | undefined): UsageRecord[] {
   if (windowEnd === undefined) return records;
