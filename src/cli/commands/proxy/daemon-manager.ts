@@ -4,7 +4,7 @@ import { getCodemieHome, getDirname } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
-import { spawnDetached } from '../../../utils/processes.js';
+import { isProcessAlive, spawnDetached } from '../../../utils/processes.js';
 
 export interface DaemonState {
   pid: number;
@@ -55,15 +55,6 @@ export async function clearState(stateFile: string = DEFAULT_STATE_FILE): Promis
     await unlink(stateFile);
   } catch {
     // Already gone — no-op
-  }
-}
-
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 

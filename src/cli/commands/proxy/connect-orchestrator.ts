@@ -21,7 +21,6 @@ import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
-  isProcessAlive,
   readState,
   spawnDaemon,
   stopDaemon,
@@ -49,6 +48,7 @@ import {
 } from './connectors/codex-desktop.js';
 import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { isProcessAlive } from '@/utils/processes.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 

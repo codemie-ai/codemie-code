@@ -211,7 +211,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
       expect(openMainTranscriptPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', hookEventName);
       const [forwarded] = forwardedEvents();
-      expect(forwarded).toMatchObject(parsedEvent);
+      expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
     }
   );
 
@@ -224,7 +224,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     expect(openSessionEndPassMock).toHaveBeenCalledWith('sid-1', '/tmp/transcript.jsonl', '/repo');
     const [forwarded] = forwardedEvents();
-    expect(forwarded).toMatchObject(parsedEvent);
+    expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
   });
 
   it('resends the SessionEnd batch once more when the first send fails (retryOnce)', async () => {
@@ -375,7 +375,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     // processOtlpEvent.
     expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
     expect(forwardedEvents()).toEqual([
-      expect.objectContaining(parsedEvent),
+      expect.objectContaining({ ...parsedEvent, cwd: 'repo' }),
       expect.objectContaining(derivedUsageEvent),
       expect.objectContaining(derivedSummaryEvent),
     ]);

@@ -245,12 +245,46 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
   });
 
   describe('built event', () => {
-    it('stamps schema_version, a unique event_id, session_id and the hook cwd', async () => {
+    it('stamps schema_version, a unique event_id, session_id and the repository identifier as cwd', async () => {
       await run({ payload: [{ session_id: 's1' }, { session_id: 's1' }] });
       const [first, second] = forwarded();
-      expect(first).toMatchObject({ schema_version: 2, session_id: 's1', cwd: '/repo' });
+      expect(first).toMatchObject({ schema_version: 2, session_id: 's1', cwd: 'repo' });
       expect(typeof first['event_id']).toBe('string');
       expect(first['event_id']).not.toBe(second['event_id']);
+    });
+
+    describe('cwd is the repository identifier, never an absolute path', () => {
+      it.each([
+        ['/Users/lika/Projects/qa-projects/pr609-preview-agents', 'qa-projects/pr609-preview-agents'],
+        ['C:\\Projects\\qa-projects\\pr609-preview-agents', 'qa-projects/pr609-preview-agents'],
+        [
+          '/Users/alice/Library/Application Support/Claude-3p/local-agent-mode-sessions/abc/def/local_7fb4c6a0-a7b9-4121-960c-035d0e4830ff/outputs',
+          'Cowork',
+        ],
+        ['/', 'unknown'],
+      ])('stamps %s as %s on the event and raw', async (cwd, expected) => {
+        await run({ cwd });
+        const event = forwarded()[0];
+        expect(event['cwd']).toBe(expected);
+        expect((event['raw'] as Record<string, unknown>)['cwd']).toBe(expected);
+        expect(String(event['cwd'])).not.toMatch(/^([/\\]|[A-Za-z]:)/);
+      });
+
+      it('keeps repo_remote empty when the remote is unknown', async () => {
+        detectGitRemoteRepoMock.mockResolvedValue(undefined);
+        await run({ cwd: '/Users/lika/Projects/qa-projects/pr609-preview-agents' });
+        expect(forwarded()[0]).toMatchObject({ repo_remote: '', cwd: 'qa-projects/pr609-preview-agents' });
+      });
+
+      it('leaves a detected repo_remote unchanged', async () => {
+        await run({ cwd: '/Users/lika/Projects/qa-projects/pr609-preview-agents' });
+        expect(forwarded()[0]).toMatchObject({ repo_remote: 'org/repo', cwd: 'qa-projects/pr609-preview-agents' });
+      });
+
+      it('lets an event-supplied repo_remote override while cwd stays short', async () => {
+        await run({ cwd: '/Users/lika/Projects/qa-projects/pr609-preview-agents', payload: [{ repo_remote: 'evt/remote' }] });
+        expect(forwarded()[0]).toMatchObject({ repo_remote: 'evt/remote', cwd: 'qa-projects/pr609-preview-agents' });
+      });
     });
 
     it('coerces a missing session_id to an empty string', async () => {
@@ -260,7 +294,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
     it('puts the hook cwd on derived events too, not the event\'s own', async () => {
       await run({ payload: [{ type: 'derived.event', session_id: 's1' }] });
-      expect(forwarded()[0]['cwd']).toBe('/repo');
+      expect(forwarded()[0]['cwd']).toBe('repo');
     });
 
     it('resolves the type from resolveEventType and keeps an explicit one', async () => {

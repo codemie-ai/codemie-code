@@ -9,6 +9,7 @@ import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { buildAnalyticsContext } from '@/providers/core/codemie-auth-helpers.js';
+import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -609,8 +610,7 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
     const message = [
       'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
       `Reason: ${authResult.reason}.`,
-      'A browser sign-in window has been opened automatically.',
-      'Complete the sign-in, then re-send your prompt.',
+      describeLogin(authResult.loginOutcome),
     ].join('\n');
 
     logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);

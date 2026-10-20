@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-15937_cli-analytics-repo-fallback",
+  "head": "dc88e6f7e4ab80a81944474853ed2e131cd5dd72",
+  "runner": "npm",
+  "started_at": "2026-10-15T09:25:01.298Z",
+  "completed_at": "2026-10-15T09:25:01.298Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24599,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 78315,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 29188,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 51243,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 241516,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "SUPERSEDED: original run failed 1 test in forwarder.test.ts, attributed to uncommitted local forwarder.ts edits. Re-run on clean tree at dc88e6f7 with CODEMIE_* unset: PASS (344 files, 5119 tests passed, 2 skipped). See qa-rerun-notes.md"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 224175,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "SUPERSEDED: original run failed (15 failures, hook/test timeouts in spawned CLI tests). Re-run on clean tree at dc88e6f7 with CODEMIE_* unset: PASS (37 files, 278 tests passed, 10 skipped). Agent project (tests/integration/agent-*) not run: Claude agent install timed out. See qa-rerun-notes.md"
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6365,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": null,
+      "notes": "Docker daemon not running; CI secrets-detection (gitleaks-action) still owed"
+    }
+  ],
+  "failures": {
+    "unit": "\n RUN  v4.1.5 C:/Projects/codemie-dev/codemie-code-fork/codemie-code\n\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K ❯ |unit| src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts (11 tests | 1 failed) 1333ms\n     × POSTs the ndjson to the target API, advances the cursor and marks the session ended 39ms\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |unit| src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts > forwardSession (hooks) > POSTs the ndjson to the target API, advances the cursor and marks the session ended\nAssertionError: expected 'http://localhost:8080/v1/analytics/cl…' to be 'https://api.example.com/v1/analytics/…' // Object.is equality\n\nExpected: \"https://api.example.com/v1/analytics/cli-analytics/event-hooks\"\nReceived: \"http://localhost:8080/v1/analytics/cli-analytics/event-hooks\"\n\n ❯ src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/forwarder.test.ts:103:25\n    101|     expect(fetchMock).toHaveBeenCalledTimes(1);\n    102|     const [url, init] = fetchMock.mock.calls[0];\n    103|     expect(String(url)).toBe('https://api.example.com/v1/analytics/cli…\n       |                         ^\n    104|     expect(init.body).toBe(`${JSON.stringify({ type: 'agent.session.en…\n    105|     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 343 passed (344)\n      Tests  1 failed | 5118 passed | 2 skipped (5121)\n   Start at  12:14:53\n   Duration  230.57s (transform 179.45s, setup 0ms, import 755.10s, tests 310.61s, environment 124ms)\n\n",
+    "integration": "       |                             ^\n    234|     expect(result.stdout).toContain('[{\"skill\":\"foo\"}]');\n    235|     const [invocation] = readInvocations();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/22]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > propagates upstream non-zero exit codes (not collapsed to 1)\nAssertionError: expected 1 to be 7 // Object.is equality\n\n- Expected\n+ Received\n\n- 7\n+ 1\n\n ❯ tests/integration/cli-commands/skills.test.ts:243:29\n    241|       STUB_EXIT_CODE: '7',\n    242|     });\n    243|     expect(result.exitCode).toBe(7);\n       |                             ^\n    244|   });\n    245|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/22]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > classifies CODEMIE_SKILL_EGRESS_BLOCKED stderr as egress_blocked exit code\nAssertionError: expected 1 to be 7 // Object.is equality\n\n- Expected\n+ Received\n\n- 7\n+ 1\n\n ❯ tests/integration/cli-commands/skills.test.ts:254:29\n    252|       STUB_STDERR: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',\n    253|     });\n    254|     expect(result.exitCode).toBe(7);\n       |                             ^\n    255|     expect(result.stderr).toContain('CODEMIE_SKILL_EGRESS_BLOCKED');\n    256|   });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/22]⎯\n\n\n Test Files  9 failed | 28 passed | 1 skipped (38)\n      Tests  15 failed | 256 passed | 17 skipped (288)\n   Start at  12:18:57\n   Duration  212.04s (transform 55.64s, setup 0ms, import 137.02s, tests 875.42s, environment 14ms)\n\n"
+  }
+}
