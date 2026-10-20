@@ -42,8 +42,14 @@ function projectDispatch(dispatch: DispatchEvent): DispatchEvent {
 function projectSnapshot(cost: SessionCost | undefined): Partial<ReportSessionRecord> {
   if (!cost) return {};
   return {
-    ...pickDefined(cost, ['capturedAt', 'observedStart', 'observedEnd', 'observedEndEstimated', 'costSource', 'costBasis', 'dispatchesComplete',
+    ...pickDefined(cost, ['capturedAt', 'observedStart', 'costSource', 'costBasis', 'dispatchesComplete',
       'rootOwnCostUSD', 'unlinkedCostUSD', 'unlinkedAgentIds']),
+    // `observedEnd` means one thing in the exported payload: this session's own confirmed end.
+    // When it's only the cosmetic open-session estimate (observedEndEstimated), omit both keys
+    // rather than export a value a consumer unaware of the flag would read as real (review
+    // comment: every consumer of the payload, server side included, would otherwise have to
+    // know about observedEndEstimated to avoid misreading it).
+    ...(cost.observedEnd !== undefined && !cost.observedEndEstimated && { observedEnd: cost.observedEnd }),
     ...(cost.rootOwnTokens && { rootOwnTokens: projectTokens(cost.rootOwnTokens) }),
     ...(cost.unlinkedTokens && { unlinkedTokens: projectTokens(cost.unlinkedTokens) }),
   };

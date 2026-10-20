@@ -23,6 +23,12 @@
  * 401/403; this plugin: 302 to /oauth2/start) with no shared `isSessionRejection()`. A follow-up
  * could unify them; for this PR, this comment states the assumption instead.
  *
+ * KNOWN GAP: the synthetic 401 body below is always Anthropic-shaped (`{type, error: {type,
+ * message}}`), regardless of which client is proxied — Codex goes through this same plugin (see
+ * `createInterceptor`'s guard, which only checks for SSO cookies, not client type) and expects an
+ * OpenAI-shaped error instead. Left as-is for this PR (third review round, 2026-10-20); a
+ * follow-up should branch on `context.config.clientType` the way the request normalizers do.
+ *
  * This plugin's own code never touches sso.auth-gate.ts or analytics-auth-status.ts — it only
  * calls their existing exported functions, reusing the shared lock file/marker those already
  * own. (sso.detached-login.ts's lock-creation race is fixed by a separate commit in this PR —

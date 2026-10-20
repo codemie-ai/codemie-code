@@ -475,6 +475,56 @@ describe('enrichCosts', () => {
     expect(summary.totalCostUSD).toBeCloseTo(6, 6);
   });
 
+  it('KNOWN GAP (review, EPMCDME-15316): two consecutive OPEN sessions sharing a file still let the earlier one swallow the later one\'s turns', async () => {
+    // Pins current behavior rather than asserting it's correct: computeDedupWindowEnd only
+    // bounds an open/crashed session when its immediate next sibling HAS its own observedEnd
+    // (a confirmed end) — by design, two sessions that are BOTH still open (e.g. a resume while
+    // the earlier process is still alive, or crashed without ever emitting an endEvent) is left
+    // genuinely ambiguous and the window stays unbounded, preserving the pre-existing
+    // earliest-wins dedup semantics for that case. If this is ever tightened, this test's
+    // expectations change along with it.
+    const base = 1_780_000_000_000;
+    const sessionA = {
+      sessionId: 'A',
+      startEvent: { agentName: 'claude', data: { startTime: base } },
+      deltas: [], // no endEvent — still open/crashed
+    };
+    const sessionB = {
+      sessionId: 'B',
+      startEvent: { agentName: 'claude', data: { startTime: base + 120_000 } },
+      deltas: [], // no endEvent either — also still open/crashed
+    };
+    const turnA = {
+      timestamp: new Date(base + 10_000).toISOString(),
+      requestId: 'req-A',
+      message: { id: 'msg-A', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    };
+    // Chronologically B's own turns (after B's startTime), physically in the same shared file.
+    const turnB1 = {
+      timestamp: new Date(base + 130_000).toISOString(),
+      requestId: 'req-B1',
+      message: { id: 'msg-B1', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const turnB2 = {
+      timestamp: new Date(base + 140_000).toISOString(),
+      requestId: 'req-B2',
+      message: { id: 'msg-B2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } },
+    };
+    const fullSharedFile = [turnA, turnB1, turnB2];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/both-open-shared.jsonl',
+      parseNative: async (_agent, _file, sessionId) =>
+        ({ sessionId, agentName: 'claude', metadata: {}, messages: fullSharedFile }) as never,
+    };
+    const { index, summary } = await enrichCosts([sessionA, sessionB] as never[], deps);
+    // A (processed first, ascending startTime, no bound since B is also open) claims all 3
+    // unseen records; B — also unbounded, but dedup already consumed every record — gets $0.
+    expect(index.get('A')!.tokens.total).toBe(2_000_000);
+    expect(index.get('B')!.tokens.total).toBe(0);
+    expect(summary.totalCostUSD).toBeCloseTo(index.get('A')!.costUSD, 6);
+  });
+
   it('CR-002: an SDK modelUsage rollup is not trusted for a session sharing its native log file (would double-count)', async () => {
     const base = 1_780_000_000_000;
     const sessionA = {

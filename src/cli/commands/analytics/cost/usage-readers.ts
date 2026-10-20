@@ -940,7 +940,9 @@ export function gatherUsageDeduped(
     // the rollup across its siblings — the safer of two wrong answers (CR-002), but previously
     // silent. Surface it so a real loss of billed usage isn't invisible.
     if (!allowRollup && sdkRollup && out.size === 0) {
-      logger.debug(
+      // logger.warn, not debug: this is a real loss of billed usage for this session (reported
+      // as $0), not a routine/expected condition — it must be visible without debug logging on.
+      logger.warn(
         '[cost] Shared-file SDK rollup present but untrusted (session shares its native log) and no per-message records to fall back to — reporting 0 usage for this session instead of double-counting'
       );
     }

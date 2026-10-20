@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { link, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
@@ -12,10 +12,10 @@ const LOCK_MAX_AGE_MS = 150_000;
 const COOLDOWN_MS = 30_000;
 const UNREADABLE_LOCK_GRACE_MS = 5_000;
 /**
- * Minimum age before `sweepOrphanedTmpFiles` removes a `tryCreateLock` tmp file. Far longer
- * than a `writeFile`+`link` pair ever takes, so a tmp file from an in-flight call elsewhere is
- * never touched — only one orphaned by a crash between `link()` succeeding and its own
- * `finally`-block `unlink()` running gets swept.
+ * Minimum age before `sweepOrphanedTmpFiles` removes a lock-update tmp file (see
+ * `writeLockAtomically`). Far longer than a `writeFile`+`rename` pair ever takes, so a tmp file
+ * from an in-flight call elsewhere is never touched — only one orphaned by a crash between the
+ * `writeFile` and the `rename` gets swept.
  */
 const ORPHANED_TMP_MAX_AGE_MS = 60_000;
 
@@ -98,49 +98,49 @@ async function sweepOrphanedTmpFiles(lockPath: string): Promise<void> {
 }
 
 /**
- * Atomically creates the lock; returns false if it already exists.
- * Writes the full content to a private temp file first, then publishes it
- * with `link` (fails EEXIST like `wx`, but atomically — a concurrent reader
- * can never observe the lock path existing with partial/empty content, which
- * a plain `writeFile(path, data, { flag: 'wx' })` cannot guarantee: open and
- * write are separate syscalls, so another caller can read an empty file in
- * between, decide the lock is corrupt, and steal it from the real owner).
- *
- * The temp filename includes a `randomUUID()`, not just pid+timestamp: several requests
- * redirected at once race into this same process's event loop, and `${pid}.${Date.now()}`
- * alone collides when two such calls land in the same millisecond — the second `writeFile`
- * overwrites the first caller's temp file, and the first caller's own `finally`-block `unlink`
- * then deletes it out from under the second caller's still-pending `link()`.
- *
- * `link()` is not supported on every filesystem (observed: some network/SMB home directories,
- * and Windows configurations without hard-link support) — EPERM/ENOTSUP/EXDEV there falls back
- * to a plain exclusive-create write, which loses the "never observe partial content" guarantee
- * above but keeps the lock usable where `link()` cannot be used at all.
+ * Creates the lock; returns false if it already exists. `wx` fails EEXIST if the path is
+ * already taken, same guarantee a prior `link()`-based dance here aimed for, but a concurrent
+ * reader can briefly see the file after `open` but before `write` completes (open and write are
+ * separate syscalls). That race was investigated in #624 and concluded not to be the actual
+ * cause of the lock-stealing bug it was fixing — `isRecentlyModified`'s grace period below
+ * already treats an unreadable-but-just-written lock as "in-progress" rather than corrupt, which
+ * is the only consequence this race can have. Simplified back to `wx` rather than keep machinery
+ * guarding a race that grace period already covers.
  */
 async function tryCreateLock(lockPath: string): Promise<boolean> {
   const lock: LoginLock = { pid: process.pid, startedAt: Date.now() };
-  const tmpPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(tmpPath, JSON.stringify(lock));
-    try {
-      await link(tmpPath, lockPath);
-    } catch (linkError) {
-      const code = (linkError as NodeJS.ErrnoException).code;
-      if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EXDEV') {
-        await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
-      } else {
-        throw linkError;
-      }
-    }
+    await writeFile(lockPath, JSON.stringify(lock), { flag: 'wx' });
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       return false;
     }
     throw error;
-  } finally {
-    await unlink(tmpPath).catch(() => {});
   }
+}
+
+/**
+ * Atomically replaces an EXISTING lock's content (`releaseLoginLockOnSuccess`, and
+ * `startDetachedSsoLogin` stamping in the real child pid once spawned). A plain
+ * `writeFile(path, data)` truncates before writing, so a concurrent reader can observe empty/
+ * partial content during the rewrite — the same class of race `tryCreateLock`'s grace period
+ * tolerates for a brand-new lock, but there is no need to tolerate it here too: `rename()` is
+ * atomic on the same filesystem, so a reader always sees either the old content or the new one,
+ * never a partial write.
+ *
+ * The temp filename includes a `randomUUID()`, not just pid+timestamp: several requests
+ * redirected at once race into this same process's event loop, and `${pid}.${Date.now()}`
+ * alone collides when two such calls land in the same millisecond — the second `writeFile`
+ * would overwrite the first caller's temp file out from under its still-pending `rename()`.
+ */
+async function writeLockAtomically(lockPath: string, lock: LoginLock): Promise<void> {
+  const tmpPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(lock));
+  await rename(tmpPath, lockPath).catch(async (error) => {
+    await unlink(tmpPath).catch(() => {});
+    throw error;
+  });
 }
 
 /** Returns null when the lock was acquired, otherwise the outcome that blocks a new login. */
@@ -200,7 +200,7 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
     const lockPath = getLockPath();
     const lock = await readLock(lockPath);
     if (lock?.pid === process.pid) {
-      await writeFile(lockPath, JSON.stringify({ ...lock, succeededAt: Date.now() } satisfies LoginLock));
+      await writeLockAtomically(lockPath, { ...lock, succeededAt: Date.now() });
     }
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to release lock:', error);
@@ -232,7 +232,7 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
       throw new Error('Failed to spawn sign-in process');
     }
 
-    await writeFile(lockPath, JSON.stringify({ pid, startedAt: Date.now() } satisfies LoginLock));
+    await writeLockAtomically(lockPath, { pid, startedAt: Date.now() });
     return 'started';
   } catch (error) {
     logger.debug('[sso-detached-login] Failed to start sign-in:', error);
