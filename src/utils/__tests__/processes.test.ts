@@ -629,7 +629,27 @@ describe('detectGitCommitsByAuthor', () => {
     ]);
     expect(execSpy).toHaveBeenCalledWith(
       'git',
-      ['log', '--since=2026-10-01T00:00:00Z', '--author=dev@example.com', '--numstat', expect.stringContaining('--format=')],
+      [
+        'log',
+        '--since=2026-10-01T00:00:00Z',
+        '--fixed-strings',
+        '--author=<dev@example.com>',
+        '--numstat',
+        expect.stringContaining('--format='),
+      ],
+      expect.objectContaining({ cwd: '/repo' })
+    );
+  });
+
+  it('filters by the complete literal author email token', async () => {
+    execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+    const { detectGitCommitsByAuthor } = await import('../processes.js');
+    await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', 'ann@corp.com');
+
+    expect(execSpy).toHaveBeenCalledWith(
+      'git',
+      expect.arrayContaining(['--fixed-strings', '--author=<ann@corp.com>']),
       expect.objectContaining({ cwd: '/repo' })
     );
   });

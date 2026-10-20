@@ -650,8 +650,8 @@ function parseGitLogNumstat(stdout: string): GitCommitSummary[] {
 }
 
 /**
- * Commits by `authorEmail` since `sinceIso` on the current branch, metadata only (sha, timestamp,
- * file count, lines +/-) — never file paths or diff content.
+ * Commits whose author email exactly matches `authorEmail` since `sinceIso` on the current branch,
+ * metadata only (sha, timestamp, file count, lines +/-) — never file paths or diff content.
  * Returns `[]` when not in a git repo, on any git failure, or when either input is empty.
  */
 export async function detectGitCommitsByAuthor(
@@ -665,7 +665,14 @@ export async function detectGitCommitsByAuthor(
   try {
     const result = await exec(
       'git',
-      ['log', `--since=${sinceIso}`, `--author=${authorEmail}`, '--numstat', `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%aI`],
+      [
+        'log',
+        `--since=${sinceIso}`,
+        '--fixed-strings',
+        `--author=<${authorEmail}>`,
+        '--numstat',
+        `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%aI`,
+      ],
       { cwd, timeout: 10000 }
     );
     if (result.code !== 0) {
