@@ -8,7 +8,7 @@
  * @group unit
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ClaudeRequestNormalizerPlugin } from '../claude-request-normalizer.plugin.js';
 import { PluginContext, ProxyInterceptor } from '../types.js';
 import { ProxyContext } from '../../proxy-types.js';
@@ -733,6 +733,29 @@ describe('ClaudeRequestNormalizerPlugin', () => {
 
       expect(fetchCodeMieLlmModels).toHaveBeenLastCalledWith('https://api.anthropic.com', { auth: 'fresh-cookie' });
       vi.useRealTimers();
+    });
+
+    it('still runs the model-catalogue fetch for JWT main auth with no SSO at all (PR #661 review)', async () => {
+      // Regression: credentialRefresher used to be undefined whenever `credentials` was JWT
+      // and there was no separate SSO syncCredentials — this fetch silently no-op'd. It's now
+      // always built from `credentials` regardless of type, so a JWT-only profile still gets it.
+      fetchCodeMieLlmModels.mockResolvedValue([{ deployment_name: 'claude-opus-5-deployment', enabled: true }]);
+
+      const jwtCredentials = { token: 'jwt-token', apiUrl: 'https://api.anthropic.com' } as never;
+      const context: PluginContext = {
+        ...createPluginContext('claude-desktop'),
+        credentials: jwtCredentials,
+        credentialRefresher: new CredentialRefresher(jwtCredentials, {
+          provider: 'test',
+          baseUrl: 'https://api.anthropic.com',
+          codeMieUrl: undefined,
+        }),
+      };
+      const interceptor = await plugin.createInterceptor(context);
+
+      await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
+
+      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', 'jwt-token');
     });
   });
 });

@@ -116,31 +116,42 @@ export class CodeMieProxy {
       }
     }
 
+    const refresherParams = {
+      provider: this.config.provider,
+      baseUrl: this.config.targetApiUrl,
+      codeMieUrl: this.config.syncCodeMieUrl,
+    };
+    // One refresher per credential SOURCE, not one total, so a consumer never gets another
+    // source's identity (PR #661 review): `credentialRefresher` wraps the main auth method's
+    // own snapshot (SSO or JWT — JWT `refresh()` is a no-op) for auth injection and the
+    // model-catalogue fetch; `syncCredentialRefresher` wraps whichever of
+    // `syncCredentials`/`credentials` actually has SSO cookies, for session sync.
+    const credentialRefresher = credentials
+      ? new CredentialRefresher(credentials, refresherParams)
+      : undefined;
+    const syncSource = syncCredentials && 'cookies' in syncCredentials
+      ? syncCredentials
+      : credentials && 'cookies' in credentials
+        ? credentials
+        : null;
+    // When sync has no credentials of its own, it falls back to the same snapshot as
+    // `credentials` — reuse that SAME refresher instance in that case (rather than a second one
+    // over an identical snapshot) so the cache/throttle clock stays singular for one SSO
+    // identity, same as before this split.
+    const syncCredentialRefresher: CredentialRefresher<SSOCredentials> | undefined = !syncSource
+      ? undefined
+      : syncSource === credentials && credentialRefresher
+        ? (credentialRefresher as CredentialRefresher<SSOCredentials>)
+        : new CredentialRefresher(syncSource as SSOCredentials, refresherParams);
+
     // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
       credentials: credentials || undefined,
       syncCredentials: syncCredentials || undefined,
-      // One shared refresher for every consumer (auth injection, session sync, model-catalogue
-      // fetch) instead of each building its own — see credential-refresh.ts and PluginContext.
-      // `credentials` is the main auth method's snapshot (SSO or JWT); `syncCredentials` is a
-      // separately-authenticated analytics-sync login (e.g. JWT main auth + SSO-authenticated
-      // sync endpoint) — whichever one actually has SSO cookies seeds the shared refresher.
-      credentialRefresher: ((): CredentialRefresher<SSOCredentials> | undefined => {
-        const ssoCredentials = credentials && 'cookies' in credentials
-          ? credentials
-          : syncCredentials && 'cookies' in syncCredentials
-            ? syncCredentials
-            : null;
-        return ssoCredentials
-          ? new CredentialRefresher(ssoCredentials as SSOCredentials, {
-              provider: this.config.provider,
-              baseUrl: this.config.targetApiUrl,
-              codeMieUrl: this.config.syncCodeMieUrl,
-            })
-          : undefined;
-      })(),
+      credentialRefresher,
+      syncCredentialRefresher,
       profileConfig: this.config.profileConfig
     };
 

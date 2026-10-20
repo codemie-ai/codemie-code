@@ -143,6 +143,30 @@ describe('SSOAuthPlugin', () => {
     expect(context.headers['cookie']).toBe('session=startup-value');
   });
 
+  it('stays a no-op for JWT main auth + a separately-authenticated SSO sync endpoint (PR #661 review)', async () => {
+    // Regression: the shared refresher used to be seeded from whichever of
+    // credentials/syncCredentials had cookies, so a JWT-authenticated main profile with an
+    // SSO-authenticated sync endpoint got the sync cookies injected into LLM requests here.
+    // `credentialRefresher` now only ever wraps `credentials` (the main auth method).
+    const jwtCredentials = { token: 'jwt-token', apiUrl: TARGET_API_URL } as never;
+    const syncCredentials = { cookies: { session: 'sync-cookie' } } as never;
+    const context: PluginContext = {
+      config: { targetApiUrl: TARGET_API_URL, provider: 'ai-run-sso', sessionId: 'test-session' },
+      logger,
+      credentials: jwtCredentials,
+      syncCredentials,
+      credentialRefresher: new CredentialRefresher(jwtCredentials, {
+        provider: 'ai-run-sso',
+        baseUrl: TARGET_API_URL,
+        codeMieUrl: undefined,
+      }),
+    };
+
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(context);
+
+    expect(interceptor.onRequest).toBeUndefined();
+  });
+
   it('throws when neither a fresh nor a last-known-good credential has any usable cookies', async () => {
     vi.mocked(getStoredPlatformCredentials).mockResolvedValue(null);
     const interceptor: ProxyInterceptor = await plugin.createInterceptor(

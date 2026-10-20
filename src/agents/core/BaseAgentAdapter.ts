@@ -1072,6 +1072,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       this.proxy = new CodeMieProxy(config);
       const { url } = await this.proxy.start();
 
+      // Preserve the real upstream URL before it's overwritten below: the spawned agent (and
+      // the hook process it runs under) only sees the local proxy URL on CODEMIE_BASE_URL from
+      // here on, but the analytics-auth-status marker is keyed to this original target URL
+      // (SSOSessionExpiryPlugin writes `targetApiUrl` from this same `config.targetApiUrl`) —
+      // without it, the hook's auth gate can never match the marker for an SSO profile
+      // (PR #661 review).
+      env.CODEMIE_TARGET_API_URL = config.targetApiUrl;
+
       // Update environment with proxy URL
       env.CODEMIE_BASE_URL = url;
       env.CODEMIE_API_KEY = 'proxy-handled';

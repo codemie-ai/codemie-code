@@ -370,6 +370,36 @@ describe('BaseAgentAdapter', () => {
     });
   });
 
+  describe('setupProxy', () => {
+    const proxyCapableMetadata: AgentMetadata = {
+      name: 'test',
+      displayName: 'Test Agent',
+      description: 'Test agent for unit testing',
+      npmPackage: null,
+      cliCommand: null,
+      envMapping: {},
+      supportedProviders: ['ai-run-sso'],
+      ssoConfig: { enabled: true, clientType: 'codemie-claude' },
+    };
+
+    it('preserves the real upstream URL in CODEMIE_TARGET_API_URL before overwriting CODEMIE_BASE_URL with the local proxy URL (PR #661 review)', async () => {
+      // BaseAgentAdapter.setupProxy() rewrites CODEMIE_BASE_URL to the proxy's own local URL
+      // for the spawned agent (and the hook process it runs under). The analytics-auth-status
+      // marker is keyed to the original upstream target URL, so the hook's auth gate needs that
+      // original preserved somewhere the rewrite doesn't touch.
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const env: NodeJS.ProcessEnv = {
+        CODEMIE_PROVIDER: 'ai-run-sso',
+        CODEMIE_BASE_URL: 'https://llm-gateway.example.com',
+      };
+
+      await (adapter as any).setupProxy(env);
+
+      expect(env.CODEMIE_TARGET_API_URL).toBe('https://llm-gateway.example.com');
+      expect(env.CODEMIE_BASE_URL).toBe('http://127.0.0.1:0');
+    });
+  });
+
   describe('reasoning effort injection', () => {
     // A minimal adapter that delegates to BaseAgentAdapter.run() so the injection
     // code path is exercised. It uses isBuiltIn=false + cliCommand so the spawn

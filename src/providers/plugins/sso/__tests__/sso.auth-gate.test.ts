@@ -81,6 +81,26 @@ describe('ensureCodeMieSsoAuth', () => {
     expect(startDetachedSsoLogin).not.toHaveBeenCalled();
   });
 
+  it('matches a marker whose targetApiUrl host differs from CODEMIE_URL, via the input.baseUrl candidate (PR #661 review)', async () => {
+    // The marker is keyed to the LLM-request proxy's own target URL, which can be on a
+    // different host than CODEMIE_URL/CODEMIE_SYNC_API_URL (e.g. a dedicated LLM gateway).
+    // hook.ts now passes the preserved CODEMIE_TARGET_API_URL as input.baseUrl for exactly this
+    // case — the gate must still match and block even though ssoUrl/syncApiUrl's host differs.
+    const TARGET_API_URL = 'https://llm-gateway.example.com';
+    getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401', baseUrl: TARGET_API_URL } as never);
+
+    const result = await ensureCodeMieSsoAuth({
+      provider: 'ai-run-sso',
+      ssoUrl: 'https://codemie.example.com',
+      syncApiUrl: 'https://codemie.example.com',
+      baseUrl: TARGET_API_URL,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('rejected the stored credentials');
+  });
+
   it('still applies a marker with no baseUrl of its own (old format, never crashes)', async () => {
     getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
     vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401' } as never); // no baseUrl field at all

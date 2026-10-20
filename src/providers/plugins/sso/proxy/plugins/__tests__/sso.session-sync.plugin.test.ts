@@ -54,13 +54,23 @@ const MANAGED_ENV = [
 function buildContext(overrides: Partial<PluginContext> = {}): PluginContext {
   const credentials = 'credentials' in overrides ? overrides.credentials : { cookies: { auth: 'cookie-value' } } as never;
   const syncCredentials = overrides.syncCredentials;
-  // sso.proxy.ts builds this once from whichever of credentials/syncCredentials has cookies
-  // and shares it across every consumer in production.
-  const ssoCredentials = syncCredentials && 'cookies' in syncCredentials
+  const refresherParams = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', codeMieUrl: undefined };
+  // Mirrors sso.proxy.ts: syncCredentialRefresher wraps whichever of syncCredentials/credentials
+  // actually has SSO cookies, reusing the same refresher instance as credentialRefresher when
+  // it falls back to the identical `credentials` snapshot (PR #661 review).
+  const credentialRefresher = credentials
+    ? new CredentialRefresher(credentials as never, refresherParams)
+    : undefined;
+  const syncSource = syncCredentials && 'cookies' in syncCredentials
     ? syncCredentials
     : credentials && 'cookies' in credentials
       ? credentials
       : undefined;
+  const syncCredentialRefresher = !syncSource
+    ? undefined
+    : syncSource === credentials && credentialRefresher
+      ? credentialRefresher
+      : new CredentialRefresher(syncSource as never, refresherParams);
   return {
     config: {
       targetApiUrl: 'https://api.example.com',
@@ -73,13 +83,8 @@ function buildContext(overrides: Partial<PluginContext> = {}): PluginContext {
     },
     logger,
     credentials,
-    credentialRefresher: ssoCredentials
-      ? new CredentialRefresher(ssoCredentials as never, {
-          provider: 'ai-run-sso',
-          baseUrl: 'https://api.example.com',
-          codeMieUrl: undefined,
-        })
-      : undefined,
+    credentialRefresher,
+    syncCredentialRefresher,
     ...overrides
   } as PluginContext;
 }
@@ -186,6 +191,26 @@ describe('SSOSessionSyncPlugin', () => {
       });
       const interceptor = await plugin.createInterceptor(ctx);
       expect(interceptor.name).toBe('sso-session-sync');
+    });
+
+    it('syncs with the syncCredentials cookies, not the main profile cookies, when both differ (PR #661 review)', async () => {
+      // Regression: the shared refresher used to be seeded "credentials first, syncCredentials
+      // second", so when the main SSO profile and the sync endpoint point at different
+      // environments, sync went out with the main profile's cookies instead of the sync
+      // endpoint's own. syncCredentialRefresher now always prefers syncCredentials.
+      vi.useFakeTimers();
+      const ctx = buildContext({
+        credentials: { cookies: { auth: 'main-profile-cookie' } } as never,
+        syncCredentials: { cookies: { auth: 'sync-endpoint-cookie' } } as never
+      });
+      const interceptor = await plugin.createInterceptor(ctx);
+
+      await interceptor.onProxyStart?.();
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=sync-endpoint-cookie' });
+
+      await interceptor.onProxyStop?.();
     });
   });
 

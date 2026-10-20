@@ -20,12 +20,14 @@ export class SSOAuthPlugin implements ProxyPlugin {
   priority = 10;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    // Guard: skip if credentials are JWT (not SSO)
-    if (!context.credentialRefresher) {
+    // Guard: skip if credentials are JWT (not SSO). `credentialRefresher` may also wrap JWT
+    // credentials (the model-catalogue fetch needs it either way), so check the underlying
+    // credential type rather than just whether a refresher exists (PR #661 review).
+    if (!context.credentials || !('cookies' in context.credentials) || !context.credentialRefresher) {
       return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(context.credentialRefresher);
+    return new SSOAuthInterceptor(context.credentialRefresher as CredentialRefresher<SSOCredentials>);
   }
 }
 

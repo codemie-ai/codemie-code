@@ -564,11 +564,14 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
     // The analytics-auth-status marker records the LLM-request proxy's own target URL
-    // (SSOSessionExpiryPlugin writes `targetApiUrl`, sourced from this same CODEMIE_BASE_URL),
-    // which can differ from the sync/SSO URLs above — without this, the gate's profile-match
-    // check (sso.auth-gate.ts's markerAppliesToProfile) never sees the one URL the marker is
-    // actually keyed to and silently ignores it.
-    const baseUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    // (SSOSessionExpiryPlugin writes `targetApiUrl`), which can differ from the sync/SSO URLs
+    // above — without this, the gate's profile-match check (sso.auth-gate.ts's
+    // markerAppliesToProfile) never sees the one URL the marker is actually keyed to and
+    // silently ignores it. In this hook's own process, CODEMIE_BASE_URL has already been
+    // rewritten to the local proxy's URL by BaseAgentAdapter.setupProxy before the agent (and
+    // this hook) were spawned, so it no longer matches — CODEMIE_TARGET_API_URL is the original
+    // value setupProxy preserves for exactly this (PR #661 review).
+    const baseUrl = getConfigValue('CODEMIE_TARGET_API_URL', config) || getConfigValue('CODEMIE_BASE_URL', config);
 
     const authInput: AuthGateInput = {
       provider,

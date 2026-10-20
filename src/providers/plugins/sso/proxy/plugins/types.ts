@@ -51,12 +51,20 @@ export interface PluginContext {
   credentials?: SSOCredentials | JWTCredentials;
   syncCredentials?: SSOCredentials | JWTCredentials;
   /**
-   * One shared throttled re-reader for the daemon's SSO credentials, built once in
-   * `sso.proxy.ts` and reused by every consumer (auth injection, session sync, model-catalogue
-   * fetch) instead of each constructing its own — see `credential-refresh.ts`. Undefined for a
-   * JWT-authenticated daemon, where there is nothing to re-read.
+   * Shared throttled re-reader for `credentials` (the main auth method's snapshot — SSO or
+   * JWT; JWT `refresh()` is a no-op), built once in `sso.proxy.ts`. Used by the auth-injection
+   * interceptor (SSO only) and the Claude/Codex model-catalogue fetch (either type). Undefined
+   * when there are no credentials at all.
    */
-  credentialRefresher?: CredentialRefresher<SSOCredentials>;
+  credentialRefresher?: CredentialRefresher<SSOCredentials | JWTCredentials>;
+  /**
+   * Shared throttled re-reader for whichever of `syncCredentials`/`credentials` actually has SSO
+   * cookies, built once in `sso.proxy.ts` and used by session sync. Kept separate from
+   * `credentialRefresher` because the two can wrap different identities (e.g. JWT main auth +
+   * an independently-authenticated SSO sync endpoint) — see `credential-refresh.ts`. Undefined
+   * when neither source has cookies.
+   */
+  syncCredentialRefresher?: CredentialRefresher<SSOCredentials>;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }
