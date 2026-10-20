@@ -111,7 +111,7 @@ function emptySessionEndPass(): {
 
 /** The `SessionEnvCheckInput` every handler below derives from a hook payload with no
  *  `effort`/`permission_mode` of its own — the common case in this file's fixtures. */
-const NO_ENV_CHECK = { effort: '', permissionMode: '' };
+const NO_ENV_CHECK = { cwd: '/repo', effort: '', permissionMode: '' };
 
 /** Every event sent in the batch call (there is at most one call per processOtlpEvent). */
 function forwardedEvents(): Record<string, unknown>[] {

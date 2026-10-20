@@ -1654,6 +1654,47 @@ describe('openSessionEnvCheckPass', () => {
     await check.finalize(true);
   });
 
+  it('builds a full env baseline on the first lifecycle check when SessionStart was missed', async () => {
+    const sessionId = 'session-env-late-baseline';
+    resolveSessionEnvFieldsMock.mockResolvedValue({
+      ...sessionEnvFixture,
+      configured_model: '',
+      permission_mode: 'acceptEdits',
+    });
+
+    const first = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: 'acceptEdits',
+      cwd: '/repo',
+    });
+
+    expect(first.sessionEnvFields).toMatchObject({
+      provider: 'anthropic',
+      permission_mode: 'acceptEdits',
+      configured_model: '',
+    });
+    expect(resolveSessionEnvFieldsMock).toHaveBeenCalledWith('/repo', '', 'acceptEdits');
+    await first.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: '',
+      permission_mode: 'acceptEdits',
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+    const next = await openSessionEnvCheckPass(sessionId, {
+      effort: '',
+      permissionMode: 'acceptEdits',
+      cwd: '/repo',
+    });
+
+    expect(next.sessionEnvFields).toBeNull();
+    await next.finalize(true);
+  });
+
   it('full path: falls back to the last snapshot\'s configured_model when the trigger supplies none (ConfigChange)', async () => {
     const sessionId = 'session-env-full-fallback-model';
     const startPass = await openSessionStartPass(sessionId, 'sha-1', sessionEnvFixture);

@@ -438,10 +438,11 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 }
 
 /** Cheap env fields (no I/O), folded into the handler's own transcript/subagent pass. */
-function envCheckInput(hookInput: Pick<HookInput, 'effort' | 'permission_mode'>): SessionEnvCheckInput {
+function envCheckInput(hookInput: Pick<HookInput, 'cwd' | 'effort' | 'permission_mode'>): SessionEnvCheckInput {
   return {
     effort: hookInput.effort?.level ?? '',
     permissionMode: hookInput.permission_mode ?? '',
+    cwd: hookInput.cwd,
   };
 }
 

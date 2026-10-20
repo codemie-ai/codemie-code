@@ -601,6 +601,8 @@ export interface SessionEnvCheckInput {
   /** The firing hook's own `effort?.level ?? ''` / `permission_mode ?? ''` — free, no I/O. */
   effort: string;
   permissionMode: string;
+  /** Hook cwd, used to build a full baseline if no SessionStart snapshot was recorded. */
+  cwd?: string;
   /**
    * Present only on triggers willing to pay for a full recompute (`PostModelSwitch`,
    * `ConfigChange`) — `output_style`/`plugins`/`mcp_servers`/`provider`/`api_host` are only
@@ -613,8 +615,7 @@ export interface SessionEnvCheckInput {
 
 export interface SessionEnvCheckResult {
   /** The full, updated snapshot to send as a new `agent.session.env` record — `null` when
-   *  nothing actually changed (the common case), or when there's no baseline to diff against
-   *  yet and this call can't build one either (a cheap-only check with no prior `SessionStart`). */
+   *  nothing actually changed (the common case), or when there's no baseline and no cwd to build one. */
   sessionEnvFields: SessionEnvFields | null;
   finalize: (accepted: boolean) => Promise<void>;
 }
@@ -631,14 +632,15 @@ async function computeSessionEnvUpdate(
   input: SessionEnvCheckInput
 ): Promise<SessionEnvFields | null> {
   const last = state.lastSessionEnvFields;
-  if (!last && !input.full) {
+  const full = input.full ?? (!last && input.cwd ? { cwd: input.cwd } : undefined);
+  if (!last && !full) {
     return null;
   }
 
   let candidate: SessionEnvFields;
-  if (input.full) {
-    const configuredModel = input.full.configuredModel ?? last?.configured_model ?? '';
-    const resolved = await resolveSessionEnvFields(input.full.cwd, configuredModel, input.permissionMode);
+  if (full) {
+    const configuredModel = full.configuredModel ?? last?.configured_model ?? '';
+    const resolved = await resolveSessionEnvFields(full.cwd, configuredModel, input.permissionMode);
     candidate = {
       ...resolved,
       effort: input.effort || last?.effort || '',
