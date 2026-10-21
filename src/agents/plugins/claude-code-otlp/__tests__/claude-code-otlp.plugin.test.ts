@@ -468,21 +468,29 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(forwardedEvents()[0].file_path).toBe('/repo/nb.ipynb');
   });
 
-  it.each(['Agent', 'Task'])('stamps subagent_type/description on agent.tool.start/end for %s', async (toolName) => {
-    const plugin = new ClaudeCodeOtlpPlugin();
-    await plugin.processOtlpEvent(
-      JSON.stringify(
-        hookEvent({
-          hook_event_name: 'PreToolUse',
-          tool_name: toolName,
-          tool_input: { subagent_type: 'Explore', description: 'find files' },
-        })
-      ),
-      { ensureOtlpProxy, forwardOtlpEventsToSpool }
-    );
-    const [forwarded] = forwardedEvents();
-    expect(forwarded.subagent_type).toBe('Explore');
-    expect(forwarded.description).toBe('find files');
+  it.each(['Agent', 'Task'])('stamps a bounded subagent description on agent.tool.start/end for %s', async (toolName) => {
+    for (const hookEventName of ['PreToolUse', 'PostToolUse']) {
+      vi.clearAllMocks();
+      vi.mocked(isProjectTracked).mockResolvedValue(true);
+      resolveClientVersionMock.mockResolvedValue('2.1.23');
+      forwardOtlpEventsToSpool.mockResolvedValue(true);
+      const plugin = new ClaudeCodeOtlpPlugin();
+      const description = 'd'.repeat(350);
+      await plugin.processOtlpEvent(
+        JSON.stringify(
+          hookEvent({
+            hook_event_name: hookEventName,
+            tool_name: toolName,
+            tool_input: { subagent_type: 'Explore', description },
+          })
+        ),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(forwarded.subagent_type).toBe('Explore');
+      expect(forwarded.description).toBe('d'.repeat(300));
+      expect(forwarded.raw.description).toBe('d'.repeat(300));
+    }
   });
 
   it('stamps skill_name on agent.tool.start/end for Skill', async () => {

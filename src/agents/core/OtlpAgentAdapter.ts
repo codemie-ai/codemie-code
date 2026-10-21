@@ -171,7 +171,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
       limited['prompt'] = this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS);
     }
-    for (const field of ['tool_input', 'tool_response', 'error']) {
+    for (const field of ['tool_input', 'tool_response', 'error', 'description']) {
       if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
         limited[field] = this.boundedText(hookEvent[field], MAX_TOOL_FIELD_CHARS);
       }
