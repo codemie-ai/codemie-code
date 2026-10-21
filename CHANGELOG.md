@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie whatsnew` command showing release notes from this changelog
 - Once-per-upgrade "What's new" notice on CLI start after an update
 - Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
+- `codemie analytics` now includes oh-my-pi sub-agent spend and auxiliary model usage in omp token and cost totals, reports omp file changes, net lines and languages, shows omp skill/agent dispatches on the Timeline with per-agent cost and a root/unlinked allocation, recognizes more framework bundles (SecOps, Matt Pocock Skills, Caveman, Ponytail, CodeMie Skills, Herdr and the full CodeMie AI Factory set), and shows omp Commands as "not recorded"
 
 ### Fixed
 
