@@ -55,6 +55,32 @@ const OMP_SKILL_PROMPT = 'skill-prompt';
 const OMP_SKILL_URL = /^skill:\/\/(.+?)(?:\/SKILL\.md)?$/;
 
 /**
+ * The plugin a resolved `SKILL.md` belongs to, read from its install path. oh-my-pi records a
+ * plugin skill by its bare name (`mr-creator`), so the path is the only place the bundle
+ * (`sdlc-factory`) survives:
+ * - oh-my-pi's own cache: `…/plugins/cache/plugins/<marketplace>___<plugin>___<version>/skills/<name>/SKILL.md`
+ * - Claude Code's cache, which oh-my-pi also loads: `…/plugins/cache/<marketplace>/<plugin>/<version>/skills/<name>/SKILL.md`
+ */
+const PLUGIN_SKILL_PATHS = [
+  /\/plugins\/cache\/plugins\/[^/]+?___([^/]+?)___[^/]+\/skills\/[^/]+\/SKILL\.md$/,
+  /\/plugins\/cache\/[^/]+\/([^/]+)\/[^/]+\/skills\/[^/]+\/SKILL\.md$/,
+];
+
+/**
+ * `<plugin>/<name>` when `path` is a plugin's `SKILL.md`, else `name` unchanged — the same
+ * slash namespace oh-my-pi writes when the user names the plugin, so both spellings of one
+ * skill count together and the session-source detector sees the bundle.
+ */
+function qualifySkillName(name: string, path: unknown): string {
+  if (name.includes('/') || typeof path !== 'string') return name;
+  for (const pattern of PLUGIN_SKILL_PATHS) {
+    const plugin = pattern.exec(path)?.[1];
+    if (plugin) return `${plugin}/${name}`;
+  }
+  return name;
+}
+
+/**
  * The opening of Pi's skill wrapper, which only Pi itself writes (`_expandSkillCommand` in
  * `core/agent-session.ts`). Group 1 is the skill name.
  *
@@ -244,8 +270,8 @@ function ompSkillPromptName(raw: unknown): string | undefined {
   if (!('type' in raw) || raw.type !== 'custom_message') return undefined;
   if (!('customType' in raw) || raw.customType !== OMP_SKILL_PROMPT) return undefined;
   const details = detailsOf(raw);
-  const name = details && 'name' in details ? details.name : undefined;
-  return typeof name === 'string' && name.trim() ? name.trim() : undefined;
+  if (!details || !('name' in details) || typeof details.name !== 'string' || !details.name.trim()) return undefined;
+  return qualifySkillName(details.name.trim(), 'path' in details ? details.path : undefined);
 }
 
 /** The skill a successful oh-my-pi `read` loaded, when it resolved to that skill's `SKILL.md`. */
@@ -256,7 +282,8 @@ function ompSkillReadName(result: object): string | undefined {
   const meta = 'meta' in details ? details.meta : undefined;
   const source = meta && typeof meta === 'object' && 'source' in meta ? meta.source : undefined;
   const url = source && typeof source === 'object' && 'value' in source ? source.value : undefined;
-  return typeof url === 'string' ? OMP_SKILL_URL.exec(url)?.[1] : undefined;
+  const name = typeof url === 'string' ? OMP_SKILL_URL.exec(url)?.[1] : undefined;
+  return name ? qualifySkillName(name, details.resolvedPath) : undefined;
 }
 
 /**
