@@ -43,6 +43,37 @@ export function piForkedContinuations(parsed: ParsedSession): LinkedTranscript[]
   return (parsed.subagents ?? []).filter((sub) => sub.agentType === PI_FORKED_CONTINUATION);
 }
 
+/**
+ * Every entry of the conversation this transcript belongs to, each counted once.
+ *
+ * `/fork` writes a NEW file that replays the prior conversation VERBATIM — entry ids included —
+ * and the analytics layer's fork folding attaches those continuations to the transcript they grew
+ * out of. Concatenating blindly would count the replayed history once per fork: on a real 12-file
+ * corpus that is 121 turns for 21 real prompts, and every fork claiming the full multi-hour
+ * duration it inherited. De-duplicating on the entry id each file writes about itself collapses
+ * the family back to the single conversation it is.
+ */
+export function piConversationEntries(parsed: ParsedSession): unknown[] {
+  const own = (parsed.messages ?? []) as Array<{ id?: string }>;
+  const continuations = piForkedContinuations(parsed);
+  if (continuations.length === 0) {
+    return own;
+  }
+
+  const entries: unknown[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of [...own, ...continuations.flatMap((fork) => (fork.messages ?? []) as Array<{ id?: string }>)]) {
+    if (entry?.id) {
+      if (seenIds.has(entry.id)) {
+        continue; // replayed copy of an entry an earlier transcript in the family already had
+      }
+      seenIds.add(entry.id);
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
 /** The immediate subdirectories of `root`, or [] when it is absent or unreadable. */
 async function subdirectoriesOf(root: string): Promise<string[]> {
   try {

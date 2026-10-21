@@ -29,13 +29,14 @@ import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
-import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
+import { PI_FORKED_CONTINUATION, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
 import { extractPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
 import {
   extractPiToolCalls,
   isPiAssistantMessage,
   isPiMessageEntry,
   isPiToolResultMessage,
+  piEntryTimestamp,
   type PiEntry,
 } from '../../../agents/plugins/pi/pi.types.js';
 
@@ -477,46 +478,6 @@ interface PiSessionLine {
 }
 
 /**
- * Every entry of the conversation this transcript belongs to, each counted once.
- *
- * `/fork` writes a NEW file that replays the prior conversation VERBATIM — entry ids included —
- * and {@link foldPiForkFamilies} attaches those continuations to the transcript they grew out
- * of. Concatenating blindly would count the replayed history once per fork: on a real 12-file
- * corpus that is 121 turns for 21 real prompts, and every fork claiming the full multi-hour
- * duration it inherited. De-duplicating on the entry id each file writes about itself collapses
- * the family back to the single conversation it is.
- */
-function piConversationLines(parsed: ParsedSession): PiSessionLine[] {
-  const own = (parsed.messages ?? []) as PiSessionLine[];
-  const continuations = piForkedContinuations(parsed);
-  if (continuations.length === 0) {
-    return own;
-  }
-
-  const lines: PiSessionLine[] = [];
-  const seenIds = new Set<string>();
-  for (const line of [...own, ...continuations.flatMap((fork) => (fork.messages ?? []) as PiSessionLine[])]) {
-    if (line?.id) {
-      if (seenIds.has(line.id)) {
-        continue; // replayed copy of an entry an earlier transcript in the family already had
-      }
-      seenIds.add(line.id);
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-
-function piLineTimestamp(line: PiSessionLine): number | null {
-  const messageTs = line.message?.timestamp;
-  if (typeof messageTs === 'number' && Number.isFinite(messageTs)) {
-    return messageTs;
-  }
-  const entryTs = line.timestamp ? Date.parse(line.timestamp) : NaN;
-  return Number.isFinite(entryTs) ? entryTs : null;
-}
-
-/**
  * Turns in a Pi transcript = user prompts.
  *
  * Pi gives tool results their own `toolResult` role, so a `user` message is always a real prompt
@@ -578,8 +539,8 @@ export function synthesizePiRawSession(
   descriptor: SessionDescriptor,
   parsed: ParsedSession
 ): RawSessionData {
-  const lines = piConversationLines(parsed);
-  const timestamps = lines.map(piLineTimestamp).filter((n): n is number => n !== null);
+  const lines = piConversationEntries(parsed) as PiSessionLine[];
+  const timestamps = lines.map(piEntryTimestamp).filter((n): n is number => n !== null);
   const meta = parsed.metadata as { projectPath?: string } | undefined;
 
   const models = lines
