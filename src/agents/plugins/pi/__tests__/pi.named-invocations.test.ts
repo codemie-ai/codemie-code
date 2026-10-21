@@ -224,8 +224,8 @@ describe('extractPiNamedInvocations', () => {
 });
 
 describe('extractPiNamedInvocations — oh-my-pi shapes', () => {
-  function skillPrompt(id: string, name: string): Record<string, unknown> {
-    return { type: 'custom_message', customType: 'skill-prompt', id, details: { name, path: `/skills/${name}/SKILL.md` } };
+  function skillPrompt(id: string, name: string, path = `/skills/${name}/SKILL.md`): Record<string, unknown> {
+    return { type: 'custom_message', customType: 'skill-prompt', id, details: { name, path } };
   }
 
   function readResult(id: string, url: string, resolvedPath: string, isError = false): Record<string, unknown> {
@@ -272,6 +272,24 @@ describe('extractPiNamedInvocations — oh-my-pi shapes', () => {
       readResult('r2', 'skill://babysit-mr', '/skills/babysit-mr/SKILL.md'),
     ]);
     expect(skillInvocations).toEqual({ 'babysit-mr': 2 });
+  });
+
+  it('namespaces a plugin skill by the plugin its SKILL.md was installed from', () => {
+    const claudeCache = '/h/.claude/plugins/cache/sdlc-factory/sdlc-factory/0.9.8/skills/mr-creator/SKILL.md';
+    const ompCache = '/h/.omp/plugins/cache/plugins/claude-plugins-official___superpowers___6.4.1/skills/using-superpowers/SKILL.md';
+    const { skillInvocations } = extractPiNamedInvocations([
+      readResult('r1', 'skill://using-superpowers', ompCache),
+      readResult('r2', 'skill://code-review', '/h/.claude/skills/code-review/SKILL.md'),
+      userEntry('u1', 'ship it'),
+      skillPrompt('p1', 'mr-creator', claudeCache),
+      // The model re-reading the skill the user just invoked is still the same invocation.
+      readResult('r3', 'skill://mr-creator', claudeCache),
+    ]);
+    expect(skillInvocations).toEqual({
+      'superpowers/using-superpowers': 1,
+      'code-review': 1,
+      'sdlc-factory/mr-creator': 1,
+    });
   });
 
   it('counts each task entry under its agent, defaulting to the task agent', () => {
