@@ -562,6 +562,43 @@ describe('openMainTranscriptPass — compactions', () => {
     }
   });
 
+  it('returns immediately instead of waiting out the budget when the transcript does not exist', async () => {
+    const sessionId = 'session-compaction-missing-transcript';
+    const transcriptPath = join(transcriptDir, 'no-such-transcript.jsonl');
+    const started = Date.now();
+
+    const pass = await openPostCompactPass(sessionId, transcriptPath, 5_000);
+    await pass.finalize(true);
+
+    // The budget is 5s — a missing file must short-circuit it rather than poll for the full time.
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(pass.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+  });
+
+  it('collects a boundary line whose trailing newline lands only after the first incremental read', async () => {
+    const sessionId = 'session-compaction-partial-line';
+    const transcriptPath = join(transcriptDir, 'transcript-compaction-partial-line.jsonl');
+    const boundary = JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      timestamp: '2026-10-01T00:10:00.000Z',
+      compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+    });
+    // Written without its trailing newline: the first polls see an incomplete line, which the
+    // incremental reader must not lose once the newline arrives.
+    writeFileSync(transcriptPath, boundary, 'utf-8');
+
+    const passPromise = openPostCompactPass(sessionId, transcriptPath, 1_500);
+    // Past the first poll (t=0) and the one at ~500ms, so both read an incomplete line.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    appendFileSync(transcriptPath, '\n');
+
+    const pass = await passPromise;
+    await pass.finalize(true);
+
+    expect(pass.events.filter((event) => event.type === 'agent.session.compact.done')).toHaveLength(1);
+  });
+
   it('does not hold the per-session lock during the lock-free wait, so a sibling pass is never blocked by it', async () => {
     const sessionId = 'session-compaction-no-lock-contention';
     const transcriptPath = writeTranscript('transcript-compaction-no-lock-contention.jsonl', []);

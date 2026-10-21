@@ -90,37 +90,60 @@ const EMPTY_PASS: TranscriptPass = { events: [], finalize: async () => {} };
  * user's own turn.
  */
 const POST_COMPACT_WAIT_BUDGET_MS = 60_000;
-const COMPACTION_POLL_INTERVAL_MS = 100;
+const COMPACTION_POLL_INTERVAL_MS = 500;
 const COMPACTION_SETTLE_INTERVAL_MS = 10_000;
 
+/** `compact_boundary` lines seen so far by {@link scanCompactions}, plus the byte offset consumed. */
+interface CompactionScan {
+  compactions: Compaction[];
+  offset: number;
+}
+
 /**
- * Reads the whole transcript and returns every `compact_boundary` line, in transcript order.
+ * Read only the transcript bytes appended since `scan.offset` and append any newly completed
+ * `compact_boundary` lines to `scan.compactions`.
+ *
+ * `PostCompact` polls for up to a minute, so re-reading the whole file and `JSON.parse`-ing every
+ * line on every poll is wasteful on a multi-megabyte transcript. This reads only the appended
+ * bytes ({@link readNewLines} cuts at the last newline, so a partially flushed line is picked up
+ * by a later poll) and parses only the lines whose text mentions `compact_boundary`.
  *
  * Deliberately not scoped to `state.mainOffset`: a sibling hook for the same session (e.g. the
  * `Stop` that resumes the turn right after compaction) can advance `mainOffset` past the boundary
  * line's position while `openPostCompactPass` is still waiting — nothing else in this module ever
  * looks for `compact_boundary`, so that line is never actually consumed by it, but relying on
  * `mainOffset` as a starting point would still miss it.
+ *
+ * Returns `false` when the transcript does not exist — there is nothing to wait for then.
  */
-async function findCompactions(transcriptPath: string): Promise<Compaction[]> {
-  let raw: string;
+async function scanCompactions(transcriptPath: string, scan: CompactionScan): Promise<boolean> {
   try {
-    raw = await readFile(transcriptPath, 'utf-8');
+    await stat(transcriptPath);
   } catch {
-    return [];
+    return false;
   }
 
-  const lines: SignalLine[] = [];
-  for (const rawLine of raw.split('\n')) {
-    if (!rawLine.trim()) continue;
+  const { lines, nextOffset } = await readNewLines(transcriptPath, scan.offset);
+  scan.offset = nextOffset;
+
+  const boundaryLines: SignalLine[] = [];
+  for (const line of lines) {
+    if (!line.includes('compact_boundary')) continue;
     try {
-      lines.push(JSON.parse(rawLine) as SignalLine);
+      boundaryLines.push(JSON.parse(line) as SignalLine);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
   }
 
-  return collectCompactions(lines);
+  for (const compaction of collectCompactions(boundaryLines)) {
+    // A truncated/rotated transcript is re-read from byte 0 by `readNewLines`; skip a boundary
+    // this pass already collected instead of reporting it twice.
+    if (scan.compactions.some((existing) => existing.end === compaction.end)) continue;
+    scan.compactions.push(compaction);
+  }
+
+  return true;
 }
 
 /**
@@ -137,24 +160,26 @@ function isCompactionNewer(candidate: Compaction, lastEnd: string): boolean {
 }
 
 /**
- * Lock-free: polls {@link findCompactions} until no new boundaries have appeared for the settle
- * interval, or `waitBudgetMs` expires. The quiet period gives Claude Code time to flush later
- * boundaries from the same compaction sequence; the authoritative full scan happens under the
- * lock afterward.
+ * Lock-free: incrementally scans the transcript until no new boundaries have appeared for the
+ * settle interval, or `waitBudgetMs` expires. The quiet period gives Claude Code time to flush
+ * later boundaries from the same compaction sequence. Returns the accumulated scan so the
+ * authoritative pass under the lock afterward can reuse it instead of re-reading the transcript,
+ * and returns immediately when the transcript does not exist.
  */
 async function waitForCompactionsToSettle(
   transcriptPath: string,
   afterEnd: string,
   waitBudgetMs: number
-): Promise<void> {
+): Promise<CompactionScan> {
+  const scan: CompactionScan = { compactions: [], offset: 0 };
   const deadline = Date.now() + waitBudgetMs;
   let previousSignature: string | undefined;
   let stableSince: number | undefined;
 
   for (;;) {
-    const newer = (await findCompactions(transcriptPath)).filter((compaction) =>
-      isCompactionNewer(compaction, afterEnd)
-    );
+    if (!(await scanCompactions(transcriptPath, scan))) return scan;
+
+    const newer = scan.compactions.filter((compaction) => isCompactionNewer(compaction, afterEnd));
     const signature = newer.map((compaction) => compaction.end).join('\n');
     const now = Date.now();
 
@@ -163,7 +188,7 @@ async function waitForCompactionsToSettle(
         previousSignature = signature;
         stableSince = now;
       } else if (stableSince !== undefined && now - stableSince >= COMPACTION_SETTLE_INTERVAL_MS) {
-        return;
+        return scan;
       }
     } else {
       previousSignature = undefined;
@@ -171,7 +196,7 @@ async function waitForCompactionsToSettle(
     }
 
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return;
+    if (remainingMs <= 0) return scan;
 
     await new Promise((resolve) => setTimeout(resolve, Math.min(COMPACTION_POLL_INTERVAL_MS, remainingMs)));
   }
@@ -764,14 +789,16 @@ export async function openMainTranscriptPass(
  * the lock for no reason. Instead:
  *
  * 1. A lock-free peek at the persisted `lastCompactionEnd` marker, then a lock-free
- *    {@link waitForCompactionsToSettle} poll. It allows a quiet interval after detecting new
- *    boundaries so delayed lines from the same compaction sequence can be collected together.
+ *    {@link waitForCompactionsToSettle} poll. The poll is incremental — each tick reads only the
+ *    bytes appended since the previous one and parses only `compact_boundary` lines — and returns
+ *    immediately when the transcript does not exist. It allows a quiet interval after detecting
+ *    new boundaries so delayed lines from the same compaction sequence can be collected together.
  * 2. Only once that resolves (found, or the budget ran out) does it acquire the lock — briefly,
  *    like every other pass — reload fresh state, run the normal {@link deriveMainEvents} for
  *    `agent.usage.request`, and re-check for all compactions newer than the now-fresh
  *    `state.lastCompactionEnd` (not reusing the lock-free peek's possibly-stale value). A sibling
  *    hook may have advanced `state.mainOffset` past a boundary line while this was waiting —
- *    harmless, since {@link findCompactions} never relies on `mainOffset`.
+ *    harmless, since {@link scanCompactions} never relies on `mainOffset`.
  *
  * The hook entry is also configured `async` (`connectors/claude-code-otlp.ts`) so Claude Code
  * itself never waits on this either.
@@ -782,7 +809,7 @@ export async function openPostCompactPass(
   waitBudgetMs: number = POST_COMPACT_WAIT_BUDGET_MS
 ): Promise<TranscriptPass> {
   const peekState = await loadParseState(sessionId);
-  await waitForCompactionsToSettle(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
+  const scan = await waitForCompactionsToSettle(transcriptPath, peekState.lastCompactionEnd, waitBudgetMs);
 
   let release: (() => Promise<void>) | undefined;
   try {
@@ -790,7 +817,10 @@ export async function openPostCompactPass(
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
 
-    const boundaries = await findCompactions(transcriptPath);
+    // Catch up with anything appended while the lock was being acquired; only the appended bytes
+    // are read, so this stays cheap even on a large transcript (and no-ops while it is unchanged).
+    await scanCompactions(transcriptPath, scan);
+    const boundaries = scan.compactions;
     const newCompactions = boundaries.filter((compaction) =>
       isCompactionNewer(compaction, state.lastCompactionEnd)
     );
