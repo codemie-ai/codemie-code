@@ -78,7 +78,7 @@ describe('parseUsageLine', () => {
     // Nested usage.output_tokens_details.thinking_tokens.
     expect(r.thinkingTokens).toBe(28);
     expect(r.cacheReadTokens).toBe(40);
-    // Nested cache_creation.* fields, not the flat cache_creation_input_tokens.
+    // Nested cache_creation.* priority over the flat cache_creation_input_tokens aggregate.
     expect(r.cacheCreation5mTokens).toBe(5);
     expect(r.cacheCreation1hTokens).toBe(10);
     // Nested server_tool_use.* fields.
@@ -92,6 +92,81 @@ describe('parseUsageLine', () => {
     expect(r.scopeKind).toBe('main');
     expect(r.scopeName).toBe('');
     expect(r.agentId).toBe('');
+  });
+
+  it('falls back to the flat cache_creation_input_tokens as the 5m tier when the row has no cache_creation split', () => {
+    const line = JSON.stringify({
+      requestId: 'req_flat_only',
+      message: {
+        id: 'msg_flat_only',
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 120 },
+      },
+    });
+
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
+
+    // Rows from older Claude Code versions/providers carry only the aggregate — it must not be lost.
+    expect(r.cacheCreation5mTokens).toBe(120);
+    expect(r.cacheCreation1hTokens).toBe(0);
+  });
+
+  it('derives the 5m tier as the aggregate minus the nested 1h tier when only 1h is split out', () => {
+    const line = JSON.stringify({
+      requestId: 'req_1h_only',
+      message: {
+        id: 'msg_1h_only',
+        model: 'claude-sonnet-4-5',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_creation_input_tokens: 120,
+          cache_creation: { ephemeral_1h_input_tokens: 20 },
+        },
+      },
+    });
+
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
+
+    expect(r.cacheCreation5mTokens).toBe(100);
+    expect(r.cacheCreation1hTokens).toBe(20);
+  });
+
+  it('never reports a negative 5m tier when the nested 1h tier exceeds the aggregate', () => {
+    const line = JSON.stringify({
+      requestId: 'req_inconsistent',
+      message: {
+        id: 'msg_inconsistent',
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 5, cache_creation: { ephemeral_1h_input_tokens: 40 } },
+      },
+    });
+
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
+
+    expect(r.cacheCreation5mTokens).toBe(0);
+    expect(r.cacheCreation1hTokens).toBe(40);
+  });
+
+  it('keeps the nested split authoritative when it disagrees with the flat aggregate', () => {
+    const line = JSON.stringify({
+      requestId: 'req_split_wins',
+      message: {
+        id: 'msg_split_wins',
+        model: 'claude-sonnet-4-5',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 100,
+          cache_creation: { ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 10 },
+        },
+      },
+    });
+
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
+
+    expect(r.cacheCreation5mTokens).toBe(5);
+    expect(r.cacheCreation1hTokens).toBe(10);
   });
 
   it('reads the top-level requestId and message.id separately from a direct-session line', () => {
