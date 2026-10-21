@@ -1,0 +1,4 @@
+{"ts":"2026-10-21T15:36:51Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved 10-task plan","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-10-21T16:02:15Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"request-changes","rationale":"Review not run: orchestrator lacks nested Agent dispatch; user deferred re-run","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-10-21T16:16:11Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"request-changes","rationale":"Fix CR-001, CR-002, CR-003","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-10-21T16:19:24Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"Fix-up 5093707d closes CR-001..003","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
