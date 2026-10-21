@@ -37,6 +37,7 @@ import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent, sessionAdapterKey } from './pi-agent.js';
 import { isLocalModel } from './local-models.js';
 import { logger } from '@/utils/logger.js';
 
@@ -59,7 +60,7 @@ function resolveSessionAdapter(agentName: string): SessionAdapter | null {
   if (isCodexFamilyAgent(agentName)) {
     return AgentRegistry.getAgent('codex')?.getSessionAdapter?.() ?? null;
   }
-  const fromRegistry = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+  const fromRegistry = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
   if (fromRegistry) {
     return fromRegistry;
   }
@@ -203,7 +204,7 @@ function maxOwnRecordTs(agentName: string, parsed: ParsedSession, upperBoundExcl
     records = extractClaudeUsageRecords(parsed);
   } else if (isCodexFamilyAgent(a)) {
     records = extractCodexUsageRecords(parsed);
-  } else if (a === 'pi') {
+  } else if (isPiFamilyAgent(a)) {
     records = extractPiUsageRecords(parsed);
   } else {
     return undefined;

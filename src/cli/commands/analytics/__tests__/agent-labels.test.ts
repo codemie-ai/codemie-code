@@ -10,6 +10,11 @@ describe('agentLabel', () => {
     expect(agentLabel('copilot-cli')).toBe('GitHub Copilot CLI');
   });
 
+  it('labels oh-my-pi separately from Pi', () => {
+    expect(agentLabel('omp')).toBe('Oh My Pi');
+    expect(agentLabel('pi')).toBe('Pi');
+  });
+
   it('returns the key unchanged for unmapped agents', () => {
     expect(agentLabel('unknown-agent')).toBe('unknown-agent');
     expect(agentLabel('claude')).toBe('claude');
