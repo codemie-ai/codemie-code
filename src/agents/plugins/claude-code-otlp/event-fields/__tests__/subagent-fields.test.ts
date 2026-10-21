@@ -20,7 +20,6 @@ describe('resolveSubagentStopFields', () => {
     expect(resolveSubagentStopFields(file, derivedEvents)).toEqual({
       description: 'Review the diff',
       tool_use_id: 'tool-a1',
-      workflow_run: '',
       spawn_depth: 2,
       worktree: 'worktrees/feature',
       started_at: '2026-10-01T00:00:00.000Z',
@@ -28,24 +27,13 @@ describe('resolveSubagentStopFields', () => {
     });
   });
 
-  it('defaults started_at/duration_ms when no agent.subagent.usage event was derived (empty/missing transcript)', () => {
+  it('omits spawn_depth/started_at/duration_ms when unknown, rather than defaulting them to 0/empty', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
 
     expect(resolveSubagentStopFields(file, [{ type: 'agent.usage.request' }])).toEqual({
       description: '',
       tool_use_id: '',
-      workflow_run: '',
-      spawn_depth: 0,
       worktree: '',
-      started_at: '',
-      duration_ms: 0,
     });
-  });
-
-  it('never fabricates workflow_run — always empty, regardless of what the derived event carries', () => {
-    const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
-    const derivedEvents = [{ type: 'agent.subagent.usage', workflow_run: 'should-be-ignored' }];
-
-    expect(resolveSubagentStopFields(file, derivedEvents).workflow_run).toBe('');
   });
 });

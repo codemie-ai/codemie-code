@@ -8,7 +8,7 @@
  *   <tmpDir>/<sessionId>/subagents/agent-<id>.meta.json   — sidecar (toolUseId/agentType/spawnDepth/description)
  *
  * Three subagents are used throughout:
- *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth must default to 0),
+ *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth is omitted, never sent as 0),
  *     two usage-bearing transcript lines (exercises summing across >1 request).
  *   - "a2": sidecar INCLUDES spawnDepth: 2 (nested subagent — pass-through), one usage line.
  *   - "a3": sidecar includes toolUseId/agentType/description, one usage line.
@@ -345,8 +345,6 @@ describe('buildSubagentUsageEvent', () => {
       tool_use_id: 'tool-a1',
       agent_type: '',
       description: '',
-      workflow_run: '',
-      spawn_depth: 0,
       worktree: '',
       started_at: '2026-10-01T00:00:00.000Z',
       ended_at: '2026-10-01T00:05:00.000Z',
@@ -371,7 +369,7 @@ describe('buildSubagentUsageEvent', () => {
     });
   });
 
-  it('passes a present spawn_depth through verbatim instead of defaulting to 0, and sources description from the sidecar-derived file field', () => {
+  it('passes a present spawn_depth through verbatim, and sources description from the sidecar-derived file field', () => {
     const file: SubagentFile = { agentId: 'a2', filePath: '/tmp/agent-a2.jsonl', spawnDepth: 2, description: 'Review the diff' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
@@ -382,14 +380,14 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.usage).toEqual([]);
   });
 
-  it('never fabricates agent_type/description/workflow_run — always empty string when absent; worktree also defaults to empty when the caller has no cwd', () => {
+  it('omits spawn_depth when absent — an unknown value is never fabricated or defaulted to 0; agent_type/description/worktree stay empty strings', () => {
     const file: SubagentFile = { agentId: 'a3', filePath: '/tmp/agent-a3.jsonl' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
     expect(event.agent_type).toBe('');
     expect(event.description).toBe('');
-    expect(event.workflow_run).toBe('');
+    expect(event).not.toHaveProperty('spawn_depth');
     expect(event.worktree).toBe('');
   });
 
@@ -401,8 +399,6 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.worktree).toBe('worktrees/feature');
     // The absolute cwd never leaves the hook process — only the extractRepository identifier does.
     expect(event.worktree).not.toContain('/repo');
-    // workflow_run has no known source regardless of cwd — still never fabricated.
-    expect(event.workflow_run).toBe('');
   });
 
   it('picks the usage[] row with the most api_calls as the top-level model', () => {

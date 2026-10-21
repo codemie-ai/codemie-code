@@ -79,8 +79,8 @@ describe('resolveToolDiffFields', () => {
     expect(fields).toEqual({ lines_added: 3, lines_removed: 1 });
   });
 
-  it('reports zero for an Edit with no structuredPatch field', () => {
-    expect(resolveToolDiffFields('Edit', {}, {})).toEqual({ lines_added: 0, lines_removed: 0 });
+  it('omits line counts for an Edit with no structuredPatch field — unknown, not zero', () => {
+    expect(resolveToolDiffFields('Edit', {}, {})).toEqual({});
   });
 
   it('counts a Write overwrite from its structuredPatch when non-empty', () => {
@@ -102,20 +102,17 @@ describe('resolveToolDiffFields', () => {
     expect(fields).toEqual({ lines_added: 1, lines_removed: 0 });
   });
 
-  it('reports zero for a Write with no content and no structuredPatch', () => {
-    expect(resolveToolDiffFields('Write', {}, {})).toEqual({ lines_added: 0, lines_removed: 0 });
+  it('omits line counts for a Write with no content and no structuredPatch — unknown, not zero', () => {
+    expect(resolveToolDiffFields('Write', {}, {})).toEqual({});
   });
 
-  it('reports zero for tools with no diff source (NotebookEdit, Bash)', () => {
-    expect(resolveToolDiffFields('NotebookEdit', { notebook_path: '/x' }, { structuredPatch: [{ lines: ['+a'] }] })).toEqual({
-      lines_added: 0,
-      lines_removed: 0,
-    });
-    expect(resolveToolDiffFields('Bash', { command: 'ls' }, {})).toEqual({ lines_added: 0, lines_removed: 0 });
+  it('omits line counts for tools with no diff source (NotebookEdit, Bash)', () => {
+    expect(resolveToolDiffFields('NotebookEdit', { notebook_path: '/x' }, { structuredPatch: [{ lines: ['+a'] }] })).toEqual({});
+    expect(resolveToolDiffFields('Bash', { command: 'ls' }, {})).toEqual({});
   });
 
-  it('is safe against a non-object tool_response', () => {
-    expect(resolveToolDiffFields('Edit', {}, 'not-an-object')).toEqual({ lines_added: 0, lines_removed: 0 });
-    expect(resolveToolDiffFields('Edit', {}, undefined)).toEqual({ lines_added: 0, lines_removed: 0 });
+  it('is safe against a non-object tool_response and omits the unknown counts', () => {
+    expect(resolveToolDiffFields('Edit', {}, 'not-an-object')).toEqual({});
+    expect(resolveToolDiffFields('Edit', {}, undefined)).toEqual({});
   });
 });

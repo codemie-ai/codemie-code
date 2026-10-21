@@ -13,11 +13,10 @@
  * scope_kind/scope_name) and passes the caller-built tool-call/tool-error/skill maps through as
  * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
- * `workflow_run` has no known source and is always an empty string, never fabricated. `worktree`
- * is the hook's own `cwd` (the contract's "its worktree path") reduced to the repository
- * identifier (`extractRepository`, the same value `cwd` carries): the caller fills `cwd` in from
- * the triggering hook payload, since no sidecar or transcript signal carries it, and no absolute
- * path leaves the hook process.
+ * `worktree` is the hook's own `cwd` (the contract's "its worktree path") reduced to the
+ * repository identifier (`extractRepository`, the same value `cwd` carries): the caller fills
+ * `cwd` in from the triggering hook payload, since no sidecar or transcript signal carries it,
+ * and no absolute path leaves the hook process.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -280,9 +279,10 @@ function buildToolsBreakdown(
  * `startedAt`/`endedAt`/`durationMs`/`toolResults` are forwarded verbatim from the caller, which
  * derives them from the subagent transcript's own lines — not this function's job.
  *
- * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
- * sidecar omits the field — not treated as an error). `description` defaults to `''` when the
- * sidecar has none.
+ * `spawn_depth` is emitted only when `file.spawnDepth` is present: a sidecar that omits it (which
+ * is how top-level subagents look) leaves the depth unknown, and an unknown value is omitted
+ * rather than reported as `0` (contract rule 4). `description` defaults to `''` when the sidecar
+ * has none.
  *
  * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, by the adapter base class at hook time.
  */
@@ -307,8 +307,7 @@ export function buildSubagentUsageEvent(
     tool_use_id: file.toolUseId ?? '',
     agent_type: file.agentType ?? '',
     description: file.description ?? '',
-    workflow_run: '',
-    spawn_depth: file.spawnDepth ?? 0,
+    ...(typeof file.spawnDepth === 'number' ? { spawn_depth: file.spawnDepth } : {}),
     worktree: file.cwd ? extractRepository(file.cwd) : '',
     started_at: startedAt,
     ended_at: endedAt,

@@ -650,7 +650,6 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(stopEvent).toMatchObject({
       description: 'task',
       tool_use_id: 'tu-sidecar',
-      workflow_run: '',
       spawn_depth: 2,
       // The repository identifier, never the absolute cwd — same value the event's own `cwd` carries.
       worktree: 'worktrees/feature',
@@ -660,7 +659,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(stopEvent.cwd).toBe('worktrees/feature');
   });
 
-  it('defaults started_at/duration_ms to empty/0 on agent.subagent.stop when no agent.subagent.usage was derived', async () => {
+  it('omits started_at/duration_ms/spawn_depth on agent.subagent.stop when they are unknown', async () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     const rawEvent = JSON.stringify(
       hookEvent({
@@ -674,8 +673,9 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     const [stopEvent] = forwardedEvents();
-    expect(stopEvent.started_at).toBe('');
-    expect(stopEvent.duration_ms).toBe(0);
+    expect(stopEvent.started_at).toBeUndefined();
+    expect(stopEvent.duration_ms).toBeUndefined();
+    expect(stopEvent.spawn_depth).toBeUndefined();
   });
 
   it('skips openSubagentPass on SubagentStop when agent_transcript_path is missing', async () => {
