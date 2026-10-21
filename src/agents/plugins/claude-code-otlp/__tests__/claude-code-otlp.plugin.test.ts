@@ -857,7 +857,16 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
     const raw =
       name === 'SubagentStart' || name === 'SubagentStop'
         ? JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name, agent_type: 'explore' })
-        : event(name);
+        : name === 'UserPromptExpansion'
+          ? JSON.stringify({
+              session_id: 's',
+              transcript_path: '',
+              cwd: '/x',
+              hook_event_name: name,
+              expansion_type: 'slash_command',
+              command_name: 'example-skill',
+            })
+          : event(name);
     await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
     return forwardedEvents()[0]['type'];
   };
@@ -950,7 +959,7 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
     expect(forwarded.raw).not.toHaveProperty('prompt');
   });
 
-  it('also copies command_name into skill_name for an mcp_prompt expansion (no expansion_type gating)', async () => {
+  it('does not forward an mcp_prompt expansion as a skill dispatch', async () => {
     const raw = JSON.stringify({
       session_id: 's',
       transcript_path: '',
@@ -964,9 +973,8 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
 
     await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    const [forwarded] = forwardedEvents();
-    expect(forwarded.skill_name).toBe('some-mcp-prompt');
-    expect(forwarded.command_name).toBe('some-mcp-prompt');
+    expect(forwardedEvents()).toEqual([]);
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });
 
