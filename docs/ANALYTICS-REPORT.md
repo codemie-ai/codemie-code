@@ -31,7 +31,7 @@ codemie analytics --open --include-external
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
 > By default the report counts only sessions CodeMie launched. Any time you ran `claude`,
-> `codex`, `gemini`, `pi`, or `copilot` directly, that spend is discovered but withheld.
+> `codex`, `gemini`, `pi` (including oh-my-pi, `omp`), or `copilot` directly, that spend is discovered but withheld.
 > See [Session provenance](#session-provenance) for why, and for the trade-off.
 
 ---
@@ -270,11 +270,17 @@ When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `
 CodeMie merges two sources to give the most complete picture:
 
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
-2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
+2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi` (including oh-my-pi, `omp`), and `copilot`, discovered automatically and deduped against tracked sessions
 
 Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
+
+### Pi and oh-my-pi
+
+Pi-family transcripts are read from `<cwd>/.pi/codemie/agent/sessions` (CodeMie-launched `codemie-pi`), `~/.pi/agent/sessions` (bare `pi`), and `~/.omp/agent/sessions` (bare `omp`). `PI_CODING_AGENT_SESSION_DIR` or a `sessionDir` setting replaces the two Pi roots but never the oh-my-pi root.
+
+Oh-my-pi sessions are reported under the **Pi** agent: filter with `--agent pi`; there is no separate `omp` agent. They have no CodeMie ownership marker and appear only with `--include-external`. Oh-my-pi `/skill:` prompts, `skill://` loads, and `task` dispatches are counted as skills and sub-agents.
 
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
 
@@ -287,7 +293,7 @@ Finding a native log is not the same as counting it. Every discovered session is
 | Provenance | Meaning | In the report by default? |
 |---|---|---|
 | `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its transcript carries a `codemie_session_start` ownership marker. | ✅ Yes |
-| `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
+| `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `omp`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
 | `native-unmanaged` | Reserved for agents CodeMie can only ever read analytics for and never launches. No agent currently carries this tag. | ✅ Yes |
 
 The default exists so that a report titled "CodeMie usage" measures CodeMie usage: without the ownership gate, every unmanaged run of an agent CodeMie *can* manage would be silently folded into CodeMie's numbers.
