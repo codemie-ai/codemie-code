@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-13T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 8,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "8 files changed (diffstat), 3 of them test files, all under src/cli/commands/analytics; maps to L on the 7-10 file band." },
+    { "dimension": "component_scope", "reason": "cost-enricher, usage-readers, data-loader, index and session-report touched; session-window attribution for shared logs, clear existing pattern. Scored from the caller-provided file list and diffstat; file contents were not read." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
