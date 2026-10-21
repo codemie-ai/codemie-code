@@ -1041,7 +1041,7 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     });
   });
 
-  it('gives a repeated SessionStart with the same snapshot the same agent.session.env event_id', async () => {
+  it('gives a changed SessionStart snapshot a new agent.session.env event_id', async () => {
     const raw = JSON.stringify({
       session_id: 's',
       transcript_path: '',
@@ -1050,8 +1050,19 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
       source: 'resume',
     });
 
+    resolveSessionEnvFieldsMock.mockResolvedValueOnce({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: 'model-a',
+      permission_mode: '',
+    });
     await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
-    // A different hook time between the two fires must not change the snapshot's identity.
+
+    resolveSessionEnvFieldsMock.mockResolvedValueOnce({
+      ...SESSION_ENV_FIELDS_STUB,
+      configured_model: 'model-b',
+      permission_mode: '',
+    });
+    // A later snapshot must be stored, not dropped as a duplicate of the earlier id.
     await new Promise((resolve) => setTimeout(resolve, 5));
     await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
@@ -1059,8 +1070,8 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
       .mocked(forwardOtlpEventsToSpool)
       .mock.calls.map(([events]) => events.find((e) => e.type === 'agent.session.env')?.['event_id']);
     expect(envIds).toHaveLength(2);
-    expect(envIds[0]).toBe(envIds[1]);
-    expect(String(envIds[0])).toMatch(/^agent\.session\.env:s:env:[0-9a-f]{64}$/);
+    expect(envIds[0]).not.toBe(envIds[1]);
+    expect(String(envIds[0])).toMatch(/^agent\.session\.env:s:[0-9a-f]{64}$/);
   });
 
   it('passes the hook cwd and model into resolveSessionEnvFields', async () => {

@@ -7,12 +7,12 @@
  * `mainOffset` (`./transcript-reader.js`), derives/merges `agent.usage.request` records for
  * those new lines (`./usage-request.js`), and returns one JSON string per completed request
  * plus (on `Stop`/`SessionEnd`) one `agent.session.summary` event. `SessionStart`
- * ({@link openSessionStartPass}) and `SubagentStop` ({@link openSubagentPass}) derive no
- * events of their own here — the former only records this session's starting point for
- * `agent.git.snapshot` to read back later. `SubagentStop` derives usage for its own subagent
- * transcript and may emit `agent.subagent.usage`. `PostCompact` ({@link openPostCompactPass}) is
- * its own case — see its doc comment — because the `compact_boundary` line it reports on is not
- * reliably present yet when the hook fires.
+ * ({@link openSessionStartPass}) derives no events of its own — it only records this session's
+ * starting point for `agent.git.snapshot` to read back later. `SubagentStop`
+ * ({@link openSubagentPass}) derives usage for its own subagent transcript and may emit
+ * `agent.subagent.usage`. `PostCompact` ({@link openPostCompactPass}) is its own case — see its
+ * doc comment — because the `compact_boundary` line it reports on is not reliably present yet
+ * when the hook fires.
  *
  * Commit-after-send: the exported `open*Pass` functions acquire the per-session parse-state
  * lock, load state, derive in memory, and return `{ events, finalize }` *without* persisting

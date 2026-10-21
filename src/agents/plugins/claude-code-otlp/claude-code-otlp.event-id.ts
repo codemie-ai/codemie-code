@@ -3,16 +3,16 @@ import { createHash } from 'node:crypto';
 /**
  * Deterministic `event_id` templates for the Claude Code adapter.
  *
- * Only events this codebase builds itself — the synthetic/transcript-derived records — get a
- * template, because those are the ones whose id must survive a re-derivation (a state-loss
- * re-parse, the SessionEnd subagent backstop, a repeated `SessionStart`). Every native Claude
- * hook event is forwarded once per occurrence and never re-derived, so it needs no template: it
- * hashes its own payload plus timestamp (below).
- *
- * Every id keeps the `<type>:<session_id>:<discriminator>` shape; the templates only choose the
- * discriminator — the record's natural key where one exists, or a content hash when the record's
- * own content is its identity (`agent.session.env`). A missing natural key falls back to the same
- * content hash.
+ * The id is the backend's dedup key (`day + hash(type + session + event_id)`, first record wins),
+ * so a record that can be sent again with *newer values* must get a new id, while an exact resend
+ * must keep the old one. Templates therefore use a natural key only for records whose content is
+ * immutable for that key (`agent.git.snapshot`'s head, the summary's phase + end time, the
+ * compaction boundary). Records that grow between passes — `agent.usage.request` (more tokens as
+ * the request streams), `agent.subagent.usage` (cumulative usage as the agent file grows) — include
+ * their content in the id instead, so the backend stores the updated row and can max()/latest it.
+ * Everything else (`agent.session.env`, native hook events) falls back to `contentKey(payload +
+ * resolved timestamp)`: a repeated identical env snapshot becomes a new row, which is harmless
+ * because the backend keeps the latest value by timestamp, while A → B → A is no longer dropped.
  */
 type EventRecord = Record<string, unknown>;
 
@@ -45,24 +45,12 @@ function contentKey(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
-/** Envelope keys already encoded in the id prefix, not part of the snapshot's identity. */
-const ENVELOPE_FIELDS = new Set(['type', 'session_id']);
-
-/** `agent.session.env`'s identity is the snapshot itself, independent of the hook time. */
-function snapshotIdentity(payload: EventRecord): string {
-  const identity: EventRecord = {};
-  for (const [field, value] of Object.entries(payload)) {
-    if (!ENVELOPE_FIELDS.has(field)) identity[field] = value;
-  }
-  return contentKey(identity);
-}
-
 const EVENT_ID_TEMPLATES: Record<string, EventIdTemplate> = {
-  'agent.session.env': (payload) => `env:${snapshotIdentity(payload)}`,
   'agent.git.snapshot': (payload) => keyed('git-snapshot', str(payload['git_head_end'])),
-  'agent.usage.request': (payload) =>
-    keyed('usage', str(payload['request_id']) || str(payload['message_id']), str(payload['model'])),
-  'agent.subagent.usage': (payload) => keyed('subagent-usage', str(payload['agent_id'])),
+  // These two are cumulative: a later pass re-sends them with more tokens/usage, and the backend
+  // must store the newer row (it groups by request id / takes the latest subagent row).
+  'agent.usage.request': (payload) => contentKey(payload),
+  'agent.subagent.usage': (payload) => contentKey(payload),
   'agent.session.summary': (payload) =>
     keyed(
       'summary',
@@ -73,9 +61,10 @@ const EVENT_ID_TEMPLATES: Record<string, EventIdTemplate> = {
 };
 
 /**
- * The Claude `event_id` for `event`: `<type>:<session_id>:<discriminator>`. Synthetic/derived
- * records use their template; everything else (native hook events, unknown types, a template
- * whose natural key is missing) hashes its canonical payload plus the resolved timestamp.
+ * The Claude `event_id` for `event`: `<type>:<session_id>:<discriminator>`. Synthetic records
+ * with an immutable natural key use their template; everything else (env snapshots, native hook
+ * events, unknown types, a template whose key is missing) hashes its canonical payload plus the
+ * resolved timestamp.
  */
 export function buildClaudeEventId(
   event: EventRecord,

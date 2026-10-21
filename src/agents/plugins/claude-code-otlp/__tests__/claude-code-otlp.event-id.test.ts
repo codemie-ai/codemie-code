@@ -7,27 +7,43 @@ const event = (type: string, sessionId = 's1') => ({ type, session_id: sessionId
 describe('buildClaudeEventId', () => {
   it('builds <type>:<session_id>:<discriminator>', () => {
     expect(buildClaudeEventId(event('agent.session.env'), { provider: 'anthropic' }, 't')).toMatch(
-      /^agent\.session\.env:s1:env:[0-9a-f]{64}$/
+      /^agent\.session\.env:s1:[0-9a-f]{64}$/
     );
   });
 
-  it('keys agent.session.env by its snapshot content, independent of the hook time', () => {
-    const payload = { provider: 'anthropic', configured_model: 'm', mcp_servers: ['a', 'b'] };
+  it('content-hashes agent.session.env with the hook time, so a later snapshot is not deduped as stale', () => {
+    const snapshot = { provider: 'anthropic', configured_model: 'm' };
 
-    const first = buildClaudeEventId(event('agent.session.env'), payload, 't1');
-    const second = buildClaudeEventId(event('agent.session.env'), payload, 't2');
-    const changed = buildClaudeEventId(event('agent.session.env'), { ...payload, configured_model: 'other' }, 't1');
-
-    expect(first).toBe(second);
-    expect(first).not.toBe(changed);
+    const first = buildClaudeEventId(event('agent.session.env'), snapshot, 't1');
+    // An exact resend (same built record) keeps its id; a new occurrence gets a fresh one, so the
+    // backend stores it and keeps the latest value by timestamp.
+    expect(buildClaudeEventId(event('agent.session.env'), snapshot, 't1')).toBe(first);
+    expect(buildClaudeEventId(event('agent.session.env'), snapshot, 't2')).not.toBe(first);
   });
 
-  it('ignores the envelope fields (type, session_id) in the env snapshot hash', () => {
-    const fields = { provider: 'anthropic' };
+  it('gives a newer version of every growing record a new id (usage.request, subagent.usage, session.env)', () => {
+    const usageBefore = {
+      request_id: 'req_a',
+      model: 'claude-sonnet-4-5-20250929',
+      output_tokens: 10,
+      timestamp: '2026-10-01T00:00:00.000Z',
+    };
+    const subagentBefore = { agent_id: 'a1', api_calls: 1, ended_at: '2026-10-01T00:00:00.000Z' };
+    const envBefore = { configured_model: 'opus' };
 
-    expect(
-      buildClaudeEventId(event('agent.session.env'), { type: 'agent.session.env', session_id: 's1', ...fields }, 't')
-    ).toBe(buildClaudeEventId(event('agent.session.env'), fields, 't'));
+    const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      ['agent.usage.request', usageBefore, { ...usageBefore, output_tokens: 40 }],
+      ['agent.subagent.usage', subagentBefore, { ...subagentBefore, api_calls: 2, ended_at: '2026-10-01T00:05:00.000Z' }],
+      ['agent.session.env', envBefore, { configured_model: 'sonnet' }],
+    ];
+
+    for (const [type, before, after] of cases) {
+      const beforeId = buildClaudeEventId(event(type), before, 't');
+      // An exact resend of the earlier record still reuses its id...
+      expect(buildClaudeEventId(event(type), before, 't')).toBe(beforeId);
+      // ...while a newer version must be stored as a new record.
+      expect(buildClaudeEventId(event(type), after, 't')).not.toBe(beforeId);
+    }
   });
 
   it('keys agent.git.snapshot by git_head_end, falling back to the content hash without one', () => {
@@ -36,24 +52,6 @@ describe('buildClaudeEventId', () => {
     );
     expect(buildClaudeEventId(event('agent.git.snapshot'), { git_head_end: '' }, 't')).toMatch(
       /^agent\.git\.snapshot:s1:[0-9a-f]{64}$/
-    );
-  });
-
-  it('keys agent.usage.request by request_id (message_id fallback) plus model', () => {
-    expect(
-      buildClaudeEventId(event('agent.usage.request'), { request_id: 'req-1', message_id: 'msg-1', model: 'm' }, 't')
-    ).toBe('agent.usage.request:s1:usage:req-1:m');
-    expect(
-      buildClaudeEventId(event('agent.usage.request'), { request_id: '', message_id: 'msg-1', model: 'm' }, 't')
-    ).toBe('agent.usage.request:s1:usage:msg-1:m');
-  });
-
-  it('keys agent.subagent.usage by agent_id, falling back to the content hash without one', () => {
-    expect(buildClaudeEventId(event('agent.subagent.usage'), { agent_id: 'a1' }, 't')).toBe(
-      'agent.subagent.usage:s1:subagent-usage:a1'
-    );
-    expect(buildClaudeEventId(event('agent.subagent.usage'), { agent_id: '' }, 't')).toMatch(
-      /^agent\.subagent\.usage:s1:[0-9a-f]{64}$/
     );
   });
 
