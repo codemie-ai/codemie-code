@@ -38,7 +38,7 @@ import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js'
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
 import { isPiFamilyAgent, sessionAdapterKey } from './pi-agent.js';
-import { allocatePiUsage } from './pi-dispatch-allocation.js';
+import { allocatePiUsage, isPiLayoutRunId } from './pi-dispatch-allocation.js';
 import { PI_SUBAGENT_RUN } from '@/agents/plugins/pi/pi.session.js';
 import { extractPiToolCalls, isPiAssistantMessage, isPiMessageEntry, type PiEntry } from '@/agents/plugins/pi/pi.types.js';
 import { isLocalModel } from './local-models.js';
@@ -487,12 +487,27 @@ function enrichDispatchCosts(
   // Pi links a dispatch to its child transcript by agent id (runs only); the rest by tool-use id.
   const pi = isPiFamilyAgent(agentName);
   const byKey = new Map<string, { messages: unknown[] }>();
+  // Plain-Pi runs carry no task id; paired with untasked agent dispatches in order below.
+  const piLayoutRuns: Array<{ messages: unknown[] }> = [];
   for (const sub of parsed.subagents ?? []) {
-    const key = pi ? (sub.agentType === PI_SUBAGENT_RUN ? sub.agentId : undefined) : sub.toolUseId;
-    if (key && Array.isArray(sub.messages)) {
-      byKey.set(key, sub);
+    if (!Array.isArray(sub.messages)) continue;
+    if (!pi) {
+      if (sub.toolUseId) byKey.set(sub.toolUseId, sub);
+      continue;
     }
+    if (sub.agentType !== PI_SUBAGENT_RUN || !sub.agentId) continue;
+    if (isPiLayoutRunId(sub.agentId)) {
+      piLayoutRuns.push(sub);
+      continue;
+    }
+    // omp: a nested child `A/A.B` folds into the top-level dispatch `A` that spawned it.
+    const top = sub.agentId.split('/')[0];
+    const merged = byKey.get(top);
+    byKey.set(top, { messages: merged ? [...merged.messages, ...sub.messages] : sub.messages });
   }
+  const untasked = pi ? dispatches.filter((d) => d.kind === 'agent' && !d._taskId) : [];
+  // ponytail: order pairing only when counts match 1:1; needs a dispatch→run id to do better.
+  const pairPiRuns = untasked.length > 0 && untasked.length === piLayoutRuns.length;
 
   for (const dispatch of dispatches) {
     if (dispatch.kind === 'skill') {
@@ -501,7 +516,11 @@ function enrichDispatchCosts(
     }
     if (dispatch.kind !== 'agent') continue;
     const key = pi ? dispatch._taskId : dispatch._toolUseId;
-    const sub = key ? byKey.get(key) : undefined;
+    const sub = key
+      ? byKey.get(key)
+      : pairPiRuns
+        ? piLayoutRuns[untasked.indexOf(dispatch)]
+        : undefined;
     if (!sub) continue;
 
     const subSeen = new Set<string>();
