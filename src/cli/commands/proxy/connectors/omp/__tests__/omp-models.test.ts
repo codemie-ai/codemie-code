@@ -56,6 +56,7 @@ describe('buildOmpModelRoster', () => {
     const roster = buildOmpModelRoster([
       model({ deployment_name: 'image-gen', supports_image_generation: true }),
       model({ base_name: 'text-embedding-3-large', deployment_name: 'text-embedding-3-large' }),
+      model({ base_name: 'text-embedding-3-large', deployment_name: 'team-embed' }),
       model({ deployment_name: 'disabled', enabled: false }),
       model({ deployment_name: 'duplicate' }),
       model({ deployment_name: 'duplicate', label: 'Second' }),
