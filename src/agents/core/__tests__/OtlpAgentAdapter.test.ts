@@ -11,6 +11,7 @@ const resolveHookCredentialsMock = vi.fn();
 const resolveIdentityMock = vi.fn();
 const getActiveProfileNameMock = vi.fn();
 const configLoadMock = vi.fn();
+const hasLocalConfigMock = vi.fn();
 const getCurrentCliVersionMock = vi.fn();
 
 vi.mock('../hook-credentials.js', () => ({ resolveHookCredentials: resolveHookCredentialsMock }));
@@ -19,7 +20,7 @@ vi.mock('../identity-resolver.js', async () => ({
   resolveIdentity: resolveIdentityMock,
 }));
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock },
+  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock },
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('@/utils/logger.js', () => ({
@@ -97,10 +98,14 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     configLoadMock.mockResolvedValue({ codeMieProject: 'proj-1' });
     getCurrentCliVersionMock.mockResolvedValue('1.2.3');
     delete process.env['SDLC_ANALYTICS_STORY_ID'];
+    delete process.env['CODEMIE_PROJECT'];
+    delete process.env['CLAUDE_PROJECT_DIR'];
   });
 
   afterEach(() => {
     delete process.env['SDLC_ANALYTICS_STORY_ID'];
+    delete process.env['CODEMIE_PROJECT'];
+    delete process.env['CLAUDE_PROJECT_DIR'];
     vi.restoreAllMocks();
   });
 
@@ -222,7 +227,42 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined);
     });
 
-    it('still forwards with empty context fields when resolution fails', async () => {
+    it('prefers CODEMIE_PROJECT over the resolved config, without even loading it', async () => {
+      process.env['CODEMIE_PROJECT'] = 'env-project';
+      await run();
+      expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'env-project' });
+      expect(configLoadMock).not.toHaveBeenCalled();
+    });
+
+    it('ignores a blank CODEMIE_PROJECT and falls back to the resolved config', async () => {
+      process.env['CODEMIE_PROJECT'] = '   ';
+      await run();
+      expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'proj-1' });
+    });
+
+    it('resolves the config from CLAUDE_PROJECT_DIR, not the hook cwd, when it is set', async () => {
+      process.env['CLAUDE_PROJECT_DIR'] = '/workspace/project';
+      hasLocalConfigMock.mockResolvedValue(true);
+      await run({ cwd: '/workspace/project/src' });
+      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/project');
+      expect(configLoadMock).toHaveBeenCalledWith('/workspace/project', { name: 'work' });
+    });
+
+    it('walks up from CLAUDE_PROJECT_DIR to the nearest ancestor with a local .codemie config', async () => {
+      process.env['CLAUDE_PROJECT_DIR'] = '/workspace/mono/apps/web';
+      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === '/workspace/mono');
+      await run();
+      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/mono');
+    });
+
+    it('falls back to CLAUDE_PROJECT_DIR itself when no ancestor has a local .codemie config', async () => {
+      process.env['CLAUDE_PROJECT_DIR'] = '/workspace/project';
+      hasLocalConfigMock.mockResolvedValue(false);
+      await run();
+      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/project');
+    });
+
+    it('still forwards with empty identity fields when identity resolution fails, independent of project and version', async () => {
       resolveHookCredentialsMock.mockRejectedValue(new Error('boom'));
       await run();
       expect(forwarded()).toHaveLength(1);
@@ -230,8 +270,8 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
         user_email: '',
         developer_name: '',
         identity_source: '',
-        codemie_project_name: '',
-        codemie_cli_version: '',
+        codemie_project_name: 'proj-1',
+        codemie_cli_version: '1.2.3',
         git_branch: 'main',
       });
     });

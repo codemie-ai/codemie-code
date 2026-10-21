@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { ConfigLoader } from '@/utils/config.js';
@@ -224,43 +225,75 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /**
    * Identity, project and CLI version for the hook's cwd. Credentials are the SSO ones the
    * daemon will use (see `resolveHookCredentials`); without them identity falls through to
-   * the git, codemie_cli and os tiers. A failed lookup yields empty fields, never a dropped event.
+   * the git, codemie_cli and os tiers. Each of the three is resolved independently, so a failed
+   * lookup yields that field's empty value only, never a dropped event and never a wider blank-out.
    */
   private async resolveIdentityFields(cwd: string): Promise<IdentityFields> {
-    const empty: IdentityFields = {
-      user_email: '',
-      developer_name: '',
-      identity_source: '',
-      codemie_project_name: '',
-      codemie_cli_version: '',
+    const [identityResult, projectName, version] = await Promise.all([
+      this.resolveIdentityTier(cwd),
+      this.resolveProjectName(cwd),
+      getCurrentCliVersion().catch(() => null),
+    ]);
+    return {
+      ...identityResult,
+      codemie_project_name: projectName,
+      codemie_cli_version: version ?? '',
     };
+  }
+
+  private async resolveIdentityTier(cwd: string): Promise<Pick<IdentityFields, 'user_email' | 'developer_name' | 'identity_source'>> {
     try {
       const credentials = await resolveHookCredentials();
-      const [identity, projectName, version] = await Promise.all([
-        resolveIdentity(credentials, cwd),
-        this.resolveProjectName(cwd),
-        getCurrentCliVersion(),
-      ]);
+      const identity = await resolveIdentity(credentials, cwd);
       return {
         user_email: resolveEmailFromCredentials(credentials),
         developer_name: identity.developerName,
         identity_source: identity.identitySource,
-        codemie_project_name: projectName,
-        codemie_cli_version: version ?? '',
       };
     } catch (error) {
-      logger.debug(`[${this.name}] identity field resolution failed: ${error instanceof Error ? error.message : String(error)}`);
-      return empty;
+      logger.debug(`[${this.name}] identity resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { user_email: '', developer_name: '', identity_source: '' };
     }
   }
 
+  /**
+   * `CODEMIE_PROJECT` (exported by the launcher into the agent's own process env, the same
+   * source `Session.project` uses) wins when present, since it is set once for the whole
+   * session and cannot drift as the hook's `cwd` moves. Otherwise falls back to the nearest
+   * `.codemie` found by walking up from `CLAUDE_PROJECT_DIR` (set once at session start,
+   * unlike `cwd`, which follows Claude's own `cd`) toward the filesystem root, then to the
+   * global active profile. Without `CLAUDE_PROJECT_DIR` (e.g. a tool other than Claude Code),
+   * falls back to the hook's own `cwd`, unwalked, as before.
+   */
   private async resolveProjectName(cwd: string): Promise<string> {
+    const envProject = process.env['CODEMIE_PROJECT']?.trim();
+    if (envProject) {
+      return envProject;
+    }
+
+    const projectDir = process.env['CLAUDE_PROJECT_DIR']?.trim();
     try {
-      const profileName = await ConfigLoader.getActiveProfileName(cwd);
-      const config = await ConfigLoader.load(cwd, profileName ? { name: profileName } : undefined);
+      const configDir = projectDir ? await this.findNearestConfigDir(projectDir) : cwd;
+      const profileName = await ConfigLoader.getActiveProfileName(configDir);
+      const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
       return config.codeMieProject ?? '';
     } catch {
       return '';
+    }
+  }
+
+  /** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */
+  private async findNearestConfigDir(startDir: string): Promise<string> {
+    let dir = startDir;
+    for (;;) {
+      if (await ConfigLoader.hasLocalConfig(dir)) {
+        return dir;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) {
+        return startDir;
+      }
+      dir = parent;
     }
   }
 
