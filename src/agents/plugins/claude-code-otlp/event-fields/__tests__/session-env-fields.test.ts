@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash, createHmac } from 'node:crypto';
+import os from 'node:os';
 
-const { readFileMock, getMCPConfigSummaryMock, resolveEnvFieldsMock } = vi.hoisted(() => ({
+const { readFileMock, getMCPConfigSummaryMock, resolveEnvFieldsMock, getInstallationIdMock } = vi.hoisted(() => ({
   readFileMock: vi.fn(),
   getMCPConfigSummaryMock: vi.fn(),
   resolveEnvFieldsMock: vi.fn(),
+  getInstallationIdMock: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock }));
 vi.mock('@/utils/mcp-config.js', () => ({ getMCPConfigSummary: getMCPConfigSummaryMock }));
+vi.mock('@/utils/config.js', () => ({ getInstallationId: getInstallationIdMock }));
 vi.mock('@/agents/core/event-fields/env-fields.js', () => ({ resolveEnvFields: resolveEnvFieldsMock }));
 vi.mock('@/agents/plugins/claude/claude.plugin.js', () => ({ ClaudePluginMetadata: { mcpConfig: { fake: true } } }));
 vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn() } }));
@@ -41,6 +45,7 @@ beforeEach(() => {
   delete process.env.CLAUDE_CODE_USE_VERTEX;
   delete process.env.ANTHROPIC_BASE_URL;
   resolveEnvFieldsMock.mockResolvedValue({ os: 'linux', timezone: 'UTC' });
+  getInstallationIdMock.mockResolvedValue('installation-id-1');
   getMCPConfigSummaryMock.mockResolvedValue({
     totalServers: 0,
     localServers: 0,
@@ -195,11 +200,13 @@ describe('resolveSessionEnvFields — mcp_servers, os/timezone, model passthroug
     expect(fields.effort).toBe('');
   });
 
-  it('fills arch/node_version/hostname_hash from the real runtime (never empty, never fabricated)', async () => {
+  it('fills arch/node_version from the real runtime and salts hostname_hash with the installation id', async () => {
     const fields = await resolveSessionEnvFields(CWD, 'm', 'auto');
     expect(fields.arch).toBe(process.arch);
     expect(fields.node_version).toBe(process.version);
-    expect(fields.hostname_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(fields.hostname_hash).toBe(createHmac('sha256', 'installation-id-1').update(os.hostname()).digest('hex'));
+    // Never the unsalted digest — a common hostname would be recoverable from it.
+    expect(fields.hostname_hash).not.toBe(createHash('sha256').update(os.hostname()).digest('hex'));
   });
 });
 
@@ -224,5 +231,13 @@ describe('resolveSessionEnvFields — failure isolation', () => {
       timezone: '',
       hostname_hash: '',
     });
+  });
+
+  it('degrades hostname_hash to empty rather than an unsalted hash when the installation id is unavailable', async () => {
+    getInstallationIdMock.mockRejectedValue(new Error('no home dir'));
+
+    const fields = await resolveSessionEnvFields(CWD, 'm', 'auto');
+
+    expect(fields.hostname_hash).toBe('');
   });
 });

@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { resolveHomeDir } from '@/utils/paths.js';
+import { getInstallationId } from '@/utils/config.js';
 import { getMCPConfigSummary } from '@/utils/mcp-config.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
@@ -130,9 +131,17 @@ async function resolvePluginVersions(cwd: string, enabledKeys: string[]): Promis
   return versions;
 }
 
-function hashHostname(): string {
+/**
+ * `hostname_hash` is HMAC-ed with the CodeMie installation id rather than a plain SHA-256: common
+ * hostnames (`build-01`, `johns-macbook`) would otherwise be recoverable by hashing a wordlist
+ * against the published digest. The installation id is a random UUID created per install and
+ * stored under `~/.codemie`, never part of the event, so a leaked hash cannot be reversed without
+ * it. Falls back to an empty string (never an unsalted hash) when it cannot be read.
+ */
+async function hashHostname(): Promise<string> {
   try {
-    return createHash('sha256').update(os.hostname()).digest('hex');
+    const key = await getInstallationId();
+    return createHmac('sha256', key).update(os.hostname()).digest('hex');
   } catch {
     return '';
   }
@@ -140,11 +149,12 @@ function hashHostname(): string {
 
 /**
  * The subset of `agent.session.env` fields cheap enough to recheck on *any* hook that happens to
- * carry `effort`/`permission_mode` (no file I/O — just the hook's own payload plus a few
- * syscalls). Shared by {@link resolveSessionEnvFields} (which hardcodes `effort: ''` for its own
- * `SessionStart` caller, per the SDK's contract) and `transcript/orchestrator.ts`'s
- * `openSessionEnvCheckPass`, which recomputes exactly these fields on `Stop`/`SubagentStop`/etc.
- * without re-reading any settings/plugin/MCP files.
+ * carry `effort`/`permission_mode` (no settings/plugin/MCP file I/O — the hook's own payload, a
+ * few syscalls, and the small `installation-id` file read that salts `hostname_hash`). Shared by
+ * {@link resolveSessionEnvFields} (which hardcodes `effort: ''` for its own `SessionStart` caller,
+ * per the SDK's contract) and `transcript/orchestrator.ts`'s `openSessionEnvCheckPass`, which
+ * recomputes exactly these fields on `Stop`/`SubagentStop`/etc. without re-reading any
+ * settings/plugin/MCP files.
  */
 export interface VolatileSessionEnvFields {
   effort: string;
@@ -161,7 +171,7 @@ export async function resolveVolatileSessionEnvFields(
   effort: string,
   permissionMode: string
 ): Promise<VolatileSessionEnvFields> {
-  const envFields = await resolveEnvFields();
+  const [envFields, hostnameHash] = await Promise.all([resolveEnvFields(), hashHostname()]);
   return {
     effort,
     permission_mode: permissionMode,
@@ -169,7 +179,7 @@ export async function resolveVolatileSessionEnvFields(
     arch: os.arch(),
     node_version: process.version,
     timezone: envFields.timezone,
-    hostname_hash: hashHostname(),
+    hostname_hash: hostnameHash,
   };
 }
 
