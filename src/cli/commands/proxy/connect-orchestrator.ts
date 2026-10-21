@@ -128,10 +128,10 @@ export interface DaemonIdentity {
 }
 
 /**
- * Derive the single daemon identity for a target set (spec §3.3 — primary by
- * priority: `claude-desktop` > `vscode-claude-code` > `vscode-byok`). The two
- * Anthropic-gateway targets share the `claude-desktop` identity, so the priority
- * collapses onto exactly the two existing identities — no new telemetry value.
+ * Derive the single daemon identity for a target set, first match wins:
+ * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `copilot-chat-otlp` >
+ * `copilot-cli-otlp` > `codex-desktop` > `codemie-daemon` (`omp` without `vscode`) > `vscode-byok`.
+ * One daemon carries one client type, so lower-priority targets share the winner's identity.
  *
  * The hooks-only Copilot targets never export OTel through this daemon and only need it
  * running by the time their first real hook fires (`ensureOtlpProxy`, started lazily);

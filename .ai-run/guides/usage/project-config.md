@@ -46,7 +46,7 @@ Provider, model, and credentials always remain aligned to the selected global pr
 when profile names differ. A selected profile's explicit project or integration is also
 authoritative; the compatible local project context only fills that gap.
 
-Persistent proxy connectors (`proxy connect desktop` and `proxy connect vscode`) use the
+Persistent proxy connectors (`codemie proxy connect --<target>`, e.g. `--claude-desktop`, `--vscode`, `--codex-desktop`, `--omp`) use the
 effective active profile when `--profile` is omitted. A local `activeProfile` may select a
 profile defined globally; a differently named local team profile may still supply compatible
 project context, but it cannot replace the selected provider, model, or credentials.
