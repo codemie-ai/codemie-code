@@ -16,6 +16,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Fixed
 
 - CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
+- Encrypted reasoning-content recovery now also covers `codemie proxy start` and `codemie proxy connect --omp` daemons
 
 ## [0.15.1] - 2026-09-08
 
