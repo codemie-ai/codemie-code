@@ -15,7 +15,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Fixed
 
 - CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
-- `codemie analytics --include-external` now finds oh-my-pi (`omp`) sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record
+- `codemie analytics --include-external` now finds oh-my-pi sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record, and reports them as their own `omp` agent ("Oh My Pi") instead of folding them into Pi; filter with `--agent omp`
 - Native (untracked) Pi and oh-my-pi sessions now report tool calls, skills and sub-agents; oh-my-pi `/skill:` prompts, `skill://` loads and `task` dispatches are recognized, and `sdlc-factory/…`, `sdlc-standard`, `sdlc-doctor` and `sdlc-status` mark a session as CodeMie AI Factory
 
 ## [0.15.1] - 2026-09-08

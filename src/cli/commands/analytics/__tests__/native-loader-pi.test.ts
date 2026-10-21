@@ -275,6 +275,26 @@ describe('loadNativeSessions — pi', () => {
     const out = await loadNativeSessions(undefined, deps({ parse: async () => null }));
     expect(out).toHaveLength(0);
   });
+
+  it('reports an oh-my-pi transcript under its own agent and parses it with the Pi adapter', async () => {
+    const parsedFor: string[] = [];
+    const out = await loadNativeSessions(
+      undefined,
+      deps({
+        discover: async () => [{ agentName: 'omp', descriptor: { ...descriptor, agentName: 'omp' } }],
+        parse: async (agent) => {
+          parsedFor.push(agent);
+          return conversation;
+        },
+      })
+    );
+
+    expect(out).toHaveLength(1);
+    expect(out[0].startEvent!.agentName).toBe('omp');
+    expect(out[0].startEvent!.data.provider).toBe('native-external');
+    expect(out[0].deltas).toHaveLength(2); // Pi-shaped synthesis, not the Claude fallback
+    expect(parsedFor).toEqual(['omp']);
+  });
 });
 
 describe('loadNativeSessions — pi fork families', () => {

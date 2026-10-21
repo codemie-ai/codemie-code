@@ -31,7 +31,7 @@ codemie analytics --open --include-external
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
 > By default the report counts only sessions CodeMie launched. Any time you ran `claude`,
-> `codex`, `gemini`, `pi` (including oh-my-pi, `omp`), or `copilot` directly, that spend is discovered but withheld.
+> `codex`, `gemini`, `pi`, `omp` (oh-my-pi), or `copilot` directly, that spend is discovered but withheld.
 > See [Session provenance](#session-provenance) for why, and for the trade-off.
 
 ---
@@ -279,7 +279,7 @@ When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `
 CodeMie merges two sources to give the most complete picture:
 
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
-2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi` (including oh-my-pi, `omp`), and `copilot`, discovered automatically and deduped against tracked sessions
+2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, `omp` (oh-my-pi), and `copilot`, discovered automatically and deduped against tracked sessions
 
 Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
@@ -287,9 +287,14 @@ Discovery looks back as far as your date filter requires: with `--from` or `--la
 
 ### Pi and oh-my-pi
 
-Pi-family transcripts are read from `<cwd>/.pi/codemie/agent/sessions` (CodeMie-launched `codemie-pi`), `~/.pi/agent/sessions` (bare `pi`), and `~/.omp/agent/sessions` (bare `omp`). `PI_CODING_AGENT_SESSION_DIR` or a `sessionDir` setting replaces the two Pi roots but never the oh-my-pi root.
+Pi and oh-my-pi share one transcript format but live in different places and are reported as **separate agents**:
 
-Oh-my-pi sessions are reported under the **Pi** agent: filter with `--agent pi`; there is no separate `omp` agent. They have no CodeMie ownership marker and appear only with `--include-external`. Oh-my-pi `/skill:` prompts, `skill://` loads, and `task` dispatches are counted as skills and sub-agents.
+| Agent key | Label in the report | Transcript root |
+|---|---|---|
+| `pi` | Pi | `<cwd>/.pi/codemie/agent/sessions` (CodeMie-launched `codemie-pi`) and `~/.pi/agent/sessions` (bare `pi`) |
+| `omp` | Oh My Pi | `~/.omp/agent/sessions` (bare `omp`) |
+
+`PI_CODING_AGENT_SESSION_DIR` or a `sessionDir` setting replaces the two Pi roots but never the oh-my-pi root. Filter with `--agent pi` or `--agent omp`; each matches only its own sessions. Oh-my-pi sessions have no CodeMie ownership marker, so they appear only with `--include-external`. Oh-my-pi `/skill:` prompts, `skill://` loads, and `task` dispatches are counted as skills and sub-agents, and its sessions are priced with the same reader as Pi.
 
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
 

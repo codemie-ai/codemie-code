@@ -25,6 +25,7 @@ import { logger } from '../../../utils/logger.js';
 import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
 import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 import { isCodexFamilyAgent } from './cost/codex-agent.js';
+import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
@@ -40,10 +41,6 @@ import {
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
-
-function isPiAgent(agentName: string): boolean {
-  return agentName.toLowerCase() === 'pi';
-}
 
 /**
  * Agents CodeMie only reads analytics for and never installs, launches, or manages.
@@ -189,7 +186,7 @@ export const realNativeDeps: NativeLoaderDeps = {
     return found;
   },
   async parse(agentName, filePath, sessionId) {
-    const adapter = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+    const adapter = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
     if (!adapter) {
       return null;
     }
@@ -633,7 +630,7 @@ export function synthesizeRawSession(
   if (isCodexFamilyAgent(agentName)) {
     return synthesizeCodexRawSession(agentName, descriptor, parsed);
   }
-  if (isPiAgent(agentName)) {
+  if (isPiFamilyAgent(agentName)) {
     return synthesizePiRawSession(agentName, descriptor, parsed);
   }
   const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
@@ -683,12 +680,12 @@ interface PiTranscript {
 /** Parse every discovered Pi transcript once and resolve the fork source each header names. */
 async function readPiTranscripts(discovered: DiscoveredNative[], deps: NativeLoaderDeps): Promise<PiTranscript[]> {
   const piDiscoveredPaths = new Set(
-    discovered.filter((d) => isPiAgent(d.agentName)).map((d) => deps.realPath(d.descriptor.filePath))
+    discovered.filter((d) => isPiFamilyAgent(d.agentName)).map((d) => deps.realPath(d.descriptor.filePath))
   );
 
   const transcripts: PiTranscript[] = [];
   for (const { agentName, descriptor } of discovered) {
-    if (!isPiAgent(agentName)) {
+    if (!isPiFamilyAgent(agentName)) {
       continue;
     }
     const parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
@@ -813,7 +810,8 @@ export async function loadNativeSessions(
   // request actually concerns a Pi session (or lists broadly, filter unset): parsing every
   // discovered Pi transcript to serve a Claude/Codex-scoped report would reintroduce the same
   // unbounded-parse OOM risk this ticket exists to fix, just shifted onto Pi volume.
-  const needsPiFamily = !filter?.sessionId || scoped.some(({ agentName }) => isPiAgent(agentName));
+  const needsPiFamily =
+    !filter?.sessionId || scoped.some(({ agentName }) => isPiFamilyAgent(agentName));
   const piTranscripts = needsPiFamily ? await readPiTranscripts(discovered, deps) : [];
   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
   const piForkedChildren = foldPiForkFamilies(piTranscripts);
@@ -825,7 +823,7 @@ export async function loadNativeSessions(
     }
     if (
       !filter?.sessionId &&
-      isPiAgent(agentName) &&
+      isPiFamilyAgent(agentName) &&
       piForkedChildren.has(deps.realPath(descriptor.filePath))
     ) {
       continue; // forked continuation — already counted inside the transcript it grew out of
@@ -838,7 +836,7 @@ export async function loadNativeSessions(
     let parsed: ParsedSession | null;
     if (isCodexFamilyAgent(agentName)) {
       parsed = codexParsed.get(descriptor.filePath) ?? null;
-    } else if (isPiAgent(agentName)) {
+    } else if (isPiFamilyAgent(agentName)) {
       parsed = piByRealPath.get(deps.realPath(descriptor.filePath))?.parsed ?? null;
     } else {
       parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
