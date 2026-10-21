@@ -8,6 +8,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 - `codemie proxy connect --omp` gives oh-my-pi the active profile's live model catalog (cost, context window, output cap, image input) via an auto-loaded extension; `codemie proxy disconnect --omp` removes it; it cannot be combined with `--vscode`
 
+### Fixed
+
+- Encrypted reasoning-content recovery now also covers `codemie proxy start` and `codemie proxy connect --omp` daemons
+
 ## [0.16.6] - 2026-11-05
 
 ### Added
