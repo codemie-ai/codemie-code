@@ -56,18 +56,26 @@ async function postToBackend(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);
   try {
-    return await fetch(url, { method: 'POST', headers, body, signal: controller.signal });
+    return await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: controller.signal,
+      redirect: 'manual',
+    });
   } finally {
     clearTimeout(timer);
   }
 }
 
 const isAuthFailure = (response: Response): boolean =>
-  response.status === 401 || response.status === 403;
+  response.status === 401 ||
+  response.status === 403 ||
+  response.status === 302;
 
 /**
- * POST a batch, retrying once on 401/403. Anything other than `'ok'` leaves the
- * bytes on disk with the cursor untouched, so the next tick retries them.
+ * POST a batch, retrying once on auth failures or login redirects. Anything other than
+ * `'ok'` leaves the bytes on disk with the cursor untouched, so the next tick retries them.
  */
 async function send(
   sessionId: string,

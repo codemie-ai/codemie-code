@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
-import type { ProxyContext } from '../proxy-types.js';
+import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
@@ -10,8 +10,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
-import { CredentialRefresher } from './credential-refresh.js';
-import { clearCredentialsStale } from './otlp-spool/auth-state.js';
+import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
 /**
  * Upper bound on the best-effort flush during proxy shutdown.
@@ -50,9 +49,11 @@ class OtlpInterceptor implements ProxyInterceptor {
   private sweepHandle?: NodeJS.Timeout;
   private ticking = false;
   private stopped = false;
-  private lastCredentials?: SSOCredentials | JWTCredentials;
 
-  constructor(private readonly credentials?: CredentialRefresher<SSOCredentials | JWTCredentials>) {}
+  constructor(
+    private credentials: SSOCredentials | JWTCredentials | undefined,
+    private readonly config: ProxyConfig | undefined
+  ) {}
 
   async onProxyStart(): Promise<void> {
     // Recovery pass for anything a previous process left on disk (crash, or a
@@ -112,21 +113,34 @@ class OtlpInterceptor implements ProxyInterceptor {
   }
 
 
-  private async tick(): Promise<void> {
-    if (!this.credentials) {
+  /**
+   * Re-reads the credential store when `markCredentialsStale()` is set, so a
+   * successful SSO re-login the user completes while this daemon keeps running
+   * is picked up without a restart. A no-op whenever credentials aren't stale.
+   */
+  private async refreshCredentialsIfStale(): Promise<void> {
+    if (!areCredentialsStale() || !this.config) {
       return;
     }
-    // Re-read stored credentials (throttled) before each tick, so a browser re-login that
-    // completed between ticks is picked up here too, instead of forwarding forever with the
-    // daemon-startup snapshot (PR #655 review, blocking). Only clear the "forwarding suspended"
-    // latch when the refresh actually returned a DIFFERENT credential object (a real re-read
-    // found something new, not just an unchanged/throttled return) — clearing on every tick
-    // regardless would retry a forward attempt against a still-genuinely-stale credential on
-    // every single tick, defeating markCredentialsStale's whole point.
-    const creds = await this.credentials.refresh();
-    if (creds !== this.lastCredentials) {
-      this.lastCredentials = creds;
-      clearCredentialsStale();
+
+    try {
+      const refreshed = await resolveFreshCredentials(this.config);
+      if (refreshed) {
+        this.credentials = refreshed;
+        clearCredentialsStale();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[otlp-ingest] credential refresh attempt failed', ...sanitizeLogArgs({ err: msg }));
+    }
+  }
+
+  private async tick(): Promise<void> {
+    await this.refreshCredentialsIfStale();
+
+    const creds = this.credentials;
+    if (!creds) {
+      return;
     }
 
     const sessionIds = await listSessionIds();
@@ -153,6 +167,8 @@ class OtlpInterceptor implements ProxyInterceptor {
     _httpClient: ProxyHTTPClient
   ): Promise<boolean> {
     const { method, url } = ctx;
+
+    void this.refreshCredentialsIfStale();
 
     // Route: POST /v1/analytics/hooks
     if (method === 'POST' && url === '/v1/analytics/hooks') {
@@ -300,15 +316,9 @@ export class OtlpPlugin implements ProxyPlugin {
   priority = 10;
 
   createInterceptor(context: PluginContext): ProxyInterceptor {
-    const credentials = context.syncCredentials || context.credentials;
     return new OtlpInterceptor(
-      credentials
-        ? new CredentialRefresher(credentials, {
-            provider: context.config.provider,
-            baseUrl: context.config.targetApiUrl,
-            codeMieUrl: context.config.syncCodeMieUrl,
-          })
-        : undefined
+      context.syncCredentials || context.credentials,
+      context.config
     );
   }
 }
