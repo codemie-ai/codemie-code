@@ -6,7 +6,7 @@
 
 import { open, readFile, readdir, stat, type FileHandle } from 'fs/promises';
 import { homedir } from 'os';
-import { dirname, join, resolve } from 'path';
+import { dirname, join, relative, resolve, sep } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -178,16 +178,9 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Nested sub-agent transcripts, stored under `<transcript-without-.jsonl>/<agentId>/run-N/`.
-   *
-   * A delegated agent gets its own session file there. The parent records tool results for those
-   * dispatches but NO usage on them (measured on a real corpus: 1707 `toolResult` entries, zero
-   * carrying `usage`), so every token a sub-agent burned lives only in the nested file and a
-   * reader that walks `messages` alone misses all of it.
-   *
-   * Attached WITHOUT a `toolUseId`: this is session-level spend, not the allocation of one
-   * dispatch, and `cost-enricher.enrichDispatchCosts` keys on `toolUseId` precisely so it skips
-   * these.
+   * Link Pi `<agent>/<run>/session.jsonl` and header-validated omp child transcripts
+   * recursively under `<transcript-without-.jsonl>/`. Relative paths identify children;
+   * omp path depth also records their ancestry. No toolUseId is inferred.
    *
    * **Forked continuations are deliberately NOT linked here.** `/fork` writes a new file that
    * replays the prior conversation verbatim, so folding it into its source looks tempting — but
@@ -206,36 +199,41 @@ export class PiSessionAdapter implements SessionAdapter {
       return [];
     }
     const runsRoot = transcriptPath.slice(0, -'.jsonl'.length);
-    let agentDirs: string[];
-    try {
-      agentDirs = await readdir(runsRoot);
-    } catch {
-      return []; // no sub-agent ran under this transcript
-    }
+    const files: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      try {
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          const file = join(dir, entry.name);
+          if (entry.isDirectory()) await walk(file);
+          else if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(file);
+        }
+      } catch {
+        // Missing run roots and unreadable subdirectories contain no usable transcripts.
+      }
+    };
+    await walk(runsRoot);
+    const relPath = (file: string): string => relative(runsRoot, file).split(sep).join('/');
+    files.sort((a, b) => relPath(a).localeCompare(relPath(b)));
 
     const out: LinkedTranscript[] = [];
-    for (const agentDir of agentDirs.sort()) {
-      let runDirs: string[];
+    for (const file of files) {
+      const rel = relPath(file);
+      const piLayout = /^([^/]+)\/([^/]+)\/session\.jsonl$/.exec(rel);
       try {
-        runDirs = await readdir(join(runsRoot, agentDir));
+        if (!piLayout && !(await this.readSessionHeader(file))) continue;
+        const segments = rel.split('/');
+        out.push({
+          agentId: piLayout ? `${piLayout[1]}/${piLayout[2]}` : rel.slice(0, -'.jsonl'.length),
+          filePath: file,
+          agentType: PI_SUBAGENT_RUN,
+          ...(!piLayout && {
+            spawnDepth: segments.length,
+            ...(segments.length > 1 && { parentAgentId: segments.slice(0, -1).join('/') }),
+          }),
+          messages: (await this.readJsonlFile(file)) as unknown[],
+        });
       } catch {
-        continue;
-      }
-      for (const runDir of runDirs.sort()) {
-        const sessionPath = join(runsRoot, agentDir, runDir, 'session.jsonl');
-        if (!existsSync(sessionPath)) {
-          continue;
-        }
-        try {
-          out.push({
-            agentId: `${agentDir}/${runDir}`,
-            filePath: sessionPath,
-            agentType: PI_SUBAGENT_RUN,
-            messages: (await this.readJsonlFile(sessionPath)) as unknown[],
-          });
-        } catch {
-          logger.debug(`[pi-adapter] Could not read sub-agent run: ${sessionPath}`);
-        }
+        logger.debug(`[pi-adapter] Could not read sub-agent run: ${file}`);
       }
     }
     return out;
