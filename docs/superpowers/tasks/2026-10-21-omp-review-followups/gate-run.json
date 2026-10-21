@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "branch": "feat/omp-codemie-models",
+  "head": "5b686dbfc2cabfd7db4106ed5eff0fbc80893546",
+  "runner": "npm",
+  "started_at": "2026-10-21T15:53:45Z",
+  "completed_at": "2026-10-21T16:03:08Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2010,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3980,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Unquoted glob in package.json: macOS /bin/sh (bash posix) brace-expands and treats ** as *, so only 133 depth-2 files are linted and none of the changed src/cli/commands/proxy/** files; see lint-ci-equivalent. Guide documents the glob as quoted, package.json does not (mismatch)."
+    },
+    {
+      "id": "lint-ci-equivalent",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 11500,
+      "command": "npx eslint '{src,tests}/**/*.ts' 'src/agents/plugins/pi/extension/*.js' --max-warnings=0",
+      "exit_code": 0,
+      "notes": "Quoted-glob form reproduces CI (ubuntu dash passes the glob literally to ESLint, which recurses); covers all changed files."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4410,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7630,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Both bundles emitted: dist/agents/plugins/claude/plugin/statusline.bundle.mjs (44.0kb), dist/cli/commands/proxy/connectors/omp/codemie-models.bundle.js (7.5kb)."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 23690,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Re-run at same HEAD after user added `lo0 alias 127.0.0.2`: 365 files passed; 5536 tests passed, 2 skipped. First run (before alias) failed 3 tests in src/utils/__tests__/system-proxy-dispatcher.test.ts on 127.0.0.2 connect timeouts — environmental."
+    },
+    {
+      "id": "integration",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 23830,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Guide gate outside the requested scope, run because CI test-ubuntu/test-windows enforce it. 37 files passed, 1 skipped; 278 tests passed, 10 skipped. Windows job not reproducible locally."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 550,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' (script scans only `git diff --staged`). Covered by secrets-branch-diff."
+    },
+    {
+      "id": "secrets-branch-diff",
+      "source": "ci",
+      "status": "PASS",
+      "command": "git diff ecab0a11e214b75e804883e2ab1622e724c91954...HEAD | docker run --rm -i -v \"$PWD/.gitleaks.toml:/gitleaks.toml\" ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "Same image/config as validate-secrets.js over the branch diff: 'scanned ~78893 bytes ... no leaks found'. CI gitleaks-action scans per-commit history; duration not measured."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Duration not measured."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 570,
+      "command": "npx commitlint --from ecab0a11e214b75e804883e2ab1622e724c91954 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "All 10 branch commits: 0 problems, 0 warnings. PR-title validation is CI-only (needs GH API)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged",
+      "notes": "Pre-commit hook operates on staged files; nothing is staged. Its lint/typecheck work is covered by lint-ci-equivalent and typecheck."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run check:pre-commit",
+      "notes": "Composite of typecheck && lint, both run individually above."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "N/A",
+      "command": "npm run ci",
+      "notes": "Composite of license-check, lint, build, unit, cli; each component run individually above."
+    }
+  ],
+  "failures": {}
+}
