@@ -622,15 +622,22 @@ export interface GitCommitSummary {
 const GIT_LOG_RECORD_SEP = '\x1e';
 const GIT_LOG_FIELD_SEP = '\x1f';
 
-/** Parses `git log --numstat --format=<RS>%H<FS>%aI` output into per-commit metadata. */
+/** Parses `git log --numstat --format=<RS>%H<FS>%at` output into per-commit metadata. */
 function parseGitLogNumstat(stdout: string): GitCommitSummary[] {
   const commits: GitCommitSummary[] = [];
   for (const block of stdout.split(GIT_LOG_RECORD_SEP)) {
     if (!block.trim()) continue;
     const lines = block.split('\n').filter((line) => line.length > 0);
     const [header, ...numstatLines] = lines;
-    const [sha, time] = (header ?? '').split(GIT_LOG_FIELD_SEP);
+    const [sha, authorTime] = (header ?? '').split(GIT_LOG_FIELD_SEP);
     if (!sha) continue;
+
+    const authorTimeSeconds = Number(authorTime);
+    const authorDate = new Date(authorTimeSeconds * 1000);
+    const time =
+      authorTime && Number.isFinite(authorTimeSeconds) && Number.isFinite(authorDate.getTime())
+        ? authorDate.toISOString()
+        : '';
 
     let added = 0;
     let removed = 0;
@@ -644,7 +651,7 @@ function parseGitLogNumstat(stdout: string): GitCommitSummary[] {
       if (Number.isFinite(addedCount)) added += addedCount;
       if (Number.isFinite(removedCount)) removed += removedCount;
     }
-    commits.push({ sha, time: time ?? '', files, added, removed });
+    commits.push({ sha, time, files, added, removed });
   }
   return commits;
 }
@@ -671,7 +678,7 @@ export async function detectGitCommitsByAuthor(
         '--fixed-strings',
         `--author=<${authorEmail}>`,
         '--numstat',
-        `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%aI`,
+        `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%at`,
       ],
       { cwd, timeout: 10000 }
     );
