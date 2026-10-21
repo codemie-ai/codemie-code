@@ -109,8 +109,9 @@ export interface DaemonIdentity {
 /**
  * Derive the single daemon identity for a target set, first match wins:
  * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `codex-desktop` >
- * `codemie-daemon` (`omp` without `vscode`) > `vscode-byok`.
+ * `codemie-daemon` (`omp`) > `vscode-byok`.
  * One daemon carries one client type, so lower-priority targets share the winner's identity.
+ * `connectTargets` rejects `omp` combined with VS Code BYOK because they need different identities.
  */
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
@@ -124,7 +125,7 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   }
   // omp alone uses the generic identity `codemie proxy start` already spawns: it needs no
   // client-specific request normalization, and a new client value would change attribution.
-  if (targets.omp && !targets.vscode) {
+  if (targets.omp) {
     return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
@@ -722,6 +723,14 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   if (!hasAnyTarget(targets)) {
     console.log(TARGET_LIST);
     return;
+  }
+
+  // omp and VS Code BYOK need different daemon identities, and one daemon carries one.
+  if (targets.omp && targets.vscode) {
+    printProxyError(new ConfigurationError(
+      '--omp cannot be combined with --vscode: they need different proxy identities and share one daemon.\n' +
+      'Run `codemie proxy connect --omp` for oh-my-pi, or `codemie proxy connect --vscode` for VS Code.'
+    ), 'Failed to connect proxy');
   }
 
   const verbose = Boolean(opts.verbose);

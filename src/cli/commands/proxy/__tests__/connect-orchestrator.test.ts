@@ -39,6 +39,9 @@ vi.mock('../connectors/desktop.js', () => ({
 vi.mock('../connectors/vscode.js', () => ({
   writeVsCodeLanguageModelsConfig: vi.fn(),
 }));
+vi.mock('../connectors/omp.js', () => ({
+  writeOmpExtension: vi.fn(),
+}));
 vi.mock('../connectors/vscode-claude-code.js', () => ({
   writeVsCodeClaudeCodeConfig: vi.fn(),
 }));
@@ -573,5 +576,79 @@ describe('runCodexDesktop', () => {
     );
 
     expect(result.ok).toBe(true);
+  });
+});
+describe('omp identity and VS Code BYOK conflict', () => {
+  let console_: ReturnType<typeof spyConsole>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    process.exitCode = 0;
+    console_ = spyConsole();
+  });
+
+  afterEach(() => {
+    console_.restore();
+    process.exitCode = 0;
+  });
+
+  it('rejects --omp with --vscode before profile resolution or side effects', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    const errorSpy = vi.spyOn(console, 'error');
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await expect(connectTargets({ targets: { omp: true, vscode: true }, profile: 'x' }))
+      .rejects.toThrow('process.exit:1');
+
+    expect(ConfigLoader.load).not.toHaveBeenCalled();
+    expect(checkStatus).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(writeVsCodeLanguageModelsConfig).not.toHaveBeenCalled();
+    expect(writeOmpExtension).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--omp cannot be combined with --vscode'));
+  });
+
+  it('keeps omp when combined with the Claude Code VS Code extension', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeVsCodeClaudeCodeConfig } = await import('../connectors/vscode-claude-code.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-desktop' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    vi.mocked(writeVsCodeClaudeCodeConfig).mockResolvedValue({ path: '/x' } as Awaited<ReturnType<typeof writeVsCodeClaudeCodeConfig>>);
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true, vscodeClaudeCode: true } });
+
+    expect(writeVsCodeClaudeCodeConfig).toHaveBeenCalled();
+    expect(writeOmpExtension).toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('derives the generic identity for omp and preserves target priority', async () => {
+    const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
+    expect(deriveDaemonIdentity({ omp: true })).toEqual({
+      clientType: 'codemie-daemon',
+      spawnOptions: { clientType: 'codemie-daemon' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, claudeDesktop: true })).toEqual({
+      clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, vscodeClaudeCode: true })).toEqual({
+      clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, claudeCodeOtlp: true })).toEqual({
+      clientType: 'claude-code-otlp', spawnOptions: { clientType: 'claude-code-otlp' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, codexDesktop: true })).toEqual({
+      clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' },
+    });
   });
 });
