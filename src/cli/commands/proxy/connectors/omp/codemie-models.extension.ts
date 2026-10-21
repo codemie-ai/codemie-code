@@ -59,9 +59,8 @@ function readDaemonConnection(): DaemonConnection {
   }
 }
 
-async function fetchRoster(): Promise<OmpModelRoster> {
-  // Re-read on every fetch: the daemon may have restarted on another port since omp loaded us.
-  const { url, gatewayKey } = readDaemonConnection();
+async function fetchRoster({ url, gatewayKey }: DaemonConnection): Promise<OmpModelRoster> {
+  // Discovery uses the same connection snapshot as inference; a daemon port/key change needs an omp restart.
   const endpoint = new URL('/v1/llm_models?include_all=true', url);
 
   let response: Response;
@@ -103,7 +102,7 @@ export default function codemieModels(pi: OmpExtensionApi): void {
   let shared: { startedAt: number; roster: Promise<OmpModelRoster> } | undefined;
   const loadRoster = (): Promise<OmpModelRoster> => {
     if (!shared || Date.now() - shared.startedAt > ROSTER_REUSE_MS) {
-      shared = { startedAt: Date.now(), roster: fetchRoster() };
+      shared = { startedAt: Date.now(), roster: fetchRoster(connection) };
     }
     return shared.roster;
   };
