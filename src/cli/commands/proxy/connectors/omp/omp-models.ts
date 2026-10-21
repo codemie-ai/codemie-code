@@ -72,6 +72,14 @@ function perMillion(usdPerToken: number | undefined): number {
   return Math.round((usdPerToken ?? 0) * TOKENS_PER_MILLION * 1e6) / 1e6;
 }
 
+/**
+ * Split the CodeMie catalog into omp rosters: `openai` (OpenAI-wire `codemie`) and `anthropic`
+ * (Anthropic-wire `codemie-claude`). Rows are skipped when nameless, disabled, image-generation,
+ * embedding (deployment or base name) or duplicated by id (deployment_name, else base_name).
+ * A row is Anthropic only when its id, or every router tier target, is a Claude family; likewise for
+ * reasoning. maxTokens is the lowest `max_output_tokens` among a router's tier targets, falling back
+ * to the row's own cap and then the default.
+ */
 export function buildOmpModelRoster(models: readonly LlmModel[]): OmpModelRoster {
   const caps = new Map<string, number>();
   for (const model of models) {
@@ -85,7 +93,8 @@ export function buildOmpModelRoster(models: readonly LlmModel[]): OmpModelRoster
   const seen = new Set<string>();
   for (const model of models) {
     const id = model.deployment_name || model.base_name;
-    if (!id || model.enabled === false || model.supports_image_generation === true || NON_CHAT.test(id) || seen.has(id)) {
+    const nonChat = [model.deployment_name, model.base_name].some(name => !!name && NON_CHAT.test(name));
+    if (!id || model.enabled === false || model.supports_image_generation === true || nonChat || seen.has(id)) {
       continue;
     }
     seen.add(id);
