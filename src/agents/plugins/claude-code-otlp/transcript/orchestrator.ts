@@ -42,6 +42,7 @@ import {
 } from '../event-fields/session-env-fields.js';
 import { readNewLines } from './transcript-reader.js';
 import { parseUsageLine, mergeUsageRequest, buildUsageRequestEvent, usageRequestKey } from './usage-request.js';
+import { isSyntheticModel } from './synthetic-model.js';
 import {
   updateBranchCounts,
   buildSessionSummaryEvent,
@@ -354,7 +355,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
   for (const model of modelByRequestKey.values()) {
-    if (model === '<synthetic>') continue;
+    if (isSyntheticModel(model)) continue;
     acc.models[model] = (acc.models[model] ?? 0) + 1;
   }
 

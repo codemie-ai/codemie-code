@@ -206,7 +206,7 @@ because a second `acquireParseStateLock` for the same session, from the same pro
 reclaimed and would stall for the full `LOCK_WAIT_BUDGET_MS` — the bug an earlier, concurrent
 `Promise.all` version of this had. `openPostCompactPass` is `PostCompact`'s own dedicated pass — see
 its note below |
-| `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session |
+| `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session; `buildSubagentUsageEvent` ranks the top-level `model` by `api_calls`, skipping the `<synthetic>` API-error placeholder (`isSyntheticModel` in `transcript/synthetic-model.ts`) — the same rule `agent.session.summary`'s `primary_model` uses |
 | `transcript/session-signals.ts` | Pure `agent.session.summary` signal extractors (edit-diff lines, turns, compactions, client versions, title). `collectCompactions()` turns each `compact_boundary` system line into a `Compaction` (`pre_tokens`/`post_tokens`/`dropped_tokens`/`duration_ms`). `openPostCompactPass` is the only caller that treats its result as a record-worthy signal (`agent.session.compact.done`); `buildFullAccumulator`'s own call (full-file, every `Stop`/`SessionEnd`) feeds only `agent.session.summary`'s aggregate stats, never a record of its own. `PreCompact`'s own event (`agent.session.compact`) never carries compaction numbers: `PreCompact` fires *before* compaction runs, so the boundary line doesn't exist in the transcript yet |
 | `src/cli/commands/proxy/connectors/claude-code-otlp.ts` | Wires Claude Code's `.claude/settings.json` hooks to `codemie hook --agent claude-code-otlp` |
 

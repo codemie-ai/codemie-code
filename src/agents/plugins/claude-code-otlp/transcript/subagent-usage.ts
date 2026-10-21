@@ -22,6 +22,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
 
@@ -233,10 +234,15 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
   return [...groups.values()];
 }
 
-/** The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`. */
+/**
+ * The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`.
+ * `<synthetic>` API-error placeholder rows are skipped (they are not real models), so a subagent
+ * whose only rows are placeholders reports `''` rather than a fake model.
+ */
 function primaryModel(totals: SubagentUsageTotal[]): string {
   let best: SubagentUsageTotal | undefined;
   for (const total of totals) {
+    if (isSyntheticModel(total.model)) continue;
     if (!best || total.api_calls > best.api_calls) {
       best = total;
     }

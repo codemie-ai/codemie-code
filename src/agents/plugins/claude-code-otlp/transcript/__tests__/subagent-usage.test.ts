@@ -401,17 +401,32 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.worktree).not.toContain('/repo');
   });
 
-  it('picks the usage[] row with the most api_calls as the top-level model', () => {
+  it('picks the usage[] row with the most api_calls as the top-level model, ignoring the <synthetic> API-error placeholder', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
     const reqs: OpenUsageRequest[] = [
       usageRequest({ model: 'claude-haiku-4-5', requestId: 'r1' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r2' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r3' }),
+      // More api_calls than any real model — must still never win the ranking.
+      usageRequest({ model: '<synthetic>', requestId: 'r4' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r5' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r6' }),
     ];
 
     const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
 
     expect(event.model).toBe('claude-opus-5-5');
+    // The placeholder rows stay in usage[] (they are real transcript rows) — only the ranking skips them.
+    expect((event.usage as Array<Record<string, unknown>>).some((row) => row.model === '<synthetic>')).toBe(true);
+  });
+
+  it('leaves the top-level model empty when every usage[] row is the <synthetic> placeholder', () => {
+    const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
+    const reqs: OpenUsageRequest[] = [usageRequest({ model: '<synthetic>', requestId: 'r1' })];
+
+    const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
+
+    expect(event.model).toBe('');
   });
 });
 
