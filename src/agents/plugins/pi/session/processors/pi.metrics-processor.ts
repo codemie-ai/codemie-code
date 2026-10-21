@@ -29,7 +29,7 @@ import {
   type PiToolCall,
   type PiToolResultMessage,
 } from '../../pi.types.js';
-import { extractPiFileOperation } from '../pi-file-operations.js';
+import { extractPiFileOperations, type PiFileOperationContext } from '../pi-file-operations.js';
 import { extractPiNamedInvocations, parseSkillWrapper } from '../pi-named-invocations.js';
 
 export const PI_METRICS_PROCESSOR_NAME = 'pi-metrics';
@@ -38,7 +38,7 @@ export const PI_METRICS_PROCESSOR_NAME = 'pi-metrics';
 const BASH_TOOL = 'bash';
 
 type PendingDelta = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
-type PiFileOperation = NonNullable<ReturnType<typeof extractPiFileOperation>>;
+type PiFileOperation = ReturnType<typeof extractPiFileOperations>[number];
 
 interface UnmatchedToolCall {
   entryId: string;
@@ -236,6 +236,9 @@ export class PiMetricsProcessor implements SessionProcessor {
       // to the same transcript, so entries from earlier runs must not be re-emitted.
       const sessionStartTime = await this.getCodeMieSessionStartTime(session.sessionId, session);
       const gitBranch = context.gitBranch;
+      const fileOpContext: PiFileOperationContext = {
+        cwd: (session.metadata as { projectPath?: string } | undefined)?.projectPath,
+      };
       const fallbackModel = process.env.CODEMIE_MODEL;
       const emitUnresolvedToolCalls =
         (context as PiMetricsProcessingContext).emitUnresolvedToolCalls ?? true;
@@ -406,7 +409,7 @@ export class PiMetricsProcessor implements SessionProcessor {
             // Keep had_errors/error_tools reachable without uploading raw output.
             apiErrorMessage = `Tool failed: ${toolName}`;
           } else if (!isFailure) {
-            fileOps = this.extractFileOperations(toolCall, msg).filter((op): op is PiFileOperation => op !== undefined);
+            fileOps = this.extractFileOperations(toolCall, msg, fileOpContext);
           }
 
           const delta: PendingDelta = {
@@ -667,9 +670,12 @@ export class PiMetricsProcessor implements SessionProcessor {
     }
   }
 
-  private extractFileOperations(toolCall: PiToolCall, result?: PiToolResultMessage): PiFileOperation[] {
-    const op = extractPiFileOperation(toolCall.name, toolCall.arguments, result?.details);
-    return op ? [op] : [];
+  private extractFileOperations(
+    toolCall: PiToolCall,
+    result: PiToolResultMessage | undefined,
+    context: PiFileOperationContext
+  ): PiFileOperation[] {
+    return extractPiFileOperations(toolCall.name, toolCall.arguments, result?.details, context);
   }
 
   /**
