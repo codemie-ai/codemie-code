@@ -330,10 +330,12 @@ The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/c
 
 | omp provider | Wire | Models |
 |---|---|---|
-| `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything except Claude |
-| `codemie-claude` | Anthropic Messages | `claude-*`, including Claude routers |
+| `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything else |
+| `codemie-claude` | Anthropic Messages | Claude deployments (id contains `claude` or `anthropic`) and routers whose tiers are all Claude |
 
-Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) on every refresh; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
+An omp provider binds one base URL, API and auth mode, so the OpenAI wire uses `<daemon>/v1` with a Bearer key while the Anthropic Messages wire uses the `<daemon>` root with `authHeader`. Per-model API overrides within one provider are unverified against omp v18.12.3.
+
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation and embedding deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. A router's `maxTokens` is the lowest `max_output_tokens` among its tier targets (128,000 on the current catalog). This value comes from metadata, and a `max_tokens: 128001` request was accepted, so it is not a proven hard limit. When no tier cap is known, 32,000 is used. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) on every refresh; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
 
 To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
 
