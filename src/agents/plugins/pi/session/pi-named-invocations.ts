@@ -35,6 +35,7 @@ import {
   isPiMessageEntry,
   isPiToolResultMessage,
   isPiUserMessage,
+  piEntryTimestamp,
   type PiEntry,
   type PiUserMessage,
 } from '../pi.types.js';
@@ -286,15 +287,25 @@ function ompSkillReadName(result: object): string | undefined {
   return name ? qualifySkillName(name, details.resolvedPath) : undefined;
 }
 
+/** One detected skill or agent invocation, in transcript order. */
+export interface PiInvocation {
+  kind: 'skill' | 'agent';
+  name: string;
+  /** Epoch ms of the entry that carried the detection, when it has one. */
+  timestamp: number | null;
+  /** Id of the `subagent` / `task` tool call that spawned the agent (agent items only). */
+  toolCallId?: string;
+}
+
 /**
- * Extract skill and agent name counts from Pi session entries.
+ * Every skill and agent invocation in Pi session entries, in order, with the timestamp of the
+ * entry that evidences it.
  *
  * Safe against missing or malformed fields — anything that is not a recognized shape is
- * skipped. `commandInvocations` is always empty; see the module comment.
+ * skipped.
  */
-export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInvocationCounts {
-  const skillInvocations: Record<string, number> = {};
-  const agentInvocations: Record<string, number> = {};
+export function listPiInvocations(entries: readonly unknown[]): PiInvocation[] {
+  const invocations: PiInvocation[] = [];
   // A `/skill:x` prompt already injected the skill, so the model re-reading `skill://x` before
   // the next user message is the same invocation, not a second one.
   let promptedThisTurn: string | undefined;
@@ -302,7 +313,7 @@ export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInv
   for (const raw of entries) {
     const promptedSkill = ompSkillPromptName(raw);
     if (promptedSkill) {
-      bump(skillInvocations, promptedSkill);
+      invocations.push({ kind: 'skill', name: promptedSkill, timestamp: piEntryTimestamp(raw) });
       promptedThisTurn = promptedSkill;
       continue;
     }
@@ -312,22 +323,27 @@ export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInv
       continue;
     }
     const message = entry.message;
+    const timestamp = piEntryTimestamp(raw);
 
     if (isPiUserMessage(message)) {
       promptedThisTurn = undefined;
       for (const text of userTextBlocks(message)) {
         const { name } = parseSkillWrapper(text);
-        if (name) bump(skillInvocations, name);
+        if (name) invocations.push({ kind: 'skill', name, timestamp });
       }
       continue;
     }
 
     if (isPiAssistantMessage(message)) {
       for (const toolCall of extractPiToolCalls(message)) {
+        let agents: string[] = [];
         if (toolCall.name === SUBAGENT_TOOL) {
-          for (const agent of subagentNames(toolCall.arguments)) bump(agentInvocations, agent);
+          agents = subagentNames(toolCall.arguments);
         } else if (toolCall.name === OMP_TASK_TOOL) {
-          for (const agent of ompTaskAgents(toolCall.arguments)) bump(agentInvocations, agent);
+          agents = ompTaskAgents(toolCall.arguments);
+        }
+        for (const name of agents) {
+          invocations.push({ kind: 'agent', name, timestamp, toolCallId: toolCall.id });
         }
       }
       continue;
@@ -335,9 +351,36 @@ export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInv
 
     if (isPiToolResultMessage(message) && message.toolName === 'read' && message.isError !== true) {
       const loaded = ompSkillReadName(message);
-      if (loaded && loaded !== promptedThisTurn) bump(skillInvocations, loaded);
+      if (loaded && loaded !== promptedThisTurn) invocations.push({ kind: 'skill', name: loaded, timestamp });
     }
   }
 
+  return invocations;
+}
+
+/**
+ * Extract skill and agent name counts from Pi session entries.
+ *
+ * `commandInvocations` is always empty; see the module comment.
+ */
+export function extractPiNamedInvocations(entries: readonly unknown[]): NamedInvocationCounts {
+  const skillInvocations: Record<string, number> = {};
+  const agentInvocations: Record<string, number> = {};
+  for (const invocation of listPiInvocations(entries)) {
+    bump(invocation.kind === 'skill' ? skillInvocations : agentInvocations, invocation.name);
+  }
   return { skillInvocations, agentInvocations, commandInvocations: {} };
+}
+
+/** Key-wise sum of several {@link NamedInvocationCounts}. */
+export function sumPiNamedInvocations(counts: readonly NamedInvocationCounts[]): NamedInvocationCounts {
+  const total: NamedInvocationCounts = { skillInvocations: {}, agentInvocations: {}, commandInvocations: {} };
+  for (const part of counts) {
+    for (const key of ['skillInvocations', 'agentInvocations', 'commandInvocations'] as const) {
+      for (const [name, count] of Object.entries(part[key])) {
+        total[key][name] = (total[key][name] ?? 0) + count;
+      }
+    }
+  }
+  return total;
 }
