@@ -52,6 +52,7 @@ describe('proxy connect — unified command and deprecated aliases', () => {
           vscode: true,
           vscodeClaudeCode: true,
           codexDesktop: false,
+          omp: false,
         },
       })
     );
@@ -273,6 +274,7 @@ describe('deprecated aliases forward their flags under real CLI nesting', () => 
           vscode: true,
           vscodeClaudeCode: false,
           codexDesktop: false,
+          omp: false,
         },
         profile: 'p',
       })
@@ -334,7 +336,7 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: true, copilotCliOtlp: false, codexDesktop: false },
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: true, copilotCliOtlp: false, codexDesktop: false, omp: false },
     });
   });
 
@@ -346,7 +348,7 @@ describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disco
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'project',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: true, codexDesktop: false },
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: true, codexDesktop: false, omp: false },
     });
   });
 });
@@ -379,7 +381,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: true },
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: true, omp: false },
     });
   });
 });
