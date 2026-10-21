@@ -48,6 +48,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     return {
       cwd: hookInput.cwd,
       prompt: hookInput.hook_event_name === 'UserPromptSubmit' ? hookInput.prompt : undefined,
+      sessionId: hookInput.session_id,
     };
   }
 

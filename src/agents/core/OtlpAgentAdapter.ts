@@ -9,6 +9,7 @@ import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveStoryFor } from './story-resolver.js';
 import { resolveHookCredentials } from './hook-credentials.js';
 import { resolveEmailFromCredentials, resolveIdentity } from './identity-resolver.js';
+import { pinProjectName, readPinnedProjectName } from './session-project-pin.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -25,6 +26,8 @@ export interface OtlpHookContext {
   cwd: string;
   /** Only for prompt-submit style events; enables the marker/mention story tiers. */
   prompt?: string;
+  /** Pins the resolved project per session (see `resolveProjectName`); omitted adapters get the unpinned, per-hook-cwd behavior. */
+  sessionId?: string;
 }
 
 /** Git and story fields, resolved from the hook's cwd and prompt. */
@@ -228,10 +231,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    * the git, codemie_cli and os tiers. Each of the three is resolved independently, so a failed
    * lookup yields that field's empty value only, never a dropped event and never a wider blank-out.
    */
-  private async resolveIdentityFields(cwd: string): Promise<IdentityFields> {
+  private async resolveIdentityFields(cwd: string, sessionId: string | undefined): Promise<IdentityFields> {
     const [identityResult, projectName, version] = await Promise.all([
       this.resolveIdentityTier(cwd),
-      this.resolveProjectName(cwd),
+      this.resolveProjectName(cwd, sessionId),
       getCurrentCliVersion().catch(() => null),
     ]);
     return {
@@ -259,18 +262,34 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /**
    * `CODEMIE_PROJECT` (exported by the launcher into the agent's own process env, the same
    * source `Session.project` uses) wins when present, since it is set once for the whole
-   * session and cannot drift as the hook's `cwd` moves. Otherwise falls back to the nearest
-   * `.codemie` found by walking up from `CLAUDE_PROJECT_DIR` (set once at session start,
-   * unlike `cwd`, which follows Claude's own `cd`) toward the filesystem root, then to the
-   * global active profile. Without `CLAUDE_PROJECT_DIR` (e.g. a tool other than Claude Code),
-   * falls back to the hook's own `cwd`, unwalked, as before.
+   * session and cannot drift as the hook's `cwd` moves, and is never pinned against (it is
+   * already fixed per session).
+   *
+   * Otherwise, with a `sessionId`, the first hook's resolution — the nearest `.codemie` found
+   * by walking up from `CLAUDE_PROJECT_DIR` toward the filesystem root, or the global active
+   * profile — is pinned for the rest of the session (`session-project-pin.ts`), so a later
+   * `codemie profile switch` or a `cwd` move into a directory with a different `.codemie`
+   * cannot change what this session reports (it would otherwise look like a second,
+   * conflicting project and drop the rest of the session's analytics). Without a `sessionId`
+   * (an adapter that doesn't supply one), or without `CLAUDE_PROJECT_DIR` (a tool other than
+   * Claude Code), resolution falls back to the hook's own `cwd`, unwalked and unpinned, as before.
    */
-  private async resolveProjectName(cwd: string): Promise<string> {
+  private async resolveProjectName(cwd: string, sessionId: string | undefined): Promise<string> {
     const envProject = process.env['CODEMIE_PROJECT']?.trim();
     if (envProject) {
       return envProject;
     }
 
+    const pinned = sessionId ? await readPinnedProjectName(sessionId) : undefined;
+    if (pinned) {
+      return pinned;
+    }
+
+    const resolved = await this.resolveProjectNameFromConfig(cwd);
+    return sessionId ? pinProjectName(sessionId, resolved) : resolved;
+  }
+
+  private async resolveProjectNameFromConfig(cwd: string): Promise<string> {
     const projectDir = process.env['CLAUDE_PROJECT_DIR']?.trim();
     try {
       const configDir = projectDir ? await this.findNearestConfigDir(projectDir) : cwd;
@@ -300,7 +319,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async resolveCommonFields(context: OtlpHookContext): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       this.resolveRepoFields(context),
-      this.resolveIdentityFields(context.cwd),
+      this.resolveIdentityFields(context.cwd, context.sessionId),
     ]);
     return { ...repoFields, ...identityFields };
   }
