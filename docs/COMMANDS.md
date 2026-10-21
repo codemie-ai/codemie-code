@@ -333,11 +333,11 @@ The connector installs a CodeMie-managed extension at `~/.omp/agent/extensions/c
 | `codemie` | OpenAI — Chat Completions, or Responses for the GPT deployments that require it | everything except Claude |
 | `codemie-claude` | Anthropic Messages | `claude-*`, including Claude routers |
 
-Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` on every refresh, so it follows a daemon restart; if the daemon is down, omp keeps its last cached roster.
+Costs are converted from the catalog's USD per token to omp's USD per million tokens. Image-generation deployments are left out of the chat rosters. omp caches the roster for 24 hours; run `omp models refresh` after the profile's models change. The extension reads the daemon URL and gateway key from `~/.codemie/proxy-daemon.json` (`$CODEMIE_HOME/proxy-daemon.json` when `CODEMIE_HOME` is set) on every refresh; when that file is missing or unreadable it falls back to `http://127.0.0.1:4001` and the `codemie-proxy` key. If the daemon is down, omp keeps its last cached roster.
 
 To send inference through another local hop that forwards to the daemon (for example a caching proxy), set `CODEMIE_OMP_BASE_URL` in omp's environment; the catalog is still read from the daemon itself.
 
-When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. Combined with other targets, the higher-priority target owns the daemon and the extension uses that daemon.
+When `--omp` is the only target, the daemon runs with the generic `codemie-daemon` client identity used by `codemie proxy start`. Combined with other targets, the daemon takes the highest-priority target's client identity (`claude-desktop` for `--claude-desktop`/`--vscode-claude-code`, then `claude-code-otlp`, `codex-desktop`, and `vscode-byok` for `--vscode`), and omp traffic is attributed to that identity.
 
 `--force` also replaces a file at the extension path that CodeMie did not install; without it the connector refuses. Re-running the connector after a CLI upgrade refreshes the installed copy.
 

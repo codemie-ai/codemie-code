@@ -207,10 +207,6 @@ export interface LlmModel {
   /** `true` on image-generation deployments, which do not serve chat completions. */
   supports_image_generation?: boolean;
   /**
-   * The model's maximum output tokens (LiteLLM `model_info.max_output_tokens`).
-   */
-  max_output_tokens?: number;
-  /**
    * Present (and `true`) on a Switchyard-generated virtual router entry (`LlmRouterOption` in
    * the backend's `Union[LLMModel, LlmRouterOption]` response) — a `base_name` that itself
    * dispatches to a capable/efficient pair rather than naming a concrete deployment.

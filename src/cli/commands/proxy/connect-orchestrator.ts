@@ -107,10 +107,10 @@ export interface DaemonIdentity {
 }
 
 /**
- * Derive the single daemon identity for a target set (spec §3.3 — primary by
- * priority: `claude-desktop` > `vscode-claude-code` > `vscode-byok`). The two
- * Anthropic-gateway targets share the `claude-desktop` identity, so the priority
- * collapses onto exactly the two existing identities — no new telemetry value.
+ * Derive the single daemon identity for a target set, first match wins:
+ * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `codex-desktop` >
+ * `codemie-daemon` (`omp` without `vscode`) > `vscode-byok`.
+ * One daemon carries one client type, so lower-priority targets share the winner's identity.
  */
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
