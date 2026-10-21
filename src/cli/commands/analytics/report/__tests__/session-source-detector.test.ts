@@ -64,6 +64,18 @@ describe('detectSessionSource', () => {
   });
 
   it('exposes the ordered detector list for callers that need custom ordering/extension', () => {
-    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual(['sdlc-factory', 'superpowers', 'openspec', 'speckit', 'bmad']);
+    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual([
+      'sdlc-factory',
+      'superpowers',
+      'secops',
+      'openspec',
+      'speckit',
+      'bmad',
+      'matt-pocock-skills',
+      'caveman',
+      'ponytail',
+      'codemie-skills',
+      'herdr',
+    ]);
   });
 });
