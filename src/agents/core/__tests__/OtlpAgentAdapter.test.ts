@@ -240,6 +240,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwarded()[0]).toMatchObject({ codemie_project_name: 'proj-1' });
     });
 
+    it('ignores a blank CLAUDE_PROJECT_DIR and resolves from the hook cwd instead', async () => {
+      process.env['CLAUDE_PROJECT_DIR'] = '   ';
+      await run();
+      expect(getActiveProfileNameMock).toHaveBeenCalledWith('/repo');
+      expect(hasLocalConfigMock).not.toHaveBeenCalled();
+    });
+
     it('resolves the config from CLAUDE_PROJECT_DIR, not the hook cwd, when it is set', async () => {
       process.env['CLAUDE_PROJECT_DIR'] = '/workspace/project';
       hasLocalConfigMock.mockResolvedValue(true);
