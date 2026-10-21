@@ -203,6 +203,25 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     expect(forwarded()[0]).toMatchObject({ story_id: 'BR-2', story_source: 'branch' });
   });
 
+  it("re-derives the branch story for an event's own git_branch when it differs from the hook-time branch", async () => {
+    detectGitBranchMock.mockResolvedValue('feature/BR-2'); // hook-time branch: ticketed
+    await run({ payload: [{ git_branch: 'master' }] }); // event's own branch: untracked
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'master', story_id: '', story_source: '' });
+  });
+
+  it("re-derives a branch story for an event's own git_branch even when the hook-time branch has none", async () => {
+    detectGitBranchMock.mockResolvedValue('master'); // hook-time branch: untracked
+    await run({ payload: [{ git_branch: 'feature/BR-2' }] }); // event's own branch: ticketed
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'feature/BR-2', story_id: 'BR-2', story_source: 'branch' });
+  });
+
+  it('never overrides an explicit or marker story even when the event carries a different, ticketed git_branch', async () => {
+    process.env['SDLC_ANALYTICS_STORY_ID'] = 'ABC-1';
+    detectGitBranchMock.mockResolvedValue('master');
+    await run({ payload: [{ git_branch: 'feature/BR-2' }] });
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'feature/BR-2', story_id: 'ABC-1', story_source: 'explicit' });
+  });
+
   it("stamps '' on a detached HEAD, even when the record carries an empty value", async () => {
     detectGitBranchMock.mockResolvedValue(undefined);
     await run({ payload: [{ git_branch: '' }] });

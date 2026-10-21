@@ -2086,4 +2086,68 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
     expect(second.events.some((e) => e.type === 'agent.session.env')).toBe(true); // still a diff
     await second.finalize(true);
   });
+
+  it('falls back to the latest transcript model for configured_model when the SessionStart baseline has none', async () => {
+    const sessionId = 'session-envcheck-model-fallback';
+    const transcriptPath = writeTranscript('transcript-envcheck-model-fallback.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10, model: 'claude-opus-5' }),
+    ]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', { ...sessionEnvFixture, configured_model: '' });
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: sessionEnvFixture.effort,
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: sessionEnvFixture.effort,
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ configured_model: 'claude-opus-5' });
+    await pass.finalize(true);
+
+    // Persisted, so a later check against the same baseline finds no further diff.
+    const next = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: sessionEnvFixture.effort,
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    expect(next.events.some((e) => e.type === 'agent.session.env')).toBe(false);
+    await next.finalize(true);
+  });
+
+  it('never falls back to the <synthetic> API-error placeholder model for configured_model', async () => {
+    const sessionId = 'session-envcheck-model-fallback-synthetic';
+    const transcriptPath = writeTranscript('transcript-envcheck-model-fallback-synthetic.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 0, model: '<synthetic>', isApiErrorMessage: true }),
+    ]);
+
+    const startPass = await openSessionStartPass(sessionId, 'sha-1', { ...sessionEnvFixture, configured_model: '' });
+    await startPass.finalize(true);
+
+    resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+      effort: 'high', // force a genuine change so an env event is actually emitted to inspect
+      permission_mode: sessionEnvFixture.permission_mode,
+      os: sessionEnvFixture.os,
+      arch: sessionEnvFixture.arch,
+      node_version: sessionEnvFixture.node_version,
+      timezone: sessionEnvFixture.timezone,
+      hostname_hash: sessionEnvFixture.hostname_hash,
+    });
+
+    const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
+      effort: 'high',
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+
+    expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ configured_model: '' });
+    await pass.finalize(true);
+  });
 });

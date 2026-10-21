@@ -33,7 +33,13 @@
 import { readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { acquireParseStateLock, loadParseState, saveParseState, type TranscriptParseState } from './parse-state.js';
+import {
+  acquireParseStateLock,
+  loadParseState,
+  saveParseState,
+  type TranscriptParseState,
+  type OpenUsageRequest,
+} from './parse-state.js';
 import {
   resolveSessionEnvFields,
   resolveVolatileSessionEnvFields,
@@ -659,6 +665,28 @@ export interface SessionEnvCheckResult {
 const NOOP_FINALIZE = async (): Promise<void> => {};
 
 /**
+ * Most recent non-empty, non-`<synthetic>` `model` among every usage request parsed so far for
+ * this session (main thread, skills, and subagents all share `state.openRequests`). Used as a
+ * last-resort fallback for `configured_model` when neither the triggering hook's own payload nor
+ * the prior `agent.session.env` snapshot has one — e.g. the Claude Code desktop app's `SessionStart`
+ * carries no `model` until the first `/compact` or model switch, even though every
+ * transcript line already reports the model that actually answered. `''` when no request has a
+ * usable model yet (true at the very first hook of a session, before any transcript line exists).
+ */
+function latestKnownModel(openRequests: Record<string, OpenUsageRequest>): string {
+  let best: OpenUsageRequest | undefined;
+  for (const req of Object.values(openRequests)) {
+    if (!req.model || isSyntheticModel(req.model)) {
+      continue;
+    }
+    if (!best || req.timestamp > best.timestamp) {
+      best = req;
+    }
+  }
+  return best?.model ?? '';
+}
+
+/**
  * Diffs a recomputed `agent.session.env` snapshot against `state.lastSessionEnvFields`, mutating
  * it and returning the new snapshot only when something changed (`null` otherwise). No lock/load
  * of its own — the caller must already hold the per-session lock for `state`.
@@ -675,7 +703,7 @@ async function computeSessionEnvUpdate(
 
   let candidate: SessionEnvFields;
   if (full) {
-    const configuredModel = full.configuredModel ?? last?.configured_model ?? '';
+    const configuredModel = full.configuredModel ?? last?.configured_model ?? latestKnownModel(state.openRequests);
     const resolved = await resolveSessionEnvFields(full.cwd, configuredModel, input.permissionMode);
     candidate = {
       ...resolved,
@@ -687,6 +715,7 @@ async function computeSessionEnvUpdate(
     candidate = {
       ...last!,
       ...volatile,
+      configured_model: last!.configured_model || latestKnownModel(state.openRequests),
       effort: input.effort || last!.effort,
       permission_mode: input.permissionMode || last!.permission_mode,
     };

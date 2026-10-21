@@ -3,6 +3,7 @@ import { extractRepository } from '@/utils/paths.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
+import { resolveBranchStory } from './story-resolver.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -228,6 +229,25 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         merged[key] = own;
       }
     }
+
+    // An event can carry its own git_branch (e.g. agent.usage.request's transcript-line branch),
+    // which lags the hook-time branch whenever the branch changes mid-turn — a hook fires once
+    // per turn, on the branch current *at that time*, but an event inside the same payload can
+    // describe something that happened earlier, on a different branch. The
+    // explicit/marker/mention story tiers are not branch-scoped, so only the branch tier (or "no
+    // story resolved") is worth re-deriving here, and only for the event's own branch.
+    const ownBranch = merged['git_branch'];
+    if (
+      (commonFields.story_source === 'branch' || commonFields.story_source === '') &&
+      typeof ownBranch === 'string' &&
+      ownBranch.length > 0 &&
+      ownBranch !== commonFields.git_branch
+    ) {
+      const rebased = resolveBranchStory(ownBranch);
+      merged['story_id'] = rebased?.storyId ?? '';
+      merged['story_source'] = rebased?.storySource ?? '';
+    }
+
     return merged;
   }
 }
