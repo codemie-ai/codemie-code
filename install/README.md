@@ -89,6 +89,33 @@ Pin a version on macOS/Linux/WSL:
 curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | env CODEMIE_PACKAGE_VERSION=0.8.0 bash
 ```
 
+### Windows Diagnostics (`install/windows/clidiag.ps1`)
+
+A diagnostic script that does not install or reconfigure anything. It reports:
+
+1. **System Requirements** — Windows 10 / Server 2016+, PowerShell 5.1+, Node.js `>=20`, npm, whether the npm prefix is writable, registry/scope/proxy settings, HTTPS reachability of the registry and GitHub (through the system or npm proxy), and whether `@codemieai/code` is visible in the registry.
+2. **Current user rights** — identity, membership in Administrators (checked by SID), elevation/UAC state, integrity level, execution policy, and directory writability.
+3. **Installation state** — raw Machine/User `PATH` from the registry (missing/duplicate entries, length, session vs registry), every `codemie*` command on PATH, installed package versions (npm global and portable), CodeMie/npm config files and environment variables, `codemie --version`, and `codemie doctor`. A bounded filesystem search runs when nothing is found on PATH.
+4. **Group Policy for PATH** (opt-in via `-RunGpoCheck`, skipped by default) — applied values from `gpresult` (RSoP), the list of applied GPOs, the local Group Policy Preferences cache, and `Environment.xml` / `Registry.xml` in SYSVOL.
+
+Secrets and e-mail addresses are masked. The transcript is saved to `%TEMP%\codemie-diagnostics-<timestamp>.log`.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clidiag.ps1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/clidiag.ps1))) -SkipDoctor
+```
+
+| Parameter | Purpose |
+|---|---|
+| `-ReportPath <file>` | Report location; `''` disables the report file |
+| `-SkipNetworkCheck` | Skip HTTPS checks and `npm view` |
+| `-SkipDoctor` / `-DoctorTimeoutSec <n>` | Skip or time-limit `codemie doctor` (default 180 s) |
+| `-NoWriteProbe` | Do not create temporary files for writability checks |
+| `-RunGpoCheck` / `-ScanAllSysvolGpos` | Run the Group Policy checks (off by default), or additionally scan every GPO in SYSVOL, not only applied ones |
+| `-SkipDeepSearch` / `-SearchRoots` / `-MaxSearchDepth` / `-SearchTimeoutSec` | Control the fallback filesystem search |
+
+Run it elevated to include computer-scope RSoP data from `gpresult`.
+
 ## Windows Defaults
 
 Windows uses `-Mode auto` by default: npm global installation when global npm is user-writable, otherwise a portable install into the current user's local profile:
