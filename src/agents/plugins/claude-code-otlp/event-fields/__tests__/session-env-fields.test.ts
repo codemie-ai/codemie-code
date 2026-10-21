@@ -16,7 +16,7 @@ vi.mock('@/agents/core/event-fields/env-fields.js', () => ({ resolveEnvFields: r
 vi.mock('@/agents/plugins/claude/claude.plugin.js', () => ({ ClaudePluginMetadata: { mcpConfig: { fake: true } } }));
 vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn() } }));
 
-const { resolveSessionEnvFields } = await import('../session-env-fields.js');
+const { resolveSessionEnvFields, sessionEnvFieldsEqual } = await import('../session-env-fields.js');
 
 /** Normalizes separators so dispatch checks work the same on win32 and posix. */
 function norm(p: string): string {
@@ -239,5 +239,33 @@ describe('resolveSessionEnvFields — failure isolation', () => {
     const fields = await resolveSessionEnvFields(CWD, 'm', 'auto');
 
     expect(fields.hostname_hash).toBe('');
+  });
+});
+
+describe('sessionEnvFieldsEqual', () => {
+  const base = {
+    provider: 'anthropic',
+    api_host: 'api.anthropic.com',
+    configured_model: 'claude-sonnet-5',
+    effort: 'high',
+    permission_mode: 'auto',
+    output_style: '',
+    plugins: { 'a@one': '1', 'b@two': '2' },
+    mcp_servers: ['a', 'b'],
+    os: 'linux',
+    arch: 'x64',
+    node_version: 'v20.0.0',
+    timezone: 'UTC',
+    hostname_hash: 'deadbeef',
+  };
+
+  it('compares field-by-field, ignoring plugin key order', () => {
+    expect(sessionEnvFieldsEqual(base, { ...base, plugins: { 'b@two': '2', 'a@one': '1' } })).toBe(true);
+  });
+
+  it('detects a changed scalar, a changed plugin set and reordered mcp_servers', () => {
+    expect(sessionEnvFieldsEqual(base, { ...base, effort: 'low' })).toBe(false);
+    expect(sessionEnvFieldsEqual(base, { ...base, plugins: { 'a@one': '1' } })).toBe(false);
+    expect(sessionEnvFieldsEqual(base, { ...base, mcp_servers: ['b', 'a'] })).toBe(false);
   });
 });

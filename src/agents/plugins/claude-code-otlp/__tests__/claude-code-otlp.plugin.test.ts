@@ -16,6 +16,13 @@ vi.mock('@/utils/config.js', () => ({
 }));
 vi.mock('@/agents/core/hook-credentials.js', () => ({ resolveHookCredentials: vi.fn(async () => null) }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: vi.fn(async () => '9.9.9') }));
+vi.mock('@/agents/core/identity-resolver.js', () => ({
+  resolveGitEmail: vi.fn(async () => 'git@example.com'),
+  resolveCodemieCliEmail: vi.fn(async () => 'cli@example.com'),
+  resolveOsUser: vi.fn(() => 'osuser'),
+  resolveIdentity: vi.fn(async () => ({ developerName: 'dev@example.com', identitySource: 'jwt' })),
+  resolveEmailFromCredentials: vi.fn(() => 'dev@example.com'),
+}));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -493,10 +500,10 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     }
   });
 
-  it('stamps skill_name on agent.tool.start/end for Skill', async () => {
+  it.each(['PreToolUse', 'PostToolUse'])('stamps skill_name on agent.tool.start/end for Skill (%s)', async (hookEventName) => {
     const plugin = new ClaudeCodeOtlpPlugin();
     await plugin.processOtlpEvent(
-      JSON.stringify(hookEvent({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'codemie:msgraph' } })),
+      JSON.stringify(hookEvent({ hook_event_name: hookEventName, tool_name: 'Skill', tool_input: { skill: 'codemie:msgraph' } })),
       { ensureOtlpProxy, forwardOtlpEventsToSpool }
     );
     expect(forwardedEvents()[0].skill_name).toBe('codemie:msgraph');
@@ -1032,6 +1039,14 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     const forwarded = forwardedEvents();
     expect(forwarded).toHaveLength(2);
     expect(forwarded[0].type).toBe('agent.session.start');
+    expect(forwarded[0]).toMatchObject({
+      os: process.platform,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? '',
+      git_email: 'git@example.com',
+      codemie_cli_email: 'cli@example.com',
+      os_user: 'osuser',
+      git_head_start: 'abc123def456',
+    });
     // The payload's `model` is only an input to the env snapshot's `configured_model`; the backend
     // does not read `model` on session.start.
     expect(forwarded[0]).not.toHaveProperty('model');
@@ -1128,6 +1143,87 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
   });
 });
 
+describe('ClaudeCodeOtlpPlugin agent.session.env (PostModelSwitch/ConfigChange)', () => {
+  const plugin = new ClaudeCodeOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+
+  const hook = (hookEventName: string, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: hookEventName, ...extra });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    resolveClientVersionMock.mockResolvedValue('2.1.23');
+    forwardOtlpEventsToSpool.mockResolvedValue(true);
+    openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
+  });
+
+  it('forwards only the derived agent.session.env for PostModelSwitch and fully re-resolves the model', async () => {
+    const finalize = vi.fn(async () => {});
+    openSessionEnvCheckPassMock.mockResolvedValue({
+      sessionEnvFields: { ...SESSION_ENV_FIELDS_STUB, configured_model: 'claude-opus-5' },
+      finalize,
+    });
+
+    await plugin.processOtlpEvent(hook('PostModelSwitch', { to_model: 'claude-opus-5' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    expect(openSessionEnvCheckPassMock).toHaveBeenCalledWith('s', {
+      effort: '',
+      permissionMode: '',
+      full: { cwd: '/x', configuredModel: 'claude-opus-5', replaceEffort: true },
+    });
+    expect(forwardedEvents()).toEqual([
+      expect.objectContaining({ type: 'agent.session.env', configured_model: 'claude-opus-5' }),
+    ]);
+    expect(finalize).toHaveBeenCalledWith(true);
+  });
+
+  it('forwards nothing when the PostModelSwitch env check finds no change', async () => {
+    const finalize = vi.fn(async () => {});
+    openSessionEnvCheckPassMock.mockResolvedValue({ sessionEnvFields: null, finalize });
+
+    await plugin.processOtlpEvent(hook('PostModelSwitch', { to_model: 'claude-opus-5' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith(true);
+  });
+
+  it('re-resolves env for a ConfigChange on settings, without a configured model', async () => {
+    openSessionEnvCheckPassMock.mockResolvedValue({
+      sessionEnvFields: { ...SESSION_ENV_FIELDS_STUB, configured_model: 'claude-sonnet-5' },
+      finalize: vi.fn(async () => {}),
+    });
+
+    await plugin.processOtlpEvent(hook('ConfigChange', { source: 'user_settings' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    expect(openSessionEnvCheckPassMock).toHaveBeenCalledWith('s', {
+      effort: '',
+      permissionMode: '',
+      full: { cwd: '/x' },
+    });
+    expect(forwardedEvents()[0]).toMatchObject({ type: 'agent.session.env', configured_model: 'claude-sonnet-5' });
+  });
+
+  it('skips a ConfigChange for source=skills before touching the pass', async () => {
+    await plugin.processOtlpEvent(hook('ConfigChange', { source: 'skills' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    expect(openSessionEnvCheckPassMock).not.toHaveBeenCalled();
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+});
+
 describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
   const plugin = new ClaudeCodeOtlpPlugin();
   const ensureOtlpProxy = vi.fn(async () => {});
@@ -1167,7 +1263,7 @@ describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
       git_head_end: 'abc123def456',
       git_commits: [{ sha: 'c1', time: '2026-10-01T01:00:00.000Z', files: 2, added: 10, removed: 1 }],
     });
-    expect(typeof snapshot?.git_email).toBe('string');
+    expect(snapshot?.git_email).toBe('git@example.com');
     // Deterministic id from the snapshot's own natural key.
     expect(snapshot?.event_id).toBe('agent.git.snapshot:s:git-snapshot:abc123def456');
   });
@@ -1175,7 +1271,7 @@ describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
   it('passes the pass-opener session start time into detectGitCommitsByAuthor', async () => {
     await plugin.processOtlpEvent(sessionEndEvent(), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(detectGitCommitsByAuthor).toHaveBeenCalledWith('/repo', '2026-10-01T00:00:00.000Z', expect.any(String));
+    expect(detectGitCommitsByAuthor).toHaveBeenCalledWith('/repo', '2026-10-01T00:00:00.000Z', 'git@example.com');
   });
 
   it('falls back to an empty git_head_start when SessionStart never persisted one', async () => {

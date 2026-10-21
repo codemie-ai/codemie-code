@@ -8,7 +8,8 @@ vi.mock('../logger.js', () => ({
     info: vi.fn(),
     success: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn()
+    error: vi.fn(),
+    debug: vi.fn()
   }
 }));
 
@@ -681,5 +682,40 @@ describe('detectGitCommitsByAuthor', () => {
     expect(await detectGitCommitsByAuthor('/repo', '', 'dev@example.com')).toEqual([]);
     expect(await detectGitCommitsByAuthor('/repo', '2026-10-01T00:00:00Z', '')).toEqual([]);
     expect(execSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('detectGitHeadSha', () => {
+  let execSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    execSpy = vi.spyOn(exec, 'exec');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the trimmed HEAD sha', async () => {
+    execSpy.mockResolvedValue({ code: 0, stdout: 'abc123def456\n', stderr: '' });
+
+    const { detectGitHeadSha } = await import('../processes.js');
+
+    expect(await detectGitHeadSha('/repo')).toBe('abc123def456');
+    expect(execSpy).toHaveBeenCalledWith(
+      'git',
+      ['rev-parse', 'HEAD'],
+      expect.objectContaining({ cwd: '/repo' })
+    );
+  });
+
+  it('returns undefined on a non-zero exit or empty output', async () => {
+    const { detectGitHeadSha } = await import('../processes.js');
+
+    execSpy.mockResolvedValue({ code: 128, stdout: '', stderr: 'fatal: not a git repository' });
+    expect(await detectGitHeadSha('/repo')).toBeUndefined();
+
+    execSpy.mockResolvedValue({ code: 0, stdout: '   ', stderr: '' });
+    expect(await detectGitHeadSha('/repo')).toBeUndefined();
   });
 });
