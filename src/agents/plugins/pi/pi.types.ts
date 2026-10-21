@@ -230,3 +230,18 @@ export function isPiSessionHeader(value: unknown): value is PiSessionHeader {
     typeof header.cwd === 'string'
   );
 }
+
+/**
+ * Epoch-ms timestamp of a transcript entry: the message's own `timestamp` (finite number) first,
+ * then the entry envelope's ISO `timestamp`. Null for non-objects and unparseable entries.
+ */
+export function piEntryTimestamp(entry: unknown): number | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const { message, timestamp } = entry as { message?: { timestamp?: unknown }; timestamp?: unknown };
+  const messageTs = message?.timestamp;
+  if (typeof messageTs === 'number' && Number.isFinite(messageTs)) {
+    return messageTs;
+  }
+  const entryTs = typeof timestamp === 'string' && timestamp ? Date.parse(timestamp) : NaN;
+  return Number.isFinite(entryTs) ? entryTs : null;
+}
