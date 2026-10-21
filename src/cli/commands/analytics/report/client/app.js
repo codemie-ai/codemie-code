@@ -36,6 +36,7 @@
     gemini: 'Gemini CLI', 'gemini-acp': 'Gemini CLI ACP', opencode: 'OpenCode', 'opencode-acp': 'OpenCode ACP',
     kimi: 'Kimi Code', 'kimi-acp': 'Kimi Code ACP', openwiki: 'OpenWiki', 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', omp: 'Oh My Pi'
   };
+  var COMMANDS_NOT_RECORDED = { omp: true }; // omp persists no slash commands
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
@@ -1584,7 +1585,7 @@
       ['Tool calls', fmtNum(s.toolCallsTotal), (s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 100) + '% ok' : '')],
       ['Agents', fmtNum(sumCalls(dispatchCounts(s, 'agent'))), ''],
       ['Skills', fmtNum(sumCalls(dispatchCounts(s, 'skill'))), ''],
-      ['Commands', fmtNum(sumCalls(dispatchCounts(s, 'command'))), '']
+      ['Commands', COMMANDS_NOT_RECORDED[s.agentName] ? '—' : fmtNum(sumCalls(dispatchCounts(s, 'command'))), COMMANDS_NOT_RECORDED[s.agentName] ? 'not recorded' : '']
     ]));
     grid3.appendChild(costCard); grid3.appendChild(tokCard); grid3.appendChild(actCard);
     body.appendChild(grid3);

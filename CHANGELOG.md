@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- `codemie analytics` now includes oh-my-pi sub-agent spend and auxiliary model usage in omp token and cost totals, reports omp file changes, net lines and languages, shows omp skill/agent dispatches on the Timeline with per-agent cost and a root/unlinked allocation, recognizes more framework bundles (SecOps, Matt Pocock Skills, Caveman, Ponytail, CodeMie Skills, Herdr and the full CodeMie AI Factory set), and shows omp Commands as "not recorded"
+
 ### Fixed
 
 - `codemie analytics --include-external` now finds oh-my-pi sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record, and reports them as their own `omp` agent ("Oh My Pi") instead of folding them into Pi; filter with `--agent omp`. Plugin skills are named after their plugin (`sdlc-factory/mr-creator`), so the Frameworks view attributes those sessions to CodeMie AI Factory or Superpowers instead of "Pure chat"
