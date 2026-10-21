@@ -1029,6 +1029,9 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     const forwarded = forwardedEvents();
     expect(forwarded).toHaveLength(2);
     expect(forwarded[0].type).toBe('agent.session.start');
+    // The payload's `model` is only an input to the env snapshot's `configured_model`; the backend
+    // does not read `model` on session.start.
+    expect(forwarded[0]).not.toHaveProperty('model');
     expect(forwarded[1]).toMatchObject({
       type: 'agent.session.env',
       session_id: 's',
@@ -1036,6 +1039,28 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
       permission_mode: 'acceptEdits',
       ...SESSION_ENV_FIELDS_STUB,
     });
+  });
+
+  it('gives a repeated SessionStart with the same snapshot the same agent.session.env event_id', async () => {
+    const raw = JSON.stringify({
+      session_id: 's',
+      transcript_path: '',
+      cwd: '/x',
+      hook_event_name: 'SessionStart',
+      source: 'resume',
+    });
+
+    await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    // A different hook time between the two fires must not change the snapshot's identity.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await plugin.processOtlpEvent(raw, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const envIds = vi
+      .mocked(forwardOtlpEventsToSpool)
+      .mock.calls.map(([events]) => events.find((e) => e.type === 'agent.session.env')?.['event_id']);
+    expect(envIds).toHaveLength(2);
+    expect(envIds[0]).toBe(envIds[1]);
+    expect(String(envIds[0])).toMatch(/^agent\.session\.env:s:env:[0-9a-f]{64}$/);
   });
 
   it('passes the hook cwd and model into resolveSessionEnvFields', async () => {
@@ -1129,6 +1154,8 @@ describe('ClaudeCodeOtlpPlugin agent.git.snapshot (SessionEnd)', () => {
       git_commits: [{ sha: 'c1', time: '2026-10-01T01:00:00.000Z', files: 2, added: 10, removed: 1 }],
     });
     expect(typeof snapshot?.git_email).toBe('string');
+    // Deterministic id from the snapshot's own natural key.
+    expect(snapshot?.event_id).toBe('agent.git.snapshot:s:git-snapshot:abc123def456');
   });
 
   it('passes the pass-opener session start time into detectGitCommitsByAuthor', async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
@@ -70,6 +71,15 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   }
   protected resolveEventType(event: Record<string, unknown>): string {
     return event['kind'] === 'start' ? 'fake.start' : 'fake.event';
+  }
+  /** Test-only deterministic id: `<type>:<session>:<sha256(payload + timestamp)>`. */
+  protected buildEventId(
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    timestamp: string
+  ): string {
+    const hash = createHash('sha256').update(`${JSON.stringify(payload)}::${timestamp}`).digest('hex');
+    return `${String(event['type'])}:${String(event['session_id'])}:${hash}`;
   }
 }
 
@@ -333,12 +343,38 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
   });
 
   describe('built event', () => {
-    it('stamps schema_version, a unique event_id, session_id and the repository identifier as cwd', async () => {
-      await run({ payload: [{ session_id: 's1' }, { session_id: 's1' }] });
+    it('stamps schema_version, a deterministic event_id, session_id and the repository identifier as cwd', async () => {
+      await run({ payload: [{ session_id: 's1', n: 1 }, { session_id: 's1', n: 2 }] });
       const [first, second] = forwarded();
       expect(first).toMatchObject({ schema_version: 2, session_id: 's1', cwd: 'repo' });
-      expect(typeof first['event_id']).toBe('string');
+      // `<type>:<session_id>:<sha256 of the record's canonical payload + timestamp>`.
+      expect(String(first['event_id'])).toMatch(/^fake\.event:s1:[0-9a-f]{64}$/);
       expect(first['event_id']).not.toBe(second['event_id']);
+    });
+
+    it('re-derives the same event_id for identical content at the same timestamp', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-06T07:08:09.000Z'));
+      try {
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(forwarded()[1]['event_id']).toBe(forwarded()[0]['event_id']);
+    });
+
+    it('changes the id when the hook time changes', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-06T07:08:09.000Z'));
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+        vi.setSystemTime(new Date('2026-05-06T07:09:09.000Z'));
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(forwarded()[1]['event_id']).not.toBe(forwarded()[0]['event_id']);
     });
 
     describe('cwd is the repository identifier, never an absolute path', () => {

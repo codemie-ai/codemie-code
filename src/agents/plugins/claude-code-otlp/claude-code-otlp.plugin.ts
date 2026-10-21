@@ -32,6 +32,7 @@ import {
 } from '@/agents/core/event-fields/repo-fields.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
+import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
 import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
 import {
   buildSessionEnvEvent,
@@ -100,6 +101,15 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
   }
 
+  /** Claude's deterministic id: per-event templates for derived records, content hash otherwise. */
+  protected buildEventId(
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    timestamp: string
+  ): string {
+    return buildClaudeEventId(event, payload, timestamp);
+  }
+
   protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {
     if (hookInput.hook_event_name === 'SessionStart') {
       return await this.onSessionStart(hookInput);
@@ -163,8 +173,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   /**
    * Enriches the session start with opt-in fields (not stamped on other events). The hook payload is
-   * spread first so a same-named payload key can never override a resolved value. `model` is passed
-   * through verbatim and is '' when the payload omits it (e.g. `clear`).
+   * spread first so a same-named payload key can never override a resolved value. The payload's
+   * `model` only feeds `agent.session.env`'s `configured_model` — it is not stamped onto
+   * `agent.session.start`, whose backend reads `configured_model` from the env snapshot instead.
    *
    * Also emits `agent.session.env`. `openSessionStartPass` records `git_head_start`/the session's
    * wall-clock start time into the parse state — same commit-after-send contract as every other
@@ -183,20 +194,21 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     ]);
     const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
 
+    const sessionStartEvent: Record<string, unknown> = {
+      ...hookInput,
+      ...envFields,
+      ...identityCandidateFields,
+      ...gitHeadStart,
+      git_head_start: pass.gitHeadStart,
+    };
+    // The payload's `model` only feeds `agent.session.env`'s `configured_model` — the field the
+    // backend actually reads. `model` on `agent.session.start` is not read, so it is not sent.
+    delete sessionStartEvent.model;
+
     const sessionEnvEvent = buildSessionEnvEvent(hookInput.session_id, pass.sessionEnvFields);
     return {
       decision: 'forward',
-      payload: [
-        {
-          ...hookInput,
-          ...envFields,
-          ...identityCandidateFields,
-          ...gitHeadStart,
-          git_head_start: pass.gitHeadStart,
-          model,
-        },
-        sessionEnvEvent,
-      ],
+      payload: [sessionStartEvent, sessionEnvEvent],
       finalize: pass.finalize,
     };
   }

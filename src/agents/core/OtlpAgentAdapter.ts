@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
@@ -7,13 +6,13 @@ import { resolveIdentityFields, type IdentityFields } from './event-fields/ident
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
-      decision: 'forward';
-      payload: Record<string, unknown>[];
-      /** SessionEnd only: resend the same built events once if the first attempt failed. */
-      retryOnce?: boolean;
-      /** Called exactly once, after the send attempt. Commits state only when accepted; always releases any lock the handler is holding. */
-      finalize?: (accepted: boolean) => Promise<void>;
-    }
+    decision: 'forward';
+    payload: Record<string, unknown>[];
+    /** SessionEnd only: resend the same built events once if the first attempt failed. */
+    retryOnce?: boolean;
+    /** Called exactly once, after the send attempt. Commits state only when accepted; always releases any lock the handler is holding. */
+    finalize?: (accepted: boolean) => Promise<void>;
+  }
   | { decision: 'block'; reason: string; hookSpecificOutput: TBlockOutput };
 
 export interface OtlpHookContext {
@@ -133,6 +132,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract resolveAgentFields(): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
+  protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
 
   /**
    * Assembles the final event. `raw` mirrors the full enriched event, so the top
@@ -151,8 +151,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       cwd: extractRepository(ctx.cwd),
       prompt_body: this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
-      event_id: randomUUID(),
     };
+    event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
     return { ...event, raw: { ...event } };
   }
 
