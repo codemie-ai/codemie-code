@@ -403,23 +403,37 @@ describe('openMainTranscriptPass — compactions', () => {
   });
 
   it('does not re-surface agent.session.compact.done for a boundary line already reported by an earlier PostCompact pass', async () => {
-    const sessionId = 'session-compaction-done-once';
-    const transcriptPath = writeTranscript('transcript-compaction-done-once.jsonl', [
-      JSON.stringify({
-        type: 'system',
-        subtype: 'compact_boundary',
-        timestamp: '2026-10-01T00:10:00.000Z',
-        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
-      }),
-    ]);
+    const warnSpy = vi.spyOn(logger, 'warn');
+    const debugSpy = vi.spyOn(logger, 'debug');
+    try {
+      const sessionId = 'session-compaction-done-once';
+      const transcriptPath = writeTranscript('transcript-compaction-done-once.jsonl', [
+        JSON.stringify({
+          type: 'system',
+          subtype: 'compact_boundary',
+          timestamp: '2026-10-01T00:10:00.000Z',
+          compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 300, durationMs: 60_000 },
+        }),
+      ]);
 
-    const first = await openPostCompactPass(sessionId, transcriptPath, 2_000);
-    await first.finalize(true);
-    expect(first.events.some((e) => e.type === 'agent.session.compact.done')).toBe(true);
+      const first = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+      await first.finalize(true);
+      expect(first.events.some((e) => e.type === 'agent.session.compact.done')).toBe(true);
 
-    const second = await openPostCompactPass(sessionId, transcriptPath, 2_000);
-    await second.finalize(true);
-    expect(second.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+      const second = await openPostCompactPass(sessionId, transcriptPath, 2_000);
+      await second.finalize(true);
+      expect(second.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+      // "Already accounted for" is not the same as "not found": only the latter is a warning.
+      expect(
+        warnSpy.mock.calls.some(([message]) => String(message).includes('compact_boundary not found'))
+      ).toBe(false);
+      expect(
+        debugSpy.mock.calls.some(([message]) => String(message).includes('compact_boundary already accounted for'))
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
   });
 
   it('reports a second, later compaction without re-reporting the first', async () => {
@@ -528,15 +542,24 @@ describe('openMainTranscriptPass — compactions', () => {
     const transcriptPath = writeTranscript('transcript-compaction-never.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
+    const warnSpy = vi.spyOn(logger, 'warn');
 
-    // A tiny real budget — the boundary line never shows up in this test either way, so this just
-    // keeps the test fast instead of waiting out the full production budget.
-    const pass = await openPostCompactPass(sessionId, transcriptPath, 50);
-    await pass.finalize(true);
+    try {
+      // A tiny real budget — the boundary line never shows up in this test either way, so this just
+      // keeps the test fast instead of waiting out the full production budget.
+      const pass = await openPostCompactPass(sessionId, transcriptPath, 50);
+      await pass.finalize(true);
 
-    // The one usage line is still reported; no agent.session.compact.done shows up anywhere.
-    expect(pass.events).toHaveLength(1);
-    expect(pass.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+      // The one usage line is still reported; no agent.session.compact.done shows up anywhere.
+      expect(pass.events).toHaveLength(1);
+      expect(pass.events.some((e) => e.type === 'agent.session.compact.done')).toBe(false);
+      // A genuinely missing boundary is still the one case that warns.
+      expect(
+        warnSpy.mock.calls.some(([message]) => String(message).includes('compact_boundary not found'))
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('does not hold the per-session lock during the lock-free wait, so a sibling pass is never blocked by it', async () => {

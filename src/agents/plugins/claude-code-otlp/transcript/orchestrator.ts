@@ -789,7 +789,8 @@ export async function openPostCompactPass(
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'PostCompact');
 
-    const newCompactions = (await findCompactions(transcriptPath)).filter((compaction) =>
+    const boundaries = await findCompactions(transcriptPath);
+    const newCompactions = boundaries.filter((compaction) =>
       isCompactionNewer(compaction, state.lastCompactionEnd)
     );
     for (const compaction of newCompactions) {
@@ -797,10 +798,18 @@ export async function openPostCompactPass(
     }
     if (newCompactions.length > 0) {
       state.lastCompactionEnd = newCompactions[newCompactions.length - 1].end;
-    } else {
+    } else if (boundaries.length === 0) {
       logger.warn(
         '[claude-code-otlp] compact_boundary not found after PostCompact wait',
         ...sanitizeLogArgs({ sessionId, waitBudgetMs })
+      );
+    } else {
+      // The transcript has boundary lines, none of them new to this pass — not a missing line but
+      // one already accounted for (or unusable, e.g. a boundary with no parseable timestamp). Keep
+      // this at debug so a normal repeat PostCompact does not look like a gap.
+      logger.debug(
+        '[claude-code-otlp] compact_boundary already accounted for; nothing new after PostCompact wait',
+        ...sanitizeLogArgs({ sessionId, lastCompactionEnd: state.lastCompactionEnd, boundaries: boundaries.length })
       );
     }
 
