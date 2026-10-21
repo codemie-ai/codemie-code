@@ -64,6 +64,26 @@ describe('codemie-models extension', () => {
     }));
   });
 
+  it('uses daemon defaults when the state file is malformed', async () => {
+    writeFileSync(join(home, 'proxy-daemon.json'), '{not json');
+    register();
+    vi.mocked(fetch).mockResolvedValue(response([]));
+    await providers.get('codemie')!.fetchDynamicModels('codemie-proxy');
+    expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4001/v1/llm_models?include_all=true'), expect.objectContaining({
+      headers: { Authorization: 'Bearer codemie-proxy' },
+    }));
+  });
+
+  it('keeps discovery on the connection read at load even if the state file changes', async () => {
+    register();
+    writeFileSync(join(home, 'proxy-daemon.json'), JSON.stringify({ url: 'http://127.0.0.1:4666', gatewayKey: 'gk-new' }));
+    vi.mocked(fetch).mockResolvedValue(response([]));
+    await providers.get('codemie')!.fetchDynamicModels(undefined);
+    expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4555/v1/llm_models?include_all=true'), expect.objectContaining({
+      headers: { Authorization: 'Bearer gk-test' },
+    }));
+  });
+
   it('uses an inference override without changing the daemon catalog request', async () => {
     vi.stubEnv('CODEMIE_OMP_BASE_URL', 'http://127.0.0.1:9999/');
     register();
