@@ -947,6 +947,7 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
   it('copies command_name into skill_name for a slash-command expansion (ticket fields only)', async () => {
     const raw = JSON.stringify({
       session_id: 's',
+      prompt_id: 'p-1',
       transcript_path: '',
       cwd: '/x',
       hook_event_name: 'UserPromptExpansion',
@@ -961,6 +962,8 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
 
     const [forwarded] = forwardedEvents();
     expect(forwarded.type).toBe('agent.skill.dispatch');
+    expect(forwarded.prompt_id).toBe('p-1');
+    expect(forwarded.raw.prompt_id).toBe('p-1');
     expect(forwarded.skill_name).toBe('superpowers:brainstorming');
     expect(forwarded.command_name).toBe('superpowers:brainstorming');
     expect(forwarded).not.toHaveProperty('command_args');

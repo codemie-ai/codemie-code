@@ -306,6 +306,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       decision: 'forward',
       payload: [{
         session_id: hookInput.session_id,
+        prompt_id: hookInput.prompt_id,
         hook_event_name: hookInput.hook_event_name,
         expansion_type: hookInput.expansion_type,
         command_name: hookInput.command_name,
