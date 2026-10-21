@@ -220,7 +220,7 @@ See `package.json` for exact dependency versions and `.ai-run/guides/architectur
 | `codex` / `codex-acp` | `codex/` | `@openai/codex`, `@agentclientprotocol/codex-acp` | Responses API; reasoning state handled by proxy plugins. ACP variant wraps `@openai/codex` via a separate JSON-RPC adapter package, configured through an injected `CODEX_CONFIG` env var (no `--config` flags) |
 | `gemini` / `gemini-acp` | `gemini/` | `@google/gemini-cli` | ACP variant prepends `--acp` to argv (native Gemini CLI mode, no extra package) |
 | `opencode` / `opencode-acp` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics`. ACP variant prepends `acp` subcommand (native OpenCode mode, no extra package) |
-| `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger |
+| `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger; analytics also discovers oh-my-pi (`omp`) transcripts in `~/.omp/agent/sessions` and reports them as Pi |
 | `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
 | `openwiki` | `openwiki/` | `openwiki` | Docs/wiki tool, not a chat agent; declarative-only adapter — `envMapping` feeds the profile's base URL/key/model to `OPENAI_COMPATIBLE_*`/`OPENWIKI_MODEL_ID`, SSO/JWT goes through the local proxy |
 | `copilot-cli` | `copilot-cli/` | `copilot` (GitHub Copilot CLI) | Managed launcher — launches the real `copilot` binary and syncs conversations/usage to the shared spool; **not** analytics-only |
