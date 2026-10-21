@@ -276,19 +276,6 @@ Native-log discovery always runs; which discovered sessions are counted is decid
 
 Discovery looks back as far as your date filter requires: with `--from` or `--last` the window is that range, and with no lower bound it is effectively unlimited.
 
-### Pi and oh-my-pi
-
-Pi and oh-my-pi share one transcript format but live in different places and are reported as **separate agents**:
-
-| Agent key | Label in the report | Transcript root |
-|---|---|---|
-| `pi` | Pi | `<cwd>/.pi/codemie/agent/sessions` (CodeMie-launched `codemie-pi`) and `~/.pi/agent/sessions` (bare `pi`) |
-| `omp` | Oh My Pi | `~/.omp/agent/sessions` (bare `omp`) |
-
-`PI_CODING_AGENT_SESSION_DIR` or a `sessionDir` setting replaces the two Pi roots but never the oh-my-pi root. Filter with `--agent pi` or `--agent omp`; each matches only its own sessions. Oh-my-pi sessions have no CodeMie ownership marker, so they appear only with `--include-external`. Oh-my-pi `/skill:` prompts, `skill://` loads, and `task` dispatches are counted as skills and sub-agents, and its sessions are priced with the same reader as Pi.
-
-Oh-my-pi records a plugin skill by its bare name (`mr-creator`), so the report names it after the plugin its `SKILL.md` was installed from (`sdlc-factory/mr-creator`, `superpowers/using-superpowers`) — from either Claude Code's plugin cache or oh-my-pi's own. That is what lets the **Frameworks** view attribute those sessions to CodeMie AI Factory or Superpowers; a skill from `~/.claude/skills` or a project's `.claude/skills` belongs to no plugin and keeps its bare name.
-
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
 
 <a id="session-provenance"></a>
