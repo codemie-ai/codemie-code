@@ -13,10 +13,10 @@
  */
 
 import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
-import type { MetricDelta } from '../../../agents/core/metrics/types.js';
+import type { FileOperation, MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { ParsedSession } from '../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionDescriptor } from '../../../agents/core/session/discovery-types.js';
 import { AgentRegistry } from '../../../agents/registry.js';
@@ -29,8 +29,9 @@ import { isPiFamilyAgent, sessionAdapterKey } from './cost/pi-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
-import { PI_FORKED_CONTINUATION, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
-import { extractPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
+import { PI_FORKED_CONTINUATION, PI_SUBAGENT_RUN, piConversationEntries } from '../../../agents/plugins/pi/pi.session.js';
+import { extractPiNamedInvocations, sumPiNamedInvocations } from '../../../agents/plugins/pi/session/pi-named-invocations.js';
+import { extractPiFileOperations, type PiFileOperationContext } from '../../../agents/plugins/pi/session/pi-file-operations.js';
 import {
   extractPiToolCalls,
   isPiAssistantMessage,
@@ -38,6 +39,7 @@ import {
   isPiToolResultMessage,
   piEntryTimestamp,
   type PiEntry,
+  type PiToolCall,
 } from '../../../agents/plugins/pi/pi.types.js';
 
 /** Agents whose native logs we discover + synthesize. */
@@ -519,6 +521,31 @@ function piToolStats(lines: readonly unknown[]): Pick<NonNullable<ParsedSession[
 }
 
 /**
+ * File operations of successful tool calls. Mirrors {@link piToolStats}: a call counts when its
+ * matching, non-error `toolResult` arrives, so the result `details` (resolved paths, diffs) are
+ * available to the extractor.
+ */
+function piFileOperations(entries: readonly unknown[], context: PiFileOperationContext): FileOperation[] {
+  const calls = new Map<string, PiToolCall>();
+  const operations: FileOperation[] = [];
+  for (const raw of entries) {
+    const entry = raw as PiEntry;
+    if (!isPiMessageEntry(entry)) continue;
+    const message = entry.message;
+    if (isPiAssistantMessage(message)) {
+      for (const call of extractPiToolCalls(message)) calls.set(call.id, call);
+    } else if (isPiToolResultMessage(message)) {
+      const call = calls.get(message.toolCallId);
+      if (!call) continue;
+      calls.delete(message.toolCallId);
+      if (message.isError === true) continue;
+      operations.push(...extractPiFileOperations(call.name, call.arguments, message.details, context));
+    }
+  }
+  return operations;
+}
+
+/**
  * Synthesize {@link RawSessionData} from a parsed Pi session (v3 JSONL — neither Claude- nor
  * Codex-shaped: entries are `{type, id, parentId, timestamp, message}` envelopes).
  *
@@ -550,12 +577,24 @@ export function synthesizePiRawSession(
 
   // The Pi adapter attaches no metrics today, so derive them from the fork-deduplicated lines —
   // otherwise every native Pi session reports zero tools, skills and agents. Anything the
-  // adapter does supply wins.
-  const { skillInvocations, agentInvocations } = extractPiNamedInvocations(lines);
+  // adapter does supply wins. Child transcripts (omp sub-agent runs) contribute file operations
+  // and skill/agent names; turns, tools, timestamps and models stay parent-only.
+  const children = (parsed.subagents ?? [])
+    .filter((s) => s.agentType === PI_SUBAGENT_RUN && Array.isArray(s.messages))
+    .map((s) => s.messages as unknown[]);
+  const fileOpContext: PiFileOperationContext = {
+    cwd: meta?.projectPath ?? descriptor.projectPath,
+    sessionDir: dirname(descriptor.filePath),
+  };
+  const fileOperations = [lines, ...children].flatMap((entries) => piFileOperations(entries, fileOpContext));
+  const { skillInvocations, agentInvocations } = sumPiNamedInvocations(
+    [lines, ...children].map(extractPiNamedInvocations)
+  );
   const withMetrics: ParsedSession = {
     ...parsed,
     metrics: {
       ...piToolStats(lines),
+      ...(fileOperations.length > 0 && { fileOperations }),
       ...(Object.keys(skillInvocations).length > 0 && { skillInvocations }),
       ...(Object.keys(agentInvocations).length > 0 && { agentInvocations }),
       ...parsed.metrics,
