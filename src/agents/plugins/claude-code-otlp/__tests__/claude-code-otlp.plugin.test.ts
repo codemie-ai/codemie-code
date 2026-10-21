@@ -652,10 +652,12 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       tool_use_id: 'tu-sidecar',
       workflow_run: '',
       spawn_depth: 2,
-      worktree: '/repo/worktrees/feature',
+      // The repository identifier, never the absolute cwd — same value the event's own `cwd` carries.
+      worktree: 'worktrees/feature',
       started_at: '2026-10-01T00:00:00.000Z',
       duration_ms: 1500,
     });
+    expect(stopEvent.cwd).toBe('worktrees/feature');
   });
 
   it('defaults started_at/duration_ms to empty/0 on agent.subagent.stop when no agent.subagent.usage was derived', async () => {

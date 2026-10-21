@@ -393,12 +393,14 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.worktree).toBe('');
   });
 
-  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived', () => {
+  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived — reduced to the repository identifier', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl', cwd: '/repo/worktrees/feature' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
-    expect(event.worktree).toBe('/repo/worktrees/feature');
+    expect(event.worktree).toBe('worktrees/feature');
+    // The absolute cwd never leaves the hook process — only the extractRepository identifier does.
+    expect(event.worktree).not.toContain('/repo');
     // workflow_run has no known source regardless of cwd — still never fabricated.
     expect(event.workflow_run).toBe('');
   });

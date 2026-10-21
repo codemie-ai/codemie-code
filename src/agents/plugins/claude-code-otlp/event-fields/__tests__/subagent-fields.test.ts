@@ -3,7 +3,7 @@ import { resolveSubagentStopFields } from '../subagent-fields.js';
 import type { SubagentFile } from '../../transcript/subagent-usage.js';
 
 describe('resolveSubagentStopFields', () => {
-  it('picks description/tool_use_id/spawn_depth/worktree straight off the file, and started_at/duration_ms off the derived agent.subagent.usage event', () => {
+  it('picks description/tool_use_id/spawn_depth/worktree off the file, and started_at/duration_ms off the derived agent.subagent.usage event', () => {
     const file: SubagentFile = {
       agentId: 'a1',
       filePath: '/tmp/agent-a1.jsonl',
@@ -22,7 +22,7 @@ describe('resolveSubagentStopFields', () => {
       tool_use_id: 'tool-a1',
       workflow_run: '',
       spawn_depth: 2,
-      worktree: '/repo/worktrees/feature',
+      worktree: 'worktrees/feature',
       started_at: '2026-10-01T00:00:00.000Z',
       duration_ms: 1500,
     });

@@ -14,13 +14,15 @@
  * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
  * `workflow_run` has no known source and is always an empty string, never fabricated. `worktree`
- * is the hook's own `cwd` (the contract's "its worktree path") — the caller fills it in from the
- * triggering hook payload, since no sidecar or transcript signal carries it.
+ * is the hook's own `cwd` (the contract's "its worktree path") reduced to the repository
+ * identifier (`extractRepository`, the same value `cwd` carries): the caller fills `cwd` in from
+ * the triggering hook payload, since no sidecar or transcript signal carries it, and no absolute
+ * path leaves the hook process.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { isPathWithinDirectory } from '@/utils/paths.js';
+import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
 
@@ -31,7 +33,10 @@ export interface SubagentFile {
   agentType?: string;
   spawnDepth?: number;
   description?: string;
-  /** The triggering hook's `cwd` — the contract's `worktree` path. `''` when the caller has none. */
+  /**
+   * The triggering hook's absolute `cwd` — reduced to a repository identifier by the `worktree`
+   * field. `''` when the caller has none.
+   */
   cwd?: string;
   /** The forked skill's name, when this subagent is actually a slash-command-invoked skill run
    *  in the background (EPMCDME-15968) — absent for a regular agent dispatch. Sourced from the
@@ -304,7 +309,7 @@ export function buildSubagentUsageEvent(
     description: file.description ?? '',
     workflow_run: '',
     spawn_depth: file.spawnDepth ?? 0,
-    worktree: file.cwd ?? '',
+    worktree: file.cwd ? extractRepository(file.cwd) : '',
     started_at: startedAt,
     ended_at: endedAt,
     duration_ms: durationMs,
