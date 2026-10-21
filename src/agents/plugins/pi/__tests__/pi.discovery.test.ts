@@ -261,7 +261,10 @@ describe('discoverSessions — unscoped listing', () => {
       });
 
       rmSync(sibling, { recursive: true, force: true });
-      expect(found.map((s) => s.sessionId).sort()).toEqual(['mine', 'omp']);
+      expect(found.map((s) => [s.sessionId, s.agentName]).sort()).toEqual([
+        ['mine', 'pi'],
+        ['omp', 'omp'],
+      ]);
     } finally {
       cwdSpy.mockRestore();
       restoreHome();
@@ -288,8 +291,31 @@ describe('discoverSessions — unscoped listing', () => {
 
       const found = await new PiSessionAdapter(PiPluginMetadata).discoverSessions({});
 
-      expect(found.map((s) => s.sessionId)).toEqual(['omp-1']);
+      expect(found.map((s) => [s.sessionId, s.agentName])).toEqual([['omp-1', 'omp']]);
       expect(found[0]?.projectPath).toBe('/omp/repo');
+    } finally {
+      cwdSpy.mockRestore();
+      restoreHome();
+      rmSync(here, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('attributes each root to its own agent when Pi and oh-my-pi transcripts coexist', async () => {
+    const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
+    const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
+    const restoreHome = redirectHomeDir(home);
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(here);
+    try {
+      makeProjectTranscript(join(home, '.pi', 'agent', 'sessions'), '--bare-project--', 'bare.jsonl', '/bare/repo');
+      makeProjectTranscript(join(home, '.omp', 'agent', 'sessions'), '-omp-project', 'omp.jsonl', '/omp/repo');
+
+      const found = await new PiSessionAdapter(PiPluginMetadata).discoverSessions({});
+
+      expect(found.map((s) => [s.sessionId, s.agentName]).sort()).toEqual([
+        ['bare', 'pi'],
+        ['omp', 'omp'],
+      ]);
     } finally {
       cwdSpy.mockRestore();
       restoreHome();

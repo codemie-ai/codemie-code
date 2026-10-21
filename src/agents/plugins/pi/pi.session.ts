@@ -55,6 +55,14 @@ async function subdirectoriesOf(root: string): Promise<string[]> {
   }
 }
 
+/** Agent key analytics reports oh-my-pi sessions under; Pi's own transcripts stay `pi`. */
+export const OMP_AGENT_NAME = 'omp';
+
+interface SessionRoot {
+  dir: string;
+  agentName: string;
+}
+
 /**
  * Every project's session directory, for an unscoped (analytics) listing.
  *
@@ -69,6 +77,7 @@ async function subdirectoriesOf(root: string): Promise<string[]> {
  *  - `~/.omp/agent/sessions` — the oh-my-pi fork's default, where every bare `omp` run lands.
  *    Its project directories are named differently from Pi's encoded-cwd buckets, which is why
  *    projects are found by enumeration rather than by deriving a directory name from a cwd.
+ *    Transcripts found here are attributed to the separate `omp` agent, not to `pi`.
  *
  * All use a one-directory-per-project layout, so a root's subdirectories ARE the projects.
  * A directory the user pointed Pi at explicitly (`PI_CODING_AGENT_SESSION_DIR`, or `sessionDir`
@@ -76,30 +85,30 @@ async function subdirectoriesOf(root: string): Promise<string[]> {
  * nothing to do with Pi — so it replaces the two Pi roots. It does not replace the oh-my-pi
  * root: Pi's settings say nothing about where `omp` writes.
  */
-async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<string[]> {
+async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<SessionRoot[]> {
   const { sessionDir, isCustom } = resolution;
   const ompRoot = join(homedir(), '.omp', 'agent', 'sessions');
 
-  const dirs: string[] = [];
+  const dirs: SessionRoot[] = [];
   const seen = new Set<string>();
-  const add = (dir: string): void => {
+  const add = (dir: string, agentName: string): void => {
     const key = resolve(dir);
     if (seen.has(key)) return;
     seen.add(key);
-    dirs.push(dir);
+    dirs.push({ dir, agentName });
   };
 
   if (isCustom) {
-    add(sessionDir);
+    add(sessionDir, 'pi');
   } else {
     for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
-      for (const dir of await subdirectoriesOf(root)) add(dir);
+      for (const dir of await subdirectoriesOf(root)) add(dir, 'pi');
     }
   }
-  for (const dir of await subdirectoriesOf(ompRoot)) add(dir);
+  for (const dir of await subdirectoriesOf(ompRoot)) add(dir, OMP_AGENT_NAME);
 
   // Every root unreadable — fall back to the project's own directory.
-  return dirs.length > 0 ? dirs : [sessionDir];
+  return dirs.length > 0 ? dirs : [{ dir: sessionDir, agentName: 'pi' }];
 }
 import {
   PI_METRICS_PROCESSOR_NAME,
@@ -368,16 +377,18 @@ export class PiSessionAdapter implements SessionAdapter {
     const maxAgeDays = piOptions?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    const sessionDirs = projectScoped ? [resolution.sessionDir] : await allProjectSessionDirs(resolution);
+    const sessionRoots: SessionRoot[] = projectScoped
+      ? [{ dir: resolution.sessionDir, agentName: 'pi' }]
+      : await allProjectSessionDirs(resolution);
     const found: SessionDescriptor[] = [];
-    for (const dir of sessionDirs) {
-      found.push(...(await this.listTranscripts(dir, cutoff, projectScoped ? cwd : undefined)));
+    for (const { dir, agentName } of sessionRoots) {
+      found.push(...(await this.listTranscripts(dir, cutoff, agentName, projectScoped ? cwd : undefined)));
     }
     found.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     const limited = piOptions?.limit && piOptions.limit > 0 ? found.slice(0, piOptions.limit) : found;
 
     logger.debug(
-      `[pi-discovery] ${found.length} transcript(s) in ${sessionDirs.length} dir(s), returning ${limited.length}`
+      `[pi-discovery] ${found.length} transcript(s) in ${sessionRoots.length} dir(s), returning ${limited.length}`
     );
     return limited;
   }
@@ -394,6 +405,7 @@ export class PiSessionAdapter implements SessionAdapter {
   private async listTranscripts(
     sessionDir: string,
     cutoff: number,
+    agentName: string,
     projectPath?: string
   ): Promise<SessionDescriptor[]> {
     if (!existsSync(sessionDir)) {
@@ -435,7 +447,7 @@ export class PiSessionAdapter implements SessionAdapter {
           projectPath: header.cwd,
           createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
           updatedAt,
-          agentName: 'pi',
+          agentName,
         });
       }
     } catch (error) {

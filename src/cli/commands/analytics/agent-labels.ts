@@ -12,6 +12,7 @@
 const AGENT_LABELS: Record<string, string> = {
   'copilot-cli': 'GitHub Copilot CLI',
   pi: 'Pi',
+  omp: 'Oh My Pi',
   'gemini': 'Gemini CLI',
 };
 

@@ -12,6 +12,7 @@ import { buildClaudeOwnership } from './claude-ownership.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent } from './pi-agent.js';
 import { logger } from '@/utils/logger.js';
 // Plain JS + hand-written .d.mts, not compiled TS modules: these are the exact files any agent's
 // statusline deploys as a sibling (see routing-headers.mjs's own header comment for why).
@@ -869,6 +870,7 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
     case 'kimi':
       return readKimi(parsed);
     case 'pi':
+    case 'omp':
       return readPi(parsed);
     case 'copilot-cli':
       return readCopilotCli(parsed);
@@ -912,7 +914,7 @@ export function gatherUsageDeduped(
   if (isCodexFamilyAgent(a)) {
     return readCodex(parsed);
   }
-  if (a === 'pi') {
+  if (isPiFamilyAgent(a)) {
     // Cross-session dedup, like Claude and unlike the session-local readers above: `/fork`
     // copies the inherited history verbatim into the new transcript, so one API response
     // really does appear in several files and must be billed to the earliest one only.
@@ -973,7 +975,7 @@ export function gatherDedupedUsageRecords(
   if (isCodexFamilyAgent(a)) {
     return takeUnseenRecords(withinWindow(extractCodexUsageRecords(parsed), windowEnd), seen);
   }
-  if (a === 'pi') {
+  if (isPiFamilyAgent(a)) {
     return takeUnseenRecords(withinWindow(extractPiUsageRecords(parsed), windowEnd), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
