@@ -134,6 +134,16 @@ export class CodeMieProxy {
       : credentials && 'cookies' in credentials
         ? credentials
         : null;
+    // A distinct sync source has its own host (syncCodeMieUrl), not the main profile's
+    // (targetApiUrl). `refresherParams` above resolves candidates with baseUrl (targetApiUrl)
+    // first, so re-using it here would re-read and overwrite the sync cookies with the main
+    // profile's on the very next refresh tick (PR #661 review). No `provider`/`baseUrl` makes
+    // `getPlatformUrlCandidates` resolve `codeMieUrl` alone as the only candidate, unfiltered by
+    // profile origin — the same direct, unfiltered lookup the startup snapshot above used.
+    const syncOnlyRefresherParams = {
+      baseUrl: this.config.syncCodeMieUrl as string, // inert: no `provider` means only `codeMieUrl` is tried
+      codeMieUrl: this.config.syncCodeMieUrl,
+    };
     // When sync has no credentials of its own, it falls back to the same snapshot as
     // `credentials` — reuse that SAME refresher instance in that case (rather than a second one
     // over an identical snapshot) so the cache/throttle clock stays singular for one SSO
@@ -142,7 +152,7 @@ export class CodeMieProxy {
       ? undefined
       : syncSource === credentials && credentialRefresher
         ? (credentialRefresher as CredentialRefresher<SSOCredentials>)
-        : new CredentialRefresher(syncSource as SSOCredentials, refresherParams);
+        : new CredentialRefresher(syncSource as SSOCredentials, syncOnlyRefresherParams);
 
     // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
