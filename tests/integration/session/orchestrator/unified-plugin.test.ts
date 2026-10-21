@@ -202,6 +202,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
@@ -235,6 +236,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
@@ -277,6 +279,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
@@ -299,6 +302,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
@@ -330,6 +334,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
@@ -358,6 +363,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         },
         credentials: { cookies: { session: 'test-cookie' } },
         credentialRefresher: testCredentialRefresher(),
+        syncCredentialRefresher: testCredentialRefresher(),
         profileConfig: {}
       } as any;
 
