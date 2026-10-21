@@ -1,8 +1,9 @@
 /**
- * oh-my-pi (omp) extension: registers the CodeMie catalog as two dynamic omp providers.
+ * oh-my-pi (omp) extension: registers the CodeMie catalog as two dynamic omp providers because
+ * each provider binds one base URL, API and auth mode.
  *
- *   codemie         OpenAI wire (Chat Completions / Responses), `<base>/v1`
- *   codemie-claude  Anthropic Messages wire, `<base>`
+ *   codemie         OpenAI wire (Chat Completions / Responses), `<base>/v1`, Bearer key
+ *   codemie-claude  Anthropic Messages wire, `<base>`, `authHeader`
  *
  * Both rosters come from one `GET /v1/llm_models?include_all=true` through the local CodeMie proxy
  * daemon — the same catalog `codemie models list` prints — so `omp models refresh` always mirrors the
