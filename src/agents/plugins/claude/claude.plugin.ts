@@ -71,16 +71,18 @@ const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
  * Providers whose gateway cannot carry auto mode's server-side classifier review: the
  * `safeguards` request field and the `safeguard_results` response field.
  *
- * Both route through LiteLLM's unified `/v1/messages`, which drops `safeguards` before v1.99.3
- * and, on any version, never returns `safeguard_results` from `bedrock_converse` deployments.
- * Claude Code then falls back to its own (billed) classifier requests and shows an
- * "isn't eligible" notice that blocks the first checked action until the user answers it.
+ * `ai-run-sso` goes through the CodeMie backend to LiteLLM's unified `/v1/messages`, which drops
+ * `safeguards` before v1.99.3 and, on any version, never returns `safeguard_results` from
+ * `bedrock_converse` deployments. Claude Code then falls back to its own (billed) classifier
+ * requests and shows an "isn't eligible" notice that blocks the first checked action until the
+ * user answers it.
  *
- * Direct connections (anthropic-subscription, bedrock) do support server review, so they are
- * left alone. Remove a provider from this set once its gateway passes the contract through.
+ * Every other provider is left alone: direct connections (anthropic-subscription, bedrock)
+ * support server review, and a user-run `litellm` gateway may be a version that passes the
+ * contract through. Remove a provider from this set once its gateway does.
  * https://code.claude.com/docs/en/auto-mode-classifier-billing
  */
-const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
+const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
 
 /**
  * Claude Code installer URLs
