@@ -641,7 +641,7 @@ async function promptForHarnessDeadEnd(
   return action === 'change' ? 'change' : 'cancel';
 }
 
-/** Registers the live-highlighting checkbox once; false when inquirer cannot register prompts. */
+/** Registers the live-coverage checkbox once; false when inquirer cannot register prompts. */
 function registerHarnessCheckbox(): boolean {
   const registrar = inquirer as unknown as { registerPrompt?: (name: string, prompt: unknown) => void };
   if (typeof registrar.registerPrompt !== 'function') return false;
@@ -649,16 +649,12 @@ function registerHarnessCheckbox(): boolean {
   return true;
 }
 
-/**
- * Dim "[codex, claude · unverified]" suffix naming the selected harnesses a model works with.
- * Agents in `missing` (no checked model covers them yet) are highlighted.
- */
-function harnessLabel(id: string, ctx: HarnessModelContext, confirmed: Set<string>, missing: string[] = []): string {
+/** Dim "[codex, claude · unverified]" suffix naming the selected harnesses a model works with. */
+function harnessLabel(id: string, ctx: HarnessModelContext, confirmed: Set<string>): string {
   const opts = { provider: ctx.provider, confirmedModels: [...confirmed], isRouter: ctx.isRouter };
   const works = compatibleHarnesses(ctx.harnesses, id, opts);
   const unverified = works.some(h => classifyModelForAgent(h, id, opts) === 'unverified');
-  const names = works.map(h => (missing.includes(h) ? chalk.bgYellow(chalk.black(h)) : chalk.dim(h)));
-  return chalk.dim('  [') + names.join(chalk.dim(', ')) + chalk.dim(`${unverified ? ' · unverified' : ''}]`);
+  return chalk.dim(`  [${works.join(', ')}${unverified ? ' · unverified' : ''}]`);
 }
 
 /** Put the label on the first line of a (possibly multi-line) choice name. */
@@ -974,19 +970,10 @@ export async function promptForModelsSelection(
 
   for (;;) {
     const plainChoices = getAllModelChoices(models.filter(isVisible), providerTemplate, recommendedOverrideIds);
-    const plainNames = new Map<string, string>(plainChoices.map(choice => [choice.value, choice.name]));
-    const coverageOpts = (): { provider?: string; confirmedModels: string[]; isRouter?: (id: string) => boolean } => ({
-      provider: harnessCtx?.provider,
-      confirmedModels: [...confirmed],
-      isRouter: harnessCtx?.isRouter
-    });
     const baseChoices = plainChoices.map(choice => ({
       ...choice,
       name: harnessCtx
-        ? withHarnessLabel(
-          choice.name,
-          harnessLabel(choice.value, harnessCtx, confirmed, uncoveredHarnesses(harnessCtx.harnesses, [...checked], coverageOpts()))
-        )
+        ? withHarnessLabel(choice.name, harnessLabel(choice.value, harnessCtx, confirmed))
         : choice.name,
       checked: checked.has(choice.value)
     }));
@@ -996,22 +983,22 @@ export async function promptForModelsSelection(
       ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
     ];
 
-    // With a harness context the rows re-label live: agents no checked model covers are highlighted.
-    const liveRows = harnessCtx && registerHarnessCheckbox()
+    // With a harness context a live line names the agents no checked model covers yet.
+    const liveCoverage = harnessCtx && registerHarnessCheckbox()
       ? {
         type: HARNESS_CHECKBOX_PROMPT,
         missingFor: (picked: string[]): string[] =>
-          uncoveredHarnesses(harnessCtx.harnesses, picked.filter(id => id !== 'custom' && id !== 'search'), coverageOpts()),
-        liveLabel: (value: string, missing: string[]): string | undefined => {
-          const plain = plainNames.get(value);
-          return plain === undefined ? undefined : withHarnessLabel(plain, harnessLabel(value, harnessCtx, confirmed, missing));
-        }
+          uncoveredHarnesses(harnessCtx.harnesses, picked.filter(id => id !== 'custom' && id !== 'search'), {
+            provider: harnessCtx.provider,
+            confirmedModels: [...confirmed],
+            isRouter: harnessCtx.isRouter
+          })
       }
       : { type: 'checkbox' };
 
     const { selectedModels } = await inquirer.prompt([
       {
-        ...liveRows,
+        ...liveCoverage,
         name: 'selectedModels',
         message: `Choose models (${models.length} available):`,
         choices,

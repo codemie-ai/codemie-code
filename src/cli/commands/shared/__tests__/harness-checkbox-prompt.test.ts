@@ -9,10 +9,8 @@ vi.mock('chalk', () => {
 import { buildCoverageHint, HarnessCheckboxPrompt } from '../harness-checkbox-prompt.js';
 
 describe('buildCoverageHint', () => {
-  it('explains the highlight and names every agent still missing a model', () => {
-    const hint = buildCoverageHint(['codex', 'gemini']);
-    expect(hint).toContain('highlight');
-    expect(hint).toContain('Still missing a model for: codex, gemini');
+  it('names every agent still missing a model', () => {
+    expect(buildCoverageHint(['codex', 'gemini'])).toContain('Still missing a model for: codex, gemini');
   });
 
   it('confirms coverage when no agent is missing', () => {
@@ -21,7 +19,7 @@ describe('buildCoverageHint', () => {
 });
 
 describe('HarnessCheckboxPrompt', () => {
-  it('re-labels rows from the currently checked values and puts the hint under the question line', () => {
+  it('computes the missing agents from the checked values and puts the hint under the question line', () => {
     const rendered: string[] = [];
     const choices = [
       { value: 'a', name: 'a', checked: true },
@@ -32,8 +30,7 @@ describe('HarnessCheckboxPrompt', () => {
     prompt.status = 'pending';
     prompt.opt = {
       choices,
-      missingFor: (checked: string[]) => (checked.includes('b') ? [] : ['codex']),
-      liveLabel: (value: string, missing: string[]) => `${value}:${missing.join('|')}`
+      missingFor: (checked: string[]) => (checked.includes('b') ? [] : ['codex'])
     };
     prompt.screen = { render: (content: string) => { rendered.push(content); } };
     // The inherited render needs the full inquirer runtime; stub the parent to emit a question + choices.
@@ -44,11 +41,8 @@ describe('HarnessCheckboxPrompt', () => {
 
     prompt.render();
 
-    expect(choices[0]).toMatchObject({ name: 'a:codex' });
-    expect(choices[1]).toMatchObject({ name: 'b:codex' });
     expect(rendered[0].split('\n')[0]).toBe('? Question');
-    expect(rendered[0].split('\n')[1]).toContain('highlight');
-    expect(rendered[0]).toContain('Still missing a model for: codex');
+    expect(rendered[0].split('\n')[1]).toContain('Still missing a model for: codex');
     spy.mockRestore();
   });
 });
