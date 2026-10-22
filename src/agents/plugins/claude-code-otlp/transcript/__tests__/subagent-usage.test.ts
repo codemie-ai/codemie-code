@@ -282,7 +282,7 @@ describe('buildSubagentUsageEvent', () => {
           model: 'm', model_raw: 'm-raw', speed: 'standard', inference_geo: '', service_tier: 'standard',
           scope_kind: 'agent', scope_name: '',
           input_tokens: 110, cache_creation_5m_tokens: 5, cache_creation_1h_tokens: 2, cache_read_tokens: 4,
-          output_tokens: 55, thinking_tokens: 0, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
+          output_tokens: 55, output_tokens_partial: false, thinking_tokens: 0, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
         },
       ],
     });

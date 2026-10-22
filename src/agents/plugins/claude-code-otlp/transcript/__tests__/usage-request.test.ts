@@ -307,6 +307,7 @@ describe('buildUsageRequestEvent', () => {
       cache_creation_1h_tokens: 2,
       cache_read_tokens: 3,
       output_tokens: 4,
+      output_tokens_partial: false,
       thinking_tokens: 9,
       web_search_requests: 5,
       web_fetch_requests: 6,
@@ -322,6 +323,20 @@ describe('buildUsageRequestEvent', () => {
     // No event_id/schema_version here — those are stamped later, daemon-side.
     expect(event).not.toHaveProperty('event_id');
     expect(event).not.toHaveProperty('schema_version');
+  });
+
+  it('flags output_tokens_partial when the merged request never received a stop_reason', () => {
+    const req: OpenUsageRequest = {
+      requestId: 'req-1', messageId: 'msg-1', model: 'm', modelRaw: 'm-raw', timestamp: 't',
+      speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
+      inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+      cacheReadTokens: 0, outputTokens: 3, thinkingTokens: null, webSearchRequests: 0, webFetchRequests: 0,
+      scopeKind: 'agent', scopeName: 'Explore', agentId: 'a1', agentType: 'Explore',
+      stopReason: '', isApiError: false, gitBranch: '',
+    };
+
+    expect(buildUsageRequestEvent('s', req).output_tokens_partial).toBe(true);
+    expect(buildUsageRequestEvent('s', { ...req, stopReason: 'end_turn' }).output_tokens_partial).toBe(false);
   });
 
   it('passes a null thinkingTokens through as thinking_tokens: null, so the backend stores it as NULL rather than 0', () => {

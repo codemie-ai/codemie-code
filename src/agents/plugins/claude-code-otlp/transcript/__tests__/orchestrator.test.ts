@@ -18,7 +18,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { logger } from '@/utils/logger.js';
 import {
   openMainTranscriptPass,
@@ -1020,5 +1022,29 @@ describe('commit-after-send: finalize(accepted)', () => {
     saveSpy.mockRestore();
     const release = await parseState.acquireParseStateLock(sessionId); // would hang if still held
     await release();
+  });
+});
+
+describe('openSubagentPass — partial output_tokens (stop_reason null rows)', () => {
+  it('flags requests that never received a stop_reason as partial and leaves finalized ones unflagged', async () => {
+    const fixture = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-subagent-direct.jsonl'),
+      'utf-8'
+    ).trimEnd().split('\n');
+    const sessionId = 'session-sub-partial';
+    const file = writeSubagentFixture(sessionId, 'bg1', fixture);
+
+    const events = await subagentEvents(sessionId, file);
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+    const byReq = Object.fromEntries(usage.map((e) => [e.request_id, e]));
+
+    expect(byReq.req_s1).toMatchObject({ output_tokens: 3, output_tokens_partial: true });
+    expect(byReq.req_s2).toMatchObject({ output_tokens: 8, output_tokens_partial: true });
+    // streamed row (1) later finalized (300): max-merge keeps the final count, not partial.
+    expect(byReq.req_s3).toMatchObject({ output_tokens: 300, output_tokens_partial: false });
+    expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
+
+    const summary = events.find((e) => e.type === 'agent.subagent.usage') as { usage: Array<Record<string, unknown>> };
+    expect(summary.usage[0]).toMatchObject({ output_tokens: 768, output_tokens_partial: true });
   });
 });

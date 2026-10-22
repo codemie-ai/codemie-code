@@ -21,6 +21,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { OpenUsageRequest } from './parse-state.js';
+import { isOutputTokensPartial } from './usage-request.js';
 
 export interface SubagentFile {
   agentId: string;
@@ -108,6 +109,8 @@ export interface SubagentUsageTotal {
   cache_creation_1h_tokens: number;
   cache_read_tokens: number;
   output_tokens: number;
+  /** True when any request in this group has no final `stop_reason`, so `output_tokens` may undercount. */
+  output_tokens_partial: boolean;
   thinking_tokens: number;
   web_search_requests: number;
   web_fetch_requests: number;
@@ -131,6 +134,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_creation_1h_tokens += r.cacheCreation1hTokens;
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
+      existing.output_tokens_partial = existing.output_tokens_partial || isOutputTokensPartial(r);
       existing.thinking_tokens += r.thinkingTokens ?? 0;
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
@@ -149,6 +153,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_creation_1h_tokens: r.cacheCreation1hTokens,
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
+        output_tokens_partial: isOutputTokensPartial(r),
         thinking_tokens: r.thinkingTokens ?? 0,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
