@@ -339,6 +339,19 @@ describe('buildUsageRequestEvent', () => {
     expect(buildUsageRequestEvent('s', { ...req, stopReason: 'end_turn' }).output_tokens_partial).toBe(false);
   });
 
+  it('does not flag an API-error request without stop_reason as output_tokens_partial', () => {
+    const req: OpenUsageRequest = {
+      requestId: 'req-1', messageId: 'msg-1', model: 'm', modelRaw: 'm-raw', timestamp: 't',
+      speed: 'standard', inferenceGeo: '', serviceTier: 'standard',
+      inputTokens: 0, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+      cacheReadTokens: 0, outputTokens: 0, thinkingTokens: null, webSearchRequests: 0, webFetchRequests: 0,
+      scopeKind: 'agent', scopeName: 'Explore', agentId: 'a1', agentType: 'Explore',
+      stopReason: '', isApiError: true, gitBranch: '',
+    };
+
+    expect(buildUsageRequestEvent('s', req).output_tokens_partial).toBe(false);
+  });
+
   it('passes a null thinkingTokens through as thinking_tokens: null, so the backend stores it as NULL rather than 0', () => {
     const req: OpenUsageRequest = {
       requestId: 'req-1', messageId: 'msg-1', model: 'm', modelRaw: 'm-raw', timestamp: 't',

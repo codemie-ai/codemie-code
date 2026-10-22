@@ -190,9 +190,10 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
  * True when the request's `output_tokens` cannot be trusted as final: Claude Code can write an
  * assistant row mid-stream (`stop_reason` null) and never rewrite it, leaving a placeholder count.
  * A request whose merged record still has no `stop_reason` never saw its finalizing row.
+ * API-error rows legitimately carry no `stop_reason` and are not partial.
  */
-export function isOutputTokensPartial(req: Pick<OpenUsageRequest, 'stopReason'>): boolean {
-  return !req.stopReason;
+export function isOutputTokensPartial(req: Pick<OpenUsageRequest, 'stopReason' | 'isApiError'>): boolean {
+  return !req.stopReason && !req.isApiError;
 }
 
 /**
