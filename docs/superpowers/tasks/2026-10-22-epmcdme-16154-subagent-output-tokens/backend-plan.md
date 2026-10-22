@@ -17,6 +17,19 @@ Streamed rows are still max-merged per `(request_id || message_id, model)`, so a
 3. Pairing: by `request_id` when present; Claude Desktop OTel records carry no `request_id`, so pair by fingerprint (timestamp, model, input/cache tokens) backend-side.
 4. H5 (unverifiable here): check the Preview session/agent aggregation sums all scopes, and that a scope row is not overwritten on a key collision.
 
+## Rollout and edge cases
+
+- **Rollout order.** `output_tokens_partial` is a new field on `agent.usage.request` and on each
+  `agent.subagent.usage` `usage[]` row. Confirm the analytics ingest tolerates unknown fields (no strict
+  schema rejection) before the CLI release, or ship the backend change first.
+- **Group flag.** On `agent.subagent.usage`, `output_tokens_partial` is true when any request in the group
+  is partial, while `output_tokens` is the sum. The flag says "do not trust this sum", not how many
+  tokens are affected; per-request detail comes from `agent.usage.request`.
+- **Older Claude Code versions.** A transcript that never carries `stop_reason` is flagged partial for
+  every request. This is safe: the backend then uses the OTel `api_request` value (or the larger of the
+  two), so the result stays correct, only the transcript value is distrusted.
+- **API-error rows** have no `stop_reason` by nature and are not flagged partial.
+
 ## Acceptance checks
 - Session output tokens (Preview) equals OTel `api_request` total (example: 2,448 vs 8,828 must reconcile).
 - Subagent output tokens <= session output tokens (example: 1,283 subagent vs 2,701 session).

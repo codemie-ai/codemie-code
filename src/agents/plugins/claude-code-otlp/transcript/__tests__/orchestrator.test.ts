@@ -16,10 +16,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { logger } from '@/utils/logger.js';
 import {
@@ -1043,8 +1042,12 @@ describe('openSubagentPass — partial output_tokens (stop_reason null rows)', (
     // streamed row (1) later finalized (300): max-merge keeps the final count, not partial.
     expect(byReq.req_s3).toMatchObject({ output_tokens: 300, output_tokens_partial: false });
     expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
+    // a later row without stop_reason must not un-finalize a request that already has one.
+    expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
+    // API-error rows carry no stop_reason by nature and are not partial.
+    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
 
     const summary = events.find((e) => e.type === 'agent.subagent.usage') as { usage: Array<Record<string, unknown>> };
-    expect(summary.usage[0]).toMatchObject({ output_tokens: 768, output_tokens_partial: true });
+    expect(summary.usage[0]).toMatchObject({ output_tokens: 818, output_tokens_partial: true });
   });
 });
