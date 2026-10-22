@@ -2087,10 +2087,13 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
     await second.finalize(true);
   });
 
-  it('falls back to the latest transcript model for configured_model when the SessionStart baseline has none', async () => {
+  it('ignores subagent models in the configured_model fallback until the main transcript provides a model', async () => {
     const sessionId = 'session-envcheck-model-fallback';
     const transcriptPath = writeTranscript('transcript-envcheck-model-fallback.jsonl', [
       usageLine({ uuid: 'u1', messageId: 'msg_a', outputTokens: 10, model: 'claude-opus-5' }),
+    ]);
+    const subagentFile = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'u2', messageId: 'msg_b', outputTokens: 5, model: 'claude-haiku-4-5-20251001' }),
     ]);
 
     const startPass = await openSessionStartPass(sessionId, 'sha-1', { ...sessionEnvFixture, configured_model: '' });
@@ -2105,6 +2108,13 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
       timezone: sessionEnvFixture.timezone,
       hostname_hash: sessionEnvFixture.hostname_hash,
     });
+
+    const subagentPass = await openSubagentPass(sessionId, { ...subagentFile, agentType: 'Explore' }, {
+      effort: sessionEnvFixture.effort,
+      permissionMode: sessionEnvFixture.permission_mode,
+    });
+    expect(subagentPass.events.find((e) => e.type === 'agent.session.env')).toBeUndefined();
+    await subagentPass.finalize(true);
 
     const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', {
       effort: sessionEnvFixture.effort,
