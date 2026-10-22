@@ -92,10 +92,10 @@ export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desk
 export interface DaemonIdentity {
   clientType: EffectiveClientType;
   spawnOptions:
-    | { telemetryMode: 'claude-desktop' }
-    | { clientType: 'vscode-byok' }
-    | { clientType: 'codex-desktop' }
-    | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME };
+  | { telemetryMode: 'claude-desktop' }
+  | { clientType: 'vscode-byok' }
+  | { clientType: 'codex-desktop' }
+  | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME };
 }
 
 /**
@@ -233,14 +233,14 @@ export async function resolveSsoProxyConfig(
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
     ? `Next step:\n` +
-      `  codemie profile switch <codemie-profile>\n` +
-      `  ${commandExample}\n\n` +
-      `Or run once with a specific profile:\n` +
-      `  ${commandExample} --profile <codemie-profile>\n\n` +
-      `Profiles to try:\n- ${available.join('\n- ')}`
+    `  codemie profile switch <codemie-profile>\n` +
+    `  ${commandExample}\n\n` +
+    `Or run once with a specific profile:\n` +
+    `  ${commandExample} --profile <codemie-profile>\n\n` +
+    `Profiles to try:\n- ${available.join('\n- ')}`
     : `No SSO-backed CodeMie profiles were found.\n\n` +
-      `Next step:\n` +
-      `  codemie setup`;
+    `Next step:\n` +
+    `  codemie setup`;
 
   throw new ConfigurationError(
     `${clientLabel} proxy needs an SSO-backed CodeMie profile.\n` +
@@ -249,13 +249,21 @@ export async function resolveSsoProxyConfig(
   );
 }
 
-export async function verifySsoCredentials(baseUrl: string, profileName: string): Promise<void> {
+export async function verifySsoCredentials(
+  baseUrl: string,
+  profileName: string,
+  loginUrl?: string
+): Promise<void> {
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
     const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl });
     if (!creds) {
       console.error(chalk.red(`✗ No SSO credentials found for profile '${profileName}'.`));
-      console.error(`  Run: codemie profile login --url ${baseUrl}`);
+      console.error(
+        loginUrl
+          ? `  Run: codemie profile login --url ${loginUrl}`
+          : '  Run: codemie profile login'
+      );
       process.exit(1);
     }
   } catch (err) {
@@ -603,11 +611,11 @@ async function runCodexDesktop(
       throw new ConfigurationError(
         candidates.length === 0
           ? `The Codex desktop app is not supported on ${process.platform} ` +
-            '(macOS and Windows only). Re-run with --force to write the config anyway.'
+          '(macOS and Windows only). Re-run with --force to write the config anyway.'
           : 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
-            `${candidates.join(', ')}. ` +
-            (process.platform === 'win32' ? 'Also queried the current user\'s OpenAI.Codex MSIX package. ' : '') +
-            'Install it, or re-run with --force to write the config anyway.'
+          `${candidates.join(', ')}. ` +
+          (process.platform === 'win32' ? 'Also queried the current user\'s OpenAI.Codex MSIX package. ' : '') +
+          'Install it, or re-run with --force to write the config anyway.'
       );
     }
 
@@ -647,25 +655,33 @@ export const runCodexDesktopForTest = runCodexDesktop;
 interface ClaudeCodeOtlpRunOptions {
   force?: boolean;
   scope?: "user" | "project";
+  profile: string;
+  codeMieUrl?: string;
 }
 
 async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<TargetResult> {
   const label = 'Claude Code Analytics';
   try {
-    const result = await writeClaudeCodeOtlpConfig({ force: options.force , scope:options.scope });
-    console.log(chalk.green(`\u2713 Claude Code analytics configured`));
+    const result = await writeClaudeCodeOtlpConfig({ force: options.force, scope: options.scope });
+    console.log(chalk.green(`\u2713 Claude Code Analytics configured successfully`));
+    console.log(chalk.bold('\nAnalytics Configuration:'));
+    const projectRows = result.allowlist.length > 0
+      ? result.allowlist.map((projectPath, index) => [index === 0 ? 'Tracked projects' : '', projectPath] as const)
+      : [['Tracked projects', 'all projects'] as const];
+    const rows = [
+      ['Profile', options.profile],
+      ...(options.codeMieUrl ? [['CodeMie URL', options.codeMieUrl]] : []),
+      ['Scope', options.scope ?? 'user'],
+      ...projectRows,
+    ];
+    const labelWidth = Math.max(...rows.map(([label]) => label.length)) + 1;
+    console.log(rows.map(([label, value]) =>
+      `${chalk.cyan(label.padEnd(labelWidth) + '│ ')}${chalk.white(value)}`
+    ).join('\n'));
     console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`));
     console.log(chalk.dim(`  ${result.envVars} OTel env var(s) set in ${result.path}`));
     if (result.backupPath) {
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
-    }
-    if (result.allowlist.length > 0) {
-      console.log(chalk.dim('  Tracked projects:'));
-      for (const projectPath of result.allowlist) {
-        console.log(chalk.dim(`    - ${projectPath}`));
-      }
-    } else {
-      console.log(chalk.dim('  Tracked projects: all projects'));
     }
     console.log(chalk.dim('  OTel env is user-level: every Claude Code session exports telemetry to the daemon while it runs;'));
     console.log(chalk.dim('  data from untracked projects is skipped and swept, never sent.'));
@@ -733,12 +749,16 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const profile = config.name ?? 'default';
     console.log(verbose
       ? chalk.cyan(
-          `Using profile: ${profile} ` +
-          `(source: ${resolved.profileSource === 'explicit' ? '--profile' : 'active profile'})`
-        )
+        `Using profile: ${profile} ` +
+        `(source: ${resolved.profileSource === 'explicit' ? '--profile' : 'active profile'})`
+      )
       : chalk.cyan(`Using profile: ${profile}`));
 
-    await verifySsoCredentials(config.baseUrl, profile);
+    await verifySsoCredentials(
+      config.baseUrl,
+      profile,
+      config.codeMieUrl
+    );
     const cwd = process.cwd();
     await Promise.allSettled([
       syncRegisteredSkills(profile, cwd),
@@ -790,7 +810,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     }));
   }
   if (targets.claudeCodeOtlp) {
-    results.push(await runClaudeCodeOtlp({ force: Boolean(opts.force), scope: opts.scope }));
+    results.push(await runClaudeCodeOtlp({
+      force: Boolean(opts.force),
+      scope: opts.scope,
+      profile: config.name ?? 'default',
+      codeMieUrl: config.codeMieUrl,
+    }));
   }
 
   const anyFailed = results.some((r) => !r.ok);
