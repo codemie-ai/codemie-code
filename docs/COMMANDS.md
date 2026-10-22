@@ -1590,12 +1590,37 @@ codemie version
 
 `codemie proxy connect --claude-code-otlp` writes the hooks and OTel environment variables into the user-level `~/.claude/settings.json`, plus `CODEMIE_ANALYTICS_PROJECT_FILTER`: a JSON array (stored as a string) of absolute project paths that are tracked.
 
+After a successful setup, the command prints an **Analytics Configuration** summary with the selected profile, CodeMie URL, tracking scope, and tracked project paths. The CodeMie URL identifies the configured environment. Supplying `--profile <name>` selects that profile for this command without changing the globally active profile.
+
+For example, with a profile configured for the live CodeMie environment:
+
+```text
+✓ Proxy started
+✓ Claude Code Analytics configured successfully
+
+Analytics Configuration:
+Profile           │ default
+CodeMie URL       │ https://codemie.lab.epam.com
+Scope             │ project
+Tracked projects  │ /path/to/control-plane
+```
+
+If SSO credentials are missing, the CLI suggests logging in to the configured CodeMie URL:
+
+```bash
+codemie profile login --url https://codemie.lab.epam.com
+```
+
+If the profile has no CodeMie URL configured, the CLI suggests `codemie profile login` without `--url`, allowing the login command to resolve its configured platform URL.
+
 | Command                                               | Allowlist result                                                                         |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                               |
 | `connect --claude-code-otlp --scope project`          | adds the current project root (deduplicated); run it in each project to track            |
 | `disconnect --claude-code-otlp --scope project`       | removes the current project root; when the list becomes empty everything is disconnected |
 | `disconnect --claude-code-otlp`                       | removes hooks, OTel variables and the allowlist                                          |
+
+`--scope user` (the default) tracks every project by clearing the project allowlist. `--scope project` adds only the current project root to the allowlist; only projects listed there are tracked.
 
 A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--force` to discard it. `--force` never edits a valid list.
 

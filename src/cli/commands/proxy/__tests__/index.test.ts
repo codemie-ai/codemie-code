@@ -103,7 +103,7 @@ describe('proxy connect desktop', () => {
     } as ReturnType<typeof ProviderRegistry.getProvider>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return {
-      getStoredCredentials: vi.fn().mockResolvedValue(null),
+        getStoredCredentials: vi.fn().mockResolvedValue(null),
       };
     } as unknown as typeof CodeMieSSO);
 
@@ -117,8 +117,73 @@ describe('proxy connect desktop', () => {
       expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com/code-assistant-api'
+      '  Run: codemie profile login --url https://codemie.lab.epam.com'
     );
+  });
+
+  it('suggests the configured CodeMie URL for missing Claude Code analytics credentials', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    const getStoredCredentials = vi.fn().mockResolvedValue(null);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', '--claude-code-otlp', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+    );
+    expect(getStoredCredentials).toHaveBeenCalledWith('https://codemie.lab.epam.com/code-assistant-api');
+  });
+
+  it('suggests profile login without an explicit URL when CodeMie URL is unavailable', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', '--claude-code-otlp', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('  Run: codemie profile login');
   });
 
   it('calls syncRegisteredSkills and syncPluginSkills when starting the daemon', async () => {
