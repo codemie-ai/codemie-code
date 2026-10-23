@@ -24,3 +24,25 @@ export function keepFirstByUuid<T>(lines: T[], seen: Set<string> = new Set()): T
     return true;
   });
 }
+
+/** Keeps one copy per duplicated `uuid`: the first when a `compact_boundary` lies between the copies (Claude Desktop re-writes head lines after `/compact`), else the last (an init re-write is the real turn start). */
+export function keepFirstAcrossCompaction<T>(lines: T[]): T[] {
+  const first = new Map<string, number>();
+  const last = new Map<string, number>();
+  const boundaries: number[] = [];
+  lines.forEach((line, index) => {
+    if (!isObject(line)) return;
+    if (line.type === 'system' && line.subtype === 'compact_boundary') boundaries.push(index);
+    if (typeof line.uuid !== 'string') return;
+    if (!first.has(line.uuid)) first.set(line.uuid, index);
+    last.set(line.uuid, index);
+  });
+  return lines.filter((line, index) => {
+    if (!isObject(line) || typeof line.uuid !== 'string') return true;
+    const firstIndex = first.get(line.uuid)!;
+    const lastIndex = last.get(line.uuid)!;
+    if (firstIndex === lastIndex) return true;
+    const compacted = boundaries.some((b) => b > firstIndex && b < lastIndex);
+    return index === (compacted ? firstIndex : lastIndex);
+  });
+}

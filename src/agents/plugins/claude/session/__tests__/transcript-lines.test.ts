@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isCountedTranscriptLine, keepFirstByUuid } from '../transcript-lines.js';
+import { isCountedTranscriptLine, keepFirstAcrossCompaction, keepFirstByUuid } from '../transcript-lines.js';
 
 describe('isCountedTranscriptLine', () => {
   it.each([
@@ -43,5 +43,30 @@ describe('keepFirstByUuid', () => {
 
     expect(keepFirstByUuid([{ type: 'user', uuid: 'u1' }, kept], seen)).toEqual([kept]);
     expect([...seen]).toEqual(['u1', 'a1']);
+  });
+});
+
+describe('keepFirstAcrossCompaction', () => {
+  it('keeps the first copy when a compact_boundary lies between the copies', () => {
+    const first = { type: 'user', uuid: 'u1', n: 1 };
+    const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'cb' };
+    const copy = { type: 'user', uuid: 'u1', n: 2 };
+
+    expect(keepFirstAcrossCompaction([first, boundary, copy])).toEqual([first, boundary]);
+  });
+
+  it('keeps the last copy when no compact_boundary lies between the copies', () => {
+    const echo = { type: 'user', uuid: 'u1', n: 1 };
+    const init = { type: 'system', subtype: 'init', uuid: 's1' };
+    const rewritten = { type: 'user', uuid: 'u1', n: 2 };
+    const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'cb' };
+
+    expect(keepFirstAcrossCompaction([echo, init, rewritten, boundary])).toEqual([init, rewritten, boundary]);
+  });
+
+  it('keeps lines that appear once and lines without a string uuid, in order', () => {
+    const lines = [{ type: 'user' }, { type: 'assistant', uuid: 'a1' }, { type: 'user', uuid: 7 }, { type: 'user', uuid: 7 }, 'text'];
+
+    expect(keepFirstAcrossCompaction(lines)).toEqual(lines);
   });
 });

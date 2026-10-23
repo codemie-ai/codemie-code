@@ -51,12 +51,17 @@ export class ConversationsProcessor implements SessionProcessor {
 
   shouldProcess(session: ParsedSession): boolean {
     if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
-    return session.messages && session.messages.length > 0;
+    const messages = this.conversationMessages(session);
+    return messages && messages.length > 0;
+  }
+
+  private conversationMessages(session: ParsedSession): unknown[] {
+    return session.conversationMessages ?? session.messages;
   }
 
   async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
-      // Transform ParsedSession.messages → generate conversation payloads
+      // Transform the conversation view → generate conversation payloads
       return await this.processMessages(session, context);
     } catch (error) {
       logger.error(`[${this.name}] Processing failed:`, error);
@@ -68,7 +73,7 @@ export class ConversationsProcessor implements SessionProcessor {
   }
 
   /**
-   * Transform ParsedSession.messages to conversation history and write to JSONL
+   * Transform the conversation view to conversation history and write to JSONL
    * Writes payload with status 'pending' for later sync by SSO provider
    * Processes one turn per invocation (incremental mode for real-time hooks)
    */
@@ -77,7 +82,7 @@ export class ConversationsProcessor implements SessionProcessor {
     context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
-      logger.info(`[${this.name}] Transforming ${session.messages.length} messages to conversation history`);
+      logger.info(`[${this.name}] Transforming ${this.conversationMessages(session).length} messages to conversation history`);
 
       // Load sync state for incremental processing
       const { SessionStore } = await import('../../../../core/session/SessionStore.js');
@@ -137,7 +142,7 @@ export class ConversationsProcessor implements SessionProcessor {
         };
       } | undefined;
 
-      const maxIterations = Math.max(1, session.messages.length + 1);
+      const maxIterations = Math.max(1, this.conversationMessages(session).length + 1);
 
       // Dedupe-before-append: a turn already in the queue (any status) is never
       // appended again. Concurrent Stop/SubagentStop hooks, or a pointer that
@@ -149,7 +154,7 @@ export class ConversationsProcessor implements SessionProcessor {
         const prevHistoryIndex = localSync.lastSyncedHistoryIndex;
 
         const result = await this.transformMessages(
-          session.messages as any[],
+          this.conversationMessages(session) as any[],
           localSync,
           CLI_ASSISTANT_ID,
           session.agentName,
@@ -291,7 +296,7 @@ export class ConversationsProcessor implements SessionProcessor {
     cutoffMs: number,
     agentSessionFile?: string
   ): Promise<ConversationSyncPointer> {
-    const messages = takeMessagesBefore(session.messages as any[], cutoffMs);
+    const messages = takeMessagesBefore(this.conversationMessages(session) as any[], cutoffMs);
     let pointer: ConversationSyncPointer = { lastSyncedHistoryIndex: -1 };
 
     for (let iteration = 0; iteration <= messages.length; iteration++) {
