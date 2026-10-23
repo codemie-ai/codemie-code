@@ -134,6 +134,14 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
   const beforeRun = CodeMieCodePluginMetadata.lifecycle!.beforeRun!;
   const onSessionEnd = CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!;
 
+  it('declares the complete reasoning-effort range for OpenCode forwarding', () => {
+    expect(CodeMieCodePluginMetadata.reasoningEffort).toMatchObject({
+      strategy: 'cli-flag',
+      flag: '--variant',
+      supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockDiscoverSessions.mockResolvedValue([]);
