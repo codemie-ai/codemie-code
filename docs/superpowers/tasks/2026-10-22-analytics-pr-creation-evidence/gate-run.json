@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "branch": "feat/analytics-pr-creation-evidence",
+  "head": "ba14a1c9a41b65b405f42734779aa71d333946de",
+  "runner": "npm",
+  "started_at": "2026-10-22T16:43:48.382874+00:00",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 70827,
+      "command": "npm run license-check",
+      "exit_code": 1,
+      "notes": "Initial sandbox DNS failure; required license-checker fetched and license check passed with escalation; see license-retry.log."
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4086,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3611,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6308,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 52103,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "5573 passed; 3 failed in unchanged system-proxy-dispatcher.test.ts (127.0.0.2 timeouts). All same 3 failures reproduced against merge-base ce7e8c6dc750b1da951e16af0b9a70f57a32b3f8; see evidence.local/qa/baseline-system-proxy.log. Full unit gate remains FAIL."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12601,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "278 passed; 10 skipped; 37 suites passed and 1 skipped, as reported by Vitest."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 483,
+      "command": "CODEMIE_SKIP_SECRETS_SCAN=1 npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "No container engine; documented CODEMIE_SKIP_SECRETS_SCAN=1 opt-out. Gitleaks must run in CI."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 384,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6849,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 483,
+      "command": "npx commitlint --from ce7e8c6dc750b1da951e16af0b9a70f57a32b3f8 --to HEAD --verbose",
+      "exit_code": 0
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 502,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "lint-staged could not find any staged files. Whole-repository lint/unit/integration ran separately."
+    },
+    {
+      "id": "windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "Windows CI unit + cli",
+      "exit_code": null,
+      "notes": "macOS host; requires Windows GitHub runner."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view ... | npx commitlint --verbose",
+      "exit_code": null,
+      "notes": "PR not created yet; validate title when creating PR."
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Aggregate not repeated: all constituent commands run individually; parent explicitly requested no duplicate full-suite runs."
+    }
+  ],
+  "failures": {
+    "unit": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:64092, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 362 passed (363)\n      Tests  3 failed | 5573 passed (5576)\n   Start at  18:47:33\n   Duration  51.13s (transform 11.39s, setup 0ms, import 54.54s, tests 80.88s, environment 20ms)\n"
+  },
+  "completed_at": "2026-10-22T16:49:57.212353+00:00",
+  "baseline_verification": {
+    "commit": "ce7e8c6dc750b1da951e16af0b9a70f57a32b3f8",
+    "method": "git archive snapshot with shared installed dependencies; isolated root",
+    "command": "npx vitest run --project unit src/utils/__tests__/system-proxy-dispatcher.test.ts --root docs/superpowers/tasks/2026-10-22-analytics-pr-creation-evidence/evidence.local/qa/base --maxWorkers=4",
+    "exit_code": 1,
+    "failed_tests": 3,
+    "log": "evidence.local/qa/baseline-system-proxy.log"
+  }
+}

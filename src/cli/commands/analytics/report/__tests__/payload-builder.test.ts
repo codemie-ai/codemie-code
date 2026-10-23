@@ -649,3 +649,31 @@ describe('buildPayload — copilot-cli specific fields', () => {
     expect(cov).toEqual({ agentName: 'copilot-cli', total: 3, priced: 2, withLog: 3 });
   });
 });
+
+describe('creation evidence public projection', () => {
+  const event = { type: 'mr_created', provider: 'gitlab', host: 'gitbud.epam.com:8443', repository: 'team/sub/repo', number: 36,
+    url: 'https://gitbud.epam.com:8443/team/sub/repo/-/merge_requests/36', timestamp: '2026-10-22T10:00:01.000Z',
+    source: 'glab_cli', toolUseId: 'tool-1', owner: 'subagent', ownerId: 'agent-1' };
+  it('allowlists evidence, preserving observed timestamps and financial values', () => {
+    const costs = new Map(costIndex);
+    costs.set('s1', { ...costs.get('s1')!, changeRequestCreation: { status: 'available', secret: 'PRIVATE_EVIDENCE', events: [{ ...event, command: 'PRIVATE_EVIDENCE', response: { token: 'PRIVATE_EVIDENCE' } }] } } as never);
+    const payload = buildPayload(root, costs, summary, ctxAll);
+    expect(payload.sessions[0].changeRequestCreation).toEqual({ status: 'available', events: [event] });
+    expect(JSON.stringify(payload)).not.toContain('PRIVATE_EVIDENCE');
+    expect(payload.sessions[0].costUSD).toBe(0.001);
+  });
+  it('caps evidence and discards oversized or inconsistent identities without truncation', () => {
+    const costs = new Map(costIndex);
+    costs.set('s1', { ...costs.get('s1')!, changeRequestCreation: { status: 'available', events: [{ ...event, toolUseId: 'a'.repeat(257) }, ...Array.from({ length: 101 }, () => event)] } } as never);
+    const evidence = buildPayload(root, costs, summary, ctxAll).sessions[0].changeRequestCreation;
+    expect(evidence?.status).toBe('partial');
+    expect(evidence?.events).toHaveLength(100);
+    expect(evidence?.events[0]).toEqual(event);
+  });
+  it.each(['available', 'partial', 'unsupported', 'unavailable'])('preserves empty %s and omits absent legacy evidence', (status) => {
+    const costs = new Map(costIndex);
+    expect(buildPayload(root, costs, summary, ctxAll).sessions[0].changeRequestCreation).toBeUndefined();
+    costs.set('s1', { ...costs.get('s1')!, changeRequestCreation: { status, events: [] } } as never);
+    expect(buildPayload(root, costs, summary, ctxAll).sessions[0].changeRequestCreation).toEqual({ status, events: [] });
+  });
+});

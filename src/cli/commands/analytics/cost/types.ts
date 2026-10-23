@@ -121,8 +121,34 @@ export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string; _taskId?: 
 /** Max dispatch events kept per session — payload guard for very long runs. */
 export const MAX_DISPATCHES = 60;
 
+/** Locally observed successful creation; not comprehensive work or monetary attribution. */
+export interface ChangeRequestCreationEvent {
+  type: 'pr_created' | 'mr_created';
+  provider: 'github' | 'gitlab';
+  host: string;
+  repository: string;
+  number: number;
+  url: string;
+  timestamp: string;
+  source: 'gh_cli' | 'glab_cli' | 'github_mcp' | 'gitlab_mcp';
+  toolUseId: string;
+  owner: 'root' | 'subagent';
+  ownerId?: string;
+}
+
+/**
+ * Coverage of supported creation evidence: available means inspected within the session window;
+ * partial means incomplete or ambiguous evidence; unavailable means no native log;
+ * unsupported means this agent or source has no extractor. Empty events do not prove no work occurred.
+ */
+export interface ChangeRequestCreationEvidence {
+  status: 'available' | 'partial' | 'unavailable' | 'unsupported';
+  events: ChangeRequestCreationEvent[];
+}
+
 /** Cost result for a single session. */
 export interface SessionCost {
+  changeRequestCreation?: ChangeRequestCreationEvidence;
   sessionId: string;
   tokens: TokenUsage; // summed across models
   costUSD: number; // summed across models

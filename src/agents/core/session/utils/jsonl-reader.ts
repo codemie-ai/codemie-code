@@ -51,12 +51,13 @@ export async function readJSONLTolerant<T>(filePath: string, logPrefix = '[jsonl
  * Read all records from JSONL file.
  *
  * @param filePath - Absolute path to JSONL file
+ * @param options - Set allowMissing to false when the caller must distinguish a missing file from an empty file
  * @returns Array of parsed records (empty if file doesn't exist)
  * @throws Error if file exists but cannot be read/parsed
  */
-export async function readJSONL<T>(filePath: string): Promise<T[]> {
+export async function readJSONL<T>(filePath: string, options: { allowMissing?: boolean } = {}): Promise<T[]> {
   try {
-    if (!existsSync(filePath)) {
+    if (options.allowMissing !== false && !existsSync(filePath)) {
       return [];
     }
 
@@ -68,7 +69,10 @@ export async function readJSONL<T>(filePath: string): Promise<T[]> {
       .map(line => JSON.parse(line) as T);
 
   } catch (error) {
-    logger.error('[jsonl-reader] Failed to read JSONL:', error);
+    // Strict callers handle missing files as coverage information, including read-time races.
+    if (options.allowMissing !== false || (error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.error('[jsonl-reader] Failed to read JSONL:', error);
+    }
     throw error;
   }
 }
