@@ -634,8 +634,11 @@ Flags are composable: a single run configures every target you pass, prints a pe
 Remove a target's configuration with `codemie proxy disconnect`:
 
 ```bash
+codemie proxy disconnect --claude-desktop --vscode-claude-code
 codemie proxy disconnect --codex-desktop
 ```
+
+`--claude-desktop` removes the gateway settings and managed MCP servers from Claude Desktop's applied config (MCP servers you added yourself are kept). `--vscode-claude-code` removes the `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` entries and `claudeCode.disableLoginPrompt` from VS Code's `settings.json` (add `--insiders` for VS Code Insiders). Both leave a gateway or base URL that does not point at the local proxy untouched, and neither stops the proxy daemon — use `codemie proxy stop` for that. Quit and reopen the app afterwards.
 
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
 

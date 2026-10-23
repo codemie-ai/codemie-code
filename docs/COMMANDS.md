@@ -89,6 +89,8 @@ codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
+codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
+codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
 codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
