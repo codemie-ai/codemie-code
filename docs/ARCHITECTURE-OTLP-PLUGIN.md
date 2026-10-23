@@ -202,10 +202,13 @@ baseline. The env-check diff for every other trigger lives in `computeSessionEnv
 when it changed. Whenever neither the triggering hook's own payload nor the prior snapshot has a
 `configured_model` (the Claude Code desktop app's `SessionStart` carries no `model`
 until the first `/compact` or model switch), it falls back to `latestKnownModel(state.openRequests)`:
-the newest `main` usage request with an empty `agentId` and a non-`<synthetic>` `model` (not a skill,
-a command or a subagent, which can run on their own `model:`; all share `state.openRequests`, already
-populated by this same pass's own `deriveMainEvents`/`deriveSubagentEvents` call before the env-check
-runs), returning its `requestedModel`, else its `model`. `''` only when no such request exists yet — true for the very first `agent.session.env` of
+the newest usage request with an empty `agentId` and a non-`<synthetic>` `model` that is scoped `main`,
+or scoped `skill` with neither `attributionSkill` nor `requestedModel` (all requests share
+`state.openRequests`, already populated by this same pass's own `deriveMainEvents`/`deriveSubagentEvents`
+call before the env-check runs), returning its `requestedModel`, else its `model`. A fork never counts;
+a line Claude Code marked with `attributionSkill` (2.1.278+) never counts, since an inline skill or a
+command can run on its own `model:`; an unmarked line without `requestedModel` (before 2.1.295) counts
+whatever scope the `activeSkill` heuristic gave it. `''` only when no such request exists yet — true for the very first `agent.session.env` of
 a session, sent synchronously from `SessionStart` itself, before any turn exists to read a model
 from. `openMainTranscriptPass`/`openSubagentPass`/`openSessionEndPass` take an optional
 `envCheck` argument and, when given, run that diff against the same already-loaded `state`, under

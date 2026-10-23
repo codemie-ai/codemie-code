@@ -2341,7 +2341,106 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
 
     expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-opus-5');
   });
+
+  it('counts an old-format line the Skill tool scoped as skill', async () => {
+    const sessionId = 'session-fallback-old-skill';
+    const transcriptPath = writeTranscript('transcript-fallback-old-skill.jsonl', [
+      skillToolUseLine('u1'),
+      usageLine({ uuid: 'u2', messageId: 'msg_skill', outputTokens: 10, model: 'claude-sonnet-4-5-20250929' }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-sonnet-4-5-20250929');
+  });
+
+  it('takes a newer old-format skill-scoped line over an older plain main line', async () => {
+    const sessionId = 'session-fallback-old-skill-newest';
+    const transcriptPath = writeTranscript('transcript-fallback-old-skill-newest.jsonl', [
+      usageLine({
+        uuid: 'u1',
+        messageId: 'msg_main',
+        outputTokens: 10,
+        model: 'claude-haiku-4-5-20251001',
+        timestamp: '2026-10-01T00:00:01.000Z',
+      }),
+      skillToolUseLine('u2'),
+      usageLine({
+        uuid: 'u3',
+        messageId: 'msg_skill',
+        outputTokens: 10,
+        model: 'claude-sonnet-4-5-20250929',
+        timestamp: '2026-10-01T00:00:02.000Z',
+      }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-sonnet-4-5-20250929');
+  });
+
+  it('takes the main line\'s model over a newer old-format fork\'s', async () => {
+    const sessionId = 'session-fallback-old-fork';
+    const transcriptPath = writeTranscript('transcript-fallback-old-fork.jsonl', [
+      usageLine({
+        uuid: 'u1',
+        messageId: 'msg_main',
+        outputTokens: 10,
+        model: 'claude-opus-5',
+        timestamp: '2026-10-01T00:00:01.000Z',
+      }),
+    ]);
+    const fork = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({
+        uuid: 'f1',
+        messageId: 'msg_fork',
+        outputTokens: 5,
+        model: 'claude-haiku-4-5-20251001',
+        timestamp: '2026-10-01T00:00:02.000Z',
+      }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+    const forkPass = await openSubagentPass(sessionId, { ...fork, agentType: 'general-purpose', skillName: 'probe-skill' });
+    await forkPass.finalize(true);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-opus-5');
+  });
+
+  it('counts a stored skill-scoped request without attributionSkill and requestedModel', async () => {
+    const sessionId = 'session-fallback-stored-skill';
+    const transcriptPath = writeTranscript('transcript-fallback-stored-skill.jsonl', [
+      skillToolUseLine('u1'),
+      usageLine({ uuid: 'u2', messageId: 'msg_skill', outputTokens: 10, model: 'claude-sonnet-4-5-20250929' }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+    await mainEvents(sessionId, transcriptPath, 'Stop');
+    const statePath = join(codemieHome, 'analytics', 'state', `${sessionId}.json`);
+    const state = JSON.parse(readFileSync(statePath, 'utf-8')) as {
+      openRequests: Record<string, Record<string, unknown>>;
+    };
+    for (const req of Object.values(state.openRequests)) {
+      expect(req.scopeKind).toBe('skill');
+      delete req.requestedModel;
+      delete req.attributionSkill;
+    }
+    writeFileSync(statePath, JSON.stringify(state), 'utf-8');
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-sonnet-4-5-20250929');
+  });
 });
+
+/** An assistant line that only invokes the `Skill` tool, with no usage of its own. */
+function skillToolUseLine(uuid: string): string {
+  return JSON.stringify({
+    type: 'assistant',
+    gitBranch: 'main',
+    cwd: '/repo',
+    timestamp: '2026-10-01T00:00:00.000Z',
+    uuid,
+    message: {
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: `tool-${uuid}`, name: 'Skill', input: { skill: 'probe-skill' } }],
+    },
+  });
+}
 
 /** Env-check input whose `effort` differs from the SessionStart baseline, so a snapshot is emitted. */
 const forcedEnvCheck = { effort: 'high', permissionMode: sessionEnvFixture.permission_mode };

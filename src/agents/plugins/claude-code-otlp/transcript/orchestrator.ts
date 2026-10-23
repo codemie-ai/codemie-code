@@ -710,16 +710,18 @@ export interface SessionEnvCheckResult {
 const NOOP_FINALIZE = async (): Promise<void> => {};
 
 /**
- * The model of the newest main-thread request (`scopeKind: 'main'`, empty `agentId`, a non-empty,
- * non-`<synthetic>` `model`) parsed so far for this session: its `requestedModel`, else its `model`.
- * Used as a last-resort fallback for `configured_model` when neither the triggering hook's own
- * payload nor the prior `agent.session.env` snapshot has one — e.g. the Claude Code desktop app's
- * `SessionStart` carries no `model` until the first `/compact` or model switch, even though every
- * transcript line already reports the model that actually answered. A fork, an inline skill or a
- * command can run on its own `model:`, so their requests do not set the session's model: a fork's
- * by its `agentId`, an inline skill's or a command's by the `attributionSkill` mark Claude Code
- * writes from 2.1.278; on earlier versions only the `activeSkill` heuristic scopes them, which
- * catches a skill run through the Skill tool but not a slash-invoked skill or a command.
+ * The model of the newest request parsed so far for this session that sets the session's model:
+ * its `requestedModel`, else its `model`. Used as a last-resort fallback for `configured_model`
+ * when neither the triggering hook's own payload nor the prior `agent.session.env` snapshot has
+ * one — e.g. the Claude Code desktop app's `SessionStart` carries no `model` until the first
+ * `/compact` or model switch, even though every transcript line already reports the model that
+ * actually answered. A request counts when it has an empty `agentId` and a non-empty,
+ * non-`<synthetic>` `model`, and is either scoped `main` or scoped `skill` with neither
+ * `attributionSkill` nor `requestedModel`. A fork never counts (its `agentId`), on any version. A
+ * line Claude Code marked with `attributionSkill` (2.1.278+) never counts: an inline skill or a
+ * command can run on its own `model:`. An unmarked line without `requestedModel` (before 2.1.295)
+ * counts whatever its scope — the `activeSkill` heuristic may have scoped it `skill`, but nothing
+ * on the line says a skill owned it, so the fallback reads it as it always has.
  * `requestedModel` is preferred because it has the form SessionStart `model` and the model-switch
  * hooks use (`claude-opus-5-5[1m]`), while `model` drops `[1m]` and can be the provider's id.
  * `''` when no such request exists yet.
@@ -727,7 +729,11 @@ const NOOP_FINALIZE = async (): Promise<void> => {};
 function latestKnownModel(openRequests: Record<string, OpenUsageRequest>): string {
   let best: OpenUsageRequest | undefined;
   for (const req of Object.values(openRequests)) {
-    if (req.scopeKind !== 'main' || req.agentId || !req.model || isSyntheticModel(req.model)) {
+    if (req.agentId || !req.model || isSyntheticModel(req.model)) {
+      continue;
+    }
+    const unmarkedSkill = req.scopeKind === 'skill' && !req.attributionSkill && !req.requestedModel;
+    if (req.scopeKind !== 'main' && !unmarkedSkill) {
       continue;
     }
     if (!best || req.timestamp > best.timestamp) {
