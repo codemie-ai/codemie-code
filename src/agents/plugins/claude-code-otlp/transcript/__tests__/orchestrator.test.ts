@@ -2161,3 +2161,263 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
     await pass.finalize(true);
   });
 });
+
+describe('api-request-blob lines', () => {
+  const blob = (role: string, content: unknown): string =>
+    JSON.stringify({ type: 'api-request-blob', sessionId: 'blob-session', hash: 'h', message: { role, content } });
+  const typed = (type: 'user' | 'assistant', uuid: string, content: unknown): string =>
+    JSON.stringify({
+      type,
+      uuid,
+      gitBranch: 'feature',
+      cwd: '/repo',
+      timestamp: '2026-10-01T00:00:00.000Z',
+      message: { role: type, content },
+    });
+  const asAssistant = (line: string): string => JSON.stringify({ type: 'assistant', ...JSON.parse(line) });
+  const boundary = JSON.stringify({
+    type: 'system',
+    subtype: 'compact_boundary',
+    timestamp: '2026-10-01T00:10:00.000Z',
+    compactMetadata: { trigger: 'manual', preTokens: 1000, postTokens: 300, durationMs: 1000 },
+  });
+
+  const skillUse = { type: 'tool_use', id: 'toolu_skill', name: 'Skill', input: { skill: 'probe-skill' } };
+  const skillResult = { type: 'tool_result', tool_use_id: 'toolu_skill', content: 'Launching skill: probe-skill' };
+  const u1 = typed('user', 'u1', commandText('probe-skill'));
+  const a1 = typed('assistant', 'a1', [{ type: 'text', text: 'ok' }]);
+  const u2 = typed('user', 'u2', commandText('probe-cmd'));
+  const a2 = typed('assistant', 'a2', [skillUse]);
+  const u3 = typed('user', 'u3', [skillResult]);
+  const head = [
+    u1,
+    blob('user', commandText('probe-skill')),
+    a1,
+    u2,
+    blob('user', commandText('probe-cmd')),
+    a2,
+    blob('assistant', [skillUse]),
+    u3,
+    blob('user', [skillResult]),
+  ];
+
+  const summaryOf = (events: ForwardedEvent[]): ForwardedEvent => {
+    const summary = events.find((e) => e.type === 'agent.session.summary');
+    if (!summary) throw new Error('missing agent.session.summary');
+    return summary;
+  };
+
+  it('counts each slash command, Skill call and tool result once on the Stop summary', async () => {
+    const transcriptPath = writeTranscript('transcript-blob-main.jsonl', head);
+
+    const summary = summaryOf(await mainEvents('session-blob-main', transcriptPath, 'Stop'));
+
+    expect(summary.commands).toEqual(['probe-skill', 'probe-cmd']);
+    expect(summary.skills).toEqual({ 'probe-skill': 1 });
+    expect(summary.tool_calls).toBe(1);
+    expect(summary.tool_results).toBe(1);
+  });
+
+  it('keeps the first copy of head lines re-written with the same uuid after a compaction', async () => {
+    const transcriptPath = writeTranscript('transcript-blob-rewrite.jsonl', [...head, boundary, u1, a1, a2, u3]);
+
+    const summary = summaryOf(await mainEvents('session-blob-rewrite', transcriptPath, 'Stop'));
+
+    expect(summary.commands).toEqual(['probe-skill', 'probe-cmd']);
+    expect(summary.primary_command).toBe('probe-skill');
+    expect(summary.skills).toEqual({ 'probe-skill': 1 });
+    expect(summary.tool_calls).toBe(1);
+    expect(summary.tool_results).toBe(1);
+  });
+
+  it('skips re-written head lines arriving in a later incremental pass', async () => {
+    const sessionId = 'session-blob-incremental';
+    const first = userLine('first prompt', { uuid: 'p1' });
+    const invoke = asAssistant(skillAwareLine({ uuid: 'r1', messageId: 'msg-1', outputTokens: 10, skill: 'probe-skill' }));
+    const transcriptPath = writeTranscript('transcript-blob-incremental.jsonl', [
+      first,
+      invoke,
+      asAssistant(skillAwareLine({ uuid: 'r2', messageId: 'msg-2', outputTokens: 20 })),
+    ]);
+    await mainEvents(sessionId, transcriptPath, 'Stop');
+
+    appendFileSync(
+      transcriptPath,
+      [
+        boundary,
+        userLine('second prompt', { uuid: 'p2' }),
+        first,
+        invoke,
+        asAssistant(skillAwareLine({ uuid: 'r3', messageId: 'msg-3', outputTokens: 30 })),
+      ].map((l) => l + '\n').join(''),
+      'utf-8'
+    );
+    const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+    expect(summaryOf(events).branch_counts).toEqual({ feature: 2 });
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+    expect(usage.map((e) => e.message_id)).toEqual(['msg-3']);
+    expect(usage[0]).toMatchObject({ scope_kind: 'main', scope_name: '' });
+  });
+
+  it('leaves the summary unchanged on a second Stop pass with no new bytes', async () => {
+    const sessionId = 'session-blob-noop';
+    const transcriptPath = writeTranscript('transcript-blob-noop.jsonl', [...head, boundary, u1]);
+    const first = summaryOf(await mainEvents(sessionId, transcriptPath, 'Stop'));
+
+    const second = summaryOf(await mainEvents(sessionId, transcriptPath, 'Stop'));
+
+    expect(first.commands).toEqual(['probe-skill', 'probe-cmd']);
+    expect(first.branch_counts).toEqual({ feature: 3 });
+    for (const field of ['commands', 'skills', 'tool_calls', 'tool_results', 'branch_counts']) {
+      expect(second[field]).toEqual(first[field]);
+    }
+  });
+
+  describe('a parse state saved before seenMessageUuids existed', () => {
+    const headUser = userLine('first prompt', { uuid: 'u1' });
+    const headSkill = asAssistant(
+      skillAwareLine({ uuid: 'a1', messageId: 'msg-1', outputTokens: 10, skill: 'probe-skill' })
+    );
+    const tail = [
+      boundary,
+      headUser,
+      headSkill,
+      userLine('second prompt', { uuid: 'u2' }),
+      asAssistant(skillAwareLine({ uuid: 'a2', messageId: 'msg-2', outputTokens: 20 })),
+    ];
+
+    it('seeds the seen uuids from the bytes before mainOffset', async () => {
+      const { loadParseState, saveParseState } = await import('../parse-state.js');
+      const sessionId = 'session-blob-legacy-state';
+      const transcriptPath = writeTranscript('transcript-blob-legacy-state.jsonl', [headUser, headSkill]);
+      await mainEvents(sessionId, transcriptPath, 'Stop');
+      const { seenMessageUuids: _dropped, ...legacy } = await loadParseState(sessionId);
+      expect(legacy.branchCounts).toEqual({ feature: 1 });
+      await saveParseState(sessionId, legacy);
+      appendFileSync(transcriptPath, tail.map((l) => l + '\n').join(''), 'utf-8');
+
+      const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      expect(summaryOf(events).branch_counts).toEqual({ feature: 2 });
+      const usage = events.filter((e) => e.type === 'agent.usage.request');
+      expect(usage.map((e) => e.message_id)).toEqual(['msg-2']);
+      expect(usage[0]).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    });
+
+    it('does not let a copied Skill call scope the next request as skill', async () => {
+      const { loadParseState, saveParseState } = await import('../parse-state.js');
+      const sessionId = 'session-blob-legacy-skill';
+      const transcriptPath = writeTranscript('transcript-blob-legacy-skill.jsonl', [
+        headUser,
+        headSkill,
+        userLine('third prompt', { uuid: 'u3' }),
+        asAssistant(skillAwareLine({ uuid: 'a3', messageId: 'msg-3', outputTokens: 30 })),
+      ]);
+      await mainEvents(sessionId, transcriptPath, 'Stop');
+      const { seenMessageUuids: _dropped, ...legacy } = await loadParseState(sessionId);
+      expect(legacy.activeSkill).toBe('');
+      await saveParseState(sessionId, legacy);
+      const answer = asAssistant(skillAwareLine({ uuid: 'a4', messageId: 'msg-4', outputTokens: 40 }));
+      appendFileSync(
+        transcriptPath,
+        [boundary, headUser, headSkill, answer].map((l) => l + '\n').join(''),
+        'utf-8'
+      );
+
+      const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      const usage = events.filter((e) => e.type === 'agent.usage.request');
+      expect(usage.map((e) => e.message_id)).toEqual(['msg-4']);
+      expect(usage[0]).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    });
+
+    it('starts from an empty set at mainOffset 0', async () => {
+      const { saveParseState, createParseState } = await import('../parse-state.js');
+      const sessionId = 'session-blob-legacy-zero';
+      await saveParseState(sessionId, createParseState());
+      const transcriptPath = writeTranscript('transcript-blob-legacy-zero.jsonl', [headUser, headSkill, ...tail]);
+
+      const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      expect(summaryOf(events).branch_counts).toEqual({ feature: 2 });
+      const usage = events.filter((e) => e.type === 'agent.usage.request');
+      expect(usage.map((e) => e.message_id)).toEqual(['msg-1', 'msg-2']);
+      expect(usage[1]).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    });
+  });
+
+  it('treats a stored non-array seen-uuid value as empty', async () => {
+    const { saveParseState, createParseState } = await import('../parse-state.js');
+    const sessionId = 'session-blob-bad-state';
+    await saveParseState(sessionId, { ...createParseState(), seenMessageUuids: 42 as unknown as string[] });
+    const line = userLine('prompt', { uuid: 'p1' });
+    const transcriptPath = writeTranscript('transcript-blob-bad-state.jsonl', [line, line]);
+
+    const summary = summaryOf(await mainEvents(sessionId, transcriptPath, 'Stop'));
+
+    expect(summary.branch_counts).toEqual({ feature: 1 });
+  });
+
+  const readUse = { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/repo/a.ts' } };
+  const readResult = { type: 'tool_result', tool_use_id: 'toolu_read', content: 'file' };
+
+  const subagentUsageOf = (events: ForwardedEvent[]): ForwardedEvent[] =>
+    events.filter((e) => e.type === 'agent.subagent.usage');
+
+  it('counts a subagent tool call once when a blob copies its tool_use', async () => {
+    const sessionId = 'session-blob-fork';
+    const file = writeSubagentFixture(sessionId, 'fork1', [
+      typed('assistant', 's1', [readUse]),
+      blob('assistant', [readUse]),
+      typed('user', 's2', [readResult]),
+      blob('user', [readResult]),
+    ]);
+
+    const [usage] = subagentUsageOf(await subagentEvents(sessionId, file));
+
+    expect(usage).toMatchObject({ tool_calls: 1, tool_results: 1 });
+  });
+
+  it('treats a subagent file holding only blob lines as empty', async () => {
+    const sessionId = 'session-blob-only';
+    const file = writeSubagentFixture(sessionId, 'blobs', [blob('assistant', [readUse]), blob('user', [readResult])]);
+
+    expect(subagentUsageOf(await subagentEvents(sessionId, file))).toHaveLength(0);
+  });
+
+  it('counts a re-written subagent assistant line once', async () => {
+    const sessionId = 'session-blob-sub-rewrite';
+    const toolLine = typed('assistant', 's1', [readUse]);
+    const file = writeSubagentFixture(sessionId, 'rewrite', [toolLine, typed('user', 's2', [readResult]), toolLine]);
+
+    const [usage] = subagentUsageOf(await subagentEvents(sessionId, file));
+
+    expect(usage).toMatchObject({ tool_calls: 1 });
+  });
+
+  it('derives the same agent.usage.request records when blob lines are interleaved', async () => {
+    const fixture = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'transcript-subagent-direct.jsonl'),
+      'utf-8'
+    ).trimEnd().split('\n');
+    const sessionId = 'session-blob-partial';
+    const file = writeSubagentFixture(
+      sessionId,
+      'bg-blob',
+      fixture.flatMap((line) => [line, blob('assistant', [{ type: 'text', text: 'copy' }])])
+    );
+
+    const events = await subagentEvents(sessionId, file);
+    const usage = events.filter((e) => e.type === 'agent.usage.request');
+    const byReq = Object.fromEntries(usage.map((e) => [e.request_id, e]));
+
+    expect(usage).toHaveLength(6);
+    expect(byReq.req_s1).toMatchObject({ output_tokens: 3, output_tokens_partial: true });
+    expect(byReq.req_s2).toMatchObject({ output_tokens: 8, output_tokens_partial: true });
+    expect(byReq.req_s3).toMatchObject({ output_tokens: 300, output_tokens_partial: false });
+    expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
+    expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
+    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
+  });
+});

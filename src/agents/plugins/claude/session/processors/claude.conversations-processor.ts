@@ -20,6 +20,7 @@ import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { takeMessagesBefore } from './messages-before.js';
+import { isCountedTranscriptLine, keepFirstByUuid } from '../transcript-lines.js';
 
 /** Assistant id stamped on every CLI-imported conversation; the backend keys CLI chats by it. */
 const CLI_ASSISTANT_ID = '5a430368-9e91-4564-be20-989803bf4da2';
@@ -1045,14 +1046,15 @@ export class ConversationsProcessor implements SessionProcessor {
       const content = await readFile(agentFilePath, 'utf-8');
       const lines = content.trim().split('\n').filter(line => line.length > 0);
 
-      const records: any[] = [];
+      const allRecords: any[] = [];
       for (const line of lines) {
         try {
-          records.push(JSON.parse(line));
+          allRecords.push(JSON.parse(line));
         } catch (error) {
           logger.warn(`[${this.name}] Failed to parse line in ${agentFilePath}:`, error);
         }
       }
+      const records = keepFirstByUuid(allRecords.filter(isCountedTranscriptLine));
 
       if (records.length === 0) {
         logger.debug(`[${this.name}] Empty agent file: ${agentFilePath}`);

@@ -59,6 +59,7 @@ import {
   extractNamedInvocations,
   extractOrderedNamedInvocations,
 } from '@/agents/plugins/claude/session/claude-named-invocations.js';
+import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import {
   buildCompactionDoneEvent,
   collectClientVersions,
@@ -359,15 +360,16 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
   }
 
   const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
-  const parsedLines: TranscriptLine[] = [];
+  const allLines: TranscriptLine[] = [];
 
   for (const line of rawLines) {
     try {
-      parsedLines.push(JSON.parse(line) as TranscriptLine);
+      allLines.push(JSON.parse(line) as TranscriptLine);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
   }
+  const parsedLines = keepFirstByUuid(allLines.filter(isCountedTranscriptLine));
 
   // Pass 1: collect tool_result error flags keyed by their matching tool_use_id.
   const errorByToolUseId = collectErrorToolUseIds(parsedLines);
@@ -438,6 +440,32 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 }
 
 /**
+ * The seen-uuid set for a state saved before `seenMessageUuids` existed: the counted `user` /
+ * `assistant` uuids in the bytes the earlier pass already read, so their re-written copies are not
+ * counted again. A missing file or a read error seeds nothing.
+ */
+async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promise<Set<string>> {
+  const seen = new Set<string>();
+  if (mainOffset <= 0) return seen;
+  let head: Buffer;
+  try {
+    head = (await readFile(transcriptPath)).subarray(0, mainOffset);
+  } catch {
+    return seen;
+  }
+  for (const line of head.toString('utf-8').split('\n')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (isCountedTranscriptLine(parsed)) keepFirstByUuid([parsed], seen);
+  }
+  return seen;
+}
+
+/**
  * Derive the spool-bound events for one `Stop`/`PreCompact`/`PostCompact`/`SessionEnd`/
  * `StopFailure` hook fire, mutating `state` in memory. Does not persist anything — the caller (a
  * pass opener below) owns the commit, so several passes can share one in-memory `state` under
@@ -473,6 +501,9 @@ async function deriveMainEvents(
 
   const events: Record<string, unknown>[] = [];
   const touchedKeys = new Set<string>();
+  const seenUuids = Array.isArray(state.seenMessageUuids)
+    ? new Set<string>(state.seenMessageUuids)
+    : await seedSeenUuids(transcriptPath, state.mainOffset);
   for (const line of lines) {
     let rawGitBranch = '';
     let isUserLine = false;
@@ -484,6 +515,9 @@ async function deriveMainEvents(
     } catch {
       // Malformed line: still attempt usage parsing below (which has its own try/catch), but
       // there is no branch/skill/turn signal to read from it.
+    }
+    if (!isCountedTranscriptLine(head) || keepFirstByUuid([head], seenUuids).length === 0) {
+      continue;
     }
     // The contract's branch counts are user lines per branch.
     if (rawGitBranch && isUserLine) {
@@ -513,6 +547,7 @@ async function deriveMainEvents(
     }
   }
   state.mainOffset = nextOffset;
+  state.seenMessageUuids = [...seenUuids];
 
   for (const key of touchedKeys) {
     events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
@@ -937,14 +972,15 @@ async function scanSubagentTranscript(filePath: string): Promise<SubagentScanRes
   }
 
   const rawLines = raw.split('\n').filter((line) => line.trim().length > 0);
-  const parsedLines: TranscriptLine[] = [];
+  const allLines: TranscriptLine[] = [];
   for (const line of rawLines) {
     try {
-      parsedLines.push(JSON.parse(line) as TranscriptLine);
+      allLines.push(JSON.parse(line) as TranscriptLine);
     } catch {
       // Skip malformed lines rather than aborting the whole scan.
     }
   }
+  const parsedLines = keepFirstByUuid(allLines.filter(isCountedTranscriptLine));
 
   if (parsedLines.length === 0) {
     return empty;

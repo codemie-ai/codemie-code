@@ -56,6 +56,10 @@ export interface TranscriptParseState {
    *  `compact_boundary` lines independently of `mainOffset`, since a sibling hook can advance
    *  `mainOffset` past one without ever looking for it. */
   lastCompactionEnd: string;
+  /** `uuid`s of the main transcript's `user` / `assistant` lines already counted, so a re-written
+   *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
+   *  a state saved before it existed. */
+  seenMessageUuids?: string[];
 }
 
 /**

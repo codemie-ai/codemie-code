@@ -295,5 +295,37 @@ describe('ClaudeSessionAdapter', () => {
 
       expect(parsed.metrics).toBeDefined();
     });
+
+    it('drops api-request-blob lines before counting', async () => {
+      const sessionFile = join(tempDir, 'blob-session.jsonl');
+      const readUse = { type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: 'test.ts' } };
+      const blob = (role: string, content: unknown) =>
+        ({ type: 'api-request-blob', sessionId: 'session-blob', hash: 'h', message: { role, content } });
+      const messages = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-blob',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: '<command-message>probe</command-message>\n<command-name>/probe</command-name>' }
+        },
+        blob('user', '<command-message>probe</command-message>\n<command-name>/probe</command-name>'),
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-blob',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: { role: 'assistant', content: [readUse] }
+        },
+        blob('assistant', [readUse])
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-blob');
+
+      expect(parsed.messages.map((m) => (m as { type: string }).type)).toEqual(['user', 'assistant']);
+      expect(parsed.metrics?.tools?.Read).toBe(1);
+    });
   });
 });

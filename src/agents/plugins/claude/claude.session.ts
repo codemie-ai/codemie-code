@@ -20,6 +20,7 @@ import { MetricsProcessor } from './session/processors/claude.metrics-processor.
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
 import { extractNamedInvocations } from './session/claude-named-invocations.js';
+import { isCountedTranscriptLine } from './session/transcript-lines.js';
 
 /**
  * Best-effort decode of a Claude Code project directory name back to a filesystem path.
@@ -184,7 +185,9 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
       // Read main session JSONL file (collapse any duplicate-uuid records)
-      const messages = this.dedupeByUuid(await readJSONL<ClaudeMessage>(filePath));
+      const messages = this.dedupeByUuid(
+        (await readJSONL<ClaudeMessage>(filePath)).filter(isCountedTranscriptLine)
+      );
 
       // Handle empty files gracefully (new sessions, in-progress, corrupted files)
       if (messages.length === 0) {
@@ -254,7 +257,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       for (const subagentFile of subagentFiles) {
         try {
           const subagentMessages = this.dedupeByUuid(
-            await readJSONL<ClaudeMessage>(subagentFile.filePath)
+            (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
           );
           subagents.push({
             agentId: subagentFile.agentId,
