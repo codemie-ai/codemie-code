@@ -2558,6 +2558,28 @@ describe('api-request-blob lines', () => {
       expect(usage.map((e) => e.message_id)).toEqual(['msg-new']);
     });
 
+    it('seeds again on the pass after one that could not read the transcript', async () => {
+      const { loadParseState, saveParseState } = await import('../parse-state.js');
+      const sessionId = 'session-blob-legacy-missing';
+      const transcriptPath = writeTranscript('transcript-blob-legacy-missing.jsonl', [headUser, headSkill]);
+      await mainEvents(sessionId, transcriptPath, 'Stop');
+      const { seenMessageUuids: _dropped, ...legacy } = await loadParseState(sessionId);
+      expect(legacy.branchCounts).toEqual({ feature: 1 });
+      await saveParseState(sessionId, legacy);
+      rmSync(transcriptPath);
+
+      await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      expect((await loadParseState(sessionId)).seenMessageUuids).toBeUndefined();
+      writeTranscript('transcript-blob-legacy-missing.jsonl', [headUser, headSkill, ...tail]);
+
+      const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      expect(summaryOf(events).branch_counts).toEqual({ feature: 2 });
+      const usage = events.filter((e) => e.type === 'agent.usage.request');
+      expect(usage.map((e) => e.message_id)).toEqual(['msg-2']);
+    });
+
     it('starts from an empty set at mainOffset 0', async () => {
       const { saveParseState, createParseState } = await import('../parse-state.js');
       const sessionId = 'session-blob-legacy-zero';

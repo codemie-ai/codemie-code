@@ -442,17 +442,18 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 /**
  * The seen-uuid set for a state saved before `seenMessageUuids` existed: the counted `user` /
  * `assistant` uuids in the bytes the earlier pass already read, so their re-written copies are not
- * counted again. A missing file or a read error seeds nothing; so does a file now shorter than
- * `mainOffset`, which the reader re-reads from byte 0 as new lines never counted.
+ * counted again. A file now shorter than `mainOffset` seeds nothing: the reader re-reads it from
+ * byte 0 as new lines never counted. `null` when the file is missing or unreadable, so the caller
+ * leaves the field absent and the next pass seeds again.
  */
-async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promise<Set<string>> {
+async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promise<Set<string> | null> {
   const seen = new Set<string>();
   if (mainOffset <= 0) return seen;
   let buffer: Buffer;
   try {
     buffer = await readFile(transcriptPath);
   } catch {
-    return seen;
+    return null;
   }
   if (buffer.length < mainOffset) return seen;
   const head = buffer.subarray(0, mainOffset);
@@ -508,9 +509,10 @@ async function deriveMainEvents(
 
   const events: Record<string, unknown>[] = [];
   const touchedKeys = new Set<string>();
-  const seenUuids = Array.isArray(state.seenMessageUuids)
+  const seeded = Array.isArray(state.seenMessageUuids)
     ? new Set<string>(state.seenMessageUuids)
     : await seedSeenUuids(transcriptPath, state.mainOffset);
+  const seenUuids = seeded ?? new Set<string>();
   for (const line of lines) {
     let rawGitBranch = '';
     let isUserLine = false;
@@ -555,7 +557,7 @@ async function deriveMainEvents(
     }
   }
   state.mainOffset = nextOffset;
-  state.seenMessageUuids = [...seenUuids];
+  if (seeded) state.seenMessageUuids = [...seenUuids];
 
   for (const key of touchedKeys) {
     events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
@@ -714,7 +716,10 @@ const NOOP_FINALIZE = async (): Promise<void> => {};
  * payload nor the prior `agent.session.env` snapshot has one — e.g. the Claude Code desktop app's
  * `SessionStart` carries no `model` until the first `/compact` or model switch, even though every
  * transcript line already reports the model that actually answered. A fork, an inline skill or a
- * command can run on its own `model:`, so their requests never set the session's model.
+ * command can run on its own `model:`, so their requests do not set the session's model: a fork's
+ * by its `agentId`, an inline skill's or a command's by the `attributionSkill` mark Claude Code
+ * writes from 2.1.278; on earlier versions only the `activeSkill` heuristic scopes them, which
+ * catches a skill run through the Skill tool but not a slash-invoked skill or a command.
  * `requestedModel` is preferred because it has the form SessionStart `model` and the model-switch
  * hooks use (`claude-opus-5-5[1m]`), while `model` drops `[1m]` and can be the provider's id.
  * `''` when no such request exists yet.
