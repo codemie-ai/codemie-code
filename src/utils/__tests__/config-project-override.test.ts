@@ -167,6 +167,103 @@ describe('ConfigLoader - Project-Level Configuration', () => {
     });
   });
 
+  describe('profile scope ownership', () => {
+    async function writeGlobalConfig(config: MultiProviderConfig): Promise<void> {
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(config, null, 2));
+    }
+
+    async function writeLocalConfig(config: MultiProviderConfig): Promise<void> {
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(config, null, 2));
+    }
+
+    it('switches to a global profile in local config without mutating global activeProfile when local config exists', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await writeGlobalConfig({
+        version: 2,
+        activeProfile: 'global-default',
+        profiles: {
+          'global-default': { provider: 'sso' },
+          'global-work': { provider: 'bedrock' }
+        }
+      });
+      await writeLocalConfig({
+        version: 2,
+        activeProfile: 'local-default',
+        profiles: { 'local-default': { provider: 'sso' } }
+      });
+
+      await expect(ConfigLoader.switchProfile('global-work', workingDir)).resolves.toBe('local');
+
+      const globalConfig: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      const localConfig: MultiProviderConfig = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(globalConfig.activeProfile).toBe('global-default');
+      expect(localConfig.activeProfile).toBe('global-work');
+      await expect(ConfigLoader.getActiveProfileName(workingDir)).resolves.toBe('global-work');
+    });
+
+    it('deletes a global profile from global config and repairs dangling local reference', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await writeGlobalConfig({
+        version: 2,
+        activeProfile: 'global-work',
+        profiles: {
+          'global-default': { provider: 'sso' },
+          'global-work': { provider: 'bedrock' }
+        }
+      });
+      await writeLocalConfig({
+        version: 2,
+        activeProfile: 'global-work',
+        profiles: { 'local-default': { provider: 'sso' } }
+      });
+
+      await expect(ConfigLoader.deleteProfile('global-work', workingDir)).resolves.toBe('global');
+
+      const globalConfig: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      const localConfig: MultiProviderConfig = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(globalConfig.profiles['global-work']).toBeUndefined();
+      expect(globalConfig.activeProfile).toBe('global-default');
+      expect(localConfig.profiles['local-default']).toBeDefined();
+      expect(localConfig.activeProfile).toBe('local-default');
+    });
+
+    it('falls back to global active profile when local active profile is empty or non-existent', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await writeGlobalConfig({
+        version: 2,
+        activeProfile: 'global-default',
+        profiles: {
+          'global-default': { provider: 'sso' }
+        }
+      });
+      await writeLocalConfig({
+        version: 2,
+        activeProfile: 'non-existent',
+        profiles: {}
+      });
+
+      await expect(ConfigLoader.getActiveProfileName(workingDir)).resolves.toBe('global-default');
+    });
+
+    it('switches active profile in global config when local config does not exist', async () => {
+      const nonProjectDir = path.join(TEST_DIR, 'no-project');
+      await writeGlobalConfig({
+        version: 2,
+        activeProfile: 'global-default',
+        profiles: {
+          'global-default': { provider: 'sso' },
+          'global-work': { provider: 'bedrock' }
+        }
+      });
+
+      await expect(ConfigLoader.switchProfile('global-work', nonProjectDir)).resolves.toBe('global');
+
+      const globalConfig: MultiProviderConfig = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      expect(globalConfig.activeProfile).toBe('global-work');
+      await expect(ConfigLoader.getActiveProfileName(nonProjectDir)).resolves.toBe('global-work');
+    });
+  });
+
   describe('loadWithSources', () => {
     it('should return ConfigWithSources structure', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
