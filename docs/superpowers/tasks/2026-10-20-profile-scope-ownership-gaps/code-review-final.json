@@ -1,0 +1,103 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran against the full branch diff with the approved spec, so confidence is high. Six blocking findings: two critical and four major. Critical 1: PR #575's stricter isMultiProviderConfig makes a previously accepted global config look empty, so the next global save overwrites every global profile. Critical 2: local-config migrations still bypass the B1 safe-write path. Major: inquirer Ctrl+C reported as a failure, AC10 test gaps, an inaccurate guide line, and the @/ alias constraint. 7 deferred as pre-existing on main: read path silently ignores unparseable/BOM local files; Object.prototype and __proto__ profile names; no file locking or atomic writes; cwd == home makes local and global the same file; empty global activeProfile loads built-in defaults; rename to an empty name; global save then local repair is not atomic. 16 dismissed: false positives (typecheck/lint pass, test path isolation via ConfigLoader getters), decisions the approved spec/plan made (first remaining profile on delete, activation on update, label wording, shared workspace, uniqueness is a non-goal), and below-floor edge cases.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"kind": "spec", "item": "B1 Safe local writes: one read-modify-write path, write-path classifier, narrow reads", "status": "partial", "notes": "updateLocalConfig/classifier cover switch, delete, rename, saveLocalProfile and Local skills/assistants. Migrations 004/005/007 still use loadLocalMultiProviderConfig + saveLocalMultiProviderConfig, which the spec lists as B1 callers."},
+    {"kind": "spec", "item": "B2 setup Local save merges; update keeps active; add follows activation rule", "status": "pass", "notes": "saveLocalProfile + setup.ts prompt gated on !isUpdate && !activated"},
+    {"kind": "spec", "item": "B3 New local file / delete repair write activeProfile \"\"", "status": "pass", "notes": "readLocalConfigForWrite default, loadLocalMultiProviderConfig default, firstProfileNameOrEmpty"},
+    {"kind": "spec", "item": "B4 One-time TTY-gated stderr fallback warning, also logged", "status": "pass", "notes": "warnDanglingLocalProfile; enabled only by profile preAction hook and AgentCLI"},
+    {"kind": "spec", "item": "B5 Scope-aware rename", "status": "pass", "notes": "renameProfile(old,new,workingDir) returns StorageScope; either-scope uniqueness; cwd local repair"},
+    {"kind": "spec", "item": "B6 Visible errors and clean cancellation", "status": "partial", "notes": "exitWithCommandError on every listed catch; custom picker cancel exits 0. Ctrl+C in inquirer prompts (delete confirmation, setup) prints a red failure and exits 1."},
+    {"kind": "spec", "item": "AC1 delete <global> in repo with local config", "status": "pass", "notes": "config-level test; isolated e2e S1"},
+    {"kind": "spec", "item": "AC2 dangling local falls back; warning once on TTY", "status": "pass", "notes": "fallback warning tests"},
+    {"kind": "spec", "item": "AC3 delete last local then a global profile", "status": "pass", "notes": "config-local-write test; e2e S3"},
+    {"kind": "spec", "item": "AC4 switch preserves keys; refuse rows byte-identical with reason", "status": "pass", "notes": "classifier tests + e2e S4/E4"},
+    {"kind": "spec", "item": "AC5 setup Local add/update keeps data; activation rule", "status": "pass", "notes": "saveLocalProfile tests; setup wiring untested (see AC10)"},
+    {"kind": "spec", "item": "AC6 fresh-dir local registration writes \"\" with no warning", "status": "pass", "notes": "skills test + '' no-warn test"},
+    {"kind": "spec", "item": "AC7 rename local-only/global, uniqueness, cwd repair", "status": "pass", "notes": "renameProfile tests + command tests; e2e E2/E2b"},
+    {"kind": "spec", "item": "AC8 red reason without debug; picker cancel exits 0", "status": "pass", "notes": "exitWithCommandError; e2e E1"},
+    {"kind": "spec", "item": "AC9 list marks effective active profile", "status": "pass", "notes": "listProfiles dangling test"},
+    {"kind": "spec", "item": "AC10 regression tests for 1-9; gates pass", "status": "partial", "notes": "No command-level test for the AC1 scope message; AC8 failure output tested only for delete/rename; no auth or status failure tests"},
+    {"kind": "spec", "item": "AC11 guide documents rename, safe-write, \"\", warning", "status": "partial", "notes": "Documented, but the guide still says 'Profile names are unique across the system', which is not enforced (non-goal, PR #585)"},
+    {"kind": "spec", "item": "Constraint: ESM, .js, @/ aliases, no any, return types, ConfigurationError", "status": "partial", "notes": "New command-error.ts uses deep relative imports instead of @/utils/..."},
+    {"kind": "spec", "item": "Constraint: StorageScope return convention", "status": "pass", "notes": "switch/delete/rename return StorageScope"},
+    {"kind": "spec", "item": "Constraint: Filip's commits kept; PR credits #575", "status": "pass", "notes": "history intact; PR credit checked at PR creation"},
+    {"kind": "spec", "item": "Anti-goal: no code path replaces an existing local file wholesale", "status": "fail", "notes": "Pending migration 004/005/007 reads an unparseable or BOM local file as {} and writes a fresh object over it"},
+    {"kind": "spec", "item": "Anti-goal: no stdout / repeated / hook warnings", "status": "pass", "notes": "console.error once, opt-in"},
+    {"kind": "spec", "item": "Anti-goal: don't change active profile where behaviour is correct", "status": "pass", "notes": "valid local active and no-local paths unchanged"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All branch commits pass commitlint (type/scope enum, header <= 100); enforced by the commit-msg hook on each commit"},
+    {"kind": "code-quality", "status": "pass", "notes": "Lint zero warnings, typecheck clean; explicit return types; no new any"},
+    {"kind": "security", "status": "pass", "notes": "Gitleaks on every commit: no leaks; no secrets logged; error output uses getErrorMessage only"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": ".ai-run/guides/usage/project-config.md",
+      "line": 63,
+      "title": "Guide claims system-wide unique profile names",
+      "problem": "The Key rule still says 'Profile names are unique across the system'. Nothing enforces cross-scope uniqueness on add (non-goal, PR #585); only rename and setup check the current directory's scopes.",
+      "impact": "Readers and agents rely on a guarantee the code does not give, e.g. assume delete/rename cannot hit a same-named profile in the other scope.",
+      "recommendation": "Reword to the actual rule: rename and setup reject a name that already exists in this directory's local or global scope; duplicates across scopes resolve local first."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/__tests__/index.test.ts",
+      "title": "AC10 command-level regression gaps",
+      "problem": "No command-level test asserts the AC1 'deleted from global config' output. AC8 red-reason output is tested only for delete and rename, not for status or the auth commands.",
+      "impact": "Regressions in the user-visible scope message or in a catch block reverting to silent logger.error would not be caught.",
+      "recommendation": "Add command tests: delete success prints the owning scope; status failure and login/logout/refresh failure print the red reason and exit 1."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/command-error.ts",
+      "line": 2,
+      "title": "New file uses deep relative imports",
+      "problem": "command-error.ts imports '../../../utils/logger.js' and '../../../utils/errors.js'; the approved spec/plan constraints require @/ aliases for new cross-tree imports.",
+      "impact": "Violates a documented project constraint (AGENTS.md pitfalls).",
+      "recommendation": "Import from '@/utils/logger.js' and '@/utils/errors.js'."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/command-error.ts",
+      "line": 22,
+      "title": "Inquirer Ctrl+C shown as a red failure",
+      "problem": "Ctrl+C in an inquirer prompt (delete confirmation, setup prompts) throws inquirer's ExitPromptError, not ProfileSelectionCancelledError. exitWithCommandError prints '✗ Failed to delete profile: User force closed the prompt...' and exits 1.",
+      "impact": "A user cancel looks like a failure. This output is new on this branch (before, the exit was silent), and it contradicts B6's clean-cancellation intent.",
+      "recommendation": "Treat error.name === 'ExitPromptError' like ProfileSelectionCancelledError (yellow 'Cancelled.', exit 0) and add a test."
+    },
+    {
+      "id": "CR-005",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/env/types.ts",
+      "line": 211,
+      "title": "Stricter guard lets global saves wipe profiles",
+      "problem": "PR #575 made isMultiProviderConfig reject a v2 global config with a null/array profile entry or a non-string activeProfile. Main accepted such files. loadMultiProviderConfig now treats them as empty ({version:2, activeProfile:'default', profiles:{}}), and saveMultiProviderConfig (saveProfile, saveUserEmail, switch, delete, rename) then writes that over the real file.",
+      "impact": "Data loss: one hand-edited bad entry turns the next global save into a wipe of every global profile. This is a regression on this branch.",
+      "recommendation": "Mirror B1 for the global write path: before saveMultiProviderConfig writes, re-read the raw global file and refuse with a ConfigurationError naming the file ('left unchanged') when it exists and is not missing/empty, v2 or legacy. Add a test that a global file with a null profile entry is byte-identical after saveProfile/switchProfile."
+    },
+    {
+      "id": "CR-006",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/migrations/004-skills-assistants-top-level.migration.ts",
+      "line": 26,
+      "title": "Migrations bypass the B1 safe local write",
+      "problem": "Migrations 004, 005 and 007 load the local file with loadLocalMultiProviderConfig. Through loadJsonConfig it returns {} for unparseable JSON or a BOM-prefixed file, which becomes an empty v2 config. The migrations then save it with saveLocalMultiProviderConfig.",
+      "impact": "A pending migration can replace an existing local file wholesale (profiles, assistants and workspace lost). This violates the B1 caller list and the anti-goal.",
+      "recommendation": "Make loadLocalMultiProviderConfig read through readLocalConfigForWrite (BOM strip, refuse unparseable/legacy/unsupported with ConfigurationError, fill partial files) so migrations refuse instead of overwriting. Keep the missing-file default. Add a test that a migration on an unparseable local file leaves it byte-identical."
+    }
+  ]
+}

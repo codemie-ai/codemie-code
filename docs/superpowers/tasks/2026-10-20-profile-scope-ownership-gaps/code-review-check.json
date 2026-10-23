@@ -1,0 +1,196 @@
+{
+  "decision": "approve",
+  "rationale": "All six blocking findings from code-review.final are resolved by fix-up commits 459eb033..62c45617 (335-line diff). Each fix landed test-first (RED observed), and the full gates pass: lint, typecheck, build, 3159 unit tests. The isolated e2e on the rebuilt CLI confirms S1-S4, E1, E2 and CR-005 (a malformed global file stays byte-identical). No new high-risk issue in the fix-up diff. Accepted side effects, noted rather than blocking: a pending local migration now fills a versionless local file (spec B1 fill row) instead of failing; with a malformed global file, reads still list no profiles (pre-existing class from the stricter #575 guard, no data loss; malformed-global hardening is a non-goal).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "B1 Safe local writes: one read-modify-write path, write-path classifier, narrow reads",
+      "status": "partial",
+      "notes": "updateLocalConfig/classifier cover switch, delete, rename, saveLocalProfile and Local skills/assistants. Migrations 004/005/007 still use loadLocalMultiProviderConfig + saveLocalMultiProviderConfig, which the spec lists as B1 callers."
+    },
+    {
+      "kind": "spec",
+      "item": "B2 setup Local save merges; update keeps active; add follows activation rule",
+      "status": "pass",
+      "notes": "saveLocalProfile + setup.ts prompt gated on !isUpdate && !activated"
+    },
+    {
+      "kind": "spec",
+      "item": "B3 New local file / delete repair write activeProfile \"\"",
+      "status": "pass",
+      "notes": "readLocalConfigForWrite default, loadLocalMultiProviderConfig default, firstProfileNameOrEmpty"
+    },
+    {
+      "kind": "spec",
+      "item": "B4 One-time TTY-gated stderr fallback warning, also logged",
+      "status": "pass",
+      "notes": "warnDanglingLocalProfile; enabled only by profile preAction hook and AgentCLI"
+    },
+    {
+      "kind": "spec",
+      "item": "B5 Scope-aware rename",
+      "status": "pass",
+      "notes": "renameProfile(old,new,workingDir) returns StorageScope; either-scope uniqueness; cwd local repair"
+    },
+    {
+      "kind": "spec",
+      "item": "B6 Visible errors and clean cancellation",
+      "status": "partial",
+      "notes": "exitWithCommandError on every listed catch; custom picker cancel exits 0. Ctrl+C in inquirer prompts (delete confirmation, setup) prints a red failure and exits 1."
+    },
+    {
+      "kind": "spec",
+      "item": "AC1 delete <global> in repo with local config",
+      "status": "pass",
+      "notes": "config-level test; isolated e2e S1"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2 dangling local falls back; warning once on TTY",
+      "status": "pass",
+      "notes": "fallback warning tests"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3 delete last local then a global profile",
+      "status": "pass",
+      "notes": "config-local-write test; e2e S3"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4 switch preserves keys; refuse rows byte-identical with reason",
+      "status": "pass",
+      "notes": "classifier tests + e2e S4/E4"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5 setup Local add/update keeps data; activation rule",
+      "status": "pass",
+      "notes": "saveLocalProfile tests; setup wiring untested (see AC10)"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6 fresh-dir local registration writes \"\" with no warning",
+      "status": "pass",
+      "notes": "skills test + '' no-warn test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7 rename local-only/global, uniqueness, cwd repair",
+      "status": "pass",
+      "notes": "renameProfile tests + command tests; e2e E2/E2b"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8 red reason without debug; picker cancel exits 0",
+      "status": "pass",
+      "notes": "exitWithCommandError; e2e E1"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9 list marks effective active profile",
+      "status": "pass",
+      "notes": "listProfiles dangling test"
+    },
+    {
+      "kind": "spec",
+      "item": "AC10 regression tests for 1-9; gates pass",
+      "status": "partial",
+      "notes": "No command-level test for the AC1 scope message; AC8 failure output tested only for delete/rename; no auth or status failure tests"
+    },
+    {
+      "kind": "spec",
+      "item": "AC11 guide documents rename, safe-write, \"\", warning",
+      "status": "partial",
+      "notes": "Documented, but the guide still says 'Profile names are unique across the system', which is not enforced (non-goal, PR #585)"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: ESM, .js, @/ aliases, no any, return types, ConfigurationError",
+      "status": "partial",
+      "notes": "New command-error.ts uses deep relative imports instead of @/utils/..."
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: StorageScope return convention",
+      "status": "pass",
+      "notes": "switch/delete/rename return StorageScope"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: Filip's commits kept; PR credits #575",
+      "status": "pass",
+      "notes": "history intact; PR credit checked at PR creation"
+    },
+    {
+      "kind": "spec",
+      "item": "Anti-goal: no code path replaces an existing local file wholesale",
+      "status": "fail",
+      "notes": "Pending migration 004/005/007 reads an unparseable or BOM local file as {} and writes a fresh object over it"
+    },
+    {
+      "kind": "spec",
+      "item": "Anti-goal: no stdout / repeated / hook warnings",
+      "status": "pass",
+      "notes": "console.error once, opt-in"
+    },
+    {
+      "kind": "spec",
+      "item": "Anti-goal: don't change active profile where behaviour is correct",
+      "status": "pass",
+      "notes": "valid local active and no-local paths unchanged"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All branch commits pass commitlint (type/scope enum, header <= 100); enforced by the commit-msg hook on each commit"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Lint zero warnings, typecheck clean; explicit return types; no new any"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Gitleaks on every commit: no leaks; no secrets logged; error output uses getErrorMessage only"
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "62c45617: guide states cross-scope uniqueness is not enforced (local wins), setup/rename check this directory scopes, delete repairs global + this directory local only"
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "4c7072ea: command tests for delete scope message, status failure, login/refresh failure, prompt cancel (logout already reports its own failure via spinner and does not rethrow)"
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "4c7072ea: command-error.ts imports @/utils/logger.js and @/utils/errors.js; build OK"
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "notes": "4c7072ea: ExitPromptError treated as cancellation (yellow Cancelled., exit 0); test added"
+    },
+    {
+      "id": "CR-005",
+      "status": "resolved",
+      "notes": "459eb033: saveMultiProviderConfig refuses unparseable/BOM/non-object/version-but-invalid global files with ConfigurationError, byte-identical; missing, empty and legacy still save; 8 tests + e2e"
+    },
+    {
+      "id": "CR-006",
+      "status": "resolved",
+      "notes": "b382848e: loadLocalMultiProviderConfig uses readLocalConfigForWrite; migration 004 on an unparseable local file leaves it byte-identical (test RED before fix showed overwrite)"
+    }
+  ]
+}

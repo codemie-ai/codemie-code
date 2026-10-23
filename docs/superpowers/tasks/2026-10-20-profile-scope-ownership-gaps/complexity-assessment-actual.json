@@ -1,0 +1,81 @@
+{
+  "task": "On top of PR #575, closed the codemie-code profile-scope gaps. Local config writes now go through a fill/refuse classifier. Setup Local save merges into the existing file. New files and delete repair write activeProfile \"\". A one-time TTY-gated fallback warning was added, rename is scope-aware, and profile/auth command errors are visible. Code-review fix-ups added a global-config write guard, routed local migrations through the safe read path, and treated inquirer Ctrl+C as a cancel.",
+  "generated": "2026-10-21",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "ConfigLoader (src/utils/config.ts: local/global write classifier and guard, switch/delete/rename/initProjectConfig, fallback warning, loadLocalMultiProviderConfig used by migrations), profile CLI commands (index.ts, auth.ts, new command-error.ts helper), setup command (Local save merge), AgentCLI (opt-in for the fallback warning), project-config usage guide",
+      "layers": "Service, Workflow (CLI commands), DB-Persistence (config file write/read semantics), Agent-Tool"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "The spec covered the local write path but missed equivalent hazards on the global write path and in local config migrations. Code review caught both (CR-005, CR-006), as well as inquirer Ctrl+C cancel handling (CR-002..CR-004). The guide's claim that profile names are unique across the system was wrong while unique-name enforcement (PR #585) is still open, so the docs were corrected in CR-001."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "There is no exact precedent for the fill/refuse classifier, which decides whether to fill a partial config file or refuse to touch an unreadable one (null profile entries, a non-string activeProfile, an unknown version, unparseable JSON, a UTF-8 BOM). The write semantics changed on the ConfigLoader path that every agent launch uses. Data loss was a real risk: review found 2 critical issues, a global config overwrite after the stricter guard and migrations overwriting unparseable local files. The one-time fallback warning has to stay TTY-gated so it does not leak into ACP stdio or agent TUIs.",
+      "mitigation": "Unreadable files are refused and left byte-identical. A real-filesystem test suite (config-local-write.test.ts, 618 lines) uses parameterized malformed-file tables for both the global and local scopes, plus a migration 004 regression test. All 6 blocking review findings were fixed in one round. No schema change and no data migration, so rollback is a normal CLI release."
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 8,
+      "modified_file_list": [
+        ".ai-run/guides/usage/project-config.md",
+        "src/agents/core/AgentCLI.ts",
+        "src/cli/commands/profile/__tests__/auth.test.ts",
+        "src/cli/commands/profile/__tests__/index.test.ts",
+        "src/cli/commands/profile/auth.ts",
+        "src/cli/commands/profile/index.ts",
+        "src/cli/commands/setup.ts",
+        "src/utils/config.ts"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        "src/cli/commands/profile/command-error.ts",
+        "src/utils/__tests__/config-local-write.test.ts"
+      ],
+      "affected_dirs": [
+        ".ai-run/guides/usage",
+        "src/agents/core",
+        "src/cli/commands",
+        "src/cli/commands/profile",
+        "src/utils"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["Service", "Workflow", "DB-Persistence", "Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base M (3). The work is concentrated in ConfigLoader plus the profile and setup CLI commands. AgentCLI is a one-line opt-in, and command-error.ts is a helper inside the profile CLI. Two scope red flags raise it to XL. ConfigLoader is a core shared utility on every agent launch path. The changes also reach several workflows: profile switch/rename/delete/status/login/refresh, setup Local save, agent-launch fallback warning, and the local config migrations (via loadLocalMultiProviderConfig). This matches the initial assessment and the project's profile-provider-decoupling calibration example (XL)." },
+    { "dimension": "technical_risk", "reason": "Raised from M to L. The fill/refuse classifier and the global write guard are new defensive patterns with no exact precedent, and they changed write semantics on the shared ConfigLoader path. The data-loss risk was real, not theoretical: code review found 2 critical issues (global overwrite after the stricter guard, migrations overwriting unparseable local files) among 6 blocking findings. Fixing them took a second commit round (CR-001..CR-006)." },
+    { "dimension": "file_change_estimate", "reason": "The implementation slice df790403~1..62c45617 changed 10 files (8 modified, 2 new) across 5 directories, with 1155 insertions and 106 deletions. src/utils/config.ts alone was +345 lines and the new config-local-write.test.ts is 618 lines. This lands in the 7-10 file L band, as the initial 8-10 estimate predicted. The full branch diff against 173b148e shows 12 files, but src/env/types.ts and config-project-override.test.ts come only from PR #575 and are excluded." },
+    { "dimension": "affected_layers", "reason": "Raised from M to L. Four distinct layers changed. Service: ConfigLoader logic. Workflow: the profile and setup CLI commands. DB-Persistence: read/write semantics of the global and local config files, including the read path the local migrations use. Agent-Tool: AgentCLI enables the fallback warning. There is no schema change and no new data migration, so it does not reach XL." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches a core shared utility (ConfigLoader in src/utils/config.ts, on every agent launch path)",
+    "Component Scope bumped from L to XL: affects multiple workflows (profile switch/rename/delete/status/login/refresh, setup Local save, agent-launch fallback warning, local config migrations)",
+    "Borderline 20->21 rule: lean higher because Component Scope is XL (5); supports the L band"
+  ],
+  "split_recommendation": null
+}

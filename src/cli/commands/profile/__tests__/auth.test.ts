@@ -117,3 +117,26 @@ describe('profile auth commands', () => {
     });
   });
 });
+
+describe('profile auth command failures', () => {
+  beforeEach(() => {
+    mockConfigLoad.mockReset();
+    mockConfigLoad.mockRejectedValue(new Error('config broken'));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code}`);
+    }) as never);
+  });
+
+  it.each([
+    ['login', createLoginCommand, 'Login failed'],
+    ['refresh', createRefreshCommand, 'Refresh failed']
+  ])('%s prints the reason without debug mode and exits 1', async (_name, create, label) => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(run(create())).rejects.toThrow('process.exit:1');
+
+    const printed = errorSpy.mock.calls.map(args => String(args[0]));
+    expect(printed.some(line => line.includes(`✗ ${label}: config broken`))).toBe(true);
+  });
+});

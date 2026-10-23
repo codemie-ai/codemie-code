@@ -4,7 +4,7 @@ import ora from 'ora';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
-import { logger } from '../../../utils/logger.js';
+import { exitWithCommandError } from './command-error.js';
 import {
   getPlatformUrl,
   getStoredPlatformCredentials
@@ -20,8 +20,7 @@ export function createLoginCommand(): Command {
       try {
         await handleLogin(options.url);
       } catch (error: unknown) {
-        logger.error('Login failed:', error);
-        process.exit(1);
+        exitWithCommandError('Login failed', error);
       }
     });
 
@@ -37,8 +36,7 @@ export function createLogoutCommand(): Command {
       try {
         await handleLogout();
       } catch (error: unknown) {
-        logger.error('Logout failed:', error);
-        process.exit(1);
+        exitWithCommandError('Logout failed', error);
       }
     });
 
@@ -54,8 +52,7 @@ export function createRefreshCommand(): Command {
       try {
         await handleRefresh();
       } catch (error: unknown) {
-        logger.error('Refresh failed:', error);
-        process.exit(1);
+        exitWithCommandError('Refresh failed', error);
       }
     });
 
