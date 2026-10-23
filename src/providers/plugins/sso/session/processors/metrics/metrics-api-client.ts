@@ -27,6 +27,7 @@ import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
+import { encodeAttributionHeader } from '../../../../../../utils/header-value.js';
 import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 
@@ -152,9 +153,9 @@ class MetricsApiClient {
       'User-Agent': `codemie-cli/${this.config.version}`,
       'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
       'X-CodeMie-Client': this.config.clientType,
-      'X-CodeMie-Repository': metric.attributes.repository,
-      'X-CodeMie-Branch': metric.attributes.branch,
-      ...(metric.attributes.project && { 'X-CodeMie-Project': metric.attributes.project })
+      'X-CodeMie-Repository': encodeAttributionHeader(metric.attributes.repository),
+      'X-CodeMie-Branch': encodeAttributionHeader(metric.attributes.branch),
+      ...(metric.attributes.project && { 'X-CodeMie-Project': encodeAttributionHeader(metric.attributes.project) })
     };
 
     if (this.config.apiKey) {

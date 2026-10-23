@@ -26,6 +26,7 @@ import type { ProxyConfig } from '../../src/providers/plugins/sso/proxy/proxy-ty
 import { ProviderRegistry } from '../../src/providers/core/registry.js';
 import type { ProviderTemplate } from '../../src/providers/core/types.js';
 import '../../src/providers/plugins/sso/proxy/plugins/index.js'; // register core plugins
+import { encodeAttributionHeader } from '../../src/utils/header-value.js';
 
 const GATEWAY_KEY = 'gw-secret-key';
 const UPSTREAM_TOKEN = 'dummy-upstream-jwt';
@@ -132,6 +133,33 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
     const h = harness.captured();
     expect(h['x-codemie-repository']).toBe('org/repo');
     expect(h['x-codemie-branch']).toBe('feature/x');
+  });
+
+  it('percent-encodes non-Latin-1 repository, branch and project values', async () => {
+    const repository = 'clients/репо-тест';
+    const branch = 'фича/икс';
+    const project = 'проект';
+    harness = await startHarness({ repository, branch, project });
+    const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
+    expect(res.status).toBe(200);
+
+    const h = harness.captured();
+    expect(h['x-codemie-repository']).toBe(encodeAttributionHeader(repository));
+    expect(h['x-codemie-branch']).toBe(encodeAttributionHeader(branch));
+    expect(h['x-codemie-project']).toBe(encodeAttributionHeader(project));
+    expect(decodeURIComponent(h['x-codemie-repository'] as string)).toBe(repository);
+    expect(decodeURIComponent(h['x-codemie-branch'] as string)).toBe(branch);
+    expect(decodeURIComponent(h['x-codemie-project'] as string)).toBe(project);
+  });
+
+  it('percent-encodes ASCII values containing spaces and percent signs', async () => {
+    harness = await startHarness({ repository: 'my repo', branch: 'fix/100%' });
+    const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
+    expect(res.status).toBe(200);
+
+    const h = harness.captured();
+    expect(h['x-codemie-repository']).toBe('my%20repo');
+    expect(h['x-codemie-branch']).toBe('fix/100%25');
   });
 
   it('OMITS X-CodeMie-Repository and X-CodeMie-Branch when not configured', async () => {

@@ -14,6 +14,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { logger } from '../../../../../utils/logger.js';
+import { encodeAttributionHeader } from '../../../../../utils/header-value.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
   id = '@codemie/proxy-headers';
@@ -89,10 +90,10 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
         { remotePort: context.remotePort, url: context.url }
       );
 
-      context.headers['X-CodeMie-Repository'] = attribution.repository ?? config.repository ?? 'Cowork';
+      context.headers['X-CodeMie-Repository'] = encodeAttributionHeader(attribution.repository ?? config.repository ?? 'Cowork');
 
       if (attribution.branch) {
-        context.headers['X-CodeMie-Branch'] = attribution.branch;
+        context.headers['X-CodeMie-Branch'] = encodeAttributionHeader(attribution.branch);
       }
 
       // Cowork sessions report as claude-desktop so orchestrator and subprocess metrics
@@ -102,14 +103,14 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       }
     } else if (config.repository) {
       // Non-Desktop mode: use static config values
-      context.headers['X-CodeMie-Repository'] = config.repository;
+      context.headers['X-CodeMie-Repository'] = encodeAttributionHeader(config.repository);
     }
 
     if (config.branch) {
-      context.headers['X-CodeMie-Branch'] = config.branch;
+      context.headers['X-CodeMie-Branch'] = encodeAttributionHeader(config.branch);
     }
     if (config.project) {
-      context.headers['X-CodeMie-Project'] = config.project;
+      context.headers['X-CodeMie-Project'] = encodeAttributionHeader(config.project);
     }
 
     logger.info('[header-injection] Request headers', {

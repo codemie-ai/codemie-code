@@ -172,6 +172,24 @@ describe('MetricsSender upload contract', () => {
     expect(h).toHaveProperty('x-codemie-branch');
   });
 
+  it('percent-encodes non-Latin-1 repository and project headers', async () => {
+    server = new MockServer();
+    await server.start(jsonOk);
+
+    const sender = new MetricsSender({
+      baseUrl: server.baseUrl,
+      cookies: 'session=abc',
+      version: '9.9.9',
+      clientType: 'codemie-claude',
+    });
+    const session = { ...makeSession(home), repository: 'clients/репо-тест', project: 'проект' };
+    await sender.sendSessionStart(session, home, { status: 'started' });
+
+    const h = server.last.headers;
+    expect(h['x-codemie-repository']).toBe('clients/' + encodeURIComponent('репо-тест'));
+    expect(h['x-codemie-project']).toBe(encodeURIComponent('проект'));
+  });
+
   it('uses the user-id header (localhost dev) when apiKey is set and omits the Cookie header', async () => {
     server = new MockServer();
     await server.start(jsonOk);
