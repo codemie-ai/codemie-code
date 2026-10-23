@@ -632,6 +632,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 - `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`
 - `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`
 - `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13)
+- Encoding: `X-CodeMie-Repository`, `X-CodeMie-Branch` and `X-CodeMie-Project` values are always percent-encoded per `/`-separated segment with `encodeURIComponent` (`encodeAttributionHeader` in `src/utils/header-value.ts`), so `/` stays readable, a literal `%` becomes `%25`, and non-Latin-1 characters cannot make Node reject the header. The backend must `decodeURIComponent` these values. Invalid-header errors on `X-CodeMie-*` headers are not reported as authentication errors.
 - `x-litellm-session-id`: session ID, injected only for `codemie-codex`/`codemie-copilot` client types (`header-injection.plugin.ts:41-43`) — not a `X-CodeMie-*` header, easy to miss when scanning for the CodeMie prefix
 
 **Architecture**:
