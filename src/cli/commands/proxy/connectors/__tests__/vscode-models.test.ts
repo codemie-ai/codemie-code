@@ -19,6 +19,15 @@ describe('VS_CODE_CAPABILITY_TABLE', () => {
 describe('findVsCodeCapabilityEntry', () => {
   it('returns the exact family entry', () => {
     expect(findVsCodeCapabilityEntry('claude-4-5-sonnet')?.family).toBe('claude-4-5-sonnet');
+    expect(findVsCodeCapabilityEntry('claude-sonnet-5-5')?.family).toBe('claude-sonnet-5-5');
+    expect(findVsCodeCapabilityEntry('claude-opus-5-5')?.family).toBe('claude-opus-5-5');
+    expect(findVsCodeCapabilityEntry('claude-haiku-5-5')?.family).toBe('claude-haiku-5-5');
+  });
+
+  it('resolves dated 5.5 model variants to their family entry', () => {
+    expect(findVsCodeCapabilityEntry('claude-sonnet-5-5-20261001')?.family).toBe('claude-sonnet-5-5');
+    expect(findVsCodeCapabilityEntry('claude-opus-5-5-20261001')?.family).toBe('claude-opus-5-5');
+    expect(findVsCodeCapabilityEntry('claude-haiku-5-5-20261001')?.family).toBe('claude-haiku-5-5');
   });
 
   it('resolves a vendor-prefixed tenant id to its family entry', () => {
