@@ -90,7 +90,8 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
         { remotePort: context.remotePort, url: context.url }
       );
 
-      context.headers['X-CodeMie-Repository'] = encodeAttributionHeader(attribution.repository ?? config.repository ?? 'Cowork');
+      const repository = attribution.repository ?? config.repository ?? 'Cowork';
+      context.headers['X-CodeMie-Repository'] = encodeAttributionHeader(repository);
 
       if (attribution.branch) {
         context.headers['X-CodeMie-Branch'] = encodeAttributionHeader(attribution.branch);

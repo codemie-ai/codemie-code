@@ -94,10 +94,10 @@ export function normalizeError(error: unknown, context?: Record<string, unknown>
     const errorCode = (error as any).code as string | undefined;
     const message = error.message || '';
 
-    // Node may throw synchronously for malformed header values (for example,
-    // corrupted/invalid cookie bytes). Treat this as an auth/session issue so
-    // users get a recovery action instead of a generic 500. Headers owned by
-    // CodeMie (X-CodeMie-*) are not session data, so re-login cannot fix them.
+    // Node may throw synchronously for malformed header values. Corrupted
+    // cookie/session bytes are an auth issue, so users get a recovery action
+    // instead of a generic 500. X-CodeMie-* headers are not session data, so
+    // re-login cannot fix them and they are reported separately.
     if (
       errorCode === 'ERR_INVALID_CHAR' ||
       errorCode === 'ERR_HTTP_INVALID_HEADER_VALUE' ||
