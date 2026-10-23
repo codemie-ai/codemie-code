@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { stat } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { isSessionStale } from '@/agents/core/session/stale-session-policy.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
@@ -47,6 +48,7 @@ export class DesktopTelemetryRuntime {
   private timer?: NodeJS.Timeout;
   private lastPollAt = this.startedAt;
   private isPolling = false;
+  private reconciliationPromise?: Promise<void>;
 
   constructor(
     private readonly adapter: LocalTelemetryAdapter,
@@ -54,6 +56,16 @@ export class DesktopTelemetryRuntime {
   ) {}
 
   async start(): Promise<void> {
+    // Fire-and-forget, mirroring BaseAgentAdapter's reconcileStaleSessions call: a daemon
+    // restart with a few stranded sessions must not make the caller (proxy-daemon's
+    // persistState, gated by the CLI's 5s readiness poll) wait on sync + metric calls that
+    // carry their own 10-30s network timeouts. Reconciliation runs to completion in the
+    // background; stop() awaits it so shutdown never races an in-flight finalize.
+    this.reconciliationPromise = this.reconcilePersistedSessions().catch((error) => {
+      logger.warn('[desktop-telemetry] Startup reconciliation failed (non-blocking)', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
     await this.poll();
     this.timer = setInterval(() => {
       this.poll().catch((error) => {
@@ -67,6 +79,8 @@ export class DesktopTelemetryRuntime {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+
+    await this.reconciliationPromise;
 
     // Final poll to catch sessions whose transcript was written after the last regular poll
     // but before proxy stop (e.g. Code tab sessions where transcript write is async).
@@ -83,6 +97,77 @@ export class DesktopTelemetryRuntime {
     await this.poll();
   }
 
+
+  /**
+   * `trackedSessions` is in-memory only, so a hard-killed daemon starts the next run with
+   * no memory of sessions it was tracking. poll() only (re)tracks a session once new
+   * activity lands after `startedAt` — a session already idle when the daemon died would
+   * otherwise never be rediscovered and would stay `active` forever. Seed tracking from
+   * disk instead: finalize anything already past the idle timeout immediately, and hand
+   * the rest to the normal poll-driven idle check.
+   */
+  private async reconcilePersistedSessions(): Promise<void> {
+    const activeSessions = await this.sessionStore.findActiveSessions(this.config.clientType);
+    if (activeSessions.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const session of activeSessions) {
+      const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
+      if (!externalSessionId) {
+        continue;
+      }
+
+      const lastSeenActivityAt = session.runtimeCheckpoint?.lastSeenActivityAt ?? session.startTime;
+      const inactiveForMs = now - lastSeenActivityAt;
+
+      if (
+        isSessionStale({
+          now,
+          lastActivityMs: lastSeenActivityAt,
+          inactivityThresholdMs: this.config.inactivityTimeoutMs,
+        })
+      ) {
+        // Reconciliation now runs concurrently with poll() rather than before it, so a
+        // session judged stale from the snapshot taken above may have picked up fresh
+        // activity in the meantime — poll() tracks it the moment that happens. Finalizing
+        // it anyway would stamp a live session completed out from under the user.
+        if (this.trackedSessions.has(externalSessionId)) {
+          logger.debug('[desktop-telemetry] Skipping stale finalize: session has fresh activity', {
+            externalSessionId,
+            sessionId: session.sessionId,
+          });
+          continue;
+        }
+
+        logger.info('[desktop-telemetry] Finalizing session stranded by a previous daemon', {
+          externalSessionId,
+          sessionId: session.sessionId,
+          inactiveForMs,
+        });
+        // One session's finalization (sync, metric send) must never abort the rest, and
+        // must never propagate out of start() — a single bad network/SSO blip here would
+        // otherwise stop the whole daemon from starting, which is strictly worse than the
+        // stale-session gap this method exists to close.
+        try {
+          await this.finalizeSession(session.sessionId, 'desktop-daemon-restart-stale', lastSeenActivityAt);
+        } catch (error) {
+          logger.warn('[desktop-telemetry] Failed to finalize stranded session (non-blocking)', {
+            externalSessionId,
+            sessionId: session.sessionId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        continue;
+      }
+
+      this.trackedSessions.set(externalSessionId, {
+        codemieSessionId: session.sessionId,
+        lastSeenActivityAt
+      });
+    }
+  }
 
   private async poll(): Promise<void> {
     if (this.isPolling) {
@@ -158,7 +243,7 @@ export class DesktopTelemetryRuntime {
           inactiveForMs,
           codemieSessionId: tracked.codemieSessionId,
         });
-        await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout');
+        await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout', tracked.lastSeenActivityAt);
         this.trackedSessions.delete(externalSessionId);
       }
     } finally {
@@ -240,6 +325,7 @@ export class DesktopTelemetryRuntime {
     const session: Session = {
       sessionId: randomUUID(),
       agentName: this.config.clientType,
+      clientType: this.config.clientType,
       provider: this.config.provider,
       startTime: baselineCutoffMs ?? discovered.createdAt,
       workingDirectory: discovered.workingDirectory,
@@ -292,41 +378,36 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  private async finalizeSession(sessionId: string, reason: string): Promise<void> {
+  private async finalizeSession(sessionId: string, reason: string, endTime: number = Date.now()): Promise<void> {
     const session = await this.sessionStore.loadSession(sessionId);
     if (!session || session.status === 'completed') {
       return;
     }
 
-    session.status = 'completed';
-    session.reason = reason;
-    session.endTime = Date.now();
-    await this.sessionStore.saveSession(session);
-
     const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
     if (externalSessionId) {
+      const sinceMs = Math.max(
+        0,
+        (session.runtimeCheckpoint?.lastSeenActivityAt
+          ?? session.runtimeCheckpoint?.lastDiscoveredAt
+          ?? session.startTime) - this.config.pollIntervalMs
+      );
       try {
-        const sinceMs = Math.max(
-          0,
-          (session.runtimeCheckpoint?.lastSeenActivityAt
-            ?? session.runtimeCheckpoint?.lastDiscoveredAt
-            ?? session.startTime) - this.config.pollIntervalMs
-        );
         const discoveredSessions = await this.adapter.discoverSessions(sinceMs);
         const discovered = discoveredSessions.find(
           candidate => candidate.externalSessionId === externalSessionId
         );
 
-        if (discovered) {
-          await this.processSession(session, discovered);
-        } else {
-          logger.warn('[desktop-telemetry] Failed to rediscover session during finalization', {
+        if (!discovered) {
+          logger.warn('[desktop-telemetry] Failed to rediscover session during finalization; continuing with persisted state', {
             sessionId,
             externalSessionId
           });
+        } else {
+          await this.processSession(session, discovered);
         }
       } catch (error) {
-        logger.warn('[desktop-telemetry] Final transcript processing failed', {
+        logger.warn('[desktop-telemetry] Final transcript processing failed (non-blocking)', {
           sessionId,
           externalSessionId,
           error: error instanceof Error ? error.message : String(error)
@@ -334,15 +415,24 @@ export class DesktopTelemetryRuntime {
       }
     }
 
-    const context = await this.buildProcessingContext(session);
+    const latestSession = await this.sessionStore.loadSession(sessionId) ?? session;
+    const finalizedSession: Session = {
+      ...latestSession,
+      status: 'completed',
+      reason,
+      endTime,
+    };
+
+    const context = await this.buildProcessingContext(finalizedSession);
     await this.syncer.sync(sessionId, context);
-    await this.sendSessionEndMetric(session);
+    await this.sendSessionEndMetric(finalizedSession);
+    await this.sessionStore.saveSession(finalizedSession);
     logger.info('[desktop-telemetry] Session finalized', {
       sessionId,
       reason,
-      repository: session.repository,
-      gitBranch: session.gitBranch,
-      status: session.status,
+      repository: finalizedSession.repository,
+      gitBranch: finalizedSession.gitBranch,
+      status: finalizedSession.status,
     });
   }
 

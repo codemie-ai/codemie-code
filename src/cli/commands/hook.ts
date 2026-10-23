@@ -8,6 +8,7 @@ import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { buildAnalyticsContext } from '@/providers/core/codemie-auth-helpers.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
 /**
@@ -33,6 +34,10 @@ export interface SessionEndEvent extends BaseHookEvent {
   hook_event_name: 'SessionEnd';
   reason: string;                  // e.g., "exit", "logout"
   cwd: string;                     // Always present for SessionEnd
+  // Last real activity timestamp, set only by synthetic SessionEnd events (stale-session
+  // reconciliation). A live SessionEnd from the running agent leaves this undefined, so
+  // every duration calculation below defaults to Date.now() as before.
+  endTime?: number;
 }
 
 /**
@@ -77,6 +82,12 @@ export interface HookProcessingConfig {
   ssoUrl?: string;
   /** Optional dedicated CodeMie API URL for analytics sync */
   syncApiUrl?: string;
+  /** Canonical upstream API URL captured before setupProxy rewrote CODEMIE_BASE_URL */
+  targetApiUrl?: string;
+  /** Skip remote metrics/conversation sync during reconciliation; finalize locally only */
+  skipRemoteSync?: boolean;
+  /** For reconciled sessions with trusted routing: require remote delivery or roll back local finalization */
+  requireRemoteDelivery?: boolean;
   /**
    * Environment carrying CODEMIE_PROFILE_CONFIG (the active profile URL) for
    * credential lookup; defaults to process.env. In-process callers pass the
@@ -111,6 +122,7 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
       'CODEMIE_AGENT': 'agentName',
       'CODEMIE_PROVIDER': 'provider',
       'CODEMIE_BASE_URL': 'apiBaseUrl',
+      'CODEMIE_TARGET_API_URL': 'targetApiUrl',
       'CODEMIE_API_KEY': 'apiKey',
       'CODEMIE_CLIENT_TYPE': 'clientType',
       'CODEMIE_CLI_VERSION': 'version',
@@ -226,22 +238,27 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   logger.info(`[hook:SessionEnd] ${JSON.stringify(event)}`);
 
   // 0. Final activity accumulation (handles edge case: session ends without Stop)
-  await accumulateActiveDuration(sessionId);
+  await accumulateActiveDuration(sessionId, event.endTime);
 
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
   await performIncrementalSync(event, 'SessionEnd', sessionId, config);
 
   // 2. Update session status (moved before network sync: marking the session
   //    completed must not depend on the API sync surviving teardown)
-  await updateSessionStatus(event, sessionId);
+  const alreadyTerminal = await updateSessionStatus(event, sessionId);
 
   // 3. Send session end metrics (only reads the session file, which still exists —
   //    the rename stays last)
-  await sendSessionEndMetrics(event, sessionId, event.session_id, config);
+  const endMetricDelivered = await sendSessionEndMetrics(event, sessionId, event.session_id, config, alreadyTerminal);
 
   // 4. API SYNC: Sync pending data to API using SessionSyncer (deadline-bounded,
   //    abortable; unfinished work stays pending for the proxy timer)
-  await syncPendingDataToAPI(sessionId, event.session_id, config, abortSignal);
+  const pendingDataDelivered = await syncPendingDataToAPI(sessionId, event.session_id, config, abortSignal);
+
+  if (config?.requireRemoteDelivery && (!endMetricDelivered || !pendingDataDelivered)) {
+    await rollbackSessionFinalization(sessionId);
+    throw new Error('Remote delivery failed during strict reconciled SessionEnd; local finalization was rolled back for retry');
+  }
 
   // 5. Rename files LAST (after all operations that need to read session)
   await renameSessionFiles(sessionId);
@@ -273,8 +290,18 @@ function resolveSessionEndSyncBudgetMs(): number {
  * @param config - Optional configuration object (if not provided, reads from environment variables)
  * @param abortSignal - Optional abort signal (SIGTERM/SIGINT during teardown) to stop the sync early
  */
-async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig, abortSignal?: AbortSignal): Promise<void> {
+async function syncPendingDataToAPI(
+  sessionId: string,
+  agentSessionId: string,
+  config?: HookProcessingConfig,
+  abortSignal?: AbortSignal
+): Promise<boolean> {
   try {
+    if (config?.skipRemoteSync) {
+      logger.info('[hook:SessionEnd] Skipping API sync for reconciled session without trusted analytics routing');
+      return true;
+    }
+
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
@@ -282,7 +309,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, c
 
     if (provider !== 'ai-run-sso' && !hasCodeMieAnalyticsAuth) {
       logger.debug('[hook:SessionEnd] Skipping API sync (CodeMie analytics auth not configured)');
-      return;
+      return true;
     }
 
     logger.info(`[hook:SessionEnd] Syncing pending data to API`);
@@ -310,11 +337,13 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, c
     } else {
       logger.warn(`[hook:SessionEnd] API sync had failures: ${result.message}`);
     }
+    return result.success;
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:SessionEnd] Failed to sync pending data: ${errorMessage}`);
     // Don't throw - sync failure should not block session end
+    return false;
   }
 }
 
@@ -520,13 +549,14 @@ async function startActivityTracking(sessionId: string): Promise<void> {
  * Called on Stop/SessionEnd to mark the end of active time
  *
  * @param sessionId - The CodeMie session ID
+ * @param asOf - Timestamp to treat as "now"; defaults to Date.now() for a live hook
  * @returns The duration accumulated in this call (0 if no active period)
  */
-async function accumulateActiveDuration(sessionId: string): Promise<number> {
+async function accumulateActiveDuration(sessionId: string, asOf?: number): Promise<number> {
   try {
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     const sessionStore = new SessionStore();
-    return await sessionStore.accumulateActiveDuration(sessionId);
+    return await sessionStore.accumulateActiveDuration(sessionId, asOf);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.warn(`[hook] Failed to accumulate active duration: ${errorMessage}`);
@@ -786,8 +816,15 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
   try {
     // Get metadata from config or environment
     const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config);
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
+    const model = getConfigValue('CODEMIE_MODEL', config);
+    const apiBaseUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const targetApiUrl = getConfigValue('CODEMIE_TARGET_API_URL', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+    const profileName = getConfigValue('CODEMIE_PROFILE_NAME', config);
 
     if (!agentName || !provider) {
       if (config) {
@@ -847,6 +884,23 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       if (remoteRepository) {
         existing.repository = remoteRepository;
       }
+      if (model) {
+        existing.model = model;
+      }
+      if (clientType) {
+        existing.clientType = clientType;
+      }
+      existing.analyticsContext = {
+        ...(existing.analyticsContext ?? {}),
+        ...buildAnalyticsContext({
+          provider,
+          apiBaseUrl,
+          targetApiUrl,
+          ssoUrl,
+          syncApiUrl,
+          profileName,
+        }),
+      };
       existing.correlation = {
         ...existing.correlation,
         status: 'matched',
@@ -886,8 +940,10 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const session = {
       sessionId,
       agentName,
+      ...(clientType && { clientType }),
       provider,
       ...(project && { project }),
+      ...(model && { model }),
       startTime: Date.now(),
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
@@ -895,6 +951,14 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
+      analyticsContext: buildAnalyticsContext({
+        provider,
+        apiBaseUrl,
+        targetApiUrl,
+        ssoUrl,
+        syncApiUrl,
+        profileName,
+      }),
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -1094,7 +1158,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID
  */
-async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<void> {
+async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<boolean> {
   try {
     // Import session store
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -1105,7 +1169,14 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
 
     if (!session) {
       logger.warn(`[hook:SessionEnd] Session not found: ${sessionId}`);
-      return;
+      return false;
+    }
+
+    if (session.status !== 'active' || session.endTime !== undefined) {
+      logger.info(
+        `[hook:SessionEnd] Session already terminal; preserving existing end state: id=${sessionId} status=${session.status} reason=${session.reason ?? 'unknown'}`
+      );
+      return true;
     }
 
     // Determine status from exit reason
@@ -1119,15 +1190,37 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
     const status = 'completed';
 
     // Update session status and reason
-    await sessionStore.updateSessionStatus(sessionId, status, event.reason);
+    await sessionStore.updateSessionStatus(sessionId, status, event.reason, event.endTime);
 
     logger.info(
       `[hook:SessionEnd] Session status updated: id=${sessionId} status=${status} reason=${event.reason}`
     );
+    return false;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:SessionEnd] Failed to update session status: ${errorMessage}`);
     // Don't throw - hook should not block agent execution
+    return false;
+  }
+}
+
+async function rollbackSessionFinalization(sessionId: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+    const sessionStore = new SessionStore();
+    const session = await sessionStore.loadSession(sessionId);
+    if (!session) {
+      return;
+    }
+
+    session.status = 'active';
+    delete session.endTime;
+    delete session.reason;
+    await sessionStore.saveSession(session);
+    logger.warn(`[hook:SessionEnd] Rolled back local finalization for retry: ${sessionId}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`[hook:SessionEnd] Failed to roll back local finalization: ${errorMessage}`);
   }
 }
 
@@ -1225,8 +1318,19 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
  * @param agentSessionId - The agent's session ID (for API)
  * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function sendSessionEndMetrics(
+  event: SessionEndEvent,
+  sessionId: string,
+  agentSessionId: string,
+  config?: HookProcessingConfig,
+  alreadyTerminal: boolean = false
+): Promise<boolean> {
   try {
+    if (config?.skipRemoteSync) {
+      logger.info('[hook:SessionEnd] Skipping end metric for reconciled session without trusted analytics routing');
+      return true;
+    }
+
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
@@ -1238,7 +1342,7 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 
     if (!agentName || !ssoUrl || !apiUrl) {
       logger.debug('[hook:SessionEnd] Missing required config for metrics');
-      return;
+      return false;
     }
 
     // Load session to get start time
@@ -1248,17 +1352,24 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 
     if (!session) {
       logger.warn(`[hook:SessionEnd] Session not found for metrics: ${sessionId}`);
-      return;
+      return false;
+    }
+
+    if (alreadyTerminal) {
+      logger.info(`[hook:SessionEnd] Session already terminal; skipping duplicate end metric for ${sessionId}`);
+      return true;
     }
 
     const { isExternalOrigin } = await import('../../agents/core/session/session-origin-audit.js');
     if (isExternalOrigin(session)) {
       logger.debug('[hook:SessionEnd] Skipping end metrics for external-resume session');
-      return;
+      return true;
     }
 
-    // Calculate durations
-    const wallClockDurationMs = Date.now() - session.startTime;
+    // Calculate durations. `session.endTime` is set by updateSessionStatus just before this
+    // runs (step 2 above), so it already reflects the real end-of-activity timestamp for a
+    // reconciled/synthetic SessionEnd rather than the time this function happens to run.
+    const wallClockDurationMs = Math.max(0, (session.endTime ?? Date.now()) - session.startTime);
     const activeDurationMs = session.activeDurationMs || undefined;
 
     // Build status object with reason from event
@@ -1289,7 +1400,7 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
 
     if (!cookieHeader) {
       logger.info(`[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`);
-      return;
+      return false;
     }
 
     // Use MetricsSender to send session end metric
@@ -1333,10 +1444,12 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       wallClockDurationMs,
       activeDurationMs
     });
+    return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.warn(`[hook:SessionEnd] Failed to send metrics: ${errorMessage}`);
     // Don't throw - metrics failures should not block agent execution
+    return false;
   }
 }
 

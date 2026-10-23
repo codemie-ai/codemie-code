@@ -8,7 +8,7 @@
 import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, basename, join } from 'path';
-import type { Session } from './types.js';
+import type { Session, SessionLiveness } from './types.js';
 import { getSessionPath } from './session-config.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
@@ -157,9 +157,61 @@ export class SessionStore {
   }
 
   /**
-   * Update session status and reason
+   * Find persisted sessions of `agentName` still marked `active`.
+   *
+   * Used by long-running local telemetry runtimes (e.g. the Claude Desktop
+   * poller) to reconcile sessions a previous process left open across a
+   * restart, since their in-memory tracking does not survive the restart.
    */
-  async updateSessionStatus(sessionId: string, status: Session['status'], reason?: string): Promise<void> {
+  async findActiveSessions(agentName: string): Promise<Session[]> {
+    const sessionsDir = getCodemiePath('sessions');
+    if (!existsSync(sessionsDir)) {
+      return [];
+    }
+
+    const active: Session[] = [];
+
+    try {
+      const files = await readdir(sessionsDir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+
+        const filePath = join(sessionsDir, file);
+        try {
+          const session = JSON.parse(await readFile(filePath, 'utf-8')) as Session;
+          if (session.agentName === agentName && session.status === 'active') {
+            active.push(session);
+          }
+        } catch (error) {
+          logger.debug('[SessionStore] Skipping unreadable session file during active session scan', {
+            filePath,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      const errorContext = createErrorContext(error, { agent: agentName });
+      logger.error('[SessionStore] Failed active session scan', formatErrorForLog(errorContext));
+    }
+
+    return active;
+  }
+
+  /**
+   * Update session status and reason.
+   *
+   * `endTime` defaults to now, which is correct for a live hook firing in real time.
+   * Callers finalizing a session on its behalf after the fact (stale-session
+   * reconciliation, restart reconciliation) must pass the session's actual last-activity
+   * timestamp instead, or the gap between that activity and whenever this runs gets
+   * counted as session duration.
+   */
+  async updateSessionStatus(
+    sessionId: string,
+    status: Session['status'],
+    reason?: string,
+    endTime: number = Date.now()
+  ): Promise<void> {
     const session = await this.loadSession(sessionId);
 
     if (!session) {
@@ -171,10 +223,36 @@ export class SessionStore {
       session.reason = reason;
     }
     if (status === 'completed' || status === 'recovered' || status === 'failed') {
-      session.endTime = Date.now();
+      session.endTime = endTime;
+      delete session.liveness;
     }
 
     await this.saveSession(session);
+  }
+
+  /**
+   * Refresh the owning process heartbeat for a live hook-managed session.
+   *
+   * Best-effort only: some agents do not persist a generic session file at all, and a
+   * late heartbeat racing with SessionEnd should never resurrect or mutate a terminal
+   * record.
+   */
+  async updateSessionLiveness(sessionId: string, liveness: SessionLiveness): Promise<boolean> {
+    const session = await this.loadSession(sessionId);
+
+    if (!session) {
+      logger.debug(`[SessionStore] Cannot update liveness - session not found: ${sessionId}`);
+      return false;
+    }
+
+    if (session.status !== 'active' || session.endTime !== undefined) {
+      logger.debug(`[SessionStore] Skipping liveness update for non-active session: ${sessionId}`);
+      return false;
+    }
+
+    session.liveness = liveness;
+    await this.saveSession(session);
+    return true;
   }
 
   /**
@@ -207,10 +285,18 @@ export class SessionStore {
    * Accumulate active duration for a session
    * Calculates duration since activityStartedAt, adds to activeDurationMs, clears activityStartedAt
    *
+   * `asOf` defaults to now, correct for a live Stop/SessionEnd hook. A caller finalizing a
+   * session it did not run (e.g. stale-session reconciliation, after the process that set
+   * `activityStartedAt` was killed mid-turn) must pass the session's actual last-activity
+   * timestamp instead — otherwise the gap between the kill and whenever reconciliation runs
+   * gets counted as active time. Clamped to the session's own lifetime as a backstop against
+   * a bad/missing `asOf` ever producing a duration larger than the session could have had.
+   *
    * @param sessionId - The session ID to accumulate duration for
+   * @param asOf - The timestamp to treat as "now" for this accumulation
    * @returns The duration accumulated in this call (0 if no active period)
    */
-  async accumulateActiveDuration(sessionId: string): Promise<number> {
+  async accumulateActiveDuration(sessionId: string, asOf: number = Date.now()): Promise<number> {
     const session = await this.loadSession(sessionId);
 
     if (!session) {
@@ -224,7 +310,8 @@ export class SessionStore {
       return 0;
     }
 
-    const duration = Date.now() - session.activityStartedAt;
+    const maxDuration = Math.max(0, asOf - session.startTime);
+    const duration = Math.min(maxDuration, Math.max(0, asOf - session.activityStartedAt));
     session.activeDurationMs = (session.activeDurationMs || 0) + duration;
     session.activityStartedAt = undefined; // Clear to mark as idle
 

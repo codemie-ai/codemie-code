@@ -344,6 +344,16 @@ export interface AgentMetadata {
    */
   sessionAnalyticsReport?: boolean;
 
+  /**
+   * When false, BaseAgentAdapter.run() skips the generic stale-session
+   * reconciliation pass it runs for every agent after onSessionStart (see
+   * reconcileStaleSessions in session/stale-session-reconciliation.ts).
+   * Default true — an agent that keeps no `~/.codemie/sessions/{id}.json`
+   * records gets a harmless no-op scan, so this only needs setting for an
+   * agent that wants to opt out explicitly.
+   */
+  staleSessionReconciliation?: boolean;
+
   // === Metrics Configuration ===
   /**
    * Metrics collection configuration for this agent
@@ -684,6 +694,10 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  // SessionEnd only, set by synthetic events from stale-session reconciliation: the
+  // session's real last-activity timestamp, so finalization doesn't bill the dead-process
+  // gap between that activity and whenever reconciliation runs as session duration.
+  endTime?: number;
 }
 
 // Forward declaration for extension installer

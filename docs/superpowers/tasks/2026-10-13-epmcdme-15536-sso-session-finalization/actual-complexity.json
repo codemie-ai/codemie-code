@@ -1,0 +1,87 @@
+{
+  "task": "Wire the existing reconcileStaleSessions fallback into all six agent plugins (claude, gemini, kimi, codemie-code, opencode, copilot-cli), adding a brand-new onSessionStart + buildXHookConfig helper to claude/gemini/kimi and a single added call into the existing onSessionStart of codemie-code/opencode/copilot-cli, plus a new lifecycle test file per call site.",
+  "generated": "2026-10-13T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL",
+      "affected": "claude.plugin.ts, codemie-code.plugin.ts, copilot-cli.plugin.ts, gemini.plugin.ts, kimi.plugin.ts, opencode.plugin.ts",
+      "layers": "Agent-Tool (six independently-wired plugin adapters)"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "The task required differentiating three plugins needing a brand-new onSessionStart + buildXHookConfig helper (claude, gemini, kimi — confirmed by new buildClaudeHookConfig/buildGeminiHookConfig/buildKimiHookConfig functions and new import of HookProcessingConfig) from three needing only one added call inside an already-existing onSessionStart (codemie-code, opencode, copilot-cli — confirmed by their pre-existing buildHookConfig/buildCopilotHookConfig helpers). Each of claude/gemini/kimi's new handlers also carries an explicit code comment establishing the non-obvious rule that the new call must NOT duplicate processEvent(SessionStart), since native hooks.json already routes SessionStart through codemie-hook -> handleSessionStart. This split and the new lifecycle-test naming/placement convention (*.plugin.lifecycle.test.ts, new for 5 of 6 sites) had to be worked out during implementation rather than being fully specified upfront."
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "All six call sites reuse the already-existing, already-tested reconcileStaleSessions function with the established non-blocking fire-and-forget .catch(...) + logger.debug pattern — no new runtime logic, no new control flow beyond wiring. The one real risk (duplicating native-hook-driven SessionStart processing for claude/gemini/kimi) is explicitly called out in code comments at each of those three sites and is directly asserted against in tests ('does not duplicate processEvent(SessionStart)').",
+      "mitigation": "Non-blocking .catch with debug-level logging at every site so a reconciliation failure never affects a live session launch; new/extended lifecycle test files per plugin assert reconciliation fires exactly once, is called with the correct agent name and env, and never throws; code review approved with 0 blocking findings; QA gates HITL-approved with 16 pre-existing unrelated failures confirmed via worktree checks (none attributable to this change)."
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/agents/plugins/claude/claude.plugin.ts",
+        "src/agents/plugins/codemie-code.plugin.ts",
+        "src/agents/plugins/copilot-cli/copilot-cli.plugin.ts",
+        "src/agents/plugins/gemini/gemini.plugin.ts",
+        "src/agents/plugins/kimi/kimi.plugin.ts",
+        "src/agents/plugins/opencode/opencode.plugin.ts",
+        "src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts"
+      ],
+      "new_files": 5,
+      "new_file_list": [
+        "src/agents/plugins/__tests__/codemie-code.plugin.lifecycle.test.ts",
+        "src/agents/plugins/claude/__tests__/claude.plugin.lifecycle.test.ts",
+        "src/agents/plugins/copilot-cli/__tests__/copilot-cli.plugin.lifecycle.test.ts",
+        "src/agents/plugins/gemini/__tests__/gemini.plugin.lifecycle.test.ts",
+        "src/agents/plugins/kimi/__tests__/kimi.plugin.lifecycle.test.ts"
+      ],
+      "affected_dirs": [
+        "src/agents/plugins",
+        "src/agents/plugins/claude",
+        "src/agents/plugins/copilot-cli",
+        "src/agents/plugins/gemini",
+        "src/agents/plugins/kimi",
+        "src/agents/plugins/opencode"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The diff confirmed six genuinely independent agent plugin subsystems touched (claude.plugin.ts, codemie-code.plugin.ts, copilot-cli.plugin.ts, gemini.plugin.ts, kimi.plugin.ts, opencode.plugin.ts), each with its own metadata, lifecycle config, and now its own stale-session reconciliation wiring — base XL for '4+ components, multiple subsystems', bumped to XXL by the 'affects multiple workflows or agents' scope red flag, matching the original plan 1:1."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "diffstat reports 12 files changed (7 modified: the 6 plugin source files plus the extended opencode-session-lifecycle.test.ts; 5 new: lifecycle test files for claude, codemie-code, copilot-cli, gemini, and kimi), 346 insertions and 0 deletions — per the actual-mode file-count band (11-15 files = XL), this lands at XL, one tier above the initial L estimate (8-10/2-4) because the final test footprint (5 new files, not the ~3 estimated) pushed the total count past the L ceiling."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): confirmed in the actual diff — six distinct plugin files across six subsystems were modified in one change, matching the 'Affects multiple workflows or agents' scope red flag.",
+    "Requirements Clarity bumped from S (2) to M (3): the actual diff shows a real structural split handled during implementation — claude/gemini/kimi required brand-new onSessionStart + helper functions while codemie-code/opencode/copilot-cli required only a single added line into existing handlers, matching the 'Similar to X but different' clarity red flag."
+  ],
+  "split_recommendation": null
+}

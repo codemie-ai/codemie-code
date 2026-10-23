@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-standard",
+  "slug": "epmcdme-15536-sso-session-finalization",
+  "branch": "EPMCDME-15536_sso-session-finalization-fallback",
+  "phase": "maintenance",
+  "started_at": "2026-10-13T08:01:27.000Z",
+  "completed_at": "2026-10-13T12:35:00.000Z",
+  "last_sync_commit": "b8ae91d76a89c080baa5b4c7d5912e5646edfc6f"
+}

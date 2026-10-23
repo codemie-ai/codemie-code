@@ -1,0 +1,9 @@
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"initial","status":"succeeded"}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"initial","status":"succeeded","note":"re-estimate after scope expansion to 6 plugins, supersedes prior S/11 entry"}
+{"event":"decision.recorded","gate_id":"spec.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"spec","status":"succeeded"}
+{"event":"decision.recorded","gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"succeeded"}
+{"event":"decision.recorded","gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false}
+{"event":"decision.recorded","gate_id":"feature.verification","mode":"hitl","decision":"approve","source":"hitl","escalated":false}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"succeeded"}

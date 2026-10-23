@@ -1,0 +1,516 @@
+diff --git a/src/agents/plugins/__tests__/codemie-code.plugin.lifecycle.test.ts b/src/agents/plugins/__tests__/codemie-code.plugin.lifecycle.test.ts
+new file mode 100644
+index 0000000..837c13a
+--- /dev/null
++++ b/src/agents/plugins/__tests__/codemie-code.plugin.lifecycle.test.ts
+@@ -0,0 +1,40 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++vi.mock('../../core/BaseAgentAdapter.js', () => ({
++  BaseAgentAdapter: class { metadata: unknown; constructor(metadata: unknown) { this.metadata = metadata; } },
++}));
++
++describe('CodeMieCodePluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
++  beforeEach(() => {
++    vi.resetModules();
++  });
++
++  it('reconciles stale codemie-code sessions on start, alongside the existing SessionStart call', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    const processEvent = vi.fn().mockResolvedValue(undefined);
++    vi.doMock('../../../cli/commands/hook.js', () => ({ processEvent }));
++
++    const { CodeMieCodePluginMetadata } = await import('../codemie-code.plugin.js');
++    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'codemie-code' };
++
++    await CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
++
++    expect(processEvent).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('codemie-code');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
++    vi.doMock('../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    vi.doMock('../../../cli/commands/hook.js', () => ({ processEvent: vi.fn().mockResolvedValue(undefined) }));
++
++    const { CodeMieCodePluginMetadata } = await import('../codemie-code.plugin.js');
++
++    await expect(
++      CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'codemie-code' })
++    ).resolves.toBeUndefined();
++  });
++});
+diff --git a/src/agents/plugins/claude/__tests__/claude.plugin.lifecycle.test.ts b/src/agents/plugins/claude/__tests__/claude.plugin.lifecycle.test.ts
+new file mode 100644
+index 0000000..52edafb
+--- /dev/null
++++ b/src/agents/plugins/claude/__tests__/claude.plugin.lifecycle.test.ts
+@@ -0,0 +1,49 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++vi.mock('../../../../utils/logger.js', () => ({
++  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
++}));
++
++describe('ClaudePluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
++  beforeEach(() => {
++    vi.resetModules();
++  });
++
++  it('reconciles stale claude sessions on start', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { ClaudePluginMetadata } = await import('../claude.plugin.js');
++    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'claude', CODEMIE_PROVIDER: 'ai-run-sso' };
++
++    await ClaudePluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
++
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('claude');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++    expect(typeof reconcileStaleSessions.mock.calls[0][2]).toBe('function');
++  });
++
++  it('does not duplicate processEvent(SessionStart)', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    const processEvent = vi.fn();
++    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
++
++    const { ClaudePluginMetadata } = await import('../claude.plugin.js');
++    await ClaudePluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'claude' });
++
++    expect(processEvent).not.toHaveBeenCalled();
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { ClaudePluginMetadata } = await import('../claude.plugin.js');
++
++    await expect(
++      ClaudePluginMetadata.lifecycle!.onSessionStart!('sid-3', { CODEMIE_AGENT: 'claude' })
++    ).resolves.toBeUndefined();
++  });
++});
+diff --git a/src/agents/plugins/claude/claude.plugin.ts b/src/agents/plugins/claude/claude.plugin.ts
+index eb41252..eae45a0 100644
+--- a/src/agents/plugins/claude/claude.plugin.ts
++++ b/src/agents/plugins/claude/claude.plugin.ts
+@@ -4,6 +4,8 @@ import type {
+   ResumeOwnershipResult,
+ } from '../../core/types.js';
+ import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
++import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
++import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+ import { ClaudeSessionAdapter } from './claude.session.js';
+ import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
+ import { writeConfigToTempFile } from '../../core/temp-config.js';
+@@ -31,6 +33,26 @@ import {
+ // Using module scope (not env var) avoids leaking internal state into subprocess environments.
+ let statuslineManagedThisSession = false;
+ 
++/**
++ * Build a hook config object from environment variables.
++ * Used by onSessionStart for stale-session reconciliation.
++ */
++function buildClaudeHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
++  return {
++    agentName: env.CODEMIE_AGENT || 'claude',
++    sessionId,
++    provider: env.CODEMIE_PROVIDER,
++    apiBaseUrl: env.CODEMIE_BASE_URL,
++    ssoUrl: env.CODEMIE_URL,
++    syncApiUrl: env.CODEMIE_SYNC_API_URL,
++    version: env.CODEMIE_CLI_VERSION,
++    profileName: env.CODEMIE_PROFILE_NAME,
++    project: env.CODEMIE_PROJECT,
++    model: env.CODEMIE_MODEL,
++    clientType: 'codemie-claude',
++  };
++}
++
+ /**
+  * Recommended Claude Code version — the one CodeMie verifies against.
+  * A different installed version produces one non-blocking notice, never a block.
+@@ -550,6 +572,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
+       return env;
+     },
+ 
++    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
++      // Claude's native hooks.json -> `codemie hook` -> handleSessionStart already
++      // reliably creates the session record on every real launch, so this must
++      // NOT also call processEvent(SessionStart) — only reconcile stranded ones.
++      void reconcileStaleSessions('claude', env, buildClaudeHookConfig).catch((error) => {
++        const msg = error instanceof Error ? error.message : String(error);
++        logger.debug(`[claude] Stale-session reconciliation failed (non-blocking): ${msg}`);
++      });
++    },
++
+     // Clean up injected statusLine from settings.json after the session ends
+     async afterRun(_exitCode, _env) {
+       if (!statuslineManagedThisSession) return;
+diff --git a/src/agents/plugins/codemie-code.plugin.ts b/src/agents/plugins/codemie-code.plugin.ts
+index 4f31e0f..1ddeb38 100644
+--- a/src/agents/plugins/codemie-code.plugin.ts
++++ b/src/agents/plugins/codemie-code.plugin.ts
+@@ -18,6 +18,7 @@ import type { HookProcessingConfig } from '../../cli/commands/hook.js';
+ import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
+ import { MAX_ENV_SIZE, writeConfigToTempFile } from '../core/temp-config.js';
+ import { ensureSessionFile } from '../core/session/ensure-session.js';
++import { reconcileStaleSessions } from '../core/session/stale-session-reconciliation.js';
+ 
+ /**
+  * Built-in agent name constant - single source of truth
+@@ -243,6 +244,11 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
+         const msg = error instanceof Error ? error.message : String(error);
+         logger.error(`[codemie-code] SessionStart hook failed (non-blocking): ${msg}`);
+       }
++
++      void reconcileStaleSessions('codemie-code', env, buildHookConfig).catch((error) => {
++        const msg = error instanceof Error ? error.message : String(error);
++        logger.debug(`[codemie-code] Stale-session reconciliation failed (non-blocking): ${msg}`);
++      });
+     },
+ 
+     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
+diff --git a/src/agents/plugins/copilot-cli/__tests__/copilot-cli.plugin.lifecycle.test.ts b/src/agents/plugins/copilot-cli/__tests__/copilot-cli.plugin.lifecycle.test.ts
+new file mode 100644
+index 0000000..0ec8c9e
+--- /dev/null
++++ b/src/agents/plugins/copilot-cli/__tests__/copilot-cli.plugin.lifecycle.test.ts
+@@ -0,0 +1,36 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++describe('CopilotCliPluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
++  beforeEach(() => {
++    vi.resetModules();
++  });
++
++  it('reconciles stale copilot-cli sessions on start, alongside the existing SessionStart call', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    const processEvent = vi.fn().mockResolvedValue(undefined);
++    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
++
++    const { CopilotCliPluginMetadata } = await import('../copilot-cli.plugin.js');
++    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'copilot-cli' };
++
++    await CopilotCliPluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
++
++    expect(processEvent).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('copilot-cli');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent: vi.fn().mockResolvedValue(undefined) }));
++
++    const { CopilotCliPluginMetadata } = await import('../copilot-cli.plugin.js');
++
++    await expect(
++      CopilotCliPluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'copilot-cli' })
++    ).resolves.toBeUndefined();
++  });
++});
+diff --git a/src/agents/plugins/copilot-cli/copilot-cli.plugin.ts b/src/agents/plugins/copilot-cli/copilot-cli.plugin.ts
+index 287ed46..ec33dbf 100644
+--- a/src/agents/plugins/copilot-cli/copilot-cli.plugin.ts
++++ b/src/agents/plugins/copilot-cli/copilot-cli.plugin.ts
+@@ -5,6 +5,7 @@ import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
+ import { ConfigurationError } from '../../../utils/errors.js';
+ import { commandExists, exec } from '../../../utils/processes.js';
+ import { logger } from '../../../utils/logger.js';
++import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
+ import {
+   COPILOT_CLI_AGENT_NAME,
+   COPILOT_CLI_CLIENT_TYPE,
+@@ -170,6 +171,11 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
+         const message = error instanceof Error ? error.message : String(error);
+         logger.error(`[copilot-cli] SessionStart hook failed (non-blocking): ${message}`);
+       }
++
++      void reconcileStaleSessions('copilot-cli', env, buildCopilotHookConfig).catch((error) => {
++        const message = error instanceof Error ? error.message : String(error);
++        logger.debug(`[copilot-cli] Stale-session reconciliation failed (non-blocking): ${message}`);
++      });
+     },
+     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
+       assertCopilotProviderSupported(config);
+diff --git a/src/agents/plugins/gemini/__tests__/gemini.plugin.lifecycle.test.ts b/src/agents/plugins/gemini/__tests__/gemini.plugin.lifecycle.test.ts
+new file mode 100644
+index 0000000..ce0a56d
+--- /dev/null
++++ b/src/agents/plugins/gemini/__tests__/gemini.plugin.lifecycle.test.ts
+@@ -0,0 +1,44 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++describe('GeminiPluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
++  beforeEach(() => {
++    vi.resetModules();
++  });
++
++  it('reconciles stale gemini sessions on start', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { GeminiPluginMetadata } = await import('../gemini.plugin.js');
++    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'gemini' };
++
++    await GeminiPluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
++
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('gemini');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++  });
++
++  it('does not duplicate processEvent(SessionStart)', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    const processEvent = vi.fn();
++    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
++
++    const { GeminiPluginMetadata } = await import('../gemini.plugin.js');
++    await GeminiPluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'gemini' });
++
++    expect(processEvent).not.toHaveBeenCalled();
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { GeminiPluginMetadata } = await import('../gemini.plugin.js');
++
++    await expect(
++      GeminiPluginMetadata.lifecycle!.onSessionStart!('sid-3', { CODEMIE_AGENT: 'gemini' })
++    ).resolves.toBeUndefined();
++  });
++});
+diff --git a/src/agents/plugins/gemini/gemini.plugin.ts b/src/agents/plugins/gemini/gemini.plugin.ts
+index c4e7ffa..4499367 100644
+--- a/src/agents/plugins/gemini/gemini.plugin.ts
++++ b/src/agents/plugins/gemini/gemini.plugin.ts
+@@ -6,6 +6,29 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+ import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
+ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+ import { validateGeminiModel } from './gemini.models.js';
++import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
++import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
++import { logger } from '../../../utils/logger.js';
++
++/**
++ * Build a hook config object from environment variables.
++ * Used by onSessionStart for stale-session reconciliation.
++ */
++function buildGeminiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
++  return {
++    agentName: env.CODEMIE_AGENT || 'gemini',
++    sessionId,
++    provider: env.CODEMIE_PROVIDER,
++    apiBaseUrl: env.CODEMIE_BASE_URL,
++    ssoUrl: env.CODEMIE_URL,
++    syncApiUrl: env.CODEMIE_SYNC_API_URL,
++    version: env.CODEMIE_CLI_VERSION,
++    profileName: env.CODEMIE_PROFILE_NAME,
++    project: env.CODEMIE_PROJECT,
++    model: env.CODEMIE_MODEL,
++    clientType: 'codemie-gemini',
++  };
++}
+ 
+ /**
+  * Supported Gemini CLI version
+@@ -177,6 +200,15 @@ export const GeminiPluginMetadata: AgentMetadata = {
+       await validateGeminiModel(env);
+ 
+       return env;
++    },
++    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
++      // Gemini's native SessionStart hook already routes through the shared
++      // codemie-hook -> handleSessionStart path and creates the session
++      // record reliably, so this must NOT also fire processEvent(SessionStart).
++      void reconcileStaleSessions('gemini', env, buildGeminiHookConfig).catch((error) => {
++        const msg = error instanceof Error ? error.message : String(error);
++        logger.debug(`[gemini] Stale-session reconciliation failed (non-blocking): ${msg}`);
++      });
+     }
+   }
+ };
+diff --git a/src/agents/plugins/kimi/__tests__/kimi.plugin.lifecycle.test.ts b/src/agents/plugins/kimi/__tests__/kimi.plugin.lifecycle.test.ts
+new file mode 100644
+index 0000000..8a1d97e
+--- /dev/null
++++ b/src/agents/plugins/kimi/__tests__/kimi.plugin.lifecycle.test.ts
+@@ -0,0 +1,44 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++describe('KimiPluginMetadata.lifecycle.onSessionStart — stale-session reconciliation', () => {
++  beforeEach(() => {
++    vi.resetModules();
++  });
++
++  it('reconciles stale kimi sessions on start', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { KimiPluginMetadata } = await import('../kimi.plugin.js');
++    const env: NodeJS.ProcessEnv = { CODEMIE_AGENT: 'kimi' };
++
++    await KimiPluginMetadata.lifecycle!.onSessionStart!('sid-1', env);
++
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('kimi');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++  });
++
++  it('does not duplicate processEvent(SessionStart)', async () => {
++    const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++    const processEvent = vi.fn();
++    vi.doMock('../../../../cli/commands/hook.js', () => ({ processEvent }));
++
++    const { KimiPluginMetadata } = await import('../kimi.plugin.js');
++    await KimiPluginMetadata.lifecycle!.onSessionStart!('sid-2', { CODEMIE_AGENT: 'kimi' });
++
++    expect(processEvent).not.toHaveBeenCalled();
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    const reconcileStaleSessions = vi.fn().mockRejectedValue(new Error('boom'));
++    vi.doMock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
++
++    const { KimiPluginMetadata } = await import('../kimi.plugin.js');
++
++    await expect(
++      KimiPluginMetadata.lifecycle!.onSessionStart!('sid-3', { CODEMIE_AGENT: 'kimi' })
++    ).resolves.toBeUndefined();
++  });
++});
+diff --git a/src/agents/plugins/kimi/kimi.plugin.ts b/src/agents/plugins/kimi/kimi.plugin.ts
+index ec22531..0868a91 100644
+--- a/src/agents/plugins/kimi/kimi.plugin.ts
++++ b/src/agents/plugins/kimi/kimi.plugin.ts
+@@ -18,6 +18,28 @@ import { isValidSemanticVersion } from '../../../utils/version-utils.js';
+ import { logger } from '../../../utils/logger.js';
+ import { sanitizeLogArgs } from '../../../utils/security.js';
+ import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
++import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
++import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
++
++/**
++ * Build a hook config object from environment variables.
++ * Used by onSessionStart for stale-session reconciliation.
++ */
++function buildKimiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
++  return {
++    agentName: env.CODEMIE_AGENT || 'kimi',
++    sessionId,
++    provider: env.CODEMIE_PROVIDER,
++    apiBaseUrl: env.CODEMIE_BASE_URL,
++    ssoUrl: env.CODEMIE_URL,
++    syncApiUrl: env.CODEMIE_SYNC_API_URL,
++    version: env.CODEMIE_CLI_VERSION,
++    profileName: env.CODEMIE_PROFILE_NAME,
++    project: env.CODEMIE_PROJECT,
++    model: env.CODEMIE_MODEL,
++    clientType: 'codemie-kimi',
++  };
++}
+ import { resolveHomeDir } from '../../../utils/paths.js';
+ 
+ // Recommended version (one non-blocking notice on mismatch) and the hard gate
+@@ -86,6 +108,15 @@ export const KimiPluginMetadata: AgentMetadata = {
+       assertExplicitKimiModelAllowed(explicitModel, availableModels);
+       return args;
+     },
++    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
++      // Kimi's hook injector registers SessionStart against `codemie hook`,
++      // which already creates the session record reliably — do NOT also
++      // fire processEvent(SessionStart) here.
++      void reconcileStaleSessions('kimi', env, buildKimiHookConfig).catch((error) => {
++        const msg = error instanceof Error ? error.message : String(error);
++        logger.debug(`[kimi] Stale-session reconciliation failed (non-blocking): ${msg}`);
++      });
++    },
+   },
+   metricsConfig: {
+     excludeErrorsFromTools: ['Bash'],
+diff --git a/src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts b/src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts
+index 9a8b56c..28e1741 100644
+--- a/src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts
++++ b/src/agents/plugins/opencode/__tests__/opencode-session-lifecycle.test.ts
+@@ -17,6 +17,7 @@ const processEvent = vi.fn();
+ const startIncrementalSync = vi.fn();
+ const stopIncrementalSync = vi.fn();
+ const ensureSessionFile = vi.fn();
++const reconcileStaleSessions = vi.fn().mockResolvedValue({ reconciled: 0, failed: 0 });
+ 
+ vi.mock('../../../../cli/commands/hook.js', () => ({ processEvent }));
+ vi.mock('../opencode.incremental-sync.js', () => ({
+@@ -24,6 +25,7 @@ vi.mock('../opencode.incremental-sync.js', () => ({
+   stopOpenCodeIncrementalSync: stopIncrementalSync,
+ }));
+ vi.mock('../../../core/session/ensure-session.js', () => ({ ensureSessionFile }));
++vi.mock('../../../core/session/stale-session-reconciliation.js', () => ({ reconcileStaleSessions }));
+ vi.mock('../opencode.paths.js', async (importOriginal) => ({
+   ...(await importOriginal<typeof import('../opencode.paths.js')>()),
+   getOpenCodeDbPath: () => '/data/opencode/opencode.db',
+@@ -93,6 +95,24 @@ describe('OpenCode onSessionStart', () => {
+     // The failsafe timer must still start.
+     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
+   });
++
++  it('reconciles stale opencode sessions on start', async () => {
++    const env = baseEnv();
++
++    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
++
++    expect(reconcileStaleSessions).toHaveBeenCalledTimes(1);
++    expect(reconcileStaleSessions.mock.calls[0][0]).toBe('opencode');
++    expect(reconcileStaleSessions.mock.calls[0][1]).toBe(env);
++  });
++
++  it('does not throw when reconciliation rejects', async () => {
++    reconcileStaleSessions.mockRejectedValueOnce(new Error('boom'));
++
++    await expect(
++      OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv())
++    ).resolves.toBeUndefined();
++  });
+ });
+ 
+ describe('OpenCode beforeRun', () => {
+diff --git a/src/agents/plugins/opencode/opencode.plugin.ts b/src/agents/plugins/opencode/opencode.plugin.ts
+index 3c6e956..c94f652 100644
+--- a/src/agents/plugins/opencode/opencode.plugin.ts
++++ b/src/agents/plugins/opencode/opencode.plugin.ts
+@@ -15,6 +15,7 @@ import {
+ } from './opencode.incremental-sync.js';
+ import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
+ import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
++import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
+ import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
+ import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
+ import { ensureSessionFile } from '../../core/session/ensure-session.js';
+@@ -220,6 +221,11 @@ export const OpenCodePluginMetadata: AgentMetadata = {
+         logger.error(`[opencode] SessionStart hook failed (non-blocking): ${msg}`);
+       }
+ 
++      void reconcileStaleSessions('opencode', env, buildHookConfig).catch((error) => {
++        const msg = error instanceof Error ? error.message : String(error);
++        logger.debug(`[opencode] Stale-session reconciliation failed (non-blocking): ${msg}`);
++      });
++
+       // Failsafe path for metrics and conversations: everything it reads is
+       // already durable in opencode.db, so deltas keep flowing even if the
+       // injected plugin never loads.

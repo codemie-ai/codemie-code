@@ -130,7 +130,7 @@ describe('findStaleCodexSessions', () => {
     expect(stale).toEqual([]);
   });
 
-  it('excludes sessions whose start time is older than the lookback window', async () => {
+  it('includes sessions whose last activity is older than 24h — overdue reconciliation is not exempt', async () => {
     await writeSession('ancient', makeSession({
       sessionId: 'ancient',
       status: 'active',
@@ -146,9 +146,9 @@ describe('findStaleCodexSessions', () => {
       },
     }));
 
-    const stale = await findStaleCodexSessions({ now: NOW, maxLookbackMs: 24 * HOUR_MS });
+    const stale = await findStaleCodexSessions({ now: NOW });
 
-    expect(stale).toEqual([]);
+    expect(stale.map(s => s.sessionId)).toEqual(['ancient']);
   });
 
   it('uses startTime as fallback when no sync activity is recorded', async () => {

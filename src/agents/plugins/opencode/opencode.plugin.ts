@@ -80,8 +80,8 @@ function buildMergedHooks(env: NodeJS.ProcessEnv): Record<string, unknown[]> {
  * metadata.ssoConfig.clientType for every agent) rather than the fixed
  * OPENCODE_CLIENT_TYPE constant, so that plugins extending OpenCodePlugin with
  * a different clientType (e.g. opencode-acp's 'codemie-opencode-acp') are
- * tagged correctly in telemetry. Falls back to OPENCODE_CLIENT_TYPE to
- * preserve behavior for plain OpenCode / any caller that doesn't set the env var.
+ * tagged correctly in telemetry. BaseAgentAdapter always sets both env vars
+ * before this runs, so no fallback is needed.
  */
 function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
   return {

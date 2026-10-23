@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "task": "RE-ESTIMATE — SUPERSEDES prior claude-only assessment (S, 11/36). Wire the existing reconcileStaleSessions fallback into all six agent plugins currently missing it (claude, gemini, kimi, codemie-code, opencode, copilot-cli): add a brand-new onSessionStart (+ buildHookConfig helper + import) to claude.plugin.ts, gemini.plugin.ts and kimi.plugin.ts, add a single reconcileStaleSessions call into the existing onSessionStart of codemie-code.plugin.ts, opencode.plugin.ts and copilot-cli.plugin.ts, and establish a new plugin-call-site test pattern applied consistently across all six call sites.",
+  "generated": "2026-10-13T12:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Six distinct, independently-wired agent plugin subsystems are touched (claude, gemini, kimi, codemie-code, opencode, copilot-cli) — base XL for '4+ components, multiple subsystems', then bumped to XXL by the 'affects multiple workflows or agents' red flag. Three of the six (claude, gemini, kimi) require a brand-new onSessionStart + buildHookConfig helper + import (no existing hook to attach to), while the other three (codemie-code, opencode, copilot-cli) only need one added line reusing their existing buildHookConfig — so the breadth driving this score is real component count, not depth of any single change."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Confirmed via Glob against the actual repo structure: 6 plugin source files modified (src/agents/plugins/claude/claude.plugin.ts, gemini/gemini.plugin.ts, kimi/kimi.plugin.ts, codemie-code.plugin.ts, opencode/opencode.plugin.ts, copilot-cli/copilot-cli.plugin.ts) plus roughly 6 test files touched to cover the new 'does onSessionStart call reconcileStaleSessions' pattern — some extending existing lifecycle-adjacent test files (kimi.plugin.test.ts, opencode-session-lifecycle.test.ts, codemie-code.hooks.test.ts) and some genuinely new (no plugin-call-site reconciliation test exists anywhere yet, per technical-analysis.md). Estimated ~9 modified + ~3 new files, spanning 6 separate plugin directories — numerically closest to L (8-10 modified, 2-4 new), with directory breadth (6, well past the '3+' threshold) reinforcing the L assignment even though it falls just short of XL's 11-15/4-6 count thresholds."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): change affects six distinct agent plugins (claude, gemini, kimi, codemie-code, opencode, copilot-cli) in one task, directly matching the 'Affects multiple workflows or agents' scope red flag.",
+    "Requirements Clarity bumped from S (2) to M (3): the task explicitly mirrors the codex/pi reconcileStaleSessions pattern 'but different' for claude/gemini/kimi — each new onSessionStart must call ONLY reconcileStaleSessions and must never duplicate processEvent(SessionStart), since all three plugins' native hook manifests already route SessionStart through the shared codemie-hook -> handleSessionStart path; this matches the 'Similar to X but different' clarity red flag. Compounded by an unresolved internal inconsistency in the task text itself, which labels this 'ALL FIVE agent plugins' while enumerating six (claude, gemini, kimi, codemie-code, opencode, copilot-cli) — left as an open gap rather than silently resolved."
+  ],
+  "split_recommendation": null
+}

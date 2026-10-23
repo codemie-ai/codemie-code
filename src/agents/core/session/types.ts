@@ -25,6 +25,7 @@ export type CorrelationStatus = 'pending' | 'matched' | 'failed';
 export interface CorrelationResult {
   status: CorrelationStatus;
   agentSessionFile?: string; // Path to matched file
+  agentSessionFiles?: string[]; // Full set of matched files for multi-transcript agents
   agentSessionId?: string; // Extracted session ID
   detectedAt?: number; // Unix timestamp (ms)
   retryCount: number;
@@ -124,6 +125,28 @@ export interface RuntimeCheckpoint {
   baselineCutoffMs?: number;
 }
 
+export interface SessionAnalyticsContext {
+  apiBaseUrl?: string;
+  ssoUrl?: string;
+  syncApiUrl?: string;
+  profileName?: string;
+}
+
+/**
+ * Best-effort liveness lease for generic hook-managed sessions.
+ *
+ * Interactive CLI sessions can stay genuinely open while idle for far longer than the
+ * inactivity threshold that abandoned-session reconciliation uses. The owning process
+ * therefore refreshes this heartbeat periodically while it is alive; reconciliation only
+ * finalizes the session once both user activity and process heartbeats have gone quiet.
+ */
+export interface SessionLiveness {
+  ownerRunId: string;
+  pid: number;
+  host: string;
+  lastHeartbeatAt: number;
+}
+
 /**
  * Session metadata (stored in ~/.codemie/sessions/{sessionId}.json)
  * Contains session info and sync state for all processors.
@@ -136,8 +159,10 @@ export interface RuntimeCheckpoint {
 export interface Session {
   sessionId: string; // CodeMie session ID (UUID)
   agentName: string; // 'claude', 'gemini'
+  clientType?: string; // Telemetry/export client identity active for this session
   provider: string; // 'ai-run-sso', etc.
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
+  model?: string; // Model active for the session at start/re-entry
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
   workingDirectory: string; // CWD where agent was launched
@@ -155,6 +180,12 @@ export interface Session {
 
   // Hierarchical sync state
   sync?: SyncState;
+
+  // Original analytics routing/auth context used when the session started
+  analyticsContext?: SessionAnalyticsContext;
+
+  // Best-effort process liveness for hook-managed CLI sessions
+  liveness?: SessionLiveness;
 
   // Runtime state for local telemetry clients that are discovered via polling
   runtimeCheckpoint?: RuntimeCheckpoint;

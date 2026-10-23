@@ -95,6 +95,34 @@ describe('KimiHookTransformer', () => {
     expect(event.permission_mode).toBe('default');
   });
 
+  it('passes through endTime on a synthetic SessionEnd from stale-session reconciliation', () => {
+    const endTime = Date.now() - 2 * 60 * 60 * 1000;
+    const payload = {
+      hook_event_name: 'SessionEnd',
+      session_id: 'session-reconciled-1',
+      cwd: '/Users/carol/project',
+      reason: 'interrupted',
+      endTime,
+    };
+
+    const event = transformer.transform(payload);
+
+    expect(event.endTime).toBe(endTime);
+  });
+
+  it('omits endTime from a live SessionEnd that never set it', () => {
+    const payload = {
+      hook_event_name: 'SessionEnd',
+      session_id: 'session-end-789',
+      cwd: '/Users/carol/project',
+      reason: 'logout',
+    };
+
+    const event = transformer.transform(payload);
+
+    expect('endTime' in event).toBe(false);
+  });
+
   it('falls back to process.cwd() when cwd is missing', () => {
     const payload = {
       hook_event_name: 'SessionStart',

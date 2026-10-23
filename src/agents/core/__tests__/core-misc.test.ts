@@ -428,7 +428,29 @@ describe('stale-session-reconciliation', () => {
     expect(stale).toEqual([]);
   });
 
-  it('filters by agentName, status, and the max lookback window', async () => {
+  it('uses activityStartedAt when a session was killed mid-turn before sync activity advanced', async () => {
+    writeSession('mid-turn.json', {
+      sessionId: 'mid-turn',
+      agentName: 'claude',
+      status: 'active',
+      startTime: NOW - 5 * HOUR,
+      activityStartedAt: NOW - 10 * 60 * 1000,
+      sync: {
+        metrics: {
+          lastProcessedTimestamp: NOW - HOUR,
+          processedRecordIds: [],
+          totalDeltas: 0,
+          totalSynced: 0,
+          totalFailed: 0,
+        },
+      },
+    });
+
+    const stale = await findStaleSessions('claude', { now: NOW });
+    expect(stale).toEqual([]);
+  });
+
+  it('filters by agentName and status, including sessions inactive far longer than 24h', async () => {
     writeSession('wrong-agent.json', {
       sessionId: 'wrong-agent',
       agentName: 'gemini',
@@ -445,7 +467,7 @@ describe('stale-session-reconciliation', () => {
       sessionId: 'ancient',
       agentName: 'claude',
       status: 'active',
-      startTime: NOW - 48 * HOUR, // older than 24h lookback → skipped
+      startTime: NOW - 48 * HOUR, // inactive far longer than the 30m threshold → still stale
     });
     writeSession('good.json', {
       sessionId: 'good',
@@ -455,7 +477,7 @@ describe('stale-session-reconciliation', () => {
     });
 
     const stale = await findStaleSessions('claude', { now: NOW });
-    expect(stale.map(s => s.sessionId)).toEqual(['good']);
+    expect(stale.map(s => s.sessionId).sort()).toEqual(['ancient', 'good']);
   });
 
   it('skips non-session files and unreadable/corrupt JSON without throwing', async () => {
@@ -477,7 +499,7 @@ describe('stale-session-reconciliation', () => {
     expect(stale.map(s => s.sessionId)).toEqual(['valid']);
   });
 
-  it('respects custom inactivityThresholdMs / maxLookbackMs options', async () => {
+  it('respects a custom inactivityThresholdMs option', async () => {
     writeSession('s.json', {
       sessionId: 's',
       agentName: 'claude',

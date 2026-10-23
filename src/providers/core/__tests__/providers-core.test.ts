@@ -377,12 +377,17 @@ describe('defaultAgentHooks', () => {
   describe('claude.enrichArgs', () => {
     const original = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
     const originalModel = process.env.CODEMIE_MODEL;
+    const originalModelPickerSettings = process.env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS;
 
     // CODEMIE_MODEL now drives --model injection, and CodeMie exports its whole
     // CODEMIE_* block into the shell of any session it launches. Clearing it per
     // test keeps these assertions independent of the developer's environment.
+    // CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS is the same story: a real codemie-claude
+    // session sets it so --settings reaches the live model picker, and these
+    // assertions must not see that leak in.
     beforeEach(() => {
       delete process.env.CODEMIE_MODEL;
+      delete process.env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS;
     });
 
     afterEach(() => {
@@ -390,6 +395,8 @@ describe('defaultAgentHooks', () => {
       else process.env.CODEMIE_CLAUDE_EXTENSION_DIR = original;
       if (originalModel === undefined) delete process.env.CODEMIE_MODEL;
       else process.env.CODEMIE_MODEL = originalModel;
+      if (originalModelPickerSettings === undefined) delete process.env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS;
+      else process.env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS = originalModelPickerSettings;
     });
 
     it('returns args unchanged when the extension dir env var is unset', () => {

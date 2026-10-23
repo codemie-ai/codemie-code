@@ -39,6 +39,11 @@ function baseEnv(): NodeJS.ProcessEnv {
   return {
     CODEMIE_SESSION_ID: 'codemie-uuid-1',
     CODEMIE_AGENT: 'opencode',
+    // Always set by BaseAgentAdapter.run() before onSessionStart fires (from
+    // metadata.ssoConfig.clientType) — included here so this direct-call test
+    // fixture matches that real contract now that buildHookConfig no longer
+    // falls back to a literal when it's missing.
+    CODEMIE_CLIENT_TYPE: 'codemie-opencode',
     CODEMIE_PROVIDER: 'ai-run-sso',
     CODEMIE_URL: 'https://sso.example.com',
     CODEMIE_CLI_VERSION: '9.9.9',
@@ -71,29 +76,6 @@ describe('OpenCode onSessionStart', () => {
     expect(config.sessionId).toBe('codemie-uuid-1');
   });
 
-  it('starts the incremental sync failsafe', async () => {
-    const env = baseEnv();
-
-    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
-
-    expect(startIncrementalSync).toHaveBeenCalledTimes(1);
-    const options = startIncrementalSync.mock.calls[0][0];
-    expect(options.sessionId).toBe('codemie-uuid-1');
-    expect(options.cwd).toBe(process.cwd());
-    expect(options.buildContext().clientType).toBe('codemie-opencode');
-  });
-
-  it('does not block startup when the lifecycle event fails', async () => {
-    processEvent.mockRejectedValueOnce(new Error('network down'));
-
-    await expect(
-      OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv())
-    ).resolves.toBeUndefined();
-
-    // The failsafe timer must still start.
-    expect(startIncrementalSync).toHaveBeenCalledTimes(1);
-  });
-
   it('tags processEvent and buildContext with CODEMIE_CLIENT_TYPE when set (e.g. by opencode-acp)', async () => {
     // OpenCodeAcpPluginMetadata inherits onSessionStart verbatim and relies on
     // BaseAgentAdapter setting env.CODEMIE_CLIENT_TYPE from its own ssoConfig —
@@ -117,6 +99,29 @@ describe('OpenCode onSessionStart', () => {
 
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.buildContext().clientType).toBe('codemie-opencode');
+  });
+
+  it('starts the incremental sync failsafe', async () => {
+    const env = baseEnv();
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    expect(startIncrementalSync).toHaveBeenCalledTimes(1);
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.sessionId).toBe('codemie-uuid-1');
+    expect(options.cwd).toBe(process.cwd());
+    expect(options.buildContext().clientType).toBe('codemie-opencode');
+  });
+
+  it('does not block startup when the lifecycle event fails', async () => {
+    processEvent.mockRejectedValueOnce(new Error('network down'));
+
+    await expect(
+      OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv())
+    ).resolves.toBeUndefined();
+
+    // The failsafe timer must still start.
+    expect(startIncrementalSync).toHaveBeenCalledTimes(1);
   });
 });
 

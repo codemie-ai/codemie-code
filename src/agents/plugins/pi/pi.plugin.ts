@@ -15,7 +15,6 @@ import {
 import { resolve } from 'path';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { appendTranscriptMarker } from '../../core/session/session-origin-audit.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
 import { startPiIncrementalSync, stopPiIncrementalSync } from './pi.incremental-sync.js';
 import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
@@ -133,6 +132,7 @@ async function correlateRunToSession(sessionId: string, ledger: PiRunLedger): Pr
       ...session.correlation,
       status: 'matched',
       agentSessionFile: ledger.primaryTranscript,
+      agentSessionFiles: ledger.transcripts.length > 0 ? [...ledger.transcripts] : undefined,
       ...(ledger.piSessionId && { agentSessionId: ledger.piSessionId }),
       detectedAt: Date.now(),
     };
@@ -386,14 +386,6 @@ export const PiPluginMetadata: AgentMetadata = {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
       }
-
-      // A run killed with SIGKILL, or whose terminal was closed, never reaches onSessionEnd and
-      // leaves its record `active` forever with no terminal metric. Recover those on the next
-      // start. Fire-and-forget: a stranded earlier session must not delay this one.
-      void reconcileStaleSessions('pi', env, buildPiHookConfig).catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[pi] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
 
       // Flush metrics during the run, so a hard kill loses at most one interval instead of the
       // whole session. Ledger-driven: it processes exactly the transcripts the extension
