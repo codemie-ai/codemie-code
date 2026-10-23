@@ -231,10 +231,22 @@ describe('forwardSession (project header)', () => {
     const urls = fetchMock.mock.calls.map(([url]) => String(url).split('/').pop());
     expect(urls).toEqual(['event-hooks', 'logs', 'metrics', 'traces']);
     for (const [, init] of fetchMock.mock.calls) {
-      expect(init.headers['X-CodeMie-Project']).toBe('Proj A');
+      expect(init.headers['X-CodeMie-Project']).toBe('Proj%20A');
       expect(init.headers['Content-Type']).toBeDefined();
     }
     expect(fetchMock.mock.calls[1][1].body.toString()).toBe('logs-bytes');
+  });
+
+  it('percent-encodes a non-Latin project name', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'клиенты/проект 100%' });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const hooksCall = fetchMock.mock.calls[0];
+    expect(hooksCall[1].headers['X-CodeMie-Project']).toBe(
+      `${encodeURIComponent('клиенты')}/${encodeURIComponent('проект 100%')}`
+    );
   });
 
   it('sends nothing when the snapshots are null', async () => {
