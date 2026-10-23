@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "task": "Fix EPMCDME-15967: reorder/robustify collectEditLineStats branch logic in session-signals.ts so Write-tool results (type:'create' + structuredPatch:[]) count content lines instead of 0, add a regression test with the real-world dual-field shape, and reconcile the stale mutual-exclusivity assumption in spec.md and two doc comments.",
+  "generated": "2026-10-15T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Touches ~5 files (session-signals.ts fix, orchestrator.ts doc-comment correction, session-signals.test.ts new regression case, likely orchestrator.test.ts Write fixture, spec.md reconciliation) across 2 directories (src/agents/plugins/claude-code-otlp/transcript/ and docs/superpowers/tasks/2026-10-01-epmcdme-15301-stage-1-1/); no new files created." },
+    { "dimension": "component_scope", "reason": "Single function (collectEditLineStats) is the only logic change; orchestrator.ts and spec.md edits are doc-comment/spec text only, not new components or layers, so this stays a self-contained, single-component fix." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
