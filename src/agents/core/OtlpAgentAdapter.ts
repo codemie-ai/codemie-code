@@ -41,7 +41,7 @@ interface InvocationContext {
 
 const SCHEMA_VERSION = 2;
 const MAX_PROMPT_CHARS = 200;
-const MAX_TOOL_FIELD_CHARS = 300;
+export const MAX_TOOL_FIELD_CHARS = 300;
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the

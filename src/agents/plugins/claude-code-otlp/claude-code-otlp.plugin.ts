@@ -50,7 +50,11 @@ import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
-import { resolveToolContextFields, resolveToolDiffFields } from './event-fields/tool-fields.js';
+import {
+  resolveSkillForkFields,
+  resolveToolContextFields,
+  resolveToolDiffFields,
+} from './event-fields/tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   SessionStart: 'agent.session.start',
@@ -457,7 +461,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   private async onPostToolUse(hookInput: PostToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
     const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
-    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields, ...diffFields }] };
+    const forkFields = resolveSkillForkFields(hookInput.tool_name, hookInput.tool_response);
+    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields, ...diffFields, ...forkFields }] };
   }
 }
 

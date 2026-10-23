@@ -509,6 +509,40 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(forwardedEvents()[0].skill_name).toBe('codemie:msgraph');
   });
 
+  it.each([
+    ['in the main thread', {}],
+    ['inside a subagent', { agent_id: 'caller-agent' }],
+  ])('stamps fork_agent_id on a Skill agent.tool.end %s from the uncut result\'s agentId', async (_where, extra) => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    const commandName = 'plugin:' + 's'.repeat(240);
+    await plugin.processOtlpEvent(
+      JSON.stringify(
+        hookEvent({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Skill',
+          tool_input: { skill: commandName },
+          tool_response: { success: true, commandName, status: 'forked', agentId: 'a861e999c42f7f90c' },
+          ...extra,
+        })
+      ),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    const [forwarded] = forwardedEvents();
+    expect(forwarded.fork_agent_id).toBe('a861e999c42f7f90c');
+    expect((forwarded.raw as Record<string, unknown>).fork_agent_id).toBe('a861e999c42f7f90c');
+    expect(String(forwarded.tool_response)).toHaveLength(300);
+    expect(String(forwarded.tool_response)).not.toContain('a861e999c42f7f90c');
+  });
+
+  it('does not stamp fork_agent_id on a Skill agent.tool.start', async () => {
+    const plugin = new ClaudeCodeOtlpPlugin();
+    await plugin.processOtlpEvent(
+      JSON.stringify(hookEvent({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'probe-skill' } })),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+    expect(forwardedEvents()[0]).not.toHaveProperty('fork_agent_id');
+  });
+
   it('stamps lines_added/lines_removed on agent.tool.end from the Edit structuredPatch', async () => {
     const plugin = new ClaudeCodeOtlpPlugin();
     await plugin.processOtlpEvent(

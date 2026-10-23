@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
+import { resolveSkillForkFields, resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
 
 describe('resolveToolContextFields', () => {
   it.each(['Edit', 'Write', 'MultiEdit'])('reads file_path from tool_input.file_path for %s', (toolName) => {
@@ -114,5 +114,38 @@ describe('resolveToolDiffFields', () => {
   it('is safe against a non-object tool_response and omits the unknown counts', () => {
     expect(resolveToolDiffFields('Edit', {}, 'not-an-object')).toEqual({});
     expect(resolveToolDiffFields('Edit', {}, undefined)).toEqual({});
+  });
+});
+
+describe('resolveSkillForkFields', () => {
+  const forkedResult = { agentId: 'a861e999c42f7f90c', status: 'forked', commandName: 'plugin:' + 's'.repeat(240) };
+
+  it('reads the fork\'s agentId from a Skill result object', () => {
+    expect(resolveSkillForkFields('Skill', forkedResult)).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
+  });
+
+  it('reads the fork\'s agentId from a Skill result given as JSON text', () => {
+    expect(resolveSkillForkFields('Skill', JSON.stringify(forkedResult))).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
+  });
+
+  it('returns nothing for an inline skill\'s result, which has no agentId', () => {
+    expect(resolveSkillForkFields('Skill', { success: true, commandName: 'probe-skill' })).toEqual({});
+  });
+
+  it('returns nothing for a tool other than Skill', () => {
+    expect(resolveSkillForkFields('Agent', { agentId: 'a861e999c42f7f90c' })).toEqual({});
+  });
+
+  it.each([
+    ['an empty agentId', { agentId: '' }],
+    ['a non-string agentId', { agentId: 42 }],
+    ['non-JSON text', 'not json'],
+    ['null', null],
+  ])('returns nothing for %s', (_case, toolResponse) => {
+    expect(resolveSkillForkFields('Skill', toolResponse)).toEqual({});
+  });
+
+  it('cuts an agentId longer than 300 chars to 300', () => {
+    expect(resolveSkillForkFields('Skill', { agentId: 'a'.repeat(350) })).toEqual({ fork_agent_id: 'a'.repeat(300) });
   });
 });

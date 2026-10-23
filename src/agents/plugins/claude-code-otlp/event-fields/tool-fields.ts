@@ -1,3 +1,4 @@
+import { MAX_TOOL_FIELD_CHARS } from '@/agents/core/OtlpAgentAdapter.js';
 import { countContentLines } from '../content-lines.js';
 
 export interface ToolContextFields {
@@ -52,6 +53,21 @@ export function resolveToolDiffFields(toolName: string, toolInput: unknown, tool
   return {};
 }
 
+/**
+ * The fork a `Skill` call started, as `{ fork_agent_id }` for its `agent.tool.end`, or `{}` for any
+ * other tool or a result without a non-empty string `agentId` (an inline skill's result has none).
+ * The backend pairs a Skill call with its fork by this id; it is read here from the uncut result
+ * because the base class cuts `tool_response` to {@link MAX_TOOL_FIELD_CHARS}, and a long skill name
+ * pushes `agentId` past that cut. The hook's typed `agent_id` names the caller, never the fork.
+ */
+export function resolveSkillForkFields(toolName: string, toolResponse: unknown): { fork_agent_id?: string } {
+  if (toolName !== 'Skill') {
+    return {};
+  }
+  const agentId = readString(parseJsonObject(toolResponse), 'agentId');
+  return agentId ? { fork_agent_id: agentId.slice(0, MAX_TOOL_FIELD_CHARS) } : {};
+}
+
 /** `tool_name` -> which `tool_input` key holds the file path. */
 const FILE_PATH_KEY_BY_TOOL: Record<string, string> = {
   Edit: 'file_path',
@@ -65,6 +81,18 @@ const AGENT_DISPATCH_TOOLS = new Set(['Agent', 'Task']);
 
 function readField(record: unknown, key: string): unknown {
   return record && typeof record === 'object' ? (record as Record<string, unknown>)[key] : undefined;
+}
+
+/** `value` itself, or the value its JSON text parses to; `undefined` for text that is not JSON. */
+function parseJsonObject(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function readString(record: unknown, key: string): string {
