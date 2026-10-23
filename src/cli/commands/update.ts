@@ -212,6 +212,9 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
   // Special handling for Claude (uses native installer)
   if (agent.name === 'claude' && agent.installVersion) {
     await agent.installVersion('supported');
+  } else if ((agent.name === 'kimi' || agent.name === 'kimi-acp') && agent.installVersion) {
+    // Kimi is installed natively; an npm install would leave the checked binary stale
+    await agent.installVersion(latestVersion);
   } else if (agent.metadata.isBuiltIn) {
     // Special handling for built-in agent — update the CLI package
     await npm.installGlobal(CLI_PACKAGE_NAME, { version: latestVersion, force: true });

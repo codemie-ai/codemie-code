@@ -112,6 +112,12 @@ function buildInstallerCommand(
 	}
 
 	// Build platform-specific command
+	if (platform === 'windows' && url.endsWith('.ps1')) {
+		// PowerShell installer: `irm | iex` can't take arguments, so scripts read their
+		// version from env (NativeInstallOptions.env); installFlags are not supported.
+		return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ${url} | iex"`;
+	}
+
 	if (platform === 'windows') {
 		// Windows CMD command (simpler and more universal than PowerShell)
 		// Download install.cmd, execute with args, then delete
