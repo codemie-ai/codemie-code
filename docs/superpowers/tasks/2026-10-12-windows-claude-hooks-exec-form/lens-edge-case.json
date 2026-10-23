@@ -1,0 +1,62 @@
+[
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:116-117",
+    "trigger_condition": "Two codemie sessions launch concurrently, or Claude reads hooks.json mid-rewrite",
+    "guard_snippet": "const tmp = `${hooksFile}.${process.pid}.tmp`; await writeFile(tmp, json, 'utf-8'); await rename(tmp, hooksFile);",
+    "potential_consequence": "Shared ~/.codemie/claude-plugin/hooks/hooks.json read truncated or empty; session starts without hooks"
+  },
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:106",
+    "trigger_condition": "process.execPath is per-shell or version-specific (fnm multishell dir, nvm/volta switch)",
+    "guard_snippet": "const nodePath = await realpath(process.execPath).catch(() => process.execPath);",
+    "potential_consequence": "Persisted node path vanishes when that shell closes; sessions with differing paths rewrite each other"
+  },
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:84-86,101",
+    "trigger_condition": "codemie run from npx cache, dev checkout, or a second install",
+    "guard_snippet": "const scriptPath = await resolveStableCodemieScript() ?? this.getCodemieScriptPath();",
+    "potential_consequence": "Shared hooks.json pinned to a transient or different CLI copy; later sessions run wrong or deleted script"
+  },
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:97",
+    "trigger_condition": "Non-win32 run finds exec-form file with Windows paths (shared or roaming home) and action is already_exists",
+    "guard_snippet": "if (process.platform !== 'win32') { if (await hasExecFormEntries(hooksFile)) await this.restoreShellFormHooks(targetPath); return; }",
+    "potential_consequence": "Windows node path stays in hooks.json; every hook fails until the plugin version bumps"
+  },
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:96-119",
+    "trigger_condition": "Installed Claude Code version predates hook `args` (exec form) support",
+    "guard_snippet": "if (!(await this.claudeSupportsExecFormHooks())) return;",
+    "potential_consequence": "Hook runs bare node with no script; stdin payload executed as JS, hooks fail"
+  },
+  {
+    "location": "src/agents/plugins/claude/claude.plugin-installer.ts:116",
+    "trigger_condition": "Installed hooks.json was hand-edited on Windows (timeout changed, entry added or removed)",
+    "guard_snippet": "if (!codemieEntriesMatch(installed, expected)) { /* rewrite only codemie entries, keep the rest */ }",
+    "potential_consequence": "Edits silently reverted on every launch; previously overwritten only on a version update"
+  },
+  {
+    "location": "src/utils/hook-command.ts:150",
+    "trigger_condition": "codemie command carries quoted arguments, shell operators, redirections or variable expansion",
+    "guard_snippet": "if (/[\"'`$&|<>;()]/.test(out.command)) return out;",
+    "potential_consequence": "Quotes and operators become literal argv tokens; hook receives wrong arguments"
+  },
+  {
+    "location": "src/utils/hook-command.ts:151-154",
+    "trigger_condition": "Converted entry already has an `args` key",
+    "guard_snippet": "if (first === 'codemie' && !('args' in out)) { ... }",
+    "potential_consequence": "Existing args array silently replaced by script path plus split tokens"
+  },
+  {
+    "location": "src/utils/hook-command.ts:152-153",
+    "trigger_condition": "nodePath or scriptPath is an extended-length path starting with \\\\?\\",
+    "guard_snippet": "const norm = (p: string) => (p.startsWith('\\\\\\\\?\\\\') ? p : toForwardSlash(p));",
+    "potential_consequence": "Prefix becomes //?/ which Windows does not resolve; hook command not found"
+  },
+  {
+    "location": "src/agents/core/extension/BaseExtensionInstaller.ts:713",
+    "trigger_condition": "A refreshInstalledHooks override rejects or throws synchronously",
+    "guard_snippet": "try { await this.refreshInstalledHooks(targetPath); } catch (e) { logger.warn(`[${this.agentName}] hooks refresh failed: ${e}`); }",
+    "potential_consequence": "Rejection reaches install's outer handler; successful copy reported failed, --plugin-dir not injected"
+  }
+]

@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "branch": "fix/windows-claude-hooks-exec-form",
+  "head": "de0266dc048e6323e32632268482cfa0db3c7a87",
+  "runner": "npm",
+  "started_at": "2026-10-13T05:48:19Z",
+  "completed_at": "2026-10-13T05:54:16Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "notes": "Gates ran against the working tree at HEAD de0266d on win32 / Node v24.11.0 / npm 11.6.1 (CI uses Node 20 on ubuntu-latest and windows-latest). The tree had uncommitted modifications to package-lock.json, .claude/settings.json and .codemie/codemie-cli.config.json before and after the run; CI installs with `npm ci` from the committed lockfile, so installed dependencies may differ from what was validated here. Full per-gate output is in <run_dir>/gate-<id>.local.log.",
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4223,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15117,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7469,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15784,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Guide describes build as `tsc && tsc-alias && npm run copy-plugin`; package.json also runs `npm run bundle-statusline`, which ran and succeeded."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 57215,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "326 files passed; 4790 tests passed, 2 individual tests skipped by the suite. Covers CI job test-windows locally; test-ubuntu (same command on ubuntu-latest, Node 20) can only be settled by CI."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 39074,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 files passed, 1 file skipped; 278 tests passed, 10 skipped by the suite. Covers CI job test-windows locally; test-ubuntu can only be settled by CI."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 2458,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" — the script scans only `git diff --staged` and nothing is staged, so the committed branch diff was not scanned. Also chained in .husky/pre-commit. Guide Skip-if names the Docker daemon (docker is not installed here) but the script also accepts Podman, which is running, so it was run; guide says the hook prints a hint and skips without Docker, whereas the script exits 1 unless CODEMIE_SKIP_SECRETS_SCAN=1. To scan locally: stage the changes before running, or run gitleaks over origin/main..HEAD. Still owed: CI job secrets-detection."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2083,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only (1 of the 2 branch commits); see commitlint-range for the full PR range."
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 31042,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 124591,
+      "command": "npm run ci",
+      "exit_code": 0,
+      "notes": "Also the `Run CI checks` step of .github/workflows/publish.yml. Unit 4790 passed / 2 skipped; integration 278 passed / 10 skipped."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 2255,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: \"lint-staged could not find any staged files.\" — branch changes are already committed. Its tasks (eslint --max-warnings=0, vitest related, license-check) are covered for the whole tree by the lint, unit, integration and license gates. To run it for real, stage the changed files first."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 1988,
+      "command": "npx commitlint --from origin/main --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Mismatch: guide gate checks HEAD~1..HEAD, CI job validate-commits checks pull_request.base.sha..HEAD. origin/main (152e6f1, equal to the merge base) substituted for the base sha; both branch commits reported 0 problems, 0 warnings."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view \"$PR_NUMBER\" --repo \"$REPO\" --json title -q '.title' | npx commitlint --verbose",
+      "exit_code": null,
+      "notes": "CI job validate-commits lints the PR title fetched from the GitHub API; no PR exists for this run. The title must be a Conventional Commit per commitlint.config.cjs."
+    },
+    {
+      "id": "secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gitleaks/gitleaks-action@v2.3.9",
+      "exit_code": null,
+      "notes": "GitHub Action scanning the PR commits with .gitleaks.toml; the repo defines no local command for it and no gitleaks binary is on PATH. Only CI can settle this check; a local equivalent would be the ghcr.io/gitleaks/gitleaks:v8.30.1 image via Podman over origin/main..HEAD."
+    },
+    {
+      "id": "npm-publish",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm publish --access public",
+      "exit_code": null,
+      "notes": "Release deploy in .github/workflows/publish.yml (release / manual dispatch only); needs NPM_TOKEN and is not a merge check."
+    }
+  ],
+  "failures": {}
+}
