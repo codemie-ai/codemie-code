@@ -257,7 +257,7 @@ The JSON output deliberately ends in `.report.json` rather than `.json` so a dir
 
 ## Automatic Per-Session Report on Exit
 
-When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `./docs/codemie/analytics/codemie-analytics-<session_id>.json`.
+When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `<CODEMIE_HOME or ~/.codemie>/analytics/codemie-analytics-[<email>-]<session_id>.json` (`CODEMIE_HOME` overrides `~/.codemie`). Nothing is written into the working repository.
 
 - **Enabled by default** — it runs in-process as part of session finalization, not as a separate command.
 - **Disable per run** with `--no-analytics-report`, e.g. `codemie claude --no-analytics-report ...` (the flag is available on every agent that supports the feature).

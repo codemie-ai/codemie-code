@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 
 const loadMock = vi.fn();
 vi.mock('../../sources/sessions-source.js', () => ({
@@ -22,6 +25,8 @@ vi.mock('../report-generator.js', () => ({
     return { path: p };
   },
 }));
+
+import { getCodemiePath } from '../../../../../utils/paths.js';
 
 describe('generateSessionReport', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -101,6 +106,60 @@ describe('generateSessionReport', () => {
     // The path passed to generateReportJson should contain the email slug and sessionId
     const writtenPath: string = generateReportJsonMock.mock.calls[0][1];
     expect(writtenPath).toContain('codemie-analytics-bob-example-com-abc-123.json');
+    expect(dirname(writtenPath)).toBe(getCodemiePath('analytics'));
+  });
+
+  describe('default output location', () => {
+    let homeDir: string;
+    let repoDir: string;
+    let prevHome: string | undefined;
+
+    beforeEach(() => {
+      prevHome = process.env.CODEMIE_HOME;
+      homeDir = mkdtempSync(join(tmpdir(), 'cm-home-'));
+      repoDir = mkdtempSync(join(tmpdir(), 'cm-repo-'));
+      mkdirSync(join(repoDir, '.git'));
+      mkdirSync(join(repoDir, 'docs', 'codemie', 'analytics'), { recursive: true });
+      writeFileSync(join(repoDir, 'docs', 'codemie', 'analytics', 'legacy.json'), '{}');
+      process.env.CODEMIE_HOME = homeDir;
+      vi.spyOn(process, 'cwd').mockReturnValue(repoDir);
+      loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 'sid' }] });
+      enrichCostsMock.mockResolvedValue({
+        index: new Map([['sid', { sessionId: 'sid', tokens: { total: 10 } }]]),
+        summary: { totalCostUSD: 0, pricedSessions: 1, totalSessions: 1 },
+      });
+      aggregateMock.mockReturnValue({ totalSessions: 1, projects: [] });
+      buildPayloadMock.mockReturnValue({ meta: { totals: { sessions: 1 } }, sessions: [] });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      if (prevHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = prevHome;
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(repoDir, { recursive: true, force: true });
+    });
+
+    it('writes under CODEMIE_HOME/analytics and never into the working repository', async () => {
+      const { generateSessionReport } = await import('../session-report.js');
+      const res = await generateSessionReport({ sessionId: 'sid' });
+
+      const writtenPath: string = generateReportJsonMock.mock.calls[0][1];
+      expect(writtenPath).toBe(join(homeDir, 'analytics', 'codemie-analytics-sid.json'));
+      expect(writtenPath.startsWith(repoDir)).toBe(false);
+      expect(res.written).toBe(writtenPath);
+      for (const call of generateReportJsonMock.mock.calls) {
+        expect(String(call[1]).startsWith(repoDir)).toBe(false);
+      }
+      expect(readdirSync(join(repoDir, 'docs', 'codemie', 'analytics'))).toEqual(['legacy.json']);
+    });
+
+    it('lets an explicit outputPath win over the default', async () => {
+      const { generateSessionReport } = await import('../session-report.js');
+      const explicit = join(repoDir, 'custom', 'out.json');
+      await generateSessionReport({ sessionId: 'sid', outputPath: explicit });
+      expect(generateReportJsonMock.mock.calls[0][1]).toBe(explicit);
+    });
   });
 
   it('passes periodStart/periodEnd to buildPayload when session has start/end events', async () => {
