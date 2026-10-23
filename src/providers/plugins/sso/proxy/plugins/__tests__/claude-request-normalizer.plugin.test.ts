@@ -238,6 +238,50 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       expect(body.thinking).toEqual({ type: 'adaptive' });
     });
 
+    it('sets thinking.type to adaptive for claude-opus-5-5', async () => {
+      const context = createProxyContext({
+        model: 'claude-opus-5-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'enabled', budget_tokens: 10000 },
+      });
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config).toEqual({ effort: 'high' });
+    });
+
+    it('sets thinking.type to adaptive for claude-sonnet-5-5', async () => {
+      const context = createProxyContext({
+        model: 'claude-sonnet-5-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'enabled', budget_tokens: 5000 },
+        temperature: 0.7,
+      });
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config).toEqual({ effort: 'medium' });
+      expect(body).not.toHaveProperty('temperature');
+    });
+
+    it('sets thinking.type to adaptive for claude-haiku-5-5', async () => {
+      const context = createProxyContext({
+        model: 'claude-haiku-5-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'enabled', budget_tokens: 2000 },
+      });
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config).toEqual({ effort: 'low' });
+    });
+
     it('removes budget_tokens from thinking object', async () => {
       const context = createProxyContext({
         model: 'claude-opus-4-7',
@@ -464,6 +508,19 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       await interceptor.onRequest!(context);
 
       expect(context.requestBody!.toString('utf-8')).toBe(originalBodyStr);
+    });
+
+    it('preserves thinking.type="disabled" for claude-sonnet-5-5', async () => {
+      const context = createProxyContext({
+        model: 'claude-sonnet-5-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        thinking: { type: 'disabled' },
+      });
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.thinking).toEqual({ type: 'disabled' });
     });
   });
 

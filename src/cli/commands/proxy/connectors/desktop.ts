@@ -55,19 +55,22 @@ interface CodeMieLlmModel {
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
  *
- * Opus and Sonnet entries are listed in descending preference
- * (`opus: 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5 → 4-6`):
+ * Opus, Sonnet, and Haiku entries are listed in descending preference
+ * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
  * {@link selectDesktopClaudeModels} collapses each family to the single
  * highest-priority ID the gateway actually serves, so Desktop never shows more
- * than one Opus or one Sonnet (matching the latest cloud Desktop lineup).
+ * than one Opus, Sonnet, or Haiku (matching the latest cloud Desktop lineup).
  */
 export const PREFERRED_CLAUDE_MODELS = [
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-sonnet-5-5',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
+  'claude-haiku-5-5',
   'claude-haiku-4-5',
 ] as const;
 
@@ -213,13 +216,12 @@ export function selectPreferredClaudeModels(
  * Build the exact model set Claude Desktop should be offered.
  *
  * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus and sonnet families to a single entry each: the first
- * (highest-priority) ID that resolved. With preferred order
- * `opus: 5 → 4-8 → 4-7 → 4-6 → 3` and `sonnet: 5 → 4-6` in
- * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 5 / Sonnet 5 when the
- * gateway serves them and otherwise falls back to the next-best available ID
- * in each family. Haiku and any other non-opus/non-sonnet models are passed
- * through untouched; order is preserved.
+ * then collapses the opus, sonnet, and haiku families to a single entry each:
+ * the first (highest-priority) ID that resolved. With preferred order
+ * `opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, and
+ * `haiku: 5.5 → 4-5` in {@link PREFERRED_CLAUDE_MODELS}, this exposes the
+ * highest-priority model in each family when the gateway serves it and
+ * otherwise falls back to the next-best available ID. Order is preserved.
  */
 export function selectDesktopClaudeModels(
   available: string[],
@@ -228,6 +230,7 @@ export function selectDesktopClaudeModels(
   const resolved = selectPreferredClaudeModels(available, preferred);
   let opusKept = false;
   let sonnetKept = false;
+  let haikuKept = false;
   return resolved.filter((id) => {
     if (/^claude-opus-/i.test(id)) {
       if (opusKept) return false;
@@ -237,6 +240,11 @@ export function selectDesktopClaudeModels(
     if (/^claude-sonnet-/i.test(id)) {
       if (sonnetKept) return false;
       sonnetKept = true;
+      return true;
+    }
+    if (/^claude-haiku-/i.test(id)) {
+      if (haikuKept) return false;
+      haikuKept = true;
       return true;
     }
     return true;

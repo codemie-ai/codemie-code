@@ -40,14 +40,19 @@ const MODEL_CAPABILITY_TABLE: ReadonlyArray<{ pattern: RegExp; capabilities: Mod
     capabilities: { thinking: 'none', effort: false, sampling: true, preserveDisabledThinking: false },
   },
   {
-    // claude-opus-4-7/8/9 (+ date-tagged; excludes 4-70+): adaptive thinking + effort.
-    pattern: /claude-opus-4-[7-9](?:[^0-9]|$)/i,
+    // claude-haiku-5 / 5-5 (+ date-tagged): adaptive thinking + effort.
+    pattern: /claude-haiku-5(?:-[0-9]+)?(?:[^0-9]|$)/i,
     capabilities: { thinking: 'adaptive', effort: true, sampling: true, preserveDisabledThinking: false },
   },
   {
-    // claude-sonnet-5 (+ date-tagged): adaptive thinking + effort; rejects manual
+    // claude-opus-4-7/8/9 and 5/5-5 (+ date-tagged; excludes 4-70+): adaptive thinking + effort.
+    pattern: /claude-opus-(?:4-[7-9]|5(?:-[0-9]+)?)(?:[^0-9]|$)/i,
+    capabilities: { thinking: 'adaptive', effort: true, sampling: true, preserveDisabledThinking: false },
+  },
+  {
+    // claude-sonnet-5 / 5-5 (+ date-tagged): adaptive thinking + effort; rejects manual
     // sampling params; keeps thinking.type="disabled".
-    pattern: /claude-sonnet-5(?:[^0-9]|$)/i,
+    pattern: /claude-sonnet-5(?:-[0-9]+)?(?:[^0-9]|$)/i,
     capabilities: { thinking: 'adaptive', effort: true, sampling: false, preserveDisabledThinking: true },
   },
 ];
