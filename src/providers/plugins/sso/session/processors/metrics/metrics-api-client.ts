@@ -153,8 +153,8 @@ class MetricsApiClient {
       'User-Agent': `codemie-cli/${this.config.version}`,
       'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
       'X-CodeMie-Client': this.config.clientType,
-      'X-CodeMie-Repository': encodeAttributionHeader(metric.attributes.repository),
-      'X-CodeMie-Branch': encodeAttributionHeader(metric.attributes.branch),
+      ...(metric.attributes.repository != null && { 'X-CodeMie-Repository': encodeAttributionHeader(metric.attributes.repository) }),
+      ...(metric.attributes.branch != null && { 'X-CodeMie-Branch': encodeAttributionHeader(metric.attributes.branch) }),
       ...(metric.attributes.project && { 'X-CodeMie-Project': encodeAttributionHeader(metric.attributes.project) })
     };
 

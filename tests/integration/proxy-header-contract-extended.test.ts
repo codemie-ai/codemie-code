@@ -162,6 +162,21 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
     expect(h['x-codemie-branch']).toBe('fix/100%25');
   });
 
+  it('percent-encodes Desktop-resolver attribution and the Cowork default', async () => {
+    const resolve = { value: { repository: 'клиент/репо', branch: 'фича/икс' } as { repository?: string; branch?: string } };
+    const desktopRepositoryResolver = {
+      resolveForRequest: async () => resolve.value,
+    } as unknown as ProxyConfig['desktopRepositoryResolver'];
+    harness = await startHarness({ desktopRepositoryResolver });
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-repository']).toBe(encodeAttributionHeader('клиент/репо'));
+    expect(harness.captured()['x-codemie-branch']).toBe(encodeAttributionHeader('фича/икс'));
+
+    resolve.value = {};
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-repository']).toBe('Cowork');
+  });
+
   it('OMITS X-CodeMie-Repository and X-CodeMie-Branch when not configured', async () => {
     harness = await startHarness();
     await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
