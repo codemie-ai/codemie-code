@@ -481,15 +481,19 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
  *   recompute (see {@link buildFullAccumulator}). `PreCompact`/`StopFailure` never return a
  *   summary.
  *
- * Scoping: `state.activeSkill` tracks which skill (if any) the main transcript is currently
- * "inside" — set to a skill's name when a `Skill` tool_use invokes it ({@link findSkillInvocation},
- * applied *after* scoping that same line's own usage record, since the invoking turn itself still
- * belongs to whatever was active before it), and cleared on the next genuine new user turn
- * ({@link isGenuineUserTurn}) — a fresh prompt is treated as leaving any skill context the
- * previous turn's work was under. Every usage record is scoped `scopeKind: 'skill'`,
- * `scopeName: state.activeSkill` while a skill is active, else `scopeKind: 'main'`, `scopeName: ''`.
- * This is a heuristic, not a tracked boundary Claude Code itself reports — a skill whose work
- * spans multiple turns without an intervening user prompt is scoped as one continuous span.
+ * Scoping: Claude Code's own mark decides first. A line with `attributionSkill` (2.1.278+, set on
+ * every line an inline skill — run as `/x` or through the `Skill` tool — or a command owns) is
+ * scoped `scopeKind: 'skill'`, `scopeName: <attributionSkill>`; a line without it that has
+ * `requestedModel` (2.1.295+, which would carry the mark if a skill owned it) is `scopeKind: 'main'`,
+ * `scopeName: ''`. Only a line with neither falls back to the `state.activeSkill` heuristic:
+ * `state.activeSkill` tracks which skill (if any) the main transcript is currently "inside" — set to
+ * a skill's name when a `Skill` tool_use invokes it ({@link findSkillInvocation}, applied *after*
+ * scoping that same line's own usage record, since the invoking turn itself still belongs to
+ * whatever was active before it), and cleared on the next genuine new user turn
+ * ({@link isGenuineUserTurn}). Such a line is scoped `scopeKind: 'skill'`,
+ * `scopeName: state.activeSkill` while a skill is active, else `main`. The heuristic misses a
+ * slash-invoked skill or command and scopes a skill whose work spans several turns without an
+ * intervening user prompt as one continuous span.
  */
 async function deriveMainEvents(
   state: TranscriptParseState,
@@ -528,9 +532,10 @@ async function deriveMainEvents(
       state.activeSkill = '';
     }
 
-    const scopeKind = state.activeSkill ? 'skill' : 'main';
-    const parsed = parseUsageLine(line, scopeKind, state.activeSkill, '', '');
+    const parsed = parseUsageLine(line, 'main', '', '', '');
     if (parsed) {
+      parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
+      parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
       const key = usageRequestKey(parsed);
       const existing = state.openRequests[key];
       state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
@@ -700,26 +705,28 @@ export interface SessionEnvCheckResult {
 const NOOP_FINALIZE = async (): Promise<void> => {};
 
 /**
- * Most recent non-empty, non-`<synthetic>` `model` among main-thread and skill usage requests
- * parsed so far for this session. Used as a last-resort fallback for `configured_model` when
- * neither the triggering hook's own payload nor the prior `agent.session.env` snapshot has one —
- * e.g. the Claude Code desktop app's `SessionStart` carries no `model` until the first `/compact`
- * or model switch, even though every transcript line already reports the model that actually
- * answered. Subagent requests share `state.openRequests` but must not set the session's model.
- * `''` when no request has a usable model yet (true at the very first hook of a session, before
- * any transcript line exists).
+ * The model of the newest main-thread request (`scopeKind: 'main'`, empty `agentId`, a non-empty,
+ * non-`<synthetic>` `model`) parsed so far for this session: its `requestedModel`, else its `model`.
+ * Used as a last-resort fallback for `configured_model` when neither the triggering hook's own
+ * payload nor the prior `agent.session.env` snapshot has one — e.g. the Claude Code desktop app's
+ * `SessionStart` carries no `model` until the first `/compact` or model switch, even though every
+ * transcript line already reports the model that actually answered. A fork, an inline skill or a
+ * command can run on its own `model:`, so their requests never set the session's model.
+ * `requestedModel` is preferred because it has the form SessionStart `model` and the model-switch
+ * hooks use (`claude-opus-5-5[1m]`), while `model` drops `[1m]` and can be the provider's id.
+ * `''` when no such request exists yet.
  */
 function latestKnownModel(openRequests: Record<string, OpenUsageRequest>): string {
   let best: OpenUsageRequest | undefined;
   for (const req of Object.values(openRequests)) {
-    if ((req.scopeKind !== 'main' && req.scopeKind !== 'skill') || !req.model || isSyntheticModel(req.model)) {
+    if (req.scopeKind !== 'main' || req.agentId || !req.model || isSyntheticModel(req.model)) {
       continue;
     }
     if (!best || req.timestamp > best.timestamp) {
       best = req;
     }
   }
-  return best?.model ?? '';
+  return best ? best.requestedModel || best.model : '';
 }
 
 /**

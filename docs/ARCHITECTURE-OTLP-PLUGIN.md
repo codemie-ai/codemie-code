@@ -202,10 +202,10 @@ baseline. The env-check diff for every other trigger lives in `computeSessionEnv
 when it changed. Whenever neither the triggering hook's own payload nor the prior snapshot has a
 `configured_model` (the Claude Code desktop app's `SessionStart` carries no `model`
 until the first `/compact` or model switch), it falls back to `latestKnownModel(state.openRequests)`:
-the most recent non-`<synthetic>` `model` among every usage request parsed so far for the session
-(main thread, skills, and subagents all share `state.openRequests`, already populated by this same
-pass's own `deriveMainEvents`/`deriveSubagentEvents` call before the env-check runs). `''` only when
-no transcript line has reported a usable model yet — true for the very first `agent.session.env` of
+the newest `main` usage request with an empty `agentId` and a non-`<synthetic>` `model` (not a skill,
+a command or a subagent, which can run on their own `model:`; all share `state.openRequests`, already
+populated by this same pass's own `deriveMainEvents`/`deriveSubagentEvents` call before the env-check
+runs), returning its `requestedModel`, else its `model`. `''` only when no such request exists yet — true for the very first `agent.session.env` of
 a session, sent synchronously from `SessionStart` itself, before any turn exists to read a model
 from. `openMainTranscriptPass`/`openSubagentPass`/`openSessionEndPass` take an optional
 `envCheck` argument and, when given, run that diff against the same already-loaded `state`, under

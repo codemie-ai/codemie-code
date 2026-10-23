@@ -40,6 +40,12 @@ export interface OpenUsageRequest {
   stopReason: string;
   isApiError: boolean;
   gitBranch: string;
+  /** The line's `requestedModel` (Claude Code 2.1.295+), in the form SessionStart `model` and the
+   *  model-switch hooks use; `''` when the line has none; absent in a record saved before it existed. */
+  requestedModel?: string;
+  /** The line's `attributionSkill` — the skill or command Claude Code attributes the request to;
+   *  `''` when the line has none; absent in a record saved before it existed. */
+  attributionSkill?: string;
 }
 
 export interface TranscriptParseState {

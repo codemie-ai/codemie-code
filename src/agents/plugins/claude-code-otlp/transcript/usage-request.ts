@@ -32,6 +32,8 @@ interface TranscriptUsageLine {
   gitBranch?: string;
   isApiErrorMessage?: boolean;
   requestId?: string;
+  requestedModel?: unknown;
+  attributionSkill?: unknown;
   message?: RoutingHeaderSource & {
     id?: string;
     model?: string;
@@ -142,6 +144,8 @@ export function parseUsageLine(
     stopReason: parsed.message?.stop_reason ?? '',
     isApiError: Boolean(parsed.isApiErrorMessage),
     gitBranch: parsed.gitBranch ?? '',
+    requestedModel: typeof parsed.requestedModel === 'string' ? parsed.requestedModel : '',
+    attributionSkill: typeof parsed.attributionSkill === 'string' ? parsed.attributionSkill : '',
   };
 }
 
@@ -195,6 +199,8 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
     stopReason: b.stopReason || a.stopReason,
     isApiError: b.isApiError || a.isApiError,
     gitBranch: b.gitBranch || a.gitBranch,
+    requestedModel: b.requestedModel || a.requestedModel || '',
+    attributionSkill: b.attributionSkill || a.attributionSkill || '',
   };
 }
 

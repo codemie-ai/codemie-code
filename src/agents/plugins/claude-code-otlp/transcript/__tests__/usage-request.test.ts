@@ -94,6 +94,27 @@ describe('parseUsageLine', () => {
     expect(r.agentId).toBe('');
   });
 
+  it('keeps the line\'s requestedModel and attributionSkill on the record', () => {
+    const line = JSON.stringify({
+      requestId: 'req_marked',
+      requestedModel: 'claude-opus-5-5[1m]',
+      attributionSkill: 'probe-skill',
+      message: { id: 'msg_marked', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 } },
+    });
+
+    const r = parseUsageLine(line, 'main', '', '', '') as OpenUsageRequest;
+
+    expect(r.requestedModel).toBe('claude-opus-5-5[1m]');
+    expect(r.attributionSkill).toBe('probe-skill');
+  });
+
+  it('reads requestedModel and attributionSkill as empty when the line has neither', () => {
+    const r = parseUsageLine(lines[3], 'main', '', '', '') as OpenUsageRequest;
+
+    expect(r.requestedModel).toBe('');
+    expect(r.attributionSkill).toBe('');
+  });
+
   it('falls back to the flat cache_creation_input_tokens as the 5m tier when the row has no cache_creation split', () => {
     const line = JSON.stringify({
       requestId: 'req_flat_only',
@@ -354,8 +375,24 @@ describe('mergeUsageRequest', () => {
   });
 });
 
+describe('mergeUsageRequest - requestedModel', () => {
+  it('keeps a non-empty requestedModel from either side', () => {
+    const first = parseUsageLine(lines[3], 'main', '', '', '') as OpenUsageRequest;
+    const marked = { ...first, requestedModel: 'claude-opus-5-5[1m]' };
+
+    expect(mergeUsageRequest(marked, first).requestedModel).toBe('claude-opus-5-5[1m]');
+    expect(mergeUsageRequest(first, marked).requestedModel).toBe('claude-opus-5-5[1m]');
+  });
+
+  it('reads a stored record that lacks requestedModel as empty', () => {
+    const { requestedModel: _dropped, ...stored } = parseUsageLine(lines[3], 'main', '', '', '') as OpenUsageRequest;
+
+    expect(mergeUsageRequest(stored, stored).requestedModel).toBe('');
+  });
+});
+
 describe('buildUsageRequestEvent', () => {
-  it('maps every OpenUsageRequest field to its snake_case event field, with an explicit type', () => {
+  it('maps every emitted OpenUsageRequest field to its snake_case event field, with an explicit type, and keeps requestedModel / attributionSkill internal', () => {
     const req: OpenUsageRequest = {
       requestId: 'req-1', messageId: 'msg-1', model: 'resolved-model', modelRaw: 'literal-model', timestamp: '2026-10-01T00:00:00.000Z',
       speed: 'fast', inferenceGeo: 'us', serviceTier: 'priority',
@@ -363,6 +400,7 @@ describe('buildUsageRequestEvent', () => {
       cacheReadTokens: 3, outputTokens: 4, thinkingTokens: 9, webSearchRequests: 5, webFetchRequests: 6,
       scopeKind: 'skill', scopeName: 'brainstorming', agentId: 'agent-7', agentType: 'Explore',
       stopReason: 'end_turn', isApiError: false, gitBranch: 'main',
+      requestedModel: 'claude-opus-5-5[1m]', attributionSkill: 'brainstorming',
     };
 
     const event = buildUsageRequestEvent('session-123', req);

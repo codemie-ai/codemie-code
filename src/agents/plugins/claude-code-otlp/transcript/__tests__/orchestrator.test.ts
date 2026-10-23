@@ -80,6 +80,8 @@ function usageLine(opts: {
   gitBranch?: string;
   stopReason?: string;
   timestamp?: string;
+  requestedModel?: string;
+  attributionSkill?: string;
 }): string {
   return JSON.stringify({
     gitBranch: opts.gitBranch ?? 'main',
@@ -87,6 +89,8 @@ function usageLine(opts: {
     timestamp: opts.timestamp ?? '2026-10-01T00:00:00.000Z',
     uuid: opts.uuid,
     ...(opts.requestId ? { requestId: opts.requestId } : {}),
+    ...(opts.requestedModel ? { requestedModel: opts.requestedModel } : {}),
+    ...(opts.attributionSkill ? { attributionSkill: opts.attributionSkill } : {}),
     ...(opts.isApiErrorMessage ? { isApiErrorMessage: opts.isApiErrorMessage } : {}),
     message: {
       id: opts.messageId,
@@ -288,6 +292,8 @@ function skillAwareLine(opts: {
   messageId: string;
   outputTokens: number;
   skill?: string;
+  requestedModel?: string;
+  attributionSkill?: string;
 }): string {
   const content: unknown[] = [{ type: 'text', text: 'ok' }];
   if (opts.skill) {
@@ -298,6 +304,8 @@ function skillAwareLine(opts: {
     cwd: '/repo',
     timestamp: '2026-10-01T00:00:00.000Z',
     uuid: opts.uuid,
+    ...(opts.requestedModel ? { requestedModel: opts.requestedModel } : {}),
+    ...(opts.attributionSkill ? { attributionSkill: opts.attributionSkill } : {}),
     message: {
       id: opts.messageId,
       role: 'assistant',
@@ -882,6 +890,60 @@ describe('openMainTranscriptPass — skill scoping', () => {
     const usage = events.filter((e) => e.type === 'agent.usage.request');
 
     expect(usage.find((e) => e.message_id === 'msg-2')).toMatchObject({ scope_kind: 'skill', scope_name: 'brainstorming' });
+  });
+
+  it.each([
+    ['an inline skill', 'probe-skill'],
+    ['a command', 'probe-cmd'],
+  ])('scopes %s run as a slash command by Claude Code\'s attributionSkill mark', async (_kind, name) => {
+    const sessionId = `session-slash-${name}`;
+    const transcriptPath = writeTranscript(`transcript-slash-${name}.jsonl`, [
+      userLine(commandText(name)),
+      skillAwareLine({
+        uuid: 'u1',
+        messageId: 'msg-1',
+        outputTokens: 10,
+        requestedModel: 'claude-sonnet-5-5',
+        attributionSkill: name,
+      }),
+    ]);
+
+    const usage = (await mainEvents(sessionId, transcriptPath, 'Stop')).filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage.find((e) => e.message_id === 'msg-1')).toMatchObject({ scope_kind: 'skill', scope_name: name });
+  });
+
+  it('scopes a Skill-tool inline skill by the mark: the invoking line and a later unmarked line stay main', async () => {
+    const sessionId = 'session-skill-tool-marked';
+    const transcriptPath = writeTranscript('transcript-skill-tool-marked.jsonl', [
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, skill: 'probe-skill', requestedModel: 'claude-haiku-5-5' }),
+      skillAwareLine({
+        uuid: 'u2',
+        messageId: 'msg-2',
+        outputTokens: 20,
+        requestedModel: 'claude-haiku-5-5',
+        attributionSkill: 'probe-skill',
+      }),
+      skillAwareLine({ uuid: 'u3', messageId: 'msg-3', outputTokens: 30, requestedModel: 'claude-haiku-5-5' }),
+    ]);
+
+    const usage = (await mainEvents(sessionId, transcriptPath, 'Stop')).filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage.find((e) => e.message_id === 'msg-1')).toMatchObject({ scope_kind: 'main', scope_name: '' });
+    expect(usage.find((e) => e.message_id === 'msg-2')).toMatchObject({ scope_kind: 'skill', scope_name: 'probe-skill' });
+    expect(usage.find((e) => e.message_id === 'msg-3')).toMatchObject({ scope_kind: 'main', scope_name: '' });
+  });
+
+  it('scopes a marked line without requestedModel (Claude Code 2.1.278-2.1.294) by its mark', async () => {
+    const sessionId = 'session-mark-no-requested-model';
+    const transcriptPath = writeTranscript('transcript-mark-no-requested-model.jsonl', [
+      userLine(commandText('probe-skill')),
+      skillAwareLine({ uuid: 'u1', messageId: 'msg-1', outputTokens: 10, attributionSkill: 'probe-skill' }),
+    ]);
+
+    const usage = (await mainEvents(sessionId, transcriptPath, 'Stop')).filter((e) => e.type === 'agent.usage.request');
+
+    expect(usage.find((e) => e.message_id === 'msg-1')).toMatchObject({ scope_kind: 'skill', scope_name: 'probe-skill' });
   });
 });
 
@@ -2160,7 +2222,151 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
     expect(pass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ configured_model: '' });
     await pass.finalize(true);
   });
+
+  it.each([
+    ['older', '2026-10-01T00:00:00.000Z'],
+    ['newer', '2026-10-01T00:00:02.000Z'],
+  ])('takes the main line\'s model over a %s fork\'s', async (order, forkTimestamp) => {
+    const sessionId = `session-fallback-fork-${order}`;
+    const transcriptPath = writeTranscript('transcript-fallback-fork.jsonl', [
+      usageLine({
+        uuid: 'u1',
+        messageId: 'msg_main',
+        outputTokens: 10,
+        model: 'claude-opus-5-5',
+        requestedModel: 'claude-opus-5-5',
+        timestamp: '2026-10-01T00:00:01.000Z',
+      }),
+    ]);
+    const fork = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'f1', messageId: 'msg_fork', outputTokens: 5, model: 'claude-haiku-5-5', timestamp: forkTimestamp }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+    const forkPass = await openSubagentPass(sessionId, { ...fork, agentType: 'general-purpose', skillName: 'probe-skill' });
+    await forkPass.finalize(true);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-opus-5-5');
+  });
+
+  it.each(['probe-skill', 'probe-cmd'])('ignores a newer %s line on its own model', async (mark) => {
+    const sessionId = `session-fallback-marked-${mark}`;
+    const transcriptPath = writeTranscript(`transcript-fallback-marked-${mark}.jsonl`, [
+      usageLine({
+        uuid: 'u1',
+        messageId: 'msg_main',
+        outputTokens: 10,
+        model: 'claude-haiku-4-5-20251001',
+        requestedModel: 'claude-haiku-5-5',
+        timestamp: '2026-10-01T00:00:01.000Z',
+      }),
+      usageLine({
+        uuid: 'u2',
+        messageId: 'msg_skill',
+        outputTokens: 10,
+        model: 'claude-sonnet-4-5-20250929',
+        requestedModel: 'claude-sonnet-5-5',
+        attributionSkill: mark,
+        timestamp: '2026-10-01T00:00:02.000Z',
+      }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-haiku-5-5');
+  });
+
+  it('keeps configured_model empty while every request so far is skill-marked', async () => {
+    const sessionId = 'session-fallback-only-marked';
+    const transcriptPath = writeTranscript('transcript-fallback-only-marked.jsonl', [
+      usageLine({
+        uuid: 'u1',
+        messageId: 'msg_skill',
+        outputTokens: 10,
+        model: 'claude-sonnet-4-5-20250929',
+        requestedModel: 'claude-sonnet-5-5',
+        attributionSkill: 'probe-skill',
+      }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('');
+  });
+
+  it('keeps configured_model empty on a resumed session whose only requests so far are a fork\'s', async () => {
+    const sessionId = 'session-fallback-only-fork';
+    const fork = writeSubagentFixture(sessionId, 'a1', [
+      usageLine({ uuid: 'f1', messageId: 'msg_fork', outputTokens: 5, model: 'claude-sonnet-5-5' }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    const forkPass = await openSubagentPass(
+      sessionId,
+      { ...fork, agentType: 'general-purpose', skillName: 'probe-skill' },
+      forcedEnvCheck
+    );
+    await forkPass.finalize(true);
+
+    expect(forkPass.events.find((e) => e.type === 'agent.session.env')).toMatchObject({ configured_model: '' });
+  });
+
+  it.each([
+    ['claude-opus-5-5[1m]', 'claude-opus-5-5', 'claude-opus-5-5[1m]'],
+    ['claude-haiku-4-5-20251001', 'anthropic.claude-haiku-4-5-20251001-v1:0', 'claude-haiku-4-5-20251001'],
+    [undefined, 'claude-opus-5', 'claude-opus-5'],
+  ])('takes requestedModel %s over model %s', async (requestedModel, model, expected) => {
+    const sessionId = `session-fallback-form-${model.replace(/:/g, '-')}`;
+    const transcriptPath = writeTranscript('transcript-fallback-form.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_main', outputTokens: 10, model, requestedModel }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe(expected);
+  });
+
+  it('reads a stored request without requestedModel as empty and falls back to its model', async () => {
+    const sessionId = 'session-fallback-stored-record';
+    const transcriptPath = writeTranscript('transcript-fallback-stored-record.jsonl', [
+      usageLine({ uuid: 'u1', messageId: 'msg_main', outputTokens: 10, model: 'claude-opus-5' }),
+    ]);
+    await startSessionWithoutModel(sessionId);
+    await mainEvents(sessionId, transcriptPath, 'Stop');
+    const statePath = join(codemieHome, 'analytics', 'state', `${sessionId}.json`);
+    const state = JSON.parse(readFileSync(statePath, 'utf-8')) as {
+      openRequests: Record<string, Record<string, unknown>>;
+    };
+    for (const req of Object.values(state.openRequests)) {
+      delete req.requestedModel;
+      delete req.attributionSkill;
+    }
+    writeFileSync(statePath, JSON.stringify(state), 'utf-8');
+
+    expect(await configuredModelAfterStop(sessionId, transcriptPath)).toBe('claude-opus-5');
+  });
 });
+
+/** Env-check input whose `effort` differs from the SessionStart baseline, so a snapshot is emitted. */
+const forcedEnvCheck = { effort: 'high', permissionMode: sessionEnvFixture.permission_mode };
+
+/** A SessionStart that carries no model, the way a session resumed without the plugin starts. */
+async function startSessionWithoutModel(sessionId: string): Promise<void> {
+  const startPass = await openSessionStartPass(sessionId, 'sha-1', { ...sessionEnvFixture, configured_model: '' });
+  await startPass.finalize(true);
+  resolveVolatileSessionEnvFieldsMock.mockResolvedValue({
+    effort: 'high',
+    permission_mode: sessionEnvFixture.permission_mode,
+    os: sessionEnvFixture.os,
+    arch: sessionEnvFixture.arch,
+    node_version: sessionEnvFixture.node_version,
+    timezone: sessionEnvFixture.timezone,
+    hostname_hash: sessionEnvFixture.hostname_hash,
+  });
+}
+
+/** `configured_model` of the `agent.session.env` a `Stop` pass emits with {@link forcedEnvCheck}. */
+async function configuredModelAfterStop(sessionId: string, transcriptPath: string): Promise<unknown> {
+  const pass = await openMainTranscriptPass(sessionId, transcriptPath, 'Stop', forcedEnvCheck);
+  await pass.finalize(true);
+  return pass.events.find((e) => e.type === 'agent.session.env')?.configured_model;
+}
 
 describe('api-request-blob lines', () => {
   const blob = (role: string, content: unknown): string =>
