@@ -442,17 +442,20 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 /**
  * The seen-uuid set for a state saved before `seenMessageUuids` existed: the counted `user` /
  * `assistant` uuids in the bytes the earlier pass already read, so their re-written copies are not
- * counted again. A missing file or a read error seeds nothing.
+ * counted again. A missing file or a read error seeds nothing; so does a file now shorter than
+ * `mainOffset`, which the reader re-reads from byte 0 as new lines never counted.
  */
 async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promise<Set<string>> {
   const seen = new Set<string>();
   if (mainOffset <= 0) return seen;
-  let head: Buffer;
+  let buffer: Buffer;
   try {
-    head = (await readFile(transcriptPath)).subarray(0, mainOffset);
+    buffer = await readFile(transcriptPath);
   } catch {
     return seen;
   }
+  if (buffer.length < mainOffset) return seen;
+  const head = buffer.subarray(0, mainOffset);
   for (const line of head.toString('utf-8').split('\n')) {
     let parsed: unknown;
     try {

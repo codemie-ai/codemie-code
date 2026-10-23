@@ -2538,6 +2538,26 @@ describe('api-request-blob lines', () => {
       expect(usage[0]).toMatchObject({ scope_kind: 'main', scope_name: '' });
     });
 
+    it('seeds nothing when the transcript is now shorter than mainOffset', async () => {
+      const { loadParseState, saveParseState } = await import('../parse-state.js');
+      const sessionId = 'session-blob-legacy-shrunk';
+      const transcriptPath = writeTranscript('transcript-blob-legacy-shrunk.jsonl', [headUser, headSkill, ...tail]);
+      await mainEvents(sessionId, transcriptPath, 'Stop');
+      const { seenMessageUuids: _dropped, ...legacy } = await loadParseState(sessionId);
+      expect(legacy.branchCounts).toEqual({ feature: 2 });
+      await saveParseState(sessionId, legacy);
+      writeTranscript('transcript-blob-legacy-shrunk.jsonl', [
+        userLine('new prompt', { uuid: 'u-new' }),
+        asAssistant(skillAwareLine({ uuid: 'a-new', messageId: 'msg-new', outputTokens: 5 })),
+      ]);
+
+      const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+
+      expect(summaryOf(events).branch_counts).toEqual({ feature: 3 });
+      const usage = events.filter((e) => e.type === 'agent.usage.request');
+      expect(usage.map((e) => e.message_id)).toEqual(['msg-new']);
+    });
+
     it('starts from an empty set at mainOffset 0', async () => {
       const { saveParseState, createParseState } = await import('../parse-state.js');
       const sessionId = 'session-blob-legacy-zero';
