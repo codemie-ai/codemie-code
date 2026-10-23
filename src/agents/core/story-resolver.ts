@@ -1,19 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
-/**
- * Shared ticket-id pattern used by every story-id tier that scans free text
- * (branch names today; marker/mention text in a later task). Carries the
- * global (`g`) flag, so a stateful `.test()`/`.exec()` on THIS SAME instance
- * across repeated calls would corrupt `lastIndex` and silently skip matches
- * on the next call. Every consumer in this module therefore either builds a
- * fresh `RegExp` from `TICKET_RE.source`/`TICKET_RE.flags` (used here via
- * `String.prototype.match()`, which — called on a freshly constructed regex
- * — reads all matches once and does not leave mutated `lastIndex` state
- * behind for the next caller) before each match, rather than reusing this
- * exported instance's `lastIndex` across calls.
- */
-export const TICKET_RE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?!\d)/gi;
+import { extractTicketMarker, extractTicketMentions } from './ticket-parser.js';
 
 export interface ExplicitStoryResult {
   storyId: string;
@@ -34,16 +21,6 @@ export interface MentionStoryResult {
   storyId: string;
   storySource: 'mention';
 }
-
-/**
- * Explicit marker-phrase pattern: `story: X` or `ticket #X`, case-insensitive
- * on the marker word, with an optional `:`/`#` separator and optional
- * surrounding whitespace. The captured id itself already covers both cases
- * via its own `[A-Za-z]`/`[A-Za-z0-9]` ranges — the result is still
- * upper-cased before returning, consistent with every other regex-derived
- * tier in this module.
- */
-const MARKER_RE = /(?:story|ticket)\s*[:#]?\s*([A-Za-z][A-Za-z0-9]+-\d+)/i;
 
 /**
  * Known limitation: the default config location is Claude-flavoured
@@ -100,14 +77,8 @@ export function resolveBranchStory(branch: string): BranchStoryResult | null {
     return null;
   }
 
-  // Fresh RegExp per call: avoids reusing TICKET_RE's own `lastIndex` across
-  // invocations (the classic stateful-global-regex-in-a-loop bug).
-  const matches = branch.match(new RegExp(TICKET_RE.source, TICKET_RE.flags));
-  if (!matches || matches.length === 0) {
-    return null;
-  }
-
-  return { storyId: matches[0].toUpperCase(), storySource: 'branch' };
+  const [storyId] = extractTicketMentions(branch, 1);
+  return storyId ? { storyId, storySource: 'branch' } : null;
 }
 
 /**
@@ -121,12 +92,8 @@ export function resolveMarkerStory(promptText: string): MarkerStoryResult | null
     return null;
   }
 
-  const match = promptText.match(MARKER_RE);
-  if (!match || !match[1]) {
-    return null;
-  }
-
-  return { storyId: match[1].toUpperCase(), storySource: 'marker' };
+  const storyId = extractTicketMarker(promptText);
+  return storyId ? { storyId, storySource: 'marker' } : null;
 }
 
 /**
@@ -141,14 +108,8 @@ export function resolveMentionStory(promptText: string): MentionStoryResult | nu
     return null;
   }
 
-  // Fresh RegExp per call: avoids reusing TICKET_RE's own `lastIndex` across
-  // invocations (the classic stateful-global-regex-in-a-loop bug).
-  const matches = promptText.match(new RegExp(TICKET_RE.source, TICKET_RE.flags));
-  if (!matches || matches.length === 0) {
-    return null;
-  }
-
-  return { storyId: matches[0].toUpperCase(), storySource: 'mention' };
+  const [storyId] = extractTicketMentions(promptText, 1);
+  return storyId ? { storyId, storySource: 'mention' } : null;
 }
 
 export type StoryResult = ExplicitStoryResult | BranchStoryResult | MarkerStoryResult | MentionStoryResult;

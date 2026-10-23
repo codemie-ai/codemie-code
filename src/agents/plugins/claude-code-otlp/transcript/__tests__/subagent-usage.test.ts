@@ -8,7 +8,7 @@
  *   <tmpDir>/<sessionId>/subagents/agent-<id>.meta.json   — sidecar (toolUseId/agentType/spawnDepth/description)
  *
  * Three subagents are used throughout:
- *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth must default to 0),
+ *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth is omitted, never sent as 0),
  *     two usage-bearing transcript lines (exercises summing across >1 request).
  *   - "a2": sidecar INCLUDES spawnDepth: 2 (nested subagent — pass-through), one usage line.
  *   - "a3": sidecar includes toolUseId/agentType/description, one usage line.
@@ -302,6 +302,18 @@ describe('buildUsageTotals', () => {
     expect(totals).toHaveLength(1);
     expect(totals[0]).toMatchObject({ thinking_tokens: 10 });
   });
+
+  it('keeps thinking_tokens null when every request in the group has none, rather than summing to 0', () => {
+    const reqs: OpenUsageRequest[] = [
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 100, thinkingTokens: null }),
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 50, thinkingTokens: null }),
+    ];
+
+    const totals = buildUsageTotals(reqs);
+
+    expect(totals).toHaveLength(1);
+    expect(totals[0]).toMatchObject({ output_tokens: 150, thinking_tokens: null });
+  });
 });
 
 describe('buildSubagentUsageEvent', () => {
@@ -333,8 +345,6 @@ describe('buildSubagentUsageEvent', () => {
       tool_use_id: 'tool-a1',
       agent_type: '',
       description: '',
-      workflow_run: '',
-      spawn_depth: 0,
       worktree: '',
       started_at: '2026-10-01T00:00:00.000Z',
       ended_at: '2026-10-01T00:05:00.000Z',
@@ -359,7 +369,7 @@ describe('buildSubagentUsageEvent', () => {
     });
   });
 
-  it('passes a present spawn_depth through verbatim instead of defaulting to 0, and sources description from the sidecar-derived file field', () => {
+  it('passes a present spawn_depth through verbatim, and sources description from the sidecar-derived file field', () => {
     const file: SubagentFile = { agentId: 'a2', filePath: '/tmp/agent-a2.jsonl', spawnDepth: 2, description: 'Review the diff' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
@@ -370,38 +380,53 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.usage).toEqual([]);
   });
 
-  it('never fabricates agent_type/description/workflow_run — always empty string when absent; worktree also defaults to empty when the caller has no cwd', () => {
+  it('omits spawn_depth when absent — an unknown value is never fabricated or defaulted to 0; agent_type/description/worktree stay empty strings', () => {
     const file: SubagentFile = { agentId: 'a3', filePath: '/tmp/agent-a3.jsonl' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
     expect(event.agent_type).toBe('');
     expect(event.description).toBe('');
-    expect(event.workflow_run).toBe('');
+    expect(event).not.toHaveProperty('spawn_depth');
     expect(event.worktree).toBe('');
   });
 
-  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived', () => {
+  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived — reduced to the repository identifier', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl', cwd: '/repo/worktrees/feature' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
-    expect(event.worktree).toBe('/repo/worktrees/feature');
-    // workflow_run has no known source regardless of cwd — still never fabricated.
-    expect(event.workflow_run).toBe('');
+    expect(event.worktree).toBe('worktrees/feature');
+    // The absolute cwd never leaves the hook process — only the extractRepository identifier does.
+    expect(event.worktree).not.toContain('/repo');
   });
 
-  it('picks the usage[] row with the most api_calls as the top-level model', () => {
+  it('picks the usage[] row with the most api_calls as the top-level model, ignoring the <synthetic> API-error placeholder', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
     const reqs: OpenUsageRequest[] = [
       usageRequest({ model: 'claude-haiku-4-5', requestId: 'r1' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r2' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r3' }),
+      // More api_calls than any real model — must still never win the ranking.
+      usageRequest({ model: '<synthetic>', requestId: 'r4' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r5' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r6' }),
     ];
 
     const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
 
     expect(event.model).toBe('claude-opus-5-5');
+    // The placeholder rows stay in usage[] (they are real transcript rows) — only the ranking skips them.
+    expect((event.usage as Array<Record<string, unknown>>).some((row) => row.model === '<synthetic>')).toBe(true);
+  });
+
+  it('leaves the top-level model empty when every usage[] row is the <synthetic> placeholder', () => {
+    const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
+    const reqs: OpenUsageRequest[] = [usageRequest({ model: '<synthetic>', requestId: 'r1' })];
+
+    const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
+
+    expect(event.model).toBe('');
   });
 });
 

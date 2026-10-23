@@ -157,6 +157,16 @@ describe('ClaudeDesktopTelemetryAdapter.applyBaseline', () => {
     expect(stored.sync.metrics.processedRecordIds).not.toContain('msg-a3');
   });
 
+  it('computes the conversation pointer from conversationMessages when the session has it', async () => {
+    const desktop = await adapter();
+    const session = { ...parsedSession(transcript()), conversationMessages: transcript().slice(0, 2) };
+
+    await desktop.applyBaseline(session, CUTOFF_MS, context);
+
+    const stored = JSON.parse(readFileSync(sessionFile(), 'utf-8'));
+    expect(stored.sync.conversations).toMatchObject({ lastSyncedMessageUuid: 'a1', lastSyncedHistoryIndex: 0 });
+  });
+
   it('writes no pending records for the skipped history itself', async () => {
     const desktop = await adapter();
     const beforeOnly = transcript().slice(0, 4);

@@ -13,14 +13,16 @@
  * scope_kind/scope_name) and passes the caller-built tool-call/tool-error/skill maps through as
  * the contract's `tools`/`skills` objects; it has no access to the subagent transcript itself.
  *
- * `workflow_run` has no known source and is always an empty string, never fabricated. `worktree`
- * is the hook's own `cwd` (the contract's "its worktree path") — the caller fills it in from the
- * triggering hook payload, since no sidecar or transcript signal carries it.
+ * `worktree` is the hook's own `cwd` (the contract's "its worktree path") reduced to the
+ * repository identifier (`extractRepository`, the same value `cwd` carries): the caller fills
+ * `cwd` in from the triggering hook payload, since no sidecar or transcript signal carries it,
+ * and no absolute path leaves the hook process.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { isPathWithinDirectory } from '@/utils/paths.js';
+import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
 
@@ -31,7 +33,10 @@ export interface SubagentFile {
   agentType?: string;
   spawnDepth?: number;
   description?: string;
-  /** The triggering hook's `cwd` — the contract's `worktree` path. `''` when the caller has none. */
+  /**
+   * The triggering hook's absolute `cwd` — reduced to a repository identifier by the `worktree`
+   * field. `''` when the caller has none.
+   */
   cwd?: string;
   /** The forked skill's name, when this subagent is actually a slash-command-invoked skill run
    *  in the background (EPMCDME-15968) — absent for a regular agent dispatch. Sourced from the
@@ -172,7 +177,7 @@ export interface SubagentUsageTotal {
   output_tokens: number;
   /** True when any request in this group has no final `stop_reason`, so `output_tokens` may undercount. */
   output_tokens_partial: boolean;
-  thinking_tokens: number;
+  thinking_tokens: number | null;
   web_search_requests: number;
   web_fetch_requests: number;
   api_calls: number;
@@ -196,7 +201,10 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
       existing.cache_read_tokens += r.cacheReadTokens;
       existing.output_tokens += r.outputTokens;
       existing.output_tokens_partial = existing.output_tokens_partial || isOutputTokensPartial(r);
-      existing.thinking_tokens += r.thinkingTokens ?? 0;
+      existing.thinking_tokens =
+        existing.thinking_tokens === null && r.thinkingTokens === null
+          ? null
+          : (existing.thinking_tokens ?? 0) + (r.thinkingTokens ?? 0);
       existing.web_search_requests += r.webSearchRequests;
       existing.web_fetch_requests += r.webFetchRequests;
       existing.api_calls += 1;
@@ -215,7 +223,7 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
         cache_read_tokens: r.cacheReadTokens,
         output_tokens: r.outputTokens,
         output_tokens_partial: isOutputTokensPartial(r),
-        thinking_tokens: r.thinkingTokens ?? 0,
+        thinking_tokens: r.thinkingTokens,
         web_search_requests: r.webSearchRequests,
         web_fetch_requests: r.webFetchRequests,
         api_calls: 1,
@@ -226,10 +234,15 @@ export function buildUsageTotals(usageRequests: OpenUsageRequest[]): SubagentUsa
   return [...groups.values()];
 }
 
-/** The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`. */
+/**
+ * The `model` of the `usage[]` row with the most `api_calls` — the contract's top-level `model`.
+ * `<synthetic>` API-error placeholder rows are skipped (they are not real models), so a subagent
+ * whose only rows are placeholders reports `''` rather than a fake model.
+ */
 function primaryModel(totals: SubagentUsageTotal[]): string {
   let best: SubagentUsageTotal | undefined;
   for (const total of totals) {
+    if (isSyntheticModel(total.model)) continue;
     if (!best || total.api_calls > best.api_calls) {
       best = total;
     }
@@ -272,9 +285,10 @@ function buildToolsBreakdown(
  * `startedAt`/`endedAt`/`durationMs`/`toolResults` are forwarded verbatim from the caller, which
  * derives them from the subagent transcript's own lines — not this function's job.
  *
- * `spawn_depth` defaults to `0` when `file.spawnDepth` is absent (top-level subagents, whose
- * sidecar omits the field — not treated as an error). `description` defaults to `''` when the
- * sidecar has none.
+ * `spawn_depth` is emitted only when `file.spawnDepth` is present: a sidecar that omits it (which
+ * is how top-level subagents look) leaves the depth unknown, and an unknown value is omitted
+ * rather than reported as `0` (contract rule 4). `description` defaults to `''` when the sidecar
+ * has none.
  *
  * Carries its own explicit `type`, so `event_id`/`schema_version` are stamped later, by the adapter base class at hook time.
  */
@@ -299,9 +313,8 @@ export function buildSubagentUsageEvent(
     tool_use_id: file.toolUseId ?? '',
     agent_type: file.agentType ?? '',
     description: file.description ?? '',
-    workflow_run: '',
-    spawn_depth: file.spawnDepth ?? 0,
-    worktree: file.cwd ?? '',
+    ...(typeof file.spawnDepth === 'number' ? { spawn_depth: file.spawnDepth } : {}),
+    worktree: file.cwd ? extractRepository(file.cwd) : '',
     started_at: startedAt,
     ended_at: endedAt,
     duration_ms: durationMs,

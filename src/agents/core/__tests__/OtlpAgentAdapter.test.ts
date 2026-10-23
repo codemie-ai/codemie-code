@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
@@ -70,6 +71,15 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   }
   protected resolveEventType(event: Record<string, unknown>): string {
     return event['kind'] === 'start' ? 'fake.start' : 'fake.event';
+  }
+  /** Test-only deterministic id: `<type>:<session>:<sha256(payload + timestamp)>`. */
+  protected buildEventId(
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    timestamp: string
+  ): string {
+    const hash = createHash('sha256').update(`${JSON.stringify(payload)}::${timestamp}`).digest('hex');
+    return `${String(event['type'])}:${String(event['session_id'])}:${hash}`;
   }
 }
 
@@ -191,6 +201,25 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     detectGitBranchMock.mockResolvedValue('feature/BR-2');
     await run();
     expect(forwarded()[0]).toMatchObject({ story_id: 'BR-2', story_source: 'branch' });
+  });
+
+  it("re-derives the branch story for an event's own git_branch when it differs from the hook-time branch", async () => {
+    detectGitBranchMock.mockResolvedValue('feature/BR-2'); // hook-time branch: ticketed
+    await run({ payload: [{ git_branch: 'master' }] }); // event's own branch: untracked
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'master', story_id: '', story_source: '' });
+  });
+
+  it("re-derives a branch story for an event's own git_branch even when the hook-time branch has none", async () => {
+    detectGitBranchMock.mockResolvedValue('master'); // hook-time branch: untracked
+    await run({ payload: [{ git_branch: 'feature/BR-2' }] }); // event's own branch: ticketed
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'feature/BR-2', story_id: 'BR-2', story_source: 'branch' });
+  });
+
+  it('never overrides an explicit or marker story even when the event carries a different, ticketed git_branch', async () => {
+    process.env['SDLC_ANALYTICS_STORY_ID'] = 'ABC-1';
+    detectGitBranchMock.mockResolvedValue('master');
+    await run({ payload: [{ git_branch: 'feature/BR-2' }] });
+    expect(forwarded()[0]).toMatchObject({ git_branch: 'feature/BR-2', story_id: 'ABC-1', story_source: 'explicit' });
   });
 
   it("stamps '' on a detached HEAD, even when the record carries an empty value", async () => {
@@ -333,12 +362,38 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
   });
 
   describe('built event', () => {
-    it('stamps schema_version, a unique event_id, session_id and the repository identifier as cwd', async () => {
-      await run({ payload: [{ session_id: 's1' }, { session_id: 's1' }] });
+    it('stamps schema_version, a deterministic event_id, session_id and the repository identifier as cwd', async () => {
+      await run({ payload: [{ session_id: 's1', n: 1 }, { session_id: 's1', n: 2 }] });
       const [first, second] = forwarded();
       expect(first).toMatchObject({ schema_version: 2, session_id: 's1', cwd: 'repo' });
-      expect(typeof first['event_id']).toBe('string');
+      // `<type>:<session_id>:<sha256 of the record's canonical payload + timestamp>`.
+      expect(String(first['event_id'])).toMatch(/^fake\.event:s1:[0-9a-f]{64}$/);
       expect(first['event_id']).not.toBe(second['event_id']);
+    });
+
+    it('re-derives the same event_id for identical content at the same timestamp', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-06T07:08:09.000Z'));
+      try {
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(forwarded()[1]['event_id']).toBe(forwarded()[0]['event_id']);
+    });
+
+    it('changes the id when the hook time changes', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-06T07:08:09.000Z'));
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+        vi.setSystemTime(new Date('2026-05-06T07:09:09.000Z'));
+        await run({ payload: [{ session_id: 's1', n: 1 }] });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(forwarded()[1]['event_id']).not.toBe(forwarded()[0]['event_id']);
     });
 
     describe('cwd is the repository identifier, never an absolute path', () => {
@@ -406,6 +461,21 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(String(record['tool_input']).startsWith('{"text":"x')).toBe(true);
       expect(record['tool_response']).toHaveLength(300);
       expect(record['error']).toHaveLength(300);
+    });
+
+    it('normalizes effort objects to their level and omits malformed values', async () => {
+      await run({
+        payload: [
+          { effort: { level: 'high' } },
+          { effort: { unsupported: true } },
+        ],
+      });
+
+      const [valid, malformed] = forwarded();
+      expect(valid['effort']).toBe('high');
+      expect((valid['raw'] as Record<string, unknown>)['effort']).toBe('high');
+      expect(malformed).not.toHaveProperty('effort');
+      expect(malformed).not.toHaveProperty('raw.effort');
     });
 
     it('does not add truncated fields to events that lack them, and prompt_body is empty', async () => {

@@ -1,0 +1,33 @@
+name: CodeQL
+
+on:
+  schedule:
+    - cron: '37 1 * * 0'
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions]
+
+    uses: codemie-ai/ci-workflows/.github/workflows/reusable-codeql.yml@main
+    with:
+      language: ${{ matrix.language }}

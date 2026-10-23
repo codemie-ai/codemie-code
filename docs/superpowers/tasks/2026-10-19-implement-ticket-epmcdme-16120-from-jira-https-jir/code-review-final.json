@@ -1,0 +1,26 @@
+{
+  "decision": "request-changes",
+  "rationale": "Edge-case lens surfaced a real gap: computeSessionEnvUpdate's full-recompute branch (orchestrator.ts:627) still overwrites effort/permission_mode with the hook payload's value unconditionally, re-introducing on PostModelSwitch/ConfigChange the same blanking bug this ticket fixed for the cheap path two lines below — kept as CR-001 (major, patch, unambiguous fix: mirror the cheap-path fallback). A second edge-case item about distinguishing an omitted effort field from a genuinely-cleared one critiques the already-accepted last-value-wins design this ticket explicitly mirrors from openSessionStartPass, not a new defect introduced here — dismissed (1 dismissed). No spec/story artifact was supplied, so acceptance did not run (no-spec round); blind and verification-gap lenses are out of scope for the compact profile and standards audit is not expected for this profile, so neither counts as a coverage gap. Confidence is low because this is a genuine no-spec round.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards audit not expected for compact profile." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards audit not expected for compact profile." },
+    { "kind": "security", "status": "na", "notes": "Standards audit not expected for compact profile." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 627,
+      "title": "Full-recompute branch still blanks effort/permission_mode",
+      "problem": "computeSessionEnvUpdate's input.full branch sets candidate = { ...resolved, effort: input.effort, permission_mode: input.permissionMode } with no fallback to the baseline, while the cheap-path branch two lines below (fixed by this ticket) falls back to last!.effort/last!.permission_mode when the hook payload's value is empty. onPostModelSwitch and onConfigChange both pass hookInput.effort?.level ?? '' straight through as input.effort, and BaseHookInput.effort is documented absent for session-lifecycle hooks and for models without effort support.",
+      "impact": "A PostModelSwitch or ConfigChange hook firing with no effort/permission_mode in its payload blanks the last-known value in the persisted agent.session.env snapshot via the full-recompute path, reintroducing the exact bug class this ticket fixes for the cheap path.",
+      "recommendation": "Apply the same baseline-preference fallback used in the else branch to the input.full branch: effort: input.effort || last?.effort || '', permission_mode: input.permissionMode || last?.permission_mode || ''."
+    }
+  ]
+}
