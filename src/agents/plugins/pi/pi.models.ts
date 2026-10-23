@@ -299,7 +299,7 @@ function buildModelsConfig(
       apiKey,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
+        thinkingFormat: 'openai',
       },
       models: proxyModels,
     };
@@ -313,7 +313,7 @@ function buildModelsConfig(
       authHeader: true,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
+        thinkingFormat: 'openai',
       },
       models: anthropicModels,
     };
@@ -387,7 +387,7 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
         apiKey,
         compat: {
           supportsReasoningEffort: true,
-          thinkingFormat: 'reasoning_effort',
+          thinkingFormat: 'openai',
         },
         models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
       },
@@ -398,6 +398,40 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
 function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: string): PiModelsConfig {
   const entry = convertLlmModelToPiEntry(createSyntheticLlmModel(modelId));
   return buildModelsConfig([entry], baseUrl, apiKey);
+}
+
+/**
+ * Narrow live model entries to the active profile's own models
+ * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has
+ * 2+ models), keeping the configured CODEMIE_MODEL even when it is missing
+ * from the allowed list. Falls back to the unfiltered list (with a warning)
+ * when the env var is unset or the allowed-CSV intersection matches none of
+ * `entries` at all — never leaving models.json empty (AC22).
+ */
+export function filterEntriesToProfile(entries: PiModelEntry[], env: NodeJS.ProcessEnv): PiModelEntry[] {
+  if (!env.CODEMIE_PROFILE_MODELS) {
+    return entries;
+  }
+
+  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(',').map(id => id.trim()).filter(Boolean));
+  const matched = entries.filter(entry => allowed.has(entry.id));
+
+  if (matched.length === 0) {
+    logger.warn(
+      '[pi-models] CODEMIE_PROFILE_MODELS matched none of the live models — showing the full catalog instead'
+    );
+    return entries;
+  }
+
+  const configuredModel = env.CODEMIE_MODEL;
+  if (configuredModel && !matched.some(entry => entry.id === configuredModel)) {
+    const configuredEntry = entries.find(entry => entry.id === configuredModel);
+    if (configuredEntry) {
+      return [...matched, configuredEntry];
+    }
+  }
+
+  return matched;
 }
 
 export async function fetchAndBuildPiModels(
@@ -424,6 +458,7 @@ export async function fetchAndBuildPiModels(
     entries = rawModels
       .filter(model => model.enabled)
       .map(convertLlmModelToPiEntry);
+    entries = filterEntriesToProfile(entries, env);
     logger.debug(`[pi-models] Loaded ${entries.length} models from CodeMie API`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

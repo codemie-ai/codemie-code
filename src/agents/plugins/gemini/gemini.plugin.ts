@@ -176,6 +176,13 @@ export const GeminiPluginMetadata: AgentMetadata = {
       // the catalog can't be fetched. Ref EPMCDME-14421.
       await validateGeminiModel(env);
 
+      if (env.CODEMIE_PROFILE_MODELS) {
+        console.warn(
+          '[codemie-gemini] This profile has multiple models, but Gemini CLI has no in-session model switcher — ' +
+          'it always launches with the active model only. Run `codemie models switch` and relaunch to use a different one.'
+        );
+      }
+
       return env;
     }
   }

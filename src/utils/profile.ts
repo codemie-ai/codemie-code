@@ -18,6 +18,8 @@ export function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   model?: string;
+  /** The profile's other models (resolveProfileModels(profile) minus the active model), when it has 2+. */
+  otherModels?: string[];
   codeMieUrl?: string;
   authStatus?: AuthStatusDisplay;
   agent?: string;
@@ -52,6 +54,9 @@ export function renderProfileInfo(config: {
   }
   if (config.model) {
     outputLines.push(formatRow('Model', config.model));
+  }
+  if (config.otherModels && config.otherModels.length > 0) {
+    outputLines.push(formatRow('Other models', config.otherModels.join(', ')));
   }
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));

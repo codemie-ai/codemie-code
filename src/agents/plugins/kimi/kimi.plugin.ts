@@ -379,6 +379,13 @@ export class KimiPlugin extends BaseAgentAdapter {
       const resolution = await resolveKimiModel(env);
       env.CODEMIE_MODEL = resolution.selectedModel;
       env.CODEMIE_KIMI_AVAILABLE_MODELS = resolution.availableModels.join(',');
+
+      if (env.CODEMIE_PROFILE_MODELS) {
+        console.warn(
+          '[codemie-kimi] This profile has multiple models, but Kimi Code has no in-session model switcher — ' +
+          'it always launches with the active model only. Run `codemie models switch` and relaunch to use a different one.'
+        );
+      }
     }
 
     await super.setupProxy(env);

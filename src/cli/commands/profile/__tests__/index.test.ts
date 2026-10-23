@@ -10,6 +10,8 @@ vi.mock('../../../../utils/config.js', () => ({
     getActiveProfileName: vi.fn(),
     load: vi.fn(),
   },
+  resolveProfileModels: (profile: { model?: string; models?: string[] }): string[] =>
+    profile.models?.length ? profile.models : profile.model ? [profile.model] : [],
 }));
 
 vi.mock('chalk', () => ({
@@ -105,6 +107,46 @@ describe('ProfileDisplay — workspace-resolved codeMieUrl', () => {
 
       const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
       expect(rendered).toContain('https://workspace-url');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe('ProfileDisplay — Other models row (multi-model profiles)', () => {
+  it('format() renders an "Other models" row with the non-active models, excluding the active one', () => {
+    const output = ProfileDisplay.format({
+      name: 'team',
+      active: true,
+      profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b', 'c'] },
+    });
+
+    expect(output).toContain('Other models');
+    expect(output).toContain('b, c');
+  });
+
+  it('format() renders no "Other models" row for a legacy single-model profile', () => {
+    const output = ProfileDisplay.format({
+      name: 'team',
+      active: true,
+      profile: { provider: 'ai-run-sso', model: 'a' },
+    });
+
+    expect(output).not.toContain('Other models');
+  });
+
+  it('formatStatus() renders an "Other models" row for a multi-model profile', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus({
+        name: 'team',
+        active: true,
+        profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b'] },
+      });
+
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('Other models');
+      expect(rendered).toContain('b');
     } finally {
       logSpy.mockRestore();
     }
