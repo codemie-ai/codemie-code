@@ -13,6 +13,7 @@
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { homedir } from 'os';
+import { parse, type ParseError } from 'jsonc-parser';
 import { logger } from './logger.js';
 import type { AgentMCPConfig, MCPConfigSource, MCPConfigSummary } from '../agents/core/types.js';
 
@@ -32,7 +33,13 @@ export type { MCPConfigSummary, AgentMCPConfig, MCPConfigSource };
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
   try {
     const content = await readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(content);
+    // OpenCode accepts JSONC config files; comments must not hide their MCP
+    // servers from analytics. Keep strict JSON parsing for other filenames.
+    const errors: ParseError[] = [];
+    const parsed = filePath.endsWith('.jsonc')
+      ? parse(content, errors, { allowTrailingComma: true })
+      : JSON.parse(content);
+    if (errors.length > 0) return null;
 
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       logger.debug(`[mcp-config] Invalid config format at ${filePath}`);
@@ -151,16 +158,22 @@ async function readMCPFromSource(
   }
 
   // Candidates are tried in order; the first file that exists AND parses wins.
-  // Note readJsonFile uses JSON.parse, so a .jsonc file carrying comments will
-  // not parse and is skipped like any other unreadable config.
+  // JSONC candidates allow comments and trailing commas; invalid files are skipped.
   const candidates = Array.isArray(source.path) ? source.path : [source.path];
 
   for (const candidate of candidates) {
     const config = await readJsonFile(resolveConfigPath(candidate, cwd));
     if (!config) continue;
 
-    const mcpServers = navigateJsonPath(config, source.jsonPath, cwd);
-    return extractServerNames(mcpServers);
+    // Select by document shape rather than the installed binary version: V2
+    // can still load V1 config. An empty native map must not fall back to the
+    // wrapper's keys and accidentally report a server named "servers".
+    const jsonPaths = Array.isArray(source.jsonPath) ? source.jsonPath : [source.jsonPath];
+    for (const jsonPath of jsonPaths) {
+      const mcpServers = navigateJsonPath(config, jsonPath, cwd);
+      if (mcpServers !== undefined) return extractServerNames(mcpServers);
+    }
+    return [];
   }
 
   return [];

@@ -417,6 +417,14 @@ CodeMie automatically configures OpenCode to use the selected provider via:
 - Dynamic model configuration in OpenCode's native format
 - SSO proxy routing for enterprise authentication
 
+**Reasoning effort (`--reasoning-effort`):**
+- On OpenCode v1 the level is passed as `opencode run --variant <level>`.
+- On OpenCode v2 there is no `--variant` flag: the level is applied through the emitted
+  config as a `#variant` suffix on the model reference (proxy provider, reasoning-capable
+  models; on Bedrock, Claude 3.7+ only). `--reasoning-effort` has no effect on Ollama remotes,
+  on Bedrock models without extended thinking, or on non-reasoning models — CodeMie warns and
+  continues without it instead of failing the run.
+
 **Example Workflow:**
 ```bash
 # Install OpenCode

@@ -88,6 +88,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
     return { discoverSessions: mockDiscoverSessions };
   }),
 }));
+vi.mock('../opencode/opencode.paths.js', () => ({ resolveOpenCodeDbPath: vi.fn(async () => '/fixture/db') }));
 
 // Mock getModelConfig and model config helpers
 vi.mock('../opencode/opencode-model-configs.js', () => ({

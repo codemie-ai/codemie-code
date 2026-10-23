@@ -10,7 +10,8 @@ import os from 'os';
 
 export interface ExecOptions {
   cwd?: string;
-  env?: Record<string, string>;
+  /** Matches spawn's environment contract, including explicitly unset keys. */
+  env?: NodeJS.ProcessEnv;
   timeout?: number;
   shell?: boolean; // Allow override for specific cases
   interactive?: boolean; // Allow interactive mode (stdio: 'inherit')

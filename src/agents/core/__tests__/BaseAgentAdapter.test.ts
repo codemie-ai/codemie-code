@@ -487,6 +487,48 @@ describe('BaseAgentAdapter', () => {
         consoleErrorSpy.mockRestore();
       }
     });
+
+    describe('shouldApply gate', () => {
+      const gatedMetadata = (gate: (args: string[], env: NodeJS.ProcessEnv) => Promise<boolean>): AgentMetadata => ({
+        ...effortMetadata,
+        reasoningEffort: {
+          ...effortMetadata.reasoningEffort!,
+          shouldApply: gate,
+        },
+      });
+
+      it('skips applyReasoningEffort when the gate vetoes', async () => {
+        const gate = vi.fn(async (_args: string[], _env: NodeJS.ProcessEnv) => false);
+        const adapter = new RunPipelineAdapter(gatedMetadata(gate));
+
+        await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
+
+        expect(gate).toHaveBeenCalledOnce();
+        expect(mockApplyReasoningEffort).not.toHaveBeenCalled();
+      });
+
+      it('applies injection when the gate allows', async () => {
+        const gate = vi.fn(async (_args: string[], _env: NodeJS.ProcessEnv) => true);
+        const adapter = new RunPipelineAdapter(gatedMetadata(gate));
+
+        await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
+
+        expect(gate).toHaveBeenCalledOnce();
+        expect(mockApplyReasoningEffort).toHaveBeenCalledOnce();
+      });
+
+      it('passes the final transformed args and env to the gate', async () => {
+        const gate = vi.fn(async (_args: string[], _env: NodeJS.ProcessEnv) => true);
+        const adapter = new RunPipelineAdapter(gatedMetadata(gate));
+
+        await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
+
+        expect(gate).toHaveBeenCalledWith(
+          expect.any(Array),
+          expect.objectContaining({ CODEMIE_REASONING_EFFORT: 'high' }),
+        );
+      });
+    });
   });
 
   describe('run() — Windows command path quoting', () => {

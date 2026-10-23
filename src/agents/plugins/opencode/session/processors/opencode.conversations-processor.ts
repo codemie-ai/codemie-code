@@ -174,8 +174,8 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
         lastProcessedMessageUuid: sentinel,
         payload: {
           // Always the opencode ses_* id, never context.agentSessionId. That
-          // field carries ses_* on the timer and Stop paths but the CodeMie UUID
-          // on the in-process SessionEnd path, and conversationId is the PUT
+          // field historically carried ses_* on timer/Stop but the CodeMie UUID
+          // on in-process SessionEnd, and conversationId is the PUT
           // path id — so keying off it filed a session's final turn under a
           // second conversation and split the history in two. The checkpoint
           // sentinel already keys on openCodeSessionId, so this is the identity

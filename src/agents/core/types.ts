@@ -83,6 +83,16 @@ export interface ReasoningEffortConfig {
    * Strategy-aware: exact-or-= match for cli-flag, substring for cli-config, N/A for env.
    */
   userOverrideFlags?: string[];
+  /**
+   * Optional async veto consulted before injection. Return false to skip
+   * injection for this run (e.g. the installed binary dropped the flag:
+   * OpenCode v2 removed `--variant` from `run`, so injecting it would fail
+   * the whole launch with "Unrecognized flag").
+   *
+   * The veto implementation must warn itself (logger.warn + console.error)
+   * so the skip is visible — core logs nothing on a vetoed run.
+   */
+  shouldApply?: (args: string[], env: NodeJS.ProcessEnv) => Promise<boolean>;
 }
 
 /**
@@ -389,11 +399,12 @@ export interface MCPConfigSource {
   path: string | string[];
 
   /**
-   * JSON path to mcpServers object
+   * JSON path to mcpServers object, or ordered alternatives for schema versions.
+   * The first object found wins, including an empty object.
    * Supports nested paths like 'projects.{cwd}.mcpServers'
    * {cwd} is replaced with actual working directory
    */
-  jsonPath: string;
+  jsonPath: string | string[];
 }
 
 /**

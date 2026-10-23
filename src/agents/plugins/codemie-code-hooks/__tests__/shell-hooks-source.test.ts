@@ -14,7 +14,7 @@
  * @group unit
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -40,12 +40,15 @@ let capturePath: string;
 let modulePath: string;
 
 /** Load the plugin factory the way the OpenCode runtime would. */
-async function loadHooks(hookNames: string[]): Promise<Record<string, HookHandler>> {
+async function loadHooks(
+  hookNames: string[],
+  asyncHooks = false
+): Promise<Record<string, HookHandler>> {
   const hooks: Record<string, unknown[]> = {};
   for (const name of hookNames) {
     // A shell command that appends whatever arrives on stdin, standing in for
     // the real `codemie hook` binary.
-    hooks[name] = [{ hooks: [{ type: 'command', command: `cat >> ${capturePath}` }] }];
+    hooks[name] = [{ hooks: [{ type: 'command', command: `cat >> ${capturePath}`, async: asyncHooks }] }];
   }
 
   process.env.OPENCODE_HOOKS = JSON.stringify({ hooks });
@@ -88,6 +91,10 @@ afterAll(() => {
 beforeEach(() => {
   capturePath = join(workDir, `capture-${Math.random().toString(36).slice(2)}.jsonl`);
 });
+
+// `cat >> file` stands in for the hook binary; cmd.exe has no `cat`, so delivery
+// through the Windows platform shell cannot be asserted with it.
+const itPosixShell = process.platform === 'win32' ? it.skip : it;
 
 describe('SHELL_HOOKS_PLUGIN_SOURCE', () => {
   it('exports an async factory returning flat dotted-key handlers', async () => {
@@ -207,5 +214,50 @@ describe('SHELL_HOOKS_PLUGIN_SOURCE', () => {
     await hooks['event']({ event: { type: 'session.idle', properties: { sessionID: 'ses_6' } } });
 
     expect(captured()).toHaveLength(0);
+  });
+
+  describe('async delivery (execCommandAsync, second-audit F5)', () => {
+    itPosixShell('delivers fire-and-forget UserPromptSubmit through the platform shell', async () => {
+      const hooks = await loadHooks(['UserPromptSubmit'], true);
+
+      await hooks['chat.message'](
+        { sessionID: 'ses_7' },
+        { parts: [{ type: 'text', text: 'async hello' }] }
+      );
+
+      // Detached spawn is fire-and-forget: the write lands only after the
+      // handler has already returned.
+      await vi.waitFor(() => {
+        expect(captured()).toHaveLength(1);
+      });
+      expect(captured()[0].hook_event_name).toBe('UserPromptSubmit');
+      expect(captured()[0].prompt).toBe('async hello');
+      expect(captured()[0].session_id).toBe('ses_7');
+    });
+
+    itPosixShell('delivers fire-and-forget Stop through the platform shell', async () => {
+      const hooks = await loadHooks(['Stop'], true);
+
+      await hooks['event']({ event: { type: 'session.idle', properties: { sessionID: 'ses_8' } } });
+
+      await vi.waitFor(() => {
+        expect(captured()).toHaveLength(1);
+      });
+      expect(captured()[0].hook_event_name).toBe('Stop');
+      expect(captured()[0].session_id).toBe('ses_8');
+    });
+
+    it('prefers a PATH sh on Windows and falls back to the platform shell', () => {
+      // Second-audit F5: a hardcoded `sh` does not exist on a stock Windows, so the
+      // detached spawn dropped telemetry silently there. On Windows a POSIX sh
+      // found on PATH is still preferred (bash-syntax hook commands keep
+      // working); otherwise the platform shell (%ComSpec%) is used.
+      expect(SHELL_HOOKS_PLUGIN_SOURCE).toContain('process.platform === "win32" && hasPosixShellOnPath()');
+      expect(SHELL_HOOKS_PLUGIN_SOURCE).toContain('spawn("sh", ["-c", command]');
+      expect(SHELL_HOOKS_PLUGIN_SOURCE).toContain('spawn(command, { ...options, shell: true })');
+    // Live-verified on Windows: detached + shell:true leaves cmd.exe hung and the
+    // hook never runs, so detaching is POSIX-only.
+    expect(SHELL_HOOKS_PLUGIN_SOURCE).toContain('detached: process.platform !== "win32"');
+    });
   });
 });

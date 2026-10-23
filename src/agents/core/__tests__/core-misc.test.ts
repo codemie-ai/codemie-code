@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, basename, dirname } from 'path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // Silence the real logger — it writes async debug logs into $CODEMIE_HOME/logs,
 // which races the temp-dir cleanup below. All targets import the same logger module.
@@ -22,7 +23,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { createPluginInjector } from '../plugin-injector.js';
+import { createPluginInjector, createPluginDirInjector } from '../plugin-injector.js';
 import { writeConfigToTempFile, MAX_ENV_SIZE } from '../temp-config.js';
 import { applyProcessingSyncUpdates } from '../session/sync-state-utils.js';
 import type { ProcessingResult } from '../session/BaseProcessor.js';
@@ -61,11 +62,22 @@ describe('plugin-injector: createPluginInjector', () => {
     const expectedPath = join(tmpdir(), 'codemie-hooks', fileName);
     written.push(expectedPath);
 
-    expect(url).toBe(`file://${expectedPath}`);
+    expect(url).toBe(pathToFileURL(expectedPath).href);
     expect(url.startsWith('file://')).toBe(true);
     expect(existsSync(expectedPath)).toBe(true);
     expect(readFileSync(expectedPath, 'utf-8')).toBe(source);
     expect(basename(expectedPath)).toBe(fileName);
+  });
+
+  it('encodes URL-significant characters in fresh and cached file URLs', () => {
+    const fileName = `test plugin #%-${process.pid}-${Date.now()}.ts`;
+    const injector = createPluginInjector(fileName, 'export default 1;', 'unit-hooks');
+    const filePath = join(tmpdir(), 'codemie-hooks', fileName);
+    written.push(filePath);
+    const url = injector.getPluginFileUrl();
+    expect(url).toBe(pathToFileURL(filePath).href);
+    expect(fileURLToPath(url)).toBe(filePath);
+    expect(injector.getPluginFileUrl()).toBe(url);
   });
 
   it('is idempotent: repeated calls return the same URL without rewriting', () => {
@@ -117,9 +129,133 @@ describe('plugin-injector: createPluginInjector', () => {
     expect(existsSync(filePath)).toBe(false);
 
     const url = injector.getPluginFileUrl();
-    expect(url).toBe(`file://${filePath}`);
+    expect(url).toBe(pathToFileURL(filePath).href);
     expect(existsSync(filePath)).toBe(true);
     expect(readFileSync(filePath, 'utf-8')).toBe('recreate-me');
+  });
+});
+
+describe('plugin-injector: createPluginDirInjector', () => {
+  // OpenCode 2.x accepts plugin directories only. getPluginDirUrl writes into
+  // <os.tmpdir()>/codemie-hooks/<dirName>; use a unique dirName per test and
+  // remove what it produced so nothing collides or leaks.
+  const written: string[] = [];
+
+  function dirPathFor(dirName: string): string {
+    const dirPath = join(tmpdir(), 'codemie-hooks', dirName);
+    written.push(dirPath);
+    return dirPath;
+  }
+
+  afterEach(() => {
+    for (const p of written.splice(0)) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  it('writes every file into <tmpdir>/codemie-hooks/<dirName> and returns the directory file:// URL', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-a`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(
+      dirName,
+      { 'index.ts': 'export default 1;', 'helper.ts': 'export const h = 2;' },
+      'unit-hooks-v2',
+    );
+
+    const url = injector.getPluginDirUrl();
+
+    expect(url).toBe(pathToFileURL(dirPath).href);
+    expect(basename(dirPath)).toBe(dirName);
+    expect(readFileSync(join(dirPath, 'index.ts'), 'utf-8')).toBe('export default 1;');
+    expect(readFileSync(join(dirPath, 'helper.ts'), 'utf-8')).toBe('export const h = 2;');
+  });
+
+  it('encodes URL-significant characters in fresh and cached directory URLs', () => {
+    const dirName = `test plugin #%-${process.pid}-${Date.now()}`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(dirName, { 'index.ts': 'export default 1;' }, 'unit-hooks-v2');
+    const url = injector.getPluginDirUrl();
+    expect(url).toBe(pathToFileURL(dirPath).href);
+    expect(fileURLToPath(url)).toBe(dirPath);
+    expect(injector.getPluginDirUrl()).toBe(url);
+  });
+
+  it('is idempotent: repeated calls return the same URL without rewriting', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-b`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(dirName, { 'index.ts': 'first-source' }, 'unit-hooks-v2');
+
+    const url1 = injector.getPluginDirUrl();
+    // A second call must short-circuit on the cached path, not rewrite the files.
+    writeFileSync(join(dirPath, 'index.ts'), 'externally-changed', 'utf-8');
+    const url2 = injector.getPluginDirUrl();
+
+    expect(url2).toBe(url1);
+    expect(readFileSync(join(dirPath, 'index.ts'), 'utf-8')).toBe('externally-changed');
+  });
+
+  it('cleanup removes the whole directory and is safe to call repeatedly', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-c`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(dirName, { 'index.ts': 'x', 'other.ts': 'y' }, 'unit-hooks-v2');
+    injector.getPluginDirUrl();
+    expect(existsSync(dirPath)).toBe(true);
+
+    injector.cleanup();
+    expect(existsSync(dirPath)).toBe(false);
+
+    expect(() => injector.cleanup()).not.toThrow();
+  });
+
+  it('cleanup before any write is a no-op', () => {
+    const injector = createPluginDirInjector(`never-${Date.now()}`, { 'index.ts': 'x' }, 'unit-hooks-v2');
+    expect(() => injector.cleanup()).not.toThrow();
+  });
+
+  it('cleanup tolerates a directory that was already removed', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-d`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(dirName, { 'index.ts': 'x' }, 'unit-hooks-v2');
+    injector.getPluginDirUrl();
+
+    rmSync(dirPath, { recursive: true, force: true });
+
+    expect(() => injector.cleanup()).not.toThrow();
+  });
+
+  it('after cleanup, getPluginDirUrl re-creates the directory with its files', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-e`;
+    const dirPath = dirPathFor(dirName);
+    const injector = createPluginDirInjector(dirName, { 'index.ts': 'recreate-me' }, 'unit-hooks-v2');
+
+    injector.getPluginDirUrl();
+    injector.cleanup();
+    expect(existsSync(dirPath)).toBe(false);
+
+    const url = injector.getPluginDirUrl();
+    expect(url).toBe(pathToFileURL(dirPath).href);
+    expect(readFileSync(join(dirPath, 'index.ts'), 'utf-8')).toBe('recreate-me');
+  });
+
+  it('registers the process-exit cleanup handler once, however many times the URL is requested', () => {
+    const dirName = `test-plugin-dir-${process.pid}-${Date.now()}-f`;
+    dirPathFor(dirName);
+    const onSpy = vi.spyOn(process, 'on');
+    try {
+      const injector = createPluginDirInjector(dirName, { 'index.ts': 'x' }, 'unit-hooks-v2');
+      injector.getPluginDirUrl();
+      injector.cleanup();
+      injector.getPluginDirUrl();
+
+      const exitRegistrations = onSpy.mock.calls.filter(([event]) => event === 'exit');
+      expect(exitRegistrations).toHaveLength(1);
+    } finally {
+      onSpy.mockRestore();
+    }
   });
 });
 

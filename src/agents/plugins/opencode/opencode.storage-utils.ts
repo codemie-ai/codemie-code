@@ -90,7 +90,7 @@ export async function readJsonlTolerant<T>(filePath: string): Promise<T[]> {
  * @param messageId - Message whose parts to load
  * @param expectedSessionId - When set, drop parts belonging to another session
  * @param partsMap - Pre-loaded parts keyed by message id (SQLite path)
- * @returns Parts sorted by id (their creation order)
+ * @returns Parts in backend order: SQLite query/content order, or file ids
  */
 export async function loadPartsForMessage<T extends { id: string; messageID: string; sessionID: string }>(
   storagePath: string,
@@ -111,7 +111,9 @@ export async function loadPartsForMessage<T extends { id: string; messageID: str
   };
 
   if (partsMap?.[messageId]) {
-    return partsMap[messageId].filter(isValid).sort((a, b) => a.id.localeCompare(b.id));
+    // V1 queries already order by id; V2 preserves content[] order. Sorting the
+    // V2 synthetic ids as strings would place index 10 before index 2.
+    return partsMap[messageId].filter(isValid);
   }
 
   const { existsSync } = await import('fs');
