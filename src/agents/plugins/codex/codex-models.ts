@@ -504,8 +504,8 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
 
 /**
  * Narrow an available-model id list to the active profile's own models
- * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has 2+
- * models), keeping the configured CODEMIE_MODEL even when it is missing from
+ * (CODEMIE_PROFILE_MODELS, comma-separated — set for the agent's own list on a
+ * per-agent profile, or when a profile has 2+ models), keeping the configured CODEMIE_MODEL even when it is missing from
  * the allowed list (CR-003) — setupProxy assigns env.CODEMIE_MODEL right
  * before calling this, so a retirement-healed active model must survive the
  * narrowing the same way OpenCode's filterToAllowed and Pi's

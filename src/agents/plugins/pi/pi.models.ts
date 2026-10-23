@@ -404,8 +404,8 @@ function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: stri
 
 /**
  * Narrow live model entries to the active profile's own models
- * (CODEMIE_PROFILE_MODELS, comma-separated — set only when the profile has
- * 2+ models), keeping the configured CODEMIE_MODEL even when it is missing
+ * (CODEMIE_PROFILE_MODELS, comma-separated — set for the agent's own list on a
+ * per-agent profile, or when a profile has 2+ models), keeping the configured CODEMIE_MODEL even when it is missing
  * from the allowed list. Falls back to the unfiltered list (with a warning)
  * when the env var is unset or the allowed-CSV intersection matches none of
  * `entries` at all — never leaving models.json empty (AC22).

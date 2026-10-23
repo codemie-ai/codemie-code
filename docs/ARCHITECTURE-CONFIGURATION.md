@@ -322,7 +322,7 @@
 | profile name | CLI > Env > Config | CODEMIE_PROFILE_NAME | `name` | `profile` | via `config.profile` |
 | provider | CLI > Env > Config | CODEMIE_PROVIDER | `provider` | `provider` | via `config.provider` |
 | model | CLI > Env > Config | CODEMIE_MODEL | `model` | `model` | via `config.model` |
-| profile models (2+ only) | Config (`resolveProfileModels`) | CODEMIE_PROFILE_MODELS | `models` | ❌ | ❌ (agent-menu filtering only) |
+| agent models (2+ only) | Config (`resolveProfileModels` on the agent view) | CODEMIE_PROFILE_MODELS | `agentModels.<agent>.models` | ❌ | ❌ (agent-menu filtering only) |
 | base URL | CLI > Env > Config | CODEMIE_BASE_URL | `baseUrl` | `targetApiUrl` | via `config.targetApiUrl` |
 | API key | CLI > Env > Config | CODEMIE_API_KEY | `apiKey` | ❌ | via `credentials` |
 | timeout | CLI > Env > Config | CODEMIE_TIMEOUT | `timeout` | `timeout` | via `config.timeout` |
@@ -358,38 +358,46 @@ CODEMIE_PROFILE_NAME=work
 CODEMIE_CLI_VERSION=0.0.16
 ```
 
-### Conditional (only when the active profile has 2+ models)
+### Conditional (the launching agent's own models, or a profile with 2+ models)
 
 ```bash
 CODEMIE_PROFILE_MODELS=claude-sonnet-5,gpt-5.6-terra
 ```
 
-Set by `ConfigLoader.exportProviderEnvVars()` from `resolveProfileModels(config)`;
-absent for any legacy or single-model profile. Consumed only by each agent
+Set by `ConfigLoader.exportProviderEnvVars()` from `resolveProfileModels(config)`.
+`AgentCLI` first narrows the config with `withAgentModelView(config, agent)`, so
+`CODEMIE_MODEL` is the agent's own active model and `CODEMIE_PROFILE_MODELS` its
+own `agentModels.<agent>.models` (unless `--model`/`CODEMIE_MODEL` overrides the
+model), even when the agent has a single model. Absent for a legacy single-model
+profile or an agent outside `agentModels`. Consumed only by each agent
 plugin's own in-session model menu (Claude `/model`, Codex's catalog, OpenCode/
 codemie-code's dynamic model config, Pi's `models.json`) to narrow it to the
 profile's own models — never persisted, and ignored by the proxy/credential
 path entirely.
 
-### Harness compatibility (profile `harnesses`, `confirmedModels`)
+### Per-agent models (profile `agentModels`)
 
-Profiles may record the agents (harnesses) they serve in `harnesses`, plus
-`confirmedModels` for ids the user confirmed despite a name-rule mismatch. Neither
-is exported as an env var; both are additive and a profile without them is legacy.
+`codemie setup` records each selected agent's models in `agentModels`
+(`{ <agent>: { models, model, confirmedModels? } }`, keyed by base agent name);
+the top-level `model` mirrors the first agent's active model. `confirmedModels`
+holds ids accepted despite the agent's name rule. None of it is exported as its
+own env var: the agent view above maps it onto `CODEMIE_MODEL` and
+`CODEMIE_PROFILE_MODELS`. A profile without `agentModels` is legacy.
 
 Compatibility is decided by an optional `classifyModel(modelId, ctx)` hook on
 `AgentMetadata` (`src/agents/core/types.ts`) returning `compatible`,
-`incompatible` or `unverified`. Claude, Codex, Gemini and Kimi implement it by
-wrapping their existing name predicates through `classifyWithPredicate`
-(`src/agents/core/model-classify.ts`, a leaf module so plugins do not import the
-registry). An agent without the hook is unrestricted. CLI code (setup, `models`,
+`incompatible` or `unverified`. Claude, Codex, Gemini, Kimi and Copilot CLI
+implement it by wrapping their existing name predicates through
+`classifyWithPredicate` (`src/agents/core/model-classify.ts`, a leaf module so
+plugins do not import the registry). An agent without the hook is unrestricted.
+CLI code (the setup wizard in `src/cli/commands/setup-wizard/`, `models`,
 `profile status`) and `AgentCLI` only use the registry-backed helper
-`src/agents/core/model-compat.ts` (`classifyModelForAgent`, `compatibleHarnesses`,
-`uncoveredHarness`, `harnessAnnotations`) and never import `agents/plugins/*`,
-which keeps CLI -> Registry -> Plugin. `AgentCLI.validateCompatibility` checks the
-persisted active model against the launching agent: it blocks when the profile has
-`harnesses` and only warns for a legacy profile; an explicit `--model` or
-`CODEMIE_MODEL` skips the check.
+`src/agents/core/model-compat.ts` (`classifyModelForAgent`, `uncoveredHarnesses`,
+`unsupportedProviderHarnesses`, `routerAcceptedModels`, `agentsUsingModel`) and
+never import `agents/plugins/*`, which keeps CLI -> Registry -> Plugin.
+`AgentCLI.validateCompatibility` checks the agent's persisted active model: it
+blocks when the profile has `agentModels` and only warns for a legacy profile; an
+explicit `--model` or `CODEMIE_MODEL` skips the check.
 
 ### Provider-Specific (SSO)
 

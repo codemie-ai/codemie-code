@@ -126,3 +126,22 @@ agents, `confirmedModels`, skipped step for subscription providers) interpret th
 - A harness that does not support the chosen provider (`supportedProviders`) is treated as having no
   compatible models, with the "change provider or harness" message.
 - The PTY test `agent-setup.test.ts` TC-029 pins the old prompts and needs updating.
+
+## Addendum (2026-10-23): per-agent model setup (PO feedback)
+
+The sections above record the approved design as first shipped and stay as history. After review,
+the PO replaced the shared model step with a per-agent flow:
+
+- Setup runs a full-screen wizard modeled on `codemie setup assistants`: select agents, then for each
+  agent select its models (only those it supports; agents without model rules list every model with a
+  note) and its active model, then review and save. Esc steps back; Cancel saves nothing.
+- The profile stores `agentModels: { <agent>: { models, model, confirmedModels? } }` and drops the
+  `models`, `harnesses` and top-level `confirmedModels` fields (none of them had shipped). The
+  top-level `model` mirrors the first agent's active model.
+- Each agent launches with its own active model, and its in-session model menu is limited to its own
+  models (`CODEMIE_PROFILE_MODELS` is per agent).
+- `codemie models switch` and `codemie models list` take `--agent`; switch asks for the agent when
+  several are configured. `profile status` shows one row per agent.
+- The shared-coverage gate, the dead-end prompt and the live "Still missing a model for" line are
+  gone: each agent screen requires at least one model, and agents the provider cannot serve are
+  shown disabled with the reason on the agents screen.

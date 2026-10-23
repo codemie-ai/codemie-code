@@ -9,6 +9,7 @@
  */
 import { AgentRegistry } from '../registry.js';
 import type { ModelCompat } from './model-classify.js';
+import type { ProviderProfile } from '../../env/types.js';
 
 export { classifyWithPredicate } from './model-classify.js';
 export type { ModelCompat, ModelClassifyContext } from './model-classify.js';
@@ -57,11 +58,6 @@ export function classifyModelForAgent(agent: string, id: string, opts: ModelComp
   return metadata.classifyModel(id, { isRouter });
 }
 
-/** Harnesses (from the given list) on which `id` is not `incompatible`. */
-export function compatibleHarnesses(harnesses: string[], id: string, opts: ModelCompatOptions = {}): string[] {
-  return harnesses.filter((h) => classifyModelForAgent(h, id, opts) !== 'incompatible');
-}
-
 /** Coverage gate: every harness with no non-`incompatible` model among `models`. */
 export function uncoveredHarnesses(
   harnesses: string[],
@@ -71,15 +67,6 @@ export function uncoveredHarnesses(
   return harnesses.filter(
     (h) => !models.some((m) => classifyModelForAgent(h, m, opts) !== 'incompatible')
   );
-}
-
-/** Coverage gate: first harness with no non-`incompatible` model among `models`, if any. */
-export function uncoveredHarness(
-  harnesses: string[],
-  models: string[],
-  opts: ModelCompatOptions = {}
-): string | undefined {
-  return uncoveredHarnesses(harnesses, models, opts)[0];
 }
 
 /**
@@ -95,15 +82,11 @@ export function unsupportedProviderHarnesses(harnesses: string[], provider: stri
   });
 }
 
-/** First harness from {@link unsupportedProviderHarnesses}, if any. */
-export function unsupportedProviderHarness(harnesses: string[], provider: string | undefined): string | undefined {
-  return unsupportedProviderHarnesses(harnesses, provider)[0];
-}
-
 /**
  * Models accepted only because the catalog flags them as routers/aliases: `incompatible` for some
  * harness by name alone, not `incompatible` once the router hint is applied. Launch has no catalog,
- * so setup persists these ids in `confirmedModels` and launch then reports them `unverified`.
+ * so setup persists these ids in the agent's `confirmedModels` and launch then reports them
+ * `unverified`.
  */
 export function routerAcceptedModels(
   harnesses: string[],
@@ -121,32 +104,16 @@ export function routerAcceptedModels(
   );
 }
 
-export interface HarnessProfileInfo {
-  harnesses?: string[];
-  provider?: string;
-  confirmedModels?: string[];
+/** Agents of a per-agent profile whose own model list holds `id`, in profile order. */
+export function agentsUsingModel(profile: Pick<ProviderProfile, 'agentModels'>, id: string): string[] {
+  return Object.entries(profile.agentModels ?? {})
+    .filter(([, set]) => set.models.includes(id))
+    .map(([agent]) => agent);
 }
 
-/**
- * Per-model list of the profile's harnesses each model works with, for display. Undefined for a
- * legacy profile (no `harnesses`), so callers render nothing and output stays unchanged.
- */
-export function harnessAnnotations(
-  profile: HarnessProfileInfo,
-  ids: string[],
-  isRouter?: (modelId: string) => boolean
-): Record<string, string[]> | undefined {
-  if (!profile.harnesses?.length) return undefined;
-  const opts: ModelCompatOptions = {
-    provider: profile.provider,
-    confirmedModels: profile.confirmedModels,
-    isRouter,
-  };
-  const result: Record<string, string[]> = {};
-  for (const id of ids) {
-    result[id] = compatibleHarnesses(profile.harnesses, id, opts);
-  }
-  return result;
+/** Display name of an agent (`-acp` folded), falling back to its id. */
+export function getAgentDisplayName(agent: string): string {
+  return resolveAgent(agent)?.metadata.displayName ?? agent;
 }
 
 export interface HarnessChoice {

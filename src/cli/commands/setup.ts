@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ConfigLoader, resolveProfileModels } from '../../utils/config.js';
+import { ConfigLoader } from '../../utils/config.js';
 import type { CodeMieConfigOptions, ProviderProfile } from '../../env/types.js';
 import { logger } from '../../utils/logger.js';
 import { ConfigurationError } from '../../utils/errors.js';
@@ -10,26 +10,13 @@ import { ProviderRegistry } from '../../providers/index.js';
 import {
   getAllProviderChoices,
   displaySetupSuccess,
-  displaySetupError,
-  getAllModelChoices
+  displaySetupError
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
-import {
-  classifyModelForAgent,
-  compatibleHarnesses,
-  getClassifierAgents,
-  getModelRuleFreeAgents,
-  getOfferedHarnesses,
-  routerAcceptedModels,
-  uncoveredHarnesses,
-  unsupportedProviderHarnesses
-} from '../../agents/core/model-compat.js';
-import {
-  HARNESS_CHECKBOX_PROMPT,
-  HarnessCheckboxPrompt
-} from './shared/harness-checkbox-prompt.js';
+import { runAgentModelsWizard, type AgentModelsResult } from './setup-wizard/index.js';
+import { agentModelsDisplay } from './profile/display.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
 
@@ -279,14 +266,11 @@ export async function handlePluginSetup(
       models = [];
     }
 
-    // Step 3: Harness + model selection
+    // Step 3: Agent + per-agent model selection
     let selectedModel: string;
     let selectedModels: string[];
-    // Harnesses (agents) the profile serves, and the harness-aware context the model step and the
-    // coverage gate use. Both stay undefined when the provider auto-picks the model.
-    let harnesses: string[] | undefined;
-    let harnessCtx: HarnessModelContext | undefined;
-    let confirmedModels: string[] = [];
+    // Models chosen per agent; undefined when the provider auto-picks the model.
+    let agentModels: AgentModelsResult | undefined;
     const preselectedModel = setupSteps.selectModel
       ? await setupSteps.selectModel(credentials, models, providerTemplate)
       : undefined;
@@ -296,82 +280,31 @@ export async function handlePluginSetup(
       selectedModels = [preselectedModel];
       logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
-      // On an update, pre-check the existing profile's models so removing the
-      // active model (or adding more) starts from what's already configured.
+      // On an update, preselect the existing profile's agents and models.
       const existingProfile = isUpdate && profileName
-        ? (await ConfigLoader.getProfile(profileName)) ?? {}
+        ? (await ConfigLoader.getProfile(profileName)) ?? undefined
         : undefined;
-      let existingModels = existingProfile ? resolveProfileModels(existingProfile) : undefined;
-      // CR-010: the profile's actual active model, threaded through separately
-      // so the active-model follow-up defaults to it rather than just the
-      // first still-checked id in existingModels.
-      const existingActiveModel = existingProfile?.model;
 
-      harnesses = await promptForHarnesses(existingProfile?.harnesses);
-
-      // Catalog entries the provider flags as routers/aliases: unverified, not incompatible, even
-      // when the name carries no "router". Best effort - a failed lookup only loses the hint.
-      let isRouter: ((id: string) => boolean) | undefined;
-      if (models.length > 0 && typeof setupSteps.fetchRouterModels === 'function') {
-        try {
-          const routerIds = new Set<string>(await setupSteps.fetchRouterModels(credentials));
-          isRouter = id => routerIds.has(id);
-        } catch (error) {
-          logger.debug('Could not fetch router models; using name rules only', error);
-        }
+      const chosen = await runAgentModelsWizard({
+        models,
+        provider: providerName,
+        providerTemplate,
+        isRouter: await fetchRouterLookup(setupSteps, credentials, models),
+        recommendedIds: await fetchRecommendedIds(setupSteps, credentials, models),
+        searchModel: typeof setupSteps.searchModel === 'function'
+          ? () => setupSteps.searchModel(credentials)
+          : undefined,
+        existing: existingProfile,
+      });
+      if (!chosen) {
+        console.log(chalk.yellow('Setup cancelled - nothing was saved.'));
+        return;
       }
+      agentModels = chosen;
 
-      // Ids confirmed in this session survive a coverage-gate retry.
-      const sessionConfirmed = new Set<string>(existingProfile?.confirmedModels ?? []);
-
-      for (;;) {
-        harnessCtx = buildHarnessContext(harnesses, providerName, [...sessionConfirmed], isRouter);
-
-        // A selected harness the provider offers no compatible model for is a dead end:
-        // explain, and never save. Without a catalog only a provider the harness does not
-        // support is known to be unsatisfiable (no typed id can ever cover it).
-        const unsupported = harnessCtx ? unsupportedProviderHarnesses(harnessCtx.harnesses, providerName) : [];
-        const noModel = harnessCtx && models.length > 0
-          ? uncoveredHarnesses(harnessCtx.harnesses, models, { provider: providerName, isRouter })
-            .filter(h => !unsupported.includes(h))
-          : [];
-        const deadEnd = harnesses.filter(h => unsupported.includes(h) || noModel.includes(h));
-        if (deadEnd.length > 0) {
-          const action = await promptForHarnessDeadEnd({ unsupported, uncovered: noModel }, providerName);
-          if (action === 'change') {
-            harnesses = await promptForHarnesses(harnesses);
-            continue;
-          }
-          console.log(chalk.yellow('Setup cancelled - nothing was saved.'));
-          return;
-        }
-
-        const result = await promptForModelsSelection(
-          models,
-          providerTemplate,
-          setupSteps,
-          credentials,
-          existingModels,
-          existingActiveModel,
-          harnessCtx
-        );
-        selectedModel = result.activeModel;
-        selectedModels = result.models;
-        confirmedModels = result.confirmedModels ?? [];
-        confirmedModels.forEach(id => sessionConfirmed.add(id));
-
-        // Coverage gate: every selected harness needs at least one non-incompatible model.
-        const uncovered = harnessCtx
-          ? uncoveredHarnesses(harnessCtx.harnesses, selectedModels, {
-            provider: providerName,
-            confirmedModels,
-            isRouter
-          })
-          : [];
-        if (uncovered.length === 0) break;
-        console.log(chalk.red(uncoveredHarnessesMessage(uncovered)));
-        existingModels = selectedModels;
-      }
+      selectedModels = [...new Set(Object.values(agentModels).flatMap(set => set.models))];
+      // The top-level model mirrors the first agent's active model.
+      selectedModel = Object.values(agentModels)[0].model;
     }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model.
@@ -398,22 +331,12 @@ export async function handlePluginSetup(
         console.log(
           chalk.yellow(`⚠ Could not install: ${failedModelIds.join(', ')} - continuing with the rest`)
         );
-        if (!selectedModels.includes(selectedModel)) {
+        if (agentModels) {
+          // Failed installs can remove the last model an agent had.
+          agentModels = withoutModels(agentModels, failedModelIds);
+          selectedModel = Object.values(agentModels)[0].model;
+        } else if (!selectedModels.includes(selectedModel)) {
           selectedModel = selectedModels[0];
-        }
-
-        // Failed installs can remove the last model a harness had.
-        const uncoveredAfterInstall = harnessCtx
-          ? uncoveredHarnesses(harnessCtx.harnesses, selectedModels, {
-            provider: providerName,
-            confirmedModels,
-            isRouter: harnessCtx.isRouter
-          })
-          : [];
-        if (uncoveredAfterInstall.length > 0) {
-          throw new ConfigurationError(
-            `No installed model works with ${formatHarnessList(uncoveredAfterInstall)} - profile not saved`
-          );
         }
       }
     }
@@ -425,7 +348,7 @@ export async function handlePluginSetup(
       const claudeMetadata = (claudeAgent as any).metadata;
       const supportsClaude = claudeMetadata?.supportedProviders?.includes(providerName);
       if (supportsClaude) {
-        modelTiers = await autoSelectModelTiers(models, selectedModel);
+        modelTiers = await autoSelectModelTiers(models, agentModels?.claude?.model ?? selectedModel);
       }
     }
 
@@ -441,22 +364,7 @@ export async function handlePluginSetup(
     config.haikuModel = modelTiers.haikuModel;
     config.sonnetModel = modelTiers.sonnetModel;
     config.opusModel = modelTiers.opusModel;
-    // Never persist a single-entry `models` array — keep the legacy shape
-    // for single-model profiles so existing consumers see no new field.
-    config.models = selectedModels.length > 1 ? selectedModels : undefined;
-    // Harness metadata: only collected when the provider lets the user pick models.
-    config.harnesses = harnesses;
-    // Launch has no catalog: ids accepted only through the router hint are persisted as confirmed
-    // so launch, switch and status report them unverified instead of incompatible.
-    const routerAccepted = harnessCtx
-      ? routerAcceptedModels(harnessCtx.harnesses, selectedModels, {
-        provider: providerName,
-        isRouter: harnessCtx.isRouter
-      })
-      : [];
-    const keptConfirmed = [...new Set([...confirmedModels, ...routerAccepted])]
-      .filter(id => selectedModels.includes(id));
-    config.confirmedModels = keptConfirmed.length > 0 ? keptConfirmed : undefined;
+    config.agentModels = agentModels;
 
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
@@ -533,7 +441,7 @@ export async function handlePluginSetup(
       }
 
       // Display success
-      displaySetupSuccess(finalProfileName!, providerName, selectedModel);
+      displaySetupSuccess(finalProfileName!, providerName, selectedModel, agentModelsDisplay(config));
 
       // Show next steps based on storage location
       if (storageLocation === 'local') {
@@ -560,151 +468,6 @@ export async function handlePluginSetup(
     displaySetupError(new Error(errorMessage), providerTemplate?.setupInstructions);
     throw error;
   }
-}
-
-/**
- * Harness-aware context for the model step: the selected agents, the profile's provider and the
- * ids already confirmed despite a name-rule mismatch. Only built when at least one selected
- * harness has a classifier; unrestricted-only selections behave exactly as before.
- */
-export interface HarnessModelContext {
-  harnesses: string[];
-  provider?: string;
-  confirmedModels?: string[];
-  /** Catalog router hint (ModelInfo.metadata.isRouter), when the provider reports one. */
-  isRouter?: (modelId: string) => boolean;
-}
-
-function buildHarnessContext(
-  harnesses: string[] | undefined,
-  provider: string,
-  confirmedModels?: string[],
-  isRouter?: (modelId: string) => boolean
-): HarnessModelContext | undefined {
-  if (!harnesses || harnesses.length === 0) return undefined;
-  const classifiers = getClassifierAgents();
-  const hasRules = harnesses.some(h => classifiers.includes(h));
-  if (!hasRules && unsupportedProviderHarnesses(harnesses, provider).length === 0) return undefined;
-  return { harnesses, provider, confirmedModels, isRouter };
-}
-
-/** Multi-select of the agents (harnesses) the profile will serve; at least one is required. */
-export async function promptForHarnesses(existing?: string[]): Promise<string[]> {
-  const offered = getOfferedHarnesses();
-  const ruleFree = getModelRuleFreeAgents();
-  if (ruleFree.length > 0) {
-    console.log(chalk.dim(
-      `No model rules for: ${ruleFree.map(h => h.name).join(', ')} - any selected model is used as-is.`
-    ));
-  }
-  const { harnesses } = await inquirer.prompt([
-    {
-      type: 'checkbox',
-      name: 'harnesses',
-      message: 'Which agents will use this profile?',
-      choices: offered.map(h => ({
-        name: h.displayName,
-        value: h.name,
-        checked: existing?.includes(h.name) ?? false
-      })),
-      validate: (picked: string[]) => picked.length > 0 || 'Select at least one agent'
-    }
-  ]);
-  return Array.isArray(harnesses) ? harnesses : [];
-}
-
-async function promptForHarnessDeadEnd(
-  stuck: { unsupported: string[]; uncovered: string[] },
-  provider: string
-): Promise<'change' | 'cancel'> {
-  if (stuck.unsupported.length > 0) {
-    console.log(chalk.yellow(
-      `\n⚠ Provider "${provider}" is not supported by ${formatHarnessList(stuck.unsupported)}.`
-    ));
-  }
-  if (stuck.uncovered.length > 0) {
-    console.log(chalk.yellow(
-      `\n⚠ Provider "${provider}" offers no model that works with ${formatHarnessList(stuck.uncovered)}.`
-    ));
-  }
-  const { action } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'action',
-      message: 'How would you like to continue?',
-      choices: [
-        { name: 'Change the selected agents', value: 'change' },
-        { name: 'Cancel (re-run `codemie setup` to choose a different provider)', value: 'cancel' }
-      ]
-    }
-  ]);
-  return action === 'change' ? 'change' : 'cancel';
-}
-
-/** Registers the live-coverage checkbox once; false when inquirer cannot register prompts. */
-function registerHarnessCheckbox(): boolean {
-  const registrar = inquirer as unknown as { registerPrompt?: (name: string, prompt: unknown) => void };
-  if (typeof registrar.registerPrompt !== 'function') return false;
-  registrar.registerPrompt(HARNESS_CHECKBOX_PROMPT, HarnessCheckboxPrompt);
-  return true;
-}
-
-/** Dim "[codex, claude · unverified]" suffix naming the selected harnesses a model works with. */
-function harnessLabel(id: string, ctx: HarnessModelContext, confirmed: Set<string>): string {
-  const opts = { provider: ctx.provider, confirmedModels: [...confirmed], isRouter: ctx.isRouter };
-  const works = compatibleHarnesses(ctx.harnesses, id, opts);
-  const unverified = works.some(h => classifyModelForAgent(h, id, opts) === 'unverified');
-  return chalk.dim(`  [${works.join(', ')}${unverified ? ' · unverified' : ''}]`);
-}
-
-/** Put the label on the first line of a (possibly multi-line) choice name. */
-function withHarnessLabel(name: string, label: string): string {
-  const newline = name.indexOf('\n');
-  return newline === -1 ? name + label : name.slice(0, newline) + label + name.slice(newline);
-}
-
-/**
- * A typed (catalog-less / custom / searched) id is accepted silently when it is not incompatible
- * for at least one selected harness. Otherwise warn and require explicit confirmation; a confirmed
- * id is recorded in `confirmed`. Without a harness context every id is accepted.
- */
-async function acceptTypedModel(
-  id: string,
-  ctx: HarnessModelContext | undefined,
-  confirmed: Set<string>
-): Promise<boolean> {
-  if (!ctx) return true;
-  const opts = { provider: ctx.provider, confirmedModels: [...confirmed], isRouter: ctx.isRouter };
-  if (compatibleHarnesses(ctx.harnesses, id, opts).length > 0) return true;
-
-  console.log(chalk.yellow(
-    `⚠ "${id}" does not look compatible with ${ctx.harnesses.join(', ')} - it may fail at launch.`
-  ));
-  const { confirmIncompatible } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'confirmIncompatible',
-      message: `Use "${id}" anyway?`,
-      default: false
-    }
-  ]);
-  if (confirmIncompatible) {
-    confirmed.add(id);
-    return true;
-  }
-  return false;
-}
-
-/** Quoted, comma-separated agent names for messages: "codex", "gemini". */
-function formatHarnessList(harnesses: string[]): string {
-  return harnesses.map(h => `"${h}"`).join(', ');
-}
-
-/** One message naming every selected agent that still lacks a compatible model. */
-function uncoveredHarnessesMessage(uncovered: string[]): string {
-  return `✗ No selected model works with ${formatHarnessList(uncovered)}. ` +
-    `Add a model for ${uncovered.length > 1 ? 'each of them' : uncovered[0]} (or remove ` +
-    `${uncovered.length > 1 ? 'them' : 'it'} from the selected agents) to continue.`;
 }
 
 /**
@@ -752,332 +515,71 @@ async function promptForProfileName(providerName: string): Promise<string> {
 }
 
 /**
- * One manual/search model entry: offers to search (when supported) or enter a model name
- * manually. `message`/`defaultModel` let the harness-aware caller steer the manual prompt.
+ * Catalog router hint: ids the provider flags as routers/aliases are unverified, not incompatible,
+ * even when the name carries no "router". Best effort - a failed lookup only loses the hint.
  */
-async function enterOneModel(
-  providerTemplate: any,
+async function fetchRouterLookup(
   setupSteps: any,
   credentials: any,
-  message: string,
-  defaultModel: string | undefined
-): Promise<string> {
-  const canSearch = typeof setupSteps?.searchModel === 'function';
-
-  if (canSearch) {
-    const { entryMethod } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'entryMethod',
-        message: 'No models found. How would you like to choose a model?',
-        choices: [
-          { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
-          { name: 'Enter model name manually', value: 'manual' }
-        ]
-      }
-    ]);
-
-    if (entryMethod === 'search') {
-      const searched = await setupSteps.searchModel(credentials);
-      if (searched) {
-        return searched;
-      }
-      // User backed out of search - fall through to manual entry
-    }
+  models: string[]
+): Promise<((id: string) => boolean) | undefined> {
+  if (models.length === 0 || typeof setupSteps.fetchRouterModels !== 'function') return undefined;
+  try {
+    const routerIds = new Set<string>(await setupSteps.fetchRouterModels(credentials));
+    return id => routerIds.has(id);
+  } catch (error) {
+    logger.debug('Could not fetch router models; using name rules only', error);
+    return undefined;
   }
-
-  const { manualModel } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'manualModel',
-      message,
-      default: defaultModel,
-      validate: (input: string) => input.trim() !== '' || 'Model name is required'
-    }
-  ]);
-  return manualModel ? manualModel.trim() : manualModel;
 }
 
 /**
- * Empty-catalog model entry. Without a harness context it returns a single model. With one it
- * keeps asking until every selected harness has a non-incompatible model, so a multi-harness
- * profile can be set up without a catalog.
+ * Live-computed recommendations (fits this machine + agent-ready + most popular) when the
+ * provider supports it; the wizard falls back to the template's static recommendedModels.
  */
-async function promptForManualOrSearchModel(
-  providerTemplate: any,
+async function fetchRecommendedIds(
   setupSteps: any,
   credentials: any,
-  harnessCtx?: HarnessModelContext,
-  confirmed: Set<string> = new Set(),
-  preselected: string[] = []
-): Promise<{ models: string[]; activeModel: string; confirmedModels?: string[] }> {
-  const recommended: string[] = providerTemplate?.recommendedModels ?? [];
-  // Confirmed typed ids from an earlier pass are kept, so a coverage-gate retry does not drop them.
-  const picked: string[] = harnessCtx ? preselected.filter(id => confirmed.has(id)) : [];
+  models: string[]
+): Promise<Set<string> | undefined> {
+  if (models.length === 0 || typeof setupSteps.getRecommendedModels !== 'function') return undefined;
+  const recommendSpinner = ora('Finding recommended models...').start();
+  try {
+    return new Set<string>(await setupSteps.getRecommendedModels(models, credentials));
+  } catch {
+    // Non-fatal - just show the list without recommendations.
+    return undefined;
+  } finally {
+    recommendSpinner.stop();
+  }
+}
 
-  // No typed id can cover a harness the provider does not support: fail instead of re-asking forever.
-  const stuck = harnessCtx ? unsupportedProviderHarnesses(harnessCtx.harnesses, harnessCtx.provider) : [];
-  if (stuck.length > 0) {
+/**
+ * Drops models (e.g. failed installs) from every agent. An agent that lost its active model falls
+ * back to its first remaining one; an agent left with no model fails the setup.
+ */
+export function withoutModels(agentModels: AgentModelsResult, removed: string[]): AgentModelsResult {
+  const result: AgentModelsResult = {};
+  const emptied: string[] = [];
+  for (const [agent, set] of Object.entries(agentModels)) {
+    const models = set.models.filter(id => !removed.includes(id));
+    if (models.length === 0) {
+      emptied.push(agent);
+      continue;
+    }
+    const confirmedModels = set.confirmedModels?.filter(id => models.includes(id));
+    result[agent] = {
+      models,
+      model: models.includes(set.model) ? set.model : models[0],
+      ...(confirmedModels?.length ? { confirmedModels } : {}),
+    };
+  }
+  if (emptied.length > 0) {
     throw new ConfigurationError(
-      `Provider "${harnessCtx?.provider}" is not supported by ${formatHarnessList(stuck)} - change the selected agents or the provider`
+      `No installed model left for ${emptied.map(agent => `"${agent}"`).join(', ')} - profile not saved`
     );
   }
-
-  let asked = false;
-  for (;;) {
-    const opts = { provider: harnessCtx?.provider, confirmedModels: [...confirmed], isRouter: harnessCtx?.isRouter };
-    const uncovered = harnessCtx && picked.length > 0
-      ? uncoveredHarnesses(harnessCtx.harnesses, picked, opts)
-      : [];
-    if (asked && picked.length > 0 && uncovered.length === 0) break;
-
-    // Say why we are asking again; the first prompt needs no explanation.
-    if (asked && uncovered.length > 0) {
-      console.log(chalk.yellow(
-        `✗ No entered model works with ${formatHarnessList(uncovered)}. Every selected agent needs at least one model.`
-      ));
-    }
-
-    const targets = uncovered.length > 0 ? uncovered : harnessCtx?.harnesses;
-    const defaultModel = harnessCtx && targets
-      ? recommended.find(m => compatibleHarnesses(targets, m, opts).length > 0)
-      : recommended[0] || 'gpt-5.5';
-    const message = uncovered.length > 0
-      ? (uncovered.length > 1
-        ? `Still no model for ${uncovered.join(', ')} - enter one (it covers whichever it fits):`
-        : `Enter a model for ${uncovered[0]}:`)
-      : 'Enter model name manually:';
-
-    const id = await enterOneModel(providerTemplate, setupSteps, credentials, message, defaultModel);
-    asked = true;
-    if (!(await acceptTypedModel(id, harnessCtx, confirmed))) continue;
-    if (!picked.includes(id)) picked.push(id);
-    if (!harnessCtx) break;
-  }
-
-  const confirmedModels = [...confirmed].filter(id => picked.includes(id));
-  const extra = confirmedModels.length > 0 ? { confirmedModels } : {};
-  if (picked.length === 1) {
-    return { models: picked, activeModel: picked[0], ...extra };
-  }
-  const activeModel = await promptForActiveModel(picked, undefined, undefined, harnessCtx, confirmed);
-  return { models: picked, activeModel, ...extra };
-}
-
-/**
- * Follow-up "which model should be active?" prompt, asked only when 2+
- * models ended up checked. Defaults to the profile's actual active model
- * (preselectedActive) when it is still checked - falling back to the first
- * still-checked preselected id, then the first checked id - rather than
- * always defaulting to the first still-checked stored id (CR-010).
- */
-async function promptForActiveModel(
-  alreadyChecked: string[],
-  preselected?: string[],
-  preselectedActive?: string,
-  harnessCtx?: HarnessModelContext,
-  confirmed: Set<string> = new Set()
-): Promise<string> {
-  const defaultActive =
-    preselectedActive && alreadyChecked.includes(preselectedActive)
-      ? preselectedActive
-      : preselected?.find(id => alreadyChecked.includes(id)) ?? alreadyChecked[0];
-
-  const { activeModel } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'activeModel',
-      message: 'Which model should be active?',
-      // A model not compatible with every harness stays selectable; it is only labeled.
-      choices: harnessCtx
-        ? alreadyChecked.map(id => ({ name: id + harnessLabel(id, harnessCtx, confirmed), value: id }))
-        : alreadyChecked,
-      default: defaultActive
-    }
-  ]);
-
-  return activeModel;
-}
-
-/**
- * Prompt for a multi-model selection with a default-active-model follow-up.
- *
- * Mirrors the single-choice picker's catalog handling (empty-catalog manual/
- * search entry, live recommendations, "Custom model" / "Search Ollama
- * library" entries), but lets the user check 2+ models and then asks which
- * one should be active when more than one was picked.
- *
- * @param preselectedActive - the profile's actual active model (profile.model)
- * on an update, used as the active-model follow-up's default - see CR-010.
- */
-export async function promptForModelsSelection(
-  models: string[],
-  providerTemplate?: any,
-  setupSteps?: any,
-  credentials?: any,
-  preselected?: string[],
-  preselectedActive?: string,
-  harnessCtx?: HarnessModelContext
-): Promise<{ models: string[]; activeModel: string; confirmedModels?: string[] }> {
-  const canSearch = typeof setupSteps?.searchModel === 'function';
-  // Ids the user confirmed despite a mismatch (already-confirmed ones seed the set).
-  const confirmed = new Set<string>(harnessCtx?.confirmedModels ?? []);
-
-  if (models.length === 0) {
-    return promptForManualOrSearchModel(providerTemplate, setupSteps, credentials, harnessCtx, confirmed, preselected);
-  }
-
-  // A confirmed typed id is not in the fetched catalog; keep it as a choice so a retry does not
-  // silently drop it from the pre-checked selection.
-  const retained = (preselected ?? []).filter(id => confirmed.has(id) && !models.includes(id));
-  if (retained.length > 0) {
-    models = [...models, ...retained];
-  }
-
-  // Models incompatible with every selected harness are hidden; the rest are labeled.
-  const isVisible = (id: string): boolean =>
-    !harnessCtx ||
-    compatibleHarnesses(harnessCtx.harnesses, id, {
-      provider: harnessCtx.provider,
-      confirmedModels: [...confirmed],
-      isRouter: harnessCtx.isRouter
-    }).length > 0;
-  const confirmedResult = (picked: string[]): { confirmedModels?: string[] } => {
-    const kept = [...confirmed].filter(id => picked.includes(id));
-    return kept.length > 0 ? { confirmedModels: kept } : {};
-  };
-
-  // Live-computed recommendations (fits this machine + agent-ready + most
-  // popular) when the provider supports it; falls back to the template's
-  // static recommendedModels inside getAllModelChoices otherwise.
-  let recommendedOverrideIds: Set<string> | undefined;
-  if (typeof setupSteps?.getRecommendedModels === 'function') {
-    const recommendSpinner = ora('Finding recommended models...').start();
-    try {
-      const recommended = await setupSteps.getRecommendedModels(models, credentials);
-      recommendedOverrideIds = new Set(recommended);
-      recommendSpinner.stop();
-    } catch {
-      recommendSpinner.stop();
-      // Non-fatal - just show the list without recommendations.
-    }
-  }
-
-  // `checked` tracks the currently-checked set across re-prompts (custom
-  // entry, Ollama search, or an empty confirmation all loop back here
-  // instead of returning).
-  let checked = new Set<string>(preselected ?? []);
-
-  for (;;) {
-    const plainChoices = getAllModelChoices(models.filter(isVisible), providerTemplate, recommendedOverrideIds);
-    const baseChoices = plainChoices.map(choice => ({
-      ...choice,
-      name: harnessCtx
-        ? withHarnessLabel(choice.name, harnessLabel(choice.value, harnessCtx, confirmed))
-        : choice.name,
-      checked: checked.has(choice.value)
-    }));
-    const choices = [
-      ...baseChoices,
-      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' },
-      ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
-    ];
-
-    // With a harness context a live line names the agents no checked model covers yet.
-    const liveCoverage = harnessCtx && registerHarnessCheckbox()
-      ? {
-        type: HARNESS_CHECKBOX_PROMPT,
-        missingFor: (picked: string[]): string[] =>
-          uncoveredHarnesses(harnessCtx.harnesses, picked.filter(id => id !== 'custom' && id !== 'search'), {
-            provider: harnessCtx.provider,
-            confirmedModels: [...confirmed],
-            isRouter: harnessCtx.isRouter
-          })
-      }
-      : { type: 'checkbox' };
-
-    const { selectedModels } = await inquirer.prompt([
-      {
-        ...liveCoverage,
-        name: 'selectedModels',
-        message: `Choose models (${models.length} available):`,
-        choices,
-        pageSize: 15
-      }
-    ]);
-
-    const picks: string[] = Array.isArray(selectedModels) ? selectedModels : [];
-    const alreadyChecked = picks.filter(id => id !== 'custom' && id !== 'search');
-
-    if (picks.includes('search')) {
-      const searched = await setupSteps.searchModel(credentials);
-      checked = new Set(alreadyChecked);
-      if (searched && await acceptTypedModel(searched, harnessCtx, confirmed)) {
-        checked.add(searched);
-        // CR-009: extend the choices source itself so the next render's
-        // checkbox actually has a matching choice for this id - inquirer's
-        // checkbox can never return a value that isn't one of its choices.
-        if (!models.includes(searched)) {
-          models = [...models, searched];
-        }
-      }
-      continue;
-    }
-
-    if (picks.includes('custom')) {
-      const { customModel } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'customModel',
-          message: 'Enter model name:',
-          validate: (input: string) => input.trim() !== '' || 'Model is required'
-        }
-      ]);
-      checked = new Set(alreadyChecked);
-      const trimmed = customModel ? customModel.trim() : '';
-      if (trimmed && await acceptTypedModel(trimmed, harnessCtx, confirmed)) {
-        checked.add(trimmed);
-        // CR-009: same reasoning as the search branch above.
-        if (!models.includes(trimmed)) {
-          models = [...models, trimmed];
-        }
-      }
-      continue;
-    }
-
-    if (alreadyChecked.length === 0) {
-      // AC5: an empty confirmation re-prompts rather than returning.
-      checked = new Set();
-      continue;
-    }
-
-    // Check coverage here, before the active-model prompt, and name every agent still missing a model.
-    const missing = harnessCtx
-      ? uncoveredHarnesses(harnessCtx.harnesses, alreadyChecked, {
-        provider: harnessCtx.provider,
-        confirmedModels: [...confirmed],
-        isRouter: harnessCtx.isRouter
-      })
-      : [];
-    if (missing.length > 0) {
-      console.log(chalk.red(uncoveredHarnessesMessage(missing)));
-      checked = new Set(alreadyChecked);
-      continue;
-    }
-
-    if (alreadyChecked.length === 1) {
-      return { models: alreadyChecked, activeModel: alreadyChecked[0], ...confirmedResult(alreadyChecked) };
-    }
-
-    const activeModel = await promptForActiveModel(
-      alreadyChecked,
-      preselected,
-      preselectedActive,
-      harnessCtx,
-      confirmed
-    );
-    return { models: alreadyChecked, activeModel, ...confirmedResult(alreadyChecked) };
-  }
+  return result;
 }
 
 /**

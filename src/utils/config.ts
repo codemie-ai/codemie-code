@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import {
   CodeMieConfigOptions,
   ProviderProfile,
+  AgentModelSet,
   MultiProviderConfig,
   WorkspaceConfig,
   CodeMieIntegrationInfo,
@@ -76,15 +77,48 @@ function pickIdentity(source: Partial<WorkspaceConfig> | undefined): ResolvedIde
   };
 }
 
+type ProfileModelFields = Pick<ProviderProfile, 'model' | 'agentModels'>;
+
+/** Base agent name: ACP variants share their base agent's models. */
+function baseAgentName(agent: string): string {
+  return agent.endsWith('-acp') ? agent.slice(0, -'-acp'.length) : agent;
+}
+
+/** The agent's own model set on a per-agent profile, if setup configured it. */
+export function resolveAgentModelSet(
+  profile: Pick<ProviderProfile, 'agentModels'>,
+  agent: string
+): AgentModelSet | undefined {
+  return profile.agentModels?.[baseAgentName(agent)];
+}
+
 /**
  * Normalize a profile's model list at read time.
  *
- * `models` is additive and optional; a missing `models` field means
- * "single-model profile" and is read as `[model]`, so every consumer can rely
- * on a normalized array without a config migration.
+ * With `agent`, the list is that agent's own models. Without it, a per-agent profile yields the
+ * union of every agent's models (in agent order). A legacy profile, or an agent the profile does
+ * not configure, is read as `[model]`, so every consumer can rely on a normalized array.
  */
-export function resolveProfileModels(profile: Pick<ProviderProfile, 'model' | 'models'>): string[] {
-  return profile.models?.length ? profile.models : profile.model ? [profile.model] : [];
+export function resolveProfileModels(profile: ProfileModelFields, agent?: string): string[] {
+  const single = profile.model ? [profile.model] : [];
+  if (!profile.agentModels) return single;
+  if (agent) return resolveAgentModelSet(profile, agent)?.models ?? single;
+
+  const union = [...new Set(Object.values(profile.agentModels).flatMap(set => set.models))];
+  return union.length > 0 ? union : single;
+}
+
+/**
+ * The profile as one agent sees it: its active model and only its own models. An agent the
+ * profile does not configure keeps the top-level model and an empty map, so the profile still
+ * reads as one set up per agent. Legacy profiles are returned unchanged.
+ */
+export function withAgentModelView<T extends ProfileModelFields>(config: T, agent: string): T {
+  if (!config.agentModels) return config;
+  const set = resolveAgentModelSet(config, agent);
+  return set
+    ? { ...config, model: set.model, agentModels: { [baseAgentName(agent)]: set } }
+    : { ...config, agentModels: {} };
 }
 
 /**
@@ -1028,14 +1062,17 @@ export class ConfigLoader {
    * Unlike switchProfile (which repoints activeProfile at a different
    * profile), this patches the currently active profile's own `model` field
    * (and, when tierOverrides is given, the three Claude tier fields) without
-   * touching `models`, `reasoningEffort`, credentials, or workspace. Writes
+   * touching the model lists, `reasoningEffort`, credentials, or workspace.
+   * With `agent` on a per-agent profile it patches that agent's active model,
+   * and the top-level `model` only when that agent is the first one. Writes
    * to whichever scope (local/global) the active profile's definition
    * actually lives in.
    */
   static async switchActiveProfileModel(
     modelId: string,
     workingDir: string = process.cwd(),
-    tierOverrides?: { haikuModel?: string; sonnetModel?: string; opusModel?: string }
+    tierOverrides?: { haikuModel?: string; sonnetModel?: string; opusModel?: string },
+    agent?: string
   ): Promise<{ profileName: string }> {
     const activeProfileName = await this.getActiveProfileName(workingDir);
     if (!activeProfileName) {
@@ -1043,7 +1080,16 @@ export class ConfigLoader {
     }
 
     const applyMutation = (profile: ProviderProfile): void => {
-      profile.model = modelId;
+      const agentSet = agent ? resolveAgentModelSet(profile, agent) : undefined;
+      if (agentSet) {
+        agentSet.model = modelId;
+        // The top-level model mirrors the first agent's active model.
+        if (Object.values(profile.agentModels ?? {})[0] === agentSet) {
+          profile.model = modelId;
+        }
+      } else {
+        profile.model = modelId;
+      }
       if (tierOverrides) {
         profile.haikuModel = tierOverrides.haikuModel;
         profile.sonnetModel = tierOverrides.sonnetModel;
@@ -1828,8 +1874,11 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    // An agent's own list (per-agent profile) is exported even with one model: the user chose
+    // exactly those models for it. A legacy single-model profile keeps the full catalog.
     const profileModels = resolveProfileModels(config);
-    if (profileModels.length >= 2) env.CODEMIE_PROFILE_MODELS = profileModels.join(',');
+    const hasAgentList = Object.keys(config.agentModels ?? {}).length > 0;
+    if (profileModels.length >= (hasAgentList ? 1 : 2)) env.CODEMIE_PROFILE_MODELS = profileModels.join(',');
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     // Always emit tier model vars — even when absent — so stale shell values are
     // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).

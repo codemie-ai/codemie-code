@@ -511,7 +511,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          // CODEMIE_PROFILE_MODELS (set only when the active profile has 2+ models)
+          // CODEMIE_PROFILE_MODELS (set for the agent's own list on a per-agent profile, or 2+ models)
           // narrows the menu to this profile's own list. Its absence is the
           // fallback signal to show the full catalog, same as an empty
           // intersection with a live catalog that dropped every one of those

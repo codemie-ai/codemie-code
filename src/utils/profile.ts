@@ -12,18 +12,31 @@ export interface AuthStatusDisplay {
 }
 
 /**
+ * One agent's models on a per-agent profile, for display
+ */
+export interface AgentModelsDisplay {
+  /** Agent display name, e.g. "Claude Code". */
+  agent: string;
+  /** The agent's active model. */
+  model: string;
+  /** The agent's other models. */
+  otherModels: string[];
+}
+
+/** "Claude Code: sonnet (active), haiku" */
+export function formatAgentModelsLine(entry: AgentModelsDisplay): string {
+  return `${entry.agent}: ${[`${entry.model} (active)`, ...entry.otherModels].join(', ')}`;
+}
+
+/**
  * Renders the CodeMie profile information in a unified table format
  */
 export function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   model?: string;
-  /** The profile's other models (resolveProfileModels(profile) minus the active model), when it has 2+. */
-  otherModels?: string[];
-  /** Harnesses (agents) the profile serves; omitted for legacy profiles. */
-  harnesses?: string[];
-  /** Per-model harnesses it works with (keyed by model id); only with `harnesses`. */
-  modelHarnesses?: Record<string, string[]>;
+  /** Per-agent models of a profile set up per agent, in profile order; omitted for legacy profiles. */
+  agentModels?: AgentModelsDisplay[];
   codeMieUrl?: string;
   /** Project text incl. its binding (see describeProjectBinding()); omitted → no Project line */
   project?: string;
@@ -58,20 +71,13 @@ export function renderProfileInfo(config: {
   if (config.provider) {
     outputLines.push(formatRow('Provider', config.provider));
   }
-  // Per-model harness suffix, e.g. "gpt-5.4 [codex]". Empty for legacy profiles.
-  const harnessSuffix = (id: string): string => {
-    const works = config.modelHarnesses?.[id];
-    return works ? ` [${works.length > 0 ? works.join(', ') : 'none'}]` : '';
-  };
   if (config.model) {
-    outputLines.push(formatRow('Model', config.model + harnessSuffix(config.model)));
+    outputLines.push(formatRow('Model', config.model));
   }
-  if (config.otherModels && config.otherModels.length > 0) {
-    outputLines.push(formatRow('Other models', config.otherModels.map(id => id + harnessSuffix(id)).join(', ')));
-  }
-  if (config.harnesses && config.harnesses.length > 0) {
-    outputLines.push(formatRow('Harnesses', config.harnesses.join(', ')));
-  }
+  // One line per agent; continuation lines keep the label column empty.
+  config.agentModels?.forEach((entry, index) => {
+    outputLines.push(formatRow(index === 0 ? 'Agent models' : '', formatAgentModelsLine(entry)));
+  });
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
   }

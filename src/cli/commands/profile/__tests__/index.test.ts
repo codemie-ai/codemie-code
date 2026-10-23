@@ -125,85 +125,46 @@ describe('ProfileDisplay — resolved identity', () => {
   });
 });
 
-describe('ProfileDisplay — Other models row (multi-model profiles)', () => {
-  it('format() renders an "Other models" row with the non-active models, excluding the active one', () => {
-    const output = ProfileDisplay.format({
-      name: 'team',
-      active: true,
-      profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b', 'c'] },
-    });
+describe('ProfileDisplay — per-agent models (EPMCDME-15641)', () => {
+  const profile = {
+    provider: 'ai-run-sso',
+    model: 'claude-sonnet-4-5',
+    agentModels: {
+      claude: { models: ['claude-sonnet-4-5', 'claude-haiku-4-5'], model: 'claude-sonnet-4-5' },
+      codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
+    },
+  };
 
-    expect(output).toContain('Other models');
-    expect(output).toContain('b, c');
+  it('format() shows one Agent models line per agent, its active model first', () => {
+    const output = ProfileDisplay.format({ name: 'team', active: true, profile });
+
+    expect(output).toContain('Agent models');
+    expect(output).toContain('Claude Code: claude-sonnet-4-5 (active), claude-haiku-4-5');
+    expect(output).toContain('OpenAI Codex CLI: gpt-5.4 (active)');
   });
 
-  it('format() renders no "Other models" row for a legacy single-model profile', () => {
+  it('formatStatus() shows the same per-agent lines', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus({ name: 'team', active: true, profile });
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('Agent models');
+      expect(rendered).toContain('OpenAI Codex CLI: gpt-5.4 (active)');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('renders a legacy profile with only its Model row', () => {
     const output = ProfileDisplay.format({
       name: 'team',
       active: true,
       profile: { provider: 'ai-run-sso', model: 'a' },
     });
 
+    expect(output).toContain('Model');
+    expect(output).not.toContain('Agent models');
     expect(output).not.toContain('Other models');
-  });
-
-  it('formatStatus() renders an "Other models" row for a multi-model profile', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      ProfileDisplay.formatStatus({
-        name: 'team',
-        active: true,
-        profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b'] },
-      });
-
-      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
-      expect(rendered).toContain('Other models');
-      expect(rendered).toContain('b');
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-});
-
-describe('ProfileDisplay — harness annotations (EPMCDME-15641)', () => {
-  const profile = {
-    provider: 'ai-run-sso',
-    model: 'claude-sonnet-4-5',
-    models: ['claude-sonnet-4-5', 'gpt-5.4'],
-    harnesses: ['claude', 'codex'],
-  };
-
-  it('format() shows the harnesses and, per model, the harnesses it works with', () => {
-    const output = ProfileDisplay.format({ name: 'team', active: true, profile });
-
-    expect(output).toContain('Harnesses');
-    expect(output).toContain('claude, codex');
-    expect(output).toMatch(/claude-sonnet-4-5\s*\[claude\]/);
-    expect(output).toMatch(/gpt-5\.4\s*\[codex\]/);
-  });
-
-  it('formatStatus() shows the same harness information', () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      ProfileDisplay.formatStatus({ name: 'team', active: true, profile });
-      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
-      expect(rendered).toContain('Harnesses');
-      expect(rendered).toMatch(/gpt-5\.4\s*\[codex\]/);
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-
-  it('renders a legacy profile (no harnesses) with no harness rows or labels', () => {
-    const output = ProfileDisplay.format({
-      name: 'team',
-      active: true,
-      profile: { provider: 'ai-run-sso', model: 'a', models: ['a', 'b'] },
-    });
-
-    expect(output).not.toContain('Harnesses');
-    expect(output).not.toContain('[claude');
-    expect(output).not.toMatch(/\[[a-z-]+(, [a-z-]+)*\]\s*$/m);
   });
 });
 

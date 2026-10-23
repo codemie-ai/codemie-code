@@ -5,12 +5,10 @@ import {
   classifyModelForAgent,
   getClassifierAgents,
   getOfferedHarnesses,
-  harnessAnnotations,
-  compatibleHarnesses,
-  uncoveredHarness,
   uncoveredHarnesses,
-  unsupportedProviderHarness,
   unsupportedProviderHarnesses,
+  agentsUsingModel,
+  getAgentDisplayName,
   getModelRuleFreeAgents,
   routerAcceptedModels,
 } from '../model-compat.js';
@@ -139,31 +137,6 @@ describe('getModelRuleFreeAgents', () => {
   });
 });
 
-describe('compatibleHarnesses', () => {
-  it('returns only the harnesses the model works with', () => {
-    expect(compatibleHarnesses(['claude', 'codex'], 'claude-sonnet-4')).toEqual(['claude']);
-    expect(compatibleHarnesses(['claude', 'codex'], 'gpt-5.4')).toEqual(['codex']);
-  });
-});
-
-describe('uncoveredHarness', () => {
-  it('names the harness that has no non-incompatible model', () => {
-    expect(uncoveredHarness(['codex'], ['claude-sonnet-4'])).toBe('codex');
-  });
-
-  it('returns undefined when every harness is covered', () => {
-    expect(uncoveredHarness(['claude', 'codex'], ['claude-sonnet-4', 'gpt-5.4'])).toBeUndefined();
-  });
-
-  it('never fails for unrestricted harnesses', () => {
-    expect(uncoveredHarness(['opencode'], ['claude-sonnet-4'])).toBeUndefined();
-  });
-
-  it('counts a confirmed model as coverage', () => {
-    expect(uncoveredHarness(['codex'], ['claude-x'], { confirmedModels: ['claude-x'] })).toBeUndefined();
-  });
-});
-
 describe('uncoveredHarnesses', () => {
   it('names every harness that has no non-incompatible model', () => {
     expect(uncoveredHarnesses(['claude', 'codex'], ['llama-3'])).toEqual(['claude', 'codex']);
@@ -174,37 +147,14 @@ describe('uncoveredHarnesses', () => {
   });
 });
 
-describe('harnessAnnotations', () => {
-  it('maps each model id to the profile harnesses it works with', () => {
-    expect(harnessAnnotations({ harnesses: ['claude', 'codex'] }, ['claude-x', 'gpt-5.4'])).toEqual({
-      'claude-x': ['claude'],
-      'gpt-5.4': ['codex'],
-    });
-  });
-
-  it('returns undefined for a legacy profile without harnesses', () => {
-    expect(harnessAnnotations({}, ['claude-x'])).toBeUndefined();
-    expect(harnessAnnotations({ harnesses: [] }, ['claude-x'])).toBeUndefined();
-  });
-
-  it('honors the router lookup and confirmed models', () => {
-    const profile = { harnesses: ['codex'], confirmedModels: ['claude-x'] };
-    expect(harnessAnnotations(profile, ['claude-x', 'sy-alias'], (id) => id === 'sy-alias')).toEqual({
-      'claude-x': ['codex'],
-      'sy-alias': ['codex'],
-    });
-  });
-});
-
-
-describe('unsupportedProviderHarness', () => {
-  it('names the first classifier harness whose supportedProviders exclude the provider', () => {
-    expect(unsupportedProviderHarness(['claude', 'codex'], 'other')).toBe('codex');
+describe('unsupportedProviderHarnesses', () => {
+  it('names harnesses whose supportedProviders exclude the provider', () => {
+    expect(unsupportedProviderHarnesses(['claude', 'codex'], 'other')).toEqual(['codex']);
   });
 
   it('ignores harnesses with an empty supportedProviders list or a supported provider', () => {
-    expect(unsupportedProviderHarness(['claude', 'pi'], 'other')).toBeUndefined();
-    expect(unsupportedProviderHarness(['codex'], 'litellm')).toBeUndefined();
+    expect(unsupportedProviderHarnesses(['claude', 'pi'], 'other')).toEqual([]);
+    expect(unsupportedProviderHarnesses(['codex'], 'litellm')).toEqual([]);
   });
 
   it('also names classifier-less harnesses whose supportedProviders exclude the provider', () => {
@@ -220,5 +170,31 @@ describe('routerAcceptedModels', () => {
 
   it('is empty without a router lookup', () => {
     expect(routerAcceptedModels(['codex'], ['sy-alias'], {})).toEqual([]);
+  });
+});
+
+describe('agentsUsingModel', () => {
+  it('names the agents whose own list holds the model, in profile order', () => {
+    const profile = {
+      agentModels: {
+        claude: { models: ['claude-x', 'shared'], model: 'claude-x' },
+        opencode: { models: ['shared'], model: 'shared' },
+      },
+    };
+    expect(agentsUsingModel(profile, 'shared')).toEqual(['claude', 'opencode']);
+    expect(agentsUsingModel(profile, 'claude-x')).toEqual(['claude']);
+    expect(agentsUsingModel(profile, 'other')).toEqual([]);
+  });
+
+  it('is empty for a legacy profile', () => {
+    expect(agentsUsingModel({}, 'claude-x')).toEqual([]);
+  });
+});
+
+describe('getAgentDisplayName', () => {
+  it('returns the display name, folding ACP variants, and falls back to the id', () => {
+    expect(getAgentDisplayName('codex')).toBe('Display codex');
+    expect(getAgentDisplayName('codex-acp')).toBe('Display codex');
+    expect(getAgentDisplayName('unknown')).toBe('unknown');
   });
 });

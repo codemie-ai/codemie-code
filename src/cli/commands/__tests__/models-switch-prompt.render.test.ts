@@ -69,13 +69,13 @@ describe('renderModelSwitchSelectionUI', () => {
     expect(renderModelSwitchSelectionUI(options)).toBe(renderModelSwitchSelectionUI(options));
   });
 
-  it('annotates each row with the harnesses it works with when labels are given', () => {
+  it('annotates each row with the agents using it when labels are given', () => {
     const output = renderModelSwitchSelectionUI({
       message: 'Select a model to switch to:',
       models: ['claude-x', 'gpt-5.4'],
       activeModel: 'claude-x',
       cursorIndex: 0,
-      harnessLabels: { 'claude-x': ['claude'], 'gpt-5.4': ['codex', 'opencode'] },
+      agentLabels: { 'claude-x': ['claude'], 'gpt-5.4': ['codex', 'opencode'] },
     });
 
     const lines = output.split('\n');
@@ -94,5 +94,21 @@ describe('renderModelSwitchSelectionUI', () => {
     expect(output).not.toMatch(/\[claude/);
     expect(output).not.toContain('claude-x]');
   });
-});
 
+  it('renders custom row labels and title (agent picker)', () => {
+    const output = renderModelSwitchSelectionUI({
+      title: 'Agents',
+      message: 'Select the agent whose active model to switch:',
+      models: ['claude', 'codex'],
+      activeModel: '',
+      cursorIndex: 1,
+      rowLabel: id => (id === 'claude' ? 'Claude Code' : 'OpenAI Codex CLI'),
+    });
+
+    expect(output).toContain('Agents');
+    expect(output).toContain('Claude Code');
+    const cursorLines = output.split('\n').filter(l => l.includes(SYMBOL.CURSOR_INDICATOR));
+    expect(cursorLines).toHaveLength(1);
+    expect(cursorLines[0]).toContain('OpenAI Codex CLI');
+  });
+});

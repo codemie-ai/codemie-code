@@ -4,7 +4,7 @@
  *
  * When a blocked model is caught, the existing "codemie models list" /
  * "--model <model-id>" suggestions are joined by a `codemie models switch`
- * hint — but only when the active profile resolves to 2+ models.
+ * hint — but only when the launching agent has 2+ models on the profile.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -61,24 +61,45 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
     return logSpy.mock.calls.map(call => call.join(' ')).join('\n');
   }
 
-  it('prints no "codemie models switch" line for a single-model profile (models has 1 entry)', () => {
+  it('prints no "codemie models switch" line for a single-model profile', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const result = validate(cfg({ provider: 'ai-run-sso', model: 'gpt-x', models: ['gpt-x'] }));
+    const result = validate(cfg({ provider: 'ai-run-sso', model: 'gpt-x' }));
 
     expect(result).toBe(false);
     expect(logs()).not.toContain('codemie models switch');
   });
 
-  it('prints the "codemie models switch" line when the active profile has 2+ models', () => {
+  it('prints the agent-scoped "codemie models switch" line when the agent has 2+ models', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const result = validate(cfg({ provider: 'ai-run-sso', model: 'gpt-x', models: ['gpt-x', 'gpt-y'] }));
+    const result = validate(cfg({
+      provider: 'ai-run-sso',
+      model: 'gpt-x',
+      agentModels: { gemini: { models: ['gpt-x', 'gpt-y'], model: 'gpt-x' } },
+    }));
 
     expect(result).toBe(false);
-    expect(logs()).toContain('codemie models switch');
+    expect(logs()).toContain('codemie models switch --agent gemini');
+  });
+
+  it('prints no switch line when only another agent has 2+ models', () => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = validate(cfg({
+      provider: 'ai-run-sso',
+      model: 'gpt-x',
+      agentModels: {
+        gemini: { models: ['gpt-x'], model: 'gpt-x' },
+        codex: { models: ['gpt-x', 'gpt-y'], model: 'gpt-x' },
+      },
+    }));
+
+    expect(result).toBe(false);
+    expect(logs()).not.toContain('codemie models switch');
   });
 });
 
@@ -99,20 +120,38 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
     return [...logSpy.mock.calls, ...errorSpy.mock.calls].map(call => call.join(' ')).join('\n');
   }
 
-  it('blocks a profile with harnesses whose active model is incompatible, naming compatible siblings', () => {
+  it('blocks a per-agent profile whose agent active model is incompatible, naming its compatible models', () => {
     const result = validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', models: ['claude-sonnet-4-5', 'gpt-5.4'], harnesses: ['claude', 'codex'] }),
+      cfg({
+        provider: 'ai-run-sso',
+        model: 'claude-sonnet-4-5',
+        agentModels: { codex: { models: ['claude-sonnet-4-5', 'gpt-5.4'], model: 'claude-sonnet-4-5' } },
+      }),
       codex()
     );
 
     expect(result).toBe(false);
     expect(output()).toContain('gpt-5.4');
-    expect(output()).toContain('codemie models switch');
+    expect(output()).toContain('codemie models switch --agent codex');
+  });
+
+  it('blocks an agent the per-agent profile does not configure when the top-level model is incompatible', () => {
+    const result = validate(
+      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', agentModels: {} }),
+      codex()
+    );
+
+    expect(result).toBe(false);
+    expect(output()).toContain('codemie setup');
   });
 
   it('points to codemie setup when the profile has no compatible model', () => {
     const result = validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', harnesses: ['claude'] }),
+      cfg({
+        provider: 'ai-run-sso',
+        model: 'claude-sonnet-4-5',
+        agentModels: { codex: { models: ['claude-sonnet-4-5'], model: 'claude-sonnet-4-5' } },
+      }),
       codex()
     );
 
@@ -121,21 +160,21 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
     expect(output()).not.toContain('codemie models switch');
   });
 
-  it('only warns and continues for a legacy profile (no harnesses) with the same mismatch', () => {
+  it('only warns and continues for a legacy profile (no agentModels) with the same mismatch', () => {
     const result = validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', models: ['claude-sonnet-4-5', 'gpt-5.4'] }),
+      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5' }),
       codex()
     );
 
     expect(result).toBe(true);
     expect(output()).toContain('claude-sonnet-4-5');
     expect(output()).toContain('Codex');
-    expect(output()).toContain('codemie models switch');
+    expect(output()).toContain('codemie setup');
   });
 
   it('keeps stdout clean on the legacy warning path (ACP/SDK callers parse stdout)', () => {
     validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', models: ['claude-sonnet-4-5', 'gpt-5.4'] }),
+      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5' }),
       codex()
     );
 
@@ -144,21 +183,29 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
   });
 
   it('skips the check when the model was set by --model or CODEMIE_MODEL', () => {
-    const config = cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', harnesses: ['codex'] });
+    const config = cfg({
+      provider: 'ai-run-sso',
+      model: 'claude-sonnet-4-5',
+      agentModels: { codex: { models: ['gpt-5.4'], model: 'gpt-5.4' } },
+    });
 
     expect(validate(config, codex(), true)).toBe(true);
     expect(output()).toBe('');
   });
 
   it('prints nothing for a compatible model, an unverified model, or an unrestricted agent', () => {
-    expect(validate(cfg({ provider: 'ai-run-sso', model: 'gpt-5.4', harnesses: ['codex'] }), codex())).toBe(true);
-    expect(validate(cfg({ provider: 'ai-run-sso', model: 'sy-router', harnesses: ['codex'] }), codex())).toBe(true);
+    const codexSet = (model: string, extra: Record<string, unknown> = {}) =>
+      cfg({ provider: 'ai-run-sso', model, agentModels: { codex: { models: [model], model, ...extra } } });
+
+    expect(validate(codexSet('gpt-5.4'), codex())).toBe(true);
+    expect(validate(codexSet('sy-router'), codex())).toBe(true);
+    expect(validate(codexSet('claude-sonnet-4-5', { confirmedModels: ['claude-sonnet-4-5'] }), codex())).toBe(true);
     expect(validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', harnesses: ['codex'], confirmedModels: ['claude-sonnet-4-5'] }),
-      codex()
-    )).toBe(true);
-    expect(validate(
-      cfg({ provider: 'ai-run-sso', model: 'claude-sonnet-4-5', harnesses: ['opencode'] }),
+      cfg({
+        provider: 'ai-run-sso',
+        model: 'claude-sonnet-4-5',
+        agentModels: { opencode: { models: ['claude-sonnet-4-5'], model: 'claude-sonnet-4-5' } },
+      }),
       createAdapter('opencode', 'OpenCode')
     )).toBe(true);
     expect(output()).toBe('');

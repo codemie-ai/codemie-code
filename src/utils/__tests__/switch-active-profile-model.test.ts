@@ -4,7 +4,7 @@
  * switchActiveProfileModel patches the active profile's `model` field (and,
  * optionally, the Claude tier fields) in place, writing to whichever scope
  * (local/global) the active profile already lives in. It must never touch
- * `models`, `reasoningEffort`, credentials, or workspace, and must never
+ * the model lists, `reasoningEffort`, credentials, or workspace, and must never
  * write to the scope the active profile does NOT live in.
  */
 
@@ -47,7 +47,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
     vi.restoreAllMocks();
   });
 
-  it('switches the active model in place, leaving models/reasoningEffort untouched (global scope)', async () => {
+  it('switches the active model in place, leaving model lists/reasoningEffort untouched (global scope)', async () => {
     const config: MultiProviderConfig = {
       version: 2,
       activeProfile: 'default',
@@ -56,7 +56,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'openai',
           model: 'a',
-          models: ['a', 'b'],
+          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
           reasoningEffort: 'high'
         }
       }
@@ -68,7 +68,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
 
     const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
     expect(reloaded.profiles.default.model).toBe('b');
-    expect(reloaded.profiles.default.models).toEqual(['a', 'b']);
+    expect(reloaded.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], model: 'a' } });
     expect(reloaded.profiles.default.reasoningEffort).toBe('high');
   });
 
@@ -91,7 +91,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'openai',
           model: 'a',
-          models: ['a', 'b'],
+          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
           reasoningEffort: 'high'
         }
       }
@@ -103,7 +103,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
 
     const reloadedLocal = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
     expect(reloadedLocal.profiles.default.model).toBe('b');
-    expect(reloadedLocal.profiles.default.models).toEqual(['a', 'b']);
+    expect(reloadedLocal.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], model: 'a' } });
     expect(reloadedLocal.profiles.default.reasoningEffort).toBe('high');
 
     const globalAfter = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
@@ -119,7 +119,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'claude',
           model: 'a',
-          models: ['a', 'b'],
+          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
           haikuModel: 'old-haiku',
           sonnetModel: 'old-sonnet',
           opusModel: 'old-opus'
@@ -154,5 +154,45 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
     await writeGlobalConfig(config);
 
     await expect(ConfigLoader.switchActiveProfileModel('b', PROJECT_DIR)).rejects.toThrow();
+  });
+
+  describe('with an agent on a per-agent profile', () => {
+    const perAgent = (): MultiProviderConfig => ({
+      version: 2,
+      activeProfile: 'default',
+      profiles: {
+        default: {
+          name: 'default',
+          provider: 'litellm',
+          model: 'claude-x',
+          agentModels: {
+            claude: { models: ['claude-x', 'claude-y'], model: 'claude-x' },
+            codex: { models: ['gpt-a', 'gpt-b'], model: 'gpt-a' },
+          },
+        },
+      },
+    });
+
+    it('switches only that agent active model, leaving the top-level model for a non-first agent', async () => {
+      await writeGlobalConfig(perAgent());
+
+      await ConfigLoader.switchActiveProfileModel('gpt-b', PROJECT_DIR, undefined, 'codex');
+
+      const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
+      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-a', 'gpt-b'], model: 'gpt-b' });
+      expect(reloaded.profiles.default.agentModels?.claude.model).toBe('claude-x');
+      expect(reloaded.profiles.default.model).toBe('claude-x');
+    });
+
+    it('keeps the top-level model in sync when the first agent switches, folding ACP names', async () => {
+      await writeGlobalConfig(perAgent());
+
+      await ConfigLoader.switchActiveProfileModel('claude-y', PROJECT_DIR, { sonnetModel: 'claude-y' }, 'claude-acp');
+
+      const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
+      expect(reloaded.profiles.default.agentModels?.claude.model).toBe('claude-y');
+      expect(reloaded.profiles.default.model).toBe('claude-y');
+      expect(reloaded.profiles.default.sonnetModel).toBe('claude-y');
+    });
   });
 });

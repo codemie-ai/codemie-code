@@ -17,24 +17,28 @@ export interface ModelSwitchSelectionUIOptions {
   models: string[];
   activeModel: string;
   cursorIndex: number;
-  /** Per-model harnesses it works with; omitted for legacy profiles (no annotation). */
-  harnessLabels?: Record<string, string[]>;
+  /** Per-model agents whose list holds it; omitted for legacy profiles (no annotation). */
+  agentLabels?: Record<string, string[]>;
+  /** Screen title; defaults to "Models". */
+  title?: string;
+  /** Row label per id (e.g. an agent display name); defaults to the id itself. */
+  rowLabel?: (id: string) => string;
 }
 
-export function formatHarnessSuffix(harnesses: string[] | undefined): string {
-  if (!harnesses) return '';
-  return chalk.dim(` [${harnesses.length > 0 ? harnesses.join(', ') : 'none'}]`);
+/** Dim " [claude, opencode]" suffix naming the agents a model belongs to. */
+export function formatAgentsSuffix(agents: string[] | undefined): string {
+  if (!agents) return '';
+  return chalk.dim(` [${agents.length > 0 ? agents.join(', ') : 'none'}]`);
 }
 
 function buildModelSelectionRow(
-  modelId: string,
-  activeModel: string,
+  label: string,
+  isActive: boolean,
   isCursor: boolean,
-  harnesses?: string[]
+  agents?: string[]
 ): string {
-  const isActive = modelId === activeModel;
   const displayName =
-    (isActive ? chalk.green.bold(modelId) : chalk.white(modelId)) + formatHarnessSuffix(harnesses);
+    (isActive ? chalk.green.bold(label) : chalk.white(label)) + formatAgentsSuffix(agents);
 
   return buildSingleChoiceRow({
     label: displayName,
@@ -51,16 +55,23 @@ export function renderModelSwitchSelectionUI({
   models,
   activeModel,
   cursorIndex,
-  harnessLabels,
+  agentLabels,
+  title = 'Models',
+  rowLabel = id => id,
 }: ModelSwitchSelectionUIOptions): string {
   let output = ANSI.CURSOR_HOME_CLEAR;
 
   output += buildTopLine();
-  output += chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold('Models') + '\n\n';
+  output += chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(title) + '\n\n';
   output += chalk.dim(message) + '\n\n';
 
   models.forEach((modelId, index) => {
-    output += buildModelSelectionRow(modelId, activeModel, index === cursorIndex, harnessLabels?.[modelId]) + '\n';
+    output += buildModelSelectionRow(
+      rowLabel(modelId),
+      modelId === activeModel,
+      index === cursorIndex,
+      agentLabels?.[modelId]
+    ) + '\n';
   });
 
   output += '\n';
@@ -76,16 +87,38 @@ export function renderModelSwitchSelectionUI({
 export async function promptModelSwitchSelection(
   models: string[],
   activeModel: string,
-  harnessLabels?: Record<string, string[]>
+  agentLabels?: Record<string, string[]>,
+  message = 'Select a model to switch to:'
 ): Promise<string> {
-  const message = 'Select a model to switch to:';
+  return promptRawSingleChoice({ message, models, activeModel, agentLabels });
+}
+
+/**
+ * Pick which agent's active model `codemie models switch` changes, on a profile set up per
+ * agent. Each row shows the agent's display name and its current active model.
+ */
+export async function promptAgentSwitchSelection(
+  agents: Array<{ name: string; displayName: string; model: string }>
+): Promise<string> {
+  const byName = new Map(agents.map(agent => [agent.name, agent]));
+  return promptRawSingleChoice({
+    title: 'Agents',
+    message: 'Select the agent whose active model to switch:',
+    models: agents.map(agent => agent.name),
+    activeModel: '',
+    rowLabel: name => {
+      const agent = byName.get(name);
+      return agent ? `${agent.displayName} ${chalk.dim(`(active: ${agent.model})`)}` : name;
+    },
+  });
+}
+
+function promptRawSingleChoice(options: Omit<ModelSwitchSelectionUIOptions, 'cursorIndex'>): Promise<string> {
+  const { models, activeModel } = options;
   let cursorIndex = Math.max(0, models.findIndex(id => id === activeModel));
-  if (cursorIndex < 0) {
-    cursorIndex = 0;
-  }
 
   function render(): void {
-    process.stdout.write(renderModelSwitchSelectionUI({ message, models, activeModel, cursorIndex, harnessLabels }));
+    process.stdout.write(renderModelSwitchSelectionUI({ ...options, cursorIndex }));
   }
 
   return new Promise((resolve, reject) => {

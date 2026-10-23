@@ -135,48 +135,88 @@ describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
   });
 });
 
-describe('AgentCLI.handleRun — harness compatibility check is skipped for explicit models (EPMCDME-15641)', () => {
+describe('AgentCLI.handleRun — per-agent models (EPMCDME-15641)', () => {
   type Cli = { handleRun: (args: string[], options: Record<string, unknown>) => Promise<void> };
-  const codexAdapter = (run: AgentAdapter['run']): AgentAdapter => {
+  const agentAdapter = (run: AgentAdapter['run'], name = 'codex'): AgentAdapter => {
     const base = createAdapter({ run });
-    return { ...base, name: 'codex', displayName: 'Codex', metadata: { ...base.metadata, name: 'codex' } };
+    return { ...base, name, displayName: 'Codex', metadata: { ...base.metadata, name } };
   };
-  const extra = { harnesses: ['claude', 'codex'], models: ['claude-x', 'gpt-5.4'] };
+  // The top-level model mirrors the first agent (claude); codex has its own active model.
+  const perAgent = {
+    agentModels: {
+      claude: { models: ['claude-x'], model: 'claude-x' },
+      codex: { models: ['gpt-5.4', 'gpt-5.5'], model: 'gpt-5.4' },
+    },
+  };
+  const incompatibleCodex = {
+    agentModels: {
+      claude: { models: ['claude-x'], model: 'claude-x' },
+      codex: { models: ['claude-x'], model: 'claude-x' },
+    },
+  };
 
   afterEach(() => {
     vi.restoreAllMocks();
     delete process.env.CODEMIE_MODEL;
   });
 
-  it('blocks a persisted incompatible active model (exit 1)', async () => {
-    mockHandleRunDependencies('claude-x', extra);
+  function exportedConfig(): Record<string, unknown> {
+    const spy = vi.mocked(ConfigLoader.exportProviderEnvVars);
+    return spy.mock.calls[spy.mock.calls.length - 1][0] as unknown as Record<string, unknown>;
+  }
+
+  it('launches the agent with its own active model and only its own models', async () => {
+    mockHandleRunDependencies('claude-x', perAgent);
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await (new AgentCLI(agentAdapter(run)) as unknown as Cli).handleRun([], {});
+
+    expect(run).toHaveBeenCalled();
+    expect(exportedConfig().model).toBe('gpt-5.4');
+    expect(exportedConfig().agentModels).toEqual({ codex: perAgent.agentModels.codex });
+  });
+
+  it('folds an ACP agent into its base agent models', async () => {
+    mockHandleRunDependencies('claude-x', perAgent);
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await (new AgentCLI(agentAdapter(run, 'codex-acp')) as unknown as Cli).handleRun([], {});
+
+    expect(exportedConfig().model).toBe('gpt-5.4');
+  });
+
+  it('blocks a persisted incompatible agent active model (exit 1)', async () => {
+    mockHandleRunDependencies('claude-x', incompatibleCodex);
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
     const run = vi.fn().mockResolvedValue(undefined);
 
-    await expect((new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], {})).rejects.toThrow();
+    await expect((new AgentCLI(agentAdapter(run)) as unknown as Cli).handleRun([], {})).rejects.toThrow();
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('launches when --model is given, leaving the persisted model untouched', async () => {
-    mockHandleRunDependencies('claude-x', extra);
+  it('launches with the --model value instead of the agent active model', async () => {
+    // ConfigLoader.load already merges --model into the top-level model.
+    mockHandleRunDependencies('claude-x', incompatibleCodex);
     const run = vi.fn().mockResolvedValue(undefined);
 
-    await (new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], { model: 'claude-x' });
+    await (new AgentCLI(agentAdapter(run)) as unknown as Cli).handleRun([], { model: 'claude-x' });
 
     expect(run).toHaveBeenCalled();
+    expect(exportedConfig().model).toBe('claude-x');
   });
 
-  it('launches when CODEMIE_MODEL is set', async () => {
-    mockHandleRunDependencies('claude-x', extra);
-    process.env.CODEMIE_MODEL = 'claude-x';
+  it('launches when CODEMIE_MODEL is set, keeping that model', async () => {
+    mockHandleRunDependencies('my-env-model', perAgent);
+    process.env.CODEMIE_MODEL = 'my-env-model';
     const run = vi.fn().mockResolvedValue(undefined);
 
-    await (new AgentCLI(codexAdapter(run)) as unknown as Cli).handleRun([], {});
+    await (new AgentCLI(agentAdapter(run)) as unknown as Cli).handleRun([], {});
 
     expect(run).toHaveBeenCalled();
+    expect(exportedConfig().model).toBe('my-env-model');
   });
 });
-
