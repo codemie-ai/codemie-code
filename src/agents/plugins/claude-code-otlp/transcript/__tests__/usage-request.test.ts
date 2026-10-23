@@ -373,6 +373,20 @@ describe('mergeUsageRequest', () => {
     expect(mergeUsageRequest(first, laterWithoutAgentType).agentType).toBe('Explore');
     expect(mergeUsageRequest(laterWithoutAgentType, first).agentType).toBe('Explore');
   });
+
+  it('takes scopeKind and scopeName together from one side', () => {
+    const base = parseUsageLine(lines[3], 'main', '', '', '') as OpenUsageRequest;
+    const skill: OpenUsageRequest = { ...base, scopeKind: 'skill', scopeName: 'probe-skill' };
+    const main: OpenUsageRequest = { ...base, scopeKind: 'main', scopeName: '' };
+    const noScope = { ...base, scopeKind: '', scopeName: '' } as unknown as OpenUsageRequest;
+
+    const skillThenMain = mergeUsageRequest(skill, main);
+    expect([skillThenMain.scopeKind, skillThenMain.scopeName]).toEqual(['main', '']);
+    const mainThenSkill = mergeUsageRequest(main, skill);
+    expect([mainThenSkill.scopeKind, mainThenSkill.scopeName]).toEqual(['skill', 'probe-skill']);
+    const skillThenNone = mergeUsageRequest(skill, noScope);
+    expect([skillThenNone.scopeKind, skillThenNone.scopeName]).toEqual(['skill', 'probe-skill']);
+  });
 });
 
 describe('mergeUsageRequest - requestedModel', () => {

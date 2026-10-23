@@ -165,7 +165,9 @@ export function usageRequestKey(r: { requestId: string; messageId: string; model
  * usage, never subtracts it); every non-numeric field takes `b`'s value when non-empty, else
  * falls back to `a`'s — so a later row that fills in a previously-empty field (e.g.
  * `stop_reason` once the turn finishes) wins, while a later row that is missing a field `a` had
- * does not blank it out.
+ * does not blank it out. `scopeKind` and `scopeName` are the exception: the pair is taken whole
+ * from `b` when `b.scopeKind` is non-empty, else from `a`, so the result never pairs one line's
+ * kind with another line's name.
  *
  * Returns a new object; neither `a` nor `b` is mutated.
  */
@@ -192,8 +194,8 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
         : Math.max(a.thinkingTokens ?? 0, b.thinkingTokens ?? 0),
     webSearchRequests: Math.max(a.webSearchRequests, b.webSearchRequests),
     webFetchRequests: Math.max(a.webFetchRequests, b.webFetchRequests),
-    scopeKind: b.scopeKind || a.scopeKind,
-    scopeName: b.scopeName || a.scopeName,
+    scopeKind: b.scopeKind ? b.scopeKind : a.scopeKind,
+    scopeName: b.scopeKind ? b.scopeName : a.scopeName,
     agentId: b.agentId || a.agentId,
     agentType: b.agentType || a.agentType,
     stopReason: b.stopReason || a.stopReason,
