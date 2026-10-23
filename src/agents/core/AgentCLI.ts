@@ -34,7 +34,7 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
-import { classifyModelForAgent } from './model-compat.js';
+import { classifyModelForAgent, isActiveModelOnly } from './model-compat.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -767,7 +767,7 @@ export class AgentCLI {
         // When the active profile has 2+ models, point at the in-place switch
         // command too — it's narrower than --model (only ever offers this
         // profile's own list) and persists, unlike the one-off override above.
-        if (resolveProfileModels(config, this.adapter.name).length >= 2) {
+        if (resolveProfileModels(config, this.adapter.name).length >= 2 || this.switchesFromCatalog(config)) {
           console.log(chalk.white('  Or run: ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick a compatible model from this profile.'));
         }
       } else {
@@ -813,11 +813,18 @@ export class AgentCLI {
     if (siblings.length > 0) {
       console.error(chalk.white(`Compatible models on this profile: ${siblings.join(', ')}`));
       console.error(chalk.white('Run ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(' to pick one.'));
+    } else if (this.switchesFromCatalog(config)) {
+      console.error(chalk.white('Run ') + chalk.cyan(this.modelsSwitchCommand(config)) + chalk.white(` to pick a ${name} model.`));
     } else {
       console.error(chalk.white(`No model on this profile works with ${name}. Run `) + chalk.cyan('codemie setup') + chalk.white(' to add one.'));
     }
 
     return !isPerAgentProfile;
+  }
+
+  /** True when `codemie models switch --agent` offers this agent the live catalog (no saved list). */
+  private switchesFromCatalog(config: CodeMieConfigOptions): boolean {
+    return Boolean(resolveAgentModelSet(config, this.adapter.name)) && isActiveModelOnly(this.adapter.name);
   }
 
   /** `codemie models switch`, scoped to this agent when the profile sets models per agent. */

@@ -11,6 +11,7 @@ import {
   getClassifierAgents,
   getModelRuleFreeAgents,
   getOfferedHarnesses,
+  isActiveModelOnly,
   routerAcceptedModels,
   uncoveredHarnesses,
   unsupportedProviderHarnesses,
@@ -115,15 +116,28 @@ export function buildActiveRows(agent: string, input: AgentModelsWizardInput, dr
     }));
 }
 
-/** Initial draft: the existing per-agent set, or the legacy active model when this agent can use it. */
+/**
+ * Initial draft: the existing per-agent set, or the legacy active model when this agent can use it.
+ * Saved models are reused only when the profile keeps its provider: another provider's ids would
+ * otherwise come back as typed models, even with an empty catalog.
+ */
 export function createDraft(agent: string, input: AgentModelsWizardInput): AgentDraft {
+  const sameProvider = input.existing?.provider === input.provider;
+  if (!sameProvider) {
+    return { models: [], extra: [], confirmed: new Set() };
+  }
+
   const existing = input.existing?.agentModels?.[agent];
   if (existing) {
+    // An agent that always runs on its active model keeps only that model.
+    const models = isActiveModelOnly(agent) && existing.models.includes(existing.model)
+      ? [existing.model]
+      : [...existing.models];
     return {
-      models: [...existing.models],
+      models,
       model: existing.model,
-      extra: existing.models.filter(id => !input.models.includes(id)),
-      confirmed: new Set(existing.confirmedModels ?? []),
+      extra: models.filter(id => !input.models.includes(id)),
+      confirmed: new Set((existing.confirmedModels ?? []).filter(id => models.includes(id))),
     };
   }
 

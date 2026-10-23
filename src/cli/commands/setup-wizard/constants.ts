@@ -15,6 +15,10 @@ export const WIZARD_TEXT = {
   MODELS_REQUIRED: (agent: string) => `Select at least one model for ${agent}.`,
   ACTIVE_TITLE: (agent: string) => `${agent} · Active model`,
   ACTIVE_NOTE: (agent: string) => `${agent} starts with this model. Switch later with "codemie models switch --agent".`,
+  ACTIVE_ONLY_NOTE: (agent: string, name: string) =>
+    `${name} has no in-session model menu - it always runs on its active model. ` +
+    `Change it later with "codemie models switch --agent ${agent}".`,
+  ACTIVE_REQUIRED: (agent: string) => `Select the active model for ${agent}.`,
   REVIEW_TITLE: 'Review',
   REVIEW_NOTE: 'Save writes these models to the profile.',
   SAVE_BUTTON: 'Save',
@@ -30,6 +34,7 @@ export const WIZARD_TEXT = {
   INSTRUCTIONS_MULTI: '↑↓ Navigate • Space Select • Enter Continue • Esc Back',
   INSTRUCTIONS_MULTI_SEARCH: '↑↓ Navigate • Space Select • Type to search • Enter Continue • Esc Back',
   INSTRUCTIONS_SINGLE: '↑↓ Navigate • Enter Select • Esc Back',
+  INSTRUCTIONS_SINGLE_SEARCH: '↑↓ Navigate • Type to search • Enter Select • Esc Back',
   INSTRUCTIONS_REVIEW: '←→ Choose • Enter Confirm • Esc Back',
 } as const;
 

@@ -243,3 +243,102 @@ describe('runModelsSwitch', () => {
     expect(allLogs(logSpy)).toContain('Switched');
   });
 });
+
+describe('runModelsSwitch — agents that always run on their active model', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let fetchModels: ReturnType<typeof vi.fn>;
+
+  const gemini = {
+    metadata: {
+      name: 'gemini',
+      displayName: 'Gemini CLI',
+      supportedProviders: [],
+      activeModelOnly: true,
+      classifyModel: (id: string) => (/gemini/i.test(id) ? 'compatible' : 'incompatible'),
+    },
+  };
+  const profile = {
+    provider: 'litellm',
+    model: 'a',
+    agentModels: {
+      claude: { models: ['a', 'b'], model: 'a' },
+      gemini: { models: ['gemini-3'], model: 'gemini-3' },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    configMock.getActiveProfileName.mockResolvedValue('default');
+    configMock.getProfile.mockResolvedValue(profile);
+    configMock.switchActiveProfileModel.mockResolvedValue({ profileName: 'default' });
+    agentRegistryMock.getAgent.mockImplementation((name: string) => (name === 'gemini' ? gemini : undefined));
+    fetchModels = vi.fn().mockResolvedValue(
+      ['gemini-3', 'gemini-3-flash', 'gpt-5'].map(id => ({ id, name: id }))
+    );
+    vi.spyOn(ProviderRegistry, 'getModelProxy').mockReturnValue({ fetchModels } as never);
+  });
+  afterEach(() => {
+    agentRegistryMock.getAgent.mockReset().mockReturnValue(undefined);
+    vi.restoreAllMocks();
+  });
+
+  const logs = (spy: ReturnType<typeof vi.spyOn>): string => spy.mock.calls.map(call => call.join(' ')).join('\n');
+
+  it('offers the agent models from the live catalog, not the saved list', async () => {
+    promptModelSwitchSelectionMock.mockResolvedValue('gemini-3-flash');
+
+    await runModelsSwitch(undefined, '/work', 'gemini');
+
+    expect(promptModelSwitchSelectionMock).toHaveBeenCalledWith(
+      ['gemini-3', 'gemini-3-flash'],
+      'gemini-3',
+      undefined,
+      expect.stringContaining('active model')
+    );
+    expect(configMock.switchActiveProfileModel).toHaveBeenCalledWith('gemini-3-flash', '/work', undefined, 'gemini');
+    expect(logs(logSpy)).toContain('Switched Gemini CLI');
+  });
+
+  it('switches to a model id outside the saved list without prompting', async () => {
+    await runModelsSwitch('gemini-3-flash', '/work', 'gemini');
+
+    expect(promptModelSwitchSelectionMock).not.toHaveBeenCalled();
+    expect(configMock.switchActiveProfileModel).toHaveBeenCalledWith('gemini-3-flash', '/work', undefined, 'gemini');
+  });
+
+  it('accepts a model id the catalog does not list when the agent rules allow it', async () => {
+    await runModelsSwitch('gemini-wildcard', '/work', 'gemini');
+
+    expect(configMock.switchActiveProfileModel).toHaveBeenCalledWith('gemini-wildcard', '/work', undefined, 'gemini');
+  });
+
+  it('rejects a model id the agent rules reject, listing the agent models', async () => {
+    await runModelsSwitch('gpt-5', '/work', 'gemini');
+
+    expect(configMock.switchActiveProfileModel).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(logs(errorSpy)).toContain('gemini-3, gemini-3-flash');
+  });
+
+  it('asks for a model id when the catalog cannot be fetched', async () => {
+    fetchModels.mockRejectedValue(new Error('network down'));
+
+    await runModelsSwitch(undefined, '/work', 'gemini');
+
+    expect(promptModelSwitchSelectionMock).not.toHaveBeenCalled();
+    expect(configMock.switchActiveProfileModel).not.toHaveBeenCalled();
+    expect(logs(logSpy)).toContain('codemie models switch --agent gemini <model-id>');
+  });
+
+  it('points a model id no agent has at --agent for these agents', async () => {
+    await runModelsSwitch('gemini-3-flash', '/work');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(logs(errorSpy)).toContain('codemie models switch --agent <agent> gemini-3-flash');
+  });
+});

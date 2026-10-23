@@ -153,17 +153,31 @@ describe('buildCustomRow / addExtraModels', () => {
 describe('createDraft / finalizeDraft / buildActiveRows', () => {
   it('starts from the existing per-agent set', () => {
     const d = createDraft('claude', input({
-      existing: { agentModels: { claude: { models: ['claude-x', 'typed'], model: 'typed', confirmedModels: ['typed'] } } },
+      existing: {
+        provider: 'litellm',
+        agentModels: { claude: { models: ['claude-x', 'typed'], model: 'typed', confirmedModels: ['typed'] } },
+      },
     }));
 
     expect(d).toEqual({ models: ['claude-x', 'typed'], model: 'typed', extra: ['typed'], confirmed: new Set(['typed']) });
   });
 
   it('preselects a legacy active model only for agents that can use it', () => {
-    const existing = { model: 'claude-x' };
+    const existing = { provider: 'litellm', model: 'claude-x' };
 
     expect(createDraft('claude', input({ existing })).models).toEqual(['claude-x']);
     expect(createDraft('codex', input({ existing })).models).toEqual([]);
+  });
+
+  it('starts empty when the update switches provider, even with an empty catalog', () => {
+    const existing = {
+      provider: 'ai-run-sso',
+      model: 'claude-x',
+      agentModels: { claude: { models: ['claude-x', 'typed'], model: 'claude-x' } },
+    };
+
+    expect(createDraft('claude', input({ existing, models: [] }))).toEqual({ models: [], extra: [], confirmed: new Set() });
+    expect(createDraft('claude', input({ existing: { provider: 'ai-run-sso', model: 'claude-x' } })).models).toEqual([]);
   });
 
   it('falls back to the first model and confirms catalog routers the name rule rejects', () => {
@@ -309,6 +323,7 @@ describe('runAgentModelsWizard', () => {
 
   it('preselects the existing agents and models on an update', async () => {
     const existing = {
+      provider: 'litellm',
       model: 'gpt-5.4',
       agentModels: { codex: { models: ['gpt-5.4'], model: 'gpt-5.4' } },
     };
@@ -320,6 +335,21 @@ describe('runAgentModelsWizard', () => {
     expect(specs[1].selected).toEqual(['gpt-5.4']);
   });
 
+  it('keeps the agents but not the old models when the update switches to a provider with no catalog', async () => {
+    const existing = {
+      provider: 'ai-run-sso',
+      model: 'gpt-5.4',
+      agentModels: { codex: { models: ['gpt-5.4', 'gpt-6-luna'], model: 'gpt-5.4' } },
+    };
+    const { screen, specs } = scripted(pick('codex'), pick('gpt-x'), pick());
+
+    await runAgentModelsWizard(input({ existing, models: [] }), screen);
+
+    expect(specs[0].selected).toEqual(['codex']);
+    expect(specs[1].selected).toEqual([]);
+    expect(specs[1].rows.map(r => r.id)).toEqual([]);
+  });
+
   it('validates that each screen has a selection', async () => {
     const { screen, specs } = scripted(pick('claude'), pick('claude-x'), pick());
 
@@ -328,5 +358,84 @@ describe('runAgentModelsWizard', () => {
     expect(specs[0].validate?.([])).toBe('Select at least one agent.');
     expect(specs[1].validate?.([])).toBe('Select at least one model for Claude Code.');
     expect(specs[1].validate?.(['claude-x'])).toBeUndefined();
+  });
+});
+
+describe('runAgentModelsWizard — agents that always run on their active model', () => {
+  const gemini = {
+    ...agent('gemini', 'Gemini CLI', /gemini/i),
+    metadata: { ...agent('gemini', 'Gemini CLI', /gemini/i).metadata, activeModelOnly: true },
+  };
+  const withGemini = [...agents, gemini];
+  const geminiCatalog = [...catalog, 'gemini-3', 'gemini-3-flash'];
+
+  beforeEach(() => {
+    agentRegistryMock.getAgent.mockImplementation((name: string) => withGemini.find(a => a.name === name));
+    agentRegistryMock.getAllAgents.mockReturnValue(withGemini);
+  });
+
+  it('asks only for the active model, picked from the models the agent supports', async () => {
+    const { screen, specs } = scripted(pick('claude', 'gemini'), pick('claude-x'), pick('gemini-3-flash'), pick());
+
+    const result = await runAgentModelsWizard(input({ models: geminiCatalog }), screen);
+
+    expect(specs.map(s => s.title)).toEqual([
+      'Which agents will use this profile?',
+      'Claude Code · Models',
+      'Gemini CLI · Active model',
+      'Review',
+    ]);
+    expect(specs[2]).toMatchObject({ mode: 'single', searchable: true });
+    expect(specs[2].rows.map(r => r.id)).toEqual(['gemini-3', 'gemini-3-flash']);
+    expect(specs[2].notes?.[0]).toContain('no in-session model menu');
+    expect(specs[2].notes?.[0]).toContain('codemie models switch --agent gemini');
+    expect(specs[2].validate?.([])).toBe('Select the active model for Gemini CLI.');
+    expect(result).toEqual({
+      claude: { models: ['claude-x'], model: 'claude-x' },
+      gemini: { models: ['gemini-3-flash'], model: 'gemini-3-flash' },
+    });
+  });
+
+  it('saves a typed model as the only model, confirming one the agent rules reject', async () => {
+    const { screen } = scripted(
+      pick('gemini'),
+      () => ({ action: 'continue', selected: ['my-model'], added: ['my-model'] }),
+      pick()
+    );
+
+    expect(await runAgentModelsWizard(input({ models: geminiCatalog }), screen)).toEqual({
+      gemini: { models: ['my-model'], model: 'my-model', confirmedModels: ['my-model'] },
+    });
+  });
+
+  it('runs the provider search from its action row and preselects the result', async () => {
+    const searchModel = vi.fn().mockResolvedValue('gemini-local');
+    const { screen, specs } = scripted(
+      pick('gemini'),
+      () => ({ action: 'row', id: '__search__', selected: [], added: [] }),
+      pick('gemini-local'),
+      pick()
+    );
+
+    const result = await runAgentModelsWizard(input({ models: geminiCatalog, searchModel }), screen);
+
+    expect(specs[2].selected).toEqual(['gemini-local']);
+    expect(specs[2].rows.map(r => r.id)).toContain('gemini-local');
+    expect(result).toEqual({ gemini: { models: ['gemini-local'], model: 'gemini-local' } });
+  });
+
+  it('keeps only the active model of an existing set on an update', async () => {
+    const existing = {
+      provider: 'litellm',
+      model: 'gemini-3',
+      agentModels: { gemini: { models: ['gemini-3', 'gemini-3-flash'], model: 'gemini-3' } },
+    };
+
+    expect(createDraft('gemini', input({ models: geminiCatalog, existing }))).toEqual({
+      models: ['gemini-3'],
+      model: 'gemini-3',
+      extra: [],
+      confirmed: new Set(),
+    });
   });
 });

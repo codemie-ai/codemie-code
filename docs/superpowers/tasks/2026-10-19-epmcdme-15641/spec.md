@@ -145,3 +145,8 @@ the PO replaced the shared model step with a per-agent flow:
 - The shared-coverage gate, the dead-end prompt and the live "Still missing a model for" line are
   gone: each agent screen requires at least one model, and agents the provider cannot serve are
   shown disabled with the reason on the agents screen.
+- Agents with no in-session model menu (`activeModelOnly`: Gemini CLI, Kimi, GitHub Copilot CLI,
+  OpenWiki) always run on their active model, so a list of models gives them nothing. Setup asks
+  only for their active model (one screen, a note explains why), and `codemie models switch --agent`
+  offers them the live catalog filtered by their rules instead of a saved list. Their old
+  "This profile has multiple models" launch warnings are removed.

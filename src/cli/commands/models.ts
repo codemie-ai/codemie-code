@@ -8,7 +8,7 @@ import type { ModelInfo } from '../../providers/core/types.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { autoSelectModelTiers } from './setup.js';
 import { promptModelSwitchSelection, promptAgentSwitchSelection } from './models-switch-prompt.js';
-import { agentsUsingModel, getAgentDisplayName } from '../../agents/core/model-compat.js';
+import { agentsUsingModel, classifyModelForAgent, getAgentDisplayName, isActiveModelOnly } from '../../agents/core/model-compat.js';
 
 /** Providers whose setup auto-picks the single model they support (no multi-model UX). */
 const SUBSCRIPTION_SINGLE_MODEL_PROVIDERS = new Set(['anthropic-subscription', 'moonshot-subscription']);
@@ -286,6 +286,11 @@ async function switchAgentModel(
       : agentNames;
     if (candidates.length === 0) {
       console.error(chalk.red(`Model '${modelIdArg}' is not available to any agent on profile '${profileName}'.`));
+      const activeOnly = agentNames.filter(name => isActiveModelOnly(name));
+      if (activeOnly.length > 0) {
+        console.error(chalk.white('To make it the model of ') + activeOnly.join(', ') + chalk.white(', run ') +
+          chalk.cyan(`codemie models switch --agent <agent> ${modelIdArg}`) + chalk.white('.'));
+      }
       console.error(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to add it.'));
       process.exit(1);
       return;
@@ -301,6 +306,11 @@ async function switchAgentModel(
 
   const set = agentModels[agent];
   const displayName = getAgentDisplayName(agent);
+
+  if (isActiveModelOnly(agent)) {
+    await switchActiveOnlyAgentModel(profile, profileName, agent, set.model, modelIdArg, workingDir);
+    return;
+  }
 
   if (set.models.length <= 1 && !modelIdArg) {
     console.log(
@@ -334,6 +344,81 @@ async function switchAgentModel(
 
   await ConfigLoader.switchActiveProfileModel(targetModel, workingDir, tierOverrides, agent);
   console.log(chalk.green(`✓ Switched ${displayName} on ${profileName} to ${targetModel}`));
+}
+
+/**
+ * Switch an agent that always runs on its active model (`activeModelOnly`). It keeps no saved list,
+ * so the choice comes from the live catalog, narrowed to the models the agent can use. A model id
+ * outside the catalog (e.g. a LiteLLM wildcard route) is accepted unless the agent's rules reject it.
+ */
+async function switchActiveOnlyAgentModel(
+  profile: ProviderProfile,
+  profileName: string,
+  agent: string,
+  currentModel: string,
+  modelIdArg: string | undefined,
+  workingDir: string
+): Promise<void> {
+  const displayName = getAgentDisplayName(agent);
+  const catalog = await fetchAgentCatalog(profile, agent, workingDir);
+
+  let targetModel: string;
+  if (modelIdArg) {
+    const known = modelIdArg === currentModel || catalog?.includes(modelIdArg);
+    if (!known && classifyModelForAgent(agent, modelIdArg, { provider: profile.provider }) === 'incompatible') {
+      console.error(chalk.red(`Model '${modelIdArg}' is not compatible with ${displayName}.`));
+      if (catalog?.length) {
+        console.error(chalk.white(`${displayName} models on ${profile.provider}: `) + catalog.join(', '));
+      }
+      process.exit(1);
+      return;
+    }
+    targetModel = modelIdArg;
+  } else {
+    if (!catalog) {
+      console.log(
+        chalk.yellow(`Could not list ${displayName} models from ${profile.provider ?? 'the provider'}. `) +
+          chalk.white('Pass the model id: ') +
+          chalk.cyan(`codemie models switch --agent ${agent} <model-id>`)
+      );
+      return;
+    }
+    const ids = catalog.includes(currentModel) ? catalog : [currentModel, ...catalog];
+    if (ids.length <= 1) {
+      console.log(chalk.yellow(`${currentModel} is the only ${displayName} model on ${profile.provider}.`));
+      return;
+    }
+    targetModel = await promptModelSwitchSelection(ids, currentModel, undefined, `Select ${displayName}'s active model:`);
+  }
+
+  await ConfigLoader.switchActiveProfileModel(targetModel, workingDir, undefined, agent);
+  console.log(chalk.green(`✓ Switched ${displayName} on ${profileName} to ${targetModel}`));
+}
+
+/**
+ * Catalog ids the agent can use on the profile's provider, or undefined when the provider lists no
+ * models or the fetch fails (the switch then needs an explicit model id).
+ */
+async function fetchAgentCatalog(
+  profile: ProviderProfile,
+  agent: string,
+  workingDir: string
+): Promise<string[] | undefined> {
+  const proxy = profile.provider ? ProviderRegistry.getModelProxy(profile.provider) : undefined;
+  if (!proxy) return undefined;
+  try {
+    const config = await ConfigLoader.load(workingDir);
+    const catalog = await proxy.fetchModels(config);
+    const routers = new Set(catalog.filter(m => m.metadata?.isRouter === true).map(m => m.id));
+    const ids = catalog
+      .map(m => m.id)
+      .filter(id => classifyModelForAgent(agent, id, { provider: profile.provider, isRouter: routers.has(id) }) !== 'incompatible');
+    return ids.length > 0 ? ids : undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`Failed to fetch models for ${agent} during switch: ${message}`);
+    return undefined;
+  }
 }
 
 /**

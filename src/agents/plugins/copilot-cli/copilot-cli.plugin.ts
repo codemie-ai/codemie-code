@@ -219,6 +219,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
   supportedProviders: [...COPILOT_COMPATIBLE_PROVIDERS],
   blockedModelPatterns: [/embedding/i, /rerank/i, /whisper/i, /tts/i, /image/i],
   classifyModel: (id, ctx) => classifyWithPredicate(isCopilotCompatibleModelName, id, ctx),
+  activeModelOnly: true, // no in-session model switcher
   recommendedModels: [...COPILOT_RECOMMENDED_MODELS],
   ssoConfig: {
     enabled: true,
@@ -398,13 +399,6 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
     }
 
     env.CODEMIE_COPILOT_AVAILABLE_MODELS = availableModels.join(',');
-
-    if (env.CODEMIE_PROFILE_MODELS) {
-      console.warn(
-        '[codemie-copilot] This profile has multiple models, but GitHub Copilot CLI has no in-session model switcher — ' +
-        'it always launches with the active model only. Run `codemie models switch` and relaunch to use a different one.'
-      );
-    }
 
     await super.setupProxy(env);
   }

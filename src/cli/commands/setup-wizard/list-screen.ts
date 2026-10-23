@@ -301,7 +301,7 @@ export function renderListScreen(state: ListScreenState): string {
   const instructions = rows.length === 0
     ? WIZARD_TEXT.INSTRUCTIONS_REVIEW
     : spec.mode === 'single'
-      ? WIZARD_TEXT.INSTRUCTIONS_SINGLE
+      ? (spec.searchable ? WIZARD_TEXT.INSTRUCTIONS_SINGLE_SEARCH : WIZARD_TEXT.INSTRUCTIONS_SINGLE)
       : spec.searchable ? WIZARD_TEXT.INSTRUCTIONS_MULTI_SEARCH : WIZARD_TEXT.INSTRUCTIONS_MULTI;
   output += chalk.dim(instructions) + '\n';
 

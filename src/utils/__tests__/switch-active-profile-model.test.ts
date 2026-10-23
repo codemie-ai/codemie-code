@@ -194,5 +194,16 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
       expect(reloaded.profiles.default.model).toBe('claude-y');
       expect(reloaded.profiles.default.sonnetModel).toBe('claude-y');
     });
+
+    it('makes a model outside the agent list its only model, dropping stale confirmations', async () => {
+      const config = perAgent();
+      config.profiles.default.agentModels!.codex = { models: ['gpt-a'], model: 'gpt-a', confirmedModels: ['gpt-a'] };
+      await writeGlobalConfig(config);
+
+      await ConfigLoader.switchActiveProfileModel('gpt-new', PROJECT_DIR, undefined, 'codex');
+
+      const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
+      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-new'], model: 'gpt-new' });
+    });
   });
 });

@@ -37,6 +37,7 @@ export const OpenWikiPluginMetadata: AgentMetadata = {
   },
   supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama', 'moonshot-subscription'],
   blockedModelPatterns: [],
+  activeModelOnly: true, // no in-session model switcher
   ssoConfig: { enabled: true, clientType: 'codemie-openwiki' },
   ownedSubcommands: ['init'],
   flagMappings: {
@@ -44,12 +45,6 @@ export const OpenWikiPluginMetadata: AgentMetadata = {
   },
   lifecycle: {
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
-      if (env.CODEMIE_PROFILE_MODELS) {
-        console.warn(
-          '[codemie-openwiki] This profile has multiple models, but OpenWiki has no in-session model switcher — ' +
-          'it always launches with the active model only. Run `codemie models switch` and relaunch to use a different one.'
-        );
-      }
 
       env.OPENWIKI_PROVIDER = 'openai-compatible';
 

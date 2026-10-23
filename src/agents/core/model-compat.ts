@@ -116,6 +116,11 @@ export function getAgentDisplayName(agent: string): string {
   return resolveAgent(agent)?.metadata.displayName ?? agent;
 }
 
+/** True when the agent always runs on the active model (no in-session model menu to limit). */
+export function isActiveModelOnly(agent: string): boolean {
+  return resolveAgent(agent)?.metadata.activeModelOnly === true;
+}
+
 export interface HarnessChoice {
   name: string;
   displayName: string;

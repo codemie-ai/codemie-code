@@ -85,7 +85,7 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
     expect(logs()).toContain('codemie models switch --agent gemini');
   });
 
-  it('prints no switch line when only another agent has 2+ models', () => {
+  it('suggests the switch for an agent that always runs on its active model, even with one model', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -98,8 +98,9 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
       },
     }));
 
+    // Gemini has no in-session model menu: the switch offers it the live catalog, not a saved list.
     expect(result).toBe(false);
-    expect(logs()).not.toContain('codemie models switch');
+    expect(logs()).toContain('codemie models switch --agent gemini');
   });
 });
 

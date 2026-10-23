@@ -66,7 +66,7 @@ export interface AgentModelsWizardInput {
   /** Provider-side model search (Ollama library); resolves to an id or undefined. */
   searchModel?: () => Promise<string | undefined>;
   /** Existing profile on an update, for preselection. */
-  existing?: Pick<ProviderProfile, 'model' | 'agentModels'>;
+  existing?: Pick<ProviderProfile, 'provider' | 'model' | 'agentModels'>;
 }
 
 /** Chosen models per agent, keyed by base agent name in offered order. */

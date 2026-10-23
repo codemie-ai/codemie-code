@@ -274,6 +274,12 @@ export interface AgentMetadata {
    * is treated as compatible. Consumed only through `agents/core/model-compat.ts`.
    */
   classifyModel?: (modelId: string, ctx?: ModelClassifyContext) => ModelCompat;
+  /**
+   * True when the agent has no in-session model menu CodeMie can limit: it always runs on the
+   * profile's active model. Setup then asks only for that model, and `codemie models switch`
+   * offers the live catalog for it instead of a saved list.
+   */
+  activeModelOnly?: boolean;
 
   // === Proxy Configuration ===
   ssoConfig?: {

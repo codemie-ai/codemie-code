@@ -158,6 +158,13 @@ back one screen, and Ctrl+C or Cancel leaves without saving.
    library" row.
 3. **For each agent: Active model** - one of that agent's picked models. Skipped
    when the agent has a single model.
+
+   Agents with no in-session model menu (`activeModelOnly` in their plugin metadata:
+   `gemini`, `kimi`, `copilot-cli`, `openwiki`) always run on their active model, so
+   steps 2 and 3 become a single **Active model** screen. It lists the models the
+   agent supports, accepts typed names and search the same way, and notes that the
+   model is changed with `codemie models switch --agent <name>`. The saved set holds
+   that one model.
 4. **Review** - one line per agent, active model first; Save writes the profile.
 
 On an update, the saved agents and models are preselected. The wizard is skipped
@@ -172,7 +179,11 @@ for providers that auto-pick their single model (`anthropic-subscription`,
   tiers when the agent is Claude). Without `--agent`, the model id picks the agent
   when only one agent has it; otherwise you choose the agent, then its model, from
   that agent's own list. An agent with one model is a no-op. On a legacy profile
-  `--agent` is rejected.
+  `--agent` is rejected. An `activeModelOnly` agent has no saved list to choose
+  from: it is offered the provider's live catalog, narrowed to the models it can
+  use, and the chosen model replaces its set. A model id the catalog does not list
+  is accepted unless the agent's rules reject it; when the catalog cannot be
+  fetched, pass the model id.
 - `codemie models list [--agent <name>]` prints an "Agents:" block (each agent's
   models, active first), then the catalog with one column per agent: `active`
   (the agent starts with this model), `✓` (available to the agent) or blank. A

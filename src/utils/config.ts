@@ -1082,6 +1082,12 @@ export class ConfigLoader {
     const applyMutation = (profile: ProviderProfile): void => {
       const agentSet = agent ? resolveAgentModelSet(profile, agent) : undefined;
       if (agentSet) {
+        // A model outside the agent's list (an active-model-only agent, switched from the
+        // catalog) becomes its only model.
+        if (!agentSet.models.includes(modelId)) {
+          agentSet.models = [modelId];
+          delete agentSet.confirmedModels;
+        }
         agentSet.model = modelId;
         // The top-level model mirrors the first agent's active model.
         if (Object.values(profile.agentModels ?? {})[0] === agentSet) {
