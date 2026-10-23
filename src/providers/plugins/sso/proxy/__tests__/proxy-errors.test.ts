@@ -19,7 +19,7 @@ describe('normalizeError header errors', () => {
 
   it('matches CodeMie header names case-insensitively', () => {
     const result = normalizeError(
-      codedError('Invalid value for header "x-codemie-branch"', 'ERR_HTTP_INVALID_HEADER_VALUE')
+      codedError('Invalid value "undefined" for header "x-codemie-branch"', 'ERR_HTTP_INVALID_HEADER_VALUE')
     );
     expect(result).not.toBeInstanceOf(AuthenticationError);
     expect(result.statusCode).toBe(500);

@@ -9,6 +9,10 @@ The CLI ALWAYS percent-encodes the values of `X-CodeMie-Repository`, `X-CodeMie-
 
 ## Edge notes
 - Old CLIs keep sending unencoded values, so the backend must handle both during the transition.
+- An old CLI that sends a raw branch or repository containing a literal `%xx` (for example `100%25`) will have it decoded by the new backend. This is the cost of backend-first rollout; the fallback below only covers malformed escapes.
+- Skill-event JSON body fields `repository`, `branch` and `project` are sent RAW (only the headers are encoded). The backend must not `decodeURIComponent` the body fields; the header, when present, takes precedence and is the only decoded source. If the backend decodes the body fields, a raw value such as `A%20B` is mis-decoded.
+- Empty header values are sent as empty strings by the metrics upload; the backend treats an empty value as absent.
+- Encoding expands a non-Latin character to 6 characters (3x per UTF-8 byte). Header size against intermediary limits is not measured.
 - Decode must not fail on malformed escapes from older CLI versions (for example a raw `100%`): fall back to the raw value.
 
 ## Rollout order (hard prerequisite)
