@@ -137,7 +137,24 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --site S
 
 # Download a file
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --download ITEM_ID --output report.xlsx
+
+# Resolve a site you don't follow (note the colon before the path) to get its SITE_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --resolve-site "contoso.sharepoint.com:/sites/TeamSite"
+
+# List ALL document libraries of a site (--site/--site-file only see the default one)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --drives SITE_ID
+
+# Browse any library by DRIVE_ID (from --drives): by path, or by folder item ID, optionally the whole tree
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --drive DRIVE_ID --path "Folder/Sub"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --drive DRIVE_ID --item FOLDER_ITEM_ID --recursive --limit 300 [--json]
+
+# Download a file from any library, by path or item ID (item IDs are printed by --drive)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --drive-file DRIVE_ID --path "Folder/file.pptx" --output file.pptx
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --drive-file DRIVE_ID --item ITEM_ID --output file.pptx
 ```
+
+> `--drive` output truncates long names; use the printed item ID (or `--json`) rather than retyping a displayed name.
+> Downloads fail with an error on HTTP 4xx/5xx instead of writing the error body to the output file.
 
 ### Teams
 

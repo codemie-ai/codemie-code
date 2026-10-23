@@ -155,7 +155,15 @@ function graphDownload(endpoint, token) {
         }
         const chunks = [];
         res.on('data', c => chunks.push(c));
-        res.on('end',  () => resolve(Buffer.concat(chunks)));
+        res.on('end',  () => {
+          if (res.statusCode >= 400) {
+            const err = new Error(`HTTP ${res.statusCode}`);
+            err.statusCode   = res.statusCode;
+            err.responseBody = Buffer.concat(chunks).toString('utf8');
+            return reject(err);
+          }
+          resolve(Buffer.concat(chunks));
+        });
         res.on('error', reject);
       }).on('error', reject);
     });
@@ -672,6 +680,72 @@ async function cmdSharepoint(args) {
     return;
   }
 
+  // --- Any document library (drive) of a site, not just the default one ---
+  const encPath = p => p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+
+  if (args.drives) {
+    const data   = await graphGet(`/sites/${args.drives}/drives`, token, { $select: 'id,name,webUrl,driveType' });
+    const drives = data.value || [];
+    if (args.json) { console.log(JSON.stringify(drives, null, 2)); return; }
+    console.log(`\nDocument libraries in site ${args.drives}:`);
+    console.log('─'.repeat(60));
+    for (const d of drives) {
+      console.log(`${d.id}  ${d.name}`);
+      console.log(`  URL: ${d.webUrl || 'N/A'}`);
+    }
+    return;
+  }
+
+  if (args.drive && args.drive !== true) {
+    const driveId = args.drive;
+    const max     = parseInt(args.limit) || 200;
+    const select  = { $top: 200, $select: 'id,name,size,lastModifiedDateTime,file,folder,webUrl' };
+    const childrenEp = (itemId, p) => itemId ? `/drives/${driveId}/items/${itemId}/children`
+      : (p ? `/drives/${driveId}/root:/${encPath(p)}:/children` : `/drives/${driveId}/root/children`);
+
+    async function listFolder(itemId, p) {
+      const out = [];
+      let data = await graphGet(childrenEp(itemId, p), token, select);
+      for (;;) {
+        out.push(...(data.value || []));
+        const next = data['@odata.nextLink'];
+        if (!next || out.length >= max) break;
+        data = await graphGet(next.slice(GRAPH_BASE.length), token);
+      }
+      return out.slice(0, max);
+    }
+
+    const rows = [];
+    async function walk(itemId, p, prefix) {
+      for (const it of await listFolder(itemId, p)) {
+        rows.push({ ...it, relPath: prefix + it.name });
+        if (args.recursive && it.folder) await walk(it.id, null, `${prefix}${it.name}/`);
+      }
+    }
+    await walk(args.item, args.path, '');
+
+    if (args.json) { console.log(JSON.stringify(rows, null, 2)); return; }
+    console.log(`\nDrive ${driveId} / ${args.item ? 'item ' + args.item : (args.path || 'root')}:`);
+    console.log('─'.repeat(60));
+    for (const it of rows) {
+      const kind = it.folder ? '📁' : '📄';
+      const size = it.file ? fmtSize(it.size) : '';
+      console.log(`  ${kind} ${pad(it.relPath, 60)} ${pad(size, 10)} ${fmtDt(it.lastModifiedDateTime)}  ${it.id}`);
+    }
+    return;
+  }
+
+  if (args.driveFile) {
+    if (!args.path && !args.item) { console.error('Error: --drive-file DRIVE_ID requires --path FILE_PATH or --item ITEM_ID'); process.exit(1); }
+    const ep      = args.item ? `/drives/${args.driveFile}/items/${args.item}/content`
+                              : `/drives/${args.driveFile}/root:/${encPath(args.path)}:/content`;
+    const outPath = args.output || (args.path ? path.basename(args.path) : `downloaded_${String(args.item).slice(0, 8)}`);
+    const content = await graphDownload(ep, token);
+    fs.writeFileSync(outPath, content);
+    console.log(`Downloaded ${content.length} bytes to ${outPath}`);
+    return;
+  }
+
   if (args.download) {
     const outPath = args.output || `downloaded_${args.download.slice(0, 8)}`;
     const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
@@ -693,6 +767,9 @@ async function cmdSharepoint(args) {
   console.log('            --sites | --site SITE_ID [--path PATH]');
   console.log('            --download ITEM_ID [--output FILE]');
   console.log('            --site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]');
+  console.log('            --drives SITE_ID                                 (list all document libraries)');
+  console.log('            --drive DRIVE_ID [--path P | --item ID] [--recursive] [--limit N]');
+  console.log('            --drive-file DRIVE_ID (--path P | --item ID) [--output LOCAL_PATH]');
 }
 
 async function cmdTeams(args) {
@@ -1620,7 +1697,7 @@ async function cmdTodo(args) {
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
     'manager','reports','availability','notebooks','list','vtt','help','force',
-    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members']);
+    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members','recursive']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1661,7 +1738,9 @@ Data:
            [--availability --start DT --end DT]
   sharepoint [--resolve-site HOSTNAME_PATH]
              [--sites] [--site ID [--path P]] [--download ID [--output FILE]]
-             [--site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]] [--json]
+             [--site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]]
+             [--drives SITE_ID] [--drive DRIVE_ID [--path P | --item ID] [--recursive]]
+             [--drive-file DRIVE_ID (--path P | --item ID) [--output LOCAL_PATH]] [--json]
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
