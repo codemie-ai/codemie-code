@@ -1,4 +1,4 @@
-import { countContentLines } from '../content-lines.js';
+import { countContentLines } from '@/utils/file-operations.js';
 
 /**
  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for

@@ -1,0 +1,154 @@
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+index b33be9ec..455213d5 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+@@ -6,6 +6,8 @@
+  * and parses the file once and hands the lines in.
+  */
+ 
++import { countContentLines } from '../../../../utils/file-operations.js';
++
+ /** The subset of a transcript line these extractors read; every field is optional. */
+ export interface SignalLine {
+   type?: string;
+@@ -66,13 +68,6 @@ function countPatchLines(patch: unknown[]): { added: number; removed: number } {
+   return { added, removed };
+ }
+ 
+-/** Lines in a file body; a trailing newline does not start another line. */
+-function countContentLines(content: string): number {
+-  if (content.length === 0) return 0;
+-  const lines = content.split('\n').length;
+-  return content.endsWith('\n') ? lines - 1 : lines;
+-}
+-
+ /**
+  * Sum the diff stats of every tool result that reports one.
+  *
+diff --git a/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts b/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
+index 8c709cc9..bc787e86 100644
+--- a/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
++++ b/src/agents/plugins/claude/session/__tests__/claude-file-operation.test.ts
+@@ -34,4 +34,36 @@ describe('extractClaudeFileOperation', () => {
+   it('returns undefined for a non-file tool', () => {
+     expect(extractClaudeFileOperation('Bash', { command: 'ls' }, {})).toBeUndefined();
+   });
++
++  it('does not overcount lines when Write content ends with a trailing newline', () => {
++    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\nb\nc\n' }, {
++      filePath: '/repo/a.ts',
++      content: 'a\nb\nc\n',
++    });
++    expect(op).toMatchObject({ linesAdded: 3 });
++  });
++
++  it('counts a single-line Write with no trailing newline as 1', () => {
++    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a' }, {
++      filePath: '/repo/a.ts',
++      content: 'a',
++    });
++    expect(op).toMatchObject({ linesAdded: 1 });
++  });
++
++  it('counts a blank line in the middle of a Write', () => {
++    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\n\nb' }, {
++      filePath: '/repo/a.ts',
++      content: 'a\n\nb',
++    });
++    expect(op).toMatchObject({ linesAdded: 3 });
++  });
++
++  it('treats CRLF-terminated Write content the same as LF-terminated', () => {
++    const op = extractClaudeFileOperation('Write', { file_path: '/repo/a.ts', content: 'a\r\nb\r\nc\r\n' }, {
++      filePath: '/repo/a.ts',
++      content: 'a\r\nb\r\nc\r\n',
++    });
++    expect(op).toMatchObject({ linesAdded: 3 });
++  });
+ });
+diff --git a/src/agents/plugins/claude/session/claude-file-operation.ts b/src/agents/plugins/claude/session/claude-file-operation.ts
+index 6b80f90e..7e33c803 100644
+--- a/src/agents/plugins/claude/session/claude-file-operation.ts
++++ b/src/agents/plugins/claude/session/claude-file-operation.ts
+@@ -7,7 +7,7 @@
+  * (native, untracked) sessions report the same `linesAdded`/`linesRemoved` as live-tracked ones.
+  */
+ 
+-import { extractFormat, detectLanguage } from '../../../../utils/file-operations.js';
++import { extractFormat, detectLanguage, countContentLines } from '../../../../utils/file-operations.js';
+ 
+ export interface ClaudeFileOperation {
+   type: string;
+@@ -71,7 +71,7 @@ export function extractClaudeFileOperation(
+   if (toolName === 'Write') {
+     const content = res.content || res.file?.content || inp.content;
+     if (content) {
+-      fileOp.linesAdded = content.split('\n').length;
++      fileOp.linesAdded = countContentLines(content);
+     }
+   } else if (toolName === 'Edit' && Array.isArray(res.structuredPatch)) {
+     let added = 0;
+diff --git a/src/utils/__tests__/file-operations.test.ts b/src/utils/__tests__/file-operations.test.ts
+index 616d4ae2..c19bc671 100644
+--- a/src/utils/__tests__/file-operations.test.ts
++++ b/src/utils/__tests__/file-operations.test.ts
+@@ -3,7 +3,7 @@
+  */
+ 
+ import { describe, it, expect } from 'vitest';
+-import { extractFormat, detectLanguage } from '../file-operations.js';
++import { extractFormat, detectLanguage, countContentLines } from '../file-operations.js';
+ 
+ describe('file-operations utilities', () => {
+   describe('extractFormat', () => {
+@@ -86,4 +86,35 @@ describe('file-operations utilities', () => {
+       expect(detectLanguage('/path/to/file')).toBeUndefined();
+     });
+   });
++
++  describe('countContentLines', () => {
++    it('counts lines with no trailing newline', () => {
++      expect(countContentLines('a\nb\nc')).toBe(3);
++    });
++
++    it('does not count a trailing newline as an extra line', () => {
++      expect(countContentLines('a\nb\nc\n')).toBe(3);
++    });
++
++    it('returns 0 for empty content', () => {
++      expect(countContentLines('')).toBe(0);
++    });
++
++    it('counts a single line with no newline as 1', () => {
++      expect(countContentLines('a')).toBe(1);
++    });
++
++    it('counts content that is only a newline as 1 (one blank line)', () => {
++      expect(countContentLines('\n')).toBe(1);
++    });
++
++    it('counts a blank line in the middle', () => {
++      expect(countContentLines('a\n\nb')).toBe(3);
++    });
++
++    it('treats a CRLF-terminated file the same as an LF-terminated one', () => {
++      expect(countContentLines('a\r\nb\r\nc\r\n')).toBe(3);
++      expect(countContentLines('a\r\nb\r\nc')).toBe(3);
++    });
++  });
+ });
+diff --git a/src/utils/file-operations.ts b/src/utils/file-operations.ts
+index 832eaaed..93139dcc 100644
+--- a/src/utils/file-operations.ts
++++ b/src/utils/file-operations.ts
+@@ -46,3 +46,10 @@ export function detectLanguage(path: string): string | undefined {
+   };
+   return langMap[ext];
+ }
++
++/** Lines in a file body; a trailing newline does not start another line. */
++export function countContentLines(content: string): number {
++  if (content.length === 0) return 0;
++  const lines = content.split('\n').length;
++  return content.endsWith('\n') ? lines - 1 : lines;
++}
