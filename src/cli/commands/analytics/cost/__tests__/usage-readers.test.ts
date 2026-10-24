@@ -887,6 +887,13 @@ describe('gatherUsageDeduped / gatherDedupedUsageRecords — pi fork replay', ()
     expect(second.size).toBe(0);
   });
 
+  it('prices an oh-my-pi session with the Pi reader and dedupes it against Pi forks', () => {
+    const seen = new Set<string>();
+    expect(gatherUsageDeduped('omp', piParsed, seen).get('kimi-k2.7-code')!.total).toBe(9425);
+    expect(gatherUsageDeduped('pi', forkOfPiParsed, seen).size).toBe(0);
+    expect(readUsageByModel('omp', piParsed).get('kimi-k2.7-code')!.total).toBe(9425);
+  });
+
   it('dedupes on responseId — the provider response identity, not the file it lives in', () => {
     const seen = new Set<string>();
     gatherUsageDeduped('pi', piParsed, seen);

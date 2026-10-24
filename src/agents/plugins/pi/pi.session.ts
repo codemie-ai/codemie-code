@@ -4,8 +4,9 @@
  * Discovers and parses Pi JSONL session files, then runs the metrics processor.
  */
 
-import { open, readFile, readdir, stat } from 'fs/promises';
-import { dirname, join, resolve } from 'path';
+import { open, readFile, readdir, stat, type FileHandle } from 'fs/promises';
+import { homedir } from 'os';
+import { dirname, join, relative, resolve, sep } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -42,6 +43,37 @@ export function piForkedContinuations(parsed: ParsedSession): LinkedTranscript[]
   return (parsed.subagents ?? []).filter((sub) => sub.agentType === PI_FORKED_CONTINUATION);
 }
 
+/**
+ * Every entry of the conversation this transcript belongs to, each counted once.
+ *
+ * `/fork` writes a NEW file that replays the prior conversation VERBATIM — entry ids included —
+ * and the analytics layer's fork folding attaches those continuations to the transcript they grew
+ * out of. Concatenating blindly would count the replayed history once per fork: on a real 12-file
+ * corpus that is 121 turns for 21 real prompts, and every fork claiming the full multi-hour
+ * duration it inherited. De-duplicating on the entry id each file writes about itself collapses
+ * the family back to the single conversation it is.
+ */
+export function piConversationEntries(parsed: ParsedSession): unknown[] {
+  const own = (parsed.messages ?? []) as Array<{ id?: string }>;
+  const continuations = piForkedContinuations(parsed);
+  if (continuations.length === 0) {
+    return own;
+  }
+
+  const entries: unknown[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of [...own, ...continuations.flatMap((fork) => (fork.messages ?? []) as Array<{ id?: string }>)]) {
+    if (entry?.id) {
+      if (seenIds.has(entry.id)) {
+        continue; // replayed copy of an entry an earlier transcript in the family already had
+      }
+      seenIds.add(entry.id);
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
 /** The immediate subdirectories of `root`, or [] when it is absent or unreadable. */
 async function subdirectoriesOf(root: string): Promise<string[]> {
   try {
@@ -52,42 +84,60 @@ async function subdirectoriesOf(root: string): Promise<string[]> {
   }
 }
 
+/** Agent key analytics reports oh-my-pi sessions under; Pi's own transcripts stay `pi`. */
+export const OMP_AGENT_NAME = 'omp';
+
+interface SessionRoot {
+  dir: string;
+  agentName: string;
+}
+
 /**
  * Every project's session directory, for an unscoped (analytics) listing.
  *
- * Pi transcripts live under TWO roots, and a listing that reads one of them is blind to
- * whichever half of the user's usage lives in the other:
+ * Pi transcripts live under THREE roots, and a listing that reads only some of them is blind
+ * to whichever part of the user's usage lives in the others:
  *
  *  - `<cwd>/.pi/codemie/agent/sessions` — where CodeMie points Pi (`beforeRun` sets
  *    `PI_CODING_AGENT_DIR`), so every MANAGED run lands here. In practice it holds exactly
  *    one directory, the project's own.
  *  - `~/.pi/agent/sessions` — Pi's own default (upstream `getDefaultSessionDir`), so every
- *    BARE `pi` run lands here. Native discovery exists precisely to report those runs, and
- *    this is the only root that has them.
+ *    BARE `pi` run lands here.
+ *  - `~/.omp/agent/sessions` — the oh-my-pi fork's default, where every bare `omp` run lands.
+ *    Its project directories are named differently from Pi's encoded-cwd buckets, which is why
+ *    projects are found by enumeration rather than by deriving a directory name from a cwd.
+ *    Transcripts found here are attributed to the separate `omp` agent, not to `pi`.
  *
- * Both use the same one-directory-per-cwd layout, so a root's subdirectories ARE the projects.
+ * All use a one-directory-per-project layout, so a root's subdirectories ARE the projects.
  * A directory the user pointed Pi at explicitly (`PI_CODING_AGENT_SESSION_DIR`, or `sessionDir`
  * in settings) is not part of that layout — its siblings are arbitrary directories that have
- * nothing to do with Pi — so a custom resolution stays alone.
+ * nothing to do with Pi — so it replaces the two Pi roots. It does not replace the oh-my-pi
+ * root: Pi's settings say nothing about where `omp` writes.
  */
-async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<string[]> {
+async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<SessionRoot[]> {
   const { sessionDir, isCustom } = resolution;
-  if (isCustom) {
-    return [sessionDir];
-  }
+  const ompRoot = join(homedir(), '.omp', 'agent', 'sessions');
 
-  const dirs: string[] = [];
+  const dirs: SessionRoot[] = [];
   const seen = new Set<string>();
-  for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
-    for (const dir of await subdirectoriesOf(root)) {
-      const key = resolve(dir);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      dirs.push(dir);
+  const add = (dir: string, agentName: string): void => {
+    const key = resolve(dir);
+    if (seen.has(key)) return;
+    seen.add(key);
+    dirs.push({ dir, agentName });
+  };
+
+  if (isCustom) {
+    add(sessionDir, 'pi');
+  } else {
+    for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
+      for (const dir of await subdirectoriesOf(root)) add(dir, 'pi');
     }
   }
-  // Both roots unreadable — fall back to the project's own directory.
-  return dirs.length > 0 ? dirs : [sessionDir];
+  for (const dir of await subdirectoriesOf(ompRoot)) add(dir, OMP_AGENT_NAME);
+
+  // Every root unreadable — fall back to the project's own directory.
+  return dirs.length > 0 ? dirs : [{ dir: sessionDir, agentName: 'pi' }];
 }
 import {
   PI_METRICS_PROCESSOR_NAME,
@@ -159,16 +209,9 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Nested sub-agent transcripts, stored under `<transcript-without-.jsonl>/<agentId>/run-N/`.
-   *
-   * A delegated agent gets its own session file there. The parent records tool results for those
-   * dispatches but NO usage on them (measured on a real corpus: 1707 `toolResult` entries, zero
-   * carrying `usage`), so every token a sub-agent burned lives only in the nested file and a
-   * reader that walks `messages` alone misses all of it.
-   *
-   * Attached WITHOUT a `toolUseId`: this is session-level spend, not the allocation of one
-   * dispatch, and `cost-enricher.enrichDispatchCosts` keys on `toolUseId` precisely so it skips
-   * these.
+   * Link Pi `<agent>/<run>/session.jsonl` and header-validated omp child transcripts
+   * recursively under `<transcript-without-.jsonl>/`. Relative paths identify children;
+   * omp path depth also records their ancestry. No toolUseId is inferred.
    *
    * **Forked continuations are deliberately NOT linked here.** `/fork` writes a new file that
    * replays the prior conversation verbatim, so folding it into its source looks tempting — but
@@ -187,36 +230,41 @@ export class PiSessionAdapter implements SessionAdapter {
       return [];
     }
     const runsRoot = transcriptPath.slice(0, -'.jsonl'.length);
-    let agentDirs: string[];
-    try {
-      agentDirs = await readdir(runsRoot);
-    } catch {
-      return []; // no sub-agent ran under this transcript
-    }
+    const files: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      try {
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          const file = join(dir, entry.name);
+          if (entry.isDirectory()) await walk(file);
+          else if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(file);
+        }
+      } catch {
+        // Missing run roots and unreadable subdirectories contain no usable transcripts.
+      }
+    };
+    await walk(runsRoot);
+    const relPath = (file: string): string => relative(runsRoot, file).split(sep).join('/');
+    files.sort((a, b) => relPath(a).localeCompare(relPath(b)));
 
     const out: LinkedTranscript[] = [];
-    for (const agentDir of agentDirs.sort()) {
-      let runDirs: string[];
+    for (const file of files) {
+      const rel = relPath(file);
+      const piLayout = /^([^/]+)\/([^/]+)\/session\.jsonl$/.exec(rel);
       try {
-        runDirs = await readdir(join(runsRoot, agentDir));
+        if (!piLayout && !(await this.readSessionHeader(file))) continue;
+        const segments = rel.split('/');
+        out.push({
+          agentId: piLayout ? `${piLayout[1]}/${piLayout[2]}` : rel.slice(0, -'.jsonl'.length),
+          filePath: file,
+          agentType: PI_SUBAGENT_RUN,
+          ...(!piLayout && {
+            spawnDepth: segments.length,
+            ...(segments.length > 1 && { parentAgentId: segments.slice(0, -1).join('/') }),
+          }),
+          messages: (await this.readJsonlFile(file)) as unknown[],
+        });
       } catch {
-        continue;
-      }
-      for (const runDir of runDirs.sort()) {
-        const sessionPath = join(runsRoot, agentDir, runDir, 'session.jsonl');
-        if (!existsSync(sessionPath)) {
-          continue;
-        }
-        try {
-          out.push({
-            agentId: `${agentDir}/${runDir}`,
-            filePath: sessionPath,
-            agentType: PI_SUBAGENT_RUN,
-            messages: (await this.readJsonlFile(sessionPath)) as unknown[],
-          });
-        } catch {
-          logger.debug(`[pi-adapter] Could not read sub-agent run: ${sessionPath}`);
-        }
+        logger.debug(`[pi-adapter] Could not read sub-agent run: ${file}`);
       }
     }
     return out;
@@ -225,18 +273,24 @@ export class PiSessionAdapter implements SessionAdapter {
 
   private static readonly HEADER_READ_BYTES = 65536;
 
+  /**
+   * The transcript's `session` header — its first record, or the first one after oh-my-pi's
+   * leading `title` records (`omp` reserves line 1 for a padded, rewritable title). Any other
+   * record before the header means the file is not a Pi transcript.
+   */
   private async readSessionHeader(filePath: string): Promise<PiSessionHeader | undefined> {
-    let handle: import('fs/promises').FileHandle | undefined;
+    let handle: FileHandle | undefined;
     try {
       handle = await open(filePath, 'r');
       const buffer = Buffer.alloc(PiSessionAdapter.HEADER_READ_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, PiSessionAdapter.HEADER_READ_BYTES, 0);
       if (bytesRead === 0) return undefined;
-      const firstLine = buffer.toString('utf-8', 0, bytesRead).split('\n')[0]?.trim();
-      if (!firstLine) return undefined;
-      const parsed = JSON.parse(firstLine);
-      if (isPiSessionHeader(parsed)) {
-        return parsed;
+      for (const line of buffer.toString('utf-8', 0, bytesRead).split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) return undefined;
+        const parsed = JSON.parse(trimmed);
+        if (parsed?.type === 'title') continue;
+        return isPiSessionHeader(parsed) ? parsed : undefined;
       }
     } catch {
       // ignore — malformed header is handled by caller
@@ -343,16 +397,18 @@ export class PiSessionAdapter implements SessionAdapter {
     const maxAgeDays = piOptions?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    const sessionDirs = projectScoped ? [resolution.sessionDir] : await allProjectSessionDirs(resolution);
+    const sessionRoots: SessionRoot[] = projectScoped
+      ? [{ dir: resolution.sessionDir, agentName: 'pi' }]
+      : await allProjectSessionDirs(resolution);
     const found: SessionDescriptor[] = [];
-    for (const dir of sessionDirs) {
-      found.push(...(await this.listTranscripts(dir, cutoff, projectScoped ? cwd : undefined)));
+    for (const { dir, agentName } of sessionRoots) {
+      found.push(...(await this.listTranscripts(dir, cutoff, agentName, projectScoped ? cwd : undefined)));
     }
     found.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     const limited = piOptions?.limit && piOptions.limit > 0 ? found.slice(0, piOptions.limit) : found;
 
     logger.debug(
-      `[pi-discovery] ${found.length} transcript(s) in ${sessionDirs.length} dir(s), returning ${limited.length}`
+      `[pi-discovery] ${found.length} transcript(s) in ${sessionRoots.length} dir(s), returning ${limited.length}`
     );
     return limited;
   }
@@ -369,6 +425,7 @@ export class PiSessionAdapter implements SessionAdapter {
   private async listTranscripts(
     sessionDir: string,
     cutoff: number,
+    agentName: string,
     projectPath?: string
   ): Promise<SessionDescriptor[]> {
     if (!existsSync(sessionDir)) {
@@ -410,7 +467,7 @@ export class PiSessionAdapter implements SessionAdapter {
           projectPath: header.cwd,
           createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
           updatedAt,
-          agentName: 'pi',
+          agentName,
         });
       }
     } catch (error) {
