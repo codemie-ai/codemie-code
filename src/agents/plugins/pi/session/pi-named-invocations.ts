@@ -28,6 +28,7 @@
  */
 
 import { logger } from '@/utils/logger.js';
+import { normalizePathSeparators } from '@/utils/paths.js';
 import type { NamedInvocationCounts } from '../../claude/session/claude-named-invocations.js';
 import {
   extractPiToolCalls,
@@ -74,8 +75,10 @@ const PLUGIN_SKILL_PATHS = [
  */
 function qualifySkillName(name: string, path: unknown): string {
   if (name.includes('/') || typeof path !== 'string') return name;
+  // oh-my-pi builds install paths with `path.join`, so they carry `\` on Windows.
+  const posixPath = normalizePathSeparators(path);
   for (const pattern of PLUGIN_SKILL_PATHS) {
-    const plugin = pattern.exec(path)?.[1];
+    const plugin = pattern.exec(posixPath)?.[1];
     if (plugin) return `${plugin}/${name}`;
   }
   return name;
@@ -279,12 +282,13 @@ function ompSkillPromptName(raw: unknown): string | undefined {
 function ompSkillReadName(result: object): string | undefined {
   const details = detailsOf(result);
   if (!details || !('resolvedPath' in details) || typeof details.resolvedPath !== 'string') return undefined;
-  if (!details.resolvedPath.endsWith('/SKILL.md')) return undefined;
+  const resolvedPath = normalizePathSeparators(details.resolvedPath);
+  if (!resolvedPath.endsWith('/SKILL.md')) return undefined;
   const meta = 'meta' in details ? details.meta : undefined;
   const source = meta && typeof meta === 'object' && 'source' in meta ? meta.source : undefined;
   const url = source && typeof source === 'object' && 'value' in source ? source.value : undefined;
   const name = typeof url === 'string' ? OMP_SKILL_URL.exec(url)?.[1] : undefined;
-  return name ? qualifySkillName(name, details.resolvedPath) : undefined;
+  return name ? qualifySkillName(name, resolvedPath) : undefined;
 }
 
 /** One detected skill or agent invocation, in transcript order. */
