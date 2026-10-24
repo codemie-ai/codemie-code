@@ -11,10 +11,12 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie whatsnew` command showing release notes from this changelog
 - Once-per-upgrade "What's new" notice on CLI start after an update
 - Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
+- `codemie proxy connect --omp` gives oh-my-pi the active profile's live model catalog (cost, context window, output cap, image input) via an auto-loaded extension; `codemie proxy disconnect --omp` removes it; it cannot be combined with `--vscode`
 
 ### Fixed
 
 - CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
+- Encrypted reasoning-content recovery now also covers `codemie proxy start` and `codemie proxy connect --omp` daemons
 
 ## [0.15.1] - 2026-09-08
 

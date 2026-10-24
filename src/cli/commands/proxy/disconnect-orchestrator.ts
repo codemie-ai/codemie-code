@@ -11,11 +11,13 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 
 import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { removeOmpExtension } from './connectors/omp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 
 export interface DisconnectTargets {
   claudeCodeOtlp?: boolean;
   codexDesktop?: boolean;
+  omp?: boolean;
 }
 
 export interface DisconnectOptions {
@@ -27,6 +29,7 @@ const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
+  '  --omp                  oh-my-pi (removes the CodeMie model catalog extension)',
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
   '',
   'Example:',
@@ -84,8 +87,24 @@ async function disconnectClaudeCodeOtlp(scope?: 'user' | 'project'): Promise<voi
   }
 }
 
+async function disconnectOmp(): Promise<void> {
+  try {
+    const result = await removeOmpExtension();
+    if (!result.removed) {
+      console.log(chalk.dim('oh-my-pi: nothing to disconnect.'));
+      return;
+    }
+    console.log(chalk.green(`✓ oh-my-pi disconnected (${result.path})`));
+    console.log(chalk.yellow('⚠ Restart omp to drop the codemie and codemie-claude providers.'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(chalk.red(`✗ oh-my-pi — ${message}`));
+    process.exitCode = 1;
+  }
+}
+
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
-  if (!opts.targets.codexDesktop && !opts.targets.claudeCodeOtlp) {
+  if (!opts.targets.codexDesktop && !opts.targets.claudeCodeOtlp && !opts.targets.omp) {
     console.log(DISCONNECT_TARGET_LIST);
     return;
   }
@@ -96,5 +115,9 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
 
   if (opts.targets.claudeCodeOtlp) {
     await disconnectClaudeCodeOtlp(opts.scope);
+  }
+
+  if (opts.targets.omp) {
+    await disconnectOmp();
   }
 }
