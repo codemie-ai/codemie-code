@@ -249,17 +249,24 @@ export async function resolveSsoProxyConfig(
   );
 }
 
-export async function verifySsoCredentials(baseUrl: string, profileName: string): Promise<void> {
+export async function verifySsoCredentials(
+  platform: { provider?: string; baseUrl?: string; codeMieUrl?: string },
+  profileName: string
+): Promise<void> {
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl });
+    const creds = await getStoredPlatformCredentials({
+      provider: platform.provider ?? 'ai-run-sso',
+      baseUrl: platform.baseUrl,
+      codeMieUrl: platform.codeMieUrl,
+    });
     if (!creds) {
-      console.error(chalk.red(`✗ No SSO credentials found for profile '${profileName}'.`));
-      console.error(`  Run: codemie profile login --url ${baseUrl}`);
+      console.error(chalk.red(`✗ No active CodeMie session for profile '${profileName}'.`));
+      console.error('  Run: codemie profile login');
       process.exit(1);
     }
   } catch (err) {
-    console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
+    console.error(chalk.red(`✗ Failed to verify profile session: ${(err as Error).message}`));
     process.exit(1);
   }
 }
@@ -738,7 +745,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         )
       : chalk.cyan(`Using profile: ${profile}`));
 
-    await verifySsoCredentials(config.baseUrl, profile);
+    await verifySsoCredentials({
+      provider: config.provider,
+      baseUrl: config.baseUrl,
+      codeMieUrl: config.codeMieUrl,
+    }, profile);
     const cwd = process.cwd();
     await Promise.allSettled([
       syncRegisteredSkills(profile, cwd),

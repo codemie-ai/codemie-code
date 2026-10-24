@@ -114,10 +114,10 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
+      expect.stringContaining("No active CodeMie session for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com/code-assistant-api'
+      '  Run: codemie profile login'
     );
   });
 
