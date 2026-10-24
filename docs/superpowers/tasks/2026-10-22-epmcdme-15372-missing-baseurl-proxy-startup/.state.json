@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-light",
+  "slug": "epmcdme-15372-missing-baseurl-proxy-startup",
+  "branch": "feature/EPMCDME-15372-sdlc-light",
+  "phase": "maintenance",
+  "started_at": "2026-10-22T00:00:00Z",
+  "completed_at": "2026-10-22T19:00:00Z",
+  "last_sync_commit": "992b9d6c"
+}
