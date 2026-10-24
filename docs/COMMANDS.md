@@ -341,7 +341,7 @@ All agent shortcuts support these options:
 --api-key <key>          # Override API key
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
--s, --silent             # Enable silent mode
+-s, --silent             # Enable silent mode (long form only for codex and gemini, which use -s natively)
 --task <prompt>          # Run a single task in headless (non-interactive) mode and exit
 --reasoning-effort <level> # Reasoning/thinking effort: minimal|low|medium|high|xhigh|max (see below)
 --resume <session-id>    # Resume a previous agent session by id (see below)

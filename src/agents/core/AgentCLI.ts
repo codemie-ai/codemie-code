@@ -64,6 +64,16 @@ export class AgentCLI {
   }
 
   /**
+   * Silent flag definition. Agents whose native CLI already uses `-s`
+   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
+   * so `-s` is forwarded to the agent untouched.
+   */
+  private getSilentFlags(): string {
+    const agentsWithNativeShortS = ['codex', 'gemini'];
+    return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
+  }
+
+  /**
    * Setup commander program
    */
   private setupProgram(): void {
@@ -75,7 +85,7 @@ export class AgentCLI {
     this.program
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
-      .option('-s, --silent', 'Enable silent mode')
+      .option(this.getSilentFlags(), 'Enable silent mode')
       .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
       .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
