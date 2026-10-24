@@ -251,9 +251,13 @@ export const CodexPluginMetadata: AgentMetadata = {
      *
      * Transformations applied (in order):
      * 1. --task <prompt>  → exec <prompt>  (non-interactive subcommand)
-     * 2. config.model     → --model <model>
+     * 2. Session tuning   → --config flags (unconditional)
      * 3. Custom provider  → model_providers.codemie (env_key bypasses ~/.codex/auth.json)
-     * 4. Session tuning   → --config flags (unconditional)
+     * 4. config.model     → --model <model>
+     *
+     * --config flags (2-3) are merged into one group with the caller's own --config
+     * flags; --model (4) prefixes the arguments and the --task prompt stays last.
+     * See mergeCodexConfigArgs.
      *
      * OPENAI_BASE_URL and OPENAI_API_KEY are injected into the process env
      * by BaseAgentAdapter.transformEnvVars via envMapping.
@@ -272,30 +276,35 @@ export const CodexPluginMetadata: AgentMetadata = {
         enriched = [...enriched.slice(0, resumeIdx), ...enriched.slice(resumeIdx + 2)];
       }
 
+      // The prompt built from --task stays out of the --config merge and is appended
+      // last, so it remains the trailing positional of `exec`.
+      let trailingPrompt: string | undefined;
+
       const taskIndex = enriched.indexOf('--task');
       if (taskIndex !== -1 && taskIndex < enriched.length - 1) {
-        const taskValue = enriched[taskIndex + 1];
+        trailingPrompt = enriched[taskIndex + 1];
         const rest = [...enriched.slice(0, taskIndex), ...enriched.slice(taskIndex + 2)];
         const head = resumeId ? ['exec', 'resume', resumeId] : ['exec'];
-        enriched = [...head, ...rest, taskValue];
+        enriched = [...head, ...rest];
       } else if (resumeId) {
         // Interactive resume: no --task present → top-level codex resume <id>
         enriched = ['resume', resumeId, ...enriched];
       }
       // else: no --task, no --resume → existing interactive behavior (unchanged)
 
-      // 2. Inject model via --model when not already overridden.
-      const explicitModel = getExplicitModelArg(enriched);
-      const availableModels = (process.env.CODEMIE_CODEX_AVAILABLE_MODELS || '')
-        .split(',')
-        .map(model => model.trim())
-        .filter(Boolean);
+      // --config pairs are collected here and merged with the caller's own at the end
+      // (see mergeCodexConfigArgs).
+      const injectedConfig: string[] = [];
 
-      if (explicitModel) {
-        assertExplicitCodexModelAllowed(explicitModel, availableModels);
-      } else if (config?.model) {
-        enriched = ['--model', config.model, ...enriched];
-      }
+      // 2. Inject session tuning flags (unconditional).
+      // --config uses TOML values: integers unquoted, strings double-quoted.
+      const maxOutputTokens = /gpt[-.]?6(?:[-.]|\b)|gpt[-.]?5[.-]6(?:[-.]|\b)/i.test(config?.model ?? '') ? 128000 : 16384;
+      injectedConfig.push(
+        '--config', 'stream_max_retries=40',
+        '--config', 'request_max_retries=40',
+        '--config', `max_output_tokens=${maxOutputTokens}`,
+        '--config', 'model_verbosity="medium"',
+      );
 
       // 3. Configure a custom model provider to bypass ~/.codex/auth.json.
       // auth.json has highest priority for the default "openai" provider and overrides
@@ -309,7 +318,7 @@ export const CodexPluginMetadata: AgentMetadata = {
       const isOllama = config?.provider === 'ollama';
       const hasUsableApiKey = config?.apiKey && config.apiKey !== 'not-required';
       if ((hasUsableApiKey || isOllama) && config?.baseUrl) {
-        enriched = [
+        injectedConfig.push(
           '--config', 'model_provider="codemie"',
           '--config', 'model_providers.codemie.name="codemie"',
           '--config', `model_providers.codemie.base_url="${config.baseUrl}"`,
@@ -318,22 +327,29 @@ export const CodexPluginMetadata: AgentMetadata = {
           ...(process.env.CODEMIE_CODEX_MODEL_CATALOG_JSON
             ? ['--config', `model_catalog_json="${process.env.CODEMIE_CODEX_MODEL_CATALOG_JSON}"`]
             : []),
-          ...enriched,
-        ];
+        );
       }
 
-      // 4. Inject session tuning flags (unconditional).
-      // --config uses TOML values: integers unquoted, strings double-quoted.
-      const maxOutputTokens = /gpt[-.]?6(?:[-.]|\b)|gpt[-.]?5[.-]6(?:[-.]|\b)/i.test(config?.model ?? '') ? 128000 : 16384;
-      enriched = [
-        '--config', 'stream_max_retries=40',
-        '--config', 'request_max_retries=40',
-        '--config', `max_output_tokens=${maxOutputTokens}`,
-        '--config', 'model_verbosity="medium"',
-        ...enriched,
-      ];
+      // 4. Inject model via --model when not already overridden.
+      // Not a global flag; it stays a root-level prefix, which Codex applies to `exec` too.
+      let modelArgs: string[] = [];
+      const explicitModel = getExplicitModelArg(enriched);
+      const availableModels = (process.env.CODEMIE_CODEX_AVAILABLE_MODELS || '')
+        .split(',')
+        .map(model => model.trim())
+        .filter(Boolean);
 
-      return enriched;
+      if (explicitModel) {
+        assertExplicitCodexModelAllowed(explicitModel, availableModels);
+      } else if (config?.model) {
+        modelArgs = ['--model', config.model];
+      }
+
+      return [
+        ...modelArgs,
+        ...mergeCodexConfigArgs(enriched, injectedConfig),
+        ...(trailingPrompt !== undefined ? [trailingPrompt] : []),
+      ];
     },
 
     /**
@@ -421,6 +437,40 @@ export const CodexPluginMetadata: AgentMetadata = {
     },
   },
 };
+
+/**
+ * Collect every `-c/--config` override into one trailing group.
+ *
+ * `-c/--config` is a multi-value global flag, and Codex CLI drops the values given
+ * before the subcommand wholesale when any `--config` also appears after it, e.g.
+ * `codex -c a=1 exec -c b=2` (openai/codex#39012). Callers such as T3 Code add their
+ * own `--config` after the subcommand, which silently discarded our custom provider
+ * and fell back to `openai`. Keeping all overrides together, wherever the subcommand
+ * is, avoids the split without having to know Codex's subcommands.
+ *
+ * Injected pairs come first so the caller's overrides still win. Anything after a
+ * `--` terminator is left alone and the group is placed before it.
+ */
+function mergeCodexConfigArgs(args: string[], injected: string[]): string[] {
+  const terminator = args.indexOf('--');
+  const head = terminator === -1 ? args : args.slice(0, terminator);
+  const tail = terminator === -1 ? [] : args.slice(terminator);
+
+  const rest: string[] = [];
+  const callerConfig: string[] = [];
+  for (let i = 0; i < head.length; i++) {
+    const arg = head[i];
+    if ((arg === '-c' || arg === '--config') && i + 1 < head.length) {
+      callerConfig.push(arg, head[++i]);
+    } else if (arg.startsWith('--config=')) {
+      callerConfig.push(arg);
+    } else {
+      rest.push(arg);
+    }
+  }
+
+  return [...rest, ...injected, ...callerConfig, ...tail];
+}
 
 function getExplicitModelArg(args: string[]): string | undefined {
   for (let i = 0; i < args.length; i++) {
