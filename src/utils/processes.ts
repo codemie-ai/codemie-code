@@ -31,7 +31,8 @@ export async function commandExists(command: string): Promise<boolean> {
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    const result = await exec(whichCommand, [command]);
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
     return result.code === 0;
   } catch {
     return false;
