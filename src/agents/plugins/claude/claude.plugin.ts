@@ -68,6 +68,23 @@ const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
 const TOOL_SEARCH_VERIFIED_PROVIDERS = new Set(['ai-run-sso', 'litellm']);
 
 /**
+ * Providers whose gateway cannot carry auto mode's server-side classifier review: the
+ * `safeguards` request field and the `safeguard_results` response field.
+ *
+ * `ai-run-sso` goes through the CodeMie backend to LiteLLM's unified `/v1/messages`, which drops
+ * `safeguards` before v1.99.3 and, on any version, never returns `safeguard_results` from
+ * `bedrock_converse` deployments. Claude Code then falls back to its own (billed) classifier
+ * requests and shows an "isn't eligible" notice that blocks the first checked action until the
+ * user answers it.
+ *
+ * Every other provider is left alone: direct connections (anthropic-subscription, bedrock)
+ * support server review, and a user-run `litellm` gateway may be a version that passes the
+ * contract through. Remove a provider from this set once its gateway does.
+ * https://code.claude.com/docs/en/auto-mode-classifier-billing
+ */
+const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
+
+/**
  * Claude Code installer URLs
  * Official Anthropic installer scripts for native installation
  */
@@ -236,6 +253,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // https://code.claude.com/docs/en/llm-gateway-protocol
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
         env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = toolSearchVerified ? '0' : '1';
+      }
+
+      // Don't ask the server for auto mode classifier review where the gateway can't carry it
+      // (see AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS). Classifier requests stay client-side and
+      // billed as before, but the "isn't eligible" notice no longer interrupts the session.
+      // Set to '1' in the environment to opt back in.
+      if (
+        !env.CLAUDE_CODE_AUTO_MODE_SERVER &&
+        AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS.has(env.CODEMIE_PROVIDER ?? '')
+      ) {
+        env.CLAUDE_CODE_AUTO_MODE_SERVER = '0';
       }
 
       // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch

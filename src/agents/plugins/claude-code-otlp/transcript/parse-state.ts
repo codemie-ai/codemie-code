@@ -11,6 +11,7 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
+import type { SessionEnvFields } from '../event-fields/session-env-fields.js';
 
 export interface OpenUsageRequest {
   /** API request id (`req_...`); `''` when the transcript has none (e.g. behind the proxy). */
@@ -39,6 +40,12 @@ export interface OpenUsageRequest {
   stopReason: string;
   isApiError: boolean;
   gitBranch: string;
+  /** The line's `requestedModel` (Claude Code 2.1.295+), in the form SessionStart `model` and the
+   *  model-switch hooks use; `''` when the line has none; absent in a record saved before it existed. */
+  requestedModel?: string;
+  /** The line's `attributionSkill` — the skill or command Claude Code attributes the request to;
+   *  `''` when the line has none; absent in a record saved before it existed. */
+  attributionSkill?: string;
 }
 
 export interface TranscriptParseState {
@@ -47,6 +54,18 @@ export interface TranscriptParseState {
   openRequests: Record<string, OpenUsageRequest>; // key: usageRequestKey()
   activeSkill: string;
   branchCounts: Record<string, number>;
+  gitHeadStart: string;
+  sessionStartedAt: string;
+  lastSessionEnvFields: SessionEnvFields | null;
+  /** The `end` timestamp of the last `compact_boundary` line reported as `agent.session.compact.done`
+   *  — `''` when none yet. Not an offset: `openPostCompactPass` scans the whole transcript for
+   *  `compact_boundary` lines independently of `mainOffset`, since a sibling hook can advance
+   *  `mainOffset` past one without ever looking for it. */
+  lastCompactionEnd: string;
+  /** `uuid`s of the main transcript's `user` / `assistant` lines already counted, so a re-written
+   *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
+   *  a state saved before it existed. */
+  seenMessageUuids?: string[];
 }
 
 /**
@@ -59,6 +78,10 @@ export function createParseState(): TranscriptParseState {
     openRequests: {},
     activeSkill: '',
     branchCounts: {},
+    gitHeadStart: '',
+    sessionStartedAt: '',
+    lastSessionEnvFields: null,
+    lastCompactionEnd: '',
   };
 }
 
