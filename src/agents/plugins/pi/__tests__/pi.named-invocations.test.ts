@@ -292,6 +292,21 @@ describe('extractPiNamedInvocations — oh-my-pi shapes', () => {
     });
   });
 
+  it('namespaces and counts skills installed under Windows paths, in both cache layouts', () => {
+    const claudeCache = 'C:\\Users\\u\\.claude\\plugins\\cache\\mkt\\superpowers\\5.0.0\\skills\\brainstorming\\SKILL.md';
+    const ompCache = 'C:\\Users\\u\\.omp\\plugins\\cache\\plugins\\mkt___sdlc-factory___1.0.0\\skills\\mr-creator\\SKILL.md';
+    const { skillInvocations } = extractPiNamedInvocations([
+      readResult('r1', 'skill://brainstorming', claudeCache),
+      readResult('r2', 'skill://mr-creator', ompCache),
+      userEntry('u1', 'ship it'),
+      skillPrompt('p1', 'mr-creator', ompCache),
+    ]);
+    expect(skillInvocations).toEqual({
+      'superpowers/brainstorming': 1,
+      'sdlc-factory/mr-creator': 2,
+    });
+  });
+
   it('counts each task entry under its agent, defaulting to the task agent', () => {
     const { agentInvocations } = extractPiNamedInvocations([
       taskCall('t1', { tasks: [{ agent: 'plan-writer', task: 'plan' }, { task: 'explore' }] }),
