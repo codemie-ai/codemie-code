@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ConversationsProcessor } from '../session/processors/claude.conversations-processor.js';
+import { keepFirstAcrossCompaction } from '../session/transcript-lines.js';
 
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -207,5 +208,33 @@ describe('ClaudeConversationsProcessor — !bash command logging (EPMCDME-13675)
     for (let i = 1; i < indices.length; i++) {
       expect(indices[i]).toBeGreaterThanOrEqual(indices[i - 1]);
     }
+  });
+});
+
+describe('ClaudeConversationsProcessor.transformMessages — Desktop init re-write of the user message', () => {
+  const proc = new ConversationsProcessor();
+  const entries = async (messages: unknown[]) => {
+    const { history } = await (proc as any).transformMessages(
+      messages, { lastSyncedHistoryIndex: -1 }, 'assistant-id', 'claude', undefined
+    );
+    return history.map((h: any) => ({ role: h.role, message: h.message, date: h.date, response_time: h.response_time }));
+  };
+  const at = <T extends object>(line: T, timestamp: string) => ({ ...line, timestamp });
+
+  it('measures the turn from the re-written user message in the conversation view', async () => {
+    const echo = at(user('u1', 'summarize the repo'), '2024-01-01T00:00:00.000Z');
+    const init1 = at(system('s-init-1'), '2024-01-01T00:00:01.000Z');
+    const init2 = at(system('s-init-2'), '2024-01-01T00:00:02.000Z');
+    const rewritten = at(user('u1', 'summarize the repo'), '2024-01-01T00:00:10.000Z');
+    const answer = at(assistant('a1', [{ type: 'text', text: 'It is a CLI.' }]), '2024-01-01T00:00:13.000Z');
+
+    const view = await entries(keepFirstAcrossCompaction([echo, init1, init2, rewritten, answer]));
+    const keepLast = await entries([init1, init2, rewritten, answer]);
+
+    expect(view).toEqual([
+      { role: 'User', message: 'summarize the repo', date: '2024-01-01T00:00:10.000Z', response_time: undefined },
+      { role: 'Assistant', message: 'It is a CLI.', date: '2024-01-01T00:00:13.000Z', response_time: 3 },
+    ]);
+    expect(view).toEqual(keepLast);
   });
 });

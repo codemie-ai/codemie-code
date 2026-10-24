@@ -121,4 +121,28 @@ describe('ClaudeSessionAdapter family evidence', () => {
       expect.objectContaining({ type: 'system', subtype: 'task-notification', taskId: 'child-task', status: 'completed' }),
     ]));
   });
+  it('excludes api-request-blob lines from a subagent transcript', async () => {
+    const sessionId = 'blob-family';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    const subagentsDir = join(tempDir, sessionId, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T10:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+    const childRow = {
+      type: 'assistant', uuid: 'child-1', sessionId, timestamp: '2026-09-15T10:00:01.000Z',
+      message: { id: 'child-response', role: 'assistant', content: '[sanitized]', usage: { input_tokens: 5, output_tokens: 3 } },
+    };
+    const blobRow = { type: 'api-request-blob', sessionId, hash: 'h', message: { role: 'assistant', content: '[sanitized]' } };
+    await writeFile(
+      join(subagentsDir, 'agent-child.jsonl'),
+      [childRow, blobRow].map(record => JSON.stringify(record)).join('\n') + '\n'
+    );
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+    const child = parsed.subagents?.find(subagent => subagent.agentId === 'child');
+
+    expect(child?.messages).toEqual([childRow]);
+  });
 });

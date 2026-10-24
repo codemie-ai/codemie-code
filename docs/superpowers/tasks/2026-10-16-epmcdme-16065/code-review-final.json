@@ -1,0 +1,38 @@
+{
+  "decision": "request-changes",
+  "rationale": "2 major patches: the SessionStart merge doesn't branch on hookInput.source so clear/fork fires merge identically to compact/resume (CR-001), and it trusts an unvalidated persisted lastSessionEnvFields.effort, which can ship agent.session.env with no effort field at all on a malformed/older-schema snapshot (CR-002); both candidates' real-world reachability is uncertain (neither confirmed live nor ruled out within this window), and the review ran in no-spec mode (acceptance lens not dispatched, compact profile has no story/spec) plus no standards audit (compact profile, standards_expected: false, not a gap). 2 edge-case candidates dismissed: one restates the exact fresh-value-wins-else-prior-snapshot merge the ticket itself specifies (not a defect against this task), the other is the catch block's pre-existing fallback-to-raw-fields shape on lock/load failure, unchanged in kind from before this commit and consistent with this module's existing error-handling convention. 0 deferred.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "standards_expected: false for compact profile; not a coverage gap." },
+    { "kind": "code-quality", "status": "na", "notes": "standards_expected: false for compact profile; not a coverage gap." },
+    { "kind": "security", "status": "na", "notes": "standards_expected: false for compact profile; not a coverage gap." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 538,
+      "title": "SessionStart merge ignores clear/fork source",
+      "problem": "openSessionStartPass merges the fresh sessionEnvFields onto the prior lastSessionEnvFields snapshot for every repeat SessionStart fire under the same sessionId, without branching on hookInput.source. The SDK's SessionStart source is 'startup' | 'resume' | 'clear' | 'compact' | 'fork' (claude-agent-sdk-hooks.d.ts:531), not just the 'compact'/'resume' the merge's own doc comment names, and onSessionStart (claude-code-otlp.plugin.ts:152-173) calls openSessionStartPass unconditionally for every source.",
+      "impact": "If a /clear or forked SessionStart fire reports an empty permission_mode/configured_model as a genuine reset rather than an unresolved value, the merge silently carries forward the prior session's stale value instead. Whether a live clear/fork fire actually reports those fields empty could not be confirmed from the hook schema and plugin code alone.",
+      "recommendation": "Branch the merge by hookInput.source (apply only for 'compact'/'resume') or confirm and explicitly document that 'clear'/'fork' are deliberately included; no spec/story exists to settle which is intended, so flag for a product decision alongside the code fix."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts",
+      "line": 565,
+      "title": "Merge trusts unvalidated persisted lastSessionEnvFields",
+      "problem": "loadParseState (parse-state.ts:90-98) casts persisted JSON to Partial<TranscriptParseState> with no runtime validation, so state.lastSessionEnvFields can be a partial or older-schema object. openSessionStartPass's merge reads last.effort directly and spreads it into the merged object with no type check.",
+      "impact": "When lastSessionEnvFields lacks a string effort (an older persisted schema, or any write that didn't carry it), effort becomes undefined in the merged object; JSON.stringify drops undefined keys, so the agent.session.env event ships with no effort field at all — reintroducing exactly the empty/missing-effort payload this task set out to fix, for the narrow case of a stale or malformed on-disk snapshot.",
+      "recommendation": "Guard the merge before trusting any field off a persisted snapshot, e.g. `effort: typeof last.effort === 'string' ? last.effort : ''`, and do the same for permission_mode/configured_model."
+    }
+  ]
+}

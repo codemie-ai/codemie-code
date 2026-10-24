@@ -34,6 +34,9 @@ export interface ParsedSession {
   // Raw messages (agent-specific format preserved for conversations processor)
   messages: unknown[];
 
+  /** The main transcript for the conversation sync — the counted lines with each duplicated `uuid` kept once: its first copy when a compaction lies between the copies, else its last copy (as `messages`). */
+  conversationMessages?: unknown[];
+
   // Sub-agent sessions (for Task tool invocations)
   // CRITICAL: These must be discovered and parsed during parseSessionFile()
   subagents?: Array<{

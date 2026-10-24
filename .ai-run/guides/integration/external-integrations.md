@@ -252,17 +252,19 @@ Claude Code's `Stop` hook fires only when the assistant responds. A burst of `!b
 
 | Invariant | Rule |
 |---|---|
-| Hard iteration cap | `Math.max(1, session.messages.length + 1)` — prevents unbounded loops if `transformMessages` regresses |
+| Hard iteration cap | `Math.max(1, n + 1)`, `n` — the length of the conversation view (`conversationMessages`, else `messages`) — prevents unbounded loops if `transformMessages` regresses |
 | Empty-history exit | Loop breaks immediately when `transformMessages` returns `history: []` |
 | Advance guard | Loop breaks if `lastProcessedMessageUuid` and `currentHistoryIndex` are both unchanged from the previous iteration |
 
-`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:128-156`
+The main-transcript sync reads the conversation view `conversationMessages`: a line re-written with the same `uuid` after a compaction (`compact_boundary` between the copies) keeps its first copy, so it is not turned into a history entry again after the sync pointer; other duplicates keep their last copy, as in `messages`. `computeBaselinePointer` reads the same view.
+
+`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:119-177`
 
 ### Per-Iteration Sync Checkpoint
 
 After each successful JSONL append, `SessionStore.saveSession()` persists the updated sync pointer to session metadata. A crash mid-drain cannot cause the next invocation to re-append already-written turns; the final `applyProcessingSyncUpdates` pass is idempotent for the same fields.
 
-`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:189-211`
+`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:217-239`
 
 ### Bash Passthrough Contract
 
