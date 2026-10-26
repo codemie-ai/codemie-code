@@ -1,5 +1,8 @@
+import { countContentLines } from '../content-lines.js';
+
 /**
- * Transcript signals for `agent.session.summary`.
+ * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
+ * `agent.session.compact.done`.
  *
  * Pure functions over already-parsed main-transcript lines: edit-diff line counts, user turns,
  * compaction boundaries, client versions and the session title. No I/O — the orchestrator reads
@@ -64,13 +67,6 @@ function countPatchLines(patch: unknown[]): { added: number; removed: number } {
     }
   }
   return { added, removed };
-}
-
-/** Lines in a file body; a trailing newline does not start another line. */
-function countContentLines(content: string): number {
-  if (content.length === 0) return 0;
-  const lines = content.split('\n').length;
-  return content.endsWith('\n') ? lines - 1 : lines;
 }
 
 /**
@@ -163,6 +159,19 @@ export function collectCompactions(lines: readonly SignalLine[]): Compaction[] {
     });
   }
   return compactions;
+}
+
+/** Builds the `agent.session.compact.done` record from a `Compaction` found by `openPostCompactPass`. */
+export function buildCompactionDoneEvent(sessionId: string, compaction: Compaction): Record<string, unknown> {
+  return {
+    type: 'agent.session.compact.done',
+    session_id: sessionId,
+    pre_tokens: compaction.pre_tokens,
+    post_tokens: compaction.post_tokens,
+    dropped_tokens: compaction.dropped_tokens,
+    duration_ms: compaction.duration_ms,
+    timestamp: compaction.end,
+  };
 }
 
 /** Distinct client versions, in order of first appearance. */

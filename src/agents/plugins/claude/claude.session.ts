@@ -20,6 +20,7 @@ import { MetricsProcessor } from './session/processors/claude.metrics-processor.
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
 import { extractNamedInvocations } from './session/claude-named-invocations.js';
+import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/transcript-lines.js';
 
 /**
  * Best-effort decode of a Claude Code project directory name back to a filesystem path.
@@ -159,17 +160,15 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   }
 
   /**
-   * Parse Claude session file to unified format.
-   * Extracts both raw messages (for conversations) and metrics (for metrics processor).
-   * CRITICAL: Discovers and parses ALL sub-agent files to avoid duplicate file reading.
-   */
-  /**
    * Collapse records that repeat the same `uuid`, keeping the LAST occurrence.
    * Claude Desktop (3p) re-writes the user message after session init/status
    * events; the later copy sits right before the assistant reply and is the real
    * turn-start. Keeping it (and dropping the earlier echo) lets turn-splitting
    * pair user+assistant correctly. Messages without a uuid are kept; this is a
    * no-op for well-formed transcripts (each uuid appears once).
+   * `messages` is read by the metrics processor, `extractMetrics` and the
+   * `codemie analytics` / cost readers; the conversation sync reads
+   * `conversationMessages` instead.
    */
   private dedupeByUuid(messages: ClaudeMessage[]): ClaudeMessage[] {
     const lastIndex = new Map<string, number>();
@@ -181,10 +180,18 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     );
   }
 
+  /**
+   * Parse Claude session file to unified format.
+   * Extracts both raw messages (for conversations) and metrics (for metrics processor).
+   * CRITICAL: Discovers and parses ALL sub-agent files to avoid duplicate file reading.
+   */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
-      // Read main session JSONL file (collapse any duplicate-uuid records)
-      const messages = this.dedupeByUuid(await readJSONL<ClaudeMessage>(filePath));
+      // Read main session JSONL file: `messages` (keep-last, for metrics, `extractMetrics`,
+      // the `codemie analytics` / cost readers) and `conversationMessages` (for the conversation sync)
+      const counted = (await readJSONL<ClaudeMessage>(filePath)).filter(isCountedTranscriptLine);
+      const messages = this.dedupeByUuid(counted);
+      const conversationMessages = keepFirstAcrossCompaction(counted);
 
       // Handle empty files gracefully (new sessions, in-progress, corrupted files)
       if (messages.length === 0) {
@@ -198,6 +205,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
             updatedAt: undefined
           },
           messages: [],
+          conversationMessages: [],
           metrics: {
             tools: {},
             toolStatus: {},
@@ -254,7 +262,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       for (const subagentFile of subagentFiles) {
         try {
           const subagentMessages = this.dedupeByUuid(
-            await readJSONL<ClaudeMessage>(subagentFile.filePath)
+            (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
           );
           subagents.push({
             agentId: subagentFile.agentId,
@@ -289,7 +297,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         sessionId,
         agentName: this.metadata.displayName || 'claude',
         metadata,
-        messages,  // Preserve raw messages for conversations processor
+        messages,  // Keep-last view for metrics, extractMetrics and the codemie analytics / cost readers
+        conversationMessages,  // Read by the conversation sync
         subagents: subagents.length > 0 ? subagents : undefined, // Include sub-agents if any
         metrics    // Extracted metrics for metrics processor
       };

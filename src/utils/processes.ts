@@ -591,6 +591,107 @@ export async function detectGitBranch(cwd: string): Promise<string | undefined> 
   }
 }
 
+/**
+ * Full SHA of the current HEAD commit.
+ * Returns undefined when not in a git repo or when HEAD is unborn (no commits yet).
+ */
+export async function detectGitHeadSha(cwd: string): Promise<string | undefined> {
+  try {
+    const result = await exec('git', ['rev-parse', 'HEAD'], { cwd, timeout: 5000 });
+    const sha = result.stdout.trim();
+    if (result.code !== 0 || !sha) {
+      logger.debug('[GitUtils] No HEAD commit detected');
+      return undefined;
+    }
+    return sha;
+  } catch (error) {
+    logger.debug('[GitUtils] Failed to detect git HEAD sha:', error);
+    return undefined;
+  }
+}
+
+/** One commit's metadata — sha/time/counts only, never diff content. */
+export interface GitCommitSummary {
+  sha: string;
+  time: string;
+  files: number;
+  added: number;
+  removed: number;
+}
+
+const GIT_LOG_RECORD_SEP = '\x1e';
+const GIT_LOG_FIELD_SEP = '\x1f';
+
+/** Parses `git log --numstat --format=<RS>%H<FS>%at` output into per-commit metadata. */
+function parseGitLogNumstat(stdout: string): GitCommitSummary[] {
+  const commits: GitCommitSummary[] = [];
+  for (const block of stdout.split(GIT_LOG_RECORD_SEP)) {
+    if (!block.trim()) continue;
+    const lines = block.split('\n').filter((line) => line.length > 0);
+    const [header, ...numstatLines] = lines;
+    const [sha, authorTime] = (header ?? '').split(GIT_LOG_FIELD_SEP);
+    if (!sha) continue;
+
+    const authorTimeSeconds = Number(authorTime);
+    const authorDate = new Date(authorTimeSeconds * 1000);
+    const time =
+      authorTime && Number.isFinite(authorTimeSeconds) && Number.isFinite(authorDate.getTime())
+        ? authorDate.toISOString()
+        : '';
+
+    let added = 0;
+    let removed = 0;
+    let files = 0;
+    for (const line of numstatLines) {
+      const [addedRaw, removedRaw] = line.split('\t');
+      if (addedRaw === undefined) continue;
+      files += 1;
+      const addedCount = Number.parseInt(addedRaw, 10);
+      const removedCount = Number.parseInt(removedRaw, 10);
+      if (Number.isFinite(addedCount)) added += addedCount;
+      if (Number.isFinite(removedCount)) removed += removedCount;
+    }
+    commits.push({ sha, time, files, added, removed });
+  }
+  return commits;
+}
+
+/**
+ * Commits whose author email exactly matches `authorEmail` since `sinceIso` on the current branch,
+ * metadata only (sha, timestamp, file count, lines +/-) — never file paths or diff content.
+ * Returns `[]` when not in a git repo, on any git failure, or when either input is empty.
+ */
+export async function detectGitCommitsByAuthor(
+  cwd: string,
+  sinceIso: string,
+  authorEmail: string
+): Promise<GitCommitSummary[]> {
+  if (!cwd || !sinceIso || !authorEmail) {
+    return [];
+  }
+  try {
+    const result = await exec(
+      'git',
+      [
+        'log',
+        `--since=${sinceIso}`,
+        '--fixed-strings',
+        `--author=<${authorEmail}>`,
+        '--numstat',
+        `--format=${GIT_LOG_RECORD_SEP}%H${GIT_LOG_FIELD_SEP}%at`,
+      ],
+      { cwd, timeout: 10000 }
+    );
+    if (result.code !== 0) {
+      return [];
+    }
+    return parseGitLogNumstat(result.stdout);
+  } catch (error) {
+    logger.debug('[GitUtils] Failed to detect git commits by author:', error);
+    return [];
+  }
+}
+
 // Re-export exec function and types for convenience
 export { exec };
 export type { ExecOptions, ExecResult };

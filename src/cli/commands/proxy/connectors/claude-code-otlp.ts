@@ -210,18 +210,34 @@ export const HOOK_EVENTS = [
   'StopFailure',
   'SessionEnd',
   'UserPromptSubmit',
+  'UserPromptExpansion',
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
   'SubagentStart',
   'SubagentStop',
   'PreCompact',
+  'PostCompact',
   'Notification',
+  'PostModelSwitch',
+  'ConfigChange',
 ] as const satisfies readonly HookEvent[];
 
 export const SETTINGS_BACKUP_SUFFIX = '.codemie-backup';
 export const CODEMIE_COMMAND_MARKER = `hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`;
 export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
+
+/**
+ * `PostCompact` alone gets `async: true` plus a longer `timeout`: `openPostCompactPass`
+ * (`transcript/orchestrator.ts`) waits up to a minute, lock-free, for a still-landing
+ * `compact_boundary` line (`POST_COMPACT_WAIT_BUDGET_MS`). `async` keeps Claude Code — and the
+ * user's own turn — from ever waiting on that; the larger `timeout` here is what keeps Claude
+ * Code itself from killing the subprocess before that wait, plus the lock-held merge/send/commit
+ * afterward, can finish. Every other event keeps the default `CODEMIE_HOOK_TIMEOUT_SECONDS`
+ * (synchronous — e.g. `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for
+ * its block decision, so it can never be async).
+ */
+export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -559,11 +575,14 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  const buildCodemieEntry = (): HookGroup => {
+  // `PostCompact` alone is async with a longer timeout — see `CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS`.
+  const buildCodemieEntry = (eventName: string): HookGroup => {
+    const isPostCompact = eventName === 'PostCompact';
     const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-      timeout: CODEMIE_HOOK_TIMEOUT_SECONDS,
+      timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+      ...(isPostCompact ? { async: true } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };
@@ -590,7 +609,7 @@ export async function writeClaudeCodeOtlpConfig(
 
   // Phase 2: (re-)add our dedicated entry for every event we currently manage.
   for (const eventName of HOOK_EVENTS) {
-    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry()];
+    hooks[eventName] = [...(hooks[eventName] ?? []), buildCodemieEntry(eventName)];
   }
 
   // --- Merge env block ---

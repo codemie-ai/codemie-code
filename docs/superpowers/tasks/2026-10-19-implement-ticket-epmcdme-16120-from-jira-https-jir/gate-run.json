@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16120",
+  "head": "d2308c6b561a8dd223437243f36e46da80ae3db1",
+  "runner": "npm",
+  "started_at": "2026-10-19T12:37:30Z",
+  "completed_at": "2026-10-19T12:41:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1418,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2535,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2619,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7073,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 46568,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "3 failures, all in src/utils/__tests__/system-proxy-dispatcher.test.ts, unrelated to the branch diff (orchestrator.ts/orchestrator.test.ts only); all fail on network timeouts connecting to a secondary loopback alias (127.0.0.2) — ConnectTimeoutError / 'Test timed out in 30000ms' / 'Request timeout after 5000ms'. Reproduced on a second isolated run of just that file with identical failures, consistent with this sandbox not routing/binding 127.0.0.2. Reported as FAIL per the gate's literal exit code; 5389/5392 other tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8789,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 677,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: script prints 'No staged changes to scan' and exits 0 because no files are staged in the index right now (validate-secrets.js only scans `git diff --staged`). Not a true PASS per the Self-skipping Gates rule. To get real local coverage, re-ran gitleaks directly against the full branch diff instead: `docker run --rm -i -v $(pwd)/.gitleaks.toml:/gitleaks.toml ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml < <(git diff 05316f139c659eff3230e2acec5a9c25b1151cdf...HEAD)` — exit 0, 'no leaks found' over ~8.2KB scanned. Enablement: `git add -u` (or stage the changed files) before `npm run validate:secrets` to exercise the gate as configured."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 900,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 900,
+      "command": "npx commitlint --from 05316f139c659eff3230e2acec5a9c25b1151cdf --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Guide's npm script (commitlint:last) only checks HEAD~1..HEAD; CI's validate-commits job lints the full PR range (base SHA..HEAD). Ran the full-range equivalent to match what CI actually enforces — both commits on this branch pass Conventional Commits with 0 problems."
+    }
+  ],
+  "failures": {
+    "unit": "FAIL |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch through the explicit proxy\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n > src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n\nFAIL |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:64669, timeout: 10000ms)\n > onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n > Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\nFAIL |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n > src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\nCaused by: Error: Request timeout after 5000ms\n > ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\nTest Files  1 failed | 357 passed (358)\nTests  3 failed | 5389 passed (5392)\n\nRe-run in isolation (only this file) produced the identical 3 failures with new local ports, confirming it is not test-order flake but an environment/network constraint (likely inability to connect to the secondary loopback alias 127.0.0.2 in this sandbox) rather than a regression introduced by the branch diff (src/agents/plugins/claude-code-otlp/transcript/orchestrator.ts and its test file)."
+  }
+}

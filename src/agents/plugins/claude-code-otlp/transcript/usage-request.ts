@@ -25,13 +25,15 @@ import type { OpenUsageRequest } from './parse-state.js';
 /**
  * Loose shape of one transcript JSONL line, mirroring `usage-readers.ts`'s `ClaudeRawMessage`
  * plus `message.stop_reason`, `message.usage`'s extra nested groups, and the top-level
- * `gitBranch`/`isApiError`. Not exported — callers only see {@link parseUsageLine}'s result.
+ * `gitBranch`/`isApiErrorMessage`. Not exported — callers only see {@link parseUsageLine}'s result.
  */
 interface TranscriptUsageLine {
   timestamp?: string;
   gitBranch?: string;
-  isApiError?: boolean;
+  isApiErrorMessage?: boolean;
   requestId?: string;
+  requestedModel?: unknown;
+  attributionSkill?: unknown;
   message?: RoutingHeaderSource & {
     id?: string;
     model?: string;
@@ -102,6 +104,18 @@ export function parseUsageLine(
   const modelRaw = parsed.message?.model ?? 'unknown';
   const model = parseBackendModelName(parsed.message) ?? modelRaw;
 
+  // `cache_creation_input_tokens` is the aggregate for both TTL tiers, while `cache_creation`
+  // splits it. Rows without that split (older Claude Code versions, some providers) would lose
+  // their cache-write tokens entirely, so the aggregate's remainder is attributed to the default
+  // 5m TTL — the same arithmetic the cost pipeline uses (cost-calculator.ts's tokens5m).
+  const nested5m = usage.cache_creation?.ephemeral_5m_input_tokens;
+  const nested1h = usage.cache_creation?.ephemeral_1h_input_tokens;
+  const cacheCreation1hTokens = typeof nested1h === 'number' ? nested1h : 0;
+  const cacheCreation5mTokens =
+    typeof nested5m === 'number'
+      ? nested5m
+      : Math.max(Number(usage.cache_creation_input_tokens ?? 0) - cacheCreation1hTokens, 0);
+
   return {
     requestId,
     messageId,
@@ -112,8 +126,8 @@ export function parseUsageLine(
     inferenceGeo: usage.inference_geo ?? '',
     serviceTier: usage.service_tier ?? '',
     inputTokens: Number(usage.input_tokens ?? 0),
-    cacheCreation5mTokens: Number(usage.cache_creation?.ephemeral_5m_input_tokens ?? 0),
-    cacheCreation1hTokens: Number(usage.cache_creation?.ephemeral_1h_input_tokens ?? 0),
+    cacheCreation5mTokens,
+    cacheCreation1hTokens,
     cacheReadTokens: Number(usage.cache_read_input_tokens ?? 0),
     outputTokens: Number(usage.output_tokens ?? 0),
     thinkingTokens:
@@ -128,8 +142,10 @@ export function parseUsageLine(
     agentType,
     // Sibling of usage on message, not nested inside it.
     stopReason: parsed.message?.stop_reason ?? '',
-    isApiError: Boolean(parsed.isApiError),
+    isApiError: Boolean(parsed.isApiErrorMessage),
     gitBranch: parsed.gitBranch ?? '',
+    requestedModel: typeof parsed.requestedModel === 'string' ? parsed.requestedModel : '',
+    attributionSkill: typeof parsed.attributionSkill === 'string' ? parsed.attributionSkill : '',
   };
 }
 
@@ -149,7 +165,9 @@ export function usageRequestKey(r: { requestId: string; messageId: string; model
  * usage, never subtracts it); every non-numeric field takes `b`'s value when non-empty, else
  * falls back to `a`'s — so a later row that fills in a previously-empty field (e.g.
  * `stop_reason` once the turn finishes) wins, while a later row that is missing a field `a` had
- * does not blank it out.
+ * does not blank it out. `scopeKind` and `scopeName` are the exception: the pair is taken whole
+ * from `b` when `b.scopeKind` is non-empty, else from `a`, so the result never pairs one line's
+ * kind with another line's name.
  *
  * Returns a new object; neither `a` nor `b` is mutated.
  */
@@ -176,14 +194,26 @@ export function mergeUsageRequest(a: OpenUsageRequest, b: OpenUsageRequest): Ope
         : Math.max(a.thinkingTokens ?? 0, b.thinkingTokens ?? 0),
     webSearchRequests: Math.max(a.webSearchRequests, b.webSearchRequests),
     webFetchRequests: Math.max(a.webFetchRequests, b.webFetchRequests),
-    scopeKind: b.scopeKind || a.scopeKind,
-    scopeName: b.scopeName || a.scopeName,
+    scopeKind: b.scopeKind ? b.scopeKind : a.scopeKind,
+    scopeName: b.scopeKind ? b.scopeName : a.scopeName,
     agentId: b.agentId || a.agentId,
     agentType: b.agentType || a.agentType,
     stopReason: b.stopReason || a.stopReason,
     isApiError: b.isApiError || a.isApiError,
     gitBranch: b.gitBranch || a.gitBranch,
+    requestedModel: b.requestedModel || a.requestedModel || '',
+    attributionSkill: b.attributionSkill || a.attributionSkill || '',
   };
+}
+
+/**
+ * True when the request's `output_tokens` cannot be trusted as final: Claude Code can write an
+ * assistant row mid-stream (`stop_reason` null) and never rewrite it, leaving a placeholder count.
+ * A request whose merged record still has no `stop_reason` never saw its finalizing row.
+ * API-error rows legitimately carry no `stop_reason` and are not partial.
+ */
+export function isOutputTokensPartial(req: Pick<OpenUsageRequest, 'stopReason' | 'isApiError'>): boolean {
+  return !req.stopReason && !req.isApiError;
 }
 
 /**
@@ -207,6 +237,7 @@ export function buildUsageRequestEvent(sessionId: string, req: OpenUsageRequest)
     cache_creation_1h_tokens: req.cacheCreation1hTokens,
     cache_read_tokens: req.cacheReadTokens,
     output_tokens: req.outputTokens,
+    output_tokens_partial: isOutputTokensPartial(req),
     thinking_tokens: req.thinkingTokens,
     web_search_requests: req.webSearchRequests,
     web_fetch_requests: req.webFetchRequests,
