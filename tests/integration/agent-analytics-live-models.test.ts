@@ -96,7 +96,7 @@ process.stdout.write(JSON.stringify(models));
     if (result.status !== 0) {
       throw new Error(
         `catalog fetch failed (exit ${result.status ?? 'null'}): ${result.stderr}\n` +
-          'Run: codemie profile login',
+          `Run: codemie profile login --url ${codeMieUrl}`,
       );
     }
     return JSON.parse(result.stdout) as LlmModel[];

@@ -239,7 +239,7 @@ describe('resolveKimiModel SSO lookup (profile baseUrl first)', () => {
     ssoMock.getStoredCredentials.mockResolvedValue(null);
 
     await expect(resolveKimiModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
-      'codemie profile login'
+      'codemie profile login --url https://profile.example.com'
     );
   });
 });
