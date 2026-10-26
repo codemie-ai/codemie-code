@@ -156,7 +156,7 @@ export function createProxyCommand(): Command {
           throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
         }
 
-        await verifySsoCredentials(config.baseUrl, profile);
+        await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
 
         const cwd = process.cwd();
         await Promise.allSettled([
