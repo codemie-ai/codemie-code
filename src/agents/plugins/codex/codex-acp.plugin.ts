@@ -115,6 +115,9 @@ export const CodexAcpPluginMetadata: AgentMetadata = {
     // CODEX_CONFIG — codex-acp's only configuration surface — mirroring the
     // same provider/tuning values codex.plugin.ts injects via --config flags.
     async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
+      // Codex's beforeRun only assigns CODEX_HOME when the user has none; a user-set home is the
+      // user's own Codex config and must not be rewritten.
+      const ownsCodexHome = !env.CODEX_HOME;
       env = await (CodexPluginMetadata.lifecycle!.beforeRun as (this: BaseAgentAdapter, env: NodeJS.ProcessEnv) => Promise<NodeJS.ProcessEnv>).call(this, env);
 
       const isOllama = env.CODEMIE_PROVIDER === 'ollama';
@@ -159,12 +162,17 @@ export const CodexAcpPluginMetadata: AgentMetadata = {
         env.CODEX_CONFIG = JSON.stringify(merged);
       }
 
-      if (env.CODEX_HOME) {
+      if (env.CODEX_HOME && ownsCodexHome) {
         try {
           await syncModelCatalogToConfigToml(env.CODEX_HOME, env.CODEMIE_CODEX_MODEL_CATALOG_JSON);
         } catch (error) {
           logger.warn('[codex-acp] Could not sync model catalog into CODEX_HOME/config.toml', { error });
         }
+      } else if (env.CODEMIE_PROFILE_MODELS) {
+        // AC22: the picker cannot be limited without writing config.toml, so say so.
+        logger.notice(
+          '[codex-acp] CODEX_HOME is your own Codex home, so the model menu is not limited to this agent\'s profile models'
+        );
       }
 
       return env;

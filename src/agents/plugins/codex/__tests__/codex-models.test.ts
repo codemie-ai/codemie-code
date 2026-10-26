@@ -306,9 +306,9 @@ describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
       expect(slugs).toEqual(['gpt-5-codex', 'gpt-5-mini']);
     });
 
-    it('falls back to the full catalog, with a warning, when CODEMIE_PROFILE_MODELS matches nothing (AC22 parity)', async () => {
+    it('falls back to the full catalog, with a user-visible notice, when CODEMIE_PROFILE_MODELS matches nothing (AC22 parity)', async () => {
       const { logger } = await import('../../../../utils/logger.js');
-      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(logger, 'notice').mockImplementation(() => {});
 
       fetchMock.mockResolvedValue([
         model({ deployment_name: 'gpt-5-codex', base_name: 'gpt-5-codex', label: 'GPT-5 Codex' }),
@@ -322,7 +322,7 @@ describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
 
       const catalog = JSON.parse(readFileSync(r.catalogPath!, 'utf-8'));
       expect(catalog.models.map((m: { slug: string }) => m.slug).sort()).toEqual(['gpt-5-codex', 'gpt-5-mini']);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/matched none of the catalog models/));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/the \/model menu shows the full catalog/));
 
       warnSpy.mockRestore();
     });

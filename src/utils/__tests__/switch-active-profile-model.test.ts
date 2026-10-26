@@ -110,6 +110,32 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
     expect(globalAfter).toBe(globalBefore);
   });
 
+  it('switches an agent in the global profile when the local copy has no agentModels', async () => {
+    // load() overlays local onto global, so the global map is the one launches use.
+    await writeGlobalConfig({
+      version: 2,
+      activeProfile: 'default',
+      profiles: {
+        default: { name: 'default', provider: 'openai', model: 'a', agentModels: { claude: { models: ['a', 'b'], model: 'a' } } },
+      },
+    });
+    await writeLocalConfig({
+      version: 2,
+      activeProfile: 'default',
+      profiles: { default: { name: 'default', provider: 'openai', model: 'a' } },
+    });
+    const localBefore = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
+
+    await ConfigLoader.switchActiveProfileModel('b', PROJECT_DIR, undefined, 'claude');
+
+    const reloadedGlobal = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
+    expect(reloadedGlobal.profiles.default.agentModels?.claude.model).toBe('b');
+    expect(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8')).toBe(localBefore);
+
+    const profile = await ConfigLoader.getProfileForModelSwitch('default', PROJECT_DIR);
+    expect(profile?.agentModels?.claude.model).toBe('b');
+  });
+
   it('overwrites tier fields when tierOverrides is given, leaves them unchanged when omitted', async () => {
     const config: MultiProviderConfig = {
       version: 2,

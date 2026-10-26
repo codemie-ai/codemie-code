@@ -19,6 +19,7 @@ vi.mock('chalk', () => {
 const configMock = vi.hoisted(() => ({
   getActiveProfileName: vi.fn(),
   getProfile: vi.fn(),
+  getProfileForModelSwitch: vi.fn(),
   switchActiveProfileModel: vi.fn(),
   load: vi.fn().mockResolvedValue({})
 }));
@@ -35,12 +36,16 @@ vi.mock('../../../utils/logger.js', () => ({ logger: loggerMock }));
 
 const promptModelSwitchSelectionMock = vi.hoisted(() => vi.fn());
 const promptAgentSwitchSelectionMock = vi.hoisted(() => vi.fn());
+const { ModelSwitchCancelledError } = vi.hoisted(() => ({
+  ModelSwitchCancelledError: class extends Error {}
+}));
 vi.mock('../models-switch-prompt.js', () => ({
   promptModelSwitchSelection: promptModelSwitchSelectionMock,
-  promptAgentSwitchSelection: promptAgentSwitchSelectionMock
+  promptAgentSwitchSelection: promptAgentSwitchSelectionMock,
+  ModelSwitchCancelledError
 }));
 
-import { runModelsSwitch } from '../models.js';
+import { createModelsCommand, runModelsSwitch } from '../models.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 
 describe('runModelsSwitch', () => {
@@ -75,7 +80,7 @@ describe('runModelsSwitch', () => {
 
   it('writes without prompting when the arg matches the only agent model', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(oneAgent);
+    configMock.getProfileForModelSwitch.mockResolvedValue(oneAgent);
 
     await runModelsSwitch('b', '/work');
 
@@ -88,7 +93,7 @@ describe('runModelsSwitch', () => {
 
   it('fails loudly and writes nothing when no agent has the arg', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(oneAgent);
+    configMock.getProfileForModelSwitch.mockResolvedValue(oneAgent);
 
     await runModelsSwitch('does-not-exist', '/work');
 
@@ -99,7 +104,7 @@ describe('runModelsSwitch', () => {
 
   it('prompts for the only agent model and writes its answer when no arg is given', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(oneAgent);
+    configMock.getProfileForModelSwitch.mockResolvedValue(oneAgent);
     promptModelSwitchSelectionMock.mockResolvedValue('b');
 
     await runModelsSwitch(undefined, '/work');
@@ -115,7 +120,7 @@ describe('runModelsSwitch', () => {
 
   it('asks for the agent first when several agents are configured, then lists only its models', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(twoAgents);
+    configMock.getProfileForModelSwitch.mockResolvedValue(twoAgents);
     promptAgentSwitchSelectionMock.mockResolvedValue('codex');
     promptModelSwitchSelectionMock.mockResolvedValue('b');
 
@@ -131,7 +136,7 @@ describe('runModelsSwitch', () => {
 
   it('offers only the agents that have the model when the arg is shared', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(twoAgents);
+    configMock.getProfileForModelSwitch.mockResolvedValue(twoAgents);
     promptAgentSwitchSelectionMock.mockResolvedValue('claude');
 
     await runModelsSwitch('b', '/work');
@@ -145,7 +150,7 @@ describe('runModelsSwitch', () => {
 
   it('skips the agent prompt with --agent and does not refresh Claude tiers for another agent', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(twoAgents);
+    configMock.getProfileForModelSwitch.mockResolvedValue(twoAgents);
     agentRegistryMock.getAgent.mockReturnValue({ metadata: { supportedProviders: ['litellm'] } });
     const fetchModels = vi.fn().mockResolvedValue([]);
     vi.spyOn(ProviderRegistry, 'getModelProxy').mockReturnValue({ fetchModels } as never);
@@ -159,7 +164,7 @@ describe('runModelsSwitch', () => {
 
   it('fails loudly for an --agent the profile does not configure, naming the configured ones', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(twoAgents);
+    configMock.getProfileForModelSwitch.mockResolvedValue(twoAgents);
 
     await runModelsSwitch(undefined, '/work', 'pi');
 
@@ -170,7 +175,7 @@ describe('runModelsSwitch', () => {
 
   it('fails loudly for a model outside the --agent list', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(twoAgents);
+    configMock.getProfileForModelSwitch.mockResolvedValue(twoAgents);
 
     await runModelsSwitch('a', '/work', 'codex');
 
@@ -181,7 +186,7 @@ describe('runModelsSwitch', () => {
 
   it('rejects --agent on a legacy profile', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue({ provider: 'openai', model: 'a' });
+    configMock.getProfileForModelSwitch.mockResolvedValue({ provider: 'openai', model: 'a' });
 
     await runModelsSwitch(undefined, '/work', 'claude');
 
@@ -191,7 +196,7 @@ describe('runModelsSwitch', () => {
 
   it('prints the single-model message for an agent with one model', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue({
+    configMock.getProfileForModelSwitch.mockResolvedValue({
       provider: 'openai',
       model: 'a',
       agentModels: { claude: { models: ['a'], model: 'a' } },
@@ -205,7 +210,7 @@ describe('runModelsSwitch', () => {
 
   it('prints the single-model message and writes nothing for a single-model profile', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue({ provider: 'openai', model: 'a' });
+    configMock.getProfileForModelSwitch.mockResolvedValue({ provider: 'openai', model: 'a' });
 
     await runModelsSwitch(undefined, '/work');
 
@@ -216,7 +221,7 @@ describe('runModelsSwitch', () => {
 
   it('prints the subscription-provider wording for an anthropic-subscription single-model profile', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue({ provider: 'anthropic-subscription', model: 'claude-x' });
+    configMock.getProfileForModelSwitch.mockResolvedValue({ provider: 'anthropic-subscription', model: 'claude-x' });
 
     await runModelsSwitch(undefined, '/work');
 
@@ -224,12 +229,24 @@ describe('runModelsSwitch', () => {
     expect(allLogs(logSpy)).toContain("doesn't support multiple models");
   });
 
+  it('treats Esc in the prompt as a clean cancel (exit 0, nothing written)', async () => {
+    configMock.getActiveProfileName.mockResolvedValue('default');
+    configMock.getProfileForModelSwitch.mockResolvedValue(oneAgent);
+    promptModelSwitchSelectionMock.mockRejectedValue(new ModelSwitchCancelledError('Model selection cancelled.'));
+
+    await createModelsCommand().parseAsync(['switch'], { from: 'user' });
+
+    expect(configMock.switchActiveProfileModel).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(allLogs(logSpy)).toContain('cancelled - nothing changed');
+  });
+
   // CR-006: the Claude tier-refresh block (proxy.fetchModels -> autoSelectModelTiers)
   // talks to the network; a failure there must not deny a switch that is
   // otherwise a pure local config write.
   it('still completes the switch when the Claude tier-refresh network call throws (CR-006)', async () => {
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue({ ...oneAgent, provider: 'litellm' });
+    configMock.getProfileForModelSwitch.mockResolvedValue({ ...oneAgent, provider: 'litellm' });
     agentRegistryMock.getAgent.mockReturnValue({ metadata: { supportedProviders: ['litellm'] } });
     const fetchModels = vi.fn().mockRejectedValue(new Error('network down'));
     vi.spyOn(ProviderRegistry, 'getModelProxy').mockReturnValue({ fetchModels } as never);
@@ -274,7 +291,7 @@ describe('runModelsSwitch — agents that always run on their active model', () 
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     configMock.getActiveProfileName.mockResolvedValue('default');
-    configMock.getProfile.mockResolvedValue(profile);
+    configMock.getProfileForModelSwitch.mockResolvedValue(profile);
     configMock.switchActiveProfileModel.mockResolvedValue({ profileName: 'default' });
     agentRegistryMock.getAgent.mockImplementation((name: string) => (name === 'gemini' ? gemini : undefined));
     fetchModels = vi.fn().mockResolvedValue(

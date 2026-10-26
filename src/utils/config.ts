@@ -1109,8 +1109,11 @@ export class ConfigLoader {
       const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
       const config = await this.loadJsonConfig(localConfigPath);
 
-      if (isMultiProviderConfig(config) && config.profiles[activeProfileName]) {
-        applyMutation(config.profiles[activeProfileName]);
+      // An agent switch belongs to the scope that owns `agentModels`: a local copy without the
+      // map leaves the global one in effect (load() overlays local onto global).
+      const localProfile = isMultiProviderConfig(config) ? config.profiles[activeProfileName] : undefined;
+      if (localProfile && !(agent && !localProfile.agentModels)) {
+        applyMutation(localProfile);
         await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
         return { profileName: activeProfileName };
       }
@@ -1201,6 +1204,18 @@ export class ConfigLoader {
    * Get a specific profile
    * Checks local config first, then falls back to global
    */
+  /**
+   * The profile `codemie models switch` acts on: what getProfile returns, with `agentModels` taken
+   * from the global profile of the same name when the local copy has none. load() overlays local
+   * onto global, so that global map is the one launches use.
+   */
+  static async getProfileForModelSwitch(profileName: string, workingDir: string = process.cwd()): Promise<ProviderProfile | null> {
+    const profile = await this.getProfile(profileName, workingDir);
+    if (!profile || profile.agentModels) return profile;
+    const globalProfile = (await this.loadMultiProviderConfig()).profiles[profileName];
+    return globalProfile?.agentModels ? { ...profile, agentModels: globalProfile.agentModels } : profile;
+  }
+
   static async getProfile(profileName: string, workingDir: string = process.cwd()): Promise<ProviderProfile | null> {
     // Check local config first
     const hasLocal = await this.hasLocalConfig(workingDir);
@@ -1881,10 +1896,11 @@ export class ConfigLoader {
 
     if (config.model) env.CODEMIE_MODEL = config.model;
     // An agent's own list (per-agent profile) is exported even with one model: the user chose
-    // exactly those models for it. A legacy single-model profile keeps the full catalog.
-    const profileModels = resolveProfileModels(config);
+    // exactly those models for it. A legacy profile, or an agent the profile does not configure,
+    // keeps the full catalog. Always emitted (empty when absent) so a value inherited from a
+    // parent codemie session cannot narrow this agent's menu (same reason as the tiers below).
     const hasAgentList = Object.keys(config.agentModels ?? {}).length > 0;
-    if (profileModels.length >= (hasAgentList ? 1 : 2)) env.CODEMIE_PROFILE_MODELS = profileModels.join(',');
+    env.CODEMIE_PROFILE_MODELS = hasAgentList ? resolveProfileModels(config).join(',') : '';
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     // Always emit tier model vars — even when absent — so stale shell values are
     // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).

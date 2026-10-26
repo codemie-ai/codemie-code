@@ -35,13 +35,23 @@ import {
   getStoredPlatformCredentials
 } from '../../core/codemie-auth-helpers.js';
 
+// One catalog request per setup run: fetchModels and fetchRouterModels get the same credentials.
+const catalogByCredentials = new WeakMap<ProviderCredentials, Promise<ModelInfo[]>>();
+
 function fetchSsoCatalog(credentials: ProviderCredentials): Promise<ModelInfo[]> {
+  const cached = catalogByCredentials.get(credentials);
+  if (cached) return cached;
+
   const modelProxy = new SSOModelProxy(credentials.baseUrl);
-  return modelProxy.fetchModels({
+  const catalog = modelProxy.fetchModels({
     codeMieUrl: credentials.additionalConfig?.codeMieUrl,
     baseUrl: credentials.baseUrl,
     cookies: credentials.additionalConfig?.cookies
   } as CodeMieConfigOptions);
+  catalogByCredentials.set(credentials, catalog);
+  // A failed request is not cached, so a retry fetches again.
+  catalog.catch(() => catalogByCredentials.delete(credentials));
+  return catalog;
 }
 
 /**

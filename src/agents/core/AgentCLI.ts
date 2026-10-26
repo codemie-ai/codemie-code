@@ -237,7 +237,9 @@ export class AgentCLI {
 
       // An explicit --model or CODEMIE_MODEL is the user's own choice for this run: it beats the
       // agent's persisted active model, and the persisted-model harness check does not apply to it.
-      const modelOverridden = Boolean(options.model) || Boolean(process.env.CODEMIE_MODEL);
+      // With --profile, ConfigLoader.load ignores CODEMIE_MODEL (profile protection), so an
+      // inherited value (e.g. from a parent codemie session) must not count as an override either.
+      const modelOverridden = Boolean(options.model) || (Boolean(process.env.CODEMIE_MODEL) && !options.profile);
       // A per-agent profile launches with this agent's own active model and model list.
       const config = withAgentModelView(loadedConfig, this.adapter.name);
       if (modelOverridden) {
@@ -764,7 +766,7 @@ export class AgentCLI {
         console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
         console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
 
-        // When the active profile has 2+ models, point at the in-place switch
+        // When the agent has 2+ models (or switches from the catalog), point at the in-place switch
         // command too — it's narrower than --model (only ever offers this
         // profile's own list) and persists, unlike the one-off override above.
         if (resolveProfileModels(config, this.adapter.name).length >= 2 || this.switchesFromCatalog(config)) {

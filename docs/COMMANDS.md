@@ -658,36 +658,37 @@ For profiles using AI/Run CodeMie SSO provider:
 
 ## Model Management Commands
 
-List the active provider's catalog, and switch the active profile's active
-model in place when the profile holds more than one.
+List the active provider's catalog, and switch an agent's active model in place.
 
 ```bash
-codemie models list                  # List all models for the current provider configuration
-codemie models switch                # Pick interactively from the active profile's own models
-codemie models switch <model-id>     # Switch directly to a known model id
+codemie models list                          # Catalog, with the active profile's models per agent
+codemie models list --agent codex            # Tag only codex's models
+codemie models switch                        # Pick the agent (if several), then its model
+codemie models switch <model-id>             # Switch the agent that has this model
+codemie models switch --agent codex <id>     # Switch codex directly
 ```
 
-**`codemie models list`** fetches the live catalog for the active provider. Rows
-belonging to the active profile's own model list are marked `(profile)`, and the
-one currently active is marked `(active)` — this is purely a display hint; the
-full catalog is always shown.
-For a profile that recorded its `harnesses`, those rows also show the agents each
-model works with, e.g. `[claude, codex]`.
+**`codemie models list`** fetches the live catalog for the active provider. On a
+profile set up per agent (`agentModels`) it prints an "Agents:" block, then an
+`AGENTS` column listing the agents each model is available to, `*` marking the
+agents that start with it. `--agent` tags only
+that agent's models as `(active)`/`(profile)`. A legacy profile keeps the
+`(active)` tag. The full catalog is always shown.
 
-**`codemie models switch`** only ever touches the active profile's own `models`
-list (never the full provider catalog), and only writes the profile's `model`
-field (plus Claude's haiku/sonnet/opus tiers, when applicable) — never
-credentials, `reasoningEffort`, or workspace settings:
-- With no argument, it prompts you to pick from the profile's own models.
-  When the profile has `harnesses`, each row is annotated with the agents the
-  model works with (informational; any listed model can be chosen).
-- With an unknown `<model-id>`, it fails loudly (non-zero exit), lists the
-  profile's real models, and writes nothing.
-- A single-model profile (or an `anthropic-subscription`/`moonshot-subscription`
-  profile, which only ever supports one model) is a documented no-op — run
-  `codemie setup` → "Update an existing profile" to add more models first.
-- It never takes a `--profile` flag — to switch models on a different profile,
-  switch to it first with `codemie profile switch`.
+**`codemie models switch`** writes only the chosen agent's active model (plus the
+top-level `model` when it is the first agent, and Claude's haiku/sonnet/opus tiers
+when the agent is Claude) — never credentials, `reasoningEffort`, or workspace
+settings:
+- Without `--agent`, a model id picks the agent when only one agent has it;
+  otherwise you choose the agent, then one of its own models.
+- An agent with no in-session model menu (gemini, kimi, copilot-cli, openwiki)
+  has no saved list: it is offered the live catalog filtered by its rules, and
+  the chosen model replaces its set.
+- An unknown agent or model fails loudly (non-zero exit) and writes nothing.
+- An agent with one model, or a single-model legacy profile, is a no-op — run
+  `codemie setup` → "Update an existing profile" to add more.
+- Esc cancels without changes. It never takes a `--profile` flag — switch
+  profiles first with `codemie profile switch`.
 
 ## Analytics Commands
 

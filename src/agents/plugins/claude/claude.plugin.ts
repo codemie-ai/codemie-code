@@ -511,7 +511,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          // CODEMIE_PROFILE_MODELS (set for the agent's own list on a per-agent profile, or 2+ models)
+          // CODEMIE_PROFILE_MODELS (set for the agent's own list on a per-agent profile)
           // narrows the menu to this profile's own list. Its absence is the
           // fallback signal to show the full catalog, same as an empty
           // intersection with a live catalog that dropped every one of those
@@ -545,8 +545,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
                 menuOptions = activeOption ? [...matched, activeOption] : matched;
               }
             } else {
-              logger.warn(
-                '[Claude] CODEMIE_PROFILE_MODELS matched none of the live /model options — showing the full catalog instead'
+              // AC22: the user must see that the menu could not be limited, not just the log file.
+              logger.notice(
+                '[Claude] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog'
               );
             }
           }

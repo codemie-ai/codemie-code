@@ -45,7 +45,6 @@ export const OpenWikiPluginMetadata: AgentMetadata = {
   },
   lifecycle: {
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
-
       env.OPENWIKI_PROVIDER = 'openai-compatible';
 
       // Follow CodeMie's own debug flag: OpenWiki's run view renders a live

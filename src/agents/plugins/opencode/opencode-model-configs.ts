@@ -746,9 +746,9 @@ export function getResponsesApiModelConfigs(
 /**
  * Narrow a model config map to the active profile's own models
  * (CODEMIE_PROFILE_MODELS, comma-separated), plus whichever model is actually
- * selected for this session — the selected model is always kept even when it
- * is missing from the allowed list, so the session never starts with a
- * config lacking its own active model.
+ * selected for this session — the selected model is kept even when it is
+ * missing from the allowed list, as long as the catalogue has it, so the
+ * session never starts with a config lacking its own active model.
  *
  * The AC22 fallback is judged on the allowed-CSV intersection alone (before
  * the selected-model add): when the profile's own list matches nothing in
@@ -770,8 +770,9 @@ export function filterToAllowed(
   if (matchedIds.length === 0) {
     // CR-004: AC22 requires a notice when the menu can't be limited and falls
     // back to the full catalog — Claude/Pi's equivalent fallbacks already warn.
-    logger.warn(
-      '[opencode-model-configs] CODEMIE_PROFILE_MODELS matched none of the live models — showing the full catalog instead'
+    // AC22: the user must see that the menu could not be limited, not just the log file.
+    logger.notice(
+      '[opencode-model-configs] None of this agent\'s profile models are in the live catalog — the model menu shows the full catalog'
     );
     return allModels;
   }

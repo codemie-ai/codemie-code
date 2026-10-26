@@ -7,18 +7,13 @@ import { logger } from '../../utils/logger.js';
 import type { ModelInfo } from '../../providers/core/types.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { autoSelectModelTiers } from './setup.js';
-import { promptModelSwitchSelection, promptAgentSwitchSelection } from './models-switch-prompt.js';
+import { promptModelSwitchSelection, promptAgentSwitchSelection, ModelSwitchCancelledError } from './models-switch-prompt.js';
 import { agentsUsingModel, classifyModelForAgent, getAgentDisplayName, isActiveModelOnly } from '../../agents/core/model-compat.js';
 
 /** Providers whose setup auto-picks the single model they support (no multi-model UX). */
 const SUBSCRIPTION_SINGLE_MODEL_PROVIDERS = new Set(['anthropic-subscription', 'moonshot-subscription']);
 
 const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
-
-/** Most agent columns shown before falling back to a single AGENTS column. */
-const MAX_AGENT_COLUMNS = 4;
-const AGENT_ACTIVE_MARK = 'active';
-const AGENT_AVAILABLE_MARK = '✓';
 
 export function formatTable(
   models: ModelInfo[],
@@ -40,9 +35,8 @@ export function formatTable(
   // Only shown when the catalog actually has router entries — see fetchModelsFromAPI's
   // metadata.isRouter (Switchyard virtual routers and LiteLLM auto-router declarations alike).
   const showType = models.some(m => m.metadata?.isRouter === true);
-  // A profile set up per agent gets agent columns instead of the trailing tag.
-  const agents = agentModels ? buildAgentColumns(agentModels, ID_WIDTH + NAME_WIDTH +
-    (showOrigin ? ORIGIN_WIDTH : 0) + (showType ? TYPE_WIDTH : 0)) : undefined;
+  // A profile set up per agent gets an AGENTS column instead of the trailing tag.
+  const agents = agentModels ? buildAgentsColumn(agentModels) : undefined;
 
   const header =
     chalk.bold(padEnd('ID', ID_WIDTH)) +
@@ -74,8 +68,13 @@ export function formatTable(
         : profileModelIds.includes(model.id)
           ? chalk.cyan(' (profile)')
           : '';
-    const agentCells = agents ? agents.row(model.id) : '';
-    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + agentCells + chalk.dim(desc) + tag);
+    const [agentCell = '', ...moreAgentLines] = agents ? agents.row(model.id) : [];
+    console.log(chalk.cyan(id) + chalk.white(name) + origin + type + agentCell + chalk.dim(desc) + tag);
+    // A long agent list continues under its own column, so the row grows instead of being cut.
+    const leadWidth = ID_WIDTH + NAME_WIDTH + (showOrigin ? ORIGIN_WIDTH : 0) + (showType ? TYPE_WIDTH : 0);
+    for (const line of moreAgentLines) {
+      console.log(' '.repeat(leadWidth) + line.trimEnd());
+    }
   }
 
   if (agents) {
@@ -83,39 +82,21 @@ export function formatTable(
   }
 }
 
-interface AgentColumns {
+interface AgentsColumn {
   header: string;
   width: number;
-  row: (modelId: string) => string;
+  /** One cell per line; a list longer than the column wraps onto further lines. */
+  row: (modelId: string) => string[];
   legend: string;
 }
 
 /**
- * One column per agent ("active" / "✓" / blank), so a cell only ever says how one agent uses
- * the model. With many agents, or when the columns would overflow the terminal, a single AGENTS
- * column lists them instead, with `*` marking the agents that have the model active.
+ * A single AGENTS column listing the agents each model is available to, with `*` marking the
+ * agents that start with it.
  */
-function buildAgentColumns(agentModels: NonNullable<ProviderProfile['agentModels']>, leadWidth: number): AgentColumns {
+function buildAgentsColumn(agentModels: NonNullable<ProviderProfile['agentModels']>): AgentsColumn {
   const entries = Object.entries(agentModels);
   const switchHint = 'switch with `codemie models switch --agent <name>`';
-
-  const columnWidth = Math.max(AGENT_ACTIVE_MARK.length, ...entries.map(([agent]) => agent.length)) + 2;
-  const columnsWidth = columnWidth * entries.length;
-  const terminalWidth = process.stdout.columns;
-  const fits = entries.length <= MAX_AGENT_COLUMNS && (!terminalWidth || leadWidth + columnsWidth <= terminalWidth);
-
-  if (fits) {
-    return {
-      header: entries.map(([agent]) => padEnd(agent.toUpperCase(), columnWidth)).join(''),
-      width: columnsWidth,
-      row: modelId => entries.map(([, set]) => {
-        if (set.model === modelId) return chalk.green(padEnd(AGENT_ACTIVE_MARK, columnWidth));
-        if (set.models.includes(modelId)) return chalk.cyan(padEnd(AGENT_AVAILABLE_MARK, columnWidth));
-        return padEnd('', columnWidth);
-      }).join(''),
-      legend: `${AGENT_ACTIVE_MARK} = the agent starts with this model · ${AGENT_AVAILABLE_MARK} = available to the agent (${switchHint})`,
-    };
-  }
 
   const width = 30;
   return {
@@ -127,20 +108,23 @@ function buildAgentColumns(agentModels: NonNullable<ProviderProfile['agentModels
       const names = entries
         .filter(([, set]) => set.models.includes(modelId))
         .map(([agent, set]) => ({ text: set.model === modelId ? `${agent}*` : agent, active: set.model === modelId }));
+      const lines: string[] = [];
       let plain = '';
       let styled = '';
       for (const [index, name] of names.entries()) {
         const separator = index === 0 ? '' : ', ';
-        // Leave at least one space before DESCRIPTION; cut the list with "…" when it is too long.
-        if (plain.length + separator.length + name.text.length > width - 1) {
-          plain += '…';
-          styled += chalk.dim('…');
-          break;
+        // Leave at least one space before DESCRIPTION; wrap onto the next line when the name does not fit.
+        if (plain && plain.length + separator.length + name.text.length > width - 1) {
+          lines.push(styled + chalk.dim(',') + ' '.repeat(Math.max(1, width - plain.length - 1)));
+          plain = '';
+          styled = '';
         }
-        plain += separator + name.text;
-        styled += chalk.dim(separator) + (name.active ? chalk.green(name.text) : chalk.cyan(name.text));
+        const lead = plain ? separator : '';
+        plain += lead + name.text;
+        styled += chalk.dim(lead) + (name.active ? chalk.green(name.text) : chalk.cyan(name.text));
       }
-      return styled + ' '.repeat(Math.max(1, width - plain.length));
+      lines.push(styled + ' '.repeat(Math.max(1, width - plain.length)));
+      return lines;
     },
     legend: `AGENTS = agents the model is available to; * = the agent starts with this model (${switchHint})`,
   };
@@ -209,7 +193,7 @@ export async function runModelsSwitch(
     return;
   }
 
-  const profile = await ConfigLoader.getProfile(activeProfileName, workingDir);
+  const profile = await ConfigLoader.getProfileForModelSwitch(activeProfileName, workingDir);
   if (!profile) {
     console.error(chalk.red(`Active profile "${activeProfileName}" not found. Run `) + chalk.cyan('codemie setup') + chalk.red('.'));
     process.exit(1);
@@ -434,8 +418,7 @@ async function refreshClaudeTiers(
   workingDir: string
 ): Promise<{ haikuModel?: string; sonnetModel?: string; opusModel?: string } | undefined> {
   const claudeAgent = AgentRegistry.getAgent('claude');
-  const claudeMetadata = (claudeAgent as any)?.metadata;
-  const supportsClaude = claudeMetadata?.supportedProviders?.includes(profile.provider);
+  const supportsClaude = Boolean(profile.provider && claudeAgent?.metadata.supportedProviders.includes(profile.provider));
   if (!supportsClaude || !profile.provider) return undefined;
 
   try {
@@ -564,6 +547,10 @@ not set up, sees the full catalog everywhere, exactly as before.
       try {
         await runModelsSwitch(modelIdArg, process.cwd(), options.agent);
       } catch (error: unknown) {
+        if (error instanceof ModelSwitchCancelledError) {
+          console.log(chalk.yellow('Model switch cancelled - nothing changed.'));
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         console.error(chalk.red(`Failed to switch model: ${message}`));
         process.exit(1);

@@ -1,5 +1,5 @@
 /**
- * `codemie models list` AGENTS fallback column: each agent name is colored on its own (active
+ * `codemie models list` AGENTS column: each agent name is colored on its own (active
  * green, available cyan), and padding ignores the color codes so DESCRIPTION stays aligned.
  */
 
@@ -22,7 +22,6 @@ import type { ModelInfo } from '../../../providers/core/types.js';
 const model = (id: string): ModelInfo => ({ id, name: id, description: 'desc' }) as ModelInfo;
 const stripTags = (s: string): string => s.replace(/<\/?[gcd]>/g, '');
 
-// Five agents force the single AGENTS column.
 const agentModels = {
   claude: { models: ['shared'], model: 'claude-x' },
   codex: { models: ['shared'], model: 'shared' },
@@ -63,14 +62,19 @@ describe('formatTable — AGENTS column colors', () => {
     }
   });
 
-  it('cuts a list longer than the column with an ellipsis', () => {
+  it('wraps a list longer than the column, keeping each line padded and colored', () => {
     const long = Object.fromEntries(
       ['agent-one', 'agent-two', 'agent-three', 'agent-four', 'agent-five'].map(name => [name, { models: ['m'], model: 'other' }])
     );
     formatTable([model('m')], [], undefined, long);
 
-    const plain = stripTags(rowFor('m'));
-    expect(plain).toContain('agent-one, agent-two…');
-    expect(plain).not.toContain('agent-three');
+    const lines = logSpy.mock.calls.map(call => String(call[0]));
+    const row = lines.findIndex(line => stripTags(line).startsWith('m '));
+    const header = stripTags(lines[0]);
+    expect(stripTags(lines[row])).toContain('agent-one, agent-two,');
+    expect(stripTags(lines[row]).indexOf('desc')).toBe(header.indexOf('DESCRIPTION'));
+    expect(stripTags(lines[row + 1]).slice(header.indexOf('AGENTS'))).toBe('agent-three, agent-four,');
+    expect(lines[row + 2]).toContain('<c>agent-five</c>');
+    expect(lines.join('\n')).not.toContain('…');
   });
 });

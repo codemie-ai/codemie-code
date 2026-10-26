@@ -505,7 +505,7 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
 /**
  * Narrow an available-model id list to the active profile's own models
  * (CODEMIE_PROFILE_MODELS, comma-separated — set for the agent's own list on a
- * per-agent profile, or when a profile has 2+ models), keeping the configured CODEMIE_MODEL even when it is missing from
+ * per-agent profile), keeping the configured CODEMIE_MODEL even when it is missing from
  * the allowed list (CR-003) — setupProxy assigns env.CODEMIE_MODEL right
  * before calling this, so a retirement-healed active model must survive the
  * narrowing the same way OpenCode's filterToAllowed and Pi's
@@ -560,8 +560,9 @@ function filterCatalogModelsToProfile(
   const filtered = catalogModels.filter(entry => allowed.has(entry.id));
 
   if (filtered.length === 0) {
-    logger.warn(
-      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the catalog models — showing the full catalog in the /model picker instead'
+    // AC22: the user must see that the menu could not be limited, not just the log file.
+    logger.notice(
+      '[codex-models] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog'
     );
     return catalogModels;
   }

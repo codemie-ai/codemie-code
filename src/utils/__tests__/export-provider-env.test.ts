@@ -137,10 +137,11 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
       expect(env.CODEMIE_MODEL).toBe('a');
     });
 
-    it('omits the key entirely for a single-model profile (only model)', () => {
+    // Empty rather than absent: it overrides a value inherited from a parent codemie session.
+    it('exports an empty key for a single-model profile (only model)', () => {
       const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a' }));
 
-      expect(env).not.toHaveProperty('CODEMIE_PROFILE_MODELS');
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('');
     });
 
     it('exports the agent own list even when it holds a single model', () => {
@@ -150,10 +151,10 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
       expect(env.CODEMIE_MODEL).toBe('c');
     });
 
-    it('omits the key for an agent the per-agent profile does not configure', () => {
+    it('exports an empty key for an agent the per-agent profile does not configure', () => {
       const env = ConfigLoader.exportProviderEnvVars(withAgentModelView(cfg({ model: 'a', agentModels }), 'pi'));
 
-      expect(env).not.toHaveProperty('CODEMIE_PROFILE_MODELS');
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('');
       expect(env.CODEMIE_MODEL).toBe('a');
     });
   });

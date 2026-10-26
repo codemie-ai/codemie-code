@@ -19,7 +19,11 @@ export interface ModelCompatOptions {
   isRouter?: boolean | ((modelId: string) => boolean);
   /** Ids the user confirmed despite a name-rule mismatch (reported as `unverified`). */
   confirmedModels?: string[];
-  /** Profile provider; outside the agent's non-empty `supportedProviders` means incompatible. */
+  /**
+   * Profile provider; for an agent with model rules, outside its non-empty `supportedProviders`
+   * means incompatible. A rule-free agent is always compatible (provider support is checked
+   * separately, e.g. on the setup agents screen).
+   */
   provider?: string;
 }
 

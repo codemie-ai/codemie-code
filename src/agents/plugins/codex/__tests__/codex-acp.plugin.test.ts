@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+// The CodeMie-owned CODEX_HOME resolves under the real home; keep it under the per-test CODEMIE_HOME.
+vi.mock('../../../../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../utils/paths.js')>();
+  return {
+    ...actual,
+    resolveHomeDir: (dir: string) => join(process.env.CODEMIE_HOME ?? tmpdir(), dir),
+  };
+});
+
 import { CodexAcpPlugin, CodexAcpPluginMetadata, syncModelCatalogToConfigToml } from '../codex-acp.plugin.js';
 import { CodexPluginMetadata } from '../codex.plugin.js';
 
@@ -55,9 +64,7 @@ describe('CodexAcpPluginMetadata', () => {
   });
 
   describe('beforeRun', () => {
-    // beforeRun now syncs CODEX_HOME/config.toml; without an explicit CODEX_HOME it would
-    // resolve under the real home (resolveHomeDir ignores CODEMIE_HOME) and rewrite the
-    // developer's actual ~/.codex/codemie/home/config.toml.
+    // An explicit CODEX_HOME counts as the user's own, so beforeRun leaves its config.toml alone.
     const callBeforeRun = async (env: NodeJS.ProcessEnv) =>
       (CodexAcpPluginMetadata.lifecycle!.beforeRun as (env: NodeJS.ProcessEnv, config: never) => Promise<NodeJS.ProcessEnv>)(
         { CODEX_HOME: await mkdtemp(join(tmpdir(), 'codemie-codex-acp-home-')), ...env },
@@ -221,14 +228,25 @@ describe('syncModelCatalogToConfigToml', () => {
     await expect(readFile(join(home, 'config.toml'), 'utf-8')).rejects.toThrow();
   });
 
-  it('is wired into beforeRun via CODEMIE_CODEX_MODEL_CATALOG_JSON', async () => {
-    // Explicit CODEX_HOME: beforeRun's default resolves under the real home, not CODEMIE_HOME.
-    const { home } = await setup();
-    const result = await (CodexAcpPluginMetadata.lifecycle!.beforeRun as (env: NodeJS.ProcessEnv, config: never) => Promise<NodeJS.ProcessEnv>)(
-      { CODEX_HOME: home, CODEMIE_CODEX_MODEL_CATALOG_JSON: '/cat/models.json' },
+  const beforeRun = (env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> =>
+    (CodexAcpPluginMetadata.lifecycle!.beforeRun as (env: NodeJS.ProcessEnv, config: never) => Promise<NodeJS.ProcessEnv>)(
+      env,
       {} as never,
     );
+
+  it('is wired into beforeRun via CODEMIE_CODEX_MODEL_CATALOG_JSON for the CodeMie-owned CODEX_HOME', async () => {
+    const result = await beforeRun({ CODEMIE_CODEX_MODEL_CATALOG_JSON: '/cat/models.json' });
+
+    expect(result.CODEX_HOME).toBe(join(process.env.CODEMIE_HOME!, '.codex/codemie/home'));
     const toml = await readFile(join(result.CODEX_HOME!, 'config.toml'), 'utf-8');
     expect(toml).toContain('model_catalog_json = "/cat/models.json"');
+  });
+
+  it('never rewrites a CODEX_HOME the user set', async () => {
+    const { home, read } = await setup('model_catalog_json = "/mine.json"\n');
+
+    await beforeRun({ CODEX_HOME: home, CODEMIE_CODEX_MODEL_CATALOG_JSON: '/cat/models.json' });
+
+    expect(await read()).toBe('model_catalog_json = "/mine.json"\n');
   });
 });

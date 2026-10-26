@@ -12,6 +12,14 @@ import { buildSingleChoiceRow, buildTopLine } from './shared/selection/ui.js';
 import { ANSI, KEY } from './shared/selection/constants.js';
 import { COLOR } from './shared/constants.js';
 
+/** The user left a switch prompt (Esc / Ctrl+C); nothing was changed. */
+export class ModelSwitchCancelledError extends Error {
+  constructor() {
+    super('Model selection cancelled.');
+    this.name = 'ModelSwitchCancelledError';
+  }
+}
+
 export interface ModelSwitchSelectionUIOptions {
   message: string;
   models: string[];
@@ -162,7 +170,7 @@ function promptRawSingleChoice(options: Omit<ModelSwitchSelectionUIOptions, 'cur
         case KEY.ESC:
         case KEY.CTRL_C:
           cleanup();
-          reject(new Error('Model selection cancelled.'));
+          reject(new ModelSwitchCancelledError());
           break;
         default:
           break;

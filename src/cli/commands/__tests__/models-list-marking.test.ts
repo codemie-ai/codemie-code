@@ -61,73 +61,47 @@ describe('formatTable — profile model marking', () => {
     expect(rendered).not.toContain('(profile)');
   });
 
-  describe('per-agent columns', () => {
+  describe('AGENTS column', () => {
     const agentModels = {
       claude: { models: ['claude-x', 'shared'], model: 'claude-x' },
       codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
       opencode: { models: ['shared', 'gpt-5.4'], model: 'shared' },
     };
-    let columns: PropertyDescriptor | undefined;
 
-    beforeEach(() => {
-      columns = Object.getOwnPropertyDescriptor(process.stdout, 'columns');
-      Object.defineProperty(process.stdout, 'columns', { value: 200, configurable: true });
-    });
-    afterEach(() => {
-      if (columns) Object.defineProperty(process.stdout, 'columns', columns);
-      else delete (process.stdout as { columns?: number }).columns;
-    });
-
-    /** The cells of one row between NAME and DESCRIPTION, split by agent column. */
-    function agentCells(line: string | undefined): string[] {
-      const header = allLogs().split('\n')[0];
-      const start = header.indexOf('CLAUDE');
-      const end = header.indexOf('DESCRIPTION');
-      const width = header.indexOf('CODEX') - start;
-      const cells = (line ?? '').slice(start, end);
-      return [0, 1, 2].map(i => cells.slice(i * width, (i + 1) * width).trim());
-    }
-
-    it('gives each agent its own column: active, available, or blank', () => {
+    it('lists the agents of each model in one column, starring active agents', () => {
       formatTable([model('claude-x'), model('gpt-5.4'), model('shared'), model('other')], [], undefined, agentModels);
 
       const lines = allLogs().split('\n');
-      expect(lines[0]).toMatch(/CLAUDE\s+CODEX\s+OPENCODE\s+DESCRIPTION/);
-      expect(agentCells(lines.find(l => /^claude-x\s/.test(l)))).toEqual(['active', '', '']);
-      expect(agentCells(lines.find(l => /^gpt-5.4\s/.test(l)))).toEqual(['', 'active', '✓']);
-      expect(agentCells(lines.find(l => /^shared\s/.test(l)))).toEqual(['✓', '', 'active']);
-      expect(agentCells(lines.find(l => /^other\s/.test(l)))).toEqual(['', '', '']);
+      expect(lines[0]).toMatch(/AGENTS\s+DESCRIPTION/);
+      expect(lines[0]).not.toContain('CLAUDE');
+      expect(lines.find(l => /^claude-x\s/.test(l))).toContain('claude*');
+      expect(lines.find(l => /^gpt-5.4\s/.test(l))).toContain('codex*, opencode');
+      expect(lines.find(l => /^shared\s/.test(l))).toContain('claude, opencode*');
+      expect(lines.find(l => /^other\s/.test(l))).not.toMatch(/claude|codex|opencode/);
       expect(allLogs()).not.toContain('(active)');
     });
 
     it('explains the marks in a legend under the table', () => {
       formatTable([model('claude-x')], [], undefined, agentModels);
 
-      expect(allLogs()).toContain('active = the agent starts with this model');
-      expect(allLogs()).toContain('✓ = available to the agent');
+      expect(allLogs()).toContain('* = the agent starts with this model');
       expect(allLogs()).toContain('codemie models switch --agent <name>');
     });
 
-    it('falls back to one AGENTS column, starring active agents, with more than four agents', () => {
-      const many = {
-        ...agentModels,
-        gemini: { models: ['gemini-x'], model: 'gemini-x' },
-        pi: { models: ['shared'], model: 'shared' },
-      };
-      formatTable([model('shared'), model('gpt-5.4')], [], undefined, many);
+    it('wraps a list that does not fit onto further lines under the AGENTS column', () => {
+      const many = Object.fromEntries(
+        ['claude', 'codex', 'gemini', 'opencode', 'pi', 'codemie-code'].map(a => [a, { models: ['shared'], model: 'x' }])
+      );
+      formatTable([model('shared'), model('next')], [], undefined, many);
 
       const lines = allLogs().split('\n');
-      expect(lines[0]).toMatch(/AGENTS\s+DESCRIPTION/);
-      expect(lines.find(l => /^shared\s/.test(l))).toContain('claude, opencode*, pi*');
-      expect(lines.find(l => /^gpt-5.4\s/.test(l))).toContain('codex*, opencode');
-      expect(allLogs()).toContain('* = the agent starts with this model');
-    });
-
-    it('falls back to one AGENTS column when the columns would overflow the terminal', () => {
-      Object.defineProperty(process.stdout, 'columns', { value: 100, configurable: true });
-      formatTable([model('shared')], [], undefined, agentModels);
-
-      expect(allLogs().split('\n')[0]).toMatch(/AGENTS\s+DESCRIPTION/);
+      const row = lines.findIndex(l => /^shared\s/.test(l));
+      const column = lines[0].indexOf('AGENTS');
+      expect(lines[row]).toContain('claude, codex, gemini,');
+      expect(lines[row + 1].slice(0, column).trim()).toBe('');
+      expect(lines[row + 1].slice(column)).toBe('opencode, pi, codemie-code');
+      expect(lines[row + 2]).toMatch(/^next\s/);
+      expect(allLogs()).not.toContain('…');
     });
   });
 
@@ -197,16 +171,16 @@ describe('runModelsList', () => {
     },
   };
 
-  it('prints the Agents block and per-agent columns, used models first', async () => {
+  it('prints the Agents block and the AGENTS column, used models first', async () => {
     mockConfig(perAgent);
 
     await runModelsList(undefined, '/work');
 
     const rows = out().split('\n').filter(l => /^(claude-x|gpt-5.4|other)\s/.test(l));
     expect(out()).toContain('Agents:');
-    expect(out()).toMatch(/CLAUDE\s+CODEX\s+DESCRIPTION/);
+    expect(out()).toMatch(/AGENTS\s+DESCRIPTION/);
     expect(rows.map(l => l.split(/\s+/)[0])).toEqual(['claude-x', 'gpt-5.4', 'other']);
-    expect(rows[0]).toMatch(/active\s+✓/);
+    expect(rows[0]).toContain('claude*, codex');
   });
 
   it('tags only the named agent models with --agent', async () => {
@@ -220,7 +194,7 @@ describe('runModelsList', () => {
     expect(lines.find(l => /^gpt-5.4\s/.test(l))).toContain('(active)');
     expect(lines.find(l => /^claude-x\s/.test(l))).toContain('(profile)');
     expect(lines.find(l => /^other\s/.test(l))).not.toContain('(');
-    expect(out()).not.toMatch(/CLAUDE\s+CODEX/);
+    expect(out()).not.toContain('AGENTS');
     // Codex's own models come first.
     expect(lines.filter(l => /^(claude-x|gpt-5.4|other)\s/.test(l)).map(l => l.split(/\s+/)[0]))
       .toEqual(['claude-x', 'gpt-5.4', 'other']);

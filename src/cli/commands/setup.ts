@@ -15,6 +15,7 @@ import {
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
+import type { ProviderCredentials, ProviderSetupSteps } from '../../providers/core/types.js';
 import { runAgentModelsWizard, type AgentModelsResult } from './setup-wizard/index.js';
 import { agentModelsDisplay } from './profile/display.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
@@ -242,7 +243,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
  */
 export async function handlePluginSetup(
   providerName: string,
-  setupSteps: any,
+  setupSteps: ProviderSetupSteps,
   profileName: string | null,
   isUpdate: boolean,
   storageLocation: 'global' | 'local' = 'global'
@@ -291,8 +292,8 @@ export async function handlePluginSetup(
         providerTemplate,
         isRouter: await fetchRouterLookup(setupSteps, credentials, models),
         recommendedIds: await fetchRecommendedIds(setupSteps, credentials, models),
-        searchModel: typeof setupSteps.searchModel === 'function'
-          ? () => setupSteps.searchModel(credentials)
+        searchModel: setupSteps.searchModel
+          ? async () => (await setupSteps.searchModel?.(credentials)) ?? undefined
           : undefined,
         existing: existingProfile,
       });
@@ -324,19 +325,17 @@ export async function handlePluginSetup(
       }
 
       if (failedModelIds.length > 0) {
-        selectedModels = selectedModels.filter(id => !failedModelIds.includes(id));
-        if (selectedModels.length === 0) {
+        if (failedModelIds.length === selectedModels.length) {
           throw new Error(`Failed to install all selected models: ${failedModelIds.join(', ')}`);
         }
         console.log(
           chalk.yellow(`⚠ Could not install: ${failedModelIds.join(', ')} - continuing with the rest`)
         );
+        // Only the wizard picks several models, so agentModels is set here. Failed installs can
+        // remove the last model an agent had.
         if (agentModels) {
-          // Failed installs can remove the last model an agent had.
           agentModels = withoutModels(agentModels, failedModelIds);
           selectedModel = Object.values(agentModels)[0].model;
-        } else if (!selectedModels.includes(selectedModel)) {
-          selectedModel = selectedModels[0];
         }
       }
     }
@@ -345,8 +344,7 @@ export async function handlePluginSetup(
     let modelTiers: { haikuModel?: string; sonnetModel?: string; opusModel?: string } = {};
     const claudeAgent = AgentRegistry.getAgent('claude');
     if (claudeAgent) {
-      const claudeMetadata = (claudeAgent as any).metadata;
-      const supportsClaude = claudeMetadata?.supportedProviders?.includes(providerName);
+      const supportsClaude = claudeAgent.metadata.supportedProviders.includes(providerName);
       if (supportsClaude) {
         modelTiers = await autoSelectModelTiers(models, agentModels?.claude?.model ?? selectedModel);
       }
@@ -519,11 +517,11 @@ async function promptForProfileName(providerName: string): Promise<string> {
  * even when the name carries no "router". Best effort - a failed lookup only loses the hint.
  */
 async function fetchRouterLookup(
-  setupSteps: any,
-  credentials: any,
+  setupSteps: ProviderSetupSteps,
+  credentials: ProviderCredentials,
   models: string[]
 ): Promise<((id: string) => boolean) | undefined> {
-  if (models.length === 0 || typeof setupSteps.fetchRouterModels !== 'function') return undefined;
+  if (models.length === 0 || !setupSteps.fetchRouterModels) return undefined;
   try {
     const routerIds = new Set<string>(await setupSteps.fetchRouterModels(credentials));
     return id => routerIds.has(id);
@@ -538,11 +536,11 @@ async function fetchRouterLookup(
  * provider supports it; the wizard falls back to the template's static recommendedModels.
  */
 async function fetchRecommendedIds(
-  setupSteps: any,
-  credentials: any,
+  setupSteps: ProviderSetupSteps,
+  credentials: ProviderCredentials,
   models: string[]
 ): Promise<Set<string> | undefined> {
-  if (models.length === 0 || typeof setupSteps.getRecommendedModels !== 'function') return undefined;
+  if (models.length === 0 || !setupSteps.getRecommendedModels) return undefined;
   const recommendSpinner = ora('Finding recommended models...').start();
   try {
     return new Set<string>(await setupSteps.getRecommendedModels(models, credentials));

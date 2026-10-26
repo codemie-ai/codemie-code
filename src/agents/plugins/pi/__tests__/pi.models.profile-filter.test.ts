@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/utils/logger.js', () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), notice: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
 import { filterEntriesToProfile, type PiModelEntry } from '../pi.models.js';
@@ -44,9 +44,9 @@ describe('filterEntriesToProfile', () => {
     expect(result.map(e => e.id).sort()).toEqual(['b', 'c']);
   });
 
-  it('falls back to the unfiltered list and warns when the intersection is empty (AC22)', () => {
+  it('falls back to the unfiltered list and tells the user when the intersection is empty (AC22)', () => {
     const result = filterEntriesToProfile(entries, { CODEMIE_PROFILE_MODELS: 'z,y' });
     expect(result.map(e => e.id).sort()).toEqual(['a', 'b', 'c']);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.notice).toHaveBeenCalledTimes(1);
   });
 });

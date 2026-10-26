@@ -185,11 +185,9 @@ for providers that auto-pick their single model (`anthropic-subscription`,
   is accepted unless the agent's rules reject it; when the catalog cannot be
   fetched, pass the model id.
 - `codemie models list [--agent <name>]` prints an "Agents:" block (each agent's
-  models, active first), then the catalog with one column per agent: `active`
-  (the agent starts with this model), `✓` (available to the agent) or blank. A
-  legend explains the marks. With more than four agents, or when the columns would
-  not fit the terminal, a single `AGENTS` column lists them instead, `*` marking
-  the agents that have the model active. Models any agent uses come first.
+  models, active first), then the catalog with an `AGENTS` column listing the
+  agents each model is available to, `*` marking the agents that start with it. A
+  legend explains the mark. Models any agent uses come first.
   `--agent` tags only that agent's models as `(active)`/`(profile)`. A legacy
   profile keeps the `(active)` tag only.
 - `codemie profile status` shows an "Agent models" row per agent.

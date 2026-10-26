@@ -133,27 +133,34 @@ interface ConfigWithSources {
   "workspace": {},
   "profiles": {
     "default": { "provider": "bedrock", "authMethod": "sso", "model": "claude-3-5-sonnet", "awsRegion": "us-east-1" },
-    "work":    { "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project", "model": "claude-sonnet-5", "models": ["claude-sonnet-5", "gpt-5.6-terra"] },
+    "work":    {
+      "provider": "ai-run-sso", "codeMieUrl": "https://codemie.example.com", "codeMieProject": "work-project", "model": "claude-sonnet-5",
+      "agentModels": {
+        "claude": { "models": ["claude-sonnet-5", "claude-haiku-5"], "model": "claude-sonnet-5" },
+        "codex":  { "models": ["gpt-5.6-terra"], "model": "gpt-5.6-terra" }
+      }
+    },
     "personal": { "provider": "anthropic-subscription", "codeMieProject": null }
   }
 }
 ```
 
-`models` is optional and additive — a profile with no `models` field (like
-`default` above) is read as having exactly `[model]`; it needs no migration.
-When present, it always includes the active `model`. `codemie models switch`
-changes which of a profile's `models` is active (writing `model` in place);
-Claude/Codex/OpenCode/Pi's in-session model menus narrow to a profile's
-`models` list via `CODEMIE_PROFILE_MODELS` when it has 2+ entries.
+`agentModels` is optional and additive. `codemie setup` fills it from a per-agent
+wizard (agents, then each agent's models and active model), keyed by base agent
+name (ACP variants share it): `models` is what the agent may use, `model` its
+active model, and optional `confirmedModels` the ids accepted despite the agent's
+model-name rule. Agents with no in-session model menu (`activeModelOnly`: gemini,
+kimi, copilot-cli, openwiki) hold only their active model. The top-level `model`
+mirrors the first agent's active model. A profile without `agentModels` (like
+`default` above) is legacy: read as `[model]`, never migrated, and a launch with
+an incompatible model only warns; with `agentModels` that launch is blocked unless
+`--model` or `CODEMIE_MODEL` overrides the model.
 
-`harnesses` (base agent names the profile serves, e.g. `["claude", "codex"]`) and
-`confirmedModels` (ids confirmed despite a name-rule mismatch, a subset of
-`models`) are also optional and additive. `codemie setup` collects `harnesses` in
-its "Which agents will use this profile?" step (skipped for `anthropic-subscription`
-and `moonshot-subscription`, which then save none) and only offers models those
-agents can run. A profile without `harnesses` is legacy: it is never migrated, and
-a launch with an incompatible active model only warns. With `harnesses`, that
-launch is blocked, unless `--model` or `CODEMIE_MODEL` overrides the model.
+At launch each agent sees only its own set: `CODEMIE_MODEL` is its active model
+and `CODEMIE_PROFILE_MODELS` its `models` (empty for a legacy profile or an agent
+not in `agentModels`), which narrows Claude/Codex/OpenCode/codemie-code/Pi's
+in-session model menus. `codemie models switch [--agent <name>]` changes one
+agent's active model in the scope that owns `agentModels`.
 
 ---
 

@@ -108,14 +108,14 @@ describe('Claude /model picker — CODEMIE_PROFILE_MODELS intersection', () => {
     expect(options).toHaveLength(4);
   });
 
-  it('falls back to the full catalog and warns when the intersection is empty', async () => {
+  it('falls back to the full catalog and tells the user when the intersection is empty (AC22)', async () => {
     const env: HookEnv = { CODEMIE_MODEL: 'a', CODEMIE_PROFILE_MODELS: 'does-not-exist' };
 
     await beforeRun(env, {});
 
     const options = writtenOptions(env);
     expect(options).toHaveLength(4);
-    expect(loggerMock.warn).toHaveBeenCalled();
+    expect(loggerMock.notice).toHaveBeenCalledWith(expect.stringContaining('shows the full catalog'));
   });
 
   // CR-002: the narrowing filter must never exclude the model the session is

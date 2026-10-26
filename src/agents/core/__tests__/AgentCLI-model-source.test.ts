@@ -219,4 +219,16 @@ describe('AgentCLI.handleRun — per-agent models (EPMCDME-15641)', () => {
     expect(run).toHaveBeenCalled();
     expect(exportedConfig().model).toBe('my-env-model');
   });
+
+  it('ignores an inherited CODEMIE_MODEL with --profile, launching the agent active model', async () => {
+    // ConfigLoader.load drops CODEMIE_MODEL when --profile is given (profile protection).
+    mockHandleRunDependencies('claude-x', perAgent);
+    process.env.CODEMIE_MODEL = 'parent-session-model';
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    await (new AgentCLI(agentAdapter(run)) as unknown as Cli).handleRun([], { profile: 'default' });
+
+    expect(run).toHaveBeenCalled();
+    expect(exportedConfig().model).toBe('gpt-5.4');
+  });
 });

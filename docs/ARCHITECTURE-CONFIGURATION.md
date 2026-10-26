@@ -358,7 +358,7 @@ CODEMIE_PROFILE_NAME=work
 CODEMIE_CLI_VERSION=0.0.16
 ```
 
-### Conditional (the launching agent's own models, or a profile with 2+ models)
+### Conditional (the launching agent's own models)
 
 ```bash
 CODEMIE_PROFILE_MODELS=claude-sonnet-5,gpt-5.6-terra
@@ -368,8 +368,9 @@ Set by `ConfigLoader.exportProviderEnvVars()` from `resolveProfileModels(config)
 `AgentCLI` first narrows the config with `withAgentModelView(config, agent)`, so
 `CODEMIE_MODEL` is the agent's own active model and `CODEMIE_PROFILE_MODELS` its
 own `agentModels.<agent>.models` (unless `--model`/`CODEMIE_MODEL` overrides the
-model), even when the agent has a single model. Absent for a legacy single-model
-profile or an agent outside `agentModels`. Consumed only by each agent
+model), even when the agent has a single model. Empty for a legacy profile or an
+agent outside `agentModels` (always emitted, so a value inherited from a parent
+codemie session cannot narrow the menu). Consumed only by each agent
 plugin's own in-session model menu (Claude `/model`, Codex's catalog, OpenCode/
 codemie-code's dynamic model config, Pi's `models.json`) to narrow it to the
 profile's own models — never persisted, and ignored by the proxy/credential

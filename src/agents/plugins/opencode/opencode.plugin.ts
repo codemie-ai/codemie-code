@@ -312,7 +312,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       const { providerOptions } = modelConfig;
 
       // Limit the model list OpenCode offers for in-session switching to the active
-      // profile's own models (CODEMIE_PROFILE_MODELS, set for an agent's own list or 2+ models).
+      // profile's own models (CODEMIE_PROFILE_MODELS, set for an agent's own list on a per-agent profile).
       // Its absence is the fallback signal to show the full catalogue, same as an empty
       // intersection with a live catalogue that dropped every one of those ids (AC22).
       const limitedModels = env.CODEMIE_PROFILE_MODELS

@@ -55,8 +55,8 @@ describe('filterToAllowed', () => {
 
   // CR-004: the AC22 fallback must also be logged, matching Claude/Pi's
   // equivalent warn - OpenCode's fallback previously logged nothing at all.
-  it('logs a warning on the AC22 fallback (CR-004)', () => {
-    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+  it('tells the user on the AC22 fallback (CR-004)', () => {
+    const warnSpy = vi.spyOn(logger, 'notice').mockImplementation(() => {});
 
     filterToAllowed(allModels, 'z', 'a');
 
