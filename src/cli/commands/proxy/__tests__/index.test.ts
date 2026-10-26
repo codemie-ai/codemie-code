@@ -121,7 +121,7 @@ describe('proxy connect desktop', () => {
     );
   });
 
-  it('suggests the configured CodeMie URL for missing Claude Code analytics credentials', async () => {
+  it('checks both credential URLs and suggests the selected profile URL when workspace URL differs', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -132,7 +132,7 @@ describe('proxy connect desktop', () => {
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'codemie-new',
       provider: 'ai-run-sso',
-      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      baseUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api',
       codeMieUrl: 'https://codemie.lab.epam.com',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
@@ -151,12 +151,16 @@ describe('proxy connect desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+      '  Run: codemie profile login --url https://codemie-preview.lab.epam.com'
     );
-    expect(getStoredCredentials).toHaveBeenCalledWith('https://codemie.lab.epam.com/code-assistant-api');
+    expect(getStoredCredentials).toHaveBeenNthCalledWith(
+      1,
+      'https://codemie-preview.lab.epam.com/code-assistant-api'
+    );
+    expect(getStoredCredentials).toHaveBeenNthCalledWith(2, 'https://codemie.lab.epam.com');
   });
 
-  it('suggests profile login without an explicit URL when CodeMie URL is unavailable', async () => {
+  it('suggests an explicit profile URL when CodeMie URL is unavailable', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -183,7 +187,9 @@ describe('proxy connect desktop', () => {
     ).rejects.toThrow('process.exit:1');
 
     expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith('  Run: codemie profile login');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '  Run: codemie profile login --url https://codemie.lab.epam.com'
+    );
   });
 
   it('calls syncRegisteredSkills and syncPluginSkills when starting the daemon', async () => {
@@ -435,6 +441,38 @@ describe('proxy start', () => {
     await createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
+  });
+
+  it.each([
+    ['a matching CodeMie URL', 'https://custom.example.com'],
+    ['a workspace URL for another environment', 'https://prod.example.com'],
+    ['no CodeMie URL', undefined],
+  ])('suggests explicit login for proxy start with %s', async (_description, codeMieUrl) => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+    const getStoredCredentials = vi.fn().mockResolvedValue(null);
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'custom',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://custom.example.com/code-assistant-api',
+      codeMieUrl,
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials };
+    } as unknown as typeof CodeMieSSO);
+
+    await expect(
+      createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '  Run: codemie profile login --url https://custom.example.com'
+    );
   });
 });
 

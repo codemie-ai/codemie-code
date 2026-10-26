@@ -477,7 +477,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
   it('prints the resolved Claude Code analytics configuration', async () => {
     await setupHappyMocks({
       name: 'preview',
-      codeMieUrl: 'https://codemie-preview.lab.epam.com',
+      baseUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
       ssoConfig: { apiUrl: 'https://codemie-preview.lab.epam.com/code-assistant-api' },
     });
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
@@ -500,9 +501,42 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(output).not.toContain('Analytics destination:');
     expect(output).toMatch(/Scope\s+│\s+project/);
     expect(output).toMatch(/Tracked projects\s+│\s+\/repo\/project/);
+    expect(output).toMatch(/OTel records may be sent for sessions with tracked-project hooks that pass daemon checks/);
     expect(console_.log()).toHaveBeenCalledWith(
       expect.stringContaining('Claude Code Analytics configured successfully')
     );
+  });
+
+  it('prints default scope and all projects without a CodeMie URL when allowlist is empty', async () => {
+    await setupHappyMocks({
+      name: 'preview',
+      codeMieUrl: undefined,
+    });
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ clientType: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    vi.mocked(writeClaudeCodeOtlpConfig).mockResolvedValue({
+      written: true,
+      path: '/mock/claude/settings.json',
+      backupPath: null,
+      hookEvents: 8,
+      envVars: 9,
+      allowlist: [],
+    });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeCodeOtlp: true } });
+
+    const output = console_.log().mock.calls
+      .map(([message]) => stripAnsi(String(message)))
+      .join('\n');
+    expect(output).toMatch(/Profile\s+│\s+preview/);
+    expect(output).not.toContain('CodeMie URL');
+    expect(output).toMatch(/Scope\s+│\s+user/);
+    expect(output).toMatch(/Tracked projects\s+│\s+all projects/);
   });
 });
 

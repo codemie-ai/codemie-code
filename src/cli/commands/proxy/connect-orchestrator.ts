@@ -252,24 +252,28 @@ export async function resolveSsoProxyConfig(
 export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
-  loginUrl?: string
+  codeMieUrl?: string
 ): Promise<void> {
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl });
+    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
       console.error(chalk.red(`✗ No SSO credentials found for profile '${profileName}'.`));
-      console.error(
-        loginUrl
-          ? `  Run: codemie profile login --url ${loginUrl}`
-          : '  Run: codemie profile login'
-      );
+      console.error(`  Run: codemie profile login --url ${resolveProfileCodeMieUrl(baseUrl, codeMieUrl)}`);
       process.exit(1);
     }
   } catch (err) {
     console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
     process.exit(1);
   }
+}
+
+function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
+  const profileOrigin = new URL(baseUrl).origin;
+  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
+    return codeMieUrl;
+  }
+  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -684,7 +688,8 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
       console.log(chalk.dim(`  Backup written: ${result.backupPath}`));
     }
     console.log(chalk.dim('  OTel env is user-level: every Claude Code session exports telemetry to the daemon while it runs;'));
-    console.log(chalk.dim('  data from untracked projects is skipped and swept, never sent.'));
+    console.log(chalk.dim('  OTel-only sessions from untracked projects are skipped and swept;'));
+    console.log(chalk.dim('  OTel records may be sent for sessions with tracked-project hooks that pass daemon checks.'));
     console.log(chalk.yellow('  First-time setup needs a Claude Code restart; allowlist changes apply immediately.'));
     return { label, ok: true };
   } catch (error) {
@@ -814,7 +819,9 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       force: Boolean(opts.force),
       scope: opts.scope,
       profile: config.name ?? 'default',
-      codeMieUrl: config.codeMieUrl,
+      codeMieUrl: config.codeMieUrl
+        ? resolveProfileCodeMieUrl(config.baseUrl, config.codeMieUrl)
+        : undefined,
     }));
   }
 
