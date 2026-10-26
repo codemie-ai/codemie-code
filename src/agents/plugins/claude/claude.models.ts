@@ -176,7 +176,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
     const found = await getStoredPlatformCredentialsFromEnv(env);
     if (!found) {
       throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login`
+        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
       );
     }
     logger.debug('[claude-models] Fetching CodeMie model list via SSO auth');

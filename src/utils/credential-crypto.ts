@@ -83,7 +83,7 @@ function hashStorageKey(normalized: string): string {
  * Reduces the URL to protocol+host before hashing so storage and retrieval
  * always agree on a key regardless of which path a caller passes in (e.g.
  * a bare portal URL from `codemie setup` vs. a full API URL from
- * `codemie profile login`). Only stripping a trailing
+ * `codemie profile login --url <api-url>`). Only stripping a trailing
  * slash here (without dropping the path) would make the key sensitive to
  * whichever URL variant happened to be passed at store time.
  * @param baseUrl - The URL to hash (path/query/hash, if any, are discarded)
