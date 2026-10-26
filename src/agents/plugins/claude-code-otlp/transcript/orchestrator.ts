@@ -560,7 +560,10 @@ async function deriveMainEvents(
   if (seeded) state.seenMessageUuids = [...seenUuids];
 
   for (const key of touchedKeys) {
-    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+    const request = state.openRequests[key];
+    if (!request.isApiError) {
+      events.push(buildUsageRequestEvent(sessionId, request));
+    }
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
@@ -579,7 +582,7 @@ async function deriveMainEvents(
     // empty agentId; the contract's api_calls excludes subagent requests, including a forked
     // skill's (scopeKind: 'skill' too, but with its own agentId — see deriveSubagentEvents).
     summaryEvent.api_calls = Object.values(state.openRequests).filter(
-      (r) => (r.scopeKind === 'main' || r.scopeKind === 'skill') && !r.agentId
+      (r) => (r.scopeKind === 'main' || r.scopeKind === 'skill') && !r.agentId && !r.isApiError
     ).length;
     events.push(summaryEvent);
   }
@@ -1115,7 +1118,10 @@ async function deriveSubagentEvents(
 
   const events: Record<string, unknown>[] = [];
   for (const key of touchedKeys) {
-    events.push(buildUsageRequestEvent(sessionId, state.openRequests[key]));
+    const request = state.openRequests[key];
+    if (!request.isApiError) {
+      events.push(buildUsageRequestEvent(sessionId, request));
+    }
   }
 
   // Cumulative usage for this agent — every record of its own scope_kind ('skill' for a forked
@@ -1123,7 +1129,7 @@ async function deriveSubagentEvents(
   // (consistent with buildFullAccumulator's own "recomputed from full state" framing for the
   // sibling agent.session.summary event).
   const usageRequestsForAgent = Object.values(state.openRequests).filter(
-    (r) => r.scopeKind === scopeKind && r.agentId === subagentFile.agentId
+    (r) => r.scopeKind === scopeKind && r.agentId === subagentFile.agentId && !r.isApiError
   );
 
   const scan = await scanSubagentTranscript(subagentFile.filePath);

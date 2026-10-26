@@ -208,7 +208,7 @@ describe('openMainTranscriptPass — idempotent reparse', () => {
 });
 
 describe('openMainTranscriptPass — Stop trigger', () => {
-  it('flags API-error placeholders and excludes their synthetic model from the session summary', async () => {
+  it('omits API-error placeholders from usage events and summary api_calls', async () => {
     const sessionId = 'session-synthetic-model';
     const transcriptPath = writeTranscript('transcript-synthetic-model.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
@@ -225,10 +225,33 @@ describe('openMainTranscriptPass — Stop trigger', () => {
     const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
     const summary = events.find((event) => event.type === 'agent.session.summary');
 
-    expect(usageEvents).toHaveLength(2);
-    expect(usageEvents.find((event) => event.message_id === 'msg-2')?.is_api_error).toBe(true);
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].message_id).toBe('msg-1');
     expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
     expect(summary?.primary_model).toBe('claude-sonnet-4-5-20250929');
+    expect(summary?.api_calls).toBe(1);
+  });
+
+  it('reports zero api_calls when the transcript contains only an API-error placeholder', async () => {
+    const sessionId = 'session-only-api-error';
+    const transcriptPath = writeTranscript('transcript-only-api-error.jsonl', [
+      usageLine({
+        uuid: 'uuid-error',
+        messageId: 'msg-error',
+        outputTokens: 0,
+        model: '<synthetic>',
+        isApiErrorMessage: true,
+      }),
+    ]);
+
+    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'Stop'));
+    const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
+    const summary = events.find((event) => event.type === 'agent.session.summary');
+
+    expect(usageEvents).toHaveLength(0);
+    expect(summary?.api_calls).toBe(0);
+    expect(summary?.models).toEqual([]);
+    expect(summary?.primary_model).toBe('');
   });
 
   it('returns one agent.usage.request event per distinct request plus one incremental agent.session.summary', async () => {
@@ -1480,10 +1503,14 @@ describe('openSubagentPass — partial output_tokens (stop_reason null rows)', (
     expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
     // a later row without stop_reason must not un-finalize a request that already has one.
     expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
-    // API-error rows carry no stop_reason by nature and are not partial.
-    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
+    // API-error rows are retained in parse state but never emitted as usage requests.
+    expect(byReq).not.toHaveProperty('req_s6');
 
-    const summary = events.find((e) => e.type === 'agent.subagent.usage') as { usage: Array<Record<string, unknown>> };
+    const summary = events.find((e) => e.type === 'agent.subagent.usage') as {
+      api_calls: number;
+      usage: Array<Record<string, unknown>>;
+    };
+    expect(summary.api_calls).toBe(5);
     expect(summary.usage[0]).toMatchObject({ output_tokens: 818, output_tokens_partial: true });
   });
 });
