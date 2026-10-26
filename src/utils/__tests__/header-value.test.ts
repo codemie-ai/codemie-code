@@ -15,8 +15,13 @@ describe('encodeAttributionHeader', () => {
     expect(encodeAttributionHeader('clients/репо-тест')).toBe('clients/' + encodeURIComponent('репо-тест'));
   });
 
-  it('escapes literal percent and spaces', () => {
-    expect(encodeAttributionHeader('100%/done x')).toBe('100%25/done%20x');
+  it('leaves printable ASCII with spaces, percent and @ unchanged', () => {
+    expect(encodeAttributionHeader('100%/done x')).toBe('100%/done x');
+    expect(encodeAttributionHeader('jane_doe@epam.com')).toBe('jane_doe@epam.com');
+  });
+
+  it('encodes only the segments that contain non-printable-ASCII characters', () => {
+    expect(encodeAttributionHeader('my repo/100%/café x')).toBe('my repo/100%/caf%C3%A9%20x');
   });
 
   it('encodes control characters', () => {
@@ -29,11 +34,15 @@ describe('encodeAttributionHeader', () => {
     expect(encodeAttributionHeader('x\uD83D\uDE00')).toBe('x%F0%9F%98%80');
   });
 
-  it('encodes an already-encoded value again', () => {
-    expect(encodeAttributionHeader('Proj%20A')).toBe('Proj%2520A');
+  it('leaves an already-encoded ASCII value unchanged', () => {
+    expect(encodeAttributionHeader('Proj%20A')).toBe('Proj%20A');
   });
 
-  it.each(['org/repo', 'café', 'clients/репо-тест', '100%/done x', 'a\nb'])(
+  it('encodes the percent sign again when the segment is non-ASCII', () => {
+    expect(encodeAttributionHeader('é%20')).toBe('%C3%A9%2520');
+  });
+
+  it.each(['org/repo', 'café', 'clients/репо-тест', 'a\nb', 'jane_doe@epam.com'])(
     'round-trips and is a valid header value: %j',
     (value) => {
       const encoded = encodeAttributionHeader(value);

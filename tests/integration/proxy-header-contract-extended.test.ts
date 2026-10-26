@@ -152,14 +152,14 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
     expect(decodeURIComponent(h['x-codemie-project'] as string)).toBe(project);
   });
 
-  it('percent-encodes ASCII values containing spaces and percent signs', async () => {
+  it('passes printable ASCII values with spaces and percent signs through unchanged', async () => {
     harness = await startHarness({ repository: 'my repo', branch: 'fix/100%' });
     const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
     expect(res.status).toBe(200);
 
     const h = harness.captured();
-    expect(h['x-codemie-repository']).toBe('my%20repo');
-    expect(h['x-codemie-branch']).toBe('fix/100%25');
+    expect(h['x-codemie-repository']).toBe('my repo');
+    expect(h['x-codemie-branch']).toBe('fix/100%');
   });
 
   it('percent-encodes Desktop-resolver attribution and the Cowork default', async () => {

@@ -231,7 +231,7 @@ describe('forwardSession (project header)', () => {
     const urls = fetchMock.mock.calls.map(([url]) => String(url).split('/').pop());
     expect(urls).toEqual(['event-hooks', 'logs', 'metrics', 'traces']);
     for (const [, init] of fetchMock.mock.calls) {
-      expect(init.headers['X-CodeMie-Project']).toBe('Proj%20A');
+      expect(init.headers['X-CodeMie-Project']).toBe('Proj A');
       expect(init.headers['Content-Type']).toBeDefined();
     }
     expect(fetchMock.mock.calls[1][1].body.toString()).toBe('logs-bytes');
