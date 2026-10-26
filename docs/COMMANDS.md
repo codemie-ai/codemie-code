@@ -1590,6 +1590,47 @@ codemie version
 
 `codemie proxy connect --claude-code-otlp` writes the hooks and OTel environment variables into the user-level `~/.claude/settings.json`, plus `CODEMIE_ANALYTICS_PROJECT_FILTER`: a JSON array (stored as a string) of absolute project paths that are tracked.
 
+After a successful setup, the command prints an **Analytics Configuration** summary with the selected profile, its CodeMie URL, tracking scope, and tracked project paths. Supplying `--profile <name>` selects that profile for this command without changing the globally active profile. The workspace `codeMieUrl` is shared across profiles, so the summary only uses it when its origin matches the selected profile's `baseUrl`; otherwise it shows that profile's `baseUrl` origin.
+
+For example, a global multi-provider configuration can have a preview profile while retaining the live environment's shared workspace URL:
+
+```json
+{
+  "version": 2,
+  "activeProfile": "preview",
+  "workspace": {
+    "codeMieUrl": "https://codemie.lab.epam.com"
+  },
+  "profiles": {
+    "preview": {
+      "provider": "ai-run-sso",
+      "baseUrl": "https://codemie-preview.lab.epam.com/code-assistant-api"
+    }
+  }
+}
+```
+
+With that configuration, the selected profile's URL is shown:
+
+```text
+✓ Proxy started
+✓ Claude Code Analytics configured successfully
+
+Analytics Configuration:
+Profile           │ preview
+CodeMie URL       │ https://codemie-preview.lab.epam.com
+Scope             │ project
+Tracked projects  │ /path/to/control-plane
+```
+
+When SSO credentials are missing, the CLI checks the selected profile's API URL and the workspace CodeMie URL, and suggests an explicit login URL for the selected profile. If the workspace URL belongs to another environment or is absent, the profile API URL's origin is used:
+
+```bash
+codemie profile login --url https://codemie-preview.lab.epam.com
+```
+
+When the `preview` profile has `baseUrl: "https://codemie-preview.lab.epam.com/code-assistant-api"` and the shared workspace has `codeMieUrl: "https://codemie.lab.epam.com"`, the preview profile's URL is used for the summary and login command. When the origins match, the configured workspace CodeMie URL is retained. If no workspace CodeMie URL is configured, the summary omits that row; a missing-credentials hint still uses the profile API URL's origin.
+
 | Command                                               | Allowlist result                                                                         |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                               |
@@ -1597,11 +1638,13 @@ codemie version
 | `disconnect --claude-code-otlp --scope project`       | removes the current project root; when the list becomes empty everything is disconnected |
 | `disconnect --claude-code-otlp`                       | removes hooks, OTel variables and the allowlist                                          |
 
+`--scope user` (the default) tracks every project by clearing the project allowlist. `--scope project` adds only the current project root to the allowlist; only projects listed there are tracked.
+
 A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--force` to discard it. `--force` never edits a valid list.
 
-**How the filter works.** Only the hook process reads the allowlist. For an untracked project the hook does nothing: no proxy start, no SSO check, nothing forwarded. The daemon has no allowlist logic; its completeness gate (`otlp-spool/completeness-gate.ts`) only sends sessions that have hooks data, and never sends OTEL-only sessions. The decision is per hook event, so a tracked session that moves fully outside the project loses hook events from that stretch, and a session that starts outside and later enters a tracked project becomes sendable from then on.
+**How the filter works.** The hook process reads the project allowlist. For an untracked project, a hook exits before starting the proxy or checking SSO, so that hook event is not forwarded. This allowlist does not filter OTel records: the OTel environment is global, and records are exported to the local daemon independently. Before forwarding, the daemon applies its project gate to bind each session to a project and discard unbound or conflicting sessions; its completeness gate (`otlp-spool/completeness-gate.ts`) also never forwards OTel-only sessions. Both gates must allow a session before its records are sent. The allowlist decision is per hook event, so a session may have hooks from its tracked stretches and OTel records from both tracked and untracked stretches.
 
-**Privacy note.** The OTel environment is global, so every Claude Code session, including untracked projects, exports telemetry (with tool details) to the local daemon whenever it runs. That data stays on disk: it is skipped after the send wait limit (`OTLP_SEND_MAX_ATTEMPTS` ticks) and deleted by the sweeper after the abandoned grace period (`OTLP_ABANDONED_SESSION_GRACE_MINUTES`). Nothing from untracked projects is sent to the backend.
+**Privacy note.** Every Claude Code session, including sessions in untracked projects, exports OTel telemetry (including tool details) to the local daemon. OTel-only sessions from untracked projects are not sent to the backend; after the send wait limit (`OTLP_SEND_MAX_ATTEMPTS` ticks), their data is skipped and later deleted by the sweeper after the abandoned grace period (`OTLP_ABANDONED_SESSION_GRACE_MINUTES`). OTel records from an untracked stretch may be sent if they belong to a session that also has eligible hook data and passes the daemon's project and completeness gates.
 
 Allowlist changes apply immediately; the first-time setup needs a Claude Code restart.
 
