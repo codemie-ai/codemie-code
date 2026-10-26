@@ -159,7 +159,7 @@ async function fetchCodeMieModelsForCopilot(env: NodeJS.ProcessEnv): Promise<Llm
     const found = await getStoredPlatformCredentialsFromEnv(env);
     if (!found) {
       throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login`
+        `SSO credentials not found for ${platformUrl}. Run: codemie setup or codemie profile login --url ${platformUrl}`
       );
     }
 

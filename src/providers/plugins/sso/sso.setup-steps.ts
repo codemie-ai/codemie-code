@@ -220,7 +220,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       if (!found) {
         return {
           valid: false,
-          error: `No SSO credentials found for ${baseUrl}. Please run: codemie profile login`
+          error: `No SSO credentials found for ${baseUrl}. Please run: codemie profile login --url ${baseUrl}`
         };
       }
       const { credentials } = found;

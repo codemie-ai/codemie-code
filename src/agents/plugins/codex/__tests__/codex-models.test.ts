@@ -296,7 +296,7 @@ describe('resolveCodexModel SSO lookup (profile baseUrl first)', () => {
     ssoMock.getStoredCredentials.mockResolvedValue(null);
 
     await expect(resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile })).rejects.toThrow(
-      'codemie profile login'
+      'codemie profile login --url https://profile.example.com'
     );
   });
 });

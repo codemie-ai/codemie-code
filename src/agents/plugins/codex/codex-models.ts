@@ -383,7 +383,7 @@ async function fetchCodeMieModelsForCodex(env: NodeJS.ProcessEnv): Promise<LlmMo
     const found = await getStoredPlatformCredentialsFromEnv(env);
     if (!found) {
       throw new ConfigurationError(
-        `SSO credentials not found for ${platformUrl}. Run: codemie profile login`
+        `SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`
       );
     }
 
