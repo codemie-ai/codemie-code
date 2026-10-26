@@ -2795,12 +2795,12 @@ describe('api-request-blob lines', () => {
     const usage = events.filter((e) => e.type === 'agent.usage.request');
     const byReq = Object.fromEntries(usage.map((e) => [e.request_id, e]));
 
-    expect(usage).toHaveLength(6);
+    expect(usage).toHaveLength(5);
     expect(byReq.req_s1).toMatchObject({ output_tokens: 3, output_tokens_partial: true });
     expect(byReq.req_s2).toMatchObject({ output_tokens: 8, output_tokens_partial: true });
     expect(byReq.req_s3).toMatchObject({ output_tokens: 300, output_tokens_partial: false });
     expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
     expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
-    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
+    expect(byReq).not.toHaveProperty('req_s6');
   });
 });
