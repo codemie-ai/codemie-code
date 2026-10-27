@@ -1,5 +1,7 @@
 # EPMCDME-16260 Non-Latin-1 Header Values Implementation Plan
 
+> **Superseded by `2411a576` and `2282a595`:** conditional encoding for Repository/Branch (only non-printable-ASCII segments), raw Project. This plan describes the original always-encode design. See `backend-handoff.md` for the current contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** codemie-claude works in folders with non-Latin-1 path characters, with attribution preserved, and invalid-header errors are no longer reported as authentication errors.
