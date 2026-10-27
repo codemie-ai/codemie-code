@@ -227,8 +227,92 @@ describe('openMainTranscriptPass — Stop trigger', () => {
 
     expect(usageEvents).toHaveLength(1);
     expect(usageEvents[0].message_id).toBe('msg-1');
+    expect(usageEvents[0].is_api_error).toBe(false);
     expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
     expect(summary?.primary_model).toBe('claude-sonnet-4-5-20250929');
+    expect(summary?.api_calls).toBe(1);
+  });
+
+  it('keeps an already-emitted normal request counted when a matching API-error row arrives later', async () => {
+    const sessionId = 'session-late-api-error-collision';
+    const transcriptPath = writeTranscript('transcript-late-api-error-collision.jsonl', [
+      usageLine({
+        uuid: 'uuid-normal',
+        requestId: 'req-collision',
+        messageId: 'msg-normal',
+        outputTokens: 50,
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ]);
+
+    const firstEvents = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const firstUsageEvents = firstEvents.filter((event) => event.type === 'agent.usage.request');
+    expect(firstUsageEvents).toHaveLength(1);
+    expect(firstUsageEvents[0].request_id).toBe('req-collision');
+
+    appendFileSync(
+      transcriptPath,
+      `${usageLine({
+        uuid: 'uuid-api-error',
+        requestId: 'req-collision',
+        messageId: 'msg-api-error',
+        outputTokens: 0,
+        model: 'claude-sonnet-4-5-20250929',
+        isApiErrorMessage: true,
+      })}\n`
+    );
+
+    const laterEvents = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const laterUsageEvents = laterEvents.filter((event) => event.type === 'agent.usage.request');
+    const summary = laterEvents.find((event) => event.type === 'agent.session.summary');
+
+    expect(laterUsageEvents).toHaveLength(0);
+    expect(summary?.api_calls).toBe(1);
+    expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
+  });
+
+  it('recovers a normal request from a legacy persisted API-error key', async () => {
+    const { createParseState, saveParseState } = await import('../parse-state.js');
+    const { parseUsageLine } = await import('../usage-request.js');
+    const sessionId = 'session-legacy-api-error-key';
+    const model = 'claude-sonnet-4-5-20250929';
+    const legacyError = parseUsageLine(
+      usageLine({
+        uuid: 'uuid-legacy-error',
+        requestId: 'req-legacy',
+        messageId: 'msg-legacy-error',
+        outputTokens: 0,
+        model,
+        isApiErrorMessage: true,
+      }),
+      'main',
+      '',
+      '',
+      ''
+    );
+    if (!legacyError) {
+      throw new Error('Expected the API-error transcript row to parse as a usage request');
+    }
+
+    const legacyState = createParseState();
+    legacyState.openRequests[`req-legacy::${model}`] = legacyError;
+    await saveParseState(sessionId, legacyState);
+    const transcriptPath = writeTranscript('transcript-legacy-api-error-key.jsonl', [
+      usageLine({
+        uuid: 'uuid-legacy-normal',
+        requestId: 'req-legacy',
+        messageId: 'msg-legacy-normal',
+        outputTokens: 50,
+        model,
+      }),
+    ]);
+
+    const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
+    const summary = events.find((event) => event.type === 'agent.session.summary');
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].is_api_error).toBe(false);
     expect(summary?.api_calls).toBe(1);
   });
 

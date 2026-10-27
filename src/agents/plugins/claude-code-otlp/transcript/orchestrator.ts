@@ -384,7 +384,9 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     // 'main' is used uniformly rather than re-deriving deriveMainEvents's active-skill state.
     const parsedUsage = parseUsageLine(line, 'main', '', '', '');
     if (parsedUsage) {
-      modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
+      if (!parsedUsage.isApiError) {
+        modelByRequestKey.set(usageRequestKey(parsedUsage), parsedUsage.model);
+      }
     }
   }
   for (const model of modelByRequestKey.values()) {
@@ -469,6 +471,21 @@ async function seedSeenUuids(transcriptPath: string, mainOffset: number): Promis
   return seen;
 }
 
+function mergeOpenUsageRequest(state: TranscriptParseState, parsed: OpenUsageRequest): string {
+  const key = usageRequestKey(parsed);
+  const existing = state.openRequests[key];
+
+  // Older persisted states keyed API-error placeholders like normal requests. When a real row
+  // now arrives under that legacy key, replace the placeholder instead of preserving its sticky
+  // error flag; current API-error rows use a separate key namespace.
+  if (existing?.isApiError && !parsed.isApiError) {
+    state.openRequests[key] = parsed;
+  } else {
+    state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
+  }
+  return key;
+}
+
 /**
  * Derive the spool-bound events for one `Stop`/`PreCompact`/`PostCompact`/`SessionEnd`/
  * `StopFailure` hook fire, mutating `state` in memory. Does not persist anything — the caller (a
@@ -541,10 +558,7 @@ async function deriveMainEvents(
     if (parsed) {
       parsed.scopeName = parsed.attributionSkill || (parsed.requestedModel ? '' : state.activeSkill);
       parsed.scopeKind = parsed.scopeName ? 'skill' : 'main';
-      const key = usageRequestKey(parsed);
-      const existing = state.openRequests[key];
-      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-      touchedKeys.add(key);
+      touchedKeys.add(mergeOpenUsageRequest(state, parsed));
     }
 
     // Applied after this line's own usage is scoped — the turn that invokes a skill still
@@ -561,6 +575,8 @@ async function deriveMainEvents(
 
   for (const key of touchedKeys) {
     const request = state.openRequests[key];
+    // usageRequestKey isolates API-error rows even when request id and resolved model match a
+    // normal request, so suppressing one cannot hide that normal request from downstream.
     if (!request.isApiError) {
       events.push(buildUsageRequestEvent(sessionId, request));
     }
@@ -1108,10 +1124,7 @@ async function deriveSubagentEvents(
   for (const line of lines) {
     const parsed = parseUsageLine(line, scopeKind, scopeName, subagentFile.agentId, agentType);
     if (parsed) {
-      const key = usageRequestKey(parsed);
-      const existing = state.openRequests[key];
-      state.openRequests[key] = existing ? mergeUsageRequest(existing, parsed) : parsed;
-      touchedKeys.add(key);
+      touchedKeys.add(mergeOpenUsageRequest(state, parsed));
     }
   }
   state.subagentOffsets[subagentFile.agentId] = nextOffset;
@@ -1119,6 +1132,8 @@ async function deriveSubagentEvents(
   const events: Record<string, unknown>[] = [];
   for (const key of touchedKeys) {
     const request = state.openRequests[key];
+    // usageRequestKey isolates API-error rows even when request id and resolved model match a
+    // normal request, so suppressing one cannot hide that normal request from downstream.
     if (!request.isApiError) {
       events.push(buildUsageRequestEvent(sessionId, request));
     }
