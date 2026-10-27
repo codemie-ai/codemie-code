@@ -10,6 +10,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
+import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
@@ -262,6 +263,9 @@ class OtlpInterceptor implements ProxyInterceptor {
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
       return sendError(res, 500, 'api_error', 'Failed to persist hooks batch');
     }
+
+    // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
+    scheduleCopilotUsageEnrichment(batch.agentName, batch.hookEvents as Record<string, unknown>[]);
 
     res.statusCode = 202;
     res.setHeader('Content-Type', 'application/json');
