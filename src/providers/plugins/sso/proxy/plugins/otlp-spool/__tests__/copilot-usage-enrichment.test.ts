@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+
+import { logger } from '@/utils/logger.js';
 
 import {
   COPILOT_CLI_OTLP_AGENT,
@@ -86,6 +89,7 @@ beforeEach(async () => {
   await mkdir(join(dir, 'copilot', 'session-state', SID), { recursive: true });
   eventsFile = join(dir, 'copilot', 'session-state', SID, 'events.jsonl');
   resetScheduledForTests();
+  vi.mocked(logger.warn).mockClear();
 });
 
 afterEach(async () => {
@@ -190,6 +194,43 @@ describe('enrichSessionUsage', () => {
     expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('no-usage');
     expect(await spooled()).toEqual([]);
   });
+
+  it('enriches a resumed session again: usage from an earlier sessionEnd does not count as a duplicate', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    const clock = fakeClock();
+    expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('enriched');
+
+    const resumedEndMs = END_MS + 3_600_000;
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n${shutdownLine(resumedEndMs + 1200)}\n`);
+    const resumed = sessionEnd({ timestamp: new Date(resumedEndMs).toISOString() });
+
+    expect(await enrichSessionUsage(resumed, clock.sleep, clock.now)).toBe('enriched');
+  });
+
+  it('rejects an unsafe session id before any filesystem read or spool append', async () => {
+    const decoyDir = join(dir, 'decoy');
+    await mkdir(decoyDir, { recursive: true });
+    await writeFile(join(decoyDir, 'events.jsonl'), `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    const clock = fakeClock();
+
+    const outcome = await enrichSessionUsage(sessionEnd({ session_id: '../../decoy' }), clock.sleep, clock.now);
+
+    expect(outcome).toBe('error');
+    expect(clock.sleeps).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('unsafe session id'));
+    expect(existsSync(join(dir, 'codemie', 'decoy.hooks.ndjson'))).toBe(false);
+  });
+
+  it('reports a spool failure as an error (logged above debug), not as a timeout', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    // A regular file where the spool directory must be makes the append fail.
+    await mkdir(join(dir, 'codemie'), { recursive: true });
+    await writeFile(join(dir, 'codemie', 'proxy'), 'not a directory');
+    const clock = fakeClock();
+
+    expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('error');
+    expect(logger.warn).toHaveBeenCalledWith('[otlp-ingest] copilot usage enrichment error', expect.anything());
+  });
 });
 
 describe('scheduleCopilotUsageEnrichment', () => {
@@ -200,6 +241,40 @@ describe('scheduleCopilotUsageEnrichment', () => {
     await vi.waitFor(async () => expect((await spooled()).length).toBe(2));
     await new Promise((r) => setTimeout(r, 100));
     expect((await spooled()).filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
+  });
+
+  it('retries a later delivery of the same sessionEnd after a non-final outcome', async () => {
+    const noUsage = `${startLine}\n${JSON.stringify({ type: 'session.shutdown', timestamp: new Date(END_MS + 50).toISOString(), data: {} })}\n`;
+    await writeFile(eventsFile, noUsage);
+    scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [sessionEnd()]);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await spooled()).toEqual([]);
+
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 50)}\n`);
+    scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [sessionEnd()]);
+
+    await vi.waitFor(async () => expect((await spooled()).length).toBe(2));
+  });
+
+  it('does not schedule an unsafe session id', async () => {
+    const decoyDir = join(dir, 'decoy');
+    await mkdir(decoyDir, { recursive: true });
+    await writeFile(join(decoyDir, 'events.jsonl'), `${startLine}\n${shutdownLine(END_MS + 50)}\n`);
+
+    scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [sessionEnd({ session_id: '../../decoy' })]);
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(existsSync(join(dir, 'codemie', 'decoy.hooks.ndjson'))).toBe(false);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('skips null and non-object elements without throwing, still scheduling the valid ones', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 50)}\n`);
+    const batch = [null, 'x', 42, sessionEnd()] as unknown as Record<string, unknown>[];
+
+    expect(() => scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, batch)).not.toThrow();
+
+    await vi.waitFor(async () => expect((await spooled()).length).toBe(2));
   });
 
   it('ignores other lifecycle events of a Copilot session', async () => {

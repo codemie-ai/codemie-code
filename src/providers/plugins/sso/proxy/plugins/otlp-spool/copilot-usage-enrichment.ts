@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isSafeSessionId } from '../../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../../utils/security.js';
 import { getCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
@@ -26,7 +27,7 @@ export const MAX_WAIT_MS = 10_000;
 
 const USAGE_TYPE = 'agent.usage.request';
 
-/** Sessions already scheduled by this daemon process: duplicate session-end batches add nothing. */
+/** In-flight or completed enrichments keyed by session + sessionEnd timestamp (a resumed session ends again). */
 const scheduled = new Set<string>();
 
 export function resetScheduledForTests(): void {
@@ -53,10 +54,14 @@ async function readEvents(sessionId: string): Promise<CopilotEvent[]> {
   return events;
 }
 
-/** True if the hooks spool already holds usage for this session (survives a daemon restart). */
-async function alreadyEnriched(sessionId: string): Promise<boolean> {
+/** True if the hooks spool already holds usage written for this sessionEnd (survives a daemon restart). */
+async function alreadyEnriched(sessionId: string, notBeforeMs: number): Promise<boolean> {
   const records = await listHookRecords(sessionId);
-  return records.some((r) => r['type'] === USAGE_TYPE);
+  return records.some((r) => {
+    if (r['type'] !== USAGE_TYPE) return false;
+    const ts = Date.parse(String(r['timestamp'] ?? ''));
+    return !Number.isFinite(notBeforeMs) || !Number.isFinite(ts) || ts >= notBeforeMs;
+  });
 }
 
 /**
@@ -67,13 +72,18 @@ export async function enrichSessionUsage(
   template: Record<string, unknown>,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => number = Date.now
-): Promise<'enriched' | 'timeout' | 'no-usage' | 'duplicate'> {
+): Promise<'enriched' | 'timeout' | 'no-usage' | 'duplicate' | 'error'> {
   const sessionId = String(template['session_id'] ?? '');
   const notBeforeMs = Date.parse(String(template['timestamp'] ?? ''));
   const deadline = now() + MAX_WAIT_MS;
 
+  if (!isSafeSessionId(sessionId)) {
+    logger.warn('[otlp-ingest] copilot usage enrichment skipped: unsafe session id');
+    return 'error';
+  }
+
   try {
-    if (await alreadyEnriched(sessionId)) {
+    if (await alreadyEnriched(sessionId, notBeforeMs)) {
       return 'duplicate';
     }
     for (;;) {
@@ -100,8 +110,8 @@ export async function enrichSessionUsage(
       await sleep(POLL_INTERVAL_MS);
     }
   } catch (err) {
-    logger.debug('[otlp-ingest] copilot usage enrichment error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
-    return 'timeout';
+    logger.warn('[otlp-ingest] copilot usage enrichment error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
+    return 'error';
   }
 }
 
@@ -109,12 +119,19 @@ export async function enrichSessionUsage(
 export function scheduleCopilotUsageEnrichment(agentName: string, events: Record<string, unknown>[]): void {
   if (agentName !== COPILOT_CLI_OTLP_AGENT) return;
   for (const event of events) {
+    if (typeof event !== 'object' || event === null) continue;
     if (event['type'] !== SESSION_END_TYPE) continue;
     const sessionId = String(event['session_id'] ?? '');
-    if (!sessionId || scheduled.has(sessionId)) continue;
-    scheduled.add(sessionId);
-    void enrichSessionUsage(event).then((outcome) => {
-      logger.debug('[otlp-ingest] copilot usage enrichment', ...sanitizeLogArgs({ sessionId, outcome }));
-    });
+    if (!isSafeSessionId(sessionId)) continue;
+    const key = `${sessionId}|${String(event['timestamp'] ?? '')}`;
+    if (scheduled.has(key)) continue;
+    scheduled.add(key);
+    void enrichSessionUsage(event)
+      .then((outcome) => {
+        // Only a finished enrichment is final; anything else may be retried by a later sessionEnd batch.
+        if (outcome !== 'enriched' && outcome !== 'duplicate') scheduled.delete(key);
+        logger.debug('[otlp-ingest] copilot usage enrichment', ...sanitizeLogArgs({ sessionId, outcome }));
+      })
+      .catch(() => scheduled.delete(key));
   }
 }

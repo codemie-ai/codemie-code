@@ -209,4 +209,48 @@ describe('OtlpPlugin — deferred Copilot usage scheduling', () => {
     expect(appendSpoolMock).toHaveBeenCalledTimes(1);
     expect(scheduleMock).toHaveBeenCalledWith('claude-code-otlp', expect.any(Array));
   });
+
+  it('still answers 202 when scheduling throws after the batch is durable', async () => {
+    scheduleMock.mockImplementationOnce(() => {
+      throw new TypeError('boom');
+    });
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: [hookEvent('s1', { type: 'agent.session.end' })] });
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a batch containing a null element alongside a valid event', async () => {
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: [null, hookEvent('s1', { type: 'agent.session.end' })] });
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OtlpPlugin — session_id validation', () => {
+  beforeEach(() => {
+    appendSpoolMock.mockReset();
+    appendSpoolMock.mockResolvedValue(undefined);
+    scheduleMock.mockClear();
+  });
+
+  it.each(['../../x', '..', 'a/b', 'a\\b', 'a..b'])(
+    'rejects the batch with 400 for session_id %j, spooling and scheduling nothing',
+    async (sessionId) => {
+      const res = await postHooks({
+        agentName: 'copilot-cli-otlp',
+        hookEvents: [hookEvent(sessionId, { type: 'agent.session.end' })],
+      });
+      expect(res.statusCode).toBe(400);
+      expect(appendSpoolMock).not.toHaveBeenCalled();
+      expect(scheduleMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts a UUID session_id', async () => {
+    const res = await postHooks({
+      agentName: 'copilot-cli-otlp',
+      hookEvents: [hookEvent('c73ecba6-c21a-415d-b40f-cb0cdb416155')],
+    });
+    expect(res.statusCode).toBe(202);
+  });
 });
