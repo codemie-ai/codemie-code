@@ -413,6 +413,35 @@ describe('analytics ticket options', () => {
     expect(payloadContext().tickets).toBeUndefined();
   });
 
+  it('rejects the ticket flags on `analytics otel` instead of ignoring them', async () => {
+    const { createAnalyticsCommand } = await import('../index.js');
+    const originalExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await createAnalyticsCommand().parseAsync(['otel', '--file', '/x.jsonl', '--ticket-sources', 'tool'], { from: 'user' });
+      expect(process.exitCode).toBe(1);
+      expect(enrichCostsMock).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  });
+
+  it('rejects an invalid ticket flag even without --export', async () => {
+    const { runAnalytics } = await import('../index.js');
+    const originalExitCode = process.exitCode;
+    for (const options of [{ ticketSources: 'bogus' }, { ticketTools: ' , ' }]) {
+      process.exitCode = undefined;
+      const source = mockSource();
+      try {
+        await runAnalytics(options as never, source as never);
+        expect(process.exitCode).toBe(1);
+        expect(source.load).not.toHaveBeenCalled();
+      } finally {
+        process.exitCode = originalExitCode;
+      }
+    }
+  });
+
   it('rejects an invalid --ticket-sources before loading any sessions', async () => {
     const { runAnalytics } = await import('../index.js');
     const originalExitCode = process.exitCode;

@@ -273,13 +273,13 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 | `prompt` | Every user prompt (CodeMie-recorded turns and the native log) | distinct prompts |
 
 - There is no ranking: reading an issue is not working on it, so the consumer decides how to weigh sources.
-- Prompt ids are matched case-sensitively and kept only when the same project prefix also appears in a `tool` or `branch` id somewhere in the report. That drops `gpt-4`, `UTF-8` or `SHA-256` without a denylist, and also drops a ticket mentioned only in prompts when nothing else in the report names its project.
-- A tool call replayed into a resumed or forked session's log is attributed once, to the earliest session — the same rule cost uses — and calls after a session's own end are ignored.
+- Prompt ids are matched case-sensitively and kept only when the same project prefix also appears in a tool-call or branch id somewhere in the report — whether or not `tool`/`branch` are among the requested sources. That drops `gpt-4`, `UTF-8` or `SHA-256` without a denylist, and also drops a ticket mentioned only in prompts when nothing else in the report names its project.
+- Resumed and forked logs copy earlier rows. A replayed tool call, prompt or row branch is attributed once — to the session that comes first by start time (ties keep input order), the same rule cost uses — and anything after a session's own end is ignored. Codex rows have no id, so a Codex prompt is recognised as a replay by its original timestamp and text.
 - Tool calls are read for Claude-shaped logs and Codex. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
-- `analytics otel` does not compute tickets (its cost comes from the events, not from native logs), so the flags below are not available there.
+- `analytics otel` does not compute tickets (its cost comes from the events, not from native logs); passing the flags below to it is an error.
 - At most 20 ids per session.
 
-Flags (exports only):
+Flags (validated on every run, used only when a report is exported):
 
 - `--ticket-sources <list>` — any of `tool,branch,prompt`, or `none`. Default: all three; **with `--redact`, `tool,branch`**, so a redacted report contains nothing derived from prompts unless `prompt` is asked for explicitly.
 - `--ticket-tools <globs>` — comma-separated tool-name globs, `*` wildcard, case-insensitive. Default: `analytics.ticketTools` from your CodeMie config (`~/.codemie/codemie-cli.config.json`, e.g. `"analytics": { "ticketTools": ["mcp__*rally*"] }`), else `mcp__*jira*`, which covers `mcp__claude_ai_Atlassian__getJiraIssue`, `mcp__atlassian__jira_get_issue` and similar.

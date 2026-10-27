@@ -56,7 +56,7 @@ describe('TicketCollector', () => {
     expect(collector.build().has('s1')).toBe(false);
   });
 
-  it('reads every native prompt and branch, and dedupes prompts replayed by row uuid', () => {
+  it('reads every native prompt and branch, and drops rows replayed into a later session', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
     const prompt = { type: 'user', uuid: 'u1', timestamp: at(0), gitBranch: 'feature/CAKE-807', message: { role: 'user', content: 'start CAKE-807' } };
     const later = { type: 'user', uuid: 'u2', timestamp: at(1000), gitBranch: 'feature/CAKE-807', message: { role: 'user', content: [{ type: 'text', text: 'now CAKE-808' }] } };
@@ -68,7 +68,47 @@ describe('TicketCollector', () => {
       { id: 'CAKE-807', sources: { branch: 1, prompt: 1 } },
       { id: 'CAKE-808', sources: { prompt: 1 } },
     ]);
-    expect(tickets.get('s2')).toEqual([{ id: 'CAKE-807', sources: { branch: 1 } }]);
+    // s2's only row is a replay of s1's: neither its prompt nor its branch counts for s2.
+    expect(tickets.has('s2')).toBe(false);
+  });
+
+  it('drops the branch of a replayed row but keeps the branch of the resumed session', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    const original = { type: 'user', uuid: 'u1', timestamp: at(0), gitBranch: 'ops/OPS-3', message: { role: 'user', content: 'hi' } };
+    collector.observe(view('s1', [original]));
+    collector.observe(view('s2', [original, { type: 'assistant', uuid: 'u9', timestamp: at(5000), gitBranch: 'ops/OPS-4' }]));
+
+    expect(collector.build().get('s2')).toEqual([{ id: 'OPS-4', sources: { branch: 1 } }]);
+  });
+
+  it('drops Codex prompts replayed with their original timestamp', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    const prompt = { type: 'event_msg', timestamp: at(0), payload: { type: 'user_message', message: 'work on CAKE-7' } };
+    const codexView = (sessionId: string, messages: unknown[]): ParsedSessionView => ({ ...view(sessionId, messages), agentName: 'codex' });
+    collector.observe(codexView('s1', [prompt, { type: 'response_item', payload: { type: 'function_call', name: 'mcp__jira__get', arguments: '{"issueKey":"CAKE-7"}', call_id: 'c1' } }]));
+    collector.observe(codexView('s2', [prompt, { type: 'event_msg', timestamp: at(9000), payload: { type: 'user_message', message: 'now CAKE-8' } }]));
+
+    const tickets = collector.build();
+    expect(tickets.get('s1')).toEqual([{ id: 'CAKE-7', sources: { tool: 1, prompt: 1 } }]);
+    expect(tickets.get('s2')).toEqual([{ id: 'CAKE-8', sources: { prompt: 1 } }]);
+  });
+
+  it('skips the deltas native-loader synthesizes from the same native log', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    collector.observe(view('s2', [jiraCall('toolu_1', 'CAKE-1', 0)]));
+    collector.addDeltas([{
+      sessionId: 's2',
+      deltas: [{ recordId: 's2-native', gitBranch: 'CAKE-50-old', userPrompts: [{ count: 1, text: 'replayed CAKE-51' }] }],
+    }] as unknown as RawSessionData[]);
+
+    expect(collector.build().get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+  });
+
+  it('finds prompt tickets with the prompt source alone, corroborated by evidence it does not emit', () => {
+    const collector = new TicketCollector({ sources: new Set<TicketSource>(['prompt']), toolGlobs: JIRA });
+    collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0), { type: 'user', uuid: 'u1', message: { role: 'user', content: 'see CAKE-2' } }]));
+
+    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-2', sources: { prompt: 1 } }]);
   });
 
   it('adds tracked prompts and branches from deltas without double counting the same text', () => {

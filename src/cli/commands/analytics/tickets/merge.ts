@@ -5,7 +5,8 @@
  * `gpt-4`, `utf-8`, `node-18`. Two rules keep them honest instead of a denylist:
  *  - prompts are matched case-sensitively (an upper-case project prefix is required);
  *  - a prompt id is kept only if its project prefix also appears in a tool or branch id
- *    somewhere in the same report ("corroboration").
+ *    somewhere in the same report ("corroboration"). Tool and branch evidence counts for this
+ *    even when those sources are not requested — they are just not emitted then.
  */
 
 import { TICKET_RE, extractTicketMentions } from '@/agents/core/ticket-parser.js';
@@ -28,6 +29,11 @@ export const MAX_TICKETS_PER_SESSION = 20;
 
 /** Ids per branch name or prompt; generous, the per-session cap is the real bound. */
 const MAX_IDS_PER_TEXT = 20;
+
+/** Ticket ids in natural order, so `BIG-2` sorts before `BIG-10`. */
+function compareIds(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true });
+}
 
 /** Prompt ids: the shared pattern without its `i` flag, so the project prefix must be upper case. */
 function promptTicketIds(text: string): string[] {
@@ -60,11 +66,15 @@ export function buildSessionTickets(
   const corroborated = new Set<string>();
 
   for (const [sessionId, e] of evidence) {
-    const tool = sources.has('tool') ? e.tool : new Map<string, number>();
-    const branch = sources.has('branch') ? countByText(e.branches, (b) => extractTicketMentions(b, MAX_IDS_PER_TEXT)) : new Map<string, number>();
-    const prompt = sources.has('prompt') ? countByText(e.prompts, promptTicketIds) : new Map<string, number>();
+    const tool = e.tool;
+    const branch = countByText(e.branches, (b) => extractTicketMentions(b, MAX_IDS_PER_TEXT));
     for (const id of [...tool.keys(), ...branch.keys()]) corroborated.add(prefixOf(id));
-    perSession.set(sessionId, { tool, branch, prompt });
+    const empty = new Map<string, number>();
+    perSession.set(sessionId, {
+      tool: sources.has('tool') ? tool : empty,
+      branch: sources.has('branch') ? branch : empty,
+      prompt: sources.has('prompt') ? countByText(e.prompts, promptTicketIds) : empty,
+    });
   }
 
   const result = new Map<string, SessionTicket[]>();
@@ -84,9 +94,9 @@ export function buildSessionTickets(
 
     // Keep the most-evidenced ids when over the cap, then order by id for stable output.
     const tickets = [...byId.values()]
-      .sort((a, b) => total(b) - total(a) || a.id.localeCompare(b.id))
+      .sort((a, b) => total(b) - total(a) || compareIds(a.id, b.id))
       .slice(0, MAX_TICKETS_PER_SESSION)
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .sort((a, b) => compareIds(a.id, b.id));
     result.set(sessionId, tickets);
   }
   return result;

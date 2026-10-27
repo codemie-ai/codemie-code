@@ -252,8 +252,19 @@ Decisions taken while implementing, where the design left room:
 - Counts: `tool` = matching calls, `branch` = distinct branch names, `prompt` = distinct prompt texts.
   Branches and prompts from deltas and from the native log are merged by text, so the same prompt seen
   in both is counted once.
-- Prompts read from a Claude native log are also deduped run-wide by row `uuid` and bounded by
-  `windowEnd`, like tool calls, because resumed logs replay prompts too.
+- Native rows (prompt and `gitBranch` together) are deduped run-wide and bounded by `windowEnd`,
+  like tool calls, because resumed logs replay them: Claude by row `uuid`, Codex by original
+  timestamp plus text (Codex rows have no id). The deltas native-loader synthesizes for native
+  sessions (`<id>-native*`) are skipped, since the native pass reads the same log.
+- With `prompt` requested, tool and branch evidence is still gathered for corroboration and simply
+  not emitted, so `--ticket-sources prompt` works on its own.
+- "Earliest" follows the enricher's sort: start time, ties in input order. A deterministic
+  tie-breaker belongs to the cost sort itself and is left to a separate change, because it alters
+  cost attribution too.
+- `analytics otel` rejects the ticket flags (commander binds parent options after `otel`, so they
+  would otherwise be accepted and ignored). Flags are validated with or without `--export`.
+- Ids sort numerically (`BIG-2` before `BIG-10`).
+- The automatic end-of-session report (`report/session-report.ts`) does not include tickets.
 - Over the cap, the ids with the most evidence are kept; output is then ordered by id.
 - Corroboration uses the whole report (open question 2: whole report).
 - `analytics.ticketTools` is a top-level key of the CodeMie config (open question 4: global).

@@ -54,6 +54,28 @@ describe('buildSessionTickets', () => {
     expect(result.get('s1')).toEqual([{ id: 'CAKE-2', sources: { branch: 1 } }]);
   });
 
+  it('corroborates prompts with tool and branch evidence even when only prompts are requested', () => {
+    const result = buildSessionTickets(new Map([['s1', evidence({
+      tool: new Map([['CAKE-1', 1]]),
+      branches: new Set(['NUTLA-5-x']),
+      prompts: new Set(['CAKE-2 and NUTLA-6 and ZZZ-9']),
+    })]]), new Set<TicketSource>(['prompt']));
+
+    expect(result.get('s1')).toEqual([
+      { id: 'CAKE-2', sources: { prompt: 1 } },
+      { id: 'NUTLA-6', sources: { prompt: 1 } },
+    ]);
+  });
+
+  it('orders ids numerically and keeps the lower numbers on a cap tie', () => {
+    const tool = new Map<string, number>();
+    for (let i = 1; i <= MAX_TICKETS_PER_SESSION + 2; i++) tool.set(`BIG-${i}`, 1);
+    const ids = buildSessionTickets(new Map([['s1', evidence({ tool })]]), ALL).get('s1')!.map((t) => t.id);
+
+    expect(ids[0]).toBe('BIG-1');
+    expect(ids[ids.length - 1]).toBe(`BIG-${MAX_TICKETS_PER_SESSION}`);
+  });
+
   it('caps a session at the most-evidenced ids', () => {
     const tool = new Map<string, number>();
     for (let i = 1; i <= MAX_TICKETS_PER_SESSION + 5; i++) tool.set(`T-${i}`, i);
