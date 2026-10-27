@@ -7,6 +7,7 @@ import stripAnsi from 'strip-ansi';
 import {
   daemonMatchesRequest,
   deriveDaemonIdentity,
+  ensureOtlpProxy,
   type ConnectTargets,
   type RequestedDaemonConfig,
 } from '../connect-orchestrator.js';
@@ -26,6 +27,10 @@ vi.mock('../daemon-manager.js', () => ({
   readState: vi.fn(),
   spawnDaemon: vi.fn(),
   stopDaemon: vi.fn(),
+}));
+vi.mock('@/utils/processes.js', () => ({
+  isProcessAlive: vi.fn().mockReturnValue(false),
+  spawnDetached: vi.fn(),
 }));
 vi.mock('../health-check.js', () => ({
   checkProxyHealth: vi.fn(),
@@ -562,6 +567,56 @@ describe('deriveDaemonIdentity — codex-desktop', () => {
 
     expect(deriveDaemonIdentity({ codexDesktop: true, vscode: true }).clientType)
       .toBe('codex-desktop');
+  });
+});
+
+describe('ensureOtlpProxy', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns silently and does not spawn a daemon when baseUrl is undefined', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue(null);
+    await setupHappyMocks({ baseUrl: undefined });
+
+    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('returns silently and does not spawn a daemon when baseUrl is an empty string', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue(null);
+    await setupHappyMocks({ baseUrl: '' });
+
+    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('returns silently and does not spawn a daemon when baseUrl is whitespace-only', async () => {
+    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue(null);
+    await setupHappyMocks({ baseUrl: '   ' });
+
+    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('still cold-starts normally when baseUrl is present', async () => {
+    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue(null);
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    await setupHappyMocks();
+
+    await ensureOtlpProxy('claude-code-otlp');
+
+    expect(spawnDaemon).toHaveBeenCalledTimes(1);
   });
 });
 
