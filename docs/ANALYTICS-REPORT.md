@@ -260,6 +260,32 @@ The JSON output deliberately ends in `.report.json` rather than `.json` so a dir
 
 All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta.userEmail` and `branch` are kept; branch names can still hint at a ticket or topic. It affects only the exported file — terminal output and local session data are untouched.
 
+**Ticket ids per session.** Exported reports carry an optional `tickets` list on each session record: the work-item ids (Jira, Rally, …) the session is attributable to, with how often each source saw them. Only ids and counts are written — never prompt text or tool input text. The field is absent when nothing was found, so existing consumers are unaffected.
+
+```json
+"tickets": [{ "id": "CAKE-807", "sources": { "tool": 3, "branch": 1, "prompt": 2 } }]
+```
+
+| Source | Read from | Counted as |
+|---|---|---|
+| `tool` | Tool calls matching the tool patterns, in the session's native log and its subagent transcripts; only key-like input fields (`issueIdOrKey`, `issueKey`, `issue_key`, `key`, `parent`, `jql`) | matching calls |
+| `branch` | Every branch the session touched | distinct branches |
+| `prompt` | Every user prompt (CodeMie-recorded turns and the native log) | distinct prompts |
+
+- There is no ranking: reading an issue is not working on it, so the consumer decides how to weigh sources.
+- Prompt ids are matched case-sensitively and kept only when the same project prefix also appears in a `tool` or `branch` id somewhere in the report. That drops `gpt-4`, `UTF-8` or `SHA-256` without a denylist, and also drops a ticket mentioned only in prompts when nothing else in the report names its project.
+- A tool call replayed into a resumed or forked session's log is attributed once, to the earliest session — the same rule cost uses — and calls after a session's own end are ignored.
+- Tool calls are read for Claude-shaped logs and Codex. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
+- `analytics otel` does not compute tickets (its cost comes from the events, not from native logs), so the flags below are not available there.
+- At most 20 ids per session.
+
+Flags (exports only):
+
+- `--ticket-sources <list>` — any of `tool,branch,prompt`, or `none`. Default: all three; **with `--redact`, `tool,branch`**, so a redacted report contains nothing derived from prompts unless `prompt` is asked for explicitly.
+- `--ticket-tools <globs>` — comma-separated tool-name globs, `*` wildcard, case-insensitive. Default: `analytics.ticketTools` from your CodeMie config (`~/.codemie/codemie-cli.config.json`, e.g. `"analytics": { "ticketTools": ["mcp__*rally*"] }`), else `mcp__*jira*`, which covers `mcp__claude_ai_Atlassian__getJiraIssue`, `mcp__atlassian__jira_get_issue` and similar.
+
+Ticket ids still reveal which project keys and work items a developer touched, so a report shared off the machine needs access control on the receiving side even when `--redact` is set.
+
 **Report metadata and your email.** Reports embed the reporting user's email plus the period covered. The address is read from your CodeMie config; if it is missing and you're on an interactive terminal, report generation warns and prompts for it once, then saves it for future runs. Declining the prompt cancels report generation. The `<email-slug>` segment is dropped from the filenames when no email is available.
 
 ---
@@ -342,6 +368,8 @@ Export flags:
   --open                     Open the generated HTML report in the default browser
                               (implies --export html when --export is not given)
   --redact                   Omit prompt text and absolute paths from the exported report
+  --ticket-sources <list>    Ticket id sources: tool,branch,prompt, or none (default all; tool,branch with --redact)
+  --ticket-tools <globs>     Tool-name globs whose inputs carry ticket ids (default mcp__*jira*)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m

@@ -649,3 +649,20 @@ describe('buildPayload — copilot-cli specific fields', () => {
     expect(cov).toEqual({ agentName: 'copilot-cli', total: 3, priced: 2, withLog: 3 });
   });
 });
+
+describe('buildPayload tickets', () => {
+  const ctx = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-10-27T00:00:00Z' };
+
+  it('copies a session\'s tickets onto its record', () => {
+    const tickets = [{ id: 'CAKE-807', sources: { tool: 2, branch: 1 } }];
+    const payload = buildPayload(root, costIndex, summary, { ...ctx, tickets: new Map([['s1', tickets]]) });
+    expect(payload.sessions[0].tickets).toEqual(tickets);
+  });
+
+  it('leaves the record shape unchanged without tickets', () => {
+    for (const extra of [{}, { tickets: new Map() }, { tickets: new Map([['s1', []]]) }]) {
+      const record = buildPayload(root, costIndex, summary, { ...ctx, ...extra }).sessions[0];
+      expect('tickets' in record).toBe(false);
+    }
+  });
+});

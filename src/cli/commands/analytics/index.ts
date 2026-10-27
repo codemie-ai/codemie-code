@@ -16,6 +16,7 @@ import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
+import type { TicketCollector } from './tickets/collector.js';
 
 /**
  * Date on which the deprecated analytics report flags (`--report`, `--report-format`,
@@ -30,6 +31,10 @@ export function createAnalyticsCommand(): Command {
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
     .option('--include-external', 'Also count native agent sessions CodeMie did not launch (e.g. plain `claude`)')
+    // Ticket ids come from native logs read by the cost pass, which `analytics otel` bypasses —
+    // so these are registered on the default source only rather than silently doing nothing there.
+    .option('--ticket-sources <list>', 'Where exported reports look for ticket ids: tool,branch,prompt (default all; tool,branch with --redact), or none')
+    .option('--ticket-tools <globs>', 'Comma-separated tool-name globs whose inputs carry ticket ids (default: mcp__*jira*, case-insensitive)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -131,6 +136,30 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       exportFormat = output.toLowerCase().endsWith('.json') ? 'json' : 'html';
     }
 
+    // Ticket options are validated before loading too, and only matter for an exported report.
+    let tickets: TicketCollector | undefined;
+    if (exportFormat) {
+      const { resolveTicketSources, resolveTicketTools, TicketOptionsError } = await import('./tickets/options.js');
+      try {
+        const sources = resolveTicketSources(options.ticketSources, Boolean(options.redact));
+        if (sources.size > 0) {
+          let configuredTools: unknown;
+          try {
+            configuredTools = (await ConfigLoader.loadMultiProviderConfig()).analytics?.ticketTools;
+          } catch {
+            // No readable config: fall back to the built-in tool patterns.
+          }
+          const { TicketCollector } = await import('./tickets/collector.js');
+          tickets = new TicketCollector({ sources, toolGlobs: resolveTicketTools(options.ticketTools, configuredTools) });
+        }
+      } catch (error) {
+        if (!(error instanceof TicketOptionsError)) throw error;
+        console.log(chalk.red(`\n✗ ${error.message}`));
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     const filter = parseFilterOptions(options);
     const { rawSessions, cost } = await source.load({
       filter,
@@ -152,8 +181,11 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       costResult = cost;
     } else {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
-      costResult = await enrichCosts(rawSessions, realDeps);
+      costResult = await enrichCosts(rawSessions, realDeps, tickets ? [tickets.observe] : []);
+      tickets?.addDeltas(rawSessions);
     }
+    // A source with authoritative cost (OTEL) never ran the native pass, so it has no tickets.
+    const ticketsBySession = cost ? undefined : tickets?.build();
     const keepSessionIds = new Set(
       [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
     );
@@ -217,6 +249,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(userEmail !== undefined && { userEmail }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
+        ...(ticketsBySession !== undefined && { tickets: ticketsBySession }),
       });
       const payload = options.redact ? redactPayload(builtPayload) : builtPayload;
 

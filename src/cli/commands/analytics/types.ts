@@ -260,6 +260,10 @@ export interface AnalyticsOptions {
    * and reduces absolute project paths to their basename; native log paths are dropped.
    */
   redact?: boolean;
+  /** `--ticket-sources <list>`: raw value, validated by tickets/options.ts. */
+  ticketSources?: string;
+  /** `--ticket-tools <globs>`: raw comma-separated tool-name globs. */
+  ticketTools?: string;
   /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;
 }

@@ -344,3 +344,86 @@ describe('-o without --export/--open infers the format from the path (unify-anal
     expect(generateReportJsonMock).not.toHaveBeenCalled();
   });
 });
+
+describe('analytics ticket options', () => {
+  const ticketSession = {
+    sessionId: 's1',
+    deltas: [{ gitBranch: 'feature/CAKE-1', userPrompts: [{ count: 1, text: 'also CAKE-2' }] }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    enrichCostsMock.mockResolvedValue(enrichResult);
+    aggregateMock.mockReturnValue(analyticsResult);
+    buildPayloadMock.mockReturnValue(payloadResult);
+    writeReportMock.mockReturnValue({ path: '/tmp/out' });
+    vi.spyOn(ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({ userEmail: 'dev@example.com' } as never);
+  });
+
+  function payloadContext(): { tickets?: Map<string, unknown> } {
+    return buildPayloadMock.mock.calls[0][3];
+  }
+
+  it('registers the ticket flags on the default command only, not on `otel`', async () => {
+    const { createAnalyticsCommand } = await import('../index.js');
+    const command = createAnalyticsCommand();
+    const otel = command.commands.find((c) => c.name() === 'otel')!;
+    for (const flag of ['--ticket-sources', '--ticket-tools']) {
+      expect(command.options.map((o) => o.long)).toContain(flag);
+      expect(otel.options.map((o) => o.long)).not.toContain(flag);
+    }
+  });
+
+  it('passes a ticket observer to the cost pass and tickets to the payload on export', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({ export: 'json' } as never, mockSource([ticketSession as never]) as never);
+    expect(enrichCostsMock.mock.calls[0][2]).toHaveLength(1);
+    expect(payloadContext().tickets?.get('s1')).toEqual([
+      { id: 'CAKE-1', sources: { branch: 1 } },
+      { id: 'CAKE-2', sources: { prompt: 1 } },
+    ]);
+  });
+
+  it('reads nothing from prompts under --redact unless asked', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({ export: 'json', redact: true } as never, mockSource([ticketSession as never]) as never);
+    expect(payloadContext().tickets?.get('s1')).toEqual([{ id: 'CAKE-1', sources: { branch: 1 } }]);
+
+    buildPayloadMock.mockClear();
+    await runAnalytics({ export: 'json', redact: true, ticketSources: 'branch,prompt' } as never, mockSource([ticketSession as never]) as never);
+    expect(payloadContext().tickets?.get('s1')).toHaveLength(2);
+  });
+
+  it('skips ticket work with --ticket-sources none and without an export', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics({ export: 'json', ticketSources: 'none' } as never, mockSource([ticketSession as never]) as never);
+    expect(enrichCostsMock.mock.calls[0][2]).toEqual([]);
+    expect(payloadContext().tickets).toBeUndefined();
+
+    enrichCostsMock.mockClear();
+    await runAnalytics({} as never, mockSource([ticketSession as never]) as never);
+    expect(enrichCostsMock.mock.calls[0][2]).toEqual([]);
+  });
+
+  it('adds no tickets for a source with its own cost (OTEL)', async () => {
+    const { runAnalytics } = await import('../index.js');
+    const source = { load: vi.fn().mockResolvedValue({ rawSessions: [ticketSession], cost: enrichResult }) };
+    await runAnalytics({ export: 'json' } as never, source as never);
+    expect(enrichCostsMock).not.toHaveBeenCalled();
+    expect(payloadContext().tickets).toBeUndefined();
+  });
+
+  it('rejects an invalid --ticket-sources before loading any sessions', async () => {
+    const { runAnalytics } = await import('../index.js');
+    const originalExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const source = mockSource();
+    try {
+      await runAnalytics({ export: 'json', ticketSources: 'title' } as never, source as never);
+      expect(process.exitCode).toBe(1);
+      expect(source.load).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  });
+});

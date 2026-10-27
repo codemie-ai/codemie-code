@@ -7,7 +7,7 @@
 import type { RootAnalytics, NamedInvocationStats } from '../types.js';
 import type { SessionCostIndex, CostSummary, AgentCoverage, SessionCost, DispatchEvent, TokenUsage } from '../cost/types.js';
 import { emptyUsage } from '../cost/cost-calculator.js';
-import type { ReportPayload, ReportSessionRecord, ReportMeta } from './types.js';
+import type { ReportPayload, ReportSessionRecord, ReportMeta, SessionTicket } from './types.js';
 import { detectSessionSource } from './session-source-detector.js';
 
 export interface PayloadContext {
@@ -17,6 +17,7 @@ export interface PayloadContext {
   userEmail?: string;   // caller stamps; absent when not authenticated
   periodStart?: string; // ISO — caller stamps from filter or session start
   periodEnd?: string;   // ISO — caller stamps from filter or session end
+  tickets?: ReadonlyMap<string, SessionTicket[]>; // per-session ticket ids (tickets/); absent = none computed
 }
 
 /** Public projections allowlist fields so internal transcript data cannot enter either export. */
@@ -186,6 +187,7 @@ export function buildPayload(
           agentInvocations,
           commandInvocations,
           sessionSource: detectSessionSource({ skillInvocations, agentInvocations, commandInvocations }),
+          ...(ctx.tickets?.get(s.sessionId)?.length ? { tickets: ctx.tickets.get(s.sessionId) } : {}),
         });
       }
     }
