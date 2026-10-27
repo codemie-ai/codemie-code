@@ -42,14 +42,25 @@ export function compileToolMatcher(globs: readonly string[]): (name: string) => 
 }
 
 /**
- * Fields holding query text rather than a bare key. Matched case-sensitively, like prompts: JQL
- * names issues by upper-case key, while free-text clauses (`text ~ "utf-8"`) would otherwise
- * produce ids.
+ * Fields holding query text rather than a bare key. Free-text clauses (`text ~ "utf-8"`) would
+ * otherwise produce ids, so a query is matched case-sensitively — except the value of an issue-key
+ * clause (`key = epmcdme-7`, `issue in (a-1, B-2)`, `parent != x-3`), where Jira accepts any case.
  */
 const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 
-function caseSensitiveIds(text: string): string[] {
-  return [...new Set(text.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? [])].slice(0, MAX_IDS_PER_CALL);
+/** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
+const JQL_KEY_CLAUSE = /\b(?:key|issue|issuekey|parent)\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)/gi;
+
+/** Text-search values (`summary ~ "…"`, `text !~ '…'`): free text, never read as clauses. */
+const JQL_TEXT_SEARCH = /!?~\s*(?:"[^"]*"|'[^']*')/g;
+
+function jqlIds(text: string): string[] {
+  const ids = new Set<string>();
+  for (const clause of text.replace(JQL_TEXT_SEARCH, ' ').matchAll(JQL_KEY_CLAUSE)) {
+    for (const id of extractTicketMentions(clause[1], MAX_IDS_PER_CALL)) ids.add(id);
+  }
+  for (const id of text.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? []) ids.add(id);
+  return [...ids].slice(0, MAX_IDS_PER_CALL);
 }
 
 /** A string holding a JSON object or array (e.g. `additional_fields: '{"parent":"X-1"}'`), parsed; else undefined. */
@@ -72,7 +83,7 @@ export function ticketsFromToolInput(input: unknown, fields: ReadonlySet<string>
   const found = new Set<string>();
   const scan = (text: string, field: string): void => {
     const value = text.slice(0, MAX_VALUE_CHARS);
-    const ids = QUERY_FIELDS.has(field) ? caseSensitiveIds(value) : extractTicketMentions(value, MAX_IDS_PER_CALL);
+    const ids = QUERY_FIELDS.has(field) ? jqlIds(value) : extractTicketMentions(value, MAX_IDS_PER_CALL);
     for (const id of ids) found.add(id);
   };
   /** `field` is the key-like field being read, or null outside one. */

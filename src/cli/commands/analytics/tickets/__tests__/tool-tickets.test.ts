@@ -50,7 +50,14 @@ describe('ticketsFromToolInput', () => {
 
   it('matches JQL case-sensitively, so free-text clauses produce no ids', () => {
     expect(ticketsFromToolInput({ jql: 'text ~ "utf-8" AND key = CAKE-1' })).toEqual(['CAKE-1']);
+    expect(ticketsFromToolInput({ jql: 'summary ~ "node-18" ORDER BY created' })).toEqual([]);
     expect(ticketsFromToolInput({ issueIdOrKey: 'epmcdme-77' })).toEqual(['EPMCDME-77']);
+  });
+
+  it('accepts any case in the value of a JQL issue-key clause', () => {
+    expect(ticketsFromToolInput({ jql: 'key = epmcdme-7 OR key = EPMCDME-8' })).toEqual(['EPMCDME-7', 'EPMCDME-8']);
+    expect(ticketsFromToolInput({ jql: 'issue in (ab-1, "cd-2") AND parent != \'ef-3\' AND issueKey NOT IN (gh-4)' })).toEqual(['AB-1', 'CD-2', 'EF-3', 'GH-4']);
+    expect(ticketsFromToolInput({ jql: 'labels = utf-8 AND text ~ "key = sha-1"' })).toEqual([]);
   });
 
   it('walks arrays and tolerates non-object input', () => {

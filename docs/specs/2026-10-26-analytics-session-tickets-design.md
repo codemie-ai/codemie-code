@@ -277,7 +277,9 @@ Decisions taken while implementing, where the design left room:
 - Branches: bot dependency branches (`dependabot/`, `renovate/`) are skipped and a match followed
   by `.` (a version, `lodash-4.17.21`) is ignored, since those were the main source of branch noise
   and, through corroboration, of prompt noise.
-- `jql` is matched case-sensitively; other key fields stay case-insensitive.
+- `jql` is matched case-sensitively, except the value of an issue-key clause (`key`/`issue`/
+  `issuekey`/`parent` with `=`, `!=`, `in`, `not in`), which accepts any case like Jira does; other
+  key fields stay case-insensitive. Known limitation: a lower-case key elsewhere in a query is lost.
 - Prompts are normalised the same way on both paths (wrappers stripped, whitespace collapsed), so a
   prompt seen in CodeMie's records and in the native log is counted once.
 - Not addressed: a session-level metadata branch (Codex `session_meta`) is not bounded by the
