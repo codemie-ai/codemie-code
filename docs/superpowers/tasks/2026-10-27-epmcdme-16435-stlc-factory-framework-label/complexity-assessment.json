@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Add STLC Factory session-source detection so sessions started by /stlc-factory:* skills and /stlc-feature are labeled STLC Factory instead of Pure chat.",
+  "generated": "2026-10-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Detector change is clear, but the Framework column in the ticket may be rendered outside this repo (codemie-preview), and the invocation-name forms for STLC skills are unconfirmed; matching rule (exact vs prefix) is a minor design choice." },
+    { "dimension": "technical_risk", "reason": "Closest pattern: sdlc-factory detector with exact-name unnamespaced command list; covers the shape fully. Low risk; existing test asserts the detector name list and must be updated." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
