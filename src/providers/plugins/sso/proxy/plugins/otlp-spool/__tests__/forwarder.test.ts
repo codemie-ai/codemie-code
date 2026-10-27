@@ -77,6 +77,24 @@ describe('unwrapHookRecords', () => {
   });
 });
 
+describe('unwrapHookRecords with a pinned project', () => {
+  it('rewrites top-level and raw project names that differ, leaves matching events byte for byte', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    const same = { type: 'agent.tool.end', codemie_project_name: 'A' };
+    const other = { type: 'agent.tool.end', codemie_project_name: 'B', raw: { codemie_project_name: 'C', x: 1 } };
+
+    const payload = unwrapHookRecords([spoolLine(same), spoolLine(other)], 'A');
+
+    const [first, second] = payload.ndjson.trim().split('\n');
+    expect(first).toBe(JSON.stringify(same));
+    expect(JSON.parse(second)).toEqual({
+      type: 'agent.tool.end',
+      codemie_project_name: 'A',
+      raw: { codemie_project_name: 'A', x: 1 },
+    });
+  });
+});
+
 describe('forwardSession (hooks)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -109,6 +127,31 @@ describe('forwardSession (hooks)', () => {
     expect(init.body).toBe(`${JSON.stringify({ type: 'agent.session.end', session_id: 's1' })}\n`);
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
     expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
+  });
+
+  it('warns on a backend drop reason without changing the send result', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ reason: 'project_context_conflict', dropped: 3 }),
+    });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(logger.warn).toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
+  });
+
+  it('does not wait for a stalled response body before advancing the cursor', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: () => new Promise<string>(() => {}) });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
   });
 
   it('retries once on 401 and succeeds', async () => {

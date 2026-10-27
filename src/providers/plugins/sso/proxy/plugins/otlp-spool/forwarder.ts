@@ -87,6 +87,9 @@ async function postToBackend(
   }
 }
 
+const DROP_BODY_TIMEOUT_MS = 2_000;
+const DROP_BODY_MAX_CHARS = 4_096;
+
 /**
  * The backend answers 200 even when its project gate discards a request. The hooks route says so
  * in its JSON body; surface it, without ever affecting the send result.
@@ -97,7 +100,13 @@ async function warnOnBackendDrop(
   stream: SpoolStream
 ): Promise<void> {
   try {
-    const parsed: unknown = JSON.parse(await response.text());
+    const body = await Promise.race([
+      response.text(),
+      new Promise<string>((_, reject) => {
+        setTimeout(() => reject(new Error('body read timeout')), DROP_BODY_TIMEOUT_MS).unref();
+      }),
+    ]);
+    const parsed: unknown = JSON.parse(body.slice(0, DROP_BODY_MAX_CHARS));
     if (typeof parsed !== 'object' || parsed === null) {
       return;
     }
@@ -167,7 +176,7 @@ async function send(
     }
     if (response.ok) {
       if (stream === 'hooks') {
-        await warnOnBackendDrop(response, sessionId, stream);
+        void warnOnBackendDrop(response, sessionId, stream);
       }
       return 'ok';
     }

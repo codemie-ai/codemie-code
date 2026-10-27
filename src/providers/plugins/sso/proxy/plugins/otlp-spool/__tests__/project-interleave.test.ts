@@ -106,7 +106,7 @@ describe('project gate — ingest vs forwarding', () => {
     // append(B) queued before the snapshot: the snapshot sees the conflict.
     const release = deferred();
     const held = withSessionLock(SESSION, () => release.promise);
-    const append = appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    const append = appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     const snapshot = snapshotPendingBytes(SESSION, 'logs');
     release.resolve();
     await held;
@@ -123,13 +123,13 @@ describe('project gate — ingest vs forwarding', () => {
     const release = deferred();
     const held = withSessionLock(SESSION, () => release.promise);
     const snapshot = snapshotPendingBytes(SESSION, 'logs');
-    const append = appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    const append = appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     release.resolve();
     await held;
     await append;
 
     expect(await snapshot).toMatchObject({ project: 'A' });
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
   });
 
   it('B. a request already in flight is the stated limit; nothing else is sent after the conflict', async () => {
@@ -147,7 +147,7 @@ describe('project gate — ingest vs forwarding', () => {
 
     const pass = forwardSession(SESSION, false, credentials as never);
     await started.promise;
-    await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     events.push('conflict-persisted');
     response.resolve({ ok: true, status: 200 });
     await pass;
@@ -155,7 +155,7 @@ describe('project gate — ingest vs forwarding', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(events).toEqual(['fetch:A', 'conflict-persisted']);
-    const hooksSize = Buffer.byteLength(hookLine('A') + hookLine('B'));
+    const hooksSize = Buffer.byteLength(hookLine('A') + hookLine('B\u00e9'));
     await cursorsAtEof(hooksSize);
   });
 
@@ -164,7 +164,7 @@ describe('project gate — ingest vs forwarding', () => {
     const { forwardSession } = await import('../forwarder.js');
     await seedBoundA();
     fetchMock.mockImplementation(async () => {
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
       return { ok: true, status: 200 };
     });
 
@@ -181,7 +181,7 @@ describe('project gate — ingest vs forwarding', () => {
       const { appendSpool } = await import('../spool-io.js');
       const { forwardSession } = await import('../forwarder.js');
       await seedBoundA(); // A hook + OTLP chunks that arrived before the switch
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
       await forwardSession(SESSION, true, credentials as never); // what the tick does for a sealed session
       await forwardSession(SESSION, true, credentials as never);
@@ -191,7 +191,7 @@ describe('project gate — ingest vs forwarding', () => {
       expect(String(url)).toBe('https://api.example.com/v1/analytics/cli-analytics/event-hooks');
       expect(init.headers['X-CodeMie-Project']).toBe('A');
       expect(init.body).toBe(`${JSON.stringify(aEvent)}\n`);
-      await cursorsAtEof(Buffer.byteLength(hookLine('A') + hookLine('B')));
+      await cursorsAtEof(Buffer.byteLength(hookLine('A') + hookLine('B\u00e9')));
     });
 
     it('a failed send leaves the cursor, and the retry sends the same bytes', async () => {
@@ -199,7 +199,7 @@ describe('project gate — ingest vs forwarding', () => {
       const { forwardSession } = await import('../forwarder.js');
       const { readStatus } = await import('../session-status.js');
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
       fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
 
       await forwardSession(SESSION, true, credentials as never);
@@ -214,7 +214,7 @@ describe('project gate — ingest vs forwarding', () => {
     describe('E. a conflict persisted after an unfiltered bound snapshot was built', () => {
       const aLine = hookLine('A');
       const blankLine = hookLine(''); // not provably A's: must never leave once the session is sealed
-      const bLine = hookLine('B');
+      const bLine = hookLine('B\u00e9');
 
       async function seedBoundWithBlank(): Promise<void> {
         const { appendSpool } = await import('../spool-io.js');
@@ -239,7 +239,7 @@ describe('project gate — ingest vs forwarding', () => {
         let conflictAppend: Promise<void> | undefined;
         authHook.onStaleCheck = (): void => {
           authHook.onStaleCheck = undefined;
-          conflictAppend = appendSpool(SESSION, 'hooks', bLine, ['B']); // queued on the lock before the check
+          conflictAppend = appendSpool(SESSION, 'hooks', bLine, ['B\u00e9']); // queued on the lock before the check
         };
 
         await forwardSession(SESSION, true, credentials as never);
@@ -261,7 +261,7 @@ describe('project gate — ingest vs forwarding', () => {
         await seedBoundWithBlank();
         fetchMock.mockReset();
         fetchMock.mockImplementationOnce(async () => {
-          await appendSpool(SESSION, 'hooks', bLine, ['B']); // conflict lands while the first attempt is on the wire
+          await appendSpool(SESSION, 'hooks', bLine, ['B\u00e9']); // conflict lands while the first attempt is on the wire
           return { ok: false, status: 401 };
         });
         fetchMock.mockResolvedValue({ ok: true, status: 200 });
@@ -281,7 +281,7 @@ describe('project gate — ingest vs forwarding', () => {
     it('a restart between the switch and the flush loses nothing: the seal is read back from disk', async () => {
       const { appendSpool } = await import('../spool-io.js');
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
       vi.resetModules();
       const { forwardSession } = await import('../forwarder.js');

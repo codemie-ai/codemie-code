@@ -1,5 +1,3 @@
-import { logger } from '@/utils/logger.js';
-import { sanitizeLogArgs } from '@/utils/security.js';
 import type { ProjectSeal, SessionStatus } from './session-status.js';
 
 /** Upper bound on remembered conflicting names; only their existence matters. */
@@ -76,10 +74,6 @@ export function applyProjectDecision(
       status.projectSeal = { v: 1, project: status.project, hooksEnd: hooksSizeBefore };
     }
     status.projectConflict = decision.names.slice(0, MAX_CONFLICT_NAMES);
-    logger.warn(
-      '[otlp-session-project] session has an unsendable project name; its analytics will not be sent',
-      ...sanitizeLogArgs({ names: status.projectConflict })
-    );
   }
 }
 

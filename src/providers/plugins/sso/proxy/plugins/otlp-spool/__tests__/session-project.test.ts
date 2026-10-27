@@ -47,17 +47,18 @@ describe('decideProject', () => {
     expect(decideProject(['A', 'a'], createStatus())).toEqual({ action: 'bind', project: 'A' });
   });
 
-  it('flags a conflict for two projects in one call, even though A is first', () => {
-    expect(decideProject(['A', 'B'], createStatus())).toEqual({
-      action: 'conflict',
-      names: ['A', 'B'],
-    });
+  it('binds the first of two projects in one call', () => {
+    expect(decideProject(['A', 'B'], createStatus())).toEqual({ action: 'bind', project: 'A' });
   });
 
-  it('flags a conflict for a stored binding plus a different name', () => {
-    expect(decideProject(['B'], withProject('A'))).toEqual({
+  it('keeps a stored binding when a different name arrives', () => {
+    expect(decideProject(['B'], withProject('A'))).toEqual({ action: 'noop' });
+  });
+
+  it('conflicts when a different name next to the binding is unsendable', () => {
+    expect(decideProject(['Проект'], withProject('A'))).toEqual({
       action: 'conflict',
-      names: ['A', 'B'],
+      names: ['A', 'Проект'],
     });
   });
 
