@@ -1,0 +1,29 @@
+{
+  "decision": "approve",
+  "rationale": "All four lenses and the standards audit ran; every story/spec criterion passes or is a declared non-goal, with lint/typecheck/test execution pending Stage 7. 1 deferred (pre-existing: tool-fields.ts and session-signals.ts still gate Write counting on different types, so a Write with no type or an update with no structuredPatch diverges as on origin/main) -> code-review-deferred.local.md. 4 dismissed: a hypothetical create with a non-empty hunk-less patch, a stale doc reference, a test comment, and a test gap for the deferred shape.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "agent.session.summary adds the lines of a Write tool call (new file) to lines_added", "status": "pass", "notes": "session-signals.ts:96 counts a create without a non-empty patch by its content" },
+    { "kind": "story-ac", "item": "Write 5-line file + Edit 1 line yields lines_added=6, lines_removed=1 (net +5)", "status": "pass", "notes": "session-signals.test.ts asserts {6,1} with the real create shape" },
+    { "kind": "story-ac", "item": "Files created through Bash are out of scope", "status": "na", "notes": "declared non-goal; Bash handling untouched" },
+    { "kind": "spec", "item": "Real new-file Write result {type:'create', structuredPatch:[], content} counted by content; trailing newline not a line", "status": "pass", "notes": "countContentLines; test asserts 'a\\nb\\nc\\n' -> 3" },
+    { "kind": "spec", "item": "A non-empty patch still wins over content (summary)", "status": "pass", "notes": "hasPatch guard; test -> {2,0}" },
+    { "kind": "spec", "item": "A create without string content stays unmeasured (null)", "status": "pass", "notes": "added stays null -> skipped; tested" },
+    { "kind": "spec", "item": "Summary uses the same rule as agent.tool.end so the summary equals the sum of per-call lines", "status": "pass", "notes": "aligned for create/update shapes; residual divergence on untyped or patchless Write is pre-existing and deferred" },
+    { "kind": "spec", "item": "resolveToolDiffFields: Write overwrite that changed nothing (type 'update', empty structuredPatch) is 0/0", "status": "pass", "notes": "tool-fields.ts:50-52; tested" },
+    { "kind": "spec", "item": "resolveToolDiffFields: new file still counted by content, non-empty patch by patch", "status": "pass", "notes": "patch branch and content fallback unchanged" },
+    { "kind": "spec", "item": "Summary counts an overwrite (type update) by its patch, and an empty-patch update as zero", "status": "pass", "notes": "tests {2,1} and {0,0}" },
+    { "kind": "spec", "item": "Tests use the real Write result shape and cover create without structuredPatch", "status": "pass", "notes": "fixtures updated; create without structuredPatch -> 3" },
+    { "kind": "spec", "item": "Orchestrator summary includes the created file's lines", "status": "pass", "notes": "orchestrator.test.ts lines_added 2 -> 5" },
+    { "kind": "spec", "item": "Files written by Bash or NotebookEdit are out of scope", "status": "na", "notes": "declared non-goal" },
+    { "kind": "spec", "item": "Vitest transcript tests green, npm run lint and npm run typecheck with zero warnings", "status": "pending-stage-7", "notes": "execution evidence owned by Stage 7" },
+    { "kind": "spec", "item": "No breaking changes", "status": "pass", "notes": "exported signatures unchanged" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "2 subjects in range use allowed type fix and allowed scope analytics, imperative, under the 100-char subject limit per git-workflow.md" },
+    { "kind": "code-quality", "status": "pass", "notes": "changes in tool-fields.ts (resolveToolDiffFields) and session-signals.ts (collectEditLineStats) keep explicit return types and JSDoc on exports, comment the why, add no console.log, any, or extensionless imports; both files well under 500 lines; tests follow *.test.ts naming" },
+    { "kind": "security", "status": "pass", "notes": "change only alters line-count arithmetic for Write/create tool results; no logging, credentials, path handling, external input to filesystem, or X-CodeMie attribution headers touched" }
+  ],
+  "findings": []
+}

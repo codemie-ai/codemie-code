@@ -653,6 +653,14 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
       userLine('hello', { version: '2.1.295' }),
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
       editResult,
+      userLine([{ type: 'tool_result', tool_use_id: 't2', content: 'ok' }], {
+        toolUseResult: {
+          type: 'create',
+          structuredPatch: [],
+          originalFile: null,
+          content: 'one\ntwo\nthree\n',
+        },
+      }),
       userLine(commandText('commit')),
       userLine(commandText('plan')),
       userLine(commandText('plan')),
@@ -665,7 +673,8 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
       JSON.stringify({ type: 'ai-title', aiTitle: 'Latest title' }),
     ]);
 
-    expect(summary.lines_added).toBe(2);
+    // 2 from the Edit patch + 3 content lines of the created file.
+    expect(summary.lines_added).toBe(5);
     expect(summary.lines_removed).toBe(1);
     // 'hello' + three command lines; the tool_result-only line is not a prompt.
     expect(summary.turns).toBe(4);

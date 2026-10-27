@@ -102,6 +102,11 @@ describe('resolveToolDiffFields', () => {
     expect(fields).toEqual({ lines_added: 1, lines_removed: 0 });
   });
 
+  it('counts a Write overwrite that changed nothing (type update, empty patch) as zero lines', () => {
+    const fields = resolveToolDiffFields('Write', { content: 'a\nb\n' }, { type: 'update', structuredPatch: [] });
+    expect(fields).toEqual({ lines_added: 0, lines_removed: 0 });
+  });
+
   it('omits line counts for a Write with no content and no structuredPatch — unknown, not zero', () => {
     expect(resolveToolDiffFields('Write', {}, {})).toEqual({});
   });

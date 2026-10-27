@@ -91,12 +91,14 @@ export function collectEditLineStats(lines: readonly SignalLine[]): EditLineStat
 
     let added: number | null = null;
     let removed = 0;
-    if (Array.isArray(structuredPatch)) {
+    // A create without a non-empty patch is counted by its content; any non-empty patch wins.
+    const hasPatch = Array.isArray(structuredPatch) && structuredPatch.length > 0;
+    if (type === 'create' && !hasPatch) {
+      if (typeof content === 'string') added = countContentLines(content);
+    } else if (Array.isArray(structuredPatch)) {
       const counts = countPatchLines(structuredPatch);
       added = counts.added;
       removed = counts.removed;
-    } else if (type === 'create' && typeof content === 'string') {
-      added = countContentLines(content);
     }
     if (added === null) continue;
 

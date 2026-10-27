@@ -31,8 +31,10 @@ export function resolveToolContextFields(toolName: string, toolInput: unknown): 
  * real zero-line change. Only `Edit`/`MultiEdit`/`Write` produce a diff; every other tool omits
  * `lines_added`/`lines_removed`.
  *
- * Write's `structuredPatch` is empty for a brand-new file (nothing to diff against), so it falls
- * back to counting the written content's lines instead, matching `claude-file-operation.ts`.
+ * A Write with a non-empty `structuredPatch` is counted by its patch. An overwrite (`type: 'update'`)
+ * with an empty patch changed nothing and counts as `0`. Otherwise — a brand-new file, whose patch is
+ * empty because there is nothing to diff against — it counts the written content's lines, matching
+ * `claude-file-operation.ts`.
  */
 export function resolveToolDiffFields(toolName: string, toolInput: unknown, toolResponse: unknown): ToolDiffFields {
   if (toolName === 'Edit' || toolName === 'MultiEdit') {
@@ -44,6 +46,9 @@ export function resolveToolDiffFields(toolName: string, toolInput: unknown, tool
     const counts = Array.isArray(patch) && patch.length > 0 ? countStructuredPatch(patch) : null;
     if (counts) {
       return { lines_added: counts.added, lines_removed: counts.removed };
+    }
+    if (readField(toolResponse, 'type') === 'update' && Array.isArray(patch)) {
+      return { lines_added: 0, lines_removed: 0 };
     }
     const content = readField(toolInput, 'content');
     // A Write never removes lines; its added count comes from the content it wrote. No content
