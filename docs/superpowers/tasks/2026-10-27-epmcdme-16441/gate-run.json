@@ -1,0 +1,81 @@
+{
+ "schema": 1,
+ "branch": "EPMCDME-16441",
+ "head": "82d6606d9d206b064035b13f47a55d02684616b2",
+ "runner": "npm",
+ "started_at": "2026-10-27T22:19:00",
+ "completed_at": "2026-10-27T22:21:10",
+ "status": "BLOCKED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "license",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 2000,
+   "command": "npm run license-check",
+   "exit_code": 0
+  },
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 2000,
+   "command": "npm run lint",
+   "exit_code": 0
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 3000,
+   "command": "npm run typecheck",
+   "exit_code": 0
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 4000,
+   "command": "npm run build",
+   "exit_code": 0
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 15000,
+   "command": "npx vitest run --project unit",
+   "exit_code": 1
+  },
+  {
+   "id": "integration",
+   "source": "guide",
+   "status": "FAIL",
+   "duration_ms": 11000,
+   "command": "npx vitest run --project cli",
+   "exit_code": 1
+  },
+  {
+   "id": "secrets",
+   "source": "guide",
+   "status": "SKIPPED",
+   "duration_ms": 0,
+   "command": "npm run validate:secrets",
+   "exit_code": 0,
+   "notes": "Output: 'No staged changes to scan'; stage changes to run the scan locally; CI runs it unconditionally"
+  },
+  {
+   "id": "commitlint",
+   "source": "guide",
+   "status": "PASS",
+   "duration_ms": 1000,
+   "command": "npm run commitlint:last",
+   "exit_code": 0
+  }
+ ],
+ "failures": {
+  "unit": "\n  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://codemie.lab.epam.com/code-assistant-api\",\n  ]\n\n\nNumber of calls: 1\n\n \u276f src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:58:35\n     56|\n     57|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO \u2026\n     58|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU\u2026\n       |                                   ^\n     59|   });\n     60|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[13/14]\u23af\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, \u2026(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": undefined,\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n \u276f src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:117:20\n    115|     const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso'\u2026\n    116|\n    117|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO \u2026\n       |                    ^\n    118|     expect(getStoredCredentials).not.toHaveBeenCalled();\n    119|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[14/14]\u23af\n\n\n Test Files  6 failed | 370 passed (376)\n      Tests  14 failed | 5870 passed (5884)\n   Start at  22:20:38\n   Duration  15.28s (transform 10.36s, setup 0ms, import 68.78s, tests 60.88s, environment 17ms)\n",
+  "integration": "+   \"/var/folders/hn/rxnq04t10gl1ftv23qfmyrbr0000gn/T/codemie-claude-model-picker-config-23884-1793132884029.json\",\n+   \"--model\",\n+   \"claude-sonnet-5-5[1m]\",\n    \"test\",\n    \"task\",\n  ]\n\n \u276f tests/integration/sso-claude-plugin.test.ts:183:28\n    181|\n    182|       // Verify args unchanged\n    183|       expect(enrichedArgs).toEqual(args);\n       |                            ^\n    184|\n    185|       // Verify --plugin-dir NOT injected\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/4]\u23af\n\n FAIL  |cli| tests/integration/sso-claude-plugin.test.ts > SSO Provider - Claude Plugin Auto-Install > Full Integration Flow > should complete full flow: install \u2192 inject\nAssertionError: expected [ '--settings', \u2026(7) ] to deeply equal [ '--plugin-dir', \u2026(3) ]\n\n- Expected\n+ Received\n\n  [\n+   \"--settings\",\n+   \"/var/folders/hn/rxnq04t10gl1ftv23qfmyrbr0000gn/T/codemie-claude-model-picker-config-23884-1793132884029.json\",\n+   \"--model\",\n+   \"claude-sonnet-5-5[1m]\",\n    \"--plugin-dir\",\n    \"/var/folders/hn/rxnq04t10gl1ftv23qfmyrbr0000gn/T/codemie-test-claude-plugin/claude-plugin\",\n    \"test\",\n    \"task\",\n  ]\n\n \u276f tests/integration/sso-claude-plugin.test.ts:233:28\n    231|\n    232|       // Verify flag injected\n    233|       expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, '\u2026\n       |                            ^\n    234|     });\n    235|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/4]\u23af\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  4 failed | 278 passed | 10 skipped (292)\n   Start at  22:20:54\n   Duration  9.77s (transform 5.61s, setup 0ms, import 21.37s, tests 54.89s, environment 2ms)\n"
+ }
+}

@@ -1,0 +1,35 @@
+# T3 findings: subagent identity and cost carry-through (EPMCDME-16441)
+
+Read-only. Nothing measured from prod; "inferred" = deduced from code only. Paths under src/agents/plugins/claude-code-otlp/ unless noted.
+
+## 1. Verification (CLI side)
+| Property | Result | Evidence |
+|---|---|---|
+| Parent session id on `agent.subagent.usage` | Yes. `session_id` = hook `session_id`, passed into `openSubagentPass` / `deriveSubagentEvents` and `buildSubagentUsageEvent(sessionId, ...)`. Subagent `agent.usage.request` events also use the parent `sessionId`. The `agent_id` is a separate field. (That Claude Code's SubagentStop `session_id` is the parent's: inferred, not measured from prod.) | claude-code-otlp.plugin.ts:406; transcript/orchestrator.ts:1176-1193, 1140-1170; transcript/subagent-usage.ts:309-312 |
+| Parent session id on `agent.subagent.stop` | Yes: `{...hookInput}` keeps `session_id`; base class re-stamps `session_id` from the payload. | plugin.ts:408-412; core/OtlpAgentAdapter.ts buildEvent (`session_id: String(hookEvent['session_id'])`) |
+| Same pinned `codemie_project_name` | Yes. `extractHookContext` passes `sessionId`, so `resolveProjectName` uses the per-session pin for every hook event (subagent ones included); the forwarder additionally rewrites to the pinned project (Task 1). A subagent cwd in another worktree does not change the project. | plugin.ts:78-84; core/event-fields/identity-fields.ts:83-96; otlp-spool/forwarder.ts:163-177 |
+| Stable `event_id` | Yes for resends: ids are built once per hook invocation (events array reused by `retryOnce`). `agent.subagent.usage` / `agent.usage.request` id = content hash, so identical resend keeps the id and a grown cumulative summary gets a new id (backend stores latest). `agent.subagent.stop` uses content hash of payload + timestamp (hook time), so a repeated stop is a new row, not a loss. | claude-code-otlp.event-id.ts:50-67; core/OtlpAgentAdapter.ts buildEvent; plugin.ts forwards once |
+| Cost fields | `agent.subagent.usage.usage[]` carries per-model token totals (input, cache 5m/1h, cache read, output, thinking, web search/fetch, api_calls); no USD (backend prices from tokens). `agent.subagent.stop` carries description, tool_use_id, spawn_depth, worktree, started_at, duration_ms only; no cost. Per-request `agent.usage.request` rows carry `agent_id`/`agent_type`. | subagent-usage.ts:164-184, 295-331; event-fields/subagent-fields.ts; transcript/usage-request.ts:255-256 |
+| Only internal check-ins skipped | Yes in the hooks: SubagentStart and SubagentStop return an empty payload only when `agent_type` is empty. Not skipped: stop without `agent_transcript_path` (forwards the stop only, no usage), and an empty/unreadable transcript (`isEmpty`: no usage event). Both are recovered by the SessionEnd backstop (`findSubagentFiles`, which applies no agent_type filter) when the file exists and offset does not already cover it. | plugin.ts:373-382, 1xx onSubagentStartEvent; orchestrator.ts:1096-1100, 1240-1256 |
+
+## 2. CLI-side gaps found
+No code fix made. Observations, none fixed (each outside "minimal" or a policy decision):
+1. Allowlist is evaluated on the hook's own `cwd` (`isTracked` -> `isProjectTracked(hookInput.cwd)`; plugin.ts:91-93). When an allowlist is configured and a subagent hook fires with a cwd (e.g. a worktree) outside every allowlisted path, its Start/Stop events and its `agent.subagent.usage` are dropped. The SessionEnd backstop (main cwd, tracked) re-derives the usage unless SessionEnd is lost (P3, `claude -p`), so cost is recoverable, the per-subagent stop event is not. INFERRED, not measured. Allowlist semantics are a product decision; not changed.
+2. Backstop `worktree` / `cwd` of a subagent derived at SessionEnd is the SessionEnd hook cwd, not the subagent's (orchestrator.ts:1243-1245 comment). Identity fields only; cost unaffected.
+3. In a `claude -p` run where SessionEnd never arrives, subagents whose own SubagentStop failed/was skipped are never reported (links to P3).
+
+## 3. Backend roll-up result (from findings-F2.md, re-read rollups.py:575-660 in the sibling checkout, commit as in F2)
+- `agent.subagent.usage` totals become a session_usage token source only when (a) no `usage_requests` row exists for that session+agent_id, (b) no OTel `api_request` log for the session (any agent), (c) no non-totals session_usage row for that agent, (d) no `attrs.otel_requests` rows (rollups.py:589-607). Reason stated in the code: otherwise requests would be counted twice.
+- The CLI sends BOTH per-request `agent.usage.request` (with `agent_id`) and the cumulative `agent.subagent.usage` for each subagent. So in a CLI-hook session the subagent has `usage_requests`, the totals are suppressed by (a) and cost is counted once via the requests: no double count (inferred from code, not measured from prod). Totals only fill in when per-request rows are absent.
+- Possible drop (inferred, not measured): a session where the subagent's `agent.usage.request` events were never delivered AND the session has any OTel `api_request` (Claude Code native OTEL on) loses the subagent totals (condition b). Also totals rows have `source_cost_usd = NULL` and the storage guide says dashboard endpoints do not read session_usage/subagent_invocations; cost aggregates read `cost_daily` (F2). Whether subagent-only totals reach dashboard cost on prod is unverified.
+- Verdict: no confirmed double count or drop. One unverified risk needs a prod query before a ticket is filed; draft below is conditional.
+
+## 4. Ready-to-file backend ticket draft (file only if the prod check confirms)
+Title: Subagent cost missing from session cost when OTel api_request exists and agent.usage.request is absent
+Link: EPMCDME-16441 (P4/P5)
+Description: `_totals_are_a_source` (src/codemie/repository/cli_analytics/postgres/rollups.py:589-607) suppresses `agent.subagent.usage` totals for the whole session when any OTel `api_request` exists, and totals rows have no cost (`source_cost_usd` NULL, rollups.py:640). If the per-request `agent.usage.request` rows of a subagent are missing (lost batch, 413, discarded request), its cost vanishes from session cost though the totals event arrived. Also confirm whether session_usage/subagent_invocations totals are read by dashboard and KPI cost (storage guide says not).
+Check on prod: for factory sessions with subagents, compare `subagent_invocations` token sums against `usage_requests` per agent_id and against cost_daily for the session.
+Expected: either surface the totals as cost when requests are absent, or document the exclusion. Severity: medium, unverified.
+
+## 5. Ticket note (to paste)
+T3: CLI stamps parent session_id, the session-pinned codemie_project_name and content-hash event_ids on agent.subagent.usage/stop and per-request agent.usage.request; only agent_type-less check-ins are skipped. Backend roll-up (rollups.py:589-607) counts subagent cost once via usage_requests and falls back to totals only when requests are absent; no confirmed drop/double count, one unverified risk (draft above). Allowlist-by-subagent-cwd gap noted (inferred).

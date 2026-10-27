@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-10-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 8,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Session-to-project pinning logic in otlp-spool (decideProject/applyProjectDecision) changes analytics attribution semantics from conflict to first-seen pin; edge cases (blank, non-ASCII, case-insensitive names, sealed prefix) and a backend handoff dependency. No exact precedent." },
+    { "dimension": "file_change_estimate", "reason": "8 files changed (7-10 range): forwarder.ts, session-project.ts, one architecture doc, and 5 test files, all within the otlp-spool plugin directory plus docs." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: enumerated edge cases (sendable-name validation, case-insensitive dedup, conflict vs bind) across several test files"
+  ],
+  "split_recommendation": null
+}
