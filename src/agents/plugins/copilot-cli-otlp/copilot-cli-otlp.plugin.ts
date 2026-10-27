@@ -169,18 +169,18 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
       if (typeof err === 'object' && err !== null) {
         const errRecord = err as Record<string, unknown>;
         if ('message' in errRecord) {
-          normalized.error = this.boundedFreeText(errRecord.message);
+          normalized.error_message = this.boundedFreeText(errRecord.message);
         }
         // Gap 1: errorOccurred forwards error.name alongside error.message; no stack.
         if (typeof errRecord.name === 'string') {
-          normalized.error_name = this.boundedFreeText(errRecord.name);
+          normalized.error_type = this.boundedFreeText(errRecord.name);
         }
       } else {
-        normalized.error = this.boundedFreeText(err);
+        normalized.error_message = this.boundedFreeText(err);
       }
     }
     if (input.errorContext !== undefined) {
-      normalized.errorContext = this.boundedFreeText(input.errorContext);
+      normalized.error_context = this.boundedFreeText(input.errorContext);
     }
     if (input.recoverable !== undefined) normalized.recoverable = input.recoverable;
     if (input.agentName !== undefined) normalized.agent_name = this.boundedFreeText(input.agentName);
