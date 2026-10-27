@@ -699,11 +699,11 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       await expect(run()).resolves.toBeUndefined();
     });
 
-    it('is also invoked when ensureOtlpProxy throws, before any block output is possible', async () => {
+    it('is not invoked when ensureOtlpProxy throws: a daemon-start failure is non-blocking', async () => {
       ensureOtlpProxy.mockRejectedValueOnce(new Error('daemon start failed'));
       const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
       await run();
-      expect(onHookError).toHaveBeenCalledWith(expect.objectContaining({ message: 'daemon start failed' }), expect.anything());
+      expect(onHookError).not.toHaveBeenCalled();
     });
   });
 });
