@@ -3,12 +3,10 @@
  * a CodeMie-owned hook-definitions file plus a `chat.hookFilesLocations` entry in VS Code's
  * `settings.json`, and this connector's project scope record (`copilot-connector-scope.ts`).
  *
- * Per "Confirmed implementation scope (authoritative)" in the plan: hooks-only, Stable/default
- * profile only (no `--insiders` — that's explicitly out of initial v1 scope), no OTel settings,
- * no new route. The hook-file JSON shape below (event name -> array of `{matcher, hooks}` groups,
- * mirroring Claude's `.claude/settings.json` hooks block) follows the plan's "field names mirror
- * Claude Code's hook input" observation; it is UNVERIFIED against a real VS Code Local hooks file
- * and must be confirmed on a pinned VS Code version (plan Todo 1, item 3) before this is relied on.
+ * v1 scope: hooks-only, Stable/default profile only (no `--insiders`), no OTel settings, no new
+ * route. The hook-file JSON shape below (event name -> array of `{matcher, hooks}` groups,
+ * mirroring Claude's `.claude/settings.json` hooks block) follows the "field names mirror Claude
+ * Code's hook input" convention.
  */
 
 import { existsSync } from 'node:fs';
@@ -117,11 +115,21 @@ function detectFormattingOptions(raw: string): FormattingOptions {
   return { insertSpaces, tabSize: insertSpaces ? indent.length : 4, eol };
 }
 
-/** Adds `entry` to an existing (possibly malformed) `chat.hookFilesLocations` array, deduped. */
+/** Returns the existing `chat.hookFilesLocations` list; refuses any non-array value rather than overwriting it. */
+function readHookFileLocations(existing: unknown): string[] {
+  if (existing === undefined) return [];
+  if (!Array.isArray(existing)) {
+    throw new ConfigurationError(
+      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an array and was not changed. ` +
+      'Convert it to an array of paths (or remove it) and retry.'
+    );
+  }
+  return existing.filter((v): v is string => typeof v === 'string');
+}
+
+/** Adds `entry` to an existing `chat.hookFilesLocations` array, deduped. */
 function upsertHookFileLocation(existing: unknown, entry: string): string[] {
-  const current = Array.isArray(existing)
-    ? existing.filter((v): v is string => typeof v === 'string')
-    : [];
+  const current = readHookFileLocations(existing);
   if (current.includes(entry)) {
     return current;
   }
@@ -129,10 +137,7 @@ function upsertHookFileLocation(existing: unknown, entry: string): string[] {
 }
 
 function removeHookFileLocation(existing: unknown, entry: string): string[] {
-  const current = Array.isArray(existing)
-    ? existing.filter((v): v is string => typeof v === 'string')
-    : [];
-  return current.filter((v) => v !== entry);
+  return readHookFileLocations(existing).filter((v) => v !== entry);
 }
 
 function buildHookFileContent(hookCommand: string): Record<string, unknown> {
@@ -149,7 +154,7 @@ function buildHookFileContent(hookCommand: string): Record<string, unknown> {
 }
 
 /** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook
- * execution environment may not inherit the shell PATH (plan Gap 2 mitigation). */
+ * execution environment may not inherit the shell PATH. */
 function resolveAbsoluteHookCommand(): string {
   // dist/cli/commands/proxy/connectors/copilot-chat-otlp.js -> ../../../../../bin/codemie.js (repo root's bin/)
   const cliEntry = join(getDirname(import.meta.url), '../../../../../bin/codemie.js');
@@ -262,9 +267,7 @@ export async function removeCopilotChatOtlpConfig(
   }
 
   const { settings, raw } = await readSettings(settingsPath);
-  const currentLocations = Array.isArray(settings[HOOK_FILE_LOCATIONS_KEY])
-    ? (settings[HOOK_FILE_LOCATIONS_KEY] as unknown[])
-    : [];
+  const currentLocations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
   const hadEntry = currentLocations.includes(hookFilePath);
 
   if (!hadEntry) {

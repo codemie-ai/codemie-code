@@ -118,11 +118,10 @@ export interface DaemonIdentity {
  * Anthropic-gateway targets share the `claude-desktop` identity, so the priority
  * collapses onto exactly the two existing identities — no new telemetry value.
  *
- * The hooks-only Copilot targets never export OTel through this daemon (plan's
- * "Confirmed implementation scope") and only need it running by the time their first
- * real hook fires (`ensureOtlpProxy`, started lazily); this identity exists so a
- * bare `connect --copilot-chat-otlp` / `--copilot-cli-otlp` run still has something to
- * spawn/match against, consistent with every other target.
+ * The hooks-only Copilot targets never export OTel through this daemon and only need it
+ * running by the time their first real hook fires (`ensureOtlpProxy`, started lazily);
+ * this identity exists so a bare `connect --copilot-chat-otlp` / `--copilot-cli-otlp` run
+ * still has something to spawn/match against, consistent with every other target.
  */
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {

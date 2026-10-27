@@ -104,7 +104,7 @@ async function readStdin(): Promise<string> {
  * back to the raw, unmodified input on a parse failure, so `OtlpAgentAdapter.processOtlpEvent`'s
  * own `JSON.parse` — not this helper — is what surfaces a malformed-input error.
  */
-function injectEventName(raw: string, eventName: string): string {
+export function injectEventName(raw: string, eventName: string): string {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {

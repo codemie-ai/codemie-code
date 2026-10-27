@@ -2,13 +2,11 @@
  * Writes/removes CodeMie's hooks-only wiring for native (non-managed) GitHub Copilot CLI
  * sessions: one CodeMie-owned hook-definitions file under `$COPILOT_HOME/hooks/` (default
  * `~/.copilot/hooks/`), plus this connector's project scope record
- * (`copilot-connector-scope.ts`). Never written to `.github/hooks/` (plan Gap 4).
+ * (`copilot-connector-scope.ts`). Never written to `.github/hooks/`.
  *
- * Per "Confirmed implementation scope (authoritative)": hooks-only, no OTel settings, no new
- * route. The hook-file JSON shape below (camelCase event name -> array of `{exec, args,
- * timeoutSec}` entries) follows the plan's "exec + args absolute commands... explicit
- * timeoutSec" resolution; GitHub does not document the exact file schema, so this is UNVERIFIED
- * pending a pinned-CLI-version experiment (plan Todo 1, items 8-12) before being relied on.
+ * v1 scope: hooks-only, no OTel settings, no new route. The hook-file JSON shape below (camelCase
+ * event name -> array of `{exec, args, timeoutSec}` entries, with `exec`/`args` as absolute
+ * commands and an explicit `timeoutSec`).
  */
 
 import { existsSync } from 'node:fs';
@@ -59,7 +57,7 @@ export function getCopilotCliHookFilePath(): string {
   return join(getCopilotHome(), 'hooks', CLI_HOOK_FILE_NAME);
 }
 
-/** Absolute `node` + script path per event, per the plan's PATH-independence mitigation. */
+/** Absolute `node` + script path per event, so the hook runner's PATH doesn't matter. */
 function resolveHookEntry(eventName: string): { exec: string; args: string[]; timeoutSec: number } {
   // dist/cli/commands/proxy/connectors/copilot-cli-otlp.js -> ../../../../../bin/codemie.js (repo root's bin/)
   const cliEntry = join(getDirname(import.meta.url), '../../../../../bin/codemie.js');
