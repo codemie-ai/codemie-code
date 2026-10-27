@@ -9,7 +9,7 @@
  *    even when those sources are not requested — they are just not emitted then.
  */
 
-import { TICKET_RE, extractTicketMentions } from '@/agents/core/ticket-parser.js';
+import { TICKET_RE } from '@/agents/core/ticket-parser.js';
 import type { SessionTicket } from '../report/types.js';
 
 export type TicketSource = 'tool' | 'branch' | 'prompt';
@@ -41,6 +41,24 @@ function promptTicketIds(text: string): string[] {
   return [...new Set(matches)].slice(0, MAX_IDS_PER_TEXT);
 }
 
+/** Branches bots create for dependency bumps: `dependabot/npm_and_yarn/lodash-4.17.21`, `renovate/node-20.x`. */
+const BOT_BRANCH = /^(dependabot|renovate)\//i;
+
+/**
+ * Branch ids: matched case-insensitively (branches are usually lower case), except on bot
+ * dependency branches, and never when the match runs into a version (`lodash-4.17`, `node-20.x`).
+ */
+function branchTicketIds(branch: string): string[] {
+  if (BOT_BRANCH.test(branch)) return [];
+  const ids = new Set<string>();
+  for (const match of branch.matchAll(new RegExp(TICKET_RE.source, TICKET_RE.flags))) {
+    if (branch[match.index + match[0].length] === '.') continue;
+    ids.add(match[0].toUpperCase());
+    if (ids.size >= MAX_IDS_PER_TEXT) break;
+  }
+  return [...ids];
+}
+
 function prefixOf(id: string): string {
   return id.slice(0, id.lastIndexOf('-'));
 }
@@ -67,7 +85,7 @@ export function buildSessionTickets(
 
   for (const [sessionId, e] of evidence) {
     const tool = e.tool;
-    const branch = countByText(e.branches, (b) => extractTicketMentions(b, MAX_IDS_PER_TEXT));
+    const branch = countByText(e.branches, branchTicketIds);
     for (const id of [...tool.keys(), ...branch.keys()]) corroborated.add(prefixOf(id));
     const empty = new Map<string, number>();
     perSession.set(sessionId, {

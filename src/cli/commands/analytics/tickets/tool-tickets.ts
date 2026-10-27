@@ -4,7 +4,7 @@
  * description, a comment body — is never read.
  */
 
-import { extractTicketMentions } from '@/agents/core/ticket-parser.js';
+import { TICKET_RE, extractTicketMentions } from '@/agents/core/ticket-parser.js';
 
 /**
  * Default tool-name globs: Jira-flavoured MCP tools (`mcp__claude_ai_Atlassian__getJiraIssue`,
@@ -41,6 +41,17 @@ export function compileToolMatcher(globs: readonly string[]): (name: string) => 
   return (name) => patterns.some((pattern) => pattern.test(name));
 }
 
+/**
+ * Fields holding query text rather than a bare key. Matched case-sensitively, like prompts: JQL
+ * names issues by upper-case key, while free-text clauses (`text ~ "utf-8"`) would otherwise
+ * produce ids.
+ */
+const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
+
+function caseSensitiveIds(text: string): string[] {
+  return [...new Set(text.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? [])].slice(0, MAX_IDS_PER_CALL);
+}
+
 /** A string holding a JSON object or array (e.g. `additional_fields: '{"parent":"X-1"}'`), parsed; else undefined. */
 function embeddedJson(value: string): unknown {
   const trimmed = value.trim();
@@ -59,26 +70,29 @@ function embeddedJson(value: string): unknown {
  */
 export function ticketsFromToolInput(input: unknown, fields: ReadonlySet<string> = TICKET_KEY_FIELDS): string[] {
   const found = new Set<string>();
-  const scan = (text: string): void => {
-    for (const id of extractTicketMentions(text.slice(0, MAX_VALUE_CHARS), MAX_IDS_PER_CALL)) found.add(id);
+  const scan = (text: string, field: string): void => {
+    const value = text.slice(0, MAX_VALUE_CHARS);
+    const ids = QUERY_FIELDS.has(field) ? caseSensitiveIds(value) : extractTicketMentions(value, MAX_IDS_PER_CALL);
+    for (const id of ids) found.add(id);
   };
-  const walk = (value: unknown, depth: number, inKeyField: boolean): void => {
+  /** `field` is the key-like field being read, or null outside one. */
+  const walk = (value: unknown, depth: number, field: string | null): void => {
     if (depth > MAX_DEPTH || value === null || value === undefined) return;
     if (typeof value === 'string') {
-      if (inKeyField) scan(value);
+      if (field !== null) scan(value, field);
       else {
         const parsed = embeddedJson(value);
-        if (parsed !== undefined) walk(parsed, depth + 1, false);
+        if (parsed !== undefined) walk(parsed, depth + 1, null);
       }
       return;
     }
     if (typeof value !== 'object') return;
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, depth + 1, inKeyField);
+      for (const item of value) walk(item, depth + 1, field);
       return;
     }
-    for (const [key, item] of Object.entries(value)) walk(item, depth + 1, fields.has(key));
+    for (const [key, item] of Object.entries(value)) walk(item, depth + 1, fields.has(key) ? key : null);
   };
-  walk(input, 0, false);
+  walk(input, 0, null);
   return [...found];
 }

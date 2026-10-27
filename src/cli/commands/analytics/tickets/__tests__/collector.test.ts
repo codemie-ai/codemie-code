@@ -50,6 +50,23 @@ describe('TicketCollector', () => {
     ]);
   });
 
+  it('matches a Codex server__tool name against the default mcp__ patterns', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    const call = { type: 'response_item', payload: { type: 'function_call', name: 'jira__get_issue', arguments: '{"issueKey":"CAKE-7"}', call_id: 'c1' } };
+    collector.observe({ ...view('s1', [call]), agentName: 'codex' });
+    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-7', sources: { tool: 1 } }]);
+  });
+
+  it('counts a prompt once when CodeMie recorded it with different wrapping than the native log', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0), { type: 'user', uuid: 'u1', message: { role: 'user', content: 'fix  CAKE-5<system-reminder>x</system-reminder>' } }]));
+    collector.addDeltas([{ sessionId: 's1', deltas: [{ userPrompts: [{ count: 1, text: 'fix CAKE-5' }] }] }] as unknown as RawSessionData[]);
+    expect(collector.build().get('s1')).toEqual([
+      { id: 'CAKE-1', sources: { tool: 1 } },
+      { id: 'CAKE-5', sources: { prompt: 1 } },
+    ]);
+  });
+
   it('ignores tools outside the configured patterns', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: ['mcp__*rally*'] });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0)]));

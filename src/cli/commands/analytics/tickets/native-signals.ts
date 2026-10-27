@@ -63,6 +63,14 @@ function toMs(timestamp: string | undefined): number | null {
 const INJECTED_BLOCKS = /<(command-name|command-message|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder)>[\s\S]*?<\/\1>/gi;
 
 /**
+ * Prompt text with injected wrappers removed and whitespace collapsed. Applied to native rows and
+ * to CodeMie-recorded prompts alike, so the same prompt seen in both is recognised as one.
+ */
+export function normalizePromptText(text: string): string {
+  return text.replace(INJECTED_BLOCKS, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Text the user actually typed on a Claude row. Same notion of a genuine user turn as
  * `countTurns` (claude-code-otlp/transcript/session-signals.ts): meta rows (injected skills,
  * attachments), sidechain rows and compaction summaries are not prompts, and neither are rows
@@ -79,7 +87,7 @@ function claudeUserText(row: ClaudeRow): string {
         .map((block) => block.text)
         .join('\n')
       : '';
-  return text.replace(INJECTED_BLOCKS, ' ');
+  return normalizePromptText(text);
 }
 
 function claudeRows(parsed: ParsedSession): NativeRow[] {
@@ -88,11 +96,11 @@ function claudeRows(parsed: ParsedSession): NativeRow[] {
     if (!row || typeof row !== 'object') continue;
     const prompt = claudeUserText(row);
     const branch = typeof row.gitBranch === 'string' && row.gitBranch ? row.gitBranch : undefined;
-    if (!prompt.trim() && !branch) continue;
+    if (!prompt && !branch) continue;
     rows.push({
       key: typeof row.uuid === 'string' && row.uuid ? `claude:${row.uuid}` : null,
       ts: toMs(row.timestamp),
-      ...(prompt.trim() && { prompt }),
+      ...(prompt && { prompt }),
       ...(branch && { branch }),
     });
   }
@@ -103,8 +111,10 @@ function codexRows(parsed: ParsedSession): NativeRow[] {
   const rows: NativeRow[] = [];
   for (const row of (Array.isArray(parsed.messages) ? parsed.messages : []) as CodexRow[]) {
     if (row?.type !== 'event_msg' || row.payload?.type !== 'user_message') continue;
-    const prompt = row.payload.message?.trim();
-    if (!prompt || isCodexInjectedUserText(prompt)) continue;
+    const raw = row.payload.message?.trim();
+    if (!raw || isCodexInjectedUserText(raw)) continue;
+    const prompt = normalizePromptText(raw);
+    if (!prompt) continue;
     const ts = toMs(row.timestamp);
     rows.push({ key: ts === null ? null : `codex:${ts}:${prompt}`, ts, prompt });
   }

@@ -24,8 +24,8 @@ describe('readToolCalls', () => {
     const sub = [{ message: { content: [{ type: 'tool_use', id: 'toolu_2', name: 'Read', input: { file_path: '/a' } }] } }];
 
     expect(readToolCalls('claude', parsed(main, [sub]))).toEqual([
-      { id: 'toolu_1', name: 'mcp__jira__get', input: { issueKey: 'CAKE-1' }, ts: Date.parse('2026-10-01T10:00:00.000Z') },
-      { id: 'toolu_2', name: 'Read', input: { file_path: '/a' }, ts: null },
+      { id: 'toolu_1', name: 'mcp__jira__get', matchNames: ['mcp__jira__get'], input: { issueKey: 'CAKE-1' }, ts: Date.parse('2026-10-01T10:00:00.000Z') },
+      { id: 'toolu_2', name: 'Read', matchNames: ['Read'], input: { file_path: '/a' }, ts: null },
     ]);
   });
 
@@ -36,9 +36,14 @@ describe('readToolCalls', () => {
       { type: 'response_item', payload: { type: 'message' } },
     ];
     expect(readToolCalls('codex', parsed(rows))).toEqual([
-      { id: 'call_1', name: 'jira__get_issue', input: { issue_key: 'CAKE-7' }, ts: Date.parse('2026-10-01T10:00:00.000Z') },
-      { id: null, name: 'exec_command', input: undefined, ts: null },
+      { id: 'call_1', name: 'jira__get_issue', matchNames: ['jira__get_issue', 'mcp__jira__get_issue'], input: { issue_key: 'CAKE-7' }, ts: Date.parse('2026-10-01T10:00:00.000Z') },
+      { id: null, name: 'exec_command', matchNames: ['exec_command'], input: undefined, ts: null },
     ]);
+  });
+
+  it('does not double-prefix a Codex name that already carries mcp__', () => {
+    const rows = [{ type: 'response_item', payload: { type: 'function_call', name: 'mcp__jira__get', arguments: '{}' } }];
+    expect(readToolCalls('codex', parsed(rows))[0].matchNames).toEqual(['mcp__jira__get']);
   });
 
   it('returns nothing for an agent without a reader', () => {

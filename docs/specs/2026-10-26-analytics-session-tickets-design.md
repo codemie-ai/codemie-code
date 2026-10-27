@@ -272,6 +272,16 @@ Decisions taken while implementing, where the design left room:
   frequent Atlassian call in real logs); a key field may hold an array of strings, and JSON
   encoded in a string (`additional_fields`) is walked. The default tool patterns add
   `mcp__*atlassian*__*issue*`, because `createIssueLink` has no "jira" in its name.
+- Codex tool names are matched as logged and, for `server__tool` names, also as `mcp__server__tool`;
+  no real Codex MCP log was available to confirm which form Codex writes.
+- Branches: bot dependency branches (`dependabot/`, `renovate/`) are skipped and a match followed
+  by `.` (a version, `lodash-4.17.21`) is ignored, since those were the main source of branch noise
+  and, through corroboration, of prompt noise.
+- `jql` is matched case-sensitively; other key fields stay case-insensitive.
+- Prompts are normalised the same way on both paths (wrappers stripped, whitespace collapsed), so a
+  prompt seen in CodeMie's records and in the native log is counted once.
+- Not addressed: a session-level metadata branch (Codex `session_meta`) is not bounded by the
+  session's window, so sessions sharing one log file can each get it.
 - Known limitation: corroboration is report-wide and branch matching is case-insensitive, so a
   noisy branch (`chore/react-17-upgrade`) can confirm prompt noise and results depend on the
   report's range and filters.

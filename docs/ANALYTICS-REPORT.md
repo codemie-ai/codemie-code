@@ -269,14 +269,15 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 | Source | Read from | Counted as |
 |---|---|---|
 | `tool` | Tool calls matching the tool patterns, in the session's native log and its subagent transcripts; only key-like input fields (`issueIdOrKey`, `issueKey`, `issue_key`, `key`, `parent`, `jql`, `inwardIssue`, `outwardIssue`), as a string or an array of strings, including inside JSON encoded in a string | matching calls |
-| `branch` | Every branch the session touched | distinct branches |
+| `branch` | Every branch the session touched, except bot dependency branches (`dependabot/…`, `renovate/…`); a match running into a version (`lodash-4.17`, `node-20.x`) is ignored | distinct branches |
 | `prompt` | Every user prompt (CodeMie-recorded turns and the native log); injected rows (skills, attachments, compaction summaries, sidechains) and slash-command plumbing or local command output are not prompts | distinct prompts |
 
 - There is no ranking: reading an issue is not working on it, so the consumer decides how to weigh sources.
 - Prompt ids are matched case-sensitively and kept only when the same project prefix also appears in a tool-call or branch id somewhere in the report — whether or not `tool`/`branch` are among the requested sources. That drops `gpt-4`, `UTF-8` or `SHA-256` without a denylist, and also drops a ticket mentioned only in prompts when nothing else in the report names its project.
 - Corroboration is report-wide, so it depends on the date range and filters, and a noisy branch can confirm noise: branch matching ignores case (branches are often lower case), so a branch like `chore/react-17-upgrade` yields `REACT-17` and also confirms `REACT-…` in any session's prompts.
 - Resumed and forked logs copy earlier rows. A replayed tool call, prompt or row branch is attributed once — to the session that comes first by start time (ties keep input order), the same rule cost uses — and anything after a session's own end is ignored. Codex rows have no id, so a Codex prompt is recognised as a replay by its original timestamp and text.
-- Tool calls are read for Claude-shaped logs and Codex. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
+- Inside tool inputs, `jql` is matched case-sensitively like prompts (JQL names issues by upper-case key, while clauses like `text ~ "utf-8"` are free text); bare key fields accept any case.
+- Tool calls are read for Claude-shaped logs and Codex. A Codex `server__tool` name is also matched in its `mcp__server__tool` form, so the default `mcp__*` patterns apply whichever form a Codex version logs. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
 - `analytics otel` does not compute tickets (its cost comes from the events, not from native logs); passing the flags below to it is an error.
 - At most 20 ids per session.
 

@@ -48,6 +48,11 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ additional_fields: '{not json' })).toEqual([]);
   });
 
+  it('matches JQL case-sensitively, so free-text clauses produce no ids', () => {
+    expect(ticketsFromToolInput({ jql: 'text ~ "utf-8" AND key = CAKE-1' })).toEqual(['CAKE-1']);
+    expect(ticketsFromToolInput({ issueIdOrKey: 'epmcdme-77' })).toEqual(['EPMCDME-77']);
+  });
+
   it('walks arrays and tolerates non-object input', () => {
     expect(ticketsFromToolInput({ issues: [{ issueKey: 'A1-1' }, { issue_key: 'B2-2' }] })).toEqual(['A1-1', 'B2-2']);
     expect(ticketsFromToolInput(undefined)).toEqual([]);

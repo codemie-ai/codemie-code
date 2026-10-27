@@ -14,6 +14,12 @@ export interface ToolCall {
   /** Stable call id (Claude `tool_use.id`, Codex `call_id`); null when the log has none. */
   id: string | null;
   name: string;
+  /**
+   * Names the tool patterns are matched against: the logged name, plus for Codex the
+   * `mcp__`-prefixed form of a `server__tool` name, so the default `mcp__*` patterns cover MCP
+   * tools whichever form a Codex version logs.
+   */
+  matchNames: string[];
   /** Parsed call arguments; for Codex, the JSON-decoded `arguments` string (undefined if not JSON). */
   input: unknown;
   /** Epoch ms of the row carrying the call; null when untimed. */
@@ -54,7 +60,7 @@ function readClaudeToolCalls(parsed: ParsedSession): ToolCall[] {
       const ts = toMs(row.timestamp);
       for (const block of content as Array<{ type?: string; id?: string; name?: string; input?: unknown }>) {
         if (block?.type !== 'tool_use' || typeof block.name !== 'string' || !block.name) continue;
-        calls.push({ id: typeof block.id === 'string' && block.id ? block.id : null, name: block.name, input: block.input, ts });
+        calls.push({ id: typeof block.id === 'string' && block.id ? block.id : null, name: block.name, matchNames: [block.name], input: block.input, ts });
       }
     }
   }
@@ -70,6 +76,10 @@ function decodeArguments(value: unknown): unknown {
   }
 }
 
+function codexMatchNames(name: string): string[] {
+  return name.includes('__') && !name.toLowerCase().startsWith('mcp__') ? [name, `mcp__${name}`] : [name];
+}
+
 function readCodexToolCalls(parsed: ParsedSession): ToolCall[] {
   const calls: ToolCall[] = [];
   for (const messages of transcripts(parsed)) {
@@ -80,6 +90,7 @@ function readCodexToolCalls(parsed: ParsedSession): ToolCall[] {
       calls.push({
         id: typeof payload.call_id === 'string' && payload.call_id ? payload.call_id : null,
         name: payload.name,
+        matchNames: codexMatchNames(payload.name),
         input: decodeArguments(payload.arguments),
         ts: toMs(row.timestamp),
       });

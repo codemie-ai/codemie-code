@@ -44,6 +44,18 @@ describe('buildSessionTickets', () => {
     expect(result.has('s1')).toBe(false);
   });
 
+  it('ignores bot dependency branches and version-like branch matches', () => {
+    const result = buildSessionTickets(new Map([['s1', evidence({
+      branches: new Set(['dependabot/npm_and_yarn/lodash-4.17.21', 'renovate/node-20.x', 'chore/bump-vite-5.2', 'feature/CAKE-9-x']),
+      prompts: new Set(['LODASH-1 and NODE-2 and CAKE-10']),
+    })]]), ALL);
+
+    expect(result.get('s1')).toEqual([
+      { id: 'CAKE-9', sources: { branch: 1 } },
+      { id: 'CAKE-10', sources: { prompt: 1 } },
+    ]);
+  });
+
   it('ignores disabled sources', () => {
     const result = buildSessionTickets(new Map([['s1', evidence({
       tool: new Map([['CAKE-1', 1]]),

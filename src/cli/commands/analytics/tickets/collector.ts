@@ -19,7 +19,7 @@ import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSessionView } from '../cost/cost-enricher.js';
 import type { SessionTicket } from '../report/types.js';
 import { buildSessionTickets, type SessionEvidence, type TicketSource } from './merge.js';
-import { readNativeSignals } from './native-signals.js';
+import { normalizePromptText, readNativeSignals } from './native-signals.js';
 import { readToolCalls } from './tool-calls.js';
 import { compileToolMatcher, ticketsFromToolInput } from './tool-tickets.js';
 
@@ -73,7 +73,7 @@ export class TicketCollector {
 
     if (this.collectTool) {
       for (const call of readToolCalls(view.agentName, view.parsed)) {
-        if (!this.matchesTool(call.name) || !inWindow(call.ts, view.windowEnd)) continue;
+        if (!call.matchNames.some(this.matchesTool) || !inWindow(call.ts, view.windowEnd)) continue;
         if (call.id !== null) {
           if (this.seenCalls.has(call.id)) continue;
           this.seenCalls.add(call.id);
@@ -107,7 +107,8 @@ export class TicketCollector {
         if (this.collectBranch && delta.gitBranch) e.branches.add(delta.gitBranch);
         if (this.collectPrompt) {
           for (const prompt of delta.userPrompts ?? []) {
-            if (prompt?.text?.trim()) e.prompts.add(prompt.text);
+            const text = prompt?.text ? normalizePromptText(prompt.text) : '';
+            if (text) e.prompts.add(text);
           }
         }
       }
