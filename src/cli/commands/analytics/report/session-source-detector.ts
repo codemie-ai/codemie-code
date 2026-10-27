@@ -47,6 +47,9 @@ function hasSubstring(names: string[], substrings: string[]): boolean {
 // from the namespaced `sdlc-factory:` prefix seen on skill/agent invocations.
 const SDLC_FACTORY_COMMANDS = ['sdlc-light', 'sdlc-task', 'sdlc-autonomous'];
 
+// Unnamespaced slash command from the stlc-factory bundle, alongside the `stlc-factory:` prefix.
+const STLC_FACTORY_COMMANDS = ['stlc-feature'];
+
 export const SESSION_SOURCE_DETECTORS: SessionSourceDetector[] = [
   {
     name: 'sdlc-factory',
@@ -57,6 +60,11 @@ export const SESSION_SOURCE_DETECTORS: SessionSourceDetector[] = [
     name: 'superpowers',
     label: 'Superpowers',
     matches: (names) => hasPrefix(names, 'superpowers:'),
+  },
+  {
+    name: 'stlc-factory',
+    label: 'STLC Factory',
+    matches: (names) => hasPrefix(names, 'stlc-factory:') || hasExact(names, STLC_FACTORY_COMMANDS),
   },
   {
     name: 'openspec',

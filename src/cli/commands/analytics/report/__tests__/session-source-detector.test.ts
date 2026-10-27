@@ -55,7 +55,23 @@ describe('detectSessionSource', () => {
     expect(detectSessionSource(session({ agent: ['SDLC-Factory:Foo'] }))).toBe('CodeMie AI Factory');
   });
 
+  it('labels stlc-factory skills and the stlc-feature command as STLC Factory', () => {
+    expect(detectSessionSource(session({ skill: ['stlc-factory:exploratory'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ skill: ['stlc-factory:stlc-foundation'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ skill: ['stlc-factory:suite-health'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ command: ['stlc-feature'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ skill: ['STLC-Factory:X'] }))).toBe('STLC Factory');
+  });
+
+  it('keeps CodeMie AI Factory when both sdlc-factory and stlc-factory names are present', () => {
+    expect(detectSessionSource(session({ skill: ['sdlc-factory:x', 'stlc-factory:y'] }))).toBe('CodeMie AI Factory');
+  });
+
+  it('does not label unrelated stlc-prefixed commands', () => {
+    expect(detectSessionSource(session({ command: ['stlc-other'] }))).toBe('Pure chat');
+  });
+
   it('exposes the ordered detector list for callers that need custom ordering/extension', () => {
-    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual(['sdlc-factory', 'superpowers', 'openspec', 'speckit', 'bmad']);
+    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual(['sdlc-factory', 'superpowers', 'stlc-factory', 'openspec', 'speckit', 'bmad']);
   });
 });
