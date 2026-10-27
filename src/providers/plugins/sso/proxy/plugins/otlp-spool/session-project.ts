@@ -1,3 +1,5 @@
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import type { ProjectSeal, SessionStatus } from './session-status.js';
 
 /** Upper bound on remembered conflicting names; only their existence matters. */
@@ -33,8 +35,9 @@ export type ProjectDecision =
   | { action: 'conflict'; names: string[] };
 
 /**
- * Pure decision over the incoming names plus the stored binding, so a mixed
- * batch is judged as a whole and a later batch against what is already stored.
+ * Pure decision over the incoming names plus the stored binding. Several distinct sendable names
+ * pin the session to the first-bound one (stored binding, else the first candidate); the others
+ * are not a conflict. Only an unsendable name conflicts.
  */
 export function decideProject(names: string[], status: SessionStatus): ProjectDecision {
   if (status.projectConflict) return { action: 'noop' };
@@ -47,10 +50,10 @@ export function decideProject(names: string[], status: SessionStatus): ProjectDe
   }
   const candidates = [...distinct.values()];
 
-  if (candidates.length > 1 || candidates.some((name) => !isSendableProjectName(name))) {
+  if (candidates.some((name) => !isSendableProjectName(name))) {
     return { action: 'conflict', names: candidates };
   }
-  if (candidates.length === 1 && !status.project) {
+  if (candidates.length > 0 && !status.project) {
     return { action: 'bind', project: candidates[0] };
   }
   return { action: 'noop' };
@@ -73,6 +76,10 @@ export function applyProjectDecision(
       status.projectSeal = { v: 1, project: status.project, hooksEnd: hooksSizeBefore };
     }
     status.projectConflict = decision.names.slice(0, MAX_CONFLICT_NAMES);
+    logger.warn(
+      '[otlp-session-project] session has an unsendable project name; its analytics will not be sent',
+      ...sanitizeLogArgs({ names: status.projectConflict })
+    );
   }
 }
 

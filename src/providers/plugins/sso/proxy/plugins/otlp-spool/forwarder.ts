@@ -155,11 +155,29 @@ interface HookPayload {
   malformed: number;
 }
 
+function pinEventProject(serialized: string, wireEvent: Record<string, unknown>, project: string): string {
+  let changed = false;
+  const pin = (holder: unknown): void => {
+    if (typeof holder !== 'object' || holder === null) return;
+    const fields = holder as Record<string, unknown>;
+    const value = fields['codemie_project_name'];
+    if (typeof value === 'string' && value !== project) {
+      fields['codemie_project_name'] = project;
+      changed = true;
+    }
+  };
+  pin(wireEvent);
+  pin(wireEvent['raw']);
+  return changed ? JSON.stringify(wireEvent) : serialized;
+}
+
 /**
  * Unwraps the spool envelopes. `hookEvent` is already the final wire event, built at hook time
- * by the adapter, so it is forwarded byte for byte: same bytes on every retry.
+ * by the adapter, so it is forwarded as is: same bytes on every retry. With `project`, an event
+ * whose `codemie_project_name` (top level or `raw`) differs is rewritten to it, so the header and
+ * every event agree and the backend never sees two projects in one request.
  */
-export function unwrapHookRecords(records: string[]): HookPayload {
+export function unwrapHookRecords(records: string[], project?: string): HookPayload {
   const unwrapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
@@ -180,7 +198,7 @@ export function unwrapHookRecords(records: string[]): HookPayload {
     if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
       containsSessionEnd = true;
     }
-    unwrapped.push(serialized);
+    unwrapped.push(project ? pinEventProject(serialized, wireEvent, project) : serialized);
   }
 
   return {
@@ -211,7 +229,7 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const payload = unwrapHookRecords(batch.records);
+  const payload = unwrapHookRecords(batch.records, batch.project);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
