@@ -80,3 +80,130 @@ Severity: medium, unverified.
 
 ## 3. Related backend items from findings-F2.md (context, not part of CR-003/CR-004)
 Distinct drop reasons for project not found / no access; log and count every ingest discard (high value for P5 measurement); OTLP discard with N == 0 is indistinguishable from success; whole-body 413 at 5,242,880 bytes with no partial acceptance. Full drafts: findings-F2.md.
+
+## 4. Backend research feedback on sections 1 and 2 (supersedes the inferred items above)
+
+Source: backend-side research relayed by the ticket owner; not re-verified from the CLI repo. Backend references are as reported there.
+
+### P3 (sessions without `agent.session.end`): already handled in the backend
+- `ended_at` and `duration_ms` fall back to the last raw event (`rollups.py:1185-1200`, the EPMCDME-15584 fix).
+- `started_at` and branch are derived from any of the 13 dimension event types, not only `agent.session.end`.
+- Cost does not depend on the end event.
+- Only remaining gap: a session with no dimension event at all is dropped by the reader because `started_at` is NULL (`reader.py:288`).
+- Effect on section 1: items 2 and 5 of "What the backend must verify or change" are answered; the P3 backend ticket draft is not needed except for the no-dimension-event case.
+
+### P4 (subagent cost): a bigger gap than section 2 states
+- `agent.subagent.usage` totals never reach `cost_daily` or KPI cost.
+- A subagent with totals but no `agent.usage.request` rows therefore has no cost, whether or not the OTel gate suppresses it (section 2 item 4 described only the gate case).
+- Relaxing `_totals_are_a_source` would double-count; recommendation is to leave it alone.
+
+### Scope decision for the backend plan (decided, see below)
+- (a) Pin and document only (recommended by the backend research): tests pinning the P4 exclusion and the P3 fallback, documented in the storage guide; no SQL behaviour change.
+- (b) Fix P4: price the totals tokens into `cost_daily` for agents with no request rows; invasive, touches model-price lookup, double-count risk, needs live-DB tests.
+- (c) (a) plus a P3 reader fallback to `activity_started_at` when `started_at` is NULL.
+Decision: superseded. The backend scope is the plan reviewed in section 9: query-time pricing of subagent totals (section 7), cost-less sessions listed with `cost_available` (sections 6 and 8), and a gate-discard log line and counter (section 6, decisions 4 and 4b). Options (a) to (c) are not taken as written.
+
+## 5. Second backend research pass (read-only, backend HEAD 83fad2f6)
+
+Method: code read of `/Users/vponkratina/work/ai/codemie` only; nothing measured from prod. Paths relative to `src/codemie/` unless marked REPO. Supersedes inferred items in sections 1, 2 and 4.
+
+### Project gate (P5) - confirmed
+Order per ingest route: authenticate (`rest_api/routers/cli_analytics.py:136`) -> feature flag `cliAnalytics` off = 404 (140) -> body over `ANALYTICS_INGEST_MAX_BODY_BYTES` = 413 -> hooks only: non-ndjson 415, empty 400, no parseable events 400 -> gate in the ingestor (`repository/cli_analytics/postgres/ingestor.py:366` OTLP, `379` hooks; gate code `service/analytics/cli_analytics_project_gate.py:52-81`):
+1. blank/missing `X-CodeMie-Project` -> `project_context_required`
+2. header vs explicit body project differ (case-insensitive) -> `project_context_conflict`
+3. active project not found by name or deleted -> `project_context_required`
+4. user lacks application access -> `project_context_required`
+5. with `ENABLE_USER_MANAGEMENT`, non-admin without current `user_project` membership -> `project_context_required`
+6. `cli_analytics_enabled` false -> `cli_analytics_disabled` (default false: `core/models.py:397`; REPO `src/external/alembic/versions/a9c4e7b2d1f3_...py:26`; personal projects forced false: `service/project/personal_project_service.py:228`)
+A discard returns HTTP 200 (hooks body `{"accepted":0,"dropped":N,"reason":...}`; OTLP `partial_success` with `rejected_*` and `error_message`). The CLI treats any 2xx as final and deletes its spool. Discards are not logged or counted in the paths read (not searched repo-wide); a discard writes no rows, ledger entries or rollup keys. Several silent causes beyond "analytics not configured": unknown/deleted project name, no project membership, flag off, header/body mismatch.
+
+### P3 (no end event) - confirmed with corrections
+- The session summary event is `agent.session.summary` (`repository/cli_analytics/postgres/rollups.py:777`), not `agent.session.end`; `agent.session.end` is only one of the 13 dimension types (`repository/cli_analytics/vocabulary.py:79-93`).
+- `ended_at`/`duration_ms` fall back to the last raw event across hooks, requests, logs, spans and metrics (`rollups.py:1190-1201`). `started_at` and branch come from any dimension type (`rollups.py:1910-1912`). Cost comes from `cost_daily`, built from `_cli_requests` (`rollups.py:739-764`), independent of the end event.
+- Reader drop confirmed: `WHERE d.started_at IS NOT NULL AND ...` (`repository/cli_analytics/postgres/reader.py:284`).
+
+### New gap: session list requires a cost_daily row
+`get_session_cost_facts` does `FROM cost_daily ... JOIN sel ... JOIN act` (`reader.py:667-679`). A session with dimension events but no `agent.usage.request`/api-request rows is absent from the session list even though `session_dims` exists. For unattended `claude -p` runs this means: if the Stop-derived usage events are lost, the session disappears entirely, regardless of the end-event fallback. This is the strongest P3 backend lead to check on prod.
+
+### P4 (subagent cost) - claim partly corrected
+- Totals do reach `session_usage` (latest `agent.subagent.usage` with totals per agent, `source_cost_usd` NULL, `token_source='subagent_usage'`; `rollups.py:628-703`), only when `_totals_are_a_source` holds (`rollups.py:588-607`).
+- Totals never reach `cost_daily`; `reader.py` has no reference to `session_usage` or `subagent_invocations`. KPI, session list, developer and model costs read `cost_daily` (`reader.py:334,352,407,667`). Per-subagent cost in session detail comes from `log_events` api_request rows by `agent_id` (`reader.py:1004-1015`).
+- A subagent with totals but no request rows has tokens but no dollar cost in the list or KPIs. Subagent rows use the parent `session_id` (`rollups.py:628-629`), so attribution to the parent session holds.
+- `insights_handler.py:1155,1251` mentions a `session_usage` aggregation key; not traced.
+
+### Dedup, lag, list filters
+- Dedup ledger: first stored version of a (type, session, event_id) wins; changed content needs a new `event_id` (`ingestor.py:17-27`; storage guide line 110). "Latest totals per agent" uses `DISTINCT ON (session_id, agent_id) ORDER BY ts DESC, ingest_seq DESC` (`rollups.py:645-652`).
+- Rollup refresh every 30 s, batch 5000 (`configs/config.py:231-232`); refresher loop not read.
+- Session list access is limited to super admins and project admins (`cli_analytics.py:117-130`); excluded when `started_at` is NULL or outside the window (clamped to raw retention), when filters (user email, project, repository, branch, search, framework) exclude it, or when no `cost_daily` row exists. Developer shown is `coalesce(session email, smallest cost_daily email, 'unknown')` (`reader.py:93-109`). A min-events filter was not found.
+
+### Net effect on the plan
+Questions for prod (replace earlier lists): per developer with missing factory MRs - is the project's `cli_analytics_enabled` true; did requests return `dropped`/`rejected_*` (needs CLI-side diagnostic, now added); do their sessions have `cost_daily` rows; for `claude -p` runs, do usage-request rows exist when `agent.session.end` is absent.
+Scope choice from section 4 is decided: the backend plan in sections 6 to 9 (a gate-discard log/counter, plus relaxing the `cost_daily` inner join for sessions with dimension events only).
+
+## 6. Backend decisions (answers to the backend team's questions)
+
+Status: answers to the backend team's questions as recommended to the ticket owner. Decisions 2 and 3 are superseded by section 7 (query-time pricing); decision 1 is extended by section 8 (`cost_available`); decisions 4 and 4b stand.
+
+| # | Question | Decision | Notes |
+|---|---|---|---|
+| 1 | Should a session with dimension events but no cost rows appear in the session list? | A: list it at $0 by relaxing the join in `get_session_cost_facts` (`reader.py:673-675`) only | KPI cost totals stay unchanged and a test pins that. The list count can exceed the number of sessions with cost. Add a "cost unavailable" marker or a log line saying why cost rows are missing, so $0 is not read as free. Fixes the AC2 symptom (a `claude -p` session with lost usage events vanishes from the list). |
+| 2 | Where do subagent token prices come from? | Superseded by section 7: the live catalog through the existing query-time pricer | The priced totals row needs a reliable model-price lookup; unknown models must produce no cost, not a guess. |
+| 3 | What happens to a priced totals row when `agent.usage.request` rows arrive later, and to existing days? | Superseded by section 7: no priced rows are stored; the write-side `_totals_are_a_source` guard already prevents double-counting, and past days are corrected at query time | A priced row exists only while the agent has no request rows; once requests arrive it is removed, mirroring the `_totals_are_a_source` DELETE (`rollups.py:588-607`). Cannot double-count. A day's cost can change once when late requests replace the estimate. Days not re-dirtied keep their old figures; a historical backfill (B) is a separate decision. Add a test for the switch from totals-only to requests arriving. |
+| 4 | What counts as a project-gate discard "count"? | A: one structured log line per discard plus an in-process counter labelled by reason | Log carries reason code, route (OTLP or hooks) and event count; no email or project name; nothing persisted. Record zero-event OTLP discards explicitly, since `N == 0` is otherwise indistinguishable from success. For OTLP this is the only trace, because the CLI does not decode protobuf. |
+| 4b | Should the discard log line carry a pseudonymous user ID? | A: yes, an HMAC of the user ID, in the log line only | Not a counter label (metric cardinality). Key from existing secret config, never logged; rotating it breaks correlation across the rotation. Consider truncating to a short fixed length. Check log retention and access against data-handling rules. Allows a distinct-ID count of affected developers. |
+
+Not backend scope: the CLI hooks-stream drop warning (committed in 46bad8dc and hardened in 9e17fbb4) already logs the drop reason locally for hooks responses.
+
+Nothing is open in this table.
+
+## 7. Verification result and redesign (supersedes decisions 2 and 3 and the null-cost idea in section 6)
+
+Source: read-only code check of the backend at HEAD 83fad2f6, plus the backend team's own analysis relayed by the ticket owner. Nothing measured from prod.
+
+### Verified facts
+- Displayed cost is priced in Python at query time from `cost_daily` token columns using the live catalog (`service/analytics/handlers/coding_agent_pricing.py:62`, `CatalogPricer`; `reader.get_session_model_costs` at `reader.py:364-384`). No displayed total reads the stored `cost_usd`. A model absent from the catalog prices at 0.0 with a warning; `CatalogPricer` has no default-model fallback.
+- `cost_usd: float` is required in `LocalAnalyticsSessionRow` (`rest_api/models/cli_analytics.py:224`), and `_float_sort_key` fails on None at five sort sites. Cost can never be NULL.
+- `MCP_AUTH_HMAC_SECRET` (`configs/config.py:533`, empty default) also keys tool-OAuth state signing and `RedisEncryption` (`service/oauth/stores.py:37,41`, `service/oauth_security.py:82`). No existing pattern for hashing user IDs in logs.
+- The rollup has no pricing code and no `llm_service` import. Whether the rollup refresher process has the model list loaded is unverified, but under the redesign it no longer matters.
+- Past days can be re-dirtied only within raw retention, via `python -m codemie.repository.cli_analytics.postgres.backfill --from D --to D [--now]`; no REST/admin route.
+
+### Redesign for subagent cost (replaces "price totals into cost_daily")
+- Do not price in the rollup: it would build a new callback pattern, store USD that goes stale when the catalog changes, and nothing displayed reads it.
+- Add the subagent totals tokens (`session_usage` rows with `token_source='subagent_usage'`, grouped by session and model) to `get_session_model_costs` (`reader.py:364`) and `get_session_detail_model_costs` (`reader.py:752`), so they flow through the existing `price_session_models` unchanged.
+- No double-count guard is needed in the reader: totals rows exist only when `_totals_are_a_source` holds (`rollups.py:588-607`).
+- Effects: no rollup pricing stage; no worry about the model list in rollup workers; past days are corrected immediately without re-dirtying or backfill.
+- Residual (known, accept): token totals in `get_cost_kpis`, `get_model_breakdown` and `get_users` still read `cost_daily`, so money would include the subagent tokens while those token counts would not. Leave the token counts alone and record the mismatch.
+
+### Corrections to section 6
+| Item | Now |
+|---|---|
+| Decision 1 (list at $0) | Still A. The list row shows 0.0 for an unpriced or cost-less session; no NULL. A `cost_available` marker is optional, not required for correctness. |
+| Decision 2 (subagent price source) | Resolved: the live catalog via the existing query-time pricer. |
+| Decision 3 (priced totals row removed when requests arrive) | Not needed. Replaced by the query-time redesign above; the existing write-side guard already prevents double-counting. |
+| "NULL means cost unavailable" | Invalid; cost is a required float. |
+| Decision 4/4b (discard log, counter, pseudonymous ID) | Unchanged. Use a dedicated HMAC key, not `MCP_AUTH_HMAC_SECRET`; an empty key omits the hash field and never emits an unkeyed hash. |
+
+### Process note
+The backend team intends to send its spec back for this redesign (query-time pricing, dedicated HMAC key, null-cost correction). That is their spec gate, tracked in their own run.
+
+## 8. Decision: additive `cost_available` field on the session-list row
+
+Decided (ticket owner): yes, in scope.
+- Add `cost_available: bool = True` to `LocalAnalyticsSessionRow` (`rest_api/models/cli_analytics.py`, next to `cost_usd` at line 224). Additive and non-breaking: existing consumers ignore it, and it does not affect sorting or `_pct`.
+- Semantics: `false` when the session has no cost rows (the sessions listed because of the relaxed cost join, section 6 decision 1); `true` otherwise. `cost_usd` stays a required float and is 0.0 when `cost_available` is false.
+- A session priced at 0.0 only because its model is missing from the catalog is a separate case; it has cost rows, so it stays `cost_available: true`. The warning logged by the pricer remains the signal for that case. Confirm this deliberately in the backend spec.
+- UI follow-up (separate item, not part of the backend change): show "unavailable" instead of $0 when `cost_available` is false.
+- Why: without it, a session whose usage events were lost reads as a real $0, which hides the `claude -p` loss this ticket is about.
+
+## 9. Review of the backend implementation plan
+
+The backend plan (query-time pricing of subagent totals in `get_session_model_costs` / `get_session_detail_model_costs`, opt-in left join with `cost_available`, gate-discard log line and counter, storage guide) matches sections 6 to 8. Reviewed from the plan text only; its line references were not checked against the backend code.
+
+Points to tighten before implementation:
+1. Zero-event discards: section 6 decision 4 requires recording an OTLP discard with `N == 0` explicitly, but Task 3's tests do not cover it. Add a test with `wire_count == 0`.
+2. Filters on the totals branch: Task 1 scopes the `session_usage` branch of the UNION by `session_id` only. Verify it applies the same date, project, repository and developer filters as the `cost_daily` branch, otherwise subagent tokens can land in the wrong filter.
+3. Detail view: the plan does not say what the session detail endpoint does for a session with no cost rows. If detail also needs `cost_daily` rows, the list would link to a 404 or an empty page. Add a check or test.
+4. Counter semantics: the counter is in-process, per worker and reset on restart. State this in the storage guide so the numbers are not read as global.
+5. Ops rollout: `CLI_ANALYTICS_LOG_HMAC_KEY` defaults to empty, so no hash appears until it is configured. Add the config rollout to the plan or ticket, otherwise logs give discard rates but not distinct developers.
+
+Notes: `cost_available` is true when a session has any priced-source rows, totals included (consistent with section 8). Commits should follow Conventional Commits; ticket keys in subjects are allowed by the repo guide. TS/UI handling of the new field stays out of scope.
