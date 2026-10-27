@@ -298,4 +298,36 @@ describe('loadNativeSessions — pi fork families', () => {
 
     expect(out.map((s) => s.sessionId)).toEqual(['root']);
   });
+
+  it('still folds the fork continuation into the root when filter.sessionId scopes to the root alone (CR-001)', async () => {
+    // The fork adds one entry the root never had, so a successful fold is visible as an extra
+    // turn — proving the fork's content reached the root's output, not just that one row came back.
+    const forkWithNewTurn = piParsed(
+      [...(conversation.messages as unknown[]), userEntry('u3', '2026-08-07T08:25:00.000Z', 'one more thing')],
+      { projectPath: '/repo', parentSession: rootPath }
+    );
+    const root: SessionDescriptor = { ...descriptor, sessionId: 'root', filePath: rootPath };
+    const fork: SessionDescriptor = { ...descriptor, sessionId: 'fork', filePath: forkPath };
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'pi', descriptor: root },
+        { agentName: 'pi', descriptor: fork },
+      ],
+      parse: async (_agent, filePath) => (filePath === forkPath ? forkWithNewTurn : conversation),
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+    };
+
+    const out = await loadNativeSessions({ sessionId: 'root' }, deps);
+
+    expect(out.map((s) => s.sessionId)).toEqual(['root']);
+    expect(out[0]?.endEvent.data.totalTurns).toBe(3); // 2 original prompts + 1 only the fork carries
+  });
+
+  it('returns the fork\'s own data when filter.sessionId targets the fork directly, instead of silently dropping it', async () => {
+    const out = await loadNativeSessions({ sessionId: 'fork' }, familyDeps(rootPath));
+
+    expect(out.map((s) => s.sessionId)).toEqual(['fork']);
+  });
 });

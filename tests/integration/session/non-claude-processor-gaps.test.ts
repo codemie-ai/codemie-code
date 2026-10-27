@@ -512,30 +512,63 @@ describe('OpenCodeConversationsProcessor.process', () => {
 
 describe('CopilotCliMetricsProcessor', () => {
   const processor = new CopilotCliMetricsProcessor();
-  const context = baseContext('copilot-metrics', 'copilot-agent');
+  function buildSession(
+    sessionId: string,
+    metrics: ParsedSession['metrics'],
+    messages: ParsedSession['messages'] = []
+  ): ParsedSession {
+    return {
+      sessionId,
+      agentName: 'copilot-cli',
+      metadata: {},
+      messages,
+      ...(metrics !== undefined && { metrics }),
+    } as ParsedSession;
+  }
 
   it('only runs when the session carries parsed metrics', () => {
     expect(processor.shouldProcess({ metrics: { tools: {} } } as unknown as ParsedSession)).toBe(true);
     expect(processor.shouldProcess({} as unknown as ParsedSession)).toBe(false);
   });
 
-  it('reports the total tool-call count as recordsProcessed', async () => {
-    const result = await processor.process(
-      { metrics: { tools: { read: 2, write: 1, bash: 3 } } } as unknown as ParsedSession,
-      context,
+  it('reports one record per assistant turn (not per tool-call total)', async () => {
+    const sessionId = newSessionId('copilot-metrics-turns');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const session = buildSession(
+      sessionId,
+      { tools: { read: 2, write: 1, bash: 3 } },
+      [
+        { type: 'user', timestamp: '2025-01-01T00:00:00Z' },
+        { type: 'assistant', timestamp: '2025-01-01T00:00:01Z', message: { model: 'gpt-5' } },
+        { type: 'assistant', timestamp: '2025-01-01T00:00:02Z', message: { model: 'gpt-5' } },
+      ]
     );
+
+    const result = await processor.process(session, context);
     expect(result.success).toBe(true);
-    expect(result.metadata?.recordsProcessed).toBe(6);
+    expect(result.metadata?.recordsProcessed).toBe(2);
+
+    const deltas = readJsonl<MetricDelta>(getSessionMetricsPath(sessionId));
+    expect(deltas).toHaveLength(2);
+    expect(deltas[0].tools).toEqual({ read: 2, write: 1, bash: 3 });
+    expect(deltas[1].tools).toEqual({});
   });
 
-  it('returns zero when metrics carry no tools', async () => {
-    const result = await processor.process({ metrics: {} } as unknown as ParsedSession, context);
+  it('returns zero when metrics carry no tools and there are no assistant turns', async () => {
+    const sessionId = newSessionId('copilot-metrics-empty-tools');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const result = await processor.process(
+      buildSession(sessionId, {}, []),
+      context,
+    );
     expect(result.success).toBe(true);
     expect(result.metadata?.recordsProcessed).toBe(0);
   });
 
-  it('does not throw when metrics is entirely absent (returns zero)', async () => {
-    const result = await processor.process({} as unknown as ParsedSession, context);
+  it('does not throw when metrics is entirely absent (returns zero with a valid ParsedSession shape)', async () => {
+    const sessionId = newSessionId('copilot-metrics-no-metrics');
+    const context = baseContext(sessionId, 'copilot-agent');
+    const result = await processor.process(buildSession(sessionId, undefined, []), context);
     expect(result.success).toBe(true);
     expect(result.metadata?.recordsProcessed).toBe(0);
   });

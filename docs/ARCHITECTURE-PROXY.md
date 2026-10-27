@@ -629,9 +629,10 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 - `X-CodeMie-Integration`: Integration ID (only when provider requires integration via `requiresIntegration` flag)
 - `X-CodeMie-CLI-Model`: Model name from config (if configured) — this fires for `vscode-byok` too whenever the active profile has a `model` set, since the daemon receives `--model` for every target (see §6.13)
 - `X-CodeMie-CLI-Timeout`: Timeout value from config (if configured)
-- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`
-- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`
-- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13)
+- `X-CodeMie-Repository`: Repository name (parent/current format), from `ProxyConfig.repository`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Branch`: Git branch at proxy startup, from `ProxyConfig.branch`; percent-encoded when non-ASCII (see Encoding)
+- `X-CodeMie-Project`: CodeMie project name, from `ProxyConfig.project` (also used by VS Code BYOK, see §6.13); sent raw, omitted if not valid Latin-1 (see Encoding)
+- Encoding: `X-CodeMie-Repository` and `X-CodeMie-Branch` values are percent-encoded per `/`-separated segment with `encodeURIComponent` (`encodeAttributionHeader` in `src/utils/header-value.ts`), but only for a segment containing a character outside printable ASCII (`0x20–0x7E`). Other segments are sent unchanged, so `org/repo`, `my repo` and `fix/100%` stay byte-identical, `/` stays readable, and non-Latin-1 characters cannot make Node reject the header. Lone surrogates become U+FFFD, and an already-encoded non-ASCII value is encoded again (not idempotent). `X-CodeMie-Project` is sent raw via `rawProjectHeader` and omitted if the value is not valid Latin-1 (`0x20–0x7E`, `0xA0–0xFF`), so the backend falls back to the user's default project. Consumers decode Repository and Branch only; Project is used as sent. Invalid-header errors naming an `X-CodeMie-*` header map to `INVALID_HEADER_VALUE` (500) rather than an authentication error.
 - `x-litellm-session-id`: session ID, injected only for `codemie-codex`/`codemie-copilot` client types (`header-injection.plugin.ts:41-43`) — not a `X-CodeMie-*` header, easy to miss when scanning for the CodeMie prefix
 
 **Architecture**:

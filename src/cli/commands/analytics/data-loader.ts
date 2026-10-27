@@ -135,6 +135,9 @@ export interface RawSessionData {
   [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }
 
+/** Suffix of the ownership sidecars written by `appendTranscriptMarker` (session-origin-audit.ts). */
+const MARKER_FILE_SUFFIX = '-codemie-marker.json';
+
 /**
  * Load all metric files from ~/.codemie/sessions/
  */
@@ -154,8 +157,11 @@ export class MetricsDataLoader {
     try {
       const files = readdirSync(this.sessionsDir);
 
-      // Find all .json files (session metadata)
-      const sessionFiles = files.filter(f => f.endsWith('.json') && !f.includes('_metrics'));
+      // Find all .json files (session metadata). Ownership sidecars (`<id>-codemie-marker.json`)
+      // live in the same directory but carry no session fields, so they are not sessions.
+      const sessionFiles = files.filter(
+        f => f.endsWith('.json') && !f.includes('_metrics') && !f.endsWith(MARKER_FILE_SUFFIX)
+      );
       const seenSessionIds = new Set<string>();
 
       for (const sessionFile of sessionFiles) {
@@ -179,17 +185,10 @@ export class MetricsDataLoader {
         }
         seenSessionIds.add(sessionId);
 
-        // Load session records
         const sessionData = this.loadSession(sessionId);
-        if (!sessionData) {
+        if (!sessionData || !this.matchesFilter(sessionData, filter)) {
           continue;
         }
-
-        // Apply filters
-        if (!this.matchesFilter(sessionData, filter)) {
-          continue;
-        }
-
         sessions.push(sessionData);
       }
     } catch {
@@ -323,8 +322,12 @@ export class MetricsDataLoader {
       return false;
     }
 
-    // Filter by agent name
-    if (filter.agentName && !agentMatchesAnalyticsFilter(startEvent.agentName, filter.agentName)) {
+    // Filter by agent name (a record without an agent name can never match a named agent)
+    if (
+      filter.agentName &&
+      (typeof startEvent.agentName !== 'string' ||
+        !agentMatchesAnalyticsFilter(startEvent.agentName, filter.agentName))
+    ) {
       return false;
     }
 

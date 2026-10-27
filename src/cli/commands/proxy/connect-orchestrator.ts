@@ -420,6 +420,13 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
     activeProfileName ? { name: activeProfileName } : undefined
   );
 
+  // Hook invocations run as a background side effect on every tracked project;
+  // an unconfigured baseUrl must skip cold start silently (not throw, unlike
+  // connectTargets' interactive ConfigurationError) so it never fails the hook.
+  if (!config.baseUrl?.trim()) {
+    return;
+  }
+
   const daemonConfig = {
     clientType: agentName,
     port: DEFAULT_DAEMON_PORT,

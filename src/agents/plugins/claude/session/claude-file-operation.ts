@@ -7,7 +7,7 @@
  * (native, untracked) sessions report the same `linesAdded`/`linesRemoved` as live-tracked ones.
  */
 
-import { extractFormat, detectLanguage } from '../../../../utils/file-operations.js';
+import { extractFormat, detectLanguage, countContentLines } from '../../../../utils/file-operations.js';
 
 export interface ClaudeFileOperation {
   type: string;
@@ -70,8 +70,8 @@ export function extractClaudeFileOperation(
 
   if (toolName === 'Write') {
     const content = res.content || res.file?.content || inp.content;
-    if (content) {
-      fileOp.linesAdded = content.split('\n').length;
+    if (content !== undefined) {
+      fileOp.linesAdded = countContentLines(content);
     }
   } else if (toolName === 'Edit' && Array.isArray(res.structuredPatch)) {
     let added = 0;

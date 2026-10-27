@@ -221,6 +221,22 @@ describe('skill events emitter (transport behavior)', () => {
     expect(init.headers['X-CodeMie-Branch']).toBe('feature/test');
   });
 
+  it('percent-encodes non-Latin-1 repository header', async () => {
+    mockDetectGitRemote.mockResolvedValue('clients/репо-тест');
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitStarted } = await importMetrics();
+    const session = await startSkillMetric('list');
+    await emitStarted(session, { scope: 'global' });
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init.headers['X-CodeMie-Repository']).toBe('clients/' + encodeURIComponent('репо-тест'));
+  });
+
   it('omits repository/branch when git context is unavailable', async () => {
     mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
     mockGetStoredCredentials.mockResolvedValue({
