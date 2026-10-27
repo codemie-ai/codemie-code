@@ -26,7 +26,7 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   notification: 'agent.notification',
 };
 
-/** Gap 2 enforcement points: replace the prompt, deny the tool. */
+/** Enforcement points: replace the prompt, deny the tool. */
 const ENFORCED_EVENTS = new Set(['userPromptTransformed', 'preToolUse']);
 
 const FREE_TEXT_MAX_CHARS = 300;
@@ -47,7 +47,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   protected async isTracked(input: CopilotCliHookInput): Promise<boolean> {
-    // Gap 10: a managed `copilot-cli` launch sets CODEMIE_SESSION_ID for its own child
+    // A managed `copilot-cli` launch sets CODEMIE_SESSION_ID for its own child
     // process; a native invocation of this hook file never carries it. Without this guard a
     // global COPILOT_HOME would make managed sessions double-counted by both pipelines.
     if (process.env.CODEMIE_SESSION_ID) {
@@ -59,7 +59,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   protected async resolveAgentFields(): Promise<Record<string, unknown>> {
     return {
       platform: 'copilot-cli',
-      // Resolved by the connector once version pinning is verified (Todo 1); unavailable, not guessed.
+      // The host version is not detected: left empty rather than guessed.
       client_version: '',
     };
   }
@@ -115,11 +115,11 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   /**
-   * Reuses the managed plugin's `extractCopilotUsage` on the session's own `events.jsonl`
-   * (Gap 9). This is a cumulative per-model session rollup, never per-request deltas — the
-   * field names below are NOT a confirmed backend wire contract (Todo 0); they exist so the
-   * data is captured and available once that contract is confirmed, not to claim it is
-   * already consumed by any dashboard.
+   * Reuses the managed plugin's `extractCopilotUsage` on the session's own `events.jsonl`.
+   * This is a cumulative per-model session rollup, never per-request deltas — the field
+   * names below are NOT a confirmed backend wire contract; they exist so the data is
+   * captured and available once that contract is confirmed, not to claim it is already
+   * consumed by any dashboard.
    */
   private attachUsage(event: Record<string, unknown>, sessionId: string): void {
     try {
@@ -171,7 +171,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
         if ('message' in errRecord) {
           normalized.error_message = this.boundedFreeText(errRecord.message);
         }
-        // Gap 1: errorOccurred forwards error.name alongside error.message; no stack.
+        // errorOccurred forwards error.name alongside error.message; never the stack.
         if (typeof errRecord.name === 'string') {
           normalized.error_type = this.boundedFreeText(errRecord.name);
         }
@@ -207,16 +207,23 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   private buildBlock(
     eventName: 'userPromptTransformed' | 'preToolUse',
-    reason: string | undefined
+    reason: string | undefined,
+    authenticationFailure = true
   ): Extract<CliForwardDecision, { decision: 'block' }> {
-    const logMessage = `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`;
+    const logMessage = authenticationFailure
+      ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
+      : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
+
+    const userMessage = authenticationFailure
+      ? 'CodeMie sign-in required — complete the browser sign-in and resend your prompt.'
+      : 'CodeMie hit an internal error and cannot process this event — check the CodeMie logs, then resend your prompt.';
 
     const hookSpecificOutput: CliBlockOutput =
       eventName === 'preToolUse'
-        ? { permissionDecision: 'deny', permissionDecisionReason: 'CodeMie sign-in required — complete the browser sign-in and resend your prompt.' }
+        ? { permissionDecision: 'deny', permissionDecisionReason: userMessage }
         : {
             modifiedTransformedPrompt:
-              'CodeMie sign-in required. Reply only with: "CodeMie sign-in required — please complete the browser sign-in and resend your prompt." Do not use any tools.',
+              `${authenticationFailure ? 'CodeMie sign-in required' : 'CodeMie internal error'}. Reply only with: "${userMessage}" Do not use any tools.`,
           };
 
     return { decision: 'block', reason: logMessage, hookSpecificOutput };
@@ -229,7 +236,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   /**
    * An internal failure during an enforcement event must still produce the replacement/deny
-   * output (decision 3) — otherwise the hook exits with an uncaught error and, per GitHub's
+   * output — otherwise the hook exits with an uncaught error and, per GitHub's
    * fail-open timeout behavior, the prompt or tool call could go through unblocked. On any
    * other event, log and swallow: a sync failure on `postToolUse`/`notification`/etc. must not
    * surface as a host-visible hook failure.
@@ -240,7 +247,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     if (!ENFORCED_EVENTS.has(input.codemieEventName)) {
       return;
     }
-    this.emitBlock(this.buildBlock(input.codemieEventName as 'userPromptTransformed' | 'preToolUse', 'an internal CodeMie error'));
+    this.emitBlock(this.buildBlock(input.codemieEventName as 'userPromptTransformed' | 'preToolUse', 'an internal CodeMie error', false));
   }
 
   private async ensureProxyAuth() {

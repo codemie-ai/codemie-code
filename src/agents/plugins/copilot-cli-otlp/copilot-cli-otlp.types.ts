@@ -6,9 +6,7 @@ export type CliEventName = (typeof CLI_HOOK_EVENT_NAMES)[number];
 
 /**
  * GitHub Copilot CLI's native hook payload (camelCase, numeric epoch-ms `timestamp`, no
- * event-name field). Event-specific field names below follow the plan's Gap 1 mapping table;
- * several are not documented by GitHub and are flagged for Todo 1 verification rather than
- * assumed correct.
+ * event-name field). Event-specific field names below mirror the documented hook payloads.
  */
 export interface CopilotCliHookInput {
   sessionId: string;
@@ -22,7 +20,7 @@ export interface CopilotCliHookInput {
   // sessionEnd
   reason?: string;
   // userPromptTransformed — the ORIGINAL prompt (bounded ≤200 by the base class), never the
-  // unbounded transformed text. Exact native field name unverified; Todo 1 item 8.
+  // unbounded transformed text.
   prompt?: string;
   // preToolUse / postToolUse / postToolUseFailure
   toolName?: string;
@@ -62,7 +60,7 @@ const EVENT_NAME_SET: ReadonlySet<string> = new Set(CLI_HOOK_EVENT_NAMES);
 /**
  * Narrows parsed hook JSON to {@link CopilotCliHookInput}.
  *
- * The CLI's hook file (Gap 4) can also be invoked by VS Code Local when it maps an entry
+ * The CLI's hook file can also be invoked by VS Code Local when it maps an entry
  * (e.g. `preToolUse` -> `PreToolUse`) — but VS Code sends the Local schema with a STRING
  * `timestamp`, so the strict `typeof === 'number'` check below rejects it as "not my host"
  * without needing to special-case VS Code.

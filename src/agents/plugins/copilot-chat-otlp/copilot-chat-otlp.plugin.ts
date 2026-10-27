@@ -19,7 +19,7 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   PreCompact: 'agent.session.compact',
 };
 
-/** Enforcement points per the plan (Gap 2): block the session/prompt, deny tools as defense in depth. */
+/** Enforcement points: block the session/prompt, deny tools as defense in depth. */
 const ENFORCED_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse']);
 
 export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput, ChatBlockOutput> {
@@ -78,7 +78,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   protected async resolveAgentFields(): Promise<Record<string, unknown>> {
     return {
       platform: 'copilot-chat',
-      // Resolved by the connector once version pinning is verified (Todo 1); unavailable, not guessed.
+      // The host version is not detected: left empty rather than guessed.
       client_version: '',
     };
   }
@@ -174,7 +174,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   /**
    * An internal failure (daemon start, forward) during an enforcement event must still produce
    * VS Code's block output — otherwise the hook exits with an uncaught error and the prompt
-   * goes through unblocked (decision 3). On any other event, log and swallow: a sync failure on
+   * goes through unblocked. On any other event, log and swallow: a sync failure on
    * `Stop`/`PostToolUse`/etc. must not surface as a host-visible hook failure.
    */
   protected async onHookError(err: unknown, input: CopilotChatHookInput): Promise<void> {
