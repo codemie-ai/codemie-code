@@ -121,7 +121,7 @@ describe('claude-code-otlp connector', () => {
 
   describe('writeClaudeCodeOtlpConfig', () => {
     describe('happy paths', () => {
-      it('creates settings.json with hooks and env when none exists (default scope = home)', async () => {
+      it('creates settings.json and defaults a fresh connection to Global', async () => {
         const result = await writeClaudeCodeOtlpConfig();
 
         const expectedPath = join(homeDir, '.claude', 'settings.json');
@@ -139,11 +139,81 @@ describe('claude-code-otlp connector', () => {
         expect(existsSync(expectedPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
 
         const settings = await readJson(expectedPath);
-        expect(settings.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(settings.env).toEqual({
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
 
         for (const event of HOOK_EVENTS) {
           expect(settings.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
+      });
+
+      it('adds the current project with an explicit project scope without removing existing allowed projects', async () => {
+        const priorProjects = [join(homeDir, 'project-a'), join(homeDir, 'project-b')];
+        await Promise.all(priorProjects.map((path) => mkdir(path, { recursive: true })));
+        const canonicalPriorProjects = await Promise.all(priorProjects.map((path) => realpath(path)));
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({
+            env: {
+              [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(canonicalPriorProjects),
+            },
+          })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const canonicalRoot = await realpath(projectDir);
+
+        expect(result.allowlist).toEqual([...canonicalPriorProjects, canonicalRoot]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(
+          JSON.stringify([...canonicalPriorProjects, canonicalRoot])
+        );
+      });
+
+      it('replaces existing project entries with a Global allowlist when scope is omitted', async () => {
+        const priorProject = join(homeDir, 'project-a');
+        await mkdir(priorProject, { recursive: true });
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({
+            env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify([await realpath(priorProject)]) },
+          })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.allowlist).toEqual([]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
+      });
+
+      it('writes a Global allowlist when scope is omitted on a fresh install', async () => {
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.allowlist).toEqual([]);
+        expect(
+          (await readJson(join(homeDir, '.claude', 'settings.json'))).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]
+        ).toBe('[]');
+      });
+
+      it('narrows an explicitly Global allowlist to only the current project with scope "project"', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' } })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+
+        expect(result.allowlist).toEqual([await realpath(projectDir)]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(
+          JSON.stringify([await realpath(projectDir)])
+        );
       });
 
       it('writes every hook entry without an async field, except PostCompact, so Claude Code runs the rest synchronously', async () => {
@@ -197,6 +267,9 @@ describe('claude-code-otlp connector', () => {
 
         const forced = await writeClaudeCodeOtlpConfig({ force: true });
         expect(forced.allowlist).toEqual([]);
+
+        const forcedProject = await writeClaudeCodeOtlpConfig({ force: true, scope: 'project' });
+        expect(forcedProject.allowlist).toEqual([await realpath(projectDir)]);
       });
 
       it('writes to home dir when scope is "user"', async () => {
@@ -407,7 +480,11 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual({ KEEP_ME: 'yes', ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(merged.env).toEqual({
+          KEEP_ME: 'yes',
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
       });
 
       it('does not require force when existing env values already match the desired codemie values', async () => {
@@ -483,7 +560,10 @@ describe('claude-code-otlp connector', () => {
         expect(await readRaw(result.backupPath!)).toBe('');
 
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(merged.env).toEqual({
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
         for (const event of HOOK_EVENTS) {
           expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
         }

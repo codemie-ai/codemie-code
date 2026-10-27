@@ -25,6 +25,7 @@ import {
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
+import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
@@ -43,7 +44,8 @@ interface UnifiedConnectOptions {
   insiders?: boolean;
   model?: string;
   profile?: string;
-  scope?: "user" | "project";
+  scope?: AllowlistScope;
+  silent?: boolean;
   verbose?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
@@ -320,10 +322,14 @@ export function createProxyCommand(): Command {
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds only the current project`,
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others`,
       )
       .default('user')
       .choices(['user', 'project']),
+    )
+    .option(
+      '--silent',
+      `Skip the confirmation prompt (required when non-interactive; applies to --${CLAUDE_CODE_OTLP_AGENT_NAME})`,
     )
     .action(async (opts: UnifiedConnectOptions) => {
       await connectTargets({
@@ -342,6 +348,7 @@ export function createProxyCommand(): Command {
         verbose: Boolean(opts.verbose),
         model: opts.model,
         scope: opts.scope,
+        silent: Boolean(opts.silent),
       });
     });
 

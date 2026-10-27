@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addProjectPath,
+  inferAllowlistScope,
   isPathInside,
   isProjectTracked,
   parseAllowlist,
@@ -15,6 +16,24 @@ describe('parseAllowlist', () => {
     for (const bad of ['nope', '{}', '["rel/path"]', '[""]', '[1]', 5]) {
       expect(parseAllowlist(bad)).toEqual({ kind: 'invalid' });
     }
+  });
+});
+
+describe('inferAllowlistScope', () => {
+  it('treats an absent allowlist as a fresh connection and maps it to Global', () => {
+    expect(inferAllowlistScope({ kind: 'absent' })).toBe('user');
+  });
+
+  it('infers Global from an explicitly empty allowlist', () => {
+    expect(inferAllowlistScope({ kind: 'valid', paths: [] })).toBe('user');
+  });
+
+  it('infers Project from a non-empty allowlist', () => {
+    expect(inferAllowlistScope({ kind: 'valid', paths: ['/project'] })).toBe('project');
+  });
+
+  it('fails closed to Project for an invalid allowlist', () => {
+    expect(inferAllowlistScope({ kind: 'invalid' })).toBe('project');
   });
 });
 

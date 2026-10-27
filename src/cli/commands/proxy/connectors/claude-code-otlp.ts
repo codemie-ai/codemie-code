@@ -16,6 +16,7 @@ import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
+  type AllowlistScope,
   CODEMIE_ANALYTICS_PROJECT_FILTER_ENV,
   addProjectPath,
   canonicalizePath,
@@ -26,7 +27,7 @@ import {
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -40,7 +41,7 @@ interface WriteClaudeCodeOtlpResult {
 }
 
 interface RemoveClaudeCodeOtlpOptions {
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface RemoveClaudeCodeOtlpResult {
@@ -499,8 +500,9 @@ export async function writeClaudeCodeOtlpConfig(
     );
   }
 
+  const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (opts.scope === 'project') {
+  if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
