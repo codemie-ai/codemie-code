@@ -26,7 +26,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { getDirname } from '@/utils/paths.js';
-import { encodeAttributionHeader } from '@/utils/header-value.js';
+import { encodeAttributionHeader, rawProjectHeader } from '@/utils/header-value.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 
 /**
@@ -270,7 +270,7 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
   };
   if (body.repository) headers['X-CodeMie-Repository'] = encodeAttributionHeader(body.repository);
   if (body.branch) headers['X-CodeMie-Branch'] = encodeAttributionHeader(body.branch);
-  if (body.project) headers['X-CodeMie-Project'] = encodeAttributionHeader(body.project);
+  if (body.project && rawProjectHeader(body.project) !== undefined) headers['X-CodeMie-Project'] = body.project;
 
   if (shouldLogSkillMetricDebug(body.command)) {
     const debugPayload = {

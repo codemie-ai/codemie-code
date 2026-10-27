@@ -14,7 +14,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { logger } from '../../../../../utils/logger.js';
-import { encodeAttributionHeader } from '../../../../../utils/header-value.js';
+import { encodeAttributionHeader, rawProjectHeader } from '../../../../../utils/header-value.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
   id = '@codemie/proxy-headers';
@@ -110,8 +110,9 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     if (config.branch) {
       context.headers['X-CodeMie-Branch'] = encodeAttributionHeader(config.branch);
     }
-    if (config.project) {
-      context.headers['X-CodeMie-Project'] = encodeAttributionHeader(config.project);
+    const project = config.project ? rawProjectHeader(config.project) : undefined;
+    if (project) {
+      context.headers['X-CodeMie-Project'] = project;
     }
 
     logger.info('[header-injection] Request headers', {

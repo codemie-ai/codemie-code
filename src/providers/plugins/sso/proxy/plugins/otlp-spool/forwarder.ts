@@ -1,4 +1,4 @@
-import { encodeAttributionHeader } from '@/utils/header-value.js';
+import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
@@ -61,7 +61,10 @@ async function postToBackend(
     throw new Error('Unsupported credential type');
   }
   headers['Content-Type'] = contentType;
-  headers[PROJECT_HEADER] = encodeAttributionHeader(project);
+  const projectValue = rawProjectHeader(project);
+  if (projectValue !== undefined) {
+    headers[PROJECT_HEADER] = projectValue;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateHeaderValue } from 'node:http';
-import { encodeAttributionHeader } from '../header-value.js';
+import { encodeAttributionHeader, rawProjectHeader } from '../header-value.js';
 
 describe('encodeAttributionHeader', () => {
   it('leaves plain slash-separated values unchanged', () => {
@@ -50,4 +50,16 @@ describe('encodeAttributionHeader', () => {
       expect(() => validateHeaderValue('X', encoded)).not.toThrow();
     }
   );
+});
+
+describe('rawProjectHeader', () => {
+  it('returns Latin-1 values unchanged', () => {
+    expect(rawProjectHeader('my-project')).toBe('my-project');
+    expect(rawProjectHeader('a@b.com')).toBe('a@b.com');
+  });
+
+  it('returns undefined for non-Latin-1 or control characters', () => {
+    expect(rawProjectHeader('проект')).toBeUndefined();
+    expect(rawProjectHeader('a\nb')).toBeUndefined();
+  });
 });

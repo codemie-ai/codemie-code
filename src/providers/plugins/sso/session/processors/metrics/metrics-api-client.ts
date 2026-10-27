@@ -27,7 +27,7 @@ import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
-import { encodeAttributionHeader } from '../../../../../../utils/header-value.js';
+import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
 import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 
@@ -155,7 +155,7 @@ class MetricsApiClient {
       'X-CodeMie-Client': this.config.clientType,
       ...(metric.attributes.repository != null && { 'X-CodeMie-Repository': encodeAttributionHeader(metric.attributes.repository) }),
       ...(metric.attributes.branch != null && { 'X-CodeMie-Branch': encodeAttributionHeader(metric.attributes.branch) }),
-      ...(metric.attributes.project && { 'X-CodeMie-Project': encodeAttributionHeader(metric.attributes.project) })
+      ...(metric.attributes.project && rawProjectHeader(metric.attributes.project) !== undefined && { 'X-CodeMie-Project': metric.attributes.project })
     };
 
     if (this.config.apiKey) {

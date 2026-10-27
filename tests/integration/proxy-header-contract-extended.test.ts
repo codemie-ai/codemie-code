@@ -135,21 +135,25 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
     expect(h['x-codemie-branch']).toBe('feature/x');
   });
 
-  it('percent-encodes non-Latin-1 repository, branch and project values', async () => {
+  it('percent-encodes non-Latin-1 repository and branch, omits a non-Latin-1 project', async () => {
     const repository = 'clients/репо-тест';
     const branch = 'фича/икс';
-    const project = 'проект';
-    harness = await startHarness({ repository, branch, project });
+    harness = await startHarness({ repository, branch, project: 'проект' });
     const res = await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`);
     expect(res.status).toBe(200);
 
     const h = harness.captured();
     expect(h['x-codemie-repository']).toBe(encodeAttributionHeader(repository));
     expect(h['x-codemie-branch']).toBe(encodeAttributionHeader(branch));
-    expect(h['x-codemie-project']).toBe(encodeAttributionHeader(project));
+    expect(h['x-codemie-project']).toBeUndefined();
     expect(decodeURIComponent(h['x-codemie-repository'] as string)).toBe(repository);
     expect(decodeURIComponent(h['x-codemie-branch'] as string)).toBe(branch);
-    expect(decodeURIComponent(h['x-codemie-project'] as string)).toBe(project);
+  });
+
+  it('sends the project header raw', async () => {
+    harness = await startHarness({ project: 'a@b.com' });
+    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect(harness.captured()['x-codemie-project']).toBe('a@b.com');
   });
 
   it('passes printable ASCII values with spaces and percent signs through unchanged', async () => {

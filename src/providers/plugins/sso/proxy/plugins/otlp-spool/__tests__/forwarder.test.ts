@@ -237,16 +237,22 @@ describe('forwardSession (project header)', () => {
     expect(fetchMock.mock.calls[1][1].body.toString()).toBe('logs-bytes');
   });
 
-  it('percent-encodes a non-Latin project name', async () => {
-    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'клиенты/проект 100%' });
+  it('sends a personal project (email) unchanged', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'a@b.com' });
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', false, credentials);
 
-    const hooksCall = fetchMock.mock.calls[0];
-    expect(hooksCall[1].headers['X-CodeMie-Project']).toBe(
-      `${encodeURIComponent('клиенты')}/${encodeURIComponent('проект 100%')}`
-    );
+    expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('a@b.com');
+  });
+
+  it('omits the project header for a non-Latin-1 project name', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'клиенты/проект' });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBeUndefined();
   });
 
   it('sends nothing when the snapshots are null', async () => {

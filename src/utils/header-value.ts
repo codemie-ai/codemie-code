@@ -15,3 +15,13 @@ export function encodeAttributionHeader(value: string): string {
     .map(segment => (NON_PRINTABLE_ASCII.test(segment) ? encodeURIComponent(segment) : segment))
     .join('/');
 }
+
+const LATIN1_HEADER_VALUE = /^[\x20-\x7e\xa0-\xff]*$/;
+
+/**
+ * The project header is sent raw (the backend does not decode it). Returns the value when it is a
+ * valid Latin-1 header value, otherwise undefined so the caller omits the header.
+ */
+export function rawProjectHeader(project: string): string | undefined {
+  return LATIN1_HEADER_VALUE.test(project) ? project : undefined;
+}
