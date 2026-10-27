@@ -67,6 +67,20 @@ describe('detectSessionSource', () => {
     expect(detectSessionSource(session({ skill: ['sdlc-factory:x', 'stlc-factory:y'] }))).toBe('CodeMie AI Factory');
   });
 
+  it('matches the stlc-feature command case-insensitively', () => {
+    expect(detectSessionSource(session({ command: ['STLC-Feature'] }))).toBe('STLC Factory');
+  });
+
+  it('keeps Superpowers when both superpowers and stlc-factory names are present', () => {
+    expect(detectSessionSource(session({ skill: ['superpowers:x', 'stlc-factory:y'] }))).toBe('Superpowers');
+  });
+
+  it('prefers STLC Factory over openspec, speckit and bmad when names are mixed', () => {
+    expect(detectSessionSource(session({ skill: ['stlc-factory:y'], command: ['openspec-apply'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ skill: ['stlc-factory:y'], command: ['speckit.plan'] }))).toBe('STLC Factory');
+    expect(detectSessionSource(session({ skill: ['stlc-factory:y'], agent: ['bmad-dev'] }))).toBe('STLC Factory');
+  });
+
   it('does not label unrelated stlc-prefixed commands', () => {
     expect(detectSessionSource(session({ command: ['stlc-other'] }))).toBe('Pure chat');
   });
