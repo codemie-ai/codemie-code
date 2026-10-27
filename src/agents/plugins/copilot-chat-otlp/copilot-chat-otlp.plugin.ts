@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { ConfigLoader } from '@/utils/config.js';
@@ -84,6 +85,20 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
 
   protected resolveEventType(event: Record<string, unknown>): string {
     return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
+  }
+
+  protected buildEventId(
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    timestamp: string
+  ): string {
+    const content = JSON.stringify({ ...payload, timestamp }) ?? 'null';
+    const digest = createHash('sha256').update(content).digest('hex');
+    return `${String(event['type'] ?? '')}:${String(event['session_id'] ?? '')}:${digest}`;
+  }
+
+  protected requiresSpoolAcceptance(input: CopilotChatHookInput): boolean {
+    return ENFORCED_EVENTS.has(input.hook_event_name);
   }
 
   protected async evaluate(hookInput: CopilotChatHookInput): Promise<ChatForwardDecision> {

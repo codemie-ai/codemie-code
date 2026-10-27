@@ -1,5 +1,6 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
@@ -118,6 +119,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         if (!accepted && decision.retryOnce) {
           accepted = await forwardOtlpEventsToSpool(events, this.name);
         }
+        if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
+          throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
+        }
       } finally {
         try {
           await decision.finalize?.(accepted);
@@ -155,6 +159,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Optional host-specific response when a recognized hook cannot be tracked. */
   protected async onUntrackedHook(_input: TInput): Promise<void> {}
+
+  /** Enforcement adapters opt in; other adapters retain commit-after-send retry behavior. */
+  protected requiresSpoolAcceptance(_input: TInput): boolean {
+    return false;
+  }
 
   /** Returns null to ignore a payload of an unknown shape. May throw on malformed JSON. */
   protected abstract parseHookInput(raw: string): TInput | null;

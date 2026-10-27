@@ -36,6 +36,8 @@ export interface OtlpHookSpoolData {
 
 Spool forwarding is injected through `OtlpAdapterDeps` (supplied by `hook.ts`) rather than imported, so `core/` has no upward imports and the base class is testable with plain fakes.
 
+Adapters can override `requiresSpoolAcceptance(input)` for enforcement events. If the local batch is rejected after any configured retry, the base class raises an `AnalyticsSourceError` through `onHookError`, after finalizing with `accepted: false`. Copilot Chat opts in for session start, prompt submission and tool permission checks; Copilot CLI opts in for prompt transformation and tool permission checks. Their existing error handlers emit the host-specific block, prompt replacement or tool denial. The default is `false`, preserving Claude's cursor/retry behavior. This checks local durable acceptance, not backend delivery: a backend outage does not block work once the local spool accepts the batch.
+
 Everything downstream of `processOtlpEvent` — spool, forwarder, analytics API — is already agent-agnostic and shared. Nothing in it is specific to any one tool's hook names or payload shape; that lives entirely inside each adapter.
 
 ## 2. Pipeline
