@@ -10,9 +10,10 @@
  * id, so `codemie proxy connect`/`disconnect` and `status` have one place to read.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { logger } from '@/utils/logger.js';
+import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { canonicalizePath, isPathInside } from './project-allowlist.js';
 
@@ -105,28 +106,56 @@ export async function readCopilotConnectorScope(
   return { kind: 'ok', value: record };
 }
 
-/** Merge-writes one connector's scope record; other connectors' records are preserved. */
+/**
+ * Merge-writes one connector's scope record; other connectors' records are preserved.
+ * Refuses to overwrite an existing file that is unreadable or corrupt, so another connector's
+ * record is never silently dropped. The write is atomic (temp file + rename) so a concurrent
+ * hook never reads a truncated file.
+ */
 export async function writeCopilotConnectorScope(connectorId: string, scope: CopilotConnectorScope): Promise<void> {
   const path = getCopilotConnectorsConfigPath();
   let file: CopilotConnectorsFile = { version: CONFIG_VERSION, connectors: {} };
+  let raw: string | undefined;
   try {
-    const raw = await readFile(path, 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as Partial<CopilotConnectorsFile>).connectors === 'object'
-    ) {
-      file = { version: CONFIG_VERSION, connectors: { ...(parsed as CopilotConnectorsFile).connectors } };
+    raw = await readFile(path, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new ConfigurationError(`Cannot read Copilot connector config, it was not changed: ${path}`);
     }
-  } catch {
-    // Absent, unreadable, or corrupt: start from a fresh file rather than failing the write.
+  }
+
+  if (raw !== undefined && raw.trim().length > 0) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    const candidate = parsed as Partial<CopilotConnectorsFile> | undefined;
+    if (
+      typeof candidate !== 'object' ||
+      candidate === null ||
+      Array.isArray(candidate) ||
+      typeof candidate.connectors !== 'object' ||
+      candidate.connectors === null
+    ) {
+      throw new ConfigurationError(
+        `Copilot connector config is corrupt and was not changed: ${path}. Fix or delete it, then retry.`
+      );
+    }
+    file = { version: CONFIG_VERSION, connectors: { ...candidate.connectors } };
   }
 
   file.connectors[connectorId] = scope;
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(file, null, 2), 'utf-8');
+  const tempPath = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(tempPath, JSON.stringify(file, null, 2), 'utf-8');
+    await rename(tempPath, path);
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
