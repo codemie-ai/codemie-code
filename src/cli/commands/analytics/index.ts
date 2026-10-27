@@ -35,7 +35,7 @@ export function createAnalyticsCommand(): Command {
     // Registered here only; because commander also binds parent options after `otel`, the otel
     // action rejects them explicitly rather than ignoring them.
     .option('--ticket-sources <list>', 'Where exported reports look for ticket ids: tool,branch,prompt (default all; tool,branch with --redact), or none')
-    .option('--ticket-tools <globs>', 'Comma-separated tool-name globs whose inputs carry ticket ids (default: mcp__*jira*, case-insensitive)')
+    .option('--ticket-tools <globs>', 'Comma-separated tool-name globs whose inputs carry ticket ids (default: mcp__*jira*,mcp__*atlassian*__*issue*; case-insensitive)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.

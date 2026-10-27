@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveTicketSources, resolveTicketTools, TicketOptionsError } from '../options.js';
+import { DEFAULT_TICKET_TOOLS } from '../tool-tickets.js';
 
 describe('resolveTicketSources', () => {
   it('defaults to every source, and to tool,branch under --redact', () => {
@@ -25,8 +26,8 @@ describe('resolveTicketTools', () => {
   it('prefers the flag, then the config key, then the built-in default', () => {
     expect(resolveTicketTools('mcp__*rally*, mcp__*jira*', ['ignored'])).toEqual(['mcp__*rally*', 'mcp__*jira*']);
     expect(resolveTicketTools(undefined, ['mcp__*rally*'])).toEqual(['mcp__*rally*']);
-    expect(resolveTicketTools(undefined, undefined)).toEqual(['mcp__*jira*']);
-    expect(resolveTicketTools(undefined, [42, ''])).toEqual(['mcp__*jira*']);
+    expect(resolveTicketTools(undefined, undefined)).toEqual([...DEFAULT_TICKET_TOOLS]);
+    expect(resolveTicketTools(undefined, [42, ''])).toEqual([...DEFAULT_TICKET_TOOLS]);
   });
 
   it('rejects an empty flag value', () => {

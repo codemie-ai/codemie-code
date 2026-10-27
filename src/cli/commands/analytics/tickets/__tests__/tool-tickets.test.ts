@@ -6,6 +6,7 @@ describe('compileToolMatcher', () => {
     const matches = compileToolMatcher(DEFAULT_TICKET_TOOLS);
     expect(matches('mcp__claude_ai_Atlassian__getJiraIssue')).toBe(true);
     expect(matches('mcp__atlassian__jira_get_issue')).toBe(true);
+    expect(matches('mcp__claude_ai_Atlassian__createIssueLink')).toBe(true);
     expect(matches('mcp__claude_ai_Atlassian__getConfluencePage')).toBe(false);
     expect(matches('Bash')).toBe(false);
   });
@@ -34,6 +35,17 @@ describe('ticketsFromToolInput', () => {
 
   it('extracts every key from a JQL string', () => {
     expect(ticketsFromToolInput({ jql: 'key in (CAKE-1, CAKE-2) OR parent = NUTLA-9' })).toEqual(['CAKE-1', 'CAKE-2', 'NUTLA-9']);
+  });
+
+  it('reads issue-link endpoints and arrays of keys in a key field', () => {
+    expect(ticketsFromToolInput({ type: 'Blocks', inwardIssue: 'CAKE-1', outwardIssue: 'CAKE-2' })).toEqual(['CAKE-1', 'CAKE-2']);
+    expect(ticketsFromToolInput({ key: ['AB-1', 'CD-2'] })).toEqual(['AB-1', 'CD-2']);
+  });
+
+  it('reads key fields inside JSON encoded in a string, but not free text there', () => {
+    const input = { summary: 'About NUTLA-9', additional_fields: '{"parent":"XY-1","description":"mentions Y-2"}' };
+    expect(ticketsFromToolInput(input)).toEqual(['XY-1']);
+    expect(ticketsFromToolInput({ additional_fields: '{not json' })).toEqual([]);
   });
 
   it('walks arrays and tolerates non-object input', () => {

@@ -36,6 +36,9 @@ export interface NativeSignals {
 interface ClaudeRow {
   type?: string;
   uuid?: string;
+  isMeta?: boolean;
+  isSidechain?: boolean;
+  isCompactSummary?: boolean;
   timestamp?: string;
   gitBranch?: string;
   message?: { role?: string; content?: unknown };
@@ -52,16 +55,31 @@ function toMs(timestamp: string | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** User-authored text of a Claude row: string content or text blocks; tool results are not prompts. */
+/**
+ * Wrappers Claude Code puts around text the user did not type: slash-command plumbing, local
+ * command output and injected reminders. `<command-args>` is kept — it is what the user typed
+ * after the command.
+ */
+const INJECTED_BLOCKS = /<(command-name|command-message|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder)>[\s\S]*?<\/\1>/gi;
+
+/**
+ * Text the user actually typed on a Claude row. Same notion of a genuine user turn as
+ * `countTurns` (claude-code-otlp/transcript/session-signals.ts): meta rows (injected skills,
+ * attachments), sidechain rows and compaction summaries are not prompts, and neither are rows
+ * holding only tool results.
+ */
 function claudeUserText(row: ClaudeRow): string {
-  if ((row.message?.role ?? row.type) !== 'user') return '';
+  if ((row.message?.role ?? row.type) !== 'user' || row.isMeta || row.isSidechain || row.isCompactSummary) return '';
   const content = row.message?.content;
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((block): block is { type: string; text: string } => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n');
+  const text = typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content
+        .filter((block): block is { type: string; text: string } => block?.type === 'text' && typeof block.text === 'string')
+        .map((block) => block.text)
+        .join('\n')
+      : '';
+  return text.replace(INJECTED_BLOCKS, ' ');
 }
 
 function claudeRows(parsed: ParsedSession): NativeRow[] {

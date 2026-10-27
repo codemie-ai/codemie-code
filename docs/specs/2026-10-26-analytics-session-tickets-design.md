@@ -265,6 +265,16 @@ Decisions taken while implementing, where the design left room:
   would otherwise be accepted and ignored). Flags are validated with or without `--export`.
 - Ids sort numerically (`BIG-2` before `BIG-10`).
 - The automatic end-of-session report (`report/session-report.ts`) does not include tickets.
+- Prompts use the repo's notion of a genuine user turn (`countTurns` in claude-code-otlp): rows
+  with `isMeta`, `isSidechain` or `isCompactSummary` are skipped, and slash-command plumbing,
+  local command output and system reminders are stripped (`<command-args>` is kept).
+- Key fields also include `inwardIssue` / `outwardIssue` (Atlassian `createIssueLink`, the most
+  frequent Atlassian call in real logs); a key field may hold an array of strings, and JSON
+  encoded in a string (`additional_fields`) is walked. The default tool patterns add
+  `mcp__*atlassian*__*issue*`, because `createIssueLink` has no "jira" in its name.
+- Known limitation: corroboration is report-wide and branch matching is case-insensitive, so a
+  noisy branch (`chore/react-17-upgrade`) can confirm prompt noise and results depend on the
+  report's range and filters.
 - Over the cap, the ids with the most evidence are kept; output is then ordered by id.
 - Corroboration uses the whole report (open question 2: whole report).
 - `analytics.ticketTools` is a top-level key of the CodeMie config (open question 4: global).

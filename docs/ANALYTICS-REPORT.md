@@ -268,12 +268,13 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 
 | Source | Read from | Counted as |
 |---|---|---|
-| `tool` | Tool calls matching the tool patterns, in the session's native log and its subagent transcripts; only key-like input fields (`issueIdOrKey`, `issueKey`, `issue_key`, `key`, `parent`, `jql`) | matching calls |
+| `tool` | Tool calls matching the tool patterns, in the session's native log and its subagent transcripts; only key-like input fields (`issueIdOrKey`, `issueKey`, `issue_key`, `key`, `parent`, `jql`, `inwardIssue`, `outwardIssue`), as a string or an array of strings, including inside JSON encoded in a string | matching calls |
 | `branch` | Every branch the session touched | distinct branches |
-| `prompt` | Every user prompt (CodeMie-recorded turns and the native log) | distinct prompts |
+| `prompt` | Every user prompt (CodeMie-recorded turns and the native log); injected rows (skills, attachments, compaction summaries, sidechains) and slash-command plumbing or local command output are not prompts | distinct prompts |
 
 - There is no ranking: reading an issue is not working on it, so the consumer decides how to weigh sources.
 - Prompt ids are matched case-sensitively and kept only when the same project prefix also appears in a tool-call or branch id somewhere in the report — whether or not `tool`/`branch` are among the requested sources. That drops `gpt-4`, `UTF-8` or `SHA-256` without a denylist, and also drops a ticket mentioned only in prompts when nothing else in the report names its project.
+- Corroboration is report-wide, so it depends on the date range and filters, and a noisy branch can confirm noise: branch matching ignores case (branches are often lower case), so a branch like `chore/react-17-upgrade` yields `REACT-17` and also confirms `REACT-…` in any session's prompts.
 - Resumed and forked logs copy earlier rows. A replayed tool call, prompt or row branch is attributed once — to the session that comes first by start time (ties keep input order), the same rule cost uses — and anything after a session's own end is ignored. Codex rows have no id, so a Codex prompt is recognised as a replay by its original timestamp and text.
 - Tool calls are read for Claude-shaped logs and Codex. Other agents contribute `branch` and `prompt` only. Ids that appear only in a tool *result* (for example the key `createJiraIssue` returns) are not read.
 - `analytics otel` does not compute tickets (its cost comes from the events, not from native logs); passing the flags below to it is an error.
@@ -282,7 +283,7 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 Flags (validated on every run, used only when a report is exported):
 
 - `--ticket-sources <list>` — any of `tool,branch,prompt`, or `none`. Default: all three; **with `--redact`, `tool,branch`**, so a redacted report contains nothing derived from prompts unless `prompt` is asked for explicitly.
-- `--ticket-tools <globs>` — comma-separated tool-name globs, `*` wildcard, case-insensitive. Default: `analytics.ticketTools` from your CodeMie config (`~/.codemie/codemie-cli.config.json`, e.g. `"analytics": { "ticketTools": ["mcp__*rally*"] }`), else `mcp__*jira*`, which covers `mcp__claude_ai_Atlassian__getJiraIssue`, `mcp__atlassian__jira_get_issue` and similar.
+- `--ticket-tools <globs>` — comma-separated tool-name globs, `*` wildcard, case-insensitive. Default: `analytics.ticketTools` from your CodeMie config (`~/.codemie/codemie-cli.config.json`, e.g. `"analytics": { "ticketTools": ["mcp__*rally*"] }`), else `mcp__*jira*,mcp__*atlassian*__*issue*`, which covers `mcp__claude_ai_Atlassian__getJiraIssue`, `mcp__claude_ai_Atlassian__createIssueLink`, `mcp__atlassian__jira_get_issue` and similar.
 
 Ticket ids still reveal which project keys and work items a developer touched, so a report shared off the machine needs access control on the receiving side even when `--redact` is set.
 
@@ -369,7 +370,7 @@ Export flags:
                               (implies --export html when --export is not given)
   --redact                   Omit prompt text and absolute paths from the exported report
   --ticket-sources <list>    Ticket id sources: tool,branch,prompt, or none (default all; tool,branch with --redact)
-  --ticket-tools <globs>     Tool-name globs whose inputs carry ticket ids (default mcp__*jira*)
+  --ticket-tools <globs>     Tool-name globs whose inputs carry ticket ids (default mcp__*jira*,mcp__*atlassian*__*issue*)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
