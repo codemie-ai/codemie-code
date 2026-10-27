@@ -33,6 +33,12 @@ const PROJECT_HEADER = 'X-CodeMie-Project';
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
 
+const BACKEND_DROP_REASONS: ReadonlySet<string> = new Set([
+  'cli_analytics_disabled',
+  'project_context_required',
+  'project_context_conflict',
+]);
+
 /* ------------------------------------------------------------------ auth --- */
 
 function buildAuthHeadersFromCreds(
@@ -78,6 +84,38 @@ async function postToBackend(
     });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * The backend answers 200 even when its project gate discards a request. The hooks route says so
+ * in its JSON body; surface it, without ever affecting the send result.
+ */
+async function warnOnBackendDrop(
+  response: Response,
+  sessionId: string,
+  stream: SpoolStream
+): Promise<void> {
+  try {
+    const parsed: unknown = JSON.parse(await response.text());
+    if (typeof parsed !== 'object' || parsed === null) {
+      return;
+    }
+    const { reason, dropped } = parsed as { reason?: unknown; dropped?: unknown };
+    if (typeof reason !== 'string' || !BACKEND_DROP_REASONS.has(reason)) {
+      return;
+    }
+    logger.warn(
+      '[otlp-forwarder] backend dropped analytics events',
+      ...sanitizeLogArgs({
+        sessionId,
+        stream,
+        reason,
+        dropped: typeof dropped === 'number' ? dropped : undefined,
+      })
+    );
+  } catch {
+    // Unreadable or non-JSON body: nothing to report.
   }
 }
 
@@ -128,6 +166,9 @@ async function send(
       }
     }
     if (response.ok) {
+      if (stream === 'hooks') {
+        await warnOnBackendDrop(response, sessionId, stream);
+      }
       return 'ok';
     }
 
