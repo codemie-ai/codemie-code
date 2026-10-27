@@ -77,6 +77,12 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (Array.isArray(conflict) && conflict.length > 0 && conflict.every((n) => typeof n === 'string')) {
     status.projectConflict = (conflict as string[]).slice(0, MAX_CONFLICT_NAMES);
   }
+  if (status.projectConflict && status.projectConflict.every(isSendableProjectName)) {
+    // Written under the old discard-on-conflict policy: several sendable names are no longer a
+    // conflict, the session pins to its first-seen project.
+    status.project ??= status.projectConflict[0];
+    delete status.projectConflict;
+  }
   const seal = parseProjectSeal(source['projectSeal'], status.projectConflict);
   if (seal) {
     status.projectSeal = seal;

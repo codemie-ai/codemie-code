@@ -90,30 +90,52 @@ async function postToBackend(
 const DROP_BODY_TIMEOUT_MS = 2_000;
 const DROP_BODY_MAX_CHARS = 4_096;
 
+const DROP_WARN_INTERVAL_MS = 60_000;
+const lastDropWarn = new Map<string, number>();
+
+/** The drop reason and count from a response body, which may be longer than the cap we read. */
+function parseDropBody(body: string): { reason?: unknown; dropped?: unknown } {
+  if (body.length <= DROP_BODY_MAX_CHARS) {
+    const parsed: unknown = JSON.parse(body);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  }
+  const head = body.slice(0, DROP_BODY_MAX_CHARS);
+  const reason = /"reason"\s*:\s*"([^"\\]{1,64})"/.exec(head)?.[1];
+  const dropped = /"dropped"\s*:\s*(\d{1,9})\b/.exec(head)?.[1];
+  return { reason, dropped: dropped === undefined ? undefined : Number(dropped) };
+}
+
 /**
  * The backend answers 200 even when its project gate discards a request. The hooks route says so
- * in its JSON body; surface it, without ever affecting the send result.
+ * in its JSON body; surface it, without ever affecting the send result. The warning is throttled
+ * per session and reason so a persistent drop cannot flood the log.
  */
 async function warnOnBackendDrop(
   response: Response,
   sessionId: string,
   stream: SpoolStream
 ): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
   try {
     const body = await Promise.race([
       response.text(),
       new Promise<string>((_, reject) => {
-        setTimeout(() => reject(new Error('body read timeout')), DROP_BODY_TIMEOUT_MS).unref();
+        timer = setTimeout(() => reject(new Error('body read timeout')), DROP_BODY_TIMEOUT_MS);
+        timer.unref();
       }),
     ]);
-    const parsed: unknown = JSON.parse(body.slice(0, DROP_BODY_MAX_CHARS));
-    if (typeof parsed !== 'object' || parsed === null) {
-      return;
-    }
-    const { reason, dropped } = parsed as { reason?: unknown; dropped?: unknown };
+    const { reason, dropped } = parseDropBody(body);
     if (typeof reason !== 'string' || !BACKEND_DROP_REASONS.has(reason)) {
       return;
     }
+    const key = `${sessionId}:${reason}`;
+    const now = Date.now();
+    const last = lastDropWarn.get(key);
+    if (last !== undefined && now - last < DROP_WARN_INTERVAL_MS) {
+      return;
+    }
+    if (lastDropWarn.size > 256) lastDropWarn.clear();
+    lastDropWarn.set(key, now);
     logger.warn(
       '[otlp-forwarder] backend dropped analytics events',
       ...sanitizeLogArgs({
@@ -125,6 +147,13 @@ async function warnOnBackendDrop(
     );
   } catch {
     // Unreadable or non-JSON body: nothing to report.
+  } finally {
+    if (timer) clearTimeout(timer);
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Body already consumed or closed.
+    }
   }
 }
 
@@ -203,34 +232,44 @@ interface HookPayload {
   ndjson: string;
   containsSessionEnd: boolean;
   malformed: number;
+  /** Events whose project name was rewritten to the pinned one; present only with a pinned project. */
+  rewritten?: number;
 }
 
-function pinEventProject(serialized: string, wireEvent: Record<string, unknown>, project: string): string {
+function pinEventProject(
+  serialized: string,
+  wireEvent: Record<string, unknown>,
+  project: string
+): { line: string; rewritten: boolean } {
+  const wanted = project.toLowerCase();
   let changed = false;
   const pin = (holder: unknown): void => {
     if (typeof holder !== 'object' || holder === null) return;
     const fields = holder as Record<string, unknown>;
+    if (!('codemie_project_name' in fields) || fields['codemie_project_name'] === undefined) return;
     const value = fields['codemie_project_name'];
-    if (typeof value === 'string' && value !== project) {
-      fields['codemie_project_name'] = project;
-      changed = true;
-    }
+    // Blank and non-string values are pinned too: the header already attributes the request to
+    // `project`, so an event must not carry anything else. Case-only differences are the same project.
+    if (typeof value === 'string' && value.toLowerCase() === wanted) return;
+    fields['codemie_project_name'] = project;
+    changed = true;
   };
   pin(wireEvent);
   pin(wireEvent['raw']);
-  return changed ? JSON.stringify(wireEvent) : serialized;
+  return changed ? { line: JSON.stringify(wireEvent), rewritten: true } : { line: serialized, rewritten: false };
 }
 
 /**
  * Unwraps the spool envelopes. `hookEvent` is already the final wire event, built at hook time
  * by the adapter, so it is forwarded as is: same bytes on every retry. With `project`, an event
- * whose `codemie_project_name` (top level or `raw`) differs is rewritten to it, so the header and
+ * whose `codemie_project_name` (top level or `raw`) differs (case-insensitively; blank and non-string values included) is rewritten to it, so the header and
  * every event agree and the backend never sees two projects in one request.
  */
 export function unwrapHookRecords(records: string[], project?: string): HookPayload {
   const unwrapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
+  let rewritten = 0;
 
   for (const record of records) {
     let serialized: string;
@@ -248,13 +287,20 @@ export function unwrapHookRecords(records: string[], project?: string): HookPayl
     if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
       containsSessionEnd = true;
     }
-    unwrapped.push(project ? pinEventProject(serialized, wireEvent, project) : serialized);
+    if (project) {
+      const pinned = pinEventProject(serialized, wireEvent, project);
+      if (pinned.rewritten) rewritten += 1;
+      unwrapped.push(pinned.line);
+    } else {
+      unwrapped.push(serialized);
+    }
   }
 
   return {
     ndjson: unwrapped.length > 0 ? `${unwrapped.join('\n')}\n` : '',
     containsSessionEnd,
     malformed,
+    ...(project ? { rewritten } : {}),
   };
 }
 
@@ -284,6 +330,13 @@ async function forwardHooks(
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
       ...sanitizeLogArgs({ sessionId, count: payload.malformed })
+    );
+  }
+
+  if (payload.rewritten) {
+    logger.debug(
+      '[otlp-forwarder] rewrote hook event project to the session project',
+      ...sanitizeLogArgs({ sessionId, count: payload.rewritten })
     );
   }
 

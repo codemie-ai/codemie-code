@@ -95,6 +95,26 @@ describe('unwrapHookRecords with a pinned project', () => {
   });
 });
 
+describe('unwrapHookRecords pinning edge cases', () => {
+  it('treats case-only differences as the same project, pins blank and non-string names, skips absent ones', async () => {
+    const { unwrapHookRecords } = await import('../forwarder.js');
+    const events = [
+      { type: 't', codemie_project_name: 'a' },
+      { type: 't', codemie_project_name: '  ' },
+      { type: 't', codemie_project_name: 7, raw: { codemie_project_name: null } },
+      { type: 't' },
+    ];
+    const payload = unwrapHookRecords(events.map(spoolLine), 'A');
+    const lines = payload.ndjson.trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines[0].codemie_project_name).toBe('a');
+    expect(lines[1].codemie_project_name).toBe('A');
+    expect(lines[2].codemie_project_name).toBe('A');
+    expect(lines[2].raw.codemie_project_name).toBe('A');
+    expect(lines[3]).toEqual({ type: 't' });
+    expect(payload.rewritten).toBe(2);
+  });
+});
+
 describe('forwardSession (hooks)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -141,8 +161,73 @@ describe('forwardSession (hooks)', () => {
     await forwardSession('s1', true, credentials);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[otlp-forwarder] backend dropped analytics events',
+      expect.anything()
+    );
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 110);
+  });
+
+  it('does not warn for an unlisted reason', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => JSON.stringify({ reason: 'something_else' }) });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('still finds the reason in a body longer than the read cap', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    const body = JSON.stringify({ reason: 'project_context_conflict', dropped: 2, pad: 'x'.repeat(10_000) });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => body });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns once per session and reason within the throttle window', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ reason: 'project_context_conflict', dropped: 3 }),
+    });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await forwardSession('s1', true, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends one project in header and every event name for a multi-project batch', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      project: 'A',
+      records: [
+        spoolLine({ type: 'x', codemie_project_name: 'A' }),
+        spoolLine({ type: 'x', codemie_project_name: 'B' }),
+      ],
+      cursor: 0,
+      byteLength: 10,
+    });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    const [, init] = fetchMock.mock.calls[0];
+    const names = String(init.body).trim().split('\n').map((l) => JSON.parse(l).codemie_project_name);
+    expect(names).toEqual(['A', 'A']);
+    expect(JSON.stringify(init.headers)).toContain('"X-CodeMie-Project":"A"');
   });
 
   it('does not wait for a stalled response body before advancing the cursor', async () => {

@@ -78,6 +78,30 @@ describe('appendSpool — project binding', () => {
     expect(status?.project).toBeUndefined();
   });
 
+  it('pins a mixed first batch of sendable names to the first one, without a conflict', async () => {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+
+    await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B'), ['A', 'B']);
+
+    const status = await readStatus(SESSION);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
+    expect(status?.projectSeal).toBeUndefined();
+  });
+
+  it('keeps the pin when a later sendable project arrives', async () => {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+    await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+
+    const status = await readStatus(SESSION);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
+  });
+
   it('records a late conflict after the cursor advanced over bound hooks', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { readStatus, advanceCursor } = await import('../session-status.js');
@@ -142,6 +166,18 @@ describe('appendSpool — project binding', () => {
 
       const status = await readStatus(SESSION);
       expect(status).toMatchObject({ project: 'A', projectScanned: true });
+      expect(status?.projectConflict).toBeUndefined();
+    });
+
+    it('pins the first project when the disk holds two sendable projects', async () => {
+      await seedLegacy(hookLine('A') + hookLine('B'));
+      const { appendSpool } = await import('../spool-io.js');
+      const { readStatus } = await import('../session-status.js');
+
+      await appendSpool(SESSION, 'hooks', hookLine(), []);
+
+      const status = await readStatus(SESSION);
+      expect(status?.project).toBe('A');
       expect(status?.projectConflict).toBeUndefined();
     });
 

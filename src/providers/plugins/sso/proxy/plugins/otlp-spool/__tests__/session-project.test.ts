@@ -140,7 +140,7 @@ describe('status persistence', () => {
     await writeStatus('s1', {
       ...createStatus(),
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectScanned: true,
     });
 
@@ -149,10 +149,35 @@ describe('status persistence', () => {
     const status = await readStatus('s1');
     expect(status).toMatchObject({
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectScanned: true,
     });
     expect(status?.cursors.hooks).toBe(7);
+  });
+
+  it('re-evaluates a legacy conflict of sendable names by pinning the first one', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(
+      join(state.root, 'legacy1.status'),
+      JSON.stringify({ cursors: {}, projectConflict: ['A', 'B'], projectSeal: { v: 1, project: 'A', hooksEnd: 4 } })
+    );
+    await writeFile(
+      join(state.root, 'legacy2.status'),
+      JSON.stringify({ cursors: {}, project: 'B', projectConflict: ['A', 'B'] })
+    );
+    const first = await readStatus('legacy1');
+    expect(first?.project).toBe('A');
+    expect(first?.projectConflict).toBeUndefined();
+    expect(first?.projectSeal).toBeUndefined();
+    const second = await readStatus('legacy2');
+    expect(second?.project).toBe('B');
+    expect(second?.projectConflict).toBeUndefined();
+  });
+
+  it('keeps a legacy conflict that contains an unsendable name', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(join(state.root, 'legacy3.status'), JSON.stringify({ cursors: {}, projectConflict: ['A', 'B\u00e9'] }));
+    expect((await readStatus('legacy3'))?.projectConflict).toEqual(['A', 'B\u00e9']);
   });
 
   it('drops malformed project fields', async () => {
@@ -180,14 +205,14 @@ describe('status persistence', () => {
     const { readStatus, writeStatus, advanceCursor } = await import('../session-status.js');
     await writeFile(
       join(state.root, 's3.status'),
-      JSON.stringify({ cursors: { hooks: 3 }, project: 'A', projectConflict: ['A', 'B'], projectScanned: true })
+      JSON.stringify({ cursors: { hooks: 3 }, project: 'A', projectConflict: ['A', 'B\u00e9'], projectScanned: true })
     );
     expect((await readStatus('s3'))?.projectSeal).toBeUndefined(); // old status: today's discard
 
     await writeStatus('s4', {
       ...createStatus(),
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectSeal: { v: 1, project: 'A', hooksEnd: 40 },
     });
     await advanceCursor('s4', 'hooks', 7);
@@ -196,7 +221,7 @@ describe('status persistence', () => {
 
   it('ignores a malformed seal on disk instead of trusting it', async () => {
     const { readStatus } = await import('../session-status.js');
-    const base = { cursors: {}, project: 'A', projectConflict: ['A', 'B'] };
+    const base = { cursors: {}, project: 'A', projectConflict: ['A', 'B\u00e9'] };
     const bad: unknown[] = [
       { v: 2, project: 'A', hooksEnd: 1 },
       { project: 'A', hooksEnd: 1 },
