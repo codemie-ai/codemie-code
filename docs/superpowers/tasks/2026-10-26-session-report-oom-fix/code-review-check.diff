@@ -1,0 +1,123 @@
+diff --git a/src/cli/commands/analytics/__tests__/native-loader-pi.test.ts b/src/cli/commands/analytics/__tests__/native-loader-pi.test.ts
+index a6cf41e9..21e1e3b2 100644
+--- a/src/cli/commands/analytics/__tests__/native-loader-pi.test.ts
++++ b/src/cli/commands/analytics/__tests__/native-loader-pi.test.ts
+@@ -298,4 +298,36 @@ describe('loadNativeSessions — pi fork families', () => {
+ 
+     expect(out.map((s) => s.sessionId)).toEqual(['root']);
+   });
++
++  it('still folds the fork continuation into the root when filter.sessionId scopes to the root alone (CR-001)', async () => {
++    // The fork adds one entry the root never had, so a successful fold is visible as an extra
++    // turn — proving the fork's content reached the root's output, not just that one row came back.
++    const forkWithNewTurn = piParsed(
++      [...(conversation.messages as unknown[]), userEntry('u3', '2026-08-07T08:25:00.000Z', 'one more thing')],
++      { projectPath: '/repo', parentSession: rootPath }
++    );
++    const root: SessionDescriptor = { ...descriptor, sessionId: 'root', filePath: rootPath };
++    const fork: SessionDescriptor = { ...descriptor, sessionId: 'fork', filePath: forkPath };
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover: async () => [
++        { agentName: 'pi', descriptor: root },
++        { agentName: 'pi', descriptor: fork },
++      ],
++      parse: async (_agent, filePath) => (filePath === forkPath ? forkWithNewTurn : conversation),
++      realPath: (p) => p,
++      hasOwnershipMarker: () => false,
++    };
++
++    const out = await loadNativeSessions({ sessionId: 'root' }, deps);
++
++    expect(out.map((s) => s.sessionId)).toEqual(['root']);
++    expect(out[0]?.endEvent.data.totalTurns).toBe(3); // 2 original prompts + 1 only the fork carries
++  });
++
++  it('returns the fork\'s own data when filter.sessionId targets the fork directly, instead of silently dropping it', async () => {
++    const out = await loadNativeSessions({ sessionId: 'fork' }, familyDeps(rootPath));
++
++    expect(out.map((s) => s.sessionId)).toEqual(['fork']);
++  });
+ });
+diff --git a/src/cli/commands/analytics/__tests__/native-loader.test.ts b/src/cli/commands/analytics/__tests__/native-loader.test.ts
+index f20dad30..4c9a3590 100644
+--- a/src/cli/commands/analytics/__tests__/native-loader.test.ts
++++ b/src/cli/commands/analytics/__tests__/native-loader.test.ts
+@@ -213,7 +213,7 @@ describe('loadNativeSessions', () => {
+ });
+ 
+ describe('loadNativeSessions — sessionId short-circuit', () => {
+-  it('parses only the descriptor matching filter.sessionId, skipping all others', async () => {
++  it('parses only the descriptor matching filter.sessionId, skipping non-matching non-Pi descriptors', async () => {
+     const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+       ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+     );
+@@ -222,7 +222,6 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
+       discover: async () => [
+         { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
+         { agentName: 'codex', descriptor: { sessionId: 'other-codex', filePath: '/logs/other.jsonl', createdAt: 1, agentName: 'codex' } },
+-        { agentName: 'pi', descriptor: { sessionId: 'other-pi', filePath: '/logs/other-pi.jsonl', createdAt: 1, agentName: 'pi' } },
+       ],
+       parse,
+       realPath: (p) => p,
+@@ -236,6 +235,28 @@ describe('loadNativeSessions — sessionId short-circuit', () => {
+     expect(results).toHaveLength(1);
+   });
+ 
++  it('still parses a non-matching Pi descriptor (fork-fold correctness needs the full Pi family, even when scoped to a different session)', async () => {
++    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
++      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
++    );
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover: async () => [
++        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
++        { agentName: 'pi', descriptor: { sessionId: 'other-pi', filePath: '/logs/other-pi.jsonl', createdAt: 1, agentName: 'pi' } },
++      ],
++      parse,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++
++    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
++
++    expect(parse).toHaveBeenCalledTimes(2);
++    expect(parse).toHaveBeenCalledWith('pi', '/logs/other-pi.jsonl', 'other-pi');
++    expect(results.map((s) => s.sessionId)).toEqual(['target']); // the non-matching Pi session is still excluded from output
++  });
++
+   it('returns an empty array and calls parse zero times when no descriptor matches filter.sessionId', async () => {
+     const parse = vi.fn(async () => null);
+     const deps: NativeLoaderDeps = {
+diff --git a/src/cli/commands/analytics/native-loader.ts b/src/cli/commands/analytics/native-loader.ts
+index 105e6191..dd9dfc29 100644
+--- a/src/cli/commands/analytics/native-loader.ts
++++ b/src/cli/commands/analytics/native-loader.ts
+@@ -748,7 +748,10 @@ export async function loadNativeSessions(
+ 
+   // Same shape for Pi, one level up: parse each transcript ONCE, then drop the `/fork`
+   // continuations the adapter already folded into the transcript they grew out of.
+-  const piTranscripts = await readPiTranscripts(scoped, deps);
++  // Always fold over the FULL discovery window, not `scoped`: a fork's data only reaches its
++  // root through this fold, so scoping the fold input to one requested sessionId would silently
++  // drop a fork's content whenever the request targets its root.
++  const piTranscripts = await readPiTranscripts(discovered, deps);
+   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
+   const piForkedChildren = foldPiForkFamilies(piTranscripts);
+ 
+@@ -757,8 +760,14 @@ export async function loadNativeSessions(
+     if (isCodexFamilyAgent(agentName) && codexChildThreads.has(descriptor.sessionId)) {
+       continue; // linked sub-agent rollout — already counted inside its parent
+     }
+-    if (isPiAgent(agentName) && piForkedChildren.has(deps.realPath(descriptor.filePath))) {
++    if (
++      !filter?.sessionId &&
++      isPiAgent(agentName) &&
++      piForkedChildren.has(deps.realPath(descriptor.filePath))
++    ) {
+       continue; // forked continuation — already counted inside the transcript it grew out of
++      // (only when listing broadly; a request scoped to this exact sessionId wants ITS data,
++      // not to be silently absorbed into the root it would otherwise fold into)
+     }
+     if (tracked.has(deps.realPath(descriptor.filePath))) {
+       continue; // already tracked by CodeMie — avoid double counting
