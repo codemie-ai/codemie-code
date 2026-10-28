@@ -74,7 +74,7 @@ Files only: `docs/superpowers/tasks/2026-10-27-epmcdme-16441/{findings-F1,findin
 
 Remove absolute local paths (`findings-T2.md:3`, `findings-F2.md:3`, `handoff-backend.md:108`), backend and CLI commit hashes and version snapshots (`48fa31b56`, `83fad2f6`, `2.49.0-SNAPSHOT...`, `ecab0a11`, `8844a322`, `46bad8dc`, `9e17fbb4`), the developer name at `findings-F1.md:18` and other personal or internal-only names (read `handoff-backend.md` in full, including "ticket owner" at ~L161); make "sibling checkout" wording generic ("the backend repository"). Keep the ticket key and all technical conclusions. Update first-seen/rewrite statements (`findings-F3.md:9`, `findings-T3.md:10`, `handoff-backend.md:60`, `findings-F1.md:11`) to split-by-project; leave the hook-side "session-pinned" remarks that are accurate.
 
-Test-first: no — `grep -nE "/Users/|[0-9a-f]{8,}|SNAPSHOT|Vlasenko|sibling" ` over the six files returns nothing.
+Test-first: no — `grep -nE "/Users/|[0-9a-f]{8,}|SNAPSHOT|<surname>|sibling" ` over the six files returns nothing.
 
 ## Task 8: Draft the PR note
 
