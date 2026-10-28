@@ -197,18 +197,21 @@ export async function touch(key: string, now: number = Date.now()): Promise<void
 }
 
 export async function sweepRecords(
-  opts: { pendingKeys: Set<string>; reserve?: number },
+  opts: { pendingKeys: Set<string>; pendingSessionIds?: Set<string>; reserve?: number },
 ): Promise<{ evicted: number; capacityBlocked: boolean }> {
   const dir = evidenceDir();
   const now = Date.now();
   const idleMs = evidenceRecordIdleDays() * DAY_MS;
   const entries: Array<{ key: string; lastUsed: number }> = [];
+  const pendingKeys = new Set(opts.pendingKeys);
   for (const name of await listRecordFiles()) {
     const key = name.slice(0, -5);
     let lastUsed: number;
     try {
-      const v = (JSON.parse(await readFile(join(dir, name), 'utf-8')) as { last_used?: unknown }).last_used;
-      lastUsed = typeof v === 'number' ? v : (await stat(join(dir, name))).mtimeMs;
+      const r = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { last_used?: unknown; session_id?: unknown };
+      lastUsed = typeof r.last_used === 'number' ? r.last_used : (await stat(join(dir, name))).mtimeMs;
+      // The spool knows session ids, not record keys (no identity there): a pending session pins its records.
+      if (typeof r.session_id === 'string' && opts.pendingSessionIds?.has(r.session_id)) pendingKeys.add(key);
     } catch {
       try { lastUsed = (await stat(join(dir, name))).mtimeMs; } catch { continue; }
     }
@@ -227,7 +230,7 @@ export async function sweepRecords(
   let live = entries.length;
   const remaining: typeof entries = [];
   for (const e of entries) {
-    if (now - e.lastUsed > idleMs && !opts.pendingKeys.has(e.key) && (await evict(e.key))) live--;
+    if (now - e.lastUsed > idleMs && !pendingKeys.has(e.key) && (await evict(e.key))) live--;
     else remaining.push(e);
   }
   const cap = evidenceRecordMaxFiles() - (opts.reserve ?? 0);
@@ -235,7 +238,7 @@ export async function sweepRecords(
     remaining.sort((a, b) => a.lastUsed - b.lastUsed);
     for (const e of remaining) {
       if (live <= cap) break;
-      if (!opts.pendingKeys.has(e.key) && (await evict(e.key))) live--;
+      if (!pendingKeys.has(e.key) && (await evict(e.key))) live--;
     }
   }
   return { evicted, capacityBlocked: live > cap };
