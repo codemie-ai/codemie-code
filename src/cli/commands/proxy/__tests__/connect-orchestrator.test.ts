@@ -1164,5 +1164,11 @@ describe('omp identity and VS Code BYOK conflict', () => {
     expect(deriveDaemonIdentity({ omp: true, codexDesktop: true })).toEqual({
       clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' },
     });
+    expect(deriveDaemonIdentity({ omp: true, copilotChatOtlp: true })).toEqual({
+      clientType: 'copilot-chat-otlp', spawnOptions: { clientType: 'copilot-chat-otlp' },
+    });
+    expect(deriveDaemonIdentity({ omp: true, copilotCliOtlp: true })).toEqual({
+      clientType: 'copilot-cli-otlp', spawnOptions: { clientType: 'copilot-cli-otlp' },
+    });
   });
 });
