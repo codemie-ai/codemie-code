@@ -1,5 +1,5 @@
 
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import type {
   ConfigChangeHookInput,
   HookInput,
@@ -51,6 +51,13 @@ import {
   type SubagentFile,
 } from './transcript/orchestrator.js';
 import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
+import { resolveHomeDir } from '@/utils/paths.js';
+import { ProviderRegistry } from '@/providers/index.js';
+import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
+import { routedViaCodemie } from '@/agents/core/evidence/routing.js';
+import { loadHookConfig } from '@/agents/core/event-fields/identity-fields.js';
+import { readClaudeOrganization } from './event-fields/claude-org.js';
+import { readJsonFile } from './event-fields/session-env-fields.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -104,6 +111,23 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   protected parseHookInput(raw: string): HookInput | null {
     const parsed: unknown = JSON.parse(raw);
     return isClaudeCodeHookInput(parsed) ? parsed : null;
+  }
+
+  /** Claude-specific evidence: organization from .claude.json and routing from settings.json env + profile. */
+  protected override async resolveEvidenceInputs(context: OtlpHookContext): Promise<EvidenceInputs> {
+    const [organization, settings, hookConfig] = await Promise.all([
+      readClaudeOrganization(),
+      readJsonFile(join(resolveHomeDir(), '.claude', 'settings.json')),
+      loadHookConfig(context.cwd),
+    ]);
+    const settingsEnv = settings?.env && typeof settings.env === 'object' ? (settings.env as Record<string, string | undefined>) : undefined;
+    const config = hookConfig?.config;
+    const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
+    const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');
+    return {
+      organization,
+      routing: routedViaCodemie({ env: process.env, settingsEnv, codemieProvider, profileBaseUrl: config?.baseUrl }),
+    };
   }
 
   protected async isTracked(hookInput: HookInput): Promise<boolean> {

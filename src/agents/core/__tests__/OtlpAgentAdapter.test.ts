@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
+const getRawGitOriginMock = vi.fn();
+const resolveProjectOriginMock = vi.fn();
 
-vi.mock('@/utils/processes.js', () => ({
+vi.mock('@/utils/processes.js', async () => ({
   detectGitBranch: detectGitBranchMock,
   detectGitRemoteRepo: detectGitRemoteRepoMock,
+  getRawGitOrigin: getRawGitOriginMock,
+  repoKeyFromRemote: (await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js')).repoKeyFromRemote,
 }));
 const resolveHookCredentialsMock = vi.fn();
 const resolveIdentityMock = vi.fn();
@@ -25,7 +32,7 @@ vi.mock('../identity-resolver.js', async () => ({
   resolveIdentity: resolveIdentityMock,
 }));
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock },
+  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock, resolveProjectOrigin: resolveProjectOriginMock },
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('../session-project-pin.js', () => ({
@@ -142,6 +149,9 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     getCurrentCliVersionMock.mockResolvedValue('1.2.3');
     readPinnedProjectNameMock.mockResolvedValue(undefined);
     pinProjectNameMock.mockImplementation(async (_sessionId: string, project: string) => project);
+    getRawGitOriginMock.mockResolvedValue('https://user:secret@git.example.com/org/repo.git');
+    resolveProjectOriginMock.mockResolvedValue('profile');
+    hasLocalConfigMock.mockResolvedValue(false);
     delete process.env['SDLC_ANALYTICS_STORY_ID'];
     delete process.env['CODEMIE_PROJECT'];
     delete process.env['CLAUDE_PROJECT_DIR'];
@@ -867,6 +877,102 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
       await run();
       expect(onHookError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('durable evidence stamping (EPMCDME-16440)', () => {
+    class StampAdapter extends FakeAdapter {
+      inputs: { organization?: string; routing: { routed: boolean; routing_proof: 'proven' | 'unproven' } } | undefined = {
+        organization: 'Acme',
+        routing: { routed: true, routing_proof: 'proven' },
+      };
+      protected override async resolveEvidenceInputs() {
+        return this.inputs;
+      }
+    }
+    let home: string;
+    let prevHome: string | undefined;
+    const readRecords = () => {
+      const dir = join(home, 'evidence');
+      const names = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
+      return names.map((n) => JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown>);
+    };
+
+    beforeEach(() => {
+      prevHome = process.env['CODEMIE_HOME'];
+      home = mkdtempSync(join(tmpdir(), 'ev-'));
+      process.env['CODEMIE_HOME'] = home;
+      adapter = new StampAdapter();
+    });
+    afterEach(() => {
+      if (prevHome === undefined) delete process.env['CODEMIE_HOME'];
+      else process.env['CODEMIE_HOME'] = prevHome;
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    it('stamps a record, marks the envelope with evidence_v 1 and adds no event field', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake', { evidenceV: 1 });
+      expect(Object.keys(forwarded()[0])).not.toContain('evidence_v');
+      const [rec] = readRecords();
+      expect(rec).toMatchObject({
+        routed_via_codemie: true,
+        routing_proof: 'proven',
+        organization: 'Acme',
+        project: 'proj-1',
+        project_source: 'profile',
+        repo_key: 'git.example.com/org/repo',
+        api_identity: 'https://api',
+      });
+      expect(JSON.stringify(rec)).not.toContain('secret');
+    });
+
+    it('keeps the record project when the project changes mid-session; a later pin never overrides it', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      configLoadMock.mockResolvedValue({ codeMieProject: 'proj-2' });
+      readPinnedProjectNameMock.mockResolvedValue('pinned-other');
+      process.env['CODEMIE_PROJECT'] = 'env-other';
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwarded().map((e) => e['codemie_project_name'])).toEqual(['proj-1', 'proj-1']);
+      expect(readRecords()).toHaveLength(1);
+    });
+
+    it.each([
+      ['no credentials', () => resolveHookCredentialsMock.mockResolvedValue(null)],
+      ['unparsable api url', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: { codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, apiUrl: 'not a url', timestamp: 0 })],
+      ['no owner', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: {}, apiUrl: 'https://api', timestamp: 0 })],
+    ])('enqueues nothing and logs a reason code when %s', async (_n, arrange) => {
+      arrange();
+      const { logger } = await import('@/utils/logger.js');
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('evidence record unavailable'));
+    });
+
+    it('enqueues nothing when the record at the key is corrupt, and never rewrites it', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      const dir = join(home, 'evidence');
+      const file = join(dir, readdirSync(dir).filter((n) => n.endsWith('.json'))[0]);
+      writeFileSync(file, '{not json');
+      forwardToSpool.mockClear();
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(readFileSync(file, 'utf-8')).toBe('{not json');
+    });
+
+    it('stamps nothing for an untracked project and leaves the event path unchanged', async () => {
+      (adapter as FakeAdapter).tracked = false;
+      await run({ sessionId: 's1' });
+      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(readRecords()).toEqual([]);
+    });
+
+    it('an adapter without evidence inputs keeps the legacy, unmarked path', async () => {
+      (adapter as StampAdapter).inputs = undefined;
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake');
+      expect(readRecords()).toEqual([]);
     });
   });
 });

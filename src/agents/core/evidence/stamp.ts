@@ -1,0 +1,78 @@
+import { logger } from '@/utils/logger.js';
+import { ConfigLoader } from '@/utils/config.js';
+import { getRawGitOrigin, repoKeyFromRemote } from '@/utils/processes.js';
+import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
+import { resolveHookCredentials } from '../hook-credentials.js';
+import { resolveEmailFromCredentials } from '../identity-resolver.js';
+import { loadHookConfig, resolveSessionProject } from '../event-fields/identity-fields.js';
+import { apiIdentity, ownerHash } from './api-identity.js';
+import { launchMode, type RoutingResult } from './routing.js';
+import { createOrRead, readRecord, recordKey, touch, type EvidenceRecord } from './record-store.js';
+
+/** Adapter-supplied facts the base cannot know (Claude organization, settings.json routing). */
+export interface EvidenceInputs {
+  organization?: string;
+  routing: RoutingResult;
+}
+
+export type StampResult = { ok: true; record: EvidenceRecord } | { ok: false; reason: string };
+
+/**
+ * Creates or reads the session's durable evidence record before anything is spooled.
+ * Never throws. A failure carries a reason code only (no URL, email, org or path values).
+ */
+export async function stampEvidence(
+  context: OtlpHookContext,
+  inputs: EvidenceInputs
+): Promise<StampResult> {
+  const sessionId = context.sessionId;
+  if (!sessionId) return { ok: false, reason: 'session_id_absent' };
+  try {
+    const credentials = await resolveHookCredentials();
+    if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
+    const email = resolveEmailFromCredentials(credentials);
+    if (!email) return { ok: false, reason: 'no_owner' };
+    let api: string;
+    try {
+      api = apiIdentity(credentials.apiUrl);
+    } catch {
+      return { ok: false, reason: 'api_url_unparsable' };
+    }
+
+    const key = recordKey(api, ownerHash(email), sessionId);
+    const found = await readRecord(key);
+    if (found) {
+      if (found.kind !== 'created' && found.kind !== 'existing') return { ok: false, reason: found.kind };
+      await touch(key);
+      return { ok: true, record: found.record };
+    }
+
+    const env = process.env;
+    const hookConfig = await loadHookConfig(context.cwd);
+    const configDir = hookConfig?.configDir ?? context.cwd;
+    const project = (await resolveSessionProject(context.cwd, sessionId)) || undefined;
+    const project_source = project
+      ? await ConfigLoader.resolveProjectOrigin(configDir, await ConfigLoader.hasLocalConfig(configDir), env)
+      : 'none';
+    const rawOrigin = await getRawGitOrigin(context.cwd);
+
+    const created = await createOrRead(key, {
+      session_id: sessionId,
+      launch_mode: launchMode(env),
+      routed_via_codemie: inputs.routing.routed,
+      routing_proof: inputs.routing.routing_proof,
+      organization: inputs.organization,
+      project,
+      project_source,
+      repo_key: rawOrigin ? repoKeyFromRemote(rawOrigin) : undefined,
+      api_identity: api,
+      owner_hash: ownerHash(email),
+      profile: hookConfig?.config.name,
+    });
+    if (created.kind === 'created' || created.kind === 'existing') return { ok: true, record: created.record };
+    return { ok: false, reason: created.kind };
+  } catch (error) {
+    logger.debug(`[evidence-stamp] failed: ${error instanceof Error ? error.name : 'error'}`);
+    return { ok: false, reason: 'unavailable' };
+  }
+}

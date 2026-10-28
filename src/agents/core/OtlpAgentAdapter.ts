@@ -6,6 +6,8 @@ import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
+import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
+import type { EvidenceRecord } from './evidence/record-store.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -123,8 +125,24 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         }
 
         const context = this.extractHookContext(hookInput);
+
+        // Stamp before anything is spooled; a failed stamp enqueues nothing (reason code only is logged).
+        let record: EvidenceRecord | undefined;
+        const evidenceInputs = await this.resolveEvidenceInputs(context);
+        if (evidenceInputs) {
+          const stamp = await stampEvidence(context, evidenceInputs);
+          if (!stamp.ok) {
+            logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}); event not enqueued`);
+            if (this.requiresSpoolAcceptance(hookInput)) {
+              throw new AnalyticsSourceError('Evidence record unavailable; hook event not enqueued');
+            }
+            return;
+          }
+          record = stamp.record;
+        }
+
         const [commonFields, agentFields] = await Promise.all([
-          this.resolveCommonFields(context),
+          this.resolveCommonFields(context, record),
           this.resolveAgentFields(),
         ]);
         const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
@@ -132,9 +150,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         // Built once: a retry below resends these exact bytes, event_ids included.
         const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
 
-        accepted = await forwardOtlpEventsToSpool(events, this.name);
+        const send = (): Promise<boolean> =>
+          record ? forwardOtlpEventsToSpool(events, this.name, { evidenceV: 1 }) : forwardOtlpEventsToSpool(events, this.name);
+        accepted = await send();
         if (!accepted && decision.retryOnce) {
-          accepted = await forwardOtlpEventsToSpool(events, this.name);
+          accepted = await send();
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
           throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
@@ -172,6 +192,17 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    */
   protected async onHookError(err: unknown, _input: TInput): Promise<void> {
     throw err;
+  }
+
+  /**
+   * Opt-in to durable evidence stamping (EPMCDME-16440). Return the adapter-specific inputs
+   * (organization, routing proof) to stamp; the base builds and reads the record. The default
+   * (undefined) stamps nothing and keeps the legacy, unmarked spool path, which is what the
+   * Copilot adapters use. Claude-specific reads (organization, settings.json endpoint) live in
+   * the claude-code-otlp override, not here.
+   */
+  protected async resolveEvidenceInputs(_context: OtlpHookContext): Promise<EvidenceInputs | undefined> {
+    return undefined;
   }
 
   /** Optional host-specific response when a recognized hook cannot be tracked. */
@@ -284,10 +315,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  private async resolveCommonFields(context: OtlpHookContext): Promise<CommonFields> {
+  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context),
+      resolveIdentityFields(context, record),
     ]);
     return { ...repoFields, ...identityFields };
   }
