@@ -136,6 +136,20 @@ describe('record-store', () => {
     expect(left).toEqual([`${keyOf(fs4[0])}.json`, `${keyOf(fs4[3])}.json`].sort());
   });
 
+  it('CR001: at the cap, a session known (by id) to have no pending spool is evicted now; a pending one pins its record', async () => {
+    process.env.CODEMIE_EVIDENCE_RECORD_MAX_FILES = '2';
+    const [a, b, n] = ['a', 'b', 'n'].map((s) => fields(s));
+    await createOrRead(keyOf(a), a);
+    await createOrRead(keyOf(b), b);
+    setLastUsed(keyOf(a), Date.now() - 5 * DAY); // idle and not pending
+    const created = await createOrRead(keyOf(n), n, { pendingSessionIds: new Set(['b']) });
+    expect(created.kind).toBe('created');
+    expect(readdirSync(evidenceDir()).sort()).toEqual([`${keyOf(b)}.json`, `${keyOf(n)}.json`].sort());
+    // Both remaining sessions pending: nothing can be evicted, so the new session stays blocked.
+    const [m] = ['m'].map((s) => fields(s));
+    expect((await createOrRead(keyOf(m), m, { pendingSessionIds: new Set(['b', 'n']) })).kind).toBe('evidence_capacity');
+  });
+
   it('cap blocked by pending => evidence_capacity for new keys, existing still readable', async () => {
     process.env.CODEMIE_EVIDENCE_RECORD_MAX_FILES = '2';
     const [a, b, n] = ['a', 'b', 'n'].map((s) => fields(s));

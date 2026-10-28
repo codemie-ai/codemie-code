@@ -97,6 +97,14 @@ const ALWAYS_DROPPED_FIELDS: readonly string[] = [
 const LEGACY_HOOK_TIMEOUT_SECONDS = 30;
 const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
+/** Enterprise managed settings (highest precedence); absent files read as null. */
+const MANAGED_SETTINGS = [
+  'C:/Program Files/ClaudeCode/managed-settings.json',
+  'C:/ProgramData/ClaudeCode/managed-settings.json',
+  '/Library/Application Support/ClaudeCode/managed-settings.json',
+  '/etc/claude-code/managed-settings.json',
+];
+
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
 
@@ -115,12 +123,22 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   /** Claude-specific evidence: organization from .claude.json and routing from settings.json env + profile. */
   protected override async resolveEvidenceInputs(context: OtlpHookContext): Promise<EvidenceInputs> {
-    const [organization, settings, hookConfig] = await Promise.all([
+    // Claude Code settings layers, lowest to highest precedence (later wins): user, project, local, managed.
+    const layers = [
+      join(resolveHomeDir(), '.claude', 'settings.json'),
+      join(context.cwd, '.claude', 'settings.json'),
+      join(context.cwd, '.claude', 'settings.local.json'),
+      ...MANAGED_SETTINGS,
+    ];
+    const [organization, files, hookConfig] = await Promise.all([
       readClaudeOrganization(),
-      readJsonFile(join(resolveHomeDir(), '.claude', 'settings.json')),
+      Promise.all(layers.map((f) => readJsonFile(f))),
       loadHookConfig(context.cwd),
     ]);
-    const settingsEnv = settings?.env && typeof settings.env === 'object' ? (settings.env as Record<string, string | undefined>) : undefined;
+    const settingsEnv = Object.assign(
+      {},
+      ...files.map((f) => (f?.env && typeof f.env === 'object' ? (f.env as Record<string, string | undefined>) : {}))
+    ) as Record<string, string | undefined>;
     const config = hookConfig?.config;
     const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
     const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');

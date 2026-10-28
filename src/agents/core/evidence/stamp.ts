@@ -56,7 +56,7 @@ export async function stampEvidence(
       : 'none';
     const rawOrigin = await getRawGitOrigin(context.cwd);
 
-    const created = await createOrRead(key, {
+    const fields = {
       session_id: sessionId,
       launch_mode: launchMode(env),
       routed_via_codemie: inputs.routing.routed,
@@ -68,7 +68,13 @@ export async function stampEvidence(
       api_identity: api,
       owner_hash: ownerHash(email),
       profile: hookConfig?.config.name,
-    });
+    };
+    let created = await createOrRead(key, fields);
+    if (created.kind === 'evidence_capacity') {
+      // At the cap: evict idle records whose sessions have no undelivered spool now, not at the next sweep.
+      const { pendingSpoolSessionIds } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/sweep.js');
+      created = await createOrRead(key, fields, { pendingSessionIds: await pendingSpoolSessionIds() });
+    }
     if (created.kind === 'created' || created.kind === 'existing') return { ok: true, record: created.record };
     return { ok: false, reason: created.kind };
   } catch (error) {

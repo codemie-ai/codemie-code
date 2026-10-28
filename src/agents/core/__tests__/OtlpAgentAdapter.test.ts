@@ -945,7 +945,9 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       arrange();
       const { logger } = await import('@/utils/logger.js');
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
-      expect(forwardToSpool).not.toHaveBeenCalled();
+      // Nothing enqueued; the dropped events are recorded as a visible loss (empty batch, no events).
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool).toHaveBeenCalledWith([], 'fake', { evidenceLoss: expect.objectContaining({ sessionId: 's1', events: 1 }) });
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('evidence record unavailable'));
     });
 
@@ -956,8 +958,38 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       writeFileSync(file, '{not json');
       forwardToSpool.mockClear();
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
-      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool.mock.calls[0][0]).toEqual([]);
+      expect(forwardToSpool.mock.calls[0][2]).toMatchObject({ evidenceLoss: { reason: 'stamp_invalid' } });
       expect(readFileSync(file, 'utf-8')).toBe('{not json');
+    });
+
+    it('CR001: a blocking decision is emitted before any stamp, so a stamp failure can never lose a block', async () => {
+      resolveHookCredentialsMock.mockResolvedValue(null); // every stamp would fail
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await run({ sessionId: 's1', block: true, payload: [{ session_id: 's1' }] });
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } }));
+      expect(forwardToSpool).not.toHaveBeenCalled(); // no stamp attempt, so no loss report either
+    });
+
+    it('CR001: at the evidence cap the hook evicts an idle non-pending record and stamps instead of dropping the event', async () => {
+      process.env['CODEMIE_EVIDENCE_RECORD_MAX_FILES'] = '1';
+      try {
+        await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+        await run({ sessionId: 's2', payload: [{ session_id: 's2' }] });
+        expect(readRecords().map((r) => r['session_id'])).toEqual(['s2']);
+        expect(forwardToSpool).toHaveBeenCalledTimes(2);
+        for (const c of forwardToSpool.mock.calls) expect(c[2]).toEqual({ evidenceV: 1 }); // both sent, neither reported lost
+      } finally {
+        delete process.env['CODEMIE_EVIDENCE_RECORD_MAX_FILES'];
+      }
+    });
+
+    it('CR001: a dropped event with a cursor to protect (finalize) is retried by the next hook, so no loss is reported', async () => {
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1' }], finalize: async () => undefined });
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).not.toHaveBeenCalled();
     });
 
     it('stamps nothing for an untracked project and leaves the event path unchanged', async () => {

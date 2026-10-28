@@ -739,7 +739,7 @@ export interface OtlpAdapterDeps {
     events: Record<string, unknown>[],
     agentName: string,
     /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
-    opts?: { evidenceV?: 1 }
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
   ) => Promise<boolean>;
 }
 

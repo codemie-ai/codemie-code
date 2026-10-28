@@ -61,11 +61,24 @@ function isLoopback(url: string | undefined): boolean {
   }
 }
 
+const truthy = (v: string | undefined): boolean => v === '1' || v?.toLowerCase() === 'true';
+
+/** `candidate` is `base` itself or lies under it at a path-segment boundary (same scheme/host/port). */
+function underBase(candidate: string | undefined, base: string | undefined): boolean {
+  return !!candidate && !!base && (candidate === base || candidate.startsWith(`${base}/`));
+}
+
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
-  const endpoint = input.settingsEnv?.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || undefined;
+  const get = (name: string): string | undefined => input.settingsEnv?.[name] || env[name] || undefined;
+  // Claude Code's own resolution (session-env-fields.ts): the Bedrock/Vertex flags select a cloud provider
+  // on its default endpoint unless a provider base URL overrides it; otherwise ANTHROPIC_BASE_URL, empty =
+  // api.anthropic.com.
+  const cloud = truthy(get('CLAUDE_CODE_USE_BEDROCK')) || truthy(get('CLAUDE_CODE_USE_VERTEX'));
+  const endpoint = cloud ? get('ANTHROPIC_BEDROCK_BASE_URL') || get('ANTHROPIC_VERTEX_BASE_URL') : get('ANTHROPIC_BASE_URL');
   const endpointId = identity(endpoint);
-  const direct = endpointId === identity(ANTHROPIC_DIRECT);
+  // Positively direct: the executor's default endpoint or explicit first-party Anthropic. A foreign override is not.
+  const direct = !endpoint || (!cloud && endpointId === identity(ANTHROPIC_DIRECT));
 
   if (launchMode(env) === 'managed' && input.codemieProvider) {
     // Proxy ran: endpoint must be the proven local proxy, and the preserved upstream must be the configured model route.
@@ -77,13 +90,10 @@ export function routedViaCodemie(input: RoutingInput): RoutingResult {
     return ok ? PROVEN(true) : UNPROVEN;
   }
 
-  if (launchMode(env) === 'native' && input.codemieProvider) {
-    // No proxy: the effective endpoint itself must be the configured CodeMie model route.
-    const configured = identity(profileUrl(input));
-    return endpointId && configured && endpointId === configured ? PROVEN(true) : UNPROVEN;
+  // No proxy ran: the effective endpoint must itself be under the configured CodeMie model route
+  // (origin + path-segment prefix); the analytics URL is never proof.
+  if (launchMode(env) === 'native' && input.codemieProvider && underBase(endpointId, identity(profileUrl(input)))) {
+    return PROVEN(true);
   }
-
-  // Non-CodeMie provider: positively direct only when the endpoint is explicitly api.anthropic.com.
-  // An absent/foreign endpoint may hide a route (other settings layers, gateways) => unproven.
   return direct ? PROVEN(false) : UNPROVEN;
 }

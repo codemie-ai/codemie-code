@@ -145,18 +145,40 @@ describe('routedViaCodemie - native', () => {
     });
     expect(r.routed).toBe(true);
   });
-  it('analytics URL alone is not routing proof', () => {
+  it('analytics URL alone is not routing proof (never routed)', () => {
     const r = routedViaCodemie({ env: { CODEMIE_URL: ANALYTICS }, codemieProvider: true, profileBaseUrl });
-    expect(r).toEqual({ routed: false, routing_proof: 'unproven' });
+    expect(r.routed).toBe(false);
+  });
+  it('native endpoint under the gateway path prefix is routed; sibling host / sibling path is not', () => {
+    const base = 'https://gw.example.com/llm';
+    const at = (u: string) => routedViaCodemie({ env: { ANTHROPIC_BASE_URL: u }, codemieProvider: true, profileBaseUrl: base });
+    expect(at('https://gw.example.com/llm/v1/anthropic')).toEqual({ routed: true, routing_proof: 'proven' });
+    expect(at('https://gw.example.com/llm2')).toEqual({ routed: false, routing_proof: 'unproven' });
+    expect(at('https://gw.example.com/other')).toEqual({ routed: false, routing_proof: 'unproven' });
+    expect(at('https://gw.example.com.evil.net/llm')).toEqual({ routed: false, routing_proof: 'unproven' });
+    expect(at('http://gw.example.com/llm')).toEqual({ routed: false, routing_proof: 'unproven' });
+  });
+  it('positively direct defaults are proven not routed: absent endpoint, Bedrock, Vertex (flag from env or settings)', () => {
+    const direct = { routed: false, routing_proof: 'proven' };
+    expect(routedViaCodemie({ env: {}, codemieProvider: true, profileBaseUrl })).toEqual(direct);
+    expect(routedViaCodemie({ env: { CLAUDE_CODE_USE_BEDROCK: '1' }, codemieProvider: false })).toEqual(direct);
+    expect(routedViaCodemie({ env: {}, settingsEnv: { CLAUDE_CODE_USE_VERTEX: 'true' }, codemieProvider: true, profileBaseUrl })).toEqual(direct);
+    // The flag selects the cloud provider: a stale ANTHROPIC_BASE_URL is not the executor's endpoint.
+    expect(routedViaCodemie({ env: { CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BASE_URL: 'https://x.example.net' }, codemieProvider: false })).toEqual(direct);
+  });
+  it('foreign overrides stay unproven: custom Bedrock/Vertex base, foreign ANTHROPIC_BASE_URL', () => {
+    const unproven = { routed: false, routing_proof: 'unproven' };
+    expect(routedViaCodemie({ env: { CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BEDROCK_BASE_URL: 'https://x.example.net' }, codemieProvider: false })).toEqual(unproven);
+    expect(routedViaCodemie({ env: { ANTHROPIC_BASE_URL: 'https://x.example.net' }, codemieProvider: false })).toEqual(unproven);
   });
   it('endpoint equal to profile URL but non-CodeMie provider => unproven', () => {
     const r = routedViaCodemie({ env: { ANTHROPIC_BASE_URL: GATEWAY }, codemieProvider: false, profileBaseUrl });
     expect(r.routing_proof).toBe('unproven');
   });
-  it('explicit api.anthropic.com => proven not routed; absent endpoint => unproven (never personal by default)', () => {
+  it('explicit api.anthropic.com and an absent endpoint => proven not routed', () => {
     expect(routedViaCodemie({ env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com/' }, codemieProvider: false }))
       .toEqual({ routed: false, routing_proof: 'proven' });
-    expect(routedViaCodemie({ env: {}, codemieProvider: false })).toEqual({ routed: false, routing_proof: 'unproven' });
+    expect(routedViaCodemie({ env: {}, codemieProvider: false })).toEqual({ routed: false, routing_proof: 'proven' });
   });
   it('unparsable URLs never throw and are unproven', () => {
     const r = routedViaCodemie({ env: { ANTHROPIC_BASE_URL: 'not a url' }, codemieProvider: true, profileBaseUrl });

@@ -17,9 +17,9 @@ const FORWARD_TIMEOUT_MS = 3_000;
 export async function forwardOtlpEventsToSpool(
   events: Record<string, unknown>[],
   agentName: string,
-  opts?: { evidenceV?: 1 }
+  opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
 ): Promise<boolean> {
-  if (events.length === 0) {
+  if (events.length === 0 && !opts?.evidenceLoss) {
     return true;
   }
 
@@ -34,7 +34,7 @@ export async function forwardOtlpEventsToSpool(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);
 
-    const body: OtlpHookBatchRequest = { agentName, hookEvents: events, ...(opts?.evidenceV ? { evidence_v: 1 } : {}) };
+    const body: OtlpHookBatchRequest = { agentName, hookEvents: events, ...(opts?.evidenceV ? { evidence_v: 1 } : {}), ...(opts?.evidenceLoss ? { evidence_loss: { session_id: opts.evidenceLoss.sessionId, reason: opts.evidenceLoss.reason, events: opts.evidenceLoss.events } } : {}) };
 
     try {
       const response = await fetch(`${state.url}/v1/analytics/hooks`, {

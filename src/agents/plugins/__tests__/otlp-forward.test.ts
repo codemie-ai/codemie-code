@@ -35,6 +35,14 @@ describe('forwardOtlpEventsToSpool', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('CR001: an evidence loss report is posted with no events; without it an empty list still sends nothing', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
+    const ok = await forwardOtlpEventsToSpool([], 'claude-code-otlp', { evidenceLoss: { sessionId: 's1', reason: 'unavailable', events: 2 } });
+    expect(ok).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({ hookEvents: [], evidence_loss: { session_id: 's1', reason: 'unavailable', events: 2 } });
+  });
+
   it('POSTs one batch body with every event and the gateway key, and returns true on 2xx', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
     const events = [{ type: 'agent.usage.request' }, { type: 'agent.session.summary' }];

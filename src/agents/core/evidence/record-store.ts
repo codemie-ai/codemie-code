@@ -147,7 +147,7 @@ async function publish(finalPath: string, content: string): Promise<'won' | 'los
 export async function createOrRead(
   key: string,
   fields: EvidenceFields,
-  opts: { pendingKeys?: Set<string> } = {},
+  opts: { pendingKeys?: Set<string>; pendingSessionIds?: Set<string> } = {},
 ): Promise<RecordResult> {
   if (recordKey(fields.api_identity, fields.owner_hash, fields.session_id) !== key) {
     return { kind: 'stamp_invalid', reason: 'key_mismatch' };
@@ -164,8 +164,8 @@ export async function createOrRead(
     await mkdir(evidenceDir(), { recursive: true });
     // New session at/over the cap: evict only when the caller told us what is pending.
     if ((await listRecordFiles()).length >= evidenceRecordMaxFiles()) {
-      const blocked = opts.pendingKeys
-        ? (await sweepRecords({ pendingKeys: opts.pendingKeys, reserve: 1 })).capacityBlocked
+      const blocked = opts.pendingKeys || opts.pendingSessionIds
+        ? (await sweepRecords({ pendingKeys: opts.pendingKeys ?? new Set(), pendingSessionIds: opts.pendingSessionIds, reserve: 1 })).capacityBlocked
         : true;
       if (blocked) return { kind: 'evidence_capacity', reason: 'evidence_capacity' };
     }

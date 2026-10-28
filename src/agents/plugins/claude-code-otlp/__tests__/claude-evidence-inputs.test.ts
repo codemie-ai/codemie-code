@@ -40,8 +40,15 @@ describe('ClaudeCodeOtlpPlugin.resolveEvidenceInputs', () => {
     expect((await call()).routing).toEqual({ routed: false, routing_proof: 'unproven' });
   });
 
-  it('an unreadable settings.json does not throw', async () => {
+  it('an unreadable settings.json does not throw; no endpoint anywhere is the direct default (proven)', async () => {
     readJsonFileMock.mockResolvedValue(null);
-    expect((await call()).routing).toMatchObject({ routed: false });
+    expect((await call()).routing).toEqual({ routed: false, routing_proof: 'proven' });
+  });
+
+  it('a project-layer override is seen, so an absent user-layer endpoint is not mistaken for direct', async () => {
+    readJsonFileMock.mockImplementation(async (f: string) =>
+      f.split('\\').join('/').endsWith('/x/.claude/settings.local.json') ? { env: { ANTHROPIC_BASE_URL: 'https://hidden.example.net' } } : null
+    );
+    expect((await call()).routing).toEqual({ routed: false, routing_proof: 'unproven' });
   });
 });
