@@ -17,16 +17,16 @@ Targeted check at head 9f89248d (fix-up from 26d74bb1): CR-001..CR-003 resolved 
 
 ## Coverage
 
-Graded at the final round; the check round re-verified the findings, not these rows — Open and Closed above are current.
+The generated grades below were assigned at the final round on `26d74bb1`; the check round re-verified findings, not these rows. They are kept as history. The "Current (artifact reconciliation)" column was reconciled afterwards from the recorded evidence only; no new review or test run was done for it.
 
-| Acceptance criterion | Status | Notes |
+| Acceptance criterion | Final round (`26d74bb1`, historical) | Current (artifact reconciliation) |
 |---|---|---|
-| 2 Positively direct route is routed=false and classifies normally | fail (final round) | carried forward from prior verdict; fix-up addresses it (routing.ts empty/first-party/Bedrock/Vertex proven direct) |
-| 2 Native routing: scheme, host, port and path prefix comparison | partial (final round) | carried forward; fix-up adds origin + path-segment prefix match |
-| 8 Lifetime: new sessions held evidence_capacity (visible) | partial (final round) | carried forward; fix-up evicts idle records and reports a visible loss |
-| AC1 Routed/direct fixtures in both launch modes | partial (final round) | carried forward |
-| AC18 Cap-forced evidence_capacity hold persisted | partial (final round) | carried forward; loss persisted as lastLoss, not a hold |
-| AC13 #702 scopes and owner resolution unchanged | pending-stage-7 | proof is existing suites run by Stage 7 |
-| Tracking scope user/project incl. folder outside allowlist | pending-stage-7 | matrix test run owned by Stage 7 |
+| 2 Positively direct route is routed=false and classifies normally | fail | Addressed by fix-up (`routing.ts`: empty, first-party, Bedrock and Vertex proven direct). Check round and the user's independent review of `9f89248d..26c2da28` closed CR-002. Test evidence: routing tests inside the otlp-spool/agents-core sets (`9f89248d`, `26c2da28`). Managed litellm/ollama with a foreign endpoint stays `routing_unproven` (Unknown) by design. |
+| 2 Native routing: scheme, host, port and path prefix comparison | partial | Origin plus path-segment prefix match added; closed with CR-002 as above. |
+| 8 Lifetime: new sessions held evidence_capacity (visible) | partial | Idle non-pending records are evicted at once; a stamp failure that drops events is reported as a visible loss. Closed as CR-001 by the independent review. Residual: loss kinds `no_credentials`/`no_owner`/`record_too_large` collapse to `stamp_invalid` in `lastLoss`. |
+| AC1 Routed/direct fixtures in both launch modes | partial | Fixtures extended in the fix-up (empty endpoint, Bedrock/Vertex direct routes, per the fix-up report); not re-graded. |
+| AC18 Cap-forced evidence_capacity hold persisted | partial | Still partial by design: the cap case persists a loss (`lastLoss`), not a hold. The independent review accepted this as CR-001 closure; not re-graded here. |
+| AC13 #702 scopes and owner resolution unchanged | pending-stage-7 | Pass: ran inside the affected unit set at `9f89248d` with no failure there; the later delta (`9f89248d..26c2da28`, three files in `otlp-spool`) does not touch #702 scope or owner resolution. |
+| Tracking scope user/project incl. folder outside allowlist | pending-stage-7 | Pass: matrix test ran inside the same affected set at `9f89248d`, same attribution as above. |
 
-Standards: commit-format fail (final round) · code-quality pass · security na
+Standards: commit-format fail at the final round, CR-004 dispositioned non-blocking by the user (squash title and ticket footer at delivery, no history rewrite) · code-quality pass · security na (no security-patterns guide). The `9f89248d..26c2da28` delta was independently reviewed by the user: CR-001..003 and IR-CLI001..003 closed on this revision, no new blocking finding.
