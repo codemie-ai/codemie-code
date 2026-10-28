@@ -1,11 +1,9 @@
 import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { classify, decide, type ClassResult, type Evidence } from '@/agents/core/evidence/classify.js';
+import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
-import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
-import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import {
   OTEL_STREAMS,
@@ -19,6 +17,7 @@ import {
   advanceCursor,
   markSessionEnded,
   readStatus,
+  type Discard,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import {
@@ -31,7 +30,8 @@ import {
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 import { withSessionLock } from './session-lock.js';
-import { getPolicyState, refreshPolicy, type NamespaceId } from './policy-cache.js';
+import type { NamespaceId } from './policy-cache.js';
+import { authHeadersFor, classifySession, sessionPolicyState } from './classification.js';
 import { proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { decodeResponse, readBoundedBody, type SendOutcome } from './response.js';
 
@@ -50,36 +50,17 @@ const FORWARD_TIMEOUT_MS = 20_000;
 /** Project the session is bound to; the backend gates analytics on it. */
 const PROJECT_HEADER = 'X-CodeMie-Project';
 
-/* ------------------------------------------------------------------ auth --- */
-
-function buildAuthHeadersFromCreds(
-  credentials: SSOCredentials | JWTCredentials
-): Record<string, string> | null {
-  if (isSSOCredentials(credentials)) {
-    return buildAuthHeaders(credentials.cookies);
-  }
-  if (isJWTCredentials(credentials)) {
-    return buildAuthHeaders(credentials.token);
-  }
-  return null;
-}
-
 /* -------------------------------------------------------------- evidence --- */
 
 /** An evidence-mode session: the frozen record at the forwarder's key and its current classification. */
 interface EvidenceContext {
+  key: string;
   record: EvidenceRecord;
   ns: NamespaceId;
   baseUrl: string;
   credentials: SSOCredentials | JWTCredentials;
   result: ClassResult;
 }
-
-const evidenceOf = (r: EvidenceRecord): Evidence => ({
-  routed_via_codemie: r.routed_via_codemie,
-  routing_proof: r.routing_proof,
-  organization: r.organization,
-});
 
 /**
  * Evidence headers (spec item 6; backend `EVIDENCE_HEADERS`), from the record's frozen values and
@@ -110,46 +91,45 @@ function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record<string
   return headers;
 }
 
-/** Usable policy from the cache; fetched (bounded by the cache's timeout/backoff) when none is usable. */
-async function currentPolicyState(
-  ns: NamespaceId,
-  baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
-  force?: true
-): ReturnType<typeof getPolicyState> {
-  const state = force ? undefined : await getPolicyState(ns);
-  if (state && (state.policy || !state.refreshDue)) return state;
-  return refreshPolicy(ns, { baseUrl, headers: buildAuthHeadersFromCreds(credentials), force });
-}
-
-/** Build the evidence context; `null` = nothing may be sent (fail closed, I2). */
+/**
+ * Build the evidence context; `null` = nothing may be sent (fail closed, I2). The tick normally
+ * passes the classification it decided (consumer seam, sticky verdict, holds); a direct caller
+ * without one gets the same decision here, and anything but `send` sends nothing.
+ */
 async function evidenceContext(
   sessionId: string,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  profile: string | undefined
+  profile: string | undefined,
+  decided: ClassResult | undefined
 ): Promise<EvidenceContext | null> {
   const id = forwarderIdentity(credentials);
   if (!id) return null;
-  const found = await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId));
+  const key = recordKey(id.api_identity, id.owner_hash, sessionId);
+  const found = await readRecord(key);
   if (found?.kind !== 'existing' && found?.kind !== 'created') return null;
   const ns: NamespaceId = { ...id, ...(profile ? { profile } : {}) };
-  const state = await currentPolicyState(ns, baseUrl, credentials);
-  const result = classify(evidenceOf(found.record), state.policy);
-  // No consumer yet (Task 14 / #711): the default forwards everything, indeterminate as `unknown`.
-  if (decide(result) !== 'forward') return null;
-  return { record: found.record, ns, baseUrl, credentials, result };
+  let result = decided;
+  if (!result) {
+    const cls = await classifySession(key, found.record, await sessionPolicyState(ns, baseUrl, credentials));
+    if (cls.action !== 'send') return null;
+    result = cls.result;
+  }
+  return { key, record: found.record, ns, baseUrl, credentials, result };
 }
 
 /**
- * 409 stale_policy: force a refresh and re-classify. True only when a fresher policy than the one
- * that was sent is now usable; otherwise the caller keeps the spool.
+ * 409 stale_policy: force a refresh and re-decide through the same seam. True only when a fresher
+ * policy than the one that was sent is now usable and the decision is still `send`; otherwise the
+ * caller keeps the spool.
  */
 async function reclassify(ctx: EvidenceContext): Promise<boolean> {
-  const state = await currentPolicyState(ctx.ns, ctx.baseUrl, ctx.credentials, true);
+  const state = await sessionPolicyState(ctx.ns, ctx.baseUrl, ctx.credentials, true);
   if (!state.policy || state.policy.version === ctx.result.policy_version) return false;
-  ctx.result = classify(evidenceOf(ctx.record), state.policy);
-  return decide(ctx.result) === 'forward';
+  const cls = await classifySession(ctx.key, ctx.record, state);
+  if (cls.action !== 'send') return false;
+  ctx.result = cls.result;
+  return true;
 }
 
 /* ------------------------------------------------------------------ http --- */
@@ -161,7 +141,7 @@ async function postToBackend(
   credentials: SSOCredentials | JWTCredentials,
   extra: Record<string, string>
 ): Promise<WireResponse> {
-  const headers = buildAuthHeadersFromCreds(credentials);
+  const headers = authHeadersFor(credentials);
   if (!headers) {
     throw new Error('Unsupported credential type');
   }
@@ -276,6 +256,16 @@ async function send(req: SendRequest): Promise<SendOutcome> {
 }
 
 const acknowledged = (o: SendOutcome): boolean => o.kind === 'ok' || o.kind === 'discarded';
+
+/**
+ * Advance exactly the acknowledged range. A final discard / rejection reason (e.g. the backend's
+ * `session_project_conflict`) is persisted with it as `lastDiscard` (AC18), never an accepted send.
+ */
+function acknowledge(sessionId: string, stream: SpoolStream, end: number, bytes: number, o: SendOutcome): Promise<void> {
+  if (!o.reason) return advanceCursor(sessionId, stream, end);
+  const discard: Discard = { reason: o.reason, stream, bytes, at: Date.now() };
+  return advanceCursor(sessionId, stream, end, discard);
+}
 
 /** Head-of-line proof hold: `reason` past the verified prefix, `null` when fully verified. */
 function noteProof(
@@ -418,7 +408,7 @@ async function forwardHooks(
   }
 
   // Exactly this request's range; a hooks answer never acknowledges an OTLP stream.
-  await advanceCursor(sessionId, 'hooks', batch.cursor + consumed);
+  await acknowledge(sessionId, 'hooks', batch.cursor + consumed, consumed, result);
 
   if (result.kind === 'ok' && payload.containsSessionEnd) {
     await markSessionEnded(sessionId);
@@ -459,7 +449,7 @@ async function forwardOtelStream(
     return result;
   }
 
-  await advanceCursor(sessionId, stream, pending.cursor + bytes.length);
+  await acknowledge(sessionId, stream, pending.cursor + bytes.length, bytes.length, result);
   return result;
 }
 
@@ -517,6 +507,7 @@ const authExpired = (r: SendOutcome | 'idle'): boolean => r !== 'idle' && r.kind
  *
  * A session the tick decided to send with evidence (`sendMode: 'evidence'`) sends only with its
  * durable record found at the forwarder's own key; without one nothing is sent (fail closed).
+ * `classification` is the tick's decision for that session (see classification.ts).
  *
  * A forwarded `SessionEnd` only records `endedAt`; it never stops later ticks
  * from delivering bytes that failed or were appended afterwards.
@@ -524,14 +515,15 @@ const authExpired = (r: SendOutcome | 'idle'): boolean => r !== 'idle' && r.kind
 export async function forwardSession(
   sessionId: string,
   hooksOnly: boolean,
-  credentials: SSOCredentials | JWTCredentials
+  credentials: SSOCredentials | JWTCredentials,
+  classification?: ClassResult
 ): Promise<void> {
   const { baseUrl, profile } = await readDaemonState();
 
   const status = await withSessionLock(sessionId, () => readStatus(sessionId));
   let evidence: EvidenceContext | undefined;
   if (status?.sendMode === 'evidence') {
-    const ctx = await evidenceContext(sessionId, baseUrl, credentials, profile);
+    const ctx = await evidenceContext(sessionId, baseUrl, credentials, profile, classification);
     if (!ctx) {
       logger.debug('[otlp-forwarder] evidence record unavailable, nothing sent', ...sanitizeLogArgs({ sessionId }));
       return;

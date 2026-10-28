@@ -35,6 +35,13 @@ vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({
   readRecord: readRecordMock,
 }));
 vi.mock('../policy-cache.js', () => ({ getPolicyState: getPolicyStateMock, refreshPolicy: refreshPolicyMock }));
+// The forwarder must never touch the real verdict directory; the sticky rules are tested in the tick.
+vi.mock('../verdict-store.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readVerdict: vi.fn().mockResolvedValue(null),
+  recordVerdict: vi.fn().mockResolvedValue(null),
+  replaceVerdict: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('../otlp-reader.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   proveRange: proveRangeMock,
@@ -381,7 +388,7 @@ describe('forwardSession (project header)', () => {
 
     await forwardSession('s1', true, credentials);
 
-    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 10);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 10, expect.objectContaining({ reason: 'project_context_conflict' }));
     expect(areCredentialsStale()).toBe(false);
   });
 
@@ -729,10 +736,23 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     const { forwardSession } = await import('../forwarder.js');
     const { logger } = await import('@/utils/logger.js');
     await forwardSession('s1', false, credentials);
+    const n = hooksBatch([line('s1')]).byteLength;
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
-    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', hooksBatch([line('s1')]).byteLength);
+    // AC18: the discard is persisted with the advance (status.lastDiscard), never an accepted send.
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', n, {
+      reason: 'session_project_conflict', stream: 'hooks', bytes: n, at: expect.any(Number),
+    });
     expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain('session_project_conflict');
     expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the classification decided by the tick, without re-reading the policy', async () => {
+    fetchMock.mockResolvedValue(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials, { class: 'personal', status: 'determinate', basis: 'org_no_match', policy_version: 'v9' });
+    expect(headersOf(0)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Policy-Version': 'v9' });
+    expect(getPolicyStateMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', hooksBatch([line('s1')]).byteLength);
   });
 
   it.each([
@@ -748,7 +768,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     const { logger } = await import('@/utils/logger.js');
     await forwardSession('s1', false, credentials);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 17);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 17, expect.objectContaining({ reason, stream: 'logs', bytes: 10 }));
     expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain(reason);
   });
 
@@ -763,7 +783,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     await forwardSession('s1', false, credentials);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
-    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 3);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 3, expect.objectContaining({ stream: 'logs', bytes: 3 }));
     expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain('cannot store');
   });
 

@@ -412,7 +412,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     expect(policy.capability).toBe('evidence');
   }
 
-  async function stamp(project?: string): Promise<void> {
+  async function stamp(project?: string, organization?: string): Promise<void> {
     const { createOrRead } = await import('@/agents/core/evidence/record-store.js');
     const { key, api_identity, owner_hash } = await identity();
     const result = await createOrRead(key, {
@@ -420,6 +420,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       launch_mode: 'native',
       routed_via_codemie: false,
       routing_proof: 'proven',
+      organization,
       project,
       project_source: project ? 'profile' : 'none',
       api_identity,
@@ -460,7 +461,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
 
     await stamp('A');
     await tick();
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }));
     const sent = await current();
     expect(sent).toMatchObject({ sendMode: 'evidence', project: 'A' });
     expect(sent.holds).toBeUndefined();
@@ -547,10 +548,132 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     await writeStatus(SESSION, { ...createStatus(), projectScanned: true });
 
     await tick();
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }));
     const status = await current();
     expect(status.sendMode).toBe('evidence');
     expect(status.project).toBeUndefined();
     expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+  });
+
+  describe('classification consumer seam and sticky verdict (Task 14)', () => {
+    const OTHER = { organizations: ['Other'], version: 'v1' };
+    const policyFetch = (body: unknown) =>
+      (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+
+    async function cachePolicy(policy: unknown, now?: number): Promise<void> {
+      const { refreshPolicy } = await import('../policy-cache.js');
+      const { api_identity, owner_hash } = await identity();
+      await refreshPolicy({ api_identity, owner_hash }, { baseUrl: API, headers: { Cookie: 'fabricated' }, fetchImpl: policyFetch(policy), now });
+    }
+
+    afterEach(async () => {
+      const { setClassificationConsumer } = await import('../classification.js');
+      setClassificationConsumer(undefined);
+      vi.unstubAllGlobals();
+      const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+      vi.mocked(readState).mockResolvedValue(null);
+    });
+
+    async function seedStamped(): Promise<void> {
+      const { writeStatus, createStatus } = await import('../session-status.js');
+      await stamp('A', 'Acme');
+      await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
+      await writeStatus(SESSION, createStatus());
+    }
+
+    it('AC3: no consumer, no usable policy: indeterminate is forwarded as unknown', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await seedStamped();
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown', status: 'indeterminate' })
+      );
+    });
+
+    it('AC3: an explicit withhold keeps the session unsent and unmoved; past retention it records classification_unresolved', async () => {
+      const { setClassificationConsumer } = await import('../classification.js');
+      const { writeStatus } = await import('../session-status.js');
+      const { forwardSession } = await import('../forwarder.js');
+      setClassificationConsumer(() => 'withhold');
+      await cachePolicy(OTHER);
+      await seedStamped();
+
+      await tick();
+      const held = await current();
+      expect(held.holds?.session?.reason).toBe('classification_unresolved');
+      expect(held.cursors.logs).toBe(0);
+      expect(forwardSession).not.toHaveBeenCalled();
+      const since = held.holds?.session?.since;
+      await tick();
+      expect((await current()).holds?.session?.since).toBe(since);
+
+      await writeStatus(SESSION, { ...(await current()), holds: { session: { reason: 'classification_unresolved', since: Date.now() - 25 * 3_600_000 } } });
+      await tick();
+      const lost = await current();
+      expect(lost.lastLoss).toMatchObject({ reason: 'classification_unresolved', bytes: 5 });
+      expect(lost.cursors.logs).toBe(5);
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('AC3: a consumer withhold is re-decided after a refresh supplies a policy, then sent', async () => {
+      const { setClassificationConsumer } = await import('../classification.js');
+      const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+      const { forwardSession } = await import('../forwarder.js');
+      setClassificationConsumer((r) => (r.status === 'indeterminate' ? 'withhold' : 'forward'));
+      await seedStamped();
+
+      await tick(); // no daemon URL: no refresh possible, indeterminate is withheld
+      expect((await current()).holds?.session?.reason).toBe('classification_unresolved');
+      expect(forwardSession).not.toHaveBeenCalled();
+
+      vi.mocked(readState).mockResolvedValue({ targetUrl: API } as never);
+      vi.stubGlobal('fetch', policyFetch({ organizations: ['acme'], version: 'v7' }));
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate', policy_version: 'v7' })
+      );
+      expect((await current()).holds).toBeUndefined();
+    });
+
+    it('AC16: a first determinate Personal is recorded and survives policy expiry as a full evidence request', async () => {
+      const { readVerdict } = await import('../verdict-store.js');
+      const { forwardSession } = await import('../forwarder.js');
+      await cachePolicy(OTHER);
+      await seedStamped();
+      await tick();
+      expect(await readVerdict((await identity()).key)).toMatchObject({ class: 'personal', policy_version: 'v1' });
+
+      await cachePolicy(OTHER, Date.now() - 25 * 3_600_000); // evidence-capable, policy expired
+      vi.mocked(forwardSession).mockClear();
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal', policy_version: 'v1' })
+      );
+    });
+
+    it('AC16: a sticky Personal under unknown capability is held personal_not_forwardable, never stripped', async () => {
+      const { rm: remove, readdir } = await import('node:fs/promises');
+      const { evidenceDir } = await import('@/agents/core/evidence/record-store.js');
+      const { forwardSession } = await import('../forwarder.js');
+      await cachePolicy(OTHER);
+      await seedStamped();
+      await tick();
+      for (const f of (await readdir(evidenceDir())).filter((n) => n.endsWith('.policy.json'))) {
+        await remove(join(evidenceDir(), f)); // capability unknown, no policy
+      }
+      vi.mocked(forwardSession).mockClear();
+      await tick();
+      expect((await current()).holds?.session?.reason).toBe('personal_not_forwardable');
+      expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('AC18: a backend discard recorded with the cursor advance is persisted as lastDiscard', async () => {
+      const { advanceCursor, writeStatus, createStatus } = await import('../session-status.js');
+      await writeStatus(SESSION, createStatus());
+      await advanceCursor(SESSION, 'hooks', 42, { reason: 'session_project_conflict', stream: 'hooks', bytes: 42, at: 1_000 });
+      const status = await current();
+      expect(status.cursors.hooks).toBe(42);
+      expect(status.lastDiscard).toEqual({ reason: 'session_project_conflict', stream: 'hooks', bytes: 42, at: 1_000 });
+    });
   });
 });

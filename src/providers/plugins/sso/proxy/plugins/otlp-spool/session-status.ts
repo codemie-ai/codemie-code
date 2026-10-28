@@ -55,10 +55,22 @@ export interface SessionStatus {
   holds?: Partial<Record<HoldScope, Hold>>;
   /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
   lastLoss?: { reason: LossReason; at: number; bytes: number };
+  /**
+   * The latest final backend discard/rejection (e.g. `session_project_conflict`): acknowledged and
+   * advanced, never an accepted send, so it stays visible here (AC18). Reason capped at 200 chars.
+   */
+  lastDiscard?: Discard;
   /** Provenance decided at the last tick: evidence request or today's legacy request. */
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
   evidenceMarked?: true;
+}
+
+export interface Discard {
+  reason: string;
+  stream: SpoolStream;
+  bytes: number;
+  at: number;
 }
 
 export type HoldScope = 'session' | SpoolStream;
@@ -82,6 +94,14 @@ function parseLoss(raw: unknown): SessionStatus['lastLoss'] {
   const { reason, at, bytes } = raw as Record<string, unknown>;
   if (!(LOSS_REASONS as readonly unknown[]).includes(reason) || toOffset(at) === 0) return undefined;
   return { reason: reason as LossReason, at: toOffset(at), bytes: toOffset(bytes) };
+}
+
+function parseDiscard(raw: unknown): Discard | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { reason, stream, bytes, at } = raw as Record<string, unknown>;
+  if (typeof reason !== 'string' || !reason || !(SPOOL_STREAMS as readonly unknown[]).includes(stream)) return undefined;
+  if (toOffset(at) === 0) return undefined;
+  return { reason: reason.slice(0, 200), stream: stream as SpoolStream, bytes: toOffset(bytes), at: toOffset(at) };
 }
 
 export function createStatus(): SessionStatus {
@@ -134,6 +154,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (holds) status.holds = holds;
   const loss = parseLoss(source['lastLoss']);
   if (loss) status.lastLoss = loss;
+  const discard = parseDiscard(source['lastDiscard']);
+  if (discard) status.lastDiscard = discard;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
   if (source['evidenceMarked'] === true) status.evidenceMarked = true;
 
@@ -179,14 +201,16 @@ export async function markSessionEnded(sessionId: string): Promise<void> {
   });
 }
 
-/** Advance an acknowledged cursor. Monotonic: never moves backwards. */
+/** Advance an acknowledged cursor. Monotonic: never moves backwards. A final discard is recorded in the same write. */
 export async function advanceCursor(
   sessionId: string,
   stream: SpoolStream,
-  nextOffset: number
+  nextOffset: number,
+  discard?: Discard
 ): Promise<void> {
   await updateStatus(sessionId, (status) => {
     status.cursors[stream] = Math.max(status.cursors[stream], nextOffset);
+    if (discard) status.lastDiscard = { ...discard, reason: discard.reason.slice(0, 200) };
   });
 }
 

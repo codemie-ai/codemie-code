@@ -16,33 +16,53 @@ import {
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 import { areCredentialsStale } from './auth-state.js';
-import { applyProjectDecision, decideProject, evaluateSessionEvidence, type SessionEvidenceDecision } from './session-project.js';
-import { getPolicyState } from './policy-cache.js';
+import {
+  applyProjectDecision,
+  decideProject,
+  evaluateSessionEvidence,
+  holdOrLose,
+  type SessionEvidenceDecision,
+} from './session-project.js';
+import type { PolicyState } from './policy-cache.js';
 import { readVerdict } from './verdict-store.js';
 import { heldRetentionMs } from './spool-config.js';
 import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
+import { classifySession, sessionPolicyState } from './classification.js';
+import type { ClassResult } from '@/agents/core/evidence/classify.js';
 
 const currentlyForwarding = new Set<string>();
 
-async function daemonProfile(): Promise<string | undefined> {
+type TickEvidenceDecision = SessionEvidenceDecision | { action: 'suppress' };
+
+/**
+ * Policy/capability for the forwarder's namespace, refreshed (bounded by the cache's backoff) before
+ * the session lock is taken, so a slow backend never blocks spool appends. `undefined` = no identity.
+ */
+async function tickPolicyState(credentials: SSOCredentials | JWTCredentials): Promise<PolicyState | undefined> {
+  const id = forwarderIdentity(credentials);
+  if (!id) return undefined;
   const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
-  return (await readState())?.profile;
+  const daemon = await readState();
+  const ns = { ...id, ...(daemon?.profile ? { profile: daemon.profile } : {}) };
+  return sessionPolicyState(ns, daemon?.targetUrl ?? daemon?.url ?? '', credentials);
 }
 
 /**
  * Gather the provenance inputs (marker, record at the forwarder's own key, capability, sticky
- * verdict, epoch), decide with `evaluateSessionEvidence` and apply it to `status`: a hold keeps its
- * first-hold time, a loss drops the backlog with its named reason, a send clears the session hold
- * and records the mode (an evidence record also binds its project). Caller holds the lock; writes
- * the status only when it changed.
+ * verdict, epoch), decide with `evaluateSessionEvidence`, classify an evidence send (consumer seam,
+ * sticky verdict) and apply it to `status`: a hold keeps its first-hold time, a loss drops the
+ * backlog with its named reason, a send clears the session hold and records the mode (an evidence
+ * record also binds its project); `suppress` changes nothing. Caller holds the lock; writes the
+ * status only when it changed.
  */
 async function applySessionEvidenceLocked(
   sessionId: string,
   status: SessionStatus,
   spool: SpoolState,
   credentials: SSOCredentials | JWTCredentials,
+  policy: PolicyState | undefined,
   now: number = Date.now()
-): Promise<SessionEvidenceDecision> {
+): Promise<{ decision: TickEvidenceDecision; result?: ClassResult }> {
   const before = JSON.stringify(status);
   if (!status.evidenceMarked && (await pendingHooksMarkedLocked(sessionId, status))) {
     status.evidenceMarked = true;
@@ -50,17 +70,26 @@ async function applySessionEvidenceLocked(
 
   const id = forwarderIdentity(credentials);
   const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
-  const decision = evaluateSessionEvidence({
+  const heldSince = status.holds?.session?.since;
+  let decision: TickEvidenceDecision = evaluateSessionEvidence({
     hasHooks: hooksGroupPresent(spool),
     marked: status.evidenceMarked === true,
     record: key ? await readRecord(key) : undefined,
-    capability: id ? (await getPolicyState({ ...id, profile: await daemonProfile() }, { now })).capability : 'unknown',
+    capability: policy?.capability ?? 'unknown',
     stickyPersonal: key ? (await readVerdict(key))?.class === 'personal' : false,
     preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
-    heldSince: status.holds?.session?.since,
+    heldSince,
     now,
     retentionMs: heldRetentionMs(),
   });
+
+  let result: ClassResult | undefined;
+  if (decision.action === 'send_evidence' && key) {
+    const cls = await classifySession(key, decision.record, policy ?? { policy: null, capability: 'unknown' });
+    if (cls.action === 'suppress') return { decision: cls };
+    if (cls.action === 'hold') decision = holdOrLose(cls.reason, heldSince, now, heldRetentionMs());
+    else result = cls.result;
+  }
 
   if (decision.action === 'hold') {
     const since = status.holds?.session?.since ?? now;
@@ -83,7 +112,7 @@ async function applySessionEvidenceLocked(
   if (JSON.stringify(status) !== before) {
     await writeStatus(sessionId, status);
   }
-  return decision;
+  return { decision, result };
 }
 
 /**
@@ -101,6 +130,9 @@ export async function processSessionTick(
 ): Promise<void> {
   let shouldForward = false;
   let hooksOnly = false;
+  let classification: ClassResult | undefined;
+  // Re-decided every tick: the policy is refreshed (when due) before the classification below.
+  const policyState = areCredentialsStale() ? undefined : await tickPolicyState(credentials);
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -117,9 +149,10 @@ export async function processSessionTick(
     // session hold it persists also gates the snapshots and `isSendAllowed`.
     let evidenceSend = false;
     if (hasPendingData(spool)) {
-      const evidence = await applySessionEvidenceLocked(sessionId, status, spool, credentials);
-      if (evidence.action === 'hold' || evidence.action === 'lose') return;
-      evidenceSend = evidence.action === 'send_evidence';
+      const { decision, result } = await applySessionEvidenceLocked(sessionId, status, spool, credentials, policyState);
+      if (decision.action === 'hold' || decision.action === 'lose' || decision.action === 'suppress') return;
+      evidenceSend = decision.action === 'send_evidence';
+      classification = result;
     }
 
     // Project policy, before the completeness gate and the same one the snapshots apply: a
@@ -184,7 +217,8 @@ export async function processSessionTick(
   currentlyForwarding.add(sessionId);
 
   try {
-    await forwardSession(sessionId, hooksOnly, credentials);
+    if (classification) await forwardSession(sessionId, hooksOnly, credentials, classification);
+    else await forwardSession(sessionId, hooksOnly, credentials);
   } finally {
     currentlyForwarding.delete(sessionId);
   }
