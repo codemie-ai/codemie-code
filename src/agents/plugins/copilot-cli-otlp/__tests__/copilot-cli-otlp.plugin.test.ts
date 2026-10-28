@@ -253,11 +253,14 @@ describe('CopilotCliOtlpPlugin error field mapping', () => {
     expect(event).not.toHaveProperty('error_type');
   });
 
-  it('keeps the 300-character limit on error_message and error_type', async () => {
-    const event = await forwardedEvent({ message: 'm'.repeat(1000), name: 'n'.repeat(1000) });
+  it('keeps the 300-character limit on error_message and error_type, masking a secret that straddles the cut', async () => {
+    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+    const event = await forwardedEvent({ message: `${'m'.repeat(280)} ${secret} ${'m'.repeat(700)}`, name: 'n'.repeat(1000) });
 
     expect(String(event.error_message)).toHaveLength(300);
     expect(String(event.error_type)).toHaveLength(300);
+    expect(String(event.error_message)).toContain('[REDACTED]');
+    expect(JSON.stringify(event)).not.toContain('ghp_');
   });
 
   it('omits error_type when the error object has no string name', async () => {

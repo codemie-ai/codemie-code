@@ -131,6 +131,96 @@ export function sanitizeObject(obj: Record<string, unknown>): Record<string, unk
   return sanitized;
 }
 
+/** Marker that replaces a secret; no part of the secret is shown. */
+const REDACTED = '[REDACTED]';
+
+/** Longest text scanned by `maskSecretsInText`; anything beyond is dropped so the scan stays bounded. */
+const MAX_MASK_INPUT_CHARS = 64 * 1024;
+
+/** Deepest nesting `maskSecretsDeep` walks; anything deeper is redacted whole. */
+const MAX_MASK_DEPTH = 32;
+
+/**
+ * Secret formats found embedded in free text (not anchored, unlike SENSITIVE_VALUE_PATTERNS).
+ * Every quantifier is bounded or runs over a character class that cannot overlap the next
+ * token, so matching stays linear on adversarial input. Each entry replaces the whole match.
+ */
+const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
+  // PEM block, including one cut off before its END line
+  [/-----BEGIN [A-Z0-9 ]{1,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{1,40}-----|$)/g, REDACTED],
+  // scheme://user:password@host - keep scheme and host
+  [/\b([a-zA-Z][a-zA-Z0-9+.-]{0,20}:\/\/)[^\s:@/]+:[^\s@/]+@/g, `$1${REDACTED}@`],
+  // Authorization header or JSON field: the whole credential after any scheme word (Negotiate, AWS4-..., ...)
+  [/(\bauthorization\\?["']?[ \t]*[:=][ \t]*\\?["']?)[^\s"'\\;][^\r\n"'\\;]*/gi, `$1${REDACTED}`],
+  // JWT
+  [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, REDACTED],
+  // Bearer token (needs a digit so prose such as "Bearer authentication" is left alone)
+  [/\b(Bearer[ \t]+)(?=[A-Za-z0-9._~+/-]{0,200}\d)[A-Za-z0-9._~+/-]{8,}=*/gi, `$1${REDACTED}`],
+  // OpenAI / Anthropic keys
+  [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/g, REDACTED],
+  // AWS access key ids
+  [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, REDACTED],
+  // GitHub tokens
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, REDACTED],
+  // GitLab personal access tokens
+  [/\bglpat-[A-Za-z0-9_-]{20,}/g, REDACTED],
+  // Slack tokens
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
+  // NAME=value / name: value / "name": "value" where the name ends in a secret word
+  [
+    /\b((?:[A-Za-z0-9_-]{0,60}(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|auth[_-]?key|credentials?)|(?:[A-Za-z0-9_-]{0,60}[_-])?pass)\\?["']?[ \t]*[:=][ \t]*)(?:\[REDACTED\]|\\?"[^"\r\n]*"|\\?'[^'\r\n]*'|[^\s"']+)/gi,
+    `$1${REDACTED}`,
+  ],
+];
+
+/**
+ * Replace secrets embedded anywhere in free text with `[REDACTED]`, leaving the
+ * surrounding text intact. Input beyond 64 KB is dropped before scanning.
+ */
+export function maskSecretsInText(text: string): string {
+  let masked = text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text;
+  for (const [pattern, replacement] of EMBEDDED_SECRET_PATTERNS) {
+    masked = masked.replace(pattern, replacement);
+  }
+  return masked;
+}
+
+/**
+ * Walk strings, arrays and objects and mask every string with `maskSecretsInText`; a string
+ * or container under a sensitive key (SENSITIVE_KEY_PATTERNS) is redacted whole. Other values are untouched
+ * and the input is never mutated. `skipKeys` applies to top-level keys only.
+ */
+export function maskSecretsDeep(value: unknown, skipKeys?: ReadonlySet<string>): unknown {
+  return maskDeep(value, skipKeys, 0);
+}
+
+function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, depth: number): unknown {
+  if (typeof value === 'string') {
+    return maskSecretsInText(value);
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  if (depth >= MAX_MASK_DEPTH) {
+    return REDACTED;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => maskDeep(item, undefined, depth + 1));
+  }
+  const masked: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (skipKeys?.has(key)) {
+      masked[key] = child;
+    } else if ((typeof child === 'string' || (typeof child === 'object' && child !== null)) && isSensitiveKey(key)) {
+      masked[key] = REDACTED;
+    } else {
+      masked[key] = maskDeep(child, undefined, depth + 1);
+    }
+  }
+  return masked;
+}
+
 /**
  * Sanitize cookie object - only show cookie names and count
  */
