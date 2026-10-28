@@ -8,16 +8,36 @@ const markSessionEndedMock = vi.fn();
 const isSendAllowedMock = vi.fn();
 const readStateMock = vi.fn();
 const fetchMock = vi.fn();
+const readStatusMock = vi.fn();
+const noteStreamHoldMock = vi.fn();
+const forwarderIdentityMock = vi.fn();
+const readRecordMock = vi.fn();
+const getPolicyStateMock = vi.fn();
+const refreshPolicyMock = vi.fn();
+const proveRangeMock = vi.fn();
 
 vi.mock('../spool-io.js', () => ({
   snapshotPendingHookRecords: snapshotPendingHookRecordsMock,
   snapshotPendingBytes: snapshotPendingBytesMock,
   snapshotPendingNdjsonRecords: snapshotPendingNdjsonRecordsMock,
   isSendAllowed: isSendAllowedMock,
+  noteStreamHold: noteStreamHoldMock,
+  forwarderIdentity: forwarderIdentityMock,
 }));
 vi.mock('../session-status.js', () => ({
   advanceCursor: advanceCursorMock,
   markSessionEnded: markSessionEndedMock,
+  readStatus: readStatusMock,
+}));
+vi.mock('../session-lock.js', () => ({ withSessionLock: (_s: string, fn: () => unknown) => fn() }));
+vi.mock('@/agents/core/evidence/record-store.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readRecord: readRecordMock,
+}));
+vi.mock('../policy-cache.js', () => ({ getPolicyState: getPolicyStateMock, refreshPolicy: refreshPolicyMock }));
+vi.mock('../otlp-reader.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  proveRange: proveRangeMock,
 }));
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
 vi.mock('@/utils/logger.js', () => ({
@@ -591,5 +611,259 @@ describe('forwardSession (OTEL JSON streams)', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', 25);
+  });
+});
+
+describe('send outcomes and evidence requests (Task 13)', () => {
+  const record = {
+    schema: 1, session_id: 's1', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven',
+    organization: 'Acme', project: 'Proj A', project_source: 'linked_folder', repo_key: 'git.example.com/a/b',
+    api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0,
+  };
+  const policyV1 = { organizations: ['Acme'], version: 'v1' };
+  const usable = (policy: unknown) => ({ policy, capability: 'evidence', usable: !!policy, refreshDue: !policy });
+  const line = (sessionId: string) => spoolLine({ type: 'agent.tool.end', session_id: sessionId, codemie_project_name: 'Proj A' });
+  const hooksBatch = (lines: string[]) => ({
+    project: 'Proj A', records: lines, cursor: 0, byteLength: lines.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0), dropped: 0, filtered: false,
+  });
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  /** ExportLogsServiceResponse{partial_success{rejected=1:varint, error_message=2:string}}, hand-encoded. */
+  const protoPartial = (rejected: number, message: string) => {
+    const msg = Buffer.from(message);
+    const inner = Buffer.concat([Buffer.from([0x08, rejected, 0x12, msg.length]), msg]);
+    return new Response(Buffer.concat([Buffer.from([0x0a, inner.length]), inner]), {
+      status: 200, headers: { 'content-type': 'application/x-protobuf' },
+    });
+  };
+  const headersOf = (n: number) => fetchMock.mock.calls[n][1].headers as Record<string, string>;
+  const evidenceKeys = ['X-CodeMie-Session-Id', 'X-CodeMie-Routed-Via-CodeMie', 'X-CodeMie-Organization',
+    'X-CodeMie-Project-Source', 'X-CodeMie-Subscription-Type', 'X-CodeMie-Policy-Version', 'X-CodeMie-Repo-Remote'];
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com', profile: 'p' });
+    isSendAllowedMock.mockResolvedValue(true);
+    readStatusMock.mockResolvedValue({ sendMode: 'evidence' });
+    forwarderIdentityMock.mockReturnValue({ api_identity: 'https://api', owner_hash: 'h' });
+    readRecordMock.mockResolvedValue({ kind: 'existing', record });
+    getPolicyStateMock.mockResolvedValue(usable(policyV1));
+    refreshPolicyMock.mockResolvedValue(usable(null));
+    noteStreamHoldMock.mockResolvedValue('clear');
+    snapshotPendingHookRecordsMock.mockResolvedValue(hooksBatch([line('s1')]));
+    snapshotPendingBytesMock.mockResolvedValue(null);
+    proveRangeMock.mockImplementation((bytes: Buffer) => ({ verified: bytes.length }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('legacy sends carry no Session-Id or evidence header', async () => {
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy' });
+    fetchMock.mockResolvedValue(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    for (const k of evidenceKeys) expect(headersOf(0)).not.toHaveProperty(k);
+    expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
+  });
+
+  it('evidence sends carry the frozen record values and the classification', async () => {
+    fetchMock.mockResolvedValue(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(headersOf(0)).toMatchObject({
+      'X-CodeMie-Session-Id': 's1', 'X-CodeMie-Routed-Via-CodeMie': 'false', 'X-CodeMie-Organization': 'Acme',
+      'X-CodeMie-Subscription-Type': 'corporate', 'X-CodeMie-Policy-Version': 'v1',
+      'X-CodeMie-Project': 'Proj A', 'X-CodeMie-Project-Source': 'linked_folder', 'X-CodeMie-Repo-Remote': 'git.example.com/a/b',
+    });
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', hooksBatch([line('s1')]).byteLength);
+  });
+
+  it('no project: no Project headers; no organization: no Organization header, sent as unknown', async () => {
+    readRecordMock.mockResolvedValue({
+      kind: 'existing', record: { ...record, project: undefined, project_source: 'none', organization: undefined, repo_key: undefined },
+    });
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([spoolLine({ type: 'x', session_id: 's1' })]), project: '' });
+    fetchMock.mockResolvedValue(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    const h = headersOf(0);
+    for (const k of ['X-CodeMie-Project', 'X-CodeMie-Project-Source', 'X-CodeMie-Organization', 'X-CodeMie-Repo-Remote', 'X-CodeMie-Policy-Version']) {
+      expect(h).not.toHaveProperty(k);
+    }
+    expect(h['X-CodeMie-Subscription-Type']).toBe('unknown');
+  });
+
+  it('evidence mode without a valid record at the forwarder key sends nothing', async () => {
+    readRecordMock.mockResolvedValue({ kind: 'stamp_invalid', reason: 'record_invalid' });
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches the policy when none is usable (bounded, not forced)', async () => {
+    getPolicyStateMock.mockResolvedValue(usable(null));
+    refreshPolicyMock.mockResolvedValue(usable(policyV1));
+    fetchMock.mockResolvedValue(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(refreshPolicyMock).toHaveBeenCalledWith(
+      { api_identity: 'https://api', owner_hash: 'h', profile: 'p' },
+      expect.objectContaining({ baseUrl: 'https://api.example.com', force: undefined })
+    );
+    expect(headersOf(0)['X-CodeMie-Policy-Version']).toBe('v1');
+  });
+
+  it('AC5: a hooks discard advances exactly its range, records the real reason and acknowledges no OTLP stream', async () => {
+    snapshotPendingBytesMock.mockResolvedValue({ project: 'Proj A', cursor: 7, bytes: Buffer.from('logs') });
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/event-hooks')
+        ? json({ accepted: 0, dropped: 1, reason: 'session_project_conflict' })
+        : new Response('', { status: 503 })
+    );
+    const { forwardSession } = await import('../forwarder.js');
+    const { logger } = await import('@/utils/logger.js');
+    await forwardSession('s1', false, credentials);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', hooksBatch([line('s1')]).byteLength);
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain('session_project_conflict');
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['protobuf', () => protoPartial(3, 'session_project_conflict'), 'session_project_conflict'],
+    ['JSON', () => json({ partialSuccess: { rejectedLogRecords: '3', errorMessage: 'evidence_session_conflict' } }), 'evidence_session_conflict'],
+  ])('AC5: an OTLP complete rejection (%s) advances its range with the real reason', async (_n, response, reason) => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 7, bytes: Buffer.from('logs-bytes') } : null
+    );
+    fetchMock.mockResolvedValue(response());
+    const { forwardSession } = await import('../forwarder.js');
+    const { logger } = await import('@/utils/logger.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 17);
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain(reason);
+  });
+
+  it('AC5: partial_success with another message is recorded and advanced once', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('abc') } : null
+    );
+    fetchMock.mockResolvedValue(protoPartial(1, 'records the analytics storage cannot store were dropped'));
+    const { forwardSession } = await import('../forwarder.js');
+    const { logger } = await import('@/utils/logger.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 3);
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).toContain('cannot store');
+  });
+
+  it.each([503, 500])('AC5: OTLP %i retains the spool', async (status) => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockResolvedValue({ project: 'Proj A', cursor: 0, bytes: Buffer.from('abc') });
+    fetchMock.mockImplementation(async () => new Response('busy', { status }));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: 409 stale_policy refreshes, re-classifies and resends once', async () => {
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    fetchMock
+      .mockResolvedValueOnce(json({ reason: 'stale_policy', policy_version: 'v2' }, 409))
+      .mockResolvedValueOnce(json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(refreshPolicyMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ force: true }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(headersOf(0)['X-CodeMie-Subscription-Type']).toBe('corporate');
+    expect(headersOf(1)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Policy-Version': 'v2' });
+    expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC4: a second 409 after the resend keeps the spool (once only)', async () => {
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    fetchMock.mockImplementation(async () => json({ reason: 'stale_policy', policy_version: 'v3' }, 409));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: a failed policy refresh on 409 keeps the spool and does not resend', async () => {
+    refreshPolicyMock.mockResolvedValue(usable(policyV1)); // still the stale version: refresh failed
+    fetchMock.mockResolvedValue(json({ reason: 'stale_policy', policy_version: 'v2' }, 409));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('auth-expired is preserved in evidence mode', async () => {
+    fetchMock.mockImplementation(async () => new Response('', { status: 401 }));
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(areCredentialsStale()).toBe(true);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('AC10: sends only the verified OTLP prefix byte-for-byte, holds the rest and advances by the prefix', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    const bytes = Buffer.from('0123456789');
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 5, bytes } : null
+    );
+    proveRangeMock.mockReturnValue({ verified: 4, hold: 'session_mismatch' });
+    noteStreamHoldMock.mockResolvedValue('held');
+    fetchMock.mockImplementation(async () => new Response(new Uint8Array(0), { status: 200 }));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(proveRangeMock).toHaveBeenCalledWith(bytes, { sessionId: 's1', project: 'Proj A', signal: 'logs' });
+    expect(Buffer.from(fetchMock.mock.calls[0][1].body).toString()).toBe('0123');
+    expect(isSendAllowedMock).toHaveBeenCalledWith('s1', 'logs', 'Proj A', { cursor: 5, end: 9, filtered: false });
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'logs', 'session_mismatch');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 9);
+  });
+
+  it('a fully verified OTLP range clears the stream hold; nothing verified sends nothing', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('ab') }
+        : stream === 'traces' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('cd') } : null
+    );
+    proveRangeMock.mockImplementation((_b: Buffer, o: { signal: string }) =>
+      o.signal === 'logs' ? { verified: 2 } : { verified: 0, hold: 'otlp_unparseable' }
+    );
+    fetchMock.mockImplementation(async () => new Response(new Uint8Array(0), { status: 200 }));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'logs', null);
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'traces', 'otlp_unparseable');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalledWith('s1', 'traces', expect.anything());
+  });
+
+  it('AC10: hooks send only the verified line prefix and hold the rest', async () => {
+    const good = line('s1');
+    snapshotPendingHookRecordsMock.mockResolvedValue(hooksBatch([good, line('other')]));
+    noteStreamHoldMock.mockResolvedValue('held');
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock.mock.calls[0][1].body).toBe(`${JSON.parse(good).hookEvent}\n`);
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'hooks', 'session_mismatch');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', Buffer.byteLength(good) + 1);
   });
 });

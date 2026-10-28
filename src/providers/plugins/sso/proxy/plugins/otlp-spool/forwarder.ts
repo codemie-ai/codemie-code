@@ -1,6 +1,8 @@
 import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { classify, decide, type ClassResult, type Evidence } from '@/agents/core/evidence/classify.js';
+import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
@@ -16,15 +18,24 @@ import {
 import {
   advanceCursor,
   markSessionEnded,
+  readStatus,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import {
+  forwarderIdentity,
   isSendAllowed,
+  noteStreamHold,
   snapshotPendingBytes,
   snapshotPendingHookRecords,
   snapshotPendingNdjsonRecords,
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
+import { withSessionLock } from './session-lock.js';
+import { getPolicyState, refreshPolicy, type NamespaceId } from './policy-cache.js';
+import { proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
+import { decodeResponse, readBoundedBody, type SendOutcome } from './response.js';
+
+export type { SendOutcome } from './response.js';
 
 const SESSION_END_EVENT_TYPE = 'agent.session.end';
 
@@ -38,9 +49,6 @@ const FORWARD_TIMEOUT_MS = 20_000;
 
 /** Project the session is bound to; the backend gates analytics on it. */
 const PROJECT_HEADER = 'X-CodeMie-Project';
-
-/** `rejected`: the backend refused this exact payload for good (see `isPermanentRejection`); retrying it cannot succeed. */
-type SendResult = 'ok' | 'failed' | 'rejected' | 'auth-expired';
 
 /* ------------------------------------------------------------------ auth --- */
 
@@ -56,6 +64,94 @@ function buildAuthHeadersFromCreds(
   return null;
 }
 
+/* -------------------------------------------------------------- evidence --- */
+
+/** An evidence-mode session: the frozen record at the forwarder's key and its current classification. */
+interface EvidenceContext {
+  record: EvidenceRecord;
+  ns: NamespaceId;
+  baseUrl: string;
+  credentials: SSOCredentials | JWTCredentials;
+  result: ClassResult;
+}
+
+const evidenceOf = (r: EvidenceRecord): Evidence => ({
+  routed_via_codemie: r.routed_via_codemie,
+  routing_proof: r.routing_proof,
+  organization: r.organization,
+});
+
+/**
+ * Evidence headers (spec item 6; backend `EVIDENCE_HEADERS`), from the record's frozen values and
+ * the classification. Organization only if known; Project and Project-Source only with a project;
+ * Repo-Remote carries the credential-free repo key, never a raw remote. Values that are not valid
+ * Latin-1 header values are omitted rather than sent mangled.
+ */
+function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record<string, string> {
+  const { record, result } = ctx;
+  const headers: Record<string, string> = {
+    'X-CodeMie-Session-Id': sessionId,
+    'X-CodeMie-Routed-Via-CodeMie': String(record.routed_via_codemie),
+    // Indeterminate is sent as `unknown`; the local basis (e.g. routing_unproven) is never sent.
+    'X-CodeMie-Subscription-Type': result.class,
+  };
+  const put = (name: string, value: string | undefined): void => {
+    const v = value ? rawProjectHeader(value) : undefined;
+    if (v) headers[name] = v;
+  };
+  put('X-CodeMie-Organization', record.organization);
+  put('X-CodeMie-Policy-Version', result.policy_version);
+  put('X-CodeMie-Repo-Remote', record.repo_key);
+  const project = record.project ? rawProjectHeader(record.project) : undefined;
+  if (project) {
+    headers[PROJECT_HEADER] = project;
+    if (record.project_source !== 'none') headers['X-CodeMie-Project-Source'] = record.project_source;
+  }
+  return headers;
+}
+
+/** Usable policy from the cache; fetched (bounded by the cache's timeout/backoff) when none is usable. */
+async function currentPolicyState(
+  ns: NamespaceId,
+  baseUrl: string,
+  credentials: SSOCredentials | JWTCredentials,
+  force?: true
+): ReturnType<typeof getPolicyState> {
+  const state = force ? undefined : await getPolicyState(ns);
+  if (state && (state.policy || !state.refreshDue)) return state;
+  return refreshPolicy(ns, { baseUrl, headers: buildAuthHeadersFromCreds(credentials), force });
+}
+
+/** Build the evidence context; `null` = nothing may be sent (fail closed, I2). */
+async function evidenceContext(
+  sessionId: string,
+  baseUrl: string,
+  credentials: SSOCredentials | JWTCredentials,
+  profile: string | undefined
+): Promise<EvidenceContext | null> {
+  const id = forwarderIdentity(credentials);
+  if (!id) return null;
+  const found = await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId));
+  if (found?.kind !== 'existing' && found?.kind !== 'created') return null;
+  const ns: NamespaceId = { ...id, ...(profile ? { profile } : {}) };
+  const state = await currentPolicyState(ns, baseUrl, credentials);
+  const result = classify(evidenceOf(found.record), state.policy);
+  // No consumer yet (Task 14 / #711): the default forwards everything, indeterminate as `unknown`.
+  if (decide(result) !== 'forward') return null;
+  return { record: found.record, ns, baseUrl, credentials, result };
+}
+
+/**
+ * 409 stale_policy: force a refresh and re-classify. True only when a fresher policy than the one
+ * that was sent is now usable; otherwise the caller keeps the spool.
+ */
+async function reclassify(ctx: EvidenceContext): Promise<boolean> {
+  const state = await currentPolicyState(ctx.ns, ctx.baseUrl, ctx.credentials, true);
+  if (!state.policy || state.policy.version === ctx.result.policy_version) return false;
+  ctx.result = classify(evidenceOf(ctx.record), state.policy);
+  return decide(ctx.result) === 'forward';
+}
+
 /* ------------------------------------------------------------------ http --- */
 
 async function postToBackend(
@@ -63,106 +159,133 @@ async function postToBackend(
   body: string | Buffer,
   contentType: string,
   credentials: SSOCredentials | JWTCredentials,
-  project: string
-): Promise<Response> {
+  extra: Record<string, string>
+): Promise<WireResponse> {
   const headers = buildAuthHeadersFromCreds(credentials);
   if (!headers) {
     throw new Error('Unsupported credential type');
   }
+  Object.assign(headers, extra);
   headers['Content-Type'] = contentType;
-  const projectValue = rawProjectHeader(project);
-  if (projectValue) {
-    // No project (AC8): no Project header at all, rather than an empty one.
-    headers[PROJECT_HEADER] = projectValue;
-  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers,
       body,
       signal: controller.signal,
       redirect: 'manual',
     });
+    // The one bounded body read, inside the same timeout as the request.
+    return {
+      status: response.status,
+      contentType: response.headers?.get('content-type') ?? '',
+      body: await readBoundedBody(response),
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
-/**
- * Statuses that depend only on the payload: malformed (400), over the body limit (413) or
- * unprocessable (422). Deliberately not every 4xx — a 404/405 can be a misrouted gateway or a deploy
- * in progress, and treating those as permanent would discard a healthy backlog.
- */
-const isPermanentRejection = (response: Response): boolean =>
-  response.status === 400 || response.status === 413 || response.status === 422;
+interface WireResponse {
+  status: number;
+  contentType: string;
+  body: Buffer;
+}
 
-const isAuthFailure = (response: Response): boolean =>
+const isAuthFailure = (response: WireResponse): boolean =>
   response.status === 401 ||
   response.status === 403 ||
   response.status === 302;
 
+interface SendRequest {
+  sessionId: string;
+  stream: SpoolStream;
+  url: string;
+  body: string | Buffer;
+  contentType: string;
+  credentials: SSOCredentials | JWTCredentials;
+  /** Session-bound project, for the pre-send check (and the legacy Project header). */
+  project: string;
+  range: { cursor: number; end: number; filtered: boolean };
+  evidence?: EvidenceContext;
+}
+
+function requestHeaders(req: SendRequest): Record<string, string> {
+  if (req.evidence) return evidenceHeaders(req.sessionId, req.evidence);
+  // Legacy request: no Session-Id or evidence header; no project = no Project header (AC8).
+  const project = rawProjectHeader(req.project);
+  return project ? { [PROJECT_HEADER]: project } : {};
+}
+
 /**
- * POST a batch, retrying once on auth failures or login redirects. Anything other than
- * `'ok'` leaves the bytes on disk with the cursor untouched, so the next tick retries them.
+ * POST a batch, retrying once on auth failures or login redirects, and decode the one response body.
+ * Only `ok` and `discarded` acknowledge the range; every other kind leaves the bytes and cursor alone.
+ * A 409 stale_policy refreshes the policy, re-classifies and resends once.
  */
-async function send(
-  sessionId: string,
-  stream: SpoolStream,
-  url: string,
-  body: string | Buffer,
-  contentType: string,
-  credentials: SSOCredentials | JWTCredentials,
-  project: string,
-  range: { cursor: number; end: number; filtered: boolean }
-): Promise<SendResult> {
+async function send(req: SendRequest): Promise<SendOutcome> {
   if (areCredentialsStale()) {
-    return 'failed';
+    return { kind: 'failed', reason: 'credentials_stale' };
   }
+  const { sessionId, stream } = req;
 
   // Local re-check before every attempt, per stream and per snapshotted byte range: narrows the
   // window between the locked snapshot and the wire, it does not close it. A sealed session passes
   // it for its hooks prefix only. `null` = no longer sendable, nothing is fetched (the next
   // snapshot applies the policy under the lock).
-  const attempt = async (): Promise<Response | null> =>
-    (await isSendAllowed(sessionId, stream, project, range))
-      ? postToBackend(url, body, contentType, credentials, project)
+  const attempt = async (): Promise<WireResponse | null> =>
+    (await isSendAllowed(sessionId, stream, req.project, req.range))
+      ? postToBackend(req.url, req.body, req.contentType, req.credentials, requestHeaders(req))
       : null;
 
-  try {
+  const exchange = async (): Promise<SendOutcome> => {
     let response = await attempt();
-    if (!response) {
-      return 'failed';
-    }
-    if (isAuthFailure(response)) {
+    if (response && isAuthFailure(response)) {
       response = await attempt();
-      if (!response) {
-        return 'failed';
-      }
-      if (isAuthFailure(response)) {
-        return 'auth-expired';
-      }
+      if (response && isAuthFailure(response)) return { kind: 'auth-expired' };
     }
-    if (response.ok) {
-      return 'ok';
+    if (!response) return { kind: 'failed', reason: 'not_sendable' };
+    return decodeResponse(response.status, response.contentType, response.body, stream === 'hooks');
+  };
+
+  try {
+    let outcome = await exchange();
+    if (outcome.kind === 'stale' && req.evidence && (await reclassify(req.evidence))) {
+      outcome = await exchange();
     }
-
-    logger.debug(
-      '[otlp-forwarder] non-success response',
-      ...sanitizeLogArgs({ sessionId, stream, status: response.status })
-    );
-
-    return isPermanentRejection(response) ? 'rejected' : 'failed';
+    if (outcome.kind === 'discarded' || (outcome.kind === 'ok' && outcome.reason)) {
+      // Final backend answer (discard / rejected records): acknowledged, recorded with the real reason.
+      logger.warn(
+        '[otlp-forwarder] backend dropped analytics',
+        ...sanitizeLogArgs({ sessionId, stream, reason: outcome.reason, rejected: outcome.rejected })
+      );
+    } else if (outcome.kind !== 'ok') {
+      logger.debug('[otlp-forwarder] not acknowledged', ...sanitizeLogArgs({ sessionId, stream, ...outcome }));
+    }
+    return outcome;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug(
       '[otlp-forwarder] request error',
       ...sanitizeLogArgs({ sessionId, stream, err: msg })
     );
-    return 'failed';
+    return { kind: 'retry', reason: 'request_error' };
   }
+}
+
+const acknowledged = (o: SendOutcome): boolean => o.kind === 'ok' || o.kind === 'discarded';
+
+/** Head-of-line proof hold: `reason` past the verified prefix, `null` when fully verified. */
+function noteProof(
+  sessionId: string,
+  stream: SpoolStream,
+  verified: number,
+  total: number,
+  hold: ProofReason | undefined
+): Promise<'held' | 'lost' | 'clear'> {
+  return noteStreamHold(sessionId, stream, verified < total ? (hold ?? 'otlp_unparseable') : null);
 }
 
 /* ------------------------------------------------------------- unwrapping --- */
@@ -210,26 +333,60 @@ export function unwrapHookRecords(records: string[]): HookPayload {
 
 /* ------------------------------------------------------------ forwarding --- */
 
-async function resolveBaseUrl(): Promise<string> {
+async function readDaemonState(): Promise<{ baseUrl: string; profile?: string }> {
   const { readState } = await import(
     '../../../../../../cli/commands/proxy/daemon-manager.js'
   );
   const state = await readState();
-  return state?.targetUrl ?? state?.url ?? '';
+  return { baseUrl: state?.targetUrl ?? state?.url ?? '', profile: state?.profile };
+}
+
+/**
+ * Evidence mode: the longest verified prefix of the hook records (whole lines). The cursor may only
+ * advance by source bytes, so a partial prefix is sent only when the records map 1:1 onto the
+ * snapshotted bytes (no blank lines, not filtered); otherwise nothing is sent until it verifies.
+ */
+async function verifiedHookPrefix(
+  sessionId: string,
+  batch: { records: string[]; byteLength: number; filtered: boolean },
+  evidence: EvidenceContext
+): Promise<{ records: string[]; consumed: number } | null> {
+  const lines = batch.records.map((r) => `${r}\n`);
+  const total = lines.reduce((n, l) => n + Buffer.byteLength(l), 0);
+  const proof = proveHookLines(lines.join(''), { sessionId, project: evidence.record.project || undefined });
+  if ((await noteProof(sessionId, 'hooks', proof.verified, total, proof.hold)) === 'lost') return null;
+  if (proof.verified >= total) return { records: batch.records, consumed: batch.byteLength };
+  // ponytail: no prefix salvage when blank lines/filtering break the 1:1 byte mapping (never written today).
+  if (batch.filtered || total !== batch.byteLength) return null;
+  let consumed = 0;
+  let count = 0;
+  while (count < lines.length && consumed + Buffer.byteLength(lines[count]) <= proof.verified) {
+    consumed += Buffer.byteLength(lines[count++]);
+  }
+  return count > 0 ? { records: batch.records.slice(0, count), consumed } : null;
 }
 
 /** Forward the complete hook records after the hooks cursor. */
 async function forwardHooks(
   sessionId: string,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials
-): Promise<SendResult | 'idle'> {
+  credentials: SSOCredentials | JWTCredentials,
+  evidence?: EvidenceContext
+): Promise<SendOutcome | 'idle'> {
   const batch = await snapshotPendingHookRecords(sessionId);
   if (!batch) {
     return 'idle';
   }
 
-  const payload = unwrapHookRecords(batch.records);
+  let records = batch.records;
+  let consumed = batch.byteLength;
+  if (evidence) {
+    const prefix = await verifiedHookPrefix(sessionId, { ...batch, filtered: batch.filtered === true }, evidence);
+    if (!prefix) return 'idle';
+    ({ records, consumed } = prefix);
+  }
+
+  const payload = unwrapHookRecords(records);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
@@ -239,7 +396,7 @@ async function forwardHooks(
 
   if (payload.ndjson.length === 0) {
     // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
-    await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+    await advanceCursor(sessionId, 'hooks', batch.cursor + consumed);
     return 'idle';
   }
 
@@ -250,22 +407,24 @@ async function forwardHooks(
     );
   }
 
-  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
-  const result = await send(
-    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', credentials, batch.project,
-    { cursor: batch.cursor, end: batch.cursor + batch.byteLength, filtered: batch.filtered === true }
-  );
-  if (result !== 'ok') {
+  const result = await send({
+    sessionId, stream: 'hooks', url: `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`,
+    body: payload.ndjson, contentType: 'application/x-ndjson', credentials, project: batch.project,
+    range: { cursor: batch.cursor, end: batch.cursor + consumed, filtered: batch.filtered === true },
+    evidence,
+  });
+  if (!acknowledged(result)) {
     return result;
   }
 
-  await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+  // Exactly this request's range; a hooks answer never acknowledges an OTLP stream.
+  await advanceCursor(sessionId, 'hooks', batch.cursor + consumed);
 
-  if (payload.containsSessionEnd) {
+  if (result.kind === 'ok' && payload.containsSessionEnd) {
     await markSessionEnded(sessionId);
   }
 
-  return 'ok';
+  return result;
 }
 
 /** Forward the raw protobuf bytes after an OTEL stream's cursor. */
@@ -273,24 +432,35 @@ async function forwardOtelStream(
   sessionId: string,
   stream: OtelStream,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials
-): Promise<SendResult | 'idle'> {
+  credentials: SSOCredentials | JWTCredentials,
+  evidence?: EvidenceContext
+): Promise<SendOutcome | 'idle'> {
   const pending = await snapshotPendingBytes(sessionId, stream);
   if (!pending) {
     return 'idle';
   }
 
-  const url = `${baseUrl}${OTEL_ENDPOINTS[stream]}`;
-  const result = await send(
-    sessionId, stream, url, pending.bytes, 'application/x-protobuf', credentials, pending.project,
-    { cursor: pending.cursor, end: pending.cursor + pending.bytes.length, filtered: false }
-  );
-  if (result !== 'ok') {
+  let bytes = pending.bytes;
+  if (evidence) {
+    // Send only the structurally verified prefix, byte for byte (I1); hold the rest with its reason.
+    const proof = proveRange(bytes, { sessionId, project: evidence.record.project || undefined, signal: stream });
+    if ((await noteProof(sessionId, stream, proof.verified, bytes.length, proof.hold)) === 'lost') return 'idle';
+    bytes = bytes.subarray(0, proof.verified);
+    if (bytes.length === 0) return 'idle';
+  }
+
+  const result = await send({
+    sessionId, stream, url: `${baseUrl}${OTEL_ENDPOINTS[stream]}`, body: bytes,
+    contentType: 'application/x-protobuf', credentials, project: pending.project,
+    range: { cursor: pending.cursor, end: pending.cursor + bytes.length, filtered: false },
+    evidence,
+  });
+  if (!acknowledged(result)) {
     return result;
   }
 
-  await advanceCursor(sessionId, stream, pending.cursor + pending.bytes.length);
-  return 'ok';
+  await advanceCursor(sessionId, stream, pending.cursor + bytes.length);
+  return result;
 }
 
 /** Forward masked-JSON OTEL records: one complete application/json POST per NDJSON line. */
@@ -334,14 +504,19 @@ async function forwardOtelJsonStream(
 
   return 'ok';
 }
+const authExpired = (r: SendOutcome | 'idle'): boolean => r !== 'idle' && r.kind === 'auth-expired';
 
 /**
  * Forward everything a session has pending to the CodeMie analytics backend.
  *
  * Each stream is read from its own cursor and acknowledged independently, so a
  * failure on one stream never blocks or rewinds another. Cursors only advance
- * after a successful response, which yields at-least-once delivery: a crash
- * between backend success and cursor persistence re-sends that batch.
+ * after an acknowledging response (accepted, or a final discard), which yields
+ * at-least-once delivery: a crash between backend success and cursor persistence
+ * re-sends that batch.
+ *
+ * A session the tick decided to send with evidence (`sendMode: 'evidence'`) sends only with its
+ * durable record found at the forwarder's own key; without one nothing is sent (fail closed).
  *
  * A forwarded `SessionEnd` only records `endedAt`; it never stops later ticks
  * from delivering bytes that failed or were appended afterwards.
@@ -351,10 +526,21 @@ export async function forwardSession(
   hooksOnly: boolean,
   credentials: SSOCredentials | JWTCredentials
 ): Promise<void> {
-  const baseUrl = await resolveBaseUrl();
+  const { baseUrl, profile } = await readDaemonState();
 
-  const hooksResult = await forwardHooks(sessionId, baseUrl, credentials);
-  if (hooksResult === 'auth-expired') {
+  const status = await withSessionLock(sessionId, () => readStatus(sessionId));
+  let evidence: EvidenceContext | undefined;
+  if (status?.sendMode === 'evidence') {
+    const ctx = await evidenceContext(sessionId, baseUrl, credentials, profile);
+    if (!ctx) {
+      logger.debug('[otlp-forwarder] evidence record unavailable, nothing sent', ...sanitizeLogArgs({ sessionId }));
+      return;
+    }
+    evidence = ctx;
+  }
+
+  const hooksResult = await forwardHooks(sessionId, baseUrl, credentials, evidence);
+  if (authExpired(hooksResult)) {
     markCredentialsStale();
     return;
   }
@@ -364,8 +550,8 @@ export async function forwardSession(
   }
 
   for (const stream of OTEL_STREAMS) {
-    const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials);
-    if (result === 'auth-expired') {
+    const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials, evidence);
+    if (authExpired(result)) {
       markCredentialsStale();
       return;
     }
