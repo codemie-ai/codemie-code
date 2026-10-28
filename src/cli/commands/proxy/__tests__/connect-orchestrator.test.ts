@@ -1146,6 +1146,28 @@ describe('omp identity and VS Code BYOK conflict', () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it('falls back to the codemie-daemon identity for omp when Claude Code analytics is declined', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
+    const { writeOmpExtension } = await import('../connectors/omp.js');
+    const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+    vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ clientType: 'codemie-daemon' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/x', changed: true });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { omp: true, claudeCodeOtlp: true } });
+
+    expect(writeClaudeCodeOtlpConfig).not.toHaveBeenCalled();
+    expect(writeOmpExtension).toHaveBeenCalledTimes(1);
+    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ clientType: 'codemie-daemon' }));
+    expect(process.exitCode).toBe(0);
+  });
+
   it('derives the generic identity for omp and preserves target priority', async () => {
     const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
     expect(deriveDaemonIdentity({ omp: true })).toEqual({
