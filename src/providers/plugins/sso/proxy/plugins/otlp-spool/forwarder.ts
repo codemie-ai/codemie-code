@@ -37,7 +37,12 @@ const PROJECT_HEADER = 'X-CodeMie-Project';
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
 
-const BACKEND_DROP_REASONS: ReadonlySet<string> = new Set([
+/**
+ * Reasons the backend reports when it discards a request it answered with 200: the `REASON_*`
+ * constants of the backend's `cli_analytics_project_gate.py`, as surfaced by `postgres/ingestor.py`
+ * (`_otlp_result` for the OTLP routes, the discard body of the hooks route).
+ */
+export const BACKEND_DROP_REASONS: ReadonlySet<string> = new Set([
   'cli_analytics_disabled',
   'project_context_required',
   'project_context_conflict',
@@ -121,12 +126,14 @@ function parseOtlpDropBody(body: string): { reason?: unknown; dropped?: unknown 
 /**
  * The backend answers 200 even when its project gate discards a request. The hooks route says so
  * in its JSON body and the OTLP routes in `partial_success`; surface it, without ever affecting the send result. The warning is throttled
- * per session and reason so a persistent drop cannot flood the log.
+ * per session, project and reason so a persistent drop cannot flood the log, while a drop for
+ * another project of the same session still shows.
  */
 async function warnOnBackendDrop(
   response: Response,
   sessionId: string,
-  stream: SpoolStream
+  stream: SpoolStream,
+  project: string
 ): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -141,7 +148,7 @@ async function warnOnBackendDrop(
     if (typeof reason !== 'string' || !BACKEND_DROP_REASONS.has(reason)) {
       return;
     }
-    const key = `${sessionId}:${reason}`;
+    const key = `${sessionId}:${project.toLowerCase()}:${reason}`;
     const now = Date.now();
     const last = lastDropWarn.get(key);
     if (last !== undefined && now - last < DROP_WARN_INTERVAL_MS) {
@@ -154,6 +161,7 @@ async function warnOnBackendDrop(
       ...sanitizeLogArgs({
         sessionId,
         stream,
+        project,
         reason,
         dropped: typeof dropped === 'number' ? dropped : undefined,
       })
@@ -217,7 +225,7 @@ async function send(
       }
     }
     if (response.ok) {
-      void warnOnBackendDrop(response, sessionId, stream);
+      void warnOnBackendDrop(response, sessionId, stream, project);
       return 'ok';
     }
 

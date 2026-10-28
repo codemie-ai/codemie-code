@@ -231,7 +231,7 @@ describe('forwardSession (hooks)', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
-  it('warns once per session and reason within the throttle window', async () => {
+  it('warns once per session, project and reason within the throttle window', async () => {
     const { logger } = await import('@/utils/logger.js');
     fetchMock.mockResolvedValue({
       ok: true,
@@ -388,6 +388,53 @@ describe('forwardSession (hooks split by project)', () => {
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
     expect(advanceCursorMock.mock.invocationCallOrder[0]).toBeGreaterThan(fetchMock.mock.invocationCallOrder[1]);
+  });
+
+  describe('backend drop warnings', () => {
+    const dropBody = JSON.stringify({ accepted: 0, dropped: 3, reason: 'project_context_conflict' });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    beforeEach(() => {
+      fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => dropBody });
+    });
+
+    it('warns once per project for the same reason, each warning naming its project', async () => {
+      const { logger } = await import('@/utils/logger.js');
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('s1', true, credentials);
+      await flush();
+
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      const projects = vi.mocked(logger.warn).mock.calls.map(([, fields]) => (fields as { project: string }).project);
+      expect(projects.sort()).toEqual(['A', 'B']);
+    });
+
+    it('keeps the throttle per project: a repeat within the window warns for neither', async () => {
+      const { logger } = await import('@/utils/logger.js');
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('s1', true, credentials);
+      await flush();
+      await forwardSession('s1', true, credentials);
+      await flush();
+
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+    });
+
+    it('treats project spellings that differ only in case as one throttle key', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, eventA2], { project: 'A' }));
+      const { logger } = await import('@/utils/logger.js');
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('s1', true, credentials);
+      await flush();
+      snapshotPendingHookRecordsMock.mockResolvedValue(batch([{ ...eventA1, codemie_project_name: 'a' }], { project: 'a' }));
+      await forwardSession('s1', true, credentials);
+      await flush();
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('re-checks every group with its own project and the shared batch range', async () => {
