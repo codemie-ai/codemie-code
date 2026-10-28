@@ -12,7 +12,7 @@ vi.mock('node:child_process', () => {
   return { exec, spawn: vi.fn() };
 });
 
-import { detectGitRemoteRepo } from '../processes.js';
+import { detectGitRemoteRepo, repoKeyFromRemote, getRawGitOrigin } from '../processes.js';
 
 describe('detectGitRemoteRepo', () => {
   beforeEach(() => {
@@ -269,5 +269,56 @@ describe('detectGitRemoteRepo - lower-casing', () => {
   ])('lower-cases the result: %s', async (_label, url, expected) => {
     mockExecAsync.mockResolvedValue({ stdout: `${url}\n`, stderr: '' });
     expect(await detectGitRemoteRepo('/repo')).toBe(expected);
+  });
+});
+
+describe('repoKeyFromRemote (backend host[:port]/path parity)', () => {
+  it.each([
+    ['scp', 'git@GitHub.com:Org/Repo.git', 'github.com/Org/Repo'],
+    ['scp no user', 'host.example:Org/Repo', 'host.example/Org/Repo'],
+    ['ssh url', 'ssh://git@Host.Example/Org/Repo.git', 'host.example/Org/Repo'],
+    ['https', 'https://github.com/Org/Repo.git', 'github.com/Org/Repo'],
+    ['ssh default port 22', 'ssh://git@h:22/a/b', 'h/a/b'],
+    ['https default port 443', 'https://h:443/a/b', 'h/a/b'],
+    ['http default port 80', 'http://h:80/a/b', 'h/a/b'],
+    ['https :8443 kept', 'https://h:8443/a/b', 'h:8443/a/b'],
+    ['ssh non-default port kept', 'ssh://git@h:2222/a/b', 'h:2222/a/b'],
+    ['scp port-looking path', 'git@h:8443/a/b', 'h/8443/a/b'],
+    ['path case kept, host lowered', 'https://HOST.com/MyOrg/MyRepo', 'host.com/MyOrg/MyRepo'],
+    ['trailing slash', 'https://h/a/b/', 'h/a/b'],
+    ['.git then slash', 'https://h/a/b.git/', 'h/a/b'],
+    ['credentials', 'https://user:s3cretTOKEN@h/a/b.git', 'h/a/b'],
+    ['credentials with port', 'https://user:s3cretTOKEN@h:8443/a/b', 'h:8443/a/b'],
+    ['query/fragment dropped', 'https://h/a/b?x=1#f', 'h/a/b'],
+    ['ipv6', 'https://[::1]/a/b', '[::1]/a/b'],
+    ['ipv6 port', 'ssh://git@[2001:DB8::1]:2222/a/b', '[2001:db8::1]:2222/a/b'],
+    ['subgroups', 'https://gitlab.example/g/sub/repo.git', 'gitlab.example/g/sub/repo'],
+  ])('%s', (_l, remote, expected) => {
+    const key = repoKeyFromRemote(remote);
+    expect(key).toBe(expected);
+    expect(key).not.toMatch(/s3cretTOKEN|user:|@/);
+  });
+
+  it.each(['', '   ', 'https://h', 'https://h/', 'https://h:abc/a/b', 'file:///a/b', 'justaword', 'git@h:'])(
+    'undefined for unparsable %j',
+    (remote) => {
+      expect(repoKeyFromRemote(remote)).toBeUndefined();
+    }
+  );
+});
+
+describe('getRawGitOrigin', () => {
+  beforeEach(() => mockExecAsync.mockReset());
+
+  it('returns trimmed origin', async () => {
+    mockExecAsync.mockResolvedValue({ stdout: 'https://u:p@h/a/b.git\n', stderr: '' });
+    expect(await getRawGitOrigin('/repo')).toBe('https://u:p@h/a/b.git');
+  });
+
+  it('fails soft', async () => {
+    mockExecAsync.mockRejectedValue(new Error('no remote'));
+    expect(await getRawGitOrigin('/repo')).toBeUndefined();
+    mockExecAsync.mockResolvedValue({ stdout: '\n', stderr: '' });
+    expect(await getRawGitOrigin('/repo')).toBeUndefined();
   });
 });
