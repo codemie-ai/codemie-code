@@ -31,6 +31,20 @@ import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js'
  * than the abandonment timeout may have its spool removed. That is safe — the
  * next producer write recreates the status and spool files from scratch.
  */
+/** Sessions with undelivered spool bytes: their evidence records must never be evicted. */
+export async function pendingSpoolSessionIds(): Promise<Set<string>> {
+  const pending = new Set<string>();
+  for (const sessionId of await listSessionIds()) {
+    try {
+      const status = (await readStatus(sessionId)) ?? createStatus();
+      if (!isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
+    } catch {
+      pending.add(sessionId); // unknown state: protect
+    }
+  }
+  return pending;
+}
+
 export async function sweepSpool(): Promise<void> {
   const pending = new Set<string>();
   for (const sessionId of await listSessionIds()) {
@@ -70,7 +84,8 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   if (!isSessionDrained(spool)) return false;
 
   const activityMs = await lastActivityMs(spool);
-  if (activityMs === null) return false; // nothing on disk to clean up
+  // Nothing on disk to clean up, except a status that only records a stamp loss: aged out like an abandoned session.
+  if (activityMs === null) return status.lastLoss ? Date.now() - status.lastLoss.at >= abandonedSessionGraceMs() : false;
 
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;

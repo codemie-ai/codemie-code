@@ -157,7 +157,7 @@ describe('processSessionTick (OTEL-only invariant)', () => {
 
     await processSessionTick(SESSION, credentials);
 
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, credentials);
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, credentials, undefined, expect.anything());
   });
 });
 
@@ -256,7 +256,7 @@ describe('processSessionTick (project gate)', () => {
 
     await processSessionTick(SESSION, credentials);
 
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, true, credentials);
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, true, credentials, undefined, expect.anything());
   });
 
   it('does not rewrite the status of an already discarded conflicted session', async () => {
@@ -295,7 +295,7 @@ describe('processSessionTick (project gate)', () => {
 
       await processSessionTick(SESSION, credentials);
 
-      expect(forwardSession).toHaveBeenCalledWith(SESSION, true, credentials);
+      expect(forwardSession).toHaveBeenCalledWith(SESSION, true, credentials, undefined, expect.anything());
       const status = await readStatusRaw();
       expect(status.waitTicks).toBe(0);
       expect(status.cursors).toEqual({
@@ -385,6 +385,8 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     delete process.env.OTLP_SEND_MAX_ATTEMPTS;
     delete process.env.OTLP_HELD_RETENTION_MINUTES;
     await epochAt(Date.now() - 60_000); // upgraded a minute ago: every seeded session is new
+    const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue({ targetUrl: API } as never); // the analytics endpoint matches the credentials
   });
 
   afterEach(async () => {
@@ -461,7 +463,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
 
     await stamp('A');
     await tick();
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }));
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }), expect.anything());
     const sent = await current();
     expect(sent).toMatchObject({ sendMode: 'evidence', project: 'A' });
     expect(sent.holds).toBeUndefined();
@@ -516,7 +518,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
 
     await tick();
     expect((await current()).sendMode).toBe('legacy');
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, undefined, expect.anything());
   });
 
   it('past heldRetentionMs the held range is dropped with the recorded loss reason no_evidence_timeout', async () => {
@@ -548,7 +550,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     await writeStatus(SESSION, { ...createStatus(), projectScanned: true });
 
     await tick();
-    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }));
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown' }), expect.anything());
     const status = await current();
     expect(status.sendMode).toBe('evidence');
     expect(status.project).toBeUndefined();
@@ -586,7 +588,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       await seedStamped();
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown', status: 'indeterminate' })
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'unknown', status: 'indeterminate' }), expect.anything()
       );
     });
 
@@ -622,15 +624,16 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       setClassificationConsumer((r) => (r.status === 'indeterminate' ? 'withhold' : 'forward'));
       await seedStamped();
 
-      await tick(); // no daemon URL: no refresh possible, indeterminate is withheld
-      expect((await current()).holds?.session?.reason).toBe('classification_unresolved');
+      vi.mocked(readState).mockResolvedValue(null); // no daemon endpoint: nothing is decided, fetched or sent
+      await tick();
+      expect((await current()).holds).toBeUndefined();
       expect(forwardSession).not.toHaveBeenCalled();
 
       vi.mocked(readState).mockResolvedValue({ targetUrl: API } as never);
       vi.stubGlobal('fetch', policyFetch({ organizations: ['acme'], version: 'v7' }));
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate', policy_version: 'v7' })
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate', policy_version: 'v7' }), expect.anything()
       );
       expect((await current()).holds).toBeUndefined();
     });
@@ -647,7 +650,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       vi.mocked(forwardSession).mockClear();
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal', policy_version: 'v1' })
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal', policy_version: 'v1' }), expect.anything()
       );
     });
 
@@ -665,6 +668,58 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       await tick();
       expect((await current()).holds?.session?.reason).toBe('personal_not_forwardable');
       expect(forwardSession).not.toHaveBeenCalled();
+    });
+
+    it('IR-CLI002: a corrupt or unreadable sticky verdict plus a legacy downgrade never reaches a legacy (evidence-free) send', async () => {
+      const { writeFile, rm: remove, mkdir } = await import('node:fs/promises');
+      const { evidenceDir, verdictFileName } = await import('@/agents/core/evidence/record-store.js');
+      const { refreshPolicy } = await import('../policy-cache.js');
+      const { forwardSession } = await import('../forwarder.js');
+      await cachePolicy(OTHER);
+      await seedStamped();
+      await tick(); // Personal sent as full evidence; verdict persisted
+      expect(forwardSession).toHaveBeenCalledTimes(1);
+
+      const { key, api_identity, owner_hash } = await identity();
+      const file = join(evidenceDir(), verdictFileName(key));
+      const legacy = (async () => new Response('', { status: 404 })) as unknown as typeof fetch;
+      for (const corrupt of ['file', 'dir'] as const) {
+        await remove(file, { recursive: true, force: true });
+        if (corrupt === 'file') await writeFile(file, '{not json');
+        else await mkdir(file); // read fails with EISDIR, not ENOENT
+        // Capability downgrade: an authenticated 404 makes the backend legacy; no policy is usable.
+        await refreshPolicy({ api_identity, owner_hash }, { baseUrl: API, headers: { Cookie: 'x' }, fetchImpl: legacy, force: true });
+        vi.mocked(forwardSession).mockClear();
+        await tick();
+        expect((await current()).holds?.session?.reason).toBe('personal_not_forwardable');
+        expect(forwardSession).not.toHaveBeenCalled();
+      }
+    });
+
+    it('IR-CLI003: the daemon endpoint must equal the credential identity (origin and base path) before any fetch or send', async () => {
+      const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+      const { forwardSession } = await import('../forwarder.js');
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      await seedStamped();
+      const wrong = [
+        'https://other.example.net/code-assistant-api', // same owner, other origin
+        'https://analytics.example.com/another-deployment', // same origin, other deployment
+        'https://analytics.example.com', // base path missing
+      ];
+      for (const targetUrl of wrong) {
+        vi.mocked(readState).mockResolvedValue({ targetUrl } as never);
+        await tick();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(forwardSession).not.toHaveBeenCalled();
+      }
+      // A stale daemon whose model target differs but which records the matching CodeMie API URL is fine.
+      vi.mocked(readState).mockResolvedValue({ targetUrl: 'https://llm-gateway.example.com', syncCodeMieUrl: API + '/' } as never);
+      vi.stubGlobal('fetch', policyFetch({ organizations: ['acme'], version: 'v9' }));
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate' }), expect.objectContaining({ baseUrl: API + '/' })
+      );
     });
 
     it('AC18: a backend discard recorded with the cursor advance is persisted as lastDiscard', async () => {

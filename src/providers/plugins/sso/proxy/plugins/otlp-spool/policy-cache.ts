@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { atomicReplace, evidenceDir } from '@/agents/core/evidence/record-store.js';
 import type { Policy } from '@/agents/core/evidence/classify.js';
 import { logger } from '@/utils/logger.js';
+import { readBoundedBody } from './response.js';
 
 /*
  * Per-namespace classification policy + backend capability cache. One file per namespace
@@ -127,9 +128,9 @@ async function probe(input: RefreshInput): Promise<Outcome> {
     if (res.status !== 200) return { kind: 'unknown' };
     const len = Number(res.headers.get('content-length') ?? 0);
     if (len > MAX_BODY) return { kind: 'unknown' };
-    const text = await res.text();
-    if (text.length > MAX_BODY) return { kind: 'unknown' };
-    const policy = validPolicy(JSON.parse(text));
+    const body = await readBoundedBody(res, MAX_BODY);
+    if (body.state !== 'complete') return { kind: 'unknown' };
+    const policy = validPolicy(JSON.parse(body.bytes.toString('utf-8')));
     return policy ? { kind: 'ok', policy } : { kind: 'unknown' };
   } catch {
     return { kind: 'unknown' }; // timeout, network, non-JSON

@@ -22,14 +22,28 @@ export interface Verdict {
 const path = (key: string) => join(evidenceDir(), verdictFileName(key));
 const determinate = (r: ClassResult) => r.status === 'determinate';
 
-export async function readVerdict(key: string): Promise<Verdict | null> {
+export type VerdictState = { state: 'none' } | { state: 'ok'; verdict: Verdict } | { state: 'unreadable' };
+
+/** Missing (ENOENT) is distinct from corrupt / unreadable: the latter may hide a sticky Personal. */
+export async function readVerdictState(key: string): Promise<VerdictState> {
+  let raw: string;
   try {
-    const v = JSON.parse(await readFile(path(key), 'utf-8')) as Verdict;
-    if (v?.schema !== 1 || !['codemie', 'corporate', 'personal', 'unknown'].includes(v.class)) return null;
-    return v;
-  } catch {
-    return null;
+    raw = await readFile(path(key), 'utf-8');
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { state: 'none' } : { state: 'unreadable' };
   }
+  try {
+    const v = JSON.parse(raw) as Verdict;
+    if (v?.schema !== 1 || !['codemie', 'corporate', 'personal', 'unknown'].includes(v.class)) return { state: 'unreadable' };
+    return { state: 'ok', verdict: v };
+  } catch {
+    return { state: 'unreadable' };
+  }
+}
+
+export async function readVerdict(key: string): Promise<Verdict | null> {
+  const s = await readVerdictState(key);
+  return s.state === 'ok' ? s.verdict : null;
 }
 
 async function write(key: string, r: ClassResult): Promise<void> {

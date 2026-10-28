@@ -8,11 +8,13 @@ export const HOLD_REASONS = [
   'stamp_invalid',
   'evidence_capacity',
   'personal_not_forwardable',
+  'verdict_unavailable',
   'classification_unresolved',
   'session_mismatch',
   'session_id_absent',
   'project_conflict',
   'otlp_unparseable',
+  'otlp_entry_too_large',
 ] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
 

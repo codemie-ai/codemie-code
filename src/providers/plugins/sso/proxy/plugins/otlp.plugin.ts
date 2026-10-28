@@ -10,7 +10,7 @@ import { maskOtlpJson } from './otlp-json-masking.js';
 import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
-import { appendSpool } from './otlp-spool/spool-io.js';
+import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
 import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
@@ -39,6 +39,8 @@ export interface OtlpHookSpoolData {
 export interface OtlpHookBatchRequest {
   agentName: string;
   evidence_v?: 1;
+  /** The hook could not stamp and dropped `events` events of the session: recorded as a visible loss, nothing spooled. */
+  evidence_loss?: { session_id: string; reason: string; events: number };
   hookEvents: Record<string, unknown>[];
 }
 
@@ -237,6 +239,23 @@ class OtlpInterceptor implements ProxyInterceptor {
       }
     } catch {
       return sendError(res, 400, 'invalid_request_error', 'Agent validation failed');
+    }
+
+    const loss = batch.evidence_loss;
+    if (loss && batch.hookEvents.length === 0) {
+      if (typeof loss.session_id !== 'string' || !isSafeSessionId(loss.session_id) || typeof loss.reason !== 'string') {
+        return sendError(res, 400, 'invalid_request_error', 'Invalid evidence_loss');
+      }
+      try {
+        await recordStampLoss(loss.session_id, loss.reason, Number.isInteger(loss.events) && loss.events > 0 ? loss.events : 1);
+      } catch (err) {
+        logger.warn('[otlp-ingest] stamp loss record error', ...sanitizeLogArgs({ sessionId: loss.session_id, err: err instanceof Error ? err.message : String(err) }));
+        return sendError(res, 500, 'api_error', 'Failed to record evidence loss');
+      }
+      res.statusCode = 202;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ accepted: true }));
+      return true;
     }
 
     // A batch is one hook invocation, so it is single-session. Events without a

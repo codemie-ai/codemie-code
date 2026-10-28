@@ -39,7 +39,8 @@ vi.mock('../policy-cache.js', () => ({ getPolicyState: getPolicyStateMock, refre
 vi.mock('../verdict-store.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   readVerdict: vi.fn().mockResolvedValue(null),
-  recordVerdict: vi.fn().mockResolvedValue(null),
+  readVerdictState: vi.fn().mockResolvedValue({ state: 'none' }),
+  recordVerdict: vi.fn().mockResolvedValue({ schema: 1, class: 'personal', created: 0 }),
   replaceVerdict: vi.fn().mockResolvedValue(false),
 }));
 vi.mock('../otlp-reader.js', async (importOriginal) => ({
@@ -128,7 +129,7 @@ describe('forwardSession (hooks)', () => {
   });
 
   it('POSTs the ndjson to the target API, advances the cursor and marks the session ended', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', true, credentials);
@@ -142,7 +143,7 @@ describe('forwardSession (hooks)', () => {
   });
 
   it('retries once on 401 and succeeds', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 }).mockResolvedValueOnce({ ok: true, status: 200 });
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 401 })).mockResolvedValueOnce(new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', true, credentials);
@@ -216,7 +217,7 @@ describe('forwardSession (hooks)', () => {
       cursor: 0,
       byteLength: 10,
     });
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', true, credentials);
@@ -246,7 +247,7 @@ describe('forwardSession (project header)', () => {
       bytes: Buffer.from(`${stream}-bytes`),
     }));
     snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
   });
 
   afterEach(() => {
@@ -320,7 +321,7 @@ describe('forwardSession (project header)', () => {
     isSendAllowedMock.mockImplementation(async (_s: string, stream: string) => stream === 'hooks');
     snapshotPendingBytesMock.mockResolvedValue({ project: 'Proj A', cursor: 4, bytes: Buffer.alloc(10) });
     fetchMock.mockReset();
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', false, credentials);
@@ -340,7 +341,7 @@ describe('forwardSession (project header)', () => {
       dropped: 0,
       filtered: true,
     });
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', true, credentials);
@@ -652,7 +653,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     vi.clearAllMocks();
     fetchMock.mockReset();
     vi.stubGlobal('fetch', fetchMock);
-    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com', profile: 'p' });
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api', profile: 'p' });
     isSendAllowedMock.mockResolvedValue(true);
     readStatusMock.mockResolvedValue({ sendMode: 'evidence' });
     forwarderIdentityMock.mockReturnValue({ api_identity: 'https://api', owner_hash: 'h' });
@@ -671,7 +672,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
 
   it('legacy sends carry no Session-Id or evidence header', async () => {
     readStatusMock.mockResolvedValue({ sendMode: 'legacy' });
-    fetchMock.mockResolvedValue(json({}));
+    fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
     for (const k of evidenceKeys) expect(headersOf(0)).not.toHaveProperty(k);
@@ -679,7 +680,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
   });
 
   it('evidence sends carry the frozen record values and the classification', async () => {
-    fetchMock.mockResolvedValue(json({}));
+    fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
     expect(headersOf(0)).toMatchObject({
@@ -695,7 +696,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
       kind: 'existing', record: { ...record, project: undefined, project_source: 'none', organization: undefined, repo_key: undefined },
     });
     snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([spoolLine({ type: 'x', session_id: 's1' })]), project: '' });
-    fetchMock.mockResolvedValue(json({}));
+    fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
     const h = headersOf(0);
@@ -703,6 +704,87 @@ describe('send outcomes and evidence requests (Task 13)', () => {
       expect(h).not.toHaveProperty(k);
     }
     expect(h['X-CodeMie-Subscription-Type']).toBe('unknown');
+  });
+
+  /** The backend's D7 (cli-analytics-events.md): routed -> codemie; org blank or empty list -> unknown; match -> corporate; else personal. */
+  const backendClass = (h: Record<string, string>, list: string[]): string => {
+    if (h['X-CodeMie-Routed-Via-CodeMie'] === 'true') return 'codemie';
+    const org = (h['X-CodeMie-Organization'] ?? '').trim().toLowerCase();
+    if (!org || list.length === 0) return 'unknown';
+    return list.some((o) => o.trim().toLowerCase() === org) ? 'corporate' : 'personal';
+  };
+
+  it('CR002 wire: an unproven route with a known non-matching organization derives Unknown at the backend too, never Personal', async () => {
+    getPolicyStateMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v1' }));
+    readRecordMock.mockResolvedValue({ kind: 'existing', record: { ...record, routing_proof: 'unproven' } });
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    const h = headersOf(0);
+    expect(h['X-CodeMie-Subscription-Type']).toBe('unknown');
+    expect(h).not.toHaveProperty('X-CodeMie-Organization');
+    expect(backendClass(h, ['Other'])).toBe('unknown');
+  });
+
+  it('CR002 wire: a proven direct route keeps the organization and client and backend agree on Personal', async () => {
+    getPolicyStateMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v1' }));
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    const h = headersOf(0);
+    expect(h['X-CodeMie-Subscription-Type']).toBe('personal');
+    expect(backendClass(h, ['Other'])).toBe('personal');
+  });
+
+  it.each([
+    ['malformed hooks JSON', () => new Response('not-json', { status: 200 })],
+    ['a body read that fails after the headers', () => ({
+      status: 200, headers: new Headers(), body: { getReader: () => ({ read: async () => { throw new Error('aborted'); } }) },
+    }) as unknown as Response],
+  ])('IR-CLI001: %s keeps the cursor and does not mark the session ended', async (_n, make) => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(hooksBatch([spoolLine({ type: 'agent.session.end', session_id: 's1', codemie_project_name: 'Proj A' })]));
+    fetchMock.mockImplementation(async () => make());
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+
+  it('IR-CLI001: a truncated OTLP response keeps the cursor; a genuine empty one advances it', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('abc'), more: false } : null);
+    fetchMock.mockImplementationOnce(async () =>
+      new Response(Buffer.from([0x0a, 0x7f]), { status: 200, headers: { 'content-type': 'application/x-protobuf' } }));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    fetchMock.mockImplementationOnce(async () => new Response(null, { status: 200, headers: { 'content-type': 'application/x-protobuf' } }));
+    await forwardSession('s1', false, credentials);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 3);
+  });
+
+  it('CR003: a backlog over the cap drains in bounded windows with exact cursors', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    const first = Buffer.from('aaaa');
+    const second = Buffer.from('bb');
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string, limit?: number) => {
+      if (stream !== 'logs') return null;
+      expect(limit).toBe(5_242_880); // evidence mode asks for a window, never the whole tail
+      const calls = snapshotPendingBytesMock.mock.calls.filter((c) => c[1] === 'logs').length;
+      return calls === 1
+        ? { project: 'Proj A', cursor: 0, bytes: first, more: true }
+        : { project: 'Proj A', cursor: 4, bytes: second, more: false };
+    });
+    proveRangeMock.mockImplementation((bytes: Buffer, o: { more?: boolean }) => ({ verified: bytes.length, ...(o.more ? { windowCut: true } : {}) }));
+    fetchMock.mockImplementation(async () => new Response(null, { status: 200 }));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock.mock.calls.map((c) => (c[1].body as Buffer).toString())).toEqual(['aaaa', 'bb']);
+    expect(advanceCursorMock.mock.calls).toEqual([['s1', 'logs', 4], ['s1', 'logs', 6]]);
+    // A window cut inside an entry is not a hold.
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'logs', null);
   });
 
   it('evidence mode without a valid record at the forwarder key sends nothing', async () => {
@@ -716,12 +798,12 @@ describe('send outcomes and evidence requests (Task 13)', () => {
   it('fetches the policy when none is usable (bounded, not forced)', async () => {
     getPolicyStateMock.mockResolvedValue(usable(null));
     refreshPolicyMock.mockResolvedValue(usable(policyV1));
-    fetchMock.mockResolvedValue(json({}));
+    fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
     expect(refreshPolicyMock).toHaveBeenCalledWith(
       { api_identity: 'https://api', owner_hash: 'h', profile: 'p' },
-      expect.objectContaining({ baseUrl: 'https://api.example.com', force: undefined })
+      expect.objectContaining({ baseUrl: 'https://api', force: undefined })
     );
     expect(headersOf(0)['X-CodeMie-Policy-Version']).toBe('v1');
   });
@@ -747,7 +829,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
   });
 
   it('uses the classification decided by the tick, without re-reading the policy', async () => {
-    fetchMock.mockResolvedValue(json({}));
+    fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials, { class: 'personal', status: 'determinate', basis: 'org_no_match', policy_version: 'v9' });
     expect(headersOf(0)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Policy-Version': 'v9' });
@@ -777,7 +859,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
       stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('abc') } : null
     );
-    fetchMock.mockResolvedValue(protoPartial(1, 'records the analytics storage cannot store were dropped'));
+    fetchMock.mockImplementation(async () => protoPartial(1, 'records the analytics storage cannot store were dropped'));
     const { forwardSession } = await import('../forwarder.js');
     const { logger } = await import('@/utils/logger.js');
     await forwardSession('s1', false, credentials);
@@ -822,7 +904,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
 
   it('AC4: a failed policy refresh on 409 keeps the spool and does not resend', async () => {
     refreshPolicyMock.mockResolvedValue(usable(policyV1)); // still the stale version: refresh failed
-    fetchMock.mockResolvedValue(json({ reason: 'stale_policy', policy_version: 'v2' }, 409));
+    fetchMock.mockImplementation(async () => json({ reason: 'stale_policy', policy_version: 'v2' }, 409));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
     expect(fetchMock).toHaveBeenCalledTimes(1);

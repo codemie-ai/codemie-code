@@ -24,27 +24,33 @@ import {
   type SessionEvidenceDecision,
 } from './session-project.js';
 import type { PolicyState } from './policy-cache.js';
-import { readVerdict } from './verdict-store.js';
+import { readVerdictState } from './verdict-store.js';
 import { heldRetentionMs } from './spool-config.js';
 import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
-import { classifySession, sessionPolicyState } from './classification.js';
+import { classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 
 const currentlyForwarding = new Set<string>();
 
 type TickEvidenceDecision = SessionEvidenceDecision | { action: 'suppress' };
 
+async function stickyPersonalOf(key: string): Promise<boolean> {
+  const v = await readVerdictState(key);
+  return v.state === 'unreadable' || (v.state === 'ok' && v.verdict.class === 'personal');
+}
+
 /**
  * Policy/capability for the forwarder's namespace, refreshed (bounded by the cache's backoff) before
  * the session lock is taken, so a slow backend never blocks spool appends. `undefined` = no identity.
  */
-async function tickPolicyState(credentials: SSOCredentials | JWTCredentials): Promise<PolicyState | undefined> {
-  const id = forwarderIdentity(credentials);
+async function tickPolicyState(
+  credentials: SSOCredentials | JWTCredentials,
+  endpoint: AnalyticsEndpoint
+): Promise<PolicyState | undefined> {
+  const id = endpoint.identity;
   if (!id) return undefined;
-  const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
-  const daemon = await readState();
-  const ns = { ...id, ...(daemon?.profile ? { profile: daemon.profile } : {}) };
-  return sessionPolicyState(ns, daemon?.targetUrl ?? daemon?.url ?? '', credentials);
+  const ns = { ...id, ...(endpoint.profile ? { profile: endpoint.profile } : {}) };
+  return sessionPolicyState(ns, endpoint.baseUrl, credentials);
 }
 
 /**
@@ -76,7 +82,8 @@ async function applySessionEvidenceLocked(
     marked: status.evidenceMarked === true,
     record: key ? await readRecord(key) : undefined,
     capability: policy?.capability ?? 'unknown',
-    stickyPersonal: key ? (await readVerdict(key))?.class === 'personal' : false,
+    // An unreadable verdict may hide a sticky Personal: treated as Personal (fail closed, never legacy).
+    stickyPersonal: key ? await stickyPersonalOf(key) : false,
     preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
     heldSince,
     now,
@@ -132,7 +139,10 @@ export async function processSessionTick(
   let hooksOnly = false;
   let classification: ClassResult | undefined;
   // Re-decided every tick: the policy is refreshed (when due) before the classification below.
-  const policyState = areCredentialsStale() ? undefined : await tickPolicyState(credentials);
+  // One analytics endpoint per tick, validated against the credential identity before any network call.
+  const endpoint = areCredentialsStale() ? undefined : await resolveAnalyticsEndpoint(credentials);
+  if (endpoint === null) return;
+  const policyState = endpoint ? await tickPolicyState(credentials, endpoint) : undefined;
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -217,8 +227,8 @@ export async function processSessionTick(
   currentlyForwarding.add(sessionId);
 
   try {
-    if (classification) await forwardSession(sessionId, hooksOnly, credentials, classification);
-    else await forwardSession(sessionId, hooksOnly, credentials);
+    if (classification) await forwardSession(sessionId, hooksOnly, credentials, classification, endpoint);
+    else await forwardSession(sessionId, hooksOnly, credentials, undefined, endpoint);
   } finally {
     currentlyForwarding.delete(sessionId);
   }

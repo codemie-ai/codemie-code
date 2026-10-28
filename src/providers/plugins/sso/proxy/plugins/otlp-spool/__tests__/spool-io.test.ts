@@ -270,6 +270,27 @@ describe('snapshots — project gate under the lock', () => {
     });
   }
 
+  it('CR001: a stamp loss is persisted as a visible lastLoss with a named reason, without spooling anything', async () => {
+    const { recordStampLoss } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    await recordStampLoss(SESSION, 'no_credentials', 3, 1_000);
+    expect((await readStatus(SESSION))?.lastLoss).toEqual({ reason: 'stamp_invalid', at: 1_000, bytes: 0 });
+    await recordStampLoss(SESSION, 'evidence_capacity', 1, 2_000);
+    expect((await readStatus(SESSION))?.lastLoss?.reason).toBe('evidence_capacity');
+  });
+
+  it('CR003: a limit bounds the read to a window and reports that more follows', async () => {
+    const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+    await appendSpool(SESSION, 'logs', Buffer.from('0123456789'));
+    const win = await snapshotPendingBytes(SESSION, 'logs', 4);
+    expect(win?.bytes.toString()).toBe('0123');
+    expect(win?.more).toBe(true);
+    const all = await snapshotPendingBytes(SESSION, 'logs', 100);
+    expect(all?.bytes.length).toBe(10);
+    expect(all?.more).toBe(false);
+  });
+
   it('returns bytes plus the project for a bound session', async () => {
     const { appendSpool, snapshotPendingBytes, snapshotPendingHookRecords } = await import(
       '../spool-io.js'

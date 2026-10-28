@@ -82,3 +82,47 @@ describe('proveHookLines', () => {
     expect(proveHookLines(ev({ session_id: 's1', codemie_project_name: 'x' }), { sessionId: 's1' }).hold).toBe('project_conflict');
   });
 });
+
+describe('proveRange bounded windows (CR003)', () => {
+  const f = byName('traces-ok.bin');
+  const one = load(f);
+  const opts = { sessionId, project, signal: 'traces' as const };
+
+  it('a window ending inside an entry verifies the whole entries before it and is cut, not held', () => {
+    const bytes = Buffer.concat([one, one, one]);
+    const window = bytes.subarray(0, one.length * 2 + 7); // third entry cut mid-way
+    expect(proveRange(window, { ...opts, more: true })).toEqual({ verified: one.length * 2, windowCut: true });
+    // Without `more` the same bytes are a genuine truncation: held.
+    expect(proveRange(window, opts)).toEqual({ verified: one.length * 2, hold: 'otlp_unparseable' });
+  });
+
+  it('many small valid entries whose total exceeds the cap drain window by window with exact cursors', () => {
+    const total = Buffer.concat(Array.from({ length: 12 }, () => one));
+    const cap = one.length * 5 + 3; // window size: 5 whole entries plus a partial one
+    let cursor = 0;
+    const sent: number[] = [];
+    while (cursor < total.length) {
+      const window = total.subarray(cursor, cursor + cap);
+      const more = cursor + cap < total.length;
+      const r = proveRange(window, { ...opts, more });
+      expect(r.hold).toBeUndefined();
+      expect(r.verified).toBeGreaterThan(0);
+      sent.push(r.verified);
+      cursor += r.verified;
+    }
+    expect(cursor).toBe(total.length);
+    expect(sent.every((n) => n % one.length === 0)).toBe(true);
+  });
+
+  it('a window that holds a genuinely bad entry after a good one still holds with the real reason', () => {
+    const bad = load(byName('traces-mixed-ids.bin'));
+    const r = proveRange(Buffer.concat([one, bad]), { ...opts, more: true });
+    expect(r.verified).toBe(one.length);
+    expect(r.hold).toBe('session_mismatch');
+  });
+
+  it('a single entry larger than the cap has its own explicit reason, even when only its header is in the window', () => {
+    const header = Buffer.from([0x0a, 0x80, 0x80, 0x80, 0x03]); // field 1, length 6 MiB
+    expect(proveRange(Buffer.concat([header, Buffer.alloc(1000)]), { ...opts, more: true })).toEqual({ verified: 0, hold: 'otlp_entry_too_large' });
+  });
+});

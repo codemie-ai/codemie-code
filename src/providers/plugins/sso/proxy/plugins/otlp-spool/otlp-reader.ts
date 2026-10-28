@@ -13,12 +13,14 @@
  */
 
 export type OtlpSignal = 'logs' | 'traces' | 'metrics';
-export type ProofReason = 'session_id_absent' | 'session_mismatch' | 'project_conflict' | 'otlp_unparseable';
+export type ProofReason = 'session_id_absent' | 'session_mismatch' | 'project_conflict' | 'otlp_unparseable' | 'otlp_entry_too_large';
 export interface Proof {
   /** Byte length of the longest verified prefix (resource-entry / whole-line boundary). */
   verified: number;
   /** Reason for the first bad entry/line; absent when everything verified. */
   hold?: ProofReason;
+  /** The window ended inside a (possibly valid) entry and more bytes follow: not a hold, read on from `verified`. */
+  windowCut?: true;
 }
 export interface ProofTarget {
   sessionId: string;
@@ -173,15 +175,34 @@ function checkResourceEntry(e: Cursor, signal: OtlpSignal, target: ProofTarget):
   }
 }
 
+/** Total size (tag + length + payload) of the top-level entry at `pos`; undefined when its header is not whole. */
+function entrySize(b: Buffer, pos: number): number | undefined {
+  const c: Cursor = { b, p: pos, end: b.length };
+  try {
+    const tag = varint(c);
+    if (tag % 8 !== 2) return undefined;
+    const len = varint(c);
+    return c.p - pos + len;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Proves a spool OTLP byte range (one or more concatenated export requests, treated as one request).
  * Verified prefixes end at top-level field boundaries; the first bad entry sets `hold`.
+ * `more` = the range is a bounded window and bytes follow it: an entry that runs past the window is
+ * left for the next window (`windowCut`), never cut. An entry larger than MAX_SNAPSHOT_BYTES can never
+ * be sent whole and holds as `otlp_entry_too_large`.
  */
-export function proveRange(bytes: Buffer, opts: ProofTarget & { signal: OtlpSignal }): Proof {
+export function proveRange(bytes: Buffer, opts: ProofTarget & { signal: OtlpSignal; more?: boolean }): Proof {
   if (bytes.length > MAX_SNAPSHOT_BYTES) return { verified: 0, hold: 'otlp_unparseable' };
   const top: Cursor = { b: bytes, p: 0, end: bytes.length };
   let verified = 0;
   while (top.p < top.end) {
+    const size = entrySize(bytes, top.p);
+    if (size !== undefined && size > MAX_SNAPSHOT_BYTES) return { verified, hold: 'otlp_entry_too_large' };
+    if (opts.more && (size === undefined ? bytes.length - top.p < 11 : top.p + size > bytes.length) && verified > 0) return { verified, windowCut: true };
     try {
       const f = nextField(top);
       if (f.num === 1 && f.wire === 2) checkResourceEntry(sub(top, f), opts.signal, opts);
@@ -190,7 +211,7 @@ export function proveRange(bytes: Buffer, opts: ProofTarget & { signal: OtlpSign
     }
     verified = top.p;
   }
-  return { verified };
+  return opts.more ? { verified, windowCut: true } : { verified };
 }
 
 /**

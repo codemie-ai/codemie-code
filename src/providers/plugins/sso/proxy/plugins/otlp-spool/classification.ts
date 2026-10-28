@@ -1,10 +1,13 @@
+import { apiIdentity } from '@/agents/core/evidence/api-identity.js';
+import { logger } from '@/utils/logger.js';
+import { forwarderIdentity } from './spool-io.js';
 import { classify, decide, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
 import { getPolicyState, refreshPolicy, type NamespaceId, type PolicyState } from './policy-cache.js';
-import { forwardDecisionWithoutPolicy, readVerdict, recordVerdict, replaceVerdict } from './verdict-store.js';
+import { forwardDecisionWithoutPolicy, readVerdictState, recordVerdict, replaceVerdict } from './verdict-store.js';
 
 /*
  * The one classification decision point for evidence sessions (spec item 5): classify -> sticky
@@ -26,7 +29,7 @@ export function setClassificationConsumer(c: Consumer | undefined): void {
 
 export type SessionClassification =
   | { action: 'send'; result: ClassResult }
-  | { action: 'hold'; reason: 'classification_unresolved' | 'personal_not_forwardable' }
+  | { action: 'hold'; reason: 'classification_unresolved' | 'personal_not_forwardable' | 'verdict_unavailable' }
   | { action: 'suppress' };
 
 export function authHeadersFor(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
@@ -65,12 +68,21 @@ export async function classifySession(
   state: Pick<PolicyState, 'policy' | 'capability'>
 ): Promise<SessionClassification> {
   let result = classify(evidenceOf(record), state.policy);
-  const verdict = await readVerdict(key);
+  const vs = await readVerdictState(key);
+  const verdict = vs.state === 'ok' ? vs.verdict : null;
+  // Durable privacy state that cannot be read or written fails closed (hold), never an evidence-free send.
+  const unavailable: SessionClassification = { action: 'hold', reason: 'verdict_unavailable' };
   if (state.policy) {
-    if (!verdict) await recordVerdict(key, result);
-    else if (verdict.class !== result.class || verdict.policy_version !== result.policy_version) {
-      await replaceVerdict(key, result, true);
+    if (!verdict) {
+      const personal = result.class === 'personal' && result.status === 'determinate';
+      // An unreadable file is overwritten (repaired) only by a determinate Personal; anything else proceeds on the fresh policy.
+      if (!(await recordVerdict(key, result)) && personal) return unavailable;
+    } else if (verdict.class !== result.class || verdict.policy_version !== result.policy_version) {
+      const eligible = result.status === 'determinate' && !!result.policy_version;
+      if (!(await replaceVerdict(key, result, true)) && eligible) return unavailable;
     }
+  } else if (vs.state === 'unreadable') {
+    return unavailable;
   } else if (verdict?.class === 'personal') {
     if (forwardDecisionWithoutPolicy({ verdict, capability: state.capability }) !== 'full_evidence') {
       return { action: 'hold', reason: 'personal_not_forwardable' };
@@ -84,4 +96,38 @@ export async function classifySession(
   if (decision === 'withhold') return { action: 'hold', reason: 'classification_unresolved' };
   if (decision === 'suppress') return { action: 'suppress' };
   return { action: 'send', result };
+}
+
+export interface AnalyticsEndpoint {
+  /** The one analytics base URL every policy fetch and ingest POST of this pass uses. */
+  baseUrl: string;
+  profile?: string;
+  /** The credential identity (null = none can be built: legacy world, no evidence key). */
+  identity: { api_identity: string; owner_hash: string } | null;
+}
+
+/**
+ * Resolve the intended ANALYTICS endpoint once (the CodeMie API URL the daemon recorded, else its
+ * target; never the model gateway on its own) and require its canonical identity (scheme, host, port
+ * and base path) to equal the credentials' api_identity that keys the record, stamp, verdict and policy
+ * cache. `null` = mismatch or stale daemon/credentials: the caller sends and fetches nothing.
+ */
+export async function resolveAnalyticsEndpoint(credentials: SSOCredentials | JWTCredentials): Promise<AnalyticsEndpoint | null> {
+  const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
+  const state = await readState();
+  const baseUrl = state?.syncCodeMieUrl ?? state?.targetUrl ?? state?.url ?? '';
+  const identity = forwarderIdentity(credentials);
+  if (identity) {
+    let wire: string | undefined;
+    try {
+      wire = apiIdentity(baseUrl);
+    } catch {
+      wire = undefined;
+    }
+    if (wire !== identity.api_identity) {
+      logger.debug('[otlp-classification] analytics endpoint does not match the credential identity; nothing sent or fetched');
+      return null;
+    }
+  }
+  return { baseUrl, profile: state?.profile, identity };
 }

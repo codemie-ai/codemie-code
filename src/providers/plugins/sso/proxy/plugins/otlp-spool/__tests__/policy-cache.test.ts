@@ -100,6 +100,22 @@ describe('policy-cache', () => {
     expect((await getPolicyState(ns, { now: T0 })).capability).toBe('unknown');
   });
 
+  it('IR-CLI001 sibling: the policy body read is genuinely bounded (no content-length, chunked) and a failing read is unknown', async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    let reads = 0;
+    const endless = (async () => ({
+      status: 200, headers: new Headers(),
+      body: { getReader: () => ({ read: async () => { reads++; return { done: false, value: chunk }; }, cancel: async () => undefined }) },
+    })) as unknown as typeof fetch;
+    expect((await run(endless, T0)).capability).toBe('unknown');
+    expect(reads).toBeLessThanOrEqual(5); // stopped near the 256 KiB cap, not read forever
+    const broken = (async () => ({
+      status: 200, headers: new Headers(),
+      body: { getReader: () => ({ read: async () => { throw new Error('reset'); } }) },
+    })) as unknown as typeof fetch;
+    expect((await run(broken, T0 + 1, ns, auth, true)).capability).toBe('unknown');
+  });
+
   it('stores no credentials or org names beyond the policy file', async () => {
     await run(okFetch, T0);
     const { readFileSync } = await import('node:fs');

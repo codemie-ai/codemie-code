@@ -21,25 +21,36 @@ export interface SendOutcome {
 export const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_REASON = 200;
 
-/** Read at most `max` bytes of the body, then cancel the rest. Never throws. */
-export async function readBoundedBody(response: Response, max = MAX_RESPONSE_BYTES): Promise<Buffer> {
+/** A bounded body read: how it ended, never a silent empty body. */
+export interface BodyRead {
+  /** complete = whole body read; truncated = more than `max` bytes; failed = the read threw (reset, timeout, abort). */
+  state: 'complete' | 'truncated' | 'failed';
+  bytes: Buffer;
+}
+
+/** Read at most `max` bytes of the body, then cancel the rest. Never throws; reports how the read ended. */
+export async function readBoundedBody(response: Response, max = MAX_RESPONSE_BYTES): Promise<BodyRead> {
   try {
     const reader = response.body?.getReader();
     if (!reader) {
-      return typeof response.text === 'function' ? Buffer.from((await response.text()).slice(0, max)) : Buffer.alloc(0);
+      if (typeof response.text !== 'function') return { state: 'complete', bytes: Buffer.alloc(0) };
+      const whole = Buffer.from(await response.text());
+      return whole.length > max ? { state: 'truncated', bytes: whole.subarray(0, max) } : { state: 'complete', bytes: whole };
     }
     const chunks: Buffer[] = [];
     let size = 0;
-    while (size < max) {
+    for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) return { state: 'complete', bytes: Buffer.concat(chunks) };
       chunks.push(Buffer.from(value));
       size += value.length;
+      if (size > max) {
+        await reader.cancel().catch(() => undefined);
+        return { state: 'truncated', bytes: Buffer.concat(chunks).subarray(0, max) };
+      }
     }
-    if (size >= max) await reader.cancel().catch(() => undefined);
-    return Buffer.concat(chunks).subarray(0, max);
   } catch {
-    return Buffer.alloc(0);
+    return { state: 'failed', bytes: Buffer.alloc(0) };
   }
 }
 
@@ -90,31 +101,42 @@ function protoFields(buf: Buffer): Map<number, number | Buffer> | undefined {
   }
 }
 
-/** OTLP partial_success: protobuf, or JSON (camelCase or snake_case; int64 may be a string). */
-function otlpPartial(body: Buffer, contentType: string): { rejected: number; message?: string } | undefined {
+type Partial = { rejected: number; message?: string };
+
+/**
+ * OTLP partial_success: protobuf, or JSON (camelCase or snake_case; int64 may be a string).
+ * `null` = a well-formed response without one; `'malformed'` = not a decodable Export*ServiceResponse.
+ */
+function otlpPartial(body: Buffer, contentType: string): Partial | null | 'malformed' {
   if (contentType.toLowerCase().includes('json')) {
     const root = parseJson(body);
-    const ps = (root?.['partialSuccess'] ?? root?.['partial_success']) as Record<string, unknown> | undefined;
-    if (!ps || typeof ps !== 'object') return undefined;
-    const key = Object.keys(ps).find((k) => k.startsWith('rejected'));
-    const rejected = Number(key ? ps[key] : 0);
-    return { rejected: Number.isFinite(rejected) ? rejected : 0, message: reasonOf(ps['errorMessage'] ?? ps['error_message']) };
+    if (!root) return 'malformed';
+    const ps = root['partialSuccess'] ?? root['partial_success'];
+    if (ps === undefined || ps === null) return null;
+    if (typeof ps !== 'object' || Array.isArray(ps)) return 'malformed';
+    const rec = ps as Record<string, unknown>;
+    const key = Object.keys(rec).find((k) => k.startsWith('rejected'));
+    const rejected = key === undefined ? 0 : Number(rec[key]);
+    if (!Number.isFinite(rejected) || rejected < 0) return 'malformed';
+    return { rejected, message: reasonOf(rec['errorMessage'] ?? rec['error_message']) };
   }
-  const partial = protoFields(body)?.get(1);
-  if (!Buffer.isBuffer(partial)) return undefined;
+  const top = protoFields(body);
+  if (!top) return 'malformed';
+  const partial = top.get(1);
+  if (partial === undefined) return null;
+  if (!Buffer.isBuffer(partial)) return 'malformed';
   const fields = protoFields(partial);
-  const rejected = fields?.get(1);
-  const message = fields?.get(2);
-  return {
-    rejected: typeof rejected === 'number' ? rejected : 0,
-    message: Buffer.isBuffer(message) ? reasonOf(message.toString('utf-8')) : undefined,
-  };
+  if (!fields) return 'malformed';
+  const rejected = fields.get(1);
+  const message = fields.get(2);
+  if ((rejected !== undefined && typeof rejected !== 'number') || (message !== undefined && !Buffer.isBuffer(message))) return 'malformed';
+  return { rejected: rejected ?? 0, message: message ? reasonOf(message.toString('utf-8')) : undefined };
 }
 
 /** Typed outcome of a non-auth response. `hooks` = the event-hooks route (never an OTLP shape). */
-export function decodeResponse(status: number, contentType: string, body: Buffer, hooks: boolean): SendOutcome {
+export function decodeResponse(status: number, contentType: string, body: BodyRead, hooks: boolean): SendOutcome {
   if (status === 409) {
-    const json = parseJson(body);
+    const json = parseJson(body.bytes);
     return json?.['reason'] === 'stale_policy'
       ? { kind: 'stale', reason: 'stale_policy', policyVersion: reasonOf(json['policy_version']) }
       : { kind: 'failed', reason: 'http_409' };
@@ -122,13 +144,24 @@ export function decodeResponse(status: number, contentType: string, body: Buffer
   if (status >= 500) return { kind: 'retry', reason: `http_${status}` };
   if (status < 200 || status >= 300) return { kind: 'failed', reason: `http_${status}` };
 
+  // A 2xx whose body cannot be verified is not an acknowledgement: the range stays (at-least-once).
+  if (body.state === 'failed') return { kind: 'retry', reason: 'response_read_failed' };
+  if (body.state === 'truncated') return { kind: 'failed', reason: 'response_too_large' };
+
   if (hooks) {
-    const json = parseJson(body);
-    const accepted = typeof json?.['accepted'] === 'number' ? json['accepted'] : undefined;
-    const reason = reasonOf(json?.['reason']);
-    return accepted === 0 && reason ? { kind: 'discarded', reason, accepted } : { kind: 'ok', accepted };
+    const json = parseJson(body.bytes);
+    if (!json) return { kind: 'failed', reason: 'response_malformed' };
+    const { accepted, dropped, reason } = json as Record<string, unknown>;
+    const countOk = (v: unknown): boolean => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 0);
+    if (!countOk(accepted) || !countOk(dropped) || (reason !== undefined && typeof reason !== 'string')) {
+      return { kind: 'failed', reason: 'response_malformed' };
+    }
+    const why = reasonOf(reason);
+    return accepted === 0 && why ? { kind: 'discarded', reason: why, accepted } : { kind: 'ok', accepted: accepted as number | undefined };
   }
-  const partial = body.length > 0 ? otlpPartial(body, contentType) : undefined;
+  if (body.bytes.length === 0) return { kind: 'ok' }; // a genuine empty Export*ServiceResponse
+  const partial = otlpPartial(body.bytes, contentType);
+  if (partial === 'malformed') return { kind: 'failed', reason: 'response_malformed' };
   if (partial && partial.rejected > 0) {
     return { kind: 'discarded', reason: partial.message ?? 'rejected', rejected: partial.rejected };
   }

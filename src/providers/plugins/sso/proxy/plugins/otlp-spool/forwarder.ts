@@ -21,7 +21,6 @@ import {
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import {
-  forwarderIdentity,
   isSendAllowed,
   noteStreamHold,
   snapshotPendingBytes,
@@ -31,9 +30,9 @@ import {
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 import { withSessionLock } from './session-lock.js';
 import type { NamespaceId } from './policy-cache.js';
-import { authHeadersFor, classifySession, sessionPolicyState } from './classification.js';
-import { proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
-import { decodeResponse, readBoundedBody, type SendOutcome } from './response.js';
+import { authHeadersFor, classifySession, resolveAnalyticsEndpoint, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
+import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
+import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
 export type { SendOutcome } from './response.js';
 
@@ -80,7 +79,11 @@ function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record<string
     const v = value ? rawProjectHeader(value) : undefined;
     if (v) headers[name] = v;
   };
-  put('X-CodeMie-Organization', record.organization);
+  // Backend D7 derives Personal from routed=false + a non-matching organization and ignores the advisory
+  // class. An unproven route must therefore not carry the organization: without it the backend derives
+  // the same Unknown this client claims. (Corporate-by-match is the only other unproven outcome and is
+  // never sent through this basis.)
+  if (result.basis !== 'routing_unproven') put('X-CodeMie-Organization', record.organization);
   put('X-CodeMie-Policy-Version', result.policy_version);
   put('X-CodeMie-Repo-Remote', record.repo_key);
   const project = record.project ? rawProjectHeader(record.project) : undefined;
@@ -100,11 +103,12 @@ async function evidenceContext(
   sessionId: string,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  profile: string | undefined,
+  endpoint: AnalyticsEndpoint,
   decided: ClassResult | undefined
 ): Promise<EvidenceContext | null> {
-  const id = forwarderIdentity(credentials);
+  const id = endpoint.identity;
   if (!id) return null;
+  const profile = endpoint.profile;
   const key = recordKey(id.api_identity, id.owner_hash, sessionId);
   const found = await readRecord(key);
   if (found?.kind !== 'existing' && found?.kind !== 'created') return null;
@@ -172,7 +176,7 @@ async function postToBackend(
 interface WireResponse {
   status: number;
   contentType: string;
-  body: Buffer;
+  body: BodyRead;
 }
 
 const isAuthFailure = (response: WireResponse): boolean =>
@@ -323,14 +327,6 @@ export function unwrapHookRecords(records: string[]): HookPayload {
 
 /* ------------------------------------------------------------ forwarding --- */
 
-async function readDaemonState(): Promise<{ baseUrl: string; profile?: string }> {
-  const { readState } = await import(
-    '../../../../../../cli/commands/proxy/daemon-manager.js'
-  );
-  const state = await readState();
-  return { baseUrl: state?.targetUrl ?? state?.url ?? '', profile: state?.profile };
-}
-
 /**
  * Evidence mode: the longest verified prefix of the hook records (whole lines). The cursor may only
  * advance by source bytes, so a partial prefix is sent only when the records map 1:1 onto the
@@ -417,7 +413,14 @@ async function forwardHooks(
   return result;
 }
 
-/** Forward the raw protobuf bytes after an OTEL stream's cursor. */
+/** Windows drained per tick and stream; the rest waits for the next tick. */
+const MAX_OTEL_WINDOWS = 8;
+
+/**
+ * Forward the raw protobuf bytes after an OTEL stream's cursor. Evidence mode reads, proves and sends
+ * bounded windows (at most MAX_SNAPSHOT_BYTES) cut at resource-entry boundaries, one request each, so a
+ * backlog larger than the cap drains instead of being rejected whole.
+ */
 async function forwardOtelStream(
   sessionId: string,
   stream: OtelStream,
@@ -425,32 +428,34 @@ async function forwardOtelStream(
   credentials: SSOCredentials | JWTCredentials,
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
-  const pending = await snapshotPendingBytes(sessionId, stream);
-  if (!pending) {
-    return 'idle';
-  }
+  let last: SendOutcome | 'idle' = 'idle';
+  for (let window = 0; window < (evidence ? MAX_OTEL_WINDOWS : 1); window++) {
+    const pending = await snapshotPendingBytes(sessionId, stream, evidence ? MAX_SNAPSHOT_BYTES : undefined);
+    if (!pending) return last;
 
-  let bytes = pending.bytes;
-  if (evidence) {
-    // Send only the structurally verified prefix, byte for byte (I1); hold the rest with its reason.
-    const proof = proveRange(bytes, { sessionId, project: evidence.record.project || undefined, signal: stream });
-    if ((await noteProof(sessionId, stream, proof.verified, bytes.length, proof.hold)) === 'lost') return 'idle';
-    bytes = bytes.subarray(0, proof.verified);
-    if (bytes.length === 0) return 'idle';
-  }
+    let bytes = pending.bytes;
+    if (evidence) {
+      // Send only the structurally verified prefix, byte for byte (I1); hold the rest with its reason.
+      const proof = proveRange(bytes, { sessionId, project: evidence.record.project || undefined, signal: stream, more: pending.more });
+      const covered = proof.windowCut ? proof.verified : bytes.length;
+      if ((await noteProof(sessionId, stream, proof.verified, covered, proof.hold)) === 'lost') return last;
+      bytes = bytes.subarray(0, proof.verified);
+      if (bytes.length === 0) return last;
+    }
 
-  const result = await send({
-    sessionId, stream, url: `${baseUrl}${OTEL_ENDPOINTS[stream]}`, body: bytes,
-    contentType: 'application/x-protobuf', credentials, project: pending.project,
-    range: { cursor: pending.cursor, end: pending.cursor + bytes.length, filtered: false },
-    evidence,
-  });
-  if (!acknowledged(result)) {
-    return result;
-  }
+    const result = await send({
+      sessionId, stream, url: `${baseUrl}${OTEL_ENDPOINTS[stream]}`, body: bytes,
+      contentType: 'application/x-protobuf', credentials, project: pending.project,
+      range: { cursor: pending.cursor, end: pending.cursor + bytes.length, filtered: false },
+      evidence,
+    });
+    if (!acknowledged(result)) return result;
 
-  await acknowledge(sessionId, stream, pending.cursor + bytes.length, bytes.length, result);
-  return result;
+    await acknowledge(sessionId, stream, pending.cursor + bytes.length, bytes.length, result);
+    last = result;
+    if (!pending.more) break;
+  }
+  return last;
 }
 
 /** Forward masked-JSON OTEL records: one complete application/json POST per NDJSON line. */
@@ -516,14 +521,18 @@ export async function forwardSession(
   sessionId: string,
   hooksOnly: boolean,
   credentials: SSOCredentials | JWTCredentials,
-  classification?: ClassResult
+  classification?: ClassResult,
+  resolved?: AnalyticsEndpoint
 ): Promise<void> {
-  const { baseUrl, profile } = await readDaemonState();
+  // Resolved once per pass (the tick passes its own); a mismatching destination sends nothing.
+  const endpoint = resolved ?? (await resolveAnalyticsEndpoint(credentials));
+  if (!endpoint) return;
+  const { baseUrl } = endpoint;
 
   const status = await withSessionLock(sessionId, () => readStatus(sessionId));
   let evidence: EvidenceContext | undefined;
   if (status?.sendMode === 'evidence') {
-    const ctx = await evidenceContext(sessionId, baseUrl, credentials, profile, classification);
+    const ctx = await evidenceContext(sessionId, baseUrl, credentials, endpoint, classification);
     if (!ctx) {
       logger.debug('[otlp-forwarder] evidence record unavailable, nothing sent', ...sanitizeLogArgs({ sessionId }));
       return;

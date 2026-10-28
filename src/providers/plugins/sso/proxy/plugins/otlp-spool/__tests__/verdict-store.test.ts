@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readdirSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { recordVerdict, readVerdict, replaceVerdict, forwardDecisionWithoutPolicy } from '../verdict-store.js';
+import { readVerdictState, recordVerdict, readVerdict, replaceVerdict, forwardDecisionWithoutPolicy } from '../verdict-store.js';
 import { createOrRead, recordKey, sweepRecords, evidenceDir } from '@/agents/core/evidence/record-store.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 
@@ -34,6 +34,20 @@ describe('verdict-store', () => {
     expect((await readVerdict(k))?.class).toBe('personal');
     expect(await replaceVerdict(k, corp, true)).toBe(true);
     expect((await readVerdict(k))?.class).toBe('corporate');
+  });
+
+  it('IR-CLI002: missing, corrupt and unreadable are distinct states (only ENOENT is none)', async () => {
+    const k = 'k'.repeat(64);
+    expect(await readVerdictState(k)).toEqual({ state: 'none' });
+    mkdirSync(evidenceDir(), { recursive: true });
+    writeFileSync(join(evidenceDir(), `${k}.verdict.json`), '{bad');
+    expect(await readVerdictState(k)).toEqual({ state: 'unreadable' });
+    const d = 'd'.repeat(64);
+    mkdirSync(join(evidenceDir(), `${d}.verdict.json`)); // EISDIR
+    expect(await readVerdictState(d)).toEqual({ state: 'unreadable' });
+    // A determinate Personal repairs a corrupt file; it is then sticky.
+    expect((await recordVerdict(k, personal))?.class).toBe('personal');
+    expect(await readVerdictState(k)).toMatchObject({ state: 'ok' });
   });
 
   it('corrupt verdict file reads as null', async () => {

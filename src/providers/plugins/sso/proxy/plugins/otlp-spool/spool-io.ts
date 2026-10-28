@@ -175,6 +175,21 @@ export async function recordLossLocked(
   return bytes;
 }
 
+/**
+ * A hook that could not stamp dropped `events` events of this session (no durable record, so nothing
+ * was spooled): make it visible as `lastLoss` instead of a warning in a hook process nobody reads.
+ * Only the stamp-failure reasons the status can name; anything else is `stamp_invalid`.
+ */
+export async function recordStampLoss(sessionId: string, reason: string, events: number, now: number = Date.now()): Promise<void> {
+  const named = reason === 'evidence_capacity' || reason === 'session_id_absent' ? reason : 'stamp_invalid';
+  await withSessionLock(sessionId, async () => {
+    const status = (await readStatus(sessionId)) ?? createStatus();
+    status.lastLoss = { reason: named, at: now, bytes: 0 };
+    await writeStatus(sessionId, status);
+    logger.warn('[otlp-spool] hook events dropped: evidence record unavailable', ...sanitizeLogArgs({ sessionId, reason, events }));
+  });
+}
+
 /** Any pending hook line carries the `evidence_v: 1` envelope marker. Caller holds the lock. */
 export async function pendingHooksMarkedLocked(sessionId: string, status: SessionStatus): Promise<boolean> {
   const pending = await readRange(sessionId, 'hooks', status.cursors.hooks);
@@ -417,6 +432,8 @@ export interface PendingBytes {
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
   cursor: number;
   bytes: Buffer;
+  /** A `limit` was given and the window is full: bytes may follow it. */
+  more: boolean;
 }
 
 /**
@@ -424,11 +441,13 @@ export interface PendingBytes {
  *
  * The lock guarantees the snapshot never contains a partially written append,
  * so the protobuf payload handed to the backend is always whole.
+ * `limit` bounds the allocation to that many bytes (a window; the caller cuts it at an entry boundary).
  * Must NOT be called while already holding the session lock.
  */
 export async function snapshotPendingBytes(
   sessionId: string,
-  stream: SpoolStream
+  stream: SpoolStream,
+  limit?: number
 ): Promise<PendingBytes | null> {
   return withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -436,8 +455,8 @@ export async function snapshotPendingBytes(
     const gate = await gateStreamLocked(sessionId, status, stream);
     if (!gate) return null;
     const cursor = status.cursors[stream];
-    const bytes = await readRange(sessionId, stream, cursor);
-    return bytes ? { project: gate.project, cursor, bytes } : null;
+    const bytes = await readRange(sessionId, stream, cursor, limit === undefined ? undefined : cursor + limit);
+    return bytes ? { project: gate.project, cursor, bytes, more: limit !== undefined && bytes.length >= limit } : null;
   });
 }
 
