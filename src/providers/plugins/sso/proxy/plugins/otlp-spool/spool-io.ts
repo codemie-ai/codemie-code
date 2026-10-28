@@ -3,17 +3,24 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { createStatus, readStatus, writeStatus, type SessionStatus } from './session-status.js';
-import { hooksOnlyForwardAllowed } from './spool-config.js';
+import { createStatus, readStatus, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
   decideProject,
   evaluateProjectPolicy,
+  holdOrLose,
   hookEventProjectNames,
   hookRecordIsProject,
+  type HoldReason,
+  type LossReason,
   type SessionPolicy,
   type StreamPolicy,
 } from './session-project.js';
+import { readOrCreateEpoch } from './epoch.js';
+import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
+import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
+import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
 
 const NEWLINE = 0x0a;
 
@@ -152,6 +159,96 @@ export async function discardBacklogLocked(
 }
 
 /**
+ * A hold that reached its retention bound: drop the held backlog of `streams` with a named, visible
+ * loss reason (persisted as `lastLoss`, logged). Never silent. Mutates `status` only; caller writes.
+ */
+export async function recordLossLocked(
+  sessionId: string,
+  status: SessionStatus,
+  reason: LossReason,
+  streams: readonly SpoolStream[] = SPOOL_STREAMS,
+  now: number = Date.now()
+): Promise<number> {
+  const { bytes } = await discardBacklogLocked(sessionId, status, streams);
+  status.lastLoss = { reason, at: now, bytes };
+  logger.warn('[otlp-spool] held analytics dropped at the retention bound', ...sanitizeLogArgs({ sessionId, reason, bytes }));
+  return bytes;
+}
+
+/** Any pending hook line carries the `evidence_v: 1` envelope marker. Caller holds the lock. */
+export async function pendingHooksMarkedLocked(sessionId: string, status: SessionStatus): Promise<boolean> {
+  const pending = await readRange(sessionId, 'hooks', status.cursors.hooks);
+  if (!pending) return false;
+  return pending
+    .toString('utf-8')
+    .split('\n')
+    .some((line) => {
+      try {
+        return (JSON.parse(line) as { evidence_v?: unknown }).evidence_v === 1;
+      } catch {
+        return false;
+      }
+    });
+}
+
+/**
+ * Head-of-line hold of one stream (a proof hold past the verified prefix, Task 13). Persists the
+ * first-hold time; `null` clears it. Past `heldRetentionMs` the stream's held backlog is dropped
+ * with the hold's reason (recorded loss). Takes the session lock: never call while holding it.
+ */
+export async function noteStreamHold(
+  sessionId: string,
+  stream: SpoolStream,
+  reason: HoldReason | null,
+  now: number = Date.now()
+): Promise<'held' | 'lost' | 'clear'> {
+  return withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return 'clear';
+    const previous = status.holds?.[stream];
+    if (reason === null) {
+      if (!previous) return 'clear';
+      clearHold(status, stream);
+      await writeStatus(sessionId, status);
+      return 'clear';
+    }
+    const decision = holdOrLose(reason, previous?.since, now, heldRetentionMs());
+    if (decision.action === 'lose') {
+      clearHold(status, stream);
+      await recordLossLocked(sessionId, status, decision.reason, [stream], now);
+    } else {
+      status.holds = { ...status.holds, [stream]: { reason, since: previous?.since ?? now } };
+    }
+    await writeStatus(sessionId, status);
+    return decision.action === 'lose' ? 'lost' : 'held';
+  });
+}
+
+/** Remove one hold; drops the empty `holds` object. */
+export function clearHold(status: SessionStatus, scope: HoldScope): void {
+  if (!status.holds?.[scope]) return;
+  delete status.holds[scope];
+  if (Object.keys(status.holds).length === 0) delete status.holds;
+}
+
+/**
+ * The forwarder's own evidence identity (spec item 7: "found by the forwarder's own key"): the
+ * daemon credentials' API URL and signed-in email, the same pair the hook stamps with
+ * (`resolveHookCredentials` mirrors the daemon's credential choice). `null` = no key can be built.
+ */
+export function forwarderIdentity(
+  credentials: SSOCredentials | JWTCredentials
+): { api_identity: string; owner_hash: string } | null {
+  const email = resolveEmailFromCredentials(credentials);
+  if (!email) return null;
+  try {
+    return { api_identity: apiIdentity(credentials.apiUrl), owner_hash: ownerHash(email) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
  * it demands and persists the status once when anything changed.
@@ -261,6 +358,8 @@ export async function appendSpool(
   projectNames?: string[]
 ): Promise<void> {
   await withSessionLock(sessionId, async () => {
+    // The epoch exists before this version writes any session status: a new session is never pre-epoch.
+    await readOrCreateEpoch();
     await mkdir(spoolRoot(), { recursive: true });
 
     const path = streamFile(sessionId, stream);

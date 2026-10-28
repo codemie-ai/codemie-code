@@ -24,13 +24,16 @@ import {
   applyProjectDecision,
   decideProject,
   evaluateProjectPolicy,
+  evaluateSessionEvidence,
   hookEventProjectNames,
   hookRecordIsProject,
   isSendableProjectName,
   parseProjectSeal,
   projectGate,
+  type SessionEvidenceInput,
 } from '../session-project.js';
 import { createStatus, type SessionStatus } from '../session-status.js';
+import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 
 const withProject = (project: string): SessionStatus => ({ ...createStatus(), project });
 
@@ -310,5 +313,128 @@ describe('evaluateProjectPolicy', () => {
     });
     expect(evaluateProjectPolicy(sealed(50), input)).toMatchObject({ hooks: { kind: 'discard' }, reason: 'seal-flushed', sealed: false });
     expect(evaluateProjectPolicy(sealed(5, 50), { ...input, hooksSize: 5 })).toMatchObject({ reason: 'seal-flushed' });
+  });
+
+  it('a session hold holds every stream, even for a bound or sealed session', () => {
+    const hold = { session: { reason: 'stamp_pending' as const, since: 1 } };
+    for (const status of [{ ...withProject('A'), holds: hold }, { ...sealed(), holds: hold }, { ...createStatus(), holds: hold }]) {
+      expect(evaluateProjectPolicy(status, input)).toMatchObject({ state: 'held', hooks: { kind: 'hold' }, otel: { kind: 'hold' }, sealed: false });
+    }
+  });
+
+  it('a stream hold alone does not block the session (the verified prefix may still go out)', () => {
+    const status = { ...withProject('A'), holds: { logs: { reason: 'session_mismatch' as const, since: 1 } } };
+    expect(evaluateProjectPolicy(status, input)).toMatchObject({ state: 'bound', otel: { kind: 'send', project: 'A' } });
+  });
+
+  it('AC8: evidence mode without a project sends without a project and discards nothing; legacy unbound still discards', () => {
+    const evidence: SessionStatus = { ...createStatus(), sendMode: 'evidence' };
+    for (const hooksSize of [0, 80]) {
+      expect(evaluateProjectPolicy(evidence, { ...input, hooksSize })).toMatchObject({
+        state: 'unbound',
+        hooks: { kind: 'send', project: '' },
+        otel: { kind: 'send', project: '' },
+      });
+    }
+    expect(evaluateProjectPolicy({ ...createStatus(), sendMode: 'legacy' }, input)).toMatchObject({ hooks: { kind: 'discard' } });
+  });
+});
+
+describe('evaluateSessionEvidence', () => {
+  const record = { schema: 1, session_id: 's', project: 'A' } as unknown as EvidenceRecord;
+  const valid = { kind: 'existing', record } as const;
+  const base: SessionEvidenceInput = {
+    hasHooks: false,
+    marked: false,
+    record: undefined,
+    capability: 'evidence',
+    stickyPersonal: false,
+    preEpoch: false,
+    now: 10_000,
+    retentionMs: 1_000,
+  };
+  const run = (over: Partial<SessionEvidenceInput>) => evaluateSessionEvidence({ ...base, ...over });
+
+  it('AC17: a new OTLP-only session without a record on an evidence-capable backend is held stamp_pending', () => {
+    expect(run({})).toEqual({ action: 'hold', reason: 'stamp_pending' });
+  });
+
+  it('AC17: once a valid record appears it is sent with evidence', () => {
+    expect(run({ record: valid })).toEqual({ action: 'send_evidence', record });
+    expect(run({ record: { kind: 'created', record }, hasHooks: true, marked: true })).toMatchObject({ action: 'send_evidence' });
+  });
+
+  it('unknown capability is treated as possibly evidence-capable: held, never legacy-forwarded', () => {
+    expect(run({ capability: 'unknown' })).toEqual({ action: 'hold', reason: 'stamp_pending' });
+  });
+
+  it('a pre-epoch OTLP-only session stays legacy', () => {
+    expect(run({ preEpoch: true })).toEqual({ action: 'send_legacy', reason: 'unstamped_legacy' });
+  });
+
+  it('unmarked hooks without a record follow the legacy path (unstamped_legacy)', () => {
+    expect(run({ hasHooks: true })).toEqual({ action: 'send_legacy', reason: 'unstamped_legacy' });
+  });
+
+  it('marked records without a valid record are held stamp_invalid, whatever the capability (I2)', () => {
+    for (const capability of ['evidence', 'legacy', 'unknown'] as const) {
+      expect(run({ hasHooks: true, marked: true, capability })).toEqual({ action: 'hold', reason: 'stamp_invalid' });
+    }
+    for (const kind of ['stamp_invalid', 'unavailable'] as const) {
+      expect(run({ hasHooks: true, record: { kind, reason: 'x' } })).toEqual({ action: 'hold', reason: 'stamp_invalid' });
+    }
+  });
+
+  it('legacy capability: legacy send, except a sticky Personal session, which is held personal_not_forwardable', () => {
+    expect(run({ capability: 'legacy', record: valid })).toEqual({ action: 'send_legacy', reason: 'unstamped_legacy' });
+    expect(run({ capability: 'legacy' })).toEqual({ action: 'send_legacy', reason: 'unstamped_legacy' });
+    expect(run({ capability: 'legacy', record: valid, stickyPersonal: true })).toEqual({ action: 'hold', reason: 'personal_not_forwardable' });
+  });
+
+  it('a hold past the retention bound is a recorded loss: stamp_pending becomes no_evidence_timeout, others keep their reason', () => {
+    expect(run({ heldSince: 9_001 })).toEqual({ action: 'hold', reason: 'stamp_pending' });
+    expect(run({ heldSince: 9_000 })).toEqual({ action: 'lose', reason: 'no_evidence_timeout' });
+    expect(run({ heldSince: 1, hasHooks: true, marked: true })).toEqual({ action: 'lose', reason: 'stamp_invalid' });
+  });
+});
+
+describe('hold and loss persistence', () => {
+  beforeEach(async () => {
+    state.root = await mkdtemp(join(tmpdir(), 'otlp-holds-'));
+  });
+  afterEach(async () => {
+    await rm(state.root, { recursive: true, force: true });
+  });
+
+  it('keeps holds (first-hold timestamp), the last loss, the send mode and the marker across a restart', async () => {
+    const { readStatus, writeStatus, advanceCursor } = await import('../session-status.js');
+    const kept = {
+      holds: { session: { reason: 'stamp_pending' as const, since: 123 }, logs: { reason: 'otlp_unparseable' as const, since: 7 } },
+      lastLoss: { reason: 'no_evidence_timeout' as const, at: 456, bytes: 9 },
+      sendMode: 'evidence' as const,
+      evidenceMarked: true as const,
+    };
+    await writeStatus('s1', { ...createStatus(), ...kept });
+    await advanceCursor('s1', 'hooks', 3);
+    expect(await readStatus('s1')).toMatchObject(kept);
+  });
+
+  it('drops malformed hold, loss and mode fields', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(
+      join(state.root, 's2.status'),
+      JSON.stringify({
+        cursors: {},
+        holds: { session: { reason: 'nope', since: 1 }, logs: { reason: 'stamp_pending', since: -1 }, bogus: { reason: 'stamp_pending', since: 1 } },
+        lastLoss: { reason: 'stamp_pending', at: 1, bytes: 1 },
+        sendMode: 'other',
+        evidenceMarked: 'yes',
+      })
+    );
+    const status = await readStatus('s2');
+    expect(status?.holds).toBeUndefined();
+    expect(status?.lastLoss).toBeUndefined();
+    expect(status?.sendMode).toBeUndefined();
+    expect(status?.evidenceMarked).toBeUndefined();
   });
 });

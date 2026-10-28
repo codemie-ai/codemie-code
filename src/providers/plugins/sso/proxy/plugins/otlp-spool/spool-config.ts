@@ -40,6 +40,15 @@ export function evidenceRecordMaxFiles(): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 20_000;
 }
 
+/**
+ * Retention bound for HELD spool data (stamp_pending, stamp_invalid, head-of-line proof holds, ...),
+ * measured from the first-hold time persisted in the session status. Past it the held backlog is
+ * dropped with its named loss reason. Independent of the sweep timers, which only remove drained data.
+ */
+export function heldRetentionMs(): number {
+  return envMinutesMs('OTLP_HELD_RETENTION_MINUTES', 24 * 60);
+}
+
 /** How often pending spool bytes are forwarded. */
 export function sendIntervalMs(): number {
   return envMinutesMs('OTLP_SEND_INTERVAL_MINUTES', 2);

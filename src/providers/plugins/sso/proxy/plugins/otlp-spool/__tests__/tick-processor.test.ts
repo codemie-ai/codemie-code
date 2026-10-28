@@ -33,6 +33,7 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
 });
 
 vi.mock('../forwarder.js', () => ({ forwardSession: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: vi.fn().mockResolvedValue(null) }));
 vi.mock('../auth-state.js', () => ({ areCredentialsStale: vi.fn().mockReturnValue(false) }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -47,6 +48,11 @@ async function seed(files: Record<string, string>): Promise<void> {
   }
 }
 
+/** Pin the one-time epoch: an epoch in the future makes every seeded session pre-upgrade (legacy). */
+async function epochAt(created: number): Promise<void> {
+  await writeFile(join(state.root, 'epoch.json'), JSON.stringify({ v: 1, created }));
+}
+
 async function readStatusRaw(): Promise<{ cursors: Record<string, number>; waitTicks: number }> {
   const { readStatus } = await import('../session-status.js');
   const status = await readStatus(SESSION);
@@ -58,6 +64,7 @@ describe('processSessionTick (OTEL-only invariant)', () => {
   beforeEach(async () => {
     state.root = await mkdtemp(join(tmpdir(), 'otlp-tick-'));
     await mkdir(state.root, { recursive: true });
+    await epochAt(Date.now() + 3_600_000); // these sessions predate the upgrade: legacy OTEL-only path
     delete process.env.OTLP_SEND_MAX_ATTEMPTS;
   });
 
@@ -164,6 +171,7 @@ describe('processSessionTick (project gate)', () => {
 
   beforeEach(async () => {
     state.root = await mkdtemp(join(tmpdir(), 'otlp-tick-gate-'));
+    await epochAt(Date.now() + 3_600_000); // pre-upgrade sessions: today's project-gate behaviour
     delete process.env.OTLP_SEND_MAX_ATTEMPTS;
     process.env.OTLP_ALLOW_HOOKS_ONLY_FORWARD = 'false';
     vi.stubGlobal('fetch', fetchMock);
@@ -351,5 +359,198 @@ describe('processSessionTick (project gate)', () => {
 
       expect(viaSnapshots).toEqual(viaTick);
     });
+  });
+});
+
+describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () => {
+  const API = 'https://analytics.example.com/code-assistant-api';
+  const EMAIL = 'dev@example.com';
+  const payload = Buffer.from(JSON.stringify({ email: EMAIL })).toString('base64url');
+  // Fabricated token: header.payload.signature with an email claim only.
+  const evidenceCreds = { cookies: { codemie_access_token: `e30.${payload}.sig` }, apiUrl: API } as unknown as SSOCredentials;
+  const hookEnvelope = (project: string, mark: boolean): string =>
+    JSON.stringify({
+      agentName: 'claude-code-otlp',
+      ...(mark ? { evidence_v: 1 } : {}),
+      hookEvent: JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: project }),
+    }) + '\n';
+  let home = '';
+  let savedHome: string | undefined;
+
+  beforeEach(async () => {
+    state.root = await mkdtemp(join(tmpdir(), 'otlp-tick-ev-'));
+    home = await mkdtemp(join(tmpdir(), 'otlp-tick-ev-home-'));
+    savedHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    delete process.env.OTLP_SEND_MAX_ATTEMPTS;
+    delete process.env.OTLP_HELD_RETENTION_MINUTES;
+    await epochAt(Date.now() - 60_000); // upgraded a minute ago: every seeded session is new
+  });
+
+  afterEach(async () => {
+    if (savedHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = savedHome;
+    vi.clearAllMocks();
+    await rm(state.root, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function identity(): Promise<{ key: string; api_identity: string; owner_hash: string }> {
+    const { apiIdentity, ownerHash } = await import('@/agents/core/evidence/api-identity.js');
+    const { recordKey } = await import('@/agents/core/evidence/record-store.js');
+    const api_identity = apiIdentity(API);
+    const owner_hash = ownerHash(EMAIL);
+    return { key: recordKey(api_identity, owner_hash, SESSION), api_identity, owner_hash };
+  }
+
+  async function evidenceCapable(): Promise<void> {
+    const { refreshPolicy } = await import('../policy-cache.js');
+    const { api_identity, owner_hash } = await identity();
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ organizations: [], version: 'v1' }), { status: 200 })) as unknown as typeof fetch;
+    const policy = await refreshPolicy({ api_identity, owner_hash }, { baseUrl: API, headers: { Cookie: 'fabricated' }, fetchImpl });
+    expect(policy.capability).toBe('evidence');
+  }
+
+  async function stamp(project?: string): Promise<void> {
+    const { createOrRead } = await import('@/agents/core/evidence/record-store.js');
+    const { key, api_identity, owner_hash } = await identity();
+    const result = await createOrRead(key, {
+      session_id: SESSION,
+      launch_mode: 'native',
+      routed_via_codemie: false,
+      routing_proof: 'proven',
+      project,
+      project_source: project ? 'profile' : 'none',
+      api_identity,
+      owner_hash,
+    });
+    expect(result.kind).toBe('created');
+  }
+
+  async function tick(): Promise<void> {
+    const { processSessionTick } = await import('../tick-processor.js');
+    await processSessionTick(SESSION, evidenceCreds);
+  }
+
+  async function current(): Promise<import('../session-status.js').SessionStatus> {
+    const { readStatus } = await import('../session-status.js');
+    const status = await readStatus(SESSION);
+    if (!status) throw new Error('status missing');
+    return status;
+  }
+
+  it('AC17: a new OTLP-only session without a record sends nothing (stamp_pending), then sends with evidence once the record appears', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    await evidenceCapable();
+    await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
+    await writeStatus(SESSION, createStatus());
+
+    await tick();
+    expect(forwardSession).not.toHaveBeenCalled();
+    const held = await current();
+    expect(held.holds?.session?.reason).toBe('stamp_pending');
+    expect(held.cursors.logs).toBe(0);
+    const since = held.holds?.session?.since;
+
+    await tick(); // still pending: the first-hold time is kept
+    expect((await current()).holds?.session?.since).toBe(since);
+    expect(forwardSession).not.toHaveBeenCalled();
+
+    await stamp('A');
+    await tick();
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+    const sent = await current();
+    expect(sent).toMatchObject({ sendMode: 'evidence', project: 'A' });
+    expect(sent.holds).toBeUndefined();
+  });
+
+  it('unknown capability (no policy cache) holds a new OTLP-only session stamp_pending too', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
+    await writeStatus(SESSION, createStatus());
+
+    await tick();
+    expect((await current()).holds?.session?.reason).toBe('stamp_pending');
+    expect(forwardSession).not.toHaveBeenCalled();
+  });
+
+  it('a pre-epoch OTLP-only session stays on the legacy wait path', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    await epochAt(Date.now() + 3_600_000);
+    await evidenceCapable();
+    await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
+    await writeStatus(SESSION, createStatus());
+
+    await tick();
+    const status = await current();
+    expect(status.holds).toBeUndefined();
+    expect(status.sendMode).toBe('legacy');
+    expect(status.waitTicks).toBe(1);
+  });
+
+  it('marked hooks without a valid record are held stamp_invalid, never sent evidence-free', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    await evidenceCapable();
+    await seed({ [`${SESSION}.hooks.ndjson`]: hookEnvelope('A', true), [`${SESSION}.otel_logs.bin`]: 'abc' });
+    await writeStatus(SESSION, { ...createStatus(), project: 'A', projectScanned: true });
+
+    await tick();
+    const status = await current();
+    expect(status.holds?.session?.reason).toBe('stamp_invalid');
+    expect(status.evidenceMarked).toBe(true);
+    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect(forwardSession).not.toHaveBeenCalled();
+  });
+
+  it('unmarked hooks without a record follow the legacy path (unstamped_legacy)', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    await evidenceCapable();
+    await seed({ [`${SESSION}.hooks.ndjson`]: hookEnvelope('A', false), [`${SESSION}.otel_logs.bin`]: 'abc' });
+    await writeStatus(SESSION, { ...createStatus(), project: 'A', projectScanned: true });
+
+    await tick();
+    expect((await current()).sendMode).toBe('legacy');
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+  });
+
+  it('past heldRetentionMs the held range is dropped with the recorded loss reason no_evidence_timeout', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    const { logger } = await import('@/utils/logger.js');
+    await evidenceCapable();
+    await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde', [`${SESSION}.otel_traces.bin`]: 'xyz' });
+    await writeStatus(SESSION, {
+      ...createStatus(),
+      holds: { session: { reason: 'stamp_pending', since: Date.now() - 25 * 3_600_000 } },
+    });
+
+    await tick();
+    const status = await current();
+    expect(status.cursors).toEqual({ hooks: 0, logs: 5, metrics: 0, traces: 3 });
+    expect(status.lastLoss).toMatchObject({ reason: 'no_evidence_timeout', bytes: 8 });
+    expect(status.holds).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalled();
+    expect(forwardSession).not.toHaveBeenCalled();
+  });
+
+  it('AC8: a stamped session without a project is forwarded and nothing is discarded locally', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    await evidenceCapable();
+    await stamp(undefined);
+    await seed({ [`${SESSION}.hooks.ndjson`]: hookEnvelope('', true), [`${SESSION}.otel_logs.bin`]: 'abc' });
+    await writeStatus(SESSION, { ...createStatus(), projectScanned: true });
+
+    await tick();
+    expect(forwardSession).toHaveBeenCalledWith(SESSION, false, evidenceCreds);
+    const status = await current();
+    expect(status.sendMode).toBe('evidence');
+    expect(status.project).toBeUndefined();
+    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
   });
 });

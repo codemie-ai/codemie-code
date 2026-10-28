@@ -1,7 +1,16 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { SPOOL_STREAMS, spoolRoot, statusFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { isSendableProjectName, MAX_CONFLICT_NAMES, parseProjectSeal } from './session-project.js';
+import {
+  HOLD_REASONS,
+  isSendableProjectName,
+  LOSS_REASONS,
+  MAX_CONFLICT_NAMES,
+  parseProjectSeal,
+  type Hold,
+  type HoldReason,
+  type LossReason,
+} from './session-project.js';
 
 /** Byte offsets that have been acknowledged by the backend, per stream. */
 export type SessionCursors = Record<SpoolStream, number>;
@@ -39,6 +48,40 @@ export interface SessionStatus {
   projectSeal?: ProjectSeal;
   /** The on-disk hooks were scanned for a project (legacy recovery) or there was nothing to scan. */
   projectScanned?: true;
+  /**
+   * Named holds. `session` blocks every stream (provenance: stamp_pending, stamp_invalid, ...); a
+   * stream hold tracks a head-of-line proof hold of that stream only. `since` survives restarts.
+   */
+  holds?: Partial<Record<HoldScope, Hold>>;
+  /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
+  lastLoss?: { reason: LossReason; at: number; bytes: number };
+  /** Provenance decided at the last tick: evidence request or today's legacy request. */
+  sendMode?: 'evidence' | 'legacy';
+  /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
+  evidenceMarked?: true;
+}
+
+export type HoldScope = 'session' | SpoolStream;
+const HOLD_SCOPES: readonly HoldScope[] = ['session', ...SPOOL_STREAMS];
+
+function parseHolds(raw: unknown): SessionStatus['holds'] {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const holds: Partial<Record<HoldScope, Hold>> = {};
+  for (const scope of HOLD_SCOPES) {
+    const hold = (raw as Record<string, unknown>)[scope] as Record<string, unknown> | undefined;
+    const since = toOffset(hold?.['since']);
+    if (since > 0 && (HOLD_REASONS as readonly unknown[]).includes(hold?.['reason'])) {
+      holds[scope] = { reason: hold!['reason'] as HoldReason, since };
+    }
+  }
+  return Object.keys(holds).length > 0 ? holds : undefined;
+}
+
+function parseLoss(raw: unknown): SessionStatus['lastLoss'] {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { reason, at, bytes } = raw as Record<string, unknown>;
+  if (!(LOSS_REASONS as readonly unknown[]).includes(reason) || toOffset(at) === 0) return undefined;
+  return { reason: reason as LossReason, at: toOffset(at), bytes: toOffset(bytes) };
 }
 
 export function createStatus(): SessionStatus {
@@ -87,6 +130,12 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (source['projectScanned'] === true) {
     status.projectScanned = true;
   }
+  const holds = parseHolds(source['holds']);
+  if (holds) status.holds = holds;
+  const loss = parseLoss(source['lastLoss']);
+  if (loss) status.lastLoss = loss;
+  if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
+  if (source['evidenceMarked'] === true) status.evidenceMarked = true;
 
   return status;
 }

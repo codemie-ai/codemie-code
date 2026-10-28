@@ -71,7 +71,8 @@ async function postToBackend(
   }
   headers['Content-Type'] = contentType;
   const projectValue = rawProjectHeader(project);
-  if (projectValue !== undefined) {
+  if (projectValue) {
+    // No project (AC8): no Project header at all, rather than an empty one.
     headers[PROJECT_HEADER] = projectValue;
   }
 

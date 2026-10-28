@@ -1,16 +1,90 @@
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
+import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { withSessionLock } from './session-lock.js';
-import { readStatus, writeStatus } from './session-status.js';
+import { readStatus, writeStatus, type SessionStatus } from './session-status.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
-import { hasPendingData, readSpoolState } from './spool-state.js';
-import { applyProjectPolicyLocked } from './spool-io.js';
+import { hasPendingData, hooksGroupPresent, readSpoolState, type SpoolState } from './spool-state.js';
+import {
+  applyProjectPolicyLocked,
+  clearHold,
+  forwarderIdentity,
+  pendingHooksMarkedLocked,
+  recordLossLocked,
+} from './spool-io.js';
 import { gateDecision } from './completeness-gate.js';
 import { forwardSession } from './forwarder.js';
 import { areCredentialsStale } from './auth-state.js';
+import { applyProjectDecision, decideProject, evaluateSessionEvidence, type SessionEvidenceDecision } from './session-project.js';
+import { getPolicyState } from './policy-cache.js';
+import { readVerdict } from './verdict-store.js';
+import { heldRetentionMs } from './spool-config.js';
+import { isPreEpoch, readOrCreateEpoch, sessionBirthMs } from './epoch.js';
 
 const currentlyForwarding = new Set<string>();
+
+async function daemonProfile(): Promise<string | undefined> {
+  const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
+  return (await readState())?.profile;
+}
+
+/**
+ * Gather the provenance inputs (marker, record at the forwarder's own key, capability, sticky
+ * verdict, epoch), decide with `evaluateSessionEvidence` and apply it to `status`: a hold keeps its
+ * first-hold time, a loss drops the backlog with its named reason, a send clears the session hold
+ * and records the mode (an evidence record also binds its project). Caller holds the lock; writes
+ * the status only when it changed.
+ */
+async function applySessionEvidenceLocked(
+  sessionId: string,
+  status: SessionStatus,
+  spool: SpoolState,
+  credentials: SSOCredentials | JWTCredentials,
+  now: number = Date.now()
+): Promise<SessionEvidenceDecision> {
+  const before = JSON.stringify(status);
+  if (!status.evidenceMarked && (await pendingHooksMarkedLocked(sessionId, status))) {
+    status.evidenceMarked = true;
+  }
+
+  const id = forwarderIdentity(credentials);
+  const key = id ? recordKey(id.api_identity, id.owner_hash, sessionId) : undefined;
+  const decision = evaluateSessionEvidence({
+    hasHooks: hooksGroupPresent(spool),
+    marked: status.evidenceMarked === true,
+    record: key ? await readRecord(key) : undefined,
+    capability: id ? (await getPolicyState({ ...id, profile: await daemonProfile() }, { now })).capability : 'unknown',
+    stickyPersonal: key ? (await readVerdict(key))?.class === 'personal' : false,
+    preEpoch: isPreEpoch(await sessionBirthMs(sessionId), await readOrCreateEpoch()),
+    heldSince: status.holds?.session?.since,
+    now,
+    retentionMs: heldRetentionMs(),
+  });
+
+  if (decision.action === 'hold') {
+    const since = status.holds?.session?.since ?? now;
+    if (status.holds?.session?.reason !== decision.reason) {
+      logger.debug('[otlp-tick] session held', ...sanitizeLogArgs({ sessionId, reason: decision.reason }));
+    }
+    status.holds = { ...status.holds, session: { reason: decision.reason, since } };
+  } else {
+    clearHold(status, 'session');
+    if (decision.action === 'lose') {
+      await recordLossLocked(sessionId, status, decision.reason, undefined, now);
+    } else {
+      status.sendMode = decision.action === 'send_evidence' ? 'evidence' : 'legacy';
+      if (decision.action === 'send_evidence' && decision.record.project) {
+        applyProjectDecision(status, decideProject([decision.record.project], status));
+      }
+    }
+  }
+
+  if (JSON.stringify(status) !== before) {
+    await writeStatus(sessionId, status);
+  }
+  return decision;
+}
 
 /**
  * Process one tick for a single session: evaluate the completeness gate and,
@@ -39,6 +113,15 @@ export async function processSessionTick(
 
     const spool = await readSpoolState(sessionId, status);
 
+    // Provenance first (spec item 7): a hold or a recorded loss is applied before any send, and the
+    // session hold it persists also gates the snapshots and `isSendAllowed`.
+    let evidenceSend = false;
+    if (hasPendingData(spool)) {
+      const evidence = await applySessionEvidenceLocked(sessionId, status, spool, credentials);
+      if (evidence.action === 'hold' || evidence.action === 'lose') return;
+      evidenceSend = evidence.action === 'send_evidence';
+    }
+
     // Project policy, before the completeness gate and the same one the snapshots apply: a
     // conflicted or unbound session sends nothing, so a hooks-only session that would never reach
     // the forwarder snapshots is discarded here. The one exception is the hooks prefix sealed while
@@ -50,11 +133,17 @@ export async function processSessionTick(
       hooksOnly = true;
       return;
     }
-    if (policy.state !== 'bound' && policy.state !== 'undecided') {
+    // Sendable: bound, undecided (completeness gate decides) or an evidence session without a project (AC8).
+    if (policy.state !== 'undecided' && policy.hooks.kind !== 'send') {
       return;
     }
 
-    const decision = gateDecision(spool, status);
+    let decision = gateDecision(spool, status);
+    // A valid evidence record proves the project is tracked (the hook stamps only tracked projects),
+    // which is what the OTEL-only invariant guards: such a session no longer waits to be skipped.
+    if (evidenceSend && !hooksGroupPresent(spool) && decision !== 'noop') {
+      decision = 'send';
+    }
     const pending = hasPendingData(spool);
 
     logger.debug(

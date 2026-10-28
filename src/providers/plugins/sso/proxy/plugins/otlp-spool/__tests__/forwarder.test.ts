@@ -250,6 +250,15 @@ describe('forwardSession (project header)', () => {
     expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('a@b.com');
   });
 
+  it('AC8: sends no project header when the session has no project', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: '' });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('X-CodeMie-Project');
+  });
+
   it('omits the project header for a non-Latin-1 project name', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'клиенты/проект' });
     const { forwardSession } = await import('../forwarder.js');
