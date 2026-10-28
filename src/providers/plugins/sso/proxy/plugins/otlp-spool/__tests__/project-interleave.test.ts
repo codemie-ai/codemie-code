@@ -5,7 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -86,6 +86,32 @@ describe('project gate — ingest vs forwarding', () => {
     await appendSpool(SESSION, 'logs', Buffer.from('L'));
     await appendSpool(SESSION, 'metrics', Buffer.from('MM'));
     await appendSpool(SESSION, 'traces', Buffer.from('TTT'));
+  }
+
+  /**
+   * What a bound session's switch to an unsendable name leaves behind: the conflict and a seal ending at
+   * the current size of the hooks file, then the conflicting hook line. The returned function takes the
+   * session lock before its first await, so a caller inside a hook queues it at that exact point.
+   */
+  async function conflictSeeder(): Promise<(line: string) => Promise<void>> {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus, writeStatus, createStatus } = await import('../session-status.js');
+    const { withSessionLock } = await import('../session-lock.js');
+    const { streamFile } = await import('../spool-paths.js');
+    return async (line: string): Promise<void> => {
+      await withSessionLock(SESSION, async () => {
+        const status = (await readStatus(SESSION)) ?? createStatus();
+        const hooksEnd = await stat(streamFile(SESSION, 'hooks')).then(
+          (info) => info.size,
+          () => 0
+        );
+        status.projectScanned = true;
+        status.projectConflict = ['B\u00e9', 'A'];
+        if (status.project) status.projectSeal = { v: 1, project: status.project, hooksEnd };
+        await writeStatus(SESSION, status);
+      });
+      await appendSpool(SESSION, 'hooks', line, ['B\u00e9']);
+    };
   }
 
   async function cursorsAtEof(hooksSize: number): Promise<void> {
@@ -178,10 +204,10 @@ describe('project gate — ingest vs forwarding', () => {
     const aEvent = { type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' };
 
     it('sends the A hooks under header A and nothing else after a switch to B', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       const { forwardSession } = await import('../forwarder.js');
       await seedBoundA(); // A hook + OTLP chunks that arrived before the switch
-      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+      await seedConflict(hookLine('B\u00e9'));
 
       await forwardSession(SESSION, true, credentials as never); // what the tick does for a sealed session
       await forwardSession(SESSION, true, credentials as never);
@@ -195,11 +221,11 @@ describe('project gate — ingest vs forwarding', () => {
     });
 
     it('a failed send leaves the cursor, and the retry sends the same bytes', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       const { forwardSession } = await import('../forwarder.js');
       const { readStatus } = await import('../session-status.js');
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+      await seedConflict(hookLine('B\u00e9'));
       fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
 
       await forwardSession(SESSION, true, credentials as never);
@@ -232,14 +258,14 @@ describe('project gate — ingest vs forwarding', () => {
       }
 
       it('between the snapshot and the pre-send check: nothing is posted, the cursor stays, the next pass sends only A', async () => {
-        const { appendSpool } = await import('../spool-io.js');
+        const seedConflict = await conflictSeeder();
         const { forwardSession } = await import('../forwarder.js');
         const { readStatus } = await import('../session-status.js');
         await seedBoundWithBlank();
         let conflictAppend: Promise<void> | undefined;
         authHook.onStaleCheck = (): void => {
           authHook.onStaleCheck = undefined;
-          conflictAppend = appendSpool(SESSION, 'hooks', bLine, ['B\u00e9']); // queued on the lock before the check
+          conflictAppend = seedConflict(bLine); // queued on the lock before the check
         };
 
         await forwardSession(SESSION, true, credentials as never);
@@ -256,12 +282,12 @@ describe('project gate — ingest vs forwarding', () => {
       });
 
       it('on the 401 retry: the retry built from the same bound snapshot is refused, then only A is sent', async () => {
-        const { appendSpool } = await import('../spool-io.js');
+        const seedConflict = await conflictSeeder();
         const { forwardSession } = await import('../forwarder.js');
         await seedBoundWithBlank();
         fetchMock.mockReset();
         fetchMock.mockImplementationOnce(async () => {
-          await appendSpool(SESSION, 'hooks', bLine, ['B\u00e9']); // conflict lands while the first attempt is on the wire
+          await seedConflict(bLine); // conflict lands while the first attempt is on the wire
           return { ok: false, status: 401 };
         });
         fetchMock.mockResolvedValue({ ok: true, status: 200 });
@@ -279,9 +305,9 @@ describe('project gate — ingest vs forwarding', () => {
     });
 
     it('a restart between the switch and the flush loses nothing: the seal is read back from disk', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+      await seedConflict(hookLine('B\u00e9'));
 
       vi.resetModules();
       const { forwardSession } = await import('../forwarder.js');
