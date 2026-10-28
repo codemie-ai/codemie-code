@@ -33,9 +33,10 @@ export type ProjectDecision =
   | { action: 'conflict'; names: string[] };
 
 /**
- * Pure decision over the incoming names plus the stored binding. Several distinct sendable names
- * pin the session to the first-bound one (stored binding, else the first candidate); the others
- * are not a conflict. Only an unsendable name conflicts.
+ * Pure decision over the incoming names plus the stored binding. Several distinct sendable names pin
+ * the session to the first-bound one (stored binding, else the first candidate); the others are not
+ * a conflict. Only an unsendable name conflicts, and it is listed first so that cutting the list to
+ * `MAX_CONFLICT_NAMES` can never drop it.
  */
 export function decideProject(names: string[], status: SessionStatus): ProjectDecision {
   if (status.projectConflict) return { action: 'noop' };
@@ -48,8 +49,9 @@ export function decideProject(names: string[], status: SessionStatus): ProjectDe
   }
   const candidates = [...distinct.values()];
 
-  if (candidates.some((name) => !isSendableProjectName(name))) {
-    return { action: 'conflict', names: candidates };
+  const unsendable = candidates.filter((name) => !isSendableProjectName(name));
+  if (unsendable.length > 0) {
+    return { action: 'conflict', names: [...unsendable, ...candidates.filter(isSendableProjectName)] };
   }
   if (candidates.length > 0 && !status.project) {
     return { action: 'bind', project: candidates[0] };

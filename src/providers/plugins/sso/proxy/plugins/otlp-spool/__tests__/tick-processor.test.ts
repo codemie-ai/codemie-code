@@ -186,7 +186,7 @@ describe('processSessionTick (project gate)', () => {
 
     const { readStatus } = await import('../session-status.js');
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.cursors).toEqual({ hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0 });
     expect(status?.waitTicks).toBe(0);
     await expectNothingSent();

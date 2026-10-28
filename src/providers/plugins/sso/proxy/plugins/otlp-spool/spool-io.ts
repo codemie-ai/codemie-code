@@ -11,6 +11,7 @@ import {
   evaluateProjectPolicy,
   hookEventProjectNames,
   hookRecordIsProject,
+  isSendableProjectName,
   type SessionPolicy,
   type StreamPolicy,
 } from './session-project.js';
@@ -34,15 +35,27 @@ function warnDiscardOnce(sessionId: string, ...args: unknown[]): void {
 
 /** Single place that reports the none-or-bound -> conflict transition (live ingest and legacy scan). */
 function warnConflictStarted(sessionId: string, status: SessionStatus): void {
+  const names = status.projectConflict ?? [];
+  const unsendable = names.filter((name) => !isSendableProjectName(name)).length;
+  const fields = sanitizeLogArgs({
+    sessionId,
+    project: status.project ?? null,
+    otherNames: Math.max(0, names.length - (status.project ? 1 : 0)),
+    unsendableNames: unsendable,
+    sealed: Boolean(status.projectSeal),
+  });
+  if (unsendable > 0) {
+    logger.warn(
+      '[otlp-spool] session project name cannot be sent as a header (leading/trailing whitespace, control or ' +
+        'non-ASCII characters): unsent analytics of this session are not sent',
+      ...fields
+    );
+    return;
+  }
   logger.warn(
     '[otlp-spool] session switched project: only hooks recorded for the first project before the switch ' +
       'can still be sent; hooks of other projects and all OTLP logs/metrics/traces of this session are not sent',
-    ...sanitizeLogArgs({
-      sessionId,
-      project: status.project ?? null,
-      otherNames: Math.max(0, (status.projectConflict?.length ?? 0) - (status.project ? 1 : 0)),
-      sealed: Boolean(status.projectSeal),
-    })
+    ...fields
   );
 }
 

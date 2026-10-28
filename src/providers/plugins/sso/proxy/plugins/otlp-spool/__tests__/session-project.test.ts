@@ -55,10 +55,17 @@ describe('decideProject', () => {
     expect(decideProject(['B'], withProject('A'))).toEqual({ action: 'noop' });
   });
 
-  it('conflicts when a different name next to the binding is unsendable', () => {
+  it('lists the unsendable name first when it conflicts next to the binding', () => {
     expect(decideProject(['Проект'], withProject('A'))).toEqual({
       action: 'conflict',
-      names: ['A', 'Проект'],
+      names: ['Проект', 'A'],
+    });
+  });
+
+  it('lists unsendable names first when an unbound batch conflicts', () => {
+    expect(decideProject(['A', 'B', 'Проект'], createStatus())).toEqual({
+      action: 'conflict',
+      names: ['Проект', 'A', 'B'],
     });
   });
 
@@ -95,6 +102,14 @@ describe('applyProjectDecision / projectGate', () => {
     applyProjectDecision(status, { action: 'conflict', names: ['A', 'B'] });
     expect(projectGate(status)).toEqual({ state: 'conflict' });
     expect(status.project).toBe('A');
+  });
+
+  it('keeps an unsendable name when the conflict list is cut', () => {
+    const sendable = Array.from({ length: 12 }, (_, i) => `P${i}`);
+    const status = createStatus();
+    applyProjectDecision(status, decideProject([...sendable, 'Проект'], status));
+    expect(status.projectConflict).toHaveLength(8);
+    expect(status.projectConflict?.[0]).toBe('Проект');
   });
 
   it('keeps a conflict set-once', () => {

@@ -74,7 +74,7 @@ describe('appendSpool — project binding', () => {
     await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B\u00e9'), ['A', 'B\u00e9']);
 
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.project).toBeUndefined();
   });
 
@@ -114,7 +114,7 @@ describe('appendSpool — project binding', () => {
     await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.cursors.hooks).toBe(Buffer.byteLength(first));
   });
 
@@ -131,7 +131,7 @@ describe('appendSpool — project binding', () => {
 
     vi.resetModules();
     ({ readStatus } = await import('../session-status.js'));
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
   });
 
   it('treats another case as the same project, keeps the first spelling, ignores blanks', async () => {
@@ -188,7 +188,7 @@ describe('appendSpool — project binding', () => {
 
       await appendSpool(SESSION, 'hooks', hookLine(), []);
 
-      expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
+      expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
     });
 
     it('stays unbound for blank names and never rescans', async () => {
@@ -242,12 +242,12 @@ describe('appendSpool — project binding', () => {
     state.failNextAppend = true;
     await expect(appendSpool(SESSION, 'hooks', conflicting, ['B\u00e9'])).rejects.toThrow(/ENOSPC/);
 
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(await readFile(file('hooks.ndjson'), 'utf-8')).toBe(first);
 
     await appendSpool(SESSION, 'hooks', conflicting, ['B\u00e9']); // client retries the same batch
 
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(await readFile(file('hooks.ndjson'), 'utf-8')).toBe(first + conflicting);
   });
 
@@ -347,7 +347,7 @@ describe('snapshots — project gate under the lock', () => {
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.cursors.logs).toBe(1);
   });
 
@@ -438,7 +438,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     const { readStatus, writeStatus, createStatus } = await import('../session-status.js');
     await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B\u00e9'), ['A', 'B\u00e9']); // mixed first batch
     let status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.projectSeal).toBeUndefined();
 
     await rm(file('status'));
@@ -447,7 +447,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     await writeStatus(SESSION, createStatus());
     await appendSpool(SESSION, 'hooks', hookLine(), []);
     status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.projectSeal).toBeUndefined();
   });
 
@@ -591,7 +591,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
 
     const status = await readStatus(SESSION);
     expect(status?.projectSeal).toBeUndefined();
-    expect(status?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
     expect(status?.cursors.hooks).toBe(0);
   });
 

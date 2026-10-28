@@ -129,7 +129,7 @@ describe('project gate — ingest vs forwarding', () => {
     await append;
 
     expect(await snapshot).toMatchObject({ project: 'A' });
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B\u00e9']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
   });
 
   it('B. a request already in flight is the stated limit; nothing else is sent after the conflict', async () => {
