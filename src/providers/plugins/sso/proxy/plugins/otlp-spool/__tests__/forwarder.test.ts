@@ -142,6 +142,43 @@ describe('forwardSession (hooks)', () => {
     expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
   });
 
+  it('IR-CLI003: every hooks and OTLP request URL is the canonical validated base plus one path (no //), localhost has no API prefix', async () => {
+    const { apiIdentity } = await import('@/agents/core/evidence/api-identity.js');
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) => ({
+      project: 'Proj A', cursor: 4, bytes: Buffer.from(`${stream}-bytes`),
+    }));
+    const API = 'https://api.example.com/code-assistant-api';
+    const LOCAL = 'http://localhost:3000';
+    const run = async (apiUrl: string, state: Record<string, string>): Promise<string[]> => {
+      fetchMock.mockClear();
+      forwarderIdentityMock.mockReturnValue({ api_identity: apiIdentity(apiUrl), owner_hash: 'h' });
+      readStateMock.mockResolvedValue({ targetUrl: 'https://llm-gateway.example.com', ...state });
+      const { forwardSession } = await import('../forwarder.js');
+      await forwardSession('s1', false, { ...credentials, apiUrl });
+      return fetchMock.mock.calls.map(([url]) => String(url));
+    };
+    const expected = (base: string): string[] =>
+      ['event-hooks', 'logs', 'metrics', 'traces'].map((p) => `${base}/v1/analytics/cli-analytics/${p}`);
+    try {
+      // Forms apiIdentity accepts: trailing slash, repeated slashes, query/userinfo, and the bare host.
+      for (const syncApiUrl of [API + '/', API + '//', 'https://u:p@api.example.com//code-assistant-api/?x=1']) {
+        const urls = await run(API, { syncApiUrl });
+        expect(urls).toEqual(expected(API));
+        expect(urls.every((u) => !u.slice(8).includes('//'))).toBe(true);
+      }
+      expect(await run(API, { syncCodeMieUrl: 'https://api.example.com/' })).toEqual(expected(API));
+      // Localhost: no /code-assistant-api prefix on either side.
+      expect(await run(LOCAL, { syncCodeMieUrl: LOCAL + '/' })).toEqual(expected(LOCAL));
+      // Genuine mismatches send and fetch nothing.
+      expect(await run(LOCAL, { syncCodeMieUrl: 'http://127.0.0.1:3000' })).toEqual([]);
+      expect(await run(API, { syncCodeMieUrl: LOCAL })).toEqual([]);
+      expect(await run(LOCAL + '/code-assistant-api', { syncCodeMieUrl: LOCAL })).toEqual([]);
+    } finally {
+      forwarderIdentityMock.mockReset();
+    }
+  });
+
   it('retries once on 401 and succeeds', async () => {
     fetchMock.mockResolvedValueOnce(new Response('', { status: 401 })).mockResolvedValueOnce(new Response('{}', { status: 200 }));
     const { forwardSession } = await import('../forwarder.js');

@@ -740,7 +740,9 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       expect(await sent({ targetUrl: GW, syncCodeMieUrl: ORIGIN + '/' })).toBe(API);
       // Explicit/discovered syncApiUrl wins over a host that would derive a different base path.
       expect(await sent({ targetUrl: GW, syncApiUrl: API, syncCodeMieUrl: 'https://other.example.net' })).toBe(API);
-      expect(await sent({ targetUrl: GW, syncApiUrl: API + '/' })).toBe(API + '/');
+      // Validated form == destination: canonical base, never the raw trailing-slash/repeated-slash candidate.
+      expect(await sent({ targetUrl: GW, syncApiUrl: API + '/' })).toBe(API);
+      expect(await sent({ targetUrl: GW, syncApiUrl: ORIGIN + '//code-assistant-api//' })).toBe(API);
       // Stale syncApiUrl but a syncCodeMieUrl that does match the credentials.
       expect(await sent({ targetUrl: GW, syncApiUrl: 'https://old.example.net/code-assistant-api', syncCodeMieUrl: ORIGIN })).toBe(API);
       // Legacy / no sync URLs: the daemon target is the analytics endpoint.

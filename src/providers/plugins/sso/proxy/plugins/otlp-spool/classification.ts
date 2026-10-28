@@ -124,7 +124,6 @@ export async function resolveAnalyticsEndpoint(credentials: SSOCredentials | JWT
     : [state?.targetUrl ?? state?.url];
   const urls = candidates.filter((u): u is string => !!u);
   const identity = forwarderIdentity(credentials);
-  if (!identity) return { baseUrl: urls[0] ?? '', profile: state?.profile, identity };
   const wireOf = (u: string): string | undefined => {
     try {
       return apiIdentity(u);
@@ -132,11 +131,13 @@ export async function resolveAnalyticsEndpoint(credentials: SSOCredentials | JWT
       return undefined;
     }
   };
+  if (!identity) return { baseUrl: (urls[0] && wireOf(urls[0])) || urls[0] || '', profile: state?.profile, identity };
   // Origin AND base path must equal the credentials' api_identity.
-  const baseUrl = urls.find((u) => wireOf(u) === identity.api_identity);
-  if (baseUrl === undefined) {
+  if (!urls.some((u) => wireOf(u) === identity.api_identity)) {
     logger.debug('[otlp-classification] analytics endpoint does not match the credential identity; nothing sent or fetched');
     return null;
   }
-  return { baseUrl, profile: state?.profile, identity };
+  // The validated canonical identity IS the destination base (no trailing/repeated slash, query or
+  // userinfo), so the policy fetch and every `${baseUrl}/v1/...` send go where validation looked.
+  return { baseUrl: identity.api_identity, profile: state?.profile, identity };
 }
