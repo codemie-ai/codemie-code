@@ -33,6 +33,21 @@ export const CODEMIE_ANALYTICS_PROJECT_FILTER_ENV = 'CODEMIE_ANALYTICS_PROJECT_F
 export type { AllowlistState };
 export { parseAllowlist, canonicalizePath, isPathInside, isProjectTracked, addProjectPath, removeProjectPath };
 
+export type AllowlistScope = 'user' | 'project';
+
+/**
+ * Infers the currently configured scope from the stored allowlist. A missing
+ * allowlist is a fresh connection (Global by default) and an explicitly empty
+ * allowlist is Global; a non-empty allowlist is Project. Invalid state maps to
+ * Project rather than broadening tracking.
+ */
+export function inferAllowlistScope(state: AllowlistState): AllowlistScope {
+  if (state.kind === 'absent') {
+    return 'user';
+  }
+  return state.kind === 'valid' && state.paths.length === 0 ? 'user' : 'project';
+}
+
 /** Path of the user-level Claude Code settings file that holds the allowlist. */
 export function getClaudeSettingsPath(): string {
   return join(resolveHomeDir(), '.claude', 'settings.json');

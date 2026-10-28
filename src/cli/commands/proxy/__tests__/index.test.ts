@@ -61,6 +61,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
   syncPluginSkills: vi.fn().mockResolvedValue(undefined),
 }));
 
+// These tests exercise the credential checks that run after the non-interactive
+// guard for --claude-code-otlp; vitest has no TTY, so pretend there is one.
+vi.mock('@/utils/interactive.js', () => ({
+  isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+}));
+
 describe('proxy connect desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;

@@ -57,6 +57,88 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     );
   });
 
+  it('defaults the Claude Code analytics scope to Global (user)', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
+        silent: false,
+      })
+    );
+  });
+
+  it('forwards an explicit --scope project as the opt-in Project scope', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--scope', 'project'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'project' })
+    );
+  });
+
+  it('forwards --silent for the Claude Code analytics target', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--silent'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
+        silent: true,
+      })
+    );
+  });
+
+  it('exposes --silent on connect only, not on start, disconnect or the aliases', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const hasSilent = (name: string): boolean =>
+      Boolean(proxy.commands.find((c) => c.name() === name)?.options.some((o) => o.long === '--silent'));
+
+    expect(hasSilent('connect')).toBe(true);
+    expect(hasSilent('start')).toBe(false);
+    expect(hasSilent('disconnect')).toBe(false);
+    const connect = proxy.commands.find((c) => c.name() === 'connect');
+    for (const alias of connect?.commands ?? []) {
+      expect(alias.options.some((o) => o.long === '--silent')).toBe(false);
+    }
+  });
+
+  it('forwards an explicitly selected Claude Code analytics scope', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--scope', 'user'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
+      })
+    );
+  });
+
   it('deprecated `connect desktop` prints a notice and delegates to { claudeDesktop: true }', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
