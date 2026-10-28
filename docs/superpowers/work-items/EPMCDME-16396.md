@@ -37,6 +37,30 @@ Verify both disable operations (all analytics and a specific project) under Proj
 
 **Out of scope:** listing or disabling several analytics configurations at once; personal subscriptions (EPMCDME-16479).
 
+## AC4 — accepted coverage limitation (decided 2026-10-28)
+
+The implementation does not include an automated test that drives a real, native `claude` CLI launch
+end-to-end through the hook pipeline. AC4's "including native Claude Code launches" sub-requirement is
+instead covered by `claude-code-otlp.disable-matrix.test.ts`, which exercises the full Project/Global ×
+disable-all/exclude-one matrix at the `ClaudeCodeOtlpPlugin.processOtlpEvent()` level (with
+`ensureOtlpProxy`/`forwardOtlpEventsToSpool`/SSO mocked), not by spawning the real binary.
+
+This was raised during code review and deliberately **not closed with new code**, because such a test
+would be a net liability rather than added confidence:
+
+- **Unreliable** — depends on process-startup timing, the installed `claude` CLI version's exact hook
+  payload shape, and OS differences; failures would often be unrelated to the gate logic under test.
+- **Needs a correctly authenticated `claude` invocation** — requires either a live credential in CI
+  (a secrets-handling risk) or mocking the auth path so deeply the test collapses back into the same
+  synthetic-payload shape already covered.
+- **Slow and brittle** — a real process spawn adds real CI wall-clock time and couples the test to an
+  external CLI's evolving behavior, risking false-red noise from changes outside this repo.
+
+The gate logic itself (`evaluateClaudeAnalyticsGate`/`isTracked()`) does not depend on how the hook
+process was launched, so the existing coverage is considered sufficient. No native-launch test will be
+added for this ticket; verifying a real native launch is left as a manual/out-of-automation-scope step.
+See `docs/superpowers/tasks/2026-10-28-epmcdme-16396-analytics-disable/plan.md` ("Known coverage gap").
+
 ---
 
 ## Pre-run context (from the 2026-10-28 investigation): HYPOTHESES, RE-VERIFY

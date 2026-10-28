@@ -280,6 +280,26 @@ this ticket — a native-launch integration test (shelling out to `bin/codemie.j
 claude-code-otlp` against a real `settings.json` + `claude-analytics.json`) was deliberately not
 added here.
 
+**Re-confirmed during the standalone post-merge review (2026-10-28):** the user explicitly decided
+**not** to add a native-launch test, for reasons beyond scope — the test itself would be a liability:
+
+- **Unreliable.** A real `claude` CLI invocation depends on process startup timing, the installed
+  CLI version's exact hook-payload shape, and platform differences (Windows vs. Linux/Mac) — none of
+  which this ticket's code controls. A flaky test here fails builds for reasons unrelated to the gate
+  logic it's meant to verify.
+- **Needs a correctly authenticated `claude` invocation.** Driving the real binary end-to-end
+  requires either a live API key/SSO session available to CI (a secrets-handling risk) or mocking the
+  auth path so deeply that the test stops being a genuine "native launch" test and collapses back into
+  the same synthetic-payload shape already covered by `claude-code-otlp.disable-matrix.test.ts`.
+- **Slow and brittle.** Spawning a real process (vs. calling `processOtlpEvent()` in-process) adds
+  real wall-clock cost to every CI run, and couples the test to the external CLI's evolving behavior —
+  a future `claude` CLI update could break this test with zero change to our code, creating false-red
+  noise that erodes trust in the suite.
+
+Net: the risk this test would introduce to CI stability outweighs the marginal coverage it would add
+over the existing `processOtlpEvent()`-level matrix, since the gate logic itself does not depend on
+how the hook process was launched. No native-launch test will be added for this ticket.
+
 ## Decisions made without user confirmation (flag for review)
 
 - Session-sync channel (`CODEMIE_SESSION_SYNC_ENABLED`) is untouched — confirmed out of scope by the user this session.

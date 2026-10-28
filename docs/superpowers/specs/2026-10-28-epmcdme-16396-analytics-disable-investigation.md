@@ -1,5 +1,10 @@
 # EPMCDME-16396: Disabling analytics (investigation)
 
+> **SUPERSEDED** — this is an early exploratory investigation. It proposes a personal-subscription /
+> `oauthAccount` classification design that was never built this way (split out to EPMCDME-16479). For
+> the shipped design, see
+> `docs/superpowers/tasks/2026-10-28-epmcdme-16396-analytics-disable/plan.md`.
+
 Ticket: [EPMCDME-16396](https://jiraeu.epam.com/browse/EPMCDME-16396). This doc checks what already exists and how AC2, AC3 and AC5 could be built. Related tickets: EPMCDME-16394 (consent before proxy), EPMCDME-16440 (classify sessions by subscription, in progress, no code yet), EPMCDME-16390.
 
 ## Summary

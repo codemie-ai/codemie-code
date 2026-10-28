@@ -1,5 +1,10 @@
 # EPMCDME-16396 Analytics Disable Controls Implementation Plan
 
+> **SUPERSEDED** — see
+> `docs/superpowers/tasks/2026-10-28-epmcdme-16396-analytics-disable/plan.md` for the shipped design.
+> This earlier plan includes a personal-subscription / `excludePersonal` / `oauthAccount`
+> classification scope that was split out to EPMCDME-16479 and never implemented here.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let users turn Claude Code analytics off entirely, for personal subscriptions only, or for one project (including under Global scope), and see the effective configuration. The hooks stay installed and existing users see no change in behaviour.
