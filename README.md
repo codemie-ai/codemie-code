@@ -642,6 +642,21 @@ codemie proxy disconnect --claude-code-otlp --scope project
 codemie proxy disconnect --claude-code-otlp
 ```
 
+Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
+
+```bash
+# Stop all analytics collection; hooks stay installed
+codemie proxy analytics disable
+
+# Exclude the current project, even when Global scope is enabled
+codemie proxy analytics exclude
+
+# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+codemie proxy analytics status
+```
+
+`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
+
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
 
 ## Codebase Memory MCP

@@ -1661,3 +1661,17 @@ A `cwd` inside any listed path is tracked (nested directories included). An inva
 Allowlist changes apply immediately; the first-time setup needs a Claude Code restart.
 
 **Backup lifecycle.** `connect` snapshots `~/.claude/settings.json` to `settings.json.codemie-backup` before writing its own hooks/env, and refreshes that backup on every subsequent `connect` that still finds the file already under CodeMie's management (not just the first time) — so it always reflects the state right before the most recent `connect`, not whichever one ran first. Only values that are genuinely foreign (or that a `--force` connect displaced and the live file still carries CodeMie's own replacement for) are ever kept in it; a value you change after `connect` is never recorded as "pre-connect" and is never resurrected by a later `disconnect`. `disconnect` deletes the backup once it finishes: a value you changed or removed since `connect` is left exactly as you set it, never restored from the backup; a value a `--force` connect displaced is put back, but only if nothing has touched it since. If nothing is left in the file after removal, the file itself is deleted. No "restored from backup" message is printed — the backup is bookkeeping, not something you interact with directly.
+
+### Claude Code OTLP analytics — disable
+
+`codemie proxy analytics` turns collection off/on or excludes one project without touching the hooks, OTel environment, or allowlist that `connect`/`disconnect` manage. It stores its own state in a CodeMie-owned file (`~/.codemie/claude-analytics.json`), so it survives `connect`, `disconnect`, and scope switches: `disconnect` uninstalls the wiring, while `analytics disable`/`exclude` turn collection off and keep the hooks installed (re-enabling is instant, no reinstall).
+
+| Command | Effect |
+|---|---|
+| `codemie proxy analytics disable` | Stop all analytics collection. No session sends data to the backend and no SSO check is triggered solely for analytics, even though the hooks stay installed. |
+| `codemie proxy analytics enable` | Resume collection. |
+| `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
+| `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). Does not touch the `settings.json` allowlist. |
+| `codemie proxy analytics status [--json]` | Show whether hooks are installed, the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. |
+
+A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
