@@ -181,12 +181,12 @@ describe('processSessionTick (project gate)', () => {
   });
 
   it('records a conflict from a legacy status and discards the backlog', async () => {
-    const hooks = hookLine('A') + hookLine('B\u00e9');
+    const hooks = hookLine('B\u00e9');
     await tickWith({ [`${SESSION}.hooks.ndjson`]: hooks, [`${SESSION}.otel_logs.bin`]: 'abc' });
 
     const { readStatus } = await import('../session-status.js');
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
+    expect(status?.projectConflict).toEqual(['B\u00e9']);
     expect(status?.cursors).toEqual({ hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0 });
     expect(status?.waitTicks).toBe(0);
     await expectNothingSent();
@@ -230,7 +230,7 @@ describe('processSessionTick (project gate)', () => {
   });
 
   it('does not rewrite the status of an already discarded conflicted session', async () => {
-    const hooks = hookLine('A') + hookLine('B\u00e9');
+    const hooks = hookLine('B\u00e9');
     await tickWith({ [`${SESSION}.hooks.ndjson`]: hooks });
     const before = await stat(join(state.root, `${SESSION}.status`));
     await new Promise((resolve) => setTimeout(resolve, 20));

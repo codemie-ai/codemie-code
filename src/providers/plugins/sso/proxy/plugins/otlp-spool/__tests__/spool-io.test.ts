@@ -132,6 +132,7 @@ describe('appendSpool — project binding', () => {
     await advanceCursor(SESSION, 'hooks', Buffer.byteLength(first));
     expect((await readStatus(SESSION))?.project).toBe('A');
 
+    await storeConflict();
     await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
     const status = await readStatus(SESSION);
@@ -147,6 +148,7 @@ describe('appendSpool — project binding', () => {
     let { readStatus } = await import('../session-status.js');
     expect((await readStatus(SESSION))?.project).toBe('A');
 
+    await storeConflict();
     const io = await import('../spool-io.js');
     await io.appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
@@ -202,14 +204,14 @@ describe('appendSpool — project binding', () => {
       expect(status?.projectConflict).toBeUndefined();
     });
 
-    it('records a conflict when the disk holds two projects', async () => {
-      await seedLegacy(hookLine('A') + hookLine('B\u00e9'));
+    it('records a conflict when the disk holds only an unsendable project', async () => {
+      await seedLegacy(hookLine('B\u00e9'));
       const { appendSpool } = await import('../spool-io.js');
       const { readStatus } = await import('../session-status.js');
 
       await appendSpool(SESSION, 'hooks', hookLine(), []);
 
-      expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
+      expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9']);
     });
 
     it('stays unbound for blank names and never rescans', async () => {
@@ -234,8 +236,8 @@ describe('appendSpool — project binding', () => {
   it('still appends the hook bytes on conflict and resets the cursor of a recreated file', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { readStatus, writeStatus, createStatus } = await import('../session-status.js');
-    await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B\u00e9'), ['A', 'B\u00e9']);
-    const before = Buffer.byteLength(hookLine('A') + hookLine('B\u00e9'));
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+    const before = Buffer.byteLength(hookLine('B\u00e9'));
 
     await appendSpool(SESSION, 'hooks', hookLine('C'), ['C']);
 
@@ -256,19 +258,19 @@ describe('appendSpool — project binding', () => {
     const { appendSpool } = await import('../spool-io.js');
     const { readStatus } = await import('../session-status.js');
     const { readFile } = await import('node:fs/promises');
-    const first = hookLine('A');
+    const first = hookLine('');
     const conflicting = hookLine('B\u00e9');
-    await appendSpool(SESSION, 'hooks', first, ['A']); // bound to A, projectScanned true
+    await appendSpool(SESSION, 'hooks', first, ['']); // nothing bound, projectScanned true
 
     state.failNextAppend = true;
     await expect(appendSpool(SESSION, 'hooks', conflicting, ['B\u00e9'])).rejects.toThrow(/ENOSPC/);
 
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9']);
     expect(await readFile(file('hooks.ndjson'), 'utf-8')).toBe(first);
 
     await appendSpool(SESSION, 'hooks', conflicting, ['B\u00e9']); // client retries the same batch
 
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9']);
     expect(await readFile(file('hooks.ndjson'), 'utf-8')).toBe(first + conflicting);
   });
 
@@ -329,8 +331,8 @@ describe('snapshots — project gate under the lock', () => {
     const { appendSpool, snapshotPendingBytes, snapshotPendingHookRecords } = await import(
       '../spool-io.js'
     );
-    const hooks = hookLine('A') + hookLine('B\u00e9');
-    await appendSpool(SESSION, 'hooks', hooks, ['A', 'B\u00e9']);
+    const hooks = hookLine('B\u00e9');
+    await appendSpool(SESSION, 'hooks', hooks, ['B\u00e9']);
     await seedOtel();
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
@@ -351,7 +353,7 @@ describe('snapshots — project gate under the lock', () => {
     expect(await snapshotPendingBytes(SESSION, 'traces')).toBeNull();
   });
 
-  it('runs the legacy scan from the snapshot: a single name binds, two conflict', async () => {
+  it('runs the legacy scan from the snapshot: a sendable name binds, an unsendable one conflicts', async () => {
     const { snapshotPendingBytes } = await import('../spool-io.js');
     const { writeStatus, createStatus, readStatus } = await import('../session-status.js');
     await writeFile(file('hooks.ndjson'), hookLine('A'));
@@ -363,12 +365,12 @@ describe('snapshots — project gate under the lock', () => {
     expect(await readStatus(SESSION)).toMatchObject({ project: 'A', projectScanned: true });
 
     await rm(file('status'));
-    await writeFile(file('hooks.ndjson'), hookLine('A') + hookLine('B\u00e9'));
+    await writeFile(file('hooks.ndjson'), hookLine('B\u00e9'));
     await writeStatus(SESSION, createStatus());
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
+    expect(status?.projectConflict).toEqual(['B\u00e9']);
     expect(status?.cursors.logs).toBe(1);
   });
 
@@ -376,6 +378,7 @@ describe('snapshots — project gate under the lock', () => {
     const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
     await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
     await seedOtel();
+    await storeConflict();
     await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
@@ -397,7 +400,7 @@ describe('snapshots — project gate under the lock', () => {
     // a session that never had a bound project has no seal: after a conflict nothing may go out
     await rm(file('status'));
     await rm(file('hooks.ndjson'));
-    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9') + hookLine('C'), ['B\u00e9', 'C']);
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     expect(await isSendAllowed(SESSION, 'hooks', 'B\u00e9', range)).toBe(false);
     expect(await isSendAllowed(SESSION, 'hooks', 'C', range)).toBe(false);
   });
