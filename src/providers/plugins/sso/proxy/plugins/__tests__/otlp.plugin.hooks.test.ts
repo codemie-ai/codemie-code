@@ -155,6 +155,16 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     expect(decoded.map((e) => e['n'])).toEqual([1, 2, 3]);
   });
 
+  it('carries evidence_v in the spool envelope only when the batch is marked, never in the event body', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', evidence_v: 1, hookEvents: [hookEvent('s1')] });
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    const parse = (i: number) =>
+      JSON.parse((appendSpoolMock.mock.calls[i] as [string, string, string])[2].trim()) as Record<string, string>;
+    expect(parse(0)['evidence_v']).toBe(1);
+    expect(JSON.parse(parse(0)['hookEvent'])).not.toHaveProperty('evidence_v');
+    expect(parse(1)).not.toHaveProperty('evidence_v');
+  });
+
   it('passes the project names of the spooled events as the fourth argument', async () => {
     const res = await postHooks({
       agentName: 'claude-code-otlp',

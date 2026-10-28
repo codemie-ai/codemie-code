@@ -31,11 +31,14 @@ export interface OtlpHookSpoolData {
   agentName: string;
   /** The complete wire-ready event, built at hook time by the adapter. */
   hookEvent: string;
+  /** Provenance marker: the hook stamped a durable evidence record before spooling. Envelope only. */
+  evidence_v?: 1;
 }
 
 /** One hook invocation's batch, as the hook process POSTs it. */
 export interface OtlpHookBatchRequest {
   agentName: string;
+  evidence_v?: 1;
   hookEvents: Record<string, unknown>[];
 }
 
@@ -256,7 +259,7 @@ class OtlpInterceptor implements ProxyInterceptor {
       } else if (sessionId !== eventSessionId) {
         return sendError(res, 400, 'invalid_request_error', 'Mixed session_id in one batch');
       }
-      const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event) };
+      const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event), ...(batch.evidence_v === 1 ? { evidence_v: 1 as const } : {}) };
       lines.push(JSON.stringify(spoolRecord));
       projectNames.push(...hookEventProjectNames(event));
     }
