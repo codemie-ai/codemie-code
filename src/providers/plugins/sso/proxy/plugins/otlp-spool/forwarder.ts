@@ -17,6 +17,7 @@ import {
   snapshotPendingHookRecords,
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
+import { isSendableProjectName } from './session-project.js';
 
 const SESSION_END_EVENT_TYPE = 'agent.session.end';
 
@@ -28,7 +29,10 @@ const OTEL_ENDPOINTS: Record<OtelStream, string> = {
 
 const FORWARD_TIMEOUT_MS = 20_000;
 
-/** Project the session is bound to; the backend gates analytics on it. */
+/**
+ * Project of the request: one per hook group (each event's own project, unnamed events under the
+ * session's bound project), the bound project for OTLP streams. The backend gates analytics on it.
+ */
 const PROJECT_HEADER = 'X-CodeMie-Project';
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
@@ -239,76 +243,117 @@ interface HookPayload {
   ndjson: string;
   containsSessionEnd: boolean;
   malformed: number;
-  /** Events whose project name was rewritten to the pinned one; present only with a pinned project. */
-  rewritten?: number;
 }
 
-function pinEventProject(
-  serialized: string,
-  wireEvent: Record<string, unknown>,
-  project: string
-): { line: string; rewritten: boolean } {
-  const wanted = project.toLowerCase();
-  let changed = false;
-  const pin = (holder: unknown): void => {
-    if (typeof holder !== 'object' || holder === null) return;
-    const fields = holder as Record<string, unknown>;
-    if (!('codemie_project_name' in fields) || fields['codemie_project_name'] === undefined) return;
-    const value = fields['codemie_project_name'];
-    // Blank and non-string values are pinned too: the header already attributes the request to
-    // `project`, so an event must not carry anything else. Case-only differences are the same project.
-    if (typeof value === 'string' && value.toLowerCase() === wanted) return;
-    fields['codemie_project_name'] = project;
-    changed = true;
-  };
-  pin(wireEvent);
-  pin(wireEvent['raw']);
-  return changed ? { line: JSON.stringify(wireEvent), rewritten: true } : { line: serialized, rewritten: false };
+export interface HookGroup {
+  /** Sent as `X-CodeMie-Project`; every event of `ndjson` belongs to it. */
+  project: string;
+  ndjson: string;
 }
+
+export interface GroupedHookPayload {
+  groups: HookGroup[];
+  containsSessionEnd: boolean;
+  malformed: number;
+  /** Groups not sent because their name cannot travel as a header. */
+  unsendable: number;
+}
+
+interface ParsedHookRecord {
+  serialized: string;
+  wireEvent: Record<string, unknown>;
+}
+
+/** The `hookEvent` wire string of a spool envelope and its parsed form; `null` for an unusable record. */
+function parseHookRecord(record: string): ParsedHookRecord | null {
+  try {
+    const serialized = (JSON.parse(record) as OtlpHookSpoolData).hookEvent;
+    const wireEvent = JSON.parse(serialized) as unknown;
+    if (typeof wireEvent !== 'object' || wireEvent === null) return null;
+    return { serialized, wireEvent: wireEvent as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+const toNdjson = (lines: string[]): string => (lines.length > 0 ? `${lines.join('\n')}\n` : '');
 
 /**
  * Unwraps the spool envelopes. `hookEvent` is already the final wire event, built at hook time
- * by the adapter, so it is forwarded as is: same bytes on every retry. With `project`, an event
- * whose `codemie_project_name` (top level or `raw`) differs (case-insensitively; blank and non-string values included) is rewritten to it, so the header and
- * every event agree and the backend never sees two projects in one request.
+ * by the adapter, so it is forwarded as is: same bytes on every retry. A complete but unusable
+ * record is counted in `malformed` and dropped; its bytes are still acknowledged with the batch so
+ * the cursor can never get stuck on it.
  */
-export function unwrapHookRecords(records: string[], project?: string): HookPayload {
+export function unwrapHookRecords(records: string[]): HookPayload {
   const unwrapped: string[] = [];
   let containsSessionEnd = false;
   let malformed = 0;
-  let rewritten = 0;
 
   for (const record of records) {
-    let serialized: string;
-    let wireEvent: Record<string, unknown>;
-    try {
-      serialized = (JSON.parse(record) as OtlpHookSpoolData).hookEvent;
-      wireEvent = JSON.parse(serialized) as Record<string, unknown>;
-    } catch {
-      // Complete but unusable record: dropped deliberately. Its bytes are still
-      // acknowledged with the batch so the cursor can never get stuck on it.
+    const parsed = parseHookRecord(record);
+    if (!parsed) {
       malformed += 1;
       continue;
     }
-
-    if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
+    if (parsed.wireEvent['type'] === SESSION_END_EVENT_TYPE) {
       containsSessionEnd = true;
     }
-    if (project) {
-      const pinned = pinEventProject(serialized, wireEvent, project);
-      if (pinned.rewritten) rewritten += 1;
-      unwrapped.push(pinned.line);
+    unwrapped.push(parsed.serialized);
+  }
+
+  return { ndjson: toNdjson(unwrapped), containsSessionEnd, malformed };
+}
+
+/**
+ * Splits a hook batch into one request body per project, so each request's `X-CodeMie-Project`
+ * matches every event in it and no event is rewritten. The key is the lowercased top-level
+ * `codemie_project_name`; a missing, blank or non-string name belongs to `boundProject`. Groups
+ * follow first appearance, events keep file order, so an unchanged range yields byte-identical
+ * groups on every retry. The header is `boundProject` when the key matches it, else the first
+ * spelling seen. A `filtered` (sealed) batch is already proven to be `boundProject` and stays one
+ * group. A group whose name cannot travel as a header is dropped and counted in `unsendable`.
+ */
+export function groupHookRecords(
+  records: string[],
+  boundProject: string,
+  filtered: boolean
+): GroupedHookPayload {
+  const boundKey = boundProject.toLowerCase();
+  const groups = new Map<string, { project: string; lines: string[] }>();
+  let containsSessionEnd = false;
+  let malformed = 0;
+
+  for (const record of records) {
+    const parsed = parseHookRecord(record);
+    if (!parsed) {
+      malformed += 1;
+      continue;
+    }
+    if (parsed.wireEvent['type'] === SESSION_END_EVENT_TYPE) {
+      containsSessionEnd = true;
+    }
+    const name = parsed.wireEvent['codemie_project_name'];
+    const named = !filtered && typeof name === 'string' && name.trim().length > 0;
+    const key = named ? name.toLowerCase() : boundKey;
+    let group = groups.get(key);
+    if (!group) {
+      group = { project: key === boundKey ? boundProject : (name as string), lines: [] };
+      groups.set(key, group);
+    }
+    group.lines.push(parsed.serialized);
+  }
+
+  const sendable: HookGroup[] = [];
+  let unsendable = 0;
+  for (const { project, lines } of groups.values()) {
+    if (isSendableProjectName(project)) {
+      sendable.push({ project, ndjson: toNdjson(lines) });
     } else {
-      unwrapped.push(serialized);
+      unsendable += 1;
     }
   }
 
-  return {
-    ndjson: unwrapped.length > 0 ? `${unwrapped.join('\n')}\n` : '',
-    containsSessionEnd,
-    malformed,
-    ...(project ? { rewritten } : {}),
-  };
+  return { groups: sendable, containsSessionEnd, malformed, unsendable };
 }
 
 /* ------------------------------------------------------------ forwarding --- */
@@ -321,7 +366,13 @@ async function resolveBaseUrl(): Promise<string> {
   return state?.targetUrl ?? state?.url ?? '';
 }
 
-/** Forward the complete hook records after the hooks cursor. */
+/**
+ * Forward the complete hook records after the hooks cursor, one request per project group, in
+ * order. The groups share one byte range: the cursor advances only after every group returned
+ * `ok`; the first other result stops the batch and is returned with the cursor untouched, so the
+ * next tick re-sends the whole range, accepted groups included (the backend skips records it
+ * already ingested). One persistently failing group therefore holds back the whole range.
+ */
 async function forwardHooks(
   sessionId: string,
   baseUrl: string,
@@ -332,27 +383,20 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const payload = unwrapHookRecords(batch.records, batch.project);
+  const filtered = batch.filtered === true;
+  const payload = groupHookRecords(batch.records, batch.project, filtered);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
       ...sanitizeLogArgs({ sessionId, count: payload.malformed })
     );
   }
-
-  if (payload.rewritten) {
+  if (payload.unsendable > 0) {
     logger.debug(
-      '[otlp-forwarder] rewrote hook event project to the session project',
-      ...sanitizeLogArgs({ sessionId, count: payload.rewritten })
+      '[otlp-forwarder] hook record groups with a project name that cannot be sent were not sent',
+      ...sanitizeLogArgs({ sessionId, count: payload.unsendable })
     );
   }
-
-  if (payload.ndjson.length === 0) {
-    // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
-    await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
-    return 'idle';
-  }
-
   if (batch.dropped > 0) {
     logger.debug(
       '[otlp-forwarder] hook records not provably the sealed project were not sent',
@@ -360,16 +404,25 @@ async function forwardHooks(
     );
   }
 
-  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
-  const result = await send(
-    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', credentials, batch.project,
-    { cursor: batch.cursor, end: batch.cursor + batch.byteLength, filtered: batch.filtered === true }
-  );
-  if (result !== 'ok') {
-    return result;
+  const end = batch.cursor + batch.byteLength;
+  if (payload.groups.length === 0) {
+    // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
+    await advanceCursor(sessionId, 'hooks', end);
+    return 'idle';
   }
 
-  await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
+  const range = { cursor: batch.cursor, end, filtered };
+  for (const group of payload.groups) {
+    const result = await send(
+      sessionId, 'hooks', url, group.ndjson, 'application/x-ndjson', credentials, group.project, range
+    );
+    if (result !== 'ok') {
+      return result;
+    }
+  }
+
+  await advanceCursor(sessionId, 'hooks', end);
 
   if (payload.containsSessionEnd) {
     await markSessionEnded(sessionId);
@@ -410,6 +463,9 @@ async function forwardOtelStream(
  * failure on one stream never blocks or rewinds another. Cursors only advance
  * after a successful response, which yields at-least-once delivery: a crash
  * between backend success and cursor persistence re-sends that batch.
+ *
+ * Hook events go out in one request per project, each with its own `X-CodeMie-Project` header
+ * (unnamed events under the session's bound project); the OTLP streams carry the bound project.
  *
  * A forwarded `SessionEnd` only records `endedAt`; it never stops later ticks
  * from delivering bytes that failed or were appended afterwards.

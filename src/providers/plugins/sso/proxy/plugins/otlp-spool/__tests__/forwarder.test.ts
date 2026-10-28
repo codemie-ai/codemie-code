@@ -77,41 +77,80 @@ describe('unwrapHookRecords', () => {
   });
 });
 
-describe('unwrapHookRecords with a pinned project', () => {
-  it('rewrites top-level and raw project names that differ, leaves matching events byte for byte', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-    const same = { type: 'agent.tool.end', codemie_project_name: 'A' };
-    const other = { type: 'agent.tool.end', codemie_project_name: 'B', raw: { codemie_project_name: 'C', x: 1 } };
-
-    const payload = unwrapHookRecords([spoolLine(same), spoolLine(other)], 'A');
-
-    const [first, second] = payload.ndjson.trim().split('\n');
-    expect(first).toBe(JSON.stringify(same));
-    expect(JSON.parse(second)).toEqual({
-      type: 'agent.tool.end',
-      codemie_project_name: 'A',
-      raw: { codemie_project_name: 'A', x: 1 },
-    });
-  });
-});
-
-describe('unwrapHookRecords pinning edge cases', () => {
-  it('treats case-only differences as the same project, pins blank and non-string names, skips absent ones', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
+describe('groupHookRecords', () => {
+  it('groups by lowercased top-level name in first-appearance order, keeping file order and bytes', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
     const events = [
-      { type: 't', codemie_project_name: 'a' },
-      { type: 't', codemie_project_name: '  ' },
-      { type: 't', codemie_project_name: 7, raw: { codemie_project_name: null } },
-      { type: 't' },
+      { type: 't', n: 1, codemie_project_name: 'b' },
+      { type: 't', n: 2, codemie_project_name: 'A' },
+      { type: 't', n: 3, codemie_project_name: 'B' },
+      { type: 't', n: 4 },
+      { type: 't', n: 5, codemie_project_name: 'a' },
     ];
-    const payload = unwrapHookRecords(events.map(spoolLine), 'A');
-    const lines = payload.ndjson.trim().split('\n').map((l) => JSON.parse(l));
-    expect(lines[0].codemie_project_name).toBe('a');
-    expect(lines[1].codemie_project_name).toBe('A');
-    expect(lines[2].codemie_project_name).toBe('A');
-    expect(lines[2].raw.codemie_project_name).toBe('A');
-    expect(lines[3]).toEqual({ type: 't' });
-    expect(payload.rewritten).toBe(2);
+
+    const result = groupHookRecords(events.map(spoolLine), 'A', false);
+
+    expect(result.groups).toEqual([
+      { project: 'b', ndjson: `${JSON.stringify(events[0])}\n${JSON.stringify(events[2])}\n` },
+      {
+        project: 'A',
+        ndjson: `${JSON.stringify(events[1])}\n${JSON.stringify(events[3])}\n${JSON.stringify(events[4])}\n`,
+      },
+    ]);
+    expect(result.unsendable).toBe(0);
+  });
+
+  it('uses the bound spelling for the bound group even when an event spells it differently first', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
+
+    const result = groupHookRecords([spoolLine({ codemie_project_name: 'proj a' })], 'Proj A', false);
+
+    expect(result.groups.map((g) => g.project)).toEqual(['Proj A']);
+  });
+
+  it('puts blank, non-string and raw-only names into the bound group', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
+    const events = [
+      { type: 't', codemie_project_name: '  ' },
+      { type: 't', codemie_project_name: 7 },
+      { type: 't', raw: { codemie_project_name: 'B' } },
+    ];
+
+    const result = groupHookRecords(events.map(spoolLine), 'A', false);
+
+    expect(result.groups).toEqual([{ project: 'A', ndjson: `${events.map((e) => JSON.stringify(e)).join('\n')}\n` }]);
+  });
+
+  it('yields one group headed by the bound project for a filtered batch', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
+    const events = [{ codemie_project_name: 'a' }, { codemie_project_name: 'B' }];
+
+    const result = groupHookRecords(events.map(spoolLine), 'A', true);
+
+    expect(result.groups).toEqual([{ project: 'A', ndjson: `${events.map((e) => JSON.stringify(e)).join('\n')}\n` }]);
+  });
+
+  it('drops a group whose name cannot be sent as a header and counts it', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
+    const events = [{ codemie_project_name: 'Café' }, { codemie_project_name: 'A' }];
+
+    const result = groupHookRecords(events.map(spoolLine), 'A', false);
+
+    expect(result.groups.map((g) => g.project)).toEqual(['A']);
+    expect(result.unsendable).toBe(1);
+  });
+
+  it('aggregates session end and malformed counts over every group', async () => {
+    const { groupHookRecords } = await import('../forwarder.js');
+
+    const result = groupHookRecords(
+      ['nope', spoolLine({ type: 'agent.session.end', codemie_project_name: 'B' })],
+      'A',
+      false
+    );
+
+    expect(result.containsSessionEnd).toBe(true);
+    expect(result.malformed).toBe(1);
   });
 });
 
@@ -209,27 +248,6 @@ describe('forwardSession (hooks)', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
-  it('sends one project in header and every event name for a multi-project batch', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
-    snapshotPendingHookRecordsMock.mockResolvedValue({
-      project: 'A',
-      records: [
-        spoolLine({ type: 'x', codemie_project_name: 'A' }),
-        spoolLine({ type: 'x', codemie_project_name: 'B' }),
-      ],
-      cursor: 0,
-      byteLength: 10,
-    });
-    const { forwardSession } = await import('../forwarder.js');
-
-    await forwardSession('s1', true, credentials);
-
-    const [, init] = fetchMock.mock.calls[0];
-    const names = String(init.body).trim().split('\n').map((l) => JSON.parse(l).codemie_project_name);
-    expect(names).toEqual(['A', 'A']);
-    expect(JSON.stringify(init.headers)).toContain('"X-CodeMie-Project":"A"');
-  });
-
   it('does not wait for a stalled response body before advancing the cursor', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, text: () => new Promise<string>(() => {}) });
     const { forwardSession } = await import('../forwarder.js');
@@ -323,6 +341,186 @@ describe('forwardSession (hooks)', () => {
   });
 });
 
+describe('forwardSession (hooks split by project)', () => {
+  const eventA1 = { type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'A' };
+  const eventB = { type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'B' };
+  const unnamed = { type: 'agent.tool.end', session_id: 's1' };
+  const eventA2 = { type: 'agent.prompt.submit', session_id: 's1', codemie_project_name: 'a' };
+  const batch = (records: Record<string, unknown>[], extra: Record<string, unknown> = {}) => ({
+    project: 'A',
+    records: records.map(spoolLine),
+    cursor: 20,
+    byteLength: 300,
+    dropped: 0,
+    filtered: false,
+    ...extra,
+  });
+  const line = (event: Record<string, unknown>): string => JSON.stringify(event);
+  const hookCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/event-hooks'));
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    isSendAllowedMock.mockResolvedValue(true);
+    snapshotPendingBytesMock.mockResolvedValue(null);
+    snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, eventB, unnamed, eventA2]));
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends one request per project with a matching header and the unmodified lines, then advances once', async () => {
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [[, first], [, second]] = fetchMock.mock.calls;
+    expect(first.headers['X-CodeMie-Project']).toBe('A');
+    expect(first.body).toBe(`${line(eventA1)}\n${line(unnamed)}\n${line(eventA2)}\n`);
+    expect(second.headers['X-CodeMie-Project']).toBe('B');
+    expect(second.body).toBe(`${line(eventB)}\n`);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+    expect(advanceCursorMock.mock.invocationCallOrder[0]).toBeGreaterThan(fetchMock.mock.invocationCallOrder[1]);
+  });
+
+  it('re-checks every group with its own project and the shared batch range', async () => {
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    const range = { cursor: 20, end: 320, filtered: false };
+    expect(isSendAllowedMock).toHaveBeenNthCalledWith(1, 's1', 'hooks', 'A', range);
+    expect(isSendAllowedMock).toHaveBeenNthCalledWith(2, 's1', 'hooks', 'B', range);
+  });
+
+  it('orders groups by first appearance and keeps case variants in one group', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(
+      batch([{ codemie_project_name: 'Beta' }, { codemie_project_name: 'A' }, { codemie_project_name: 'BETA' }])
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock.mock.calls.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['Beta', 'A']);
+    expect(fetchMock.mock.calls[0][1].body).toBe(
+      `${line({ codemie_project_name: 'Beta' })}\n${line({ codemie_project_name: 'BETA' })}\n`
+    );
+  });
+
+  it('stops at a failed group: cursor unchanged and the session not marked ended', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(
+      batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'B' }, { codemie_project_name: 'C' }])
+    );
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValue({ ok: false, status: 500 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+
+  it('re-sends the accepted group with identical bytes on retry and advances only when all succeed', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValueOnce({ ok: false, status: 500 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+
+    await forwardSession('s1', true, credentials);
+
+    const calls = hookCalls();
+    expect(calls).toHaveLength(4);
+    expect(calls[2][1].headers['X-CodeMie-Project']).toBe('A');
+    expect(calls[2][1].body).toBe(calls[0][1].body);
+    expect(calls[3][1].headers['X-CodeMie-Project']).toBe('B');
+    expect(calls[3][1].body).toBe(calls[1][1].body);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+  });
+
+  it('marks credentials stale and leaves the cursor when a later group is auth-expired', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValue({ ok: false, status: 401 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(true);
+  });
+
+  it('marks the session ended for a session end in a non-bound group, after the cursor advance', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(
+      batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'B' }])
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
+    expect(markSessionEndedMock.mock.invocationCallOrder[0]).toBeGreaterThan(advanceCursorMock.mock.invocationCallOrder[0]);
+  });
+
+  it('never posts a group whose name cannot be sent and advances over it', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, { codemie_project_name: 'Café' }]));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('A');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+  });
+
+  it('advances without a request when every group is unsendable', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(batch([{ codemie_project_name: 'Café' }]));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+  });
+
+  it('sends a sealed batch as one filtered request under the seal project', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, eventA2], { filtered: true }));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('A');
+    expect(fetchMock.mock.calls[0][1].body).toBe(`${line(eventA1)}\n${line(eventA2)}\n`);
+    expect(isSendAllowedMock).toHaveBeenCalledWith('s1', 'hooks', 'A', { cursor: 20, end: 320, filtered: true });
+  });
+
+  it('keeps the bound project header and the bytes on every OTLP stream of a split session', async () => {
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) => ({
+      project: 'A',
+      cursor: 0,
+      bytes: Buffer.from(`${stream}-bytes`),
+    }));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const otlp = fetchMock.mock.calls.filter(([url]) => !String(url).endsWith('/event-hooks'));
+    expect(hookCalls()).toHaveLength(2);
+    expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
+    expect(otlp.map(([, init]) => init.body.toString())).toEqual(['logs-bytes', 'metrics-bytes', 'traces-bytes']);
+  });
+});
+
 describe('forwardSession (project header)', () => {
   const hooksBatch = {
     project: 'Proj A',
@@ -374,13 +572,17 @@ describe('forwardSession (project header)', () => {
     expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('a@b.com');
   });
 
-  it('omits the project header for a non-Latin-1 project name', async () => {
-    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch, project: 'клиенты/проект' });
+  it('omits the project header on an OTLP stream for a non-Latin-1 project name', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockResolvedValue({ project: 'клиенты/проект', cursor: 0, bytes: Buffer.from('x') });
     const { forwardSession } = await import('../forwarder.js');
 
     await forwardSession('s1', false, credentials);
 
-    expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init.headers['X-CodeMie-Project']).toBeUndefined();
+    }
   });
 
   it('sends nothing when the snapshots are null', async () => {
@@ -402,26 +604,6 @@ describe('forwardSession (project header)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(advanceCursorMock).not.toHaveBeenCalled();
     expect(isSendAllowedMock).toHaveBeenNthCalledWith(1, 's1', 'hooks', 'Proj A', { cursor: 0, end: 10, filtered: false });
-  });
-
-  it('sends one project header and untouched bytes on every OTLP stream of a multi-project session', async () => {
-    snapshotPendingHookRecordsMock.mockResolvedValue({
-      ...hooksBatch,
-      records: [
-        spoolLine({ type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'Proj A' }),
-        spoolLine({ type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'Proj B' }),
-      ],
-    });
-    const { forwardSession } = await import('../forwarder.js');
-
-    await forwardSession('s1', false, credentials);
-
-    const otlp = fetchMock.mock.calls.slice(1);
-    expect(otlp).toHaveLength(3);
-    for (const [, init] of otlp) {
-      expect(init.headers['X-CodeMie-Project']).toBe('Proj A');
-    }
-    expect(otlp.map(([, init]) => init.body.toString())).toEqual(['logs-bytes', 'metrics-bytes', 'traces-bytes']);
   });
 
   it('warns when an OTLP response reports a project-gate rejection in partial_success', async () => {
