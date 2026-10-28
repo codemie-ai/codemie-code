@@ -4,7 +4,7 @@
 
 import { isAbsolute, resolve, sep } from 'path';
 import type { FileOperation, FileOperationType } from '../../../core/metrics/types.js';
-import { extractFormat, detectLanguage } from '../../../../utils/file-operations.js';
+import { extractFormat, detectLanguage, countContentLines } from '../../../../utils/file-operations.js';
 import { logger } from '../../../../utils/logger.js';
 
 // Pi's closed tool registry is read | bash | edit | write | grep | find | ls
@@ -185,10 +185,7 @@ function extractWriteOperations(
   const operation = withPath({ type: 'write' }, path);
   const content = args?.content;
   if (typeof content === 'string' && content.length > 0) {
-    // Strip a single trailing newline so newline-terminated source files are
-    // not over-counted by one.
-    const normalized = content.endsWith('\n') ? content.slice(0, -1) : content;
-    operation.linesAdded = normalized.split('\n').length;
+    operation.linesAdded = countContentLines(content);
   }
   return [operation];
 }
