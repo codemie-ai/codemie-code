@@ -99,6 +99,24 @@ const DROP_BODY_MAX_CHARS = 4_096;
 const DROP_WARN_INTERVAL_MS = 60_000;
 const lastDropWarn = new Map<string, number>();
 
+/** Sessions already told about a dropped group; bounded so a long-lived daemon cannot grow it without limit. */
+const MAX_WARNED_SESSIONS = 1000;
+const warnedUnsendable = new Set<string>();
+
+/** One WARN per session for hook groups whose project name cannot travel as a header; never the name. */
+function warnUnsendableOnce(sessionId: string, count: number): void {
+  if (warnedUnsendable.has(sessionId)) return;
+  if (warnedUnsendable.size >= MAX_WARNED_SESSIONS) {
+    const oldest = warnedUnsendable.values().next().value;
+    if (oldest !== undefined) warnedUnsendable.delete(oldest);
+  }
+  warnedUnsendable.add(sessionId);
+  logger.warn(
+    '[otlp-forwarder] hook record groups with a project name that cannot be sent were not sent',
+    ...sanitizeLogArgs({ sessionId, count })
+  );
+}
+
 /** The drop reason and count from a response body. The body is read whole; `DROP_BODY_MAX_CHARS` bounds only how much of it is parsed. */
 function parseDropBody(body: string): { reason?: unknown; dropped?: unknown } {
   if (body.length <= DROP_BODY_MAX_CHARS) {
@@ -282,6 +300,7 @@ async function forwardHooks(
       '[otlp-forwarder] hook record groups with a project name that cannot be sent were not sent',
       ...sanitizeLogArgs({ sessionId, count: payload.unsendable })
     );
+    warnUnsendableOnce(sessionId, payload.unsendable);
   }
   if (batch.dropped > 0) {
     logger.debug(

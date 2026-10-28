@@ -414,6 +414,64 @@ describe('forwardSession (hooks split by project)', () => {
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
   });
 
+  describe('warning about unsendable groups', () => {
+    const unsendable = { type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'Café' };
+    const warnCalls = async (): Promise<unknown[][]> => {
+      const { logger } = await import('@/utils/logger.js');
+      return vi.mocked(logger.warn).mock.calls.filter(([message]) => String(message).includes('cannot be sent'));
+    };
+
+    it('warns once per session, with the session id and the group count', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, unsendable]));
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('sess-warn-1', true, credentials);
+      await forwardSession('sess-warn-1', true, credentials);
+
+      const calls = await warnCalls();
+      expect(calls).toHaveLength(1);
+      expect(JSON.stringify(calls[0])).toContain('"sessionId":"sess-warn-1"');
+      expect(JSON.stringify(calls[0])).toContain('"count":1');
+    });
+
+    it('warns again for another session', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(batch([unsendable]));
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('sess-warn-2', true, credentials);
+      await forwardSession('sess-warn-3', true, credentials);
+
+      expect(await warnCalls()).toHaveLength(2);
+    });
+
+    it('never puts the project name in a log argument', async () => {
+      const secretLike = 'sk-secret\u0007token Café';
+      snapshotPendingHookRecordsMock.mockResolvedValue(
+        batch([eventA1, { ...unsendable, codemie_project_name: secretLike }])
+      );
+      const { forwardSession } = await import('../forwarder.js');
+      const { logger } = await import('@/utils/logger.js');
+
+      await forwardSession('sess-warn-4', true, credentials);
+
+      expect(await warnCalls()).toHaveLength(1);
+      const logged = JSON.stringify(
+        [logger.debug, logger.info, logger.warn, logger.error].map((fn) => vi.mocked(fn).mock.calls)
+      );
+      expect(logged).not.toContain('secret');
+      expect(logged).not.toContain('Caf');
+    });
+
+    it('does not warn when no group is dropped', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1]));
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('sess-warn-5', true, credentials);
+
+      expect(await warnCalls()).toHaveLength(0);
+    });
+  });
+
   it('does not mark the session ended for a session end held only by an unsent group', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue(
       batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'Café' }])
