@@ -139,4 +139,12 @@ describe('extractPiFileOperations (omp)', () => {
     expect(extractPiFileOperations('read', { path: 'agent://x' }, undefined, { cwd: '/repo' })).toEqual([]);
     expect(extractPiFileOperations('write', { path: 'local://n.md', content: 'a' }, undefined, { cwd: '/repo' })).toEqual([]);
   });
+
+  it('counts write lines without the trailing newline, like the shared countContentLines', () => {
+    const lines = (content: string): number | undefined =>
+      extractPiFileOperations('write', { path: 'a.ts', content }, undefined, { cwd: '/repo' })[0].linesAdded;
+    expect(lines('one\ntwo\n')).toBe(2);
+    expect(lines('one\ntwo')).toBe(2);
+    expect(lines('one\n\n')).toBe(2);
+  });
 });
