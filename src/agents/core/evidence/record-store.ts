@@ -56,6 +56,11 @@ export function evidenceDir(): string {
   return getCodemiePath('evidence');
 }
 
+/** Sticky-verdict file name for a record key (never matches RECORD_RE). */
+export function verdictFileName(key: string): string {
+  return `${key}.verdict.json`;
+}
+
 /** Atomic replace: temp file in the same dir, then rename. */
 export async function atomicReplace(path: string, content: string): Promise<void> {
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
@@ -211,7 +216,13 @@ export async function sweepRecords(
   }
   let evicted = 0;
   const evict = async (key: string): Promise<boolean> => {
-    try { await unlink(join(dir, `${key}.json`)); evicted++; return true; } catch { return false; }
+    try {
+      await unlink(join(dir, `${key}.json`));
+      evicted++;
+      // Sticky verdict shares the record's key and retention (and its pending protection).
+      await unlink(join(dir, verdictFileName(key))).catch(() => undefined);
+      return true;
+    } catch { return false; }
   };
   let live = entries.length;
   const remaining: typeof entries = [];
