@@ -9,7 +9,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { ConfigurationError } from '@/utils/errors.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
-import { canonicalizePath } from '@/agents/core/project-allowlist.js';
+import { addProjectPath, canonicalizePath, isPathInside, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import {
   getClaudeAnalyticsPreferencesPath,
   updateClaudeAnalyticsPreferences,
@@ -48,11 +48,13 @@ async function setEnabled(enabled: boolean): Promise<void> {
 
 async function excludeProject(path: string | undefined): Promise<void> {
   await withErrorHandling(async () => {
-    const canonical = await canonicalizePath(path ?? resolveProjectRoot());
+    const target = path ?? resolveProjectRoot();
+    const canonical = await canonicalizePath(target);
     let changed = true;
-    await updateClaudeAnalyticsPreferences((current: ClaudeAnalyticsPreferences) => {
-      changed = !current.excludedProjects.includes(canonical);
-      return changed ? { ...current, excludedProjects: [...current.excludedProjects, canonical] } : current;
+    await updateClaudeAnalyticsPreferences(async (current: ClaudeAnalyticsPreferences) => {
+      const excludedProjects = await addProjectPath(current.excludedProjects, target);
+      changed = excludedProjects.length !== current.excludedProjects.length;
+      return changed ? { ...current, excludedProjects } : current;
     });
     if (!changed) {
       console.log(chalk.dim('Nothing to change.'));
@@ -64,16 +66,31 @@ async function excludeProject(path: string | undefined): Promise<void> {
 
 async function includeProject(path: string | undefined): Promise<void> {
   await withErrorHandling(async () => {
-    const canonical = await canonicalizePath(path ?? resolveProjectRoot());
+    const target = path ?? resolveProjectRoot();
+    const canonical = await canonicalizePath(target);
     let changed = true;
-    await updateClaudeAnalyticsPreferences((current: ClaudeAnalyticsPreferences) => {
-      changed = current.excludedProjects.includes(canonical);
-      return changed
-        ? { ...current, excludedProjects: current.excludedProjects.filter((p) => p !== canonical) }
-        : current;
+    let coveringParent: string | undefined;
+    await updateClaudeAnalyticsPreferences(async (current: ClaudeAnalyticsPreferences) => {
+      const excludedProjects = await removeProjectPath(current.excludedProjects, target);
+      changed = excludedProjects.length !== current.excludedProjects.length;
+      if (!changed) {
+        for (const entry of current.excludedProjects) {
+          if (isPathInside(canonical, await canonicalizePath(entry))) {
+            coveringParent = entry;
+            break;
+          }
+        }
+      }
+      return changed ? { ...current, excludedProjects } : current;
     });
     if (!changed) {
-      console.log(chalk.dim('Nothing to change.'));
+      console.log(
+        chalk.dim(
+          coveringParent
+            ? `Nothing to change: ${canonical} is still excluded via ${coveringParent}.`
+            : 'Nothing to change.'
+        )
+      );
       return;
     }
     printSaved(` (project: ${canonical})`);

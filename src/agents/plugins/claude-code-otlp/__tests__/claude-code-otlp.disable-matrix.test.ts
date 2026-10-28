@@ -118,7 +118,8 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
   }
 
   describe.each([
-    ['Global', undefined],
+    ['Global (absent filter)', undefined],
+    ['Global (empty [] filter, as written by `connect --scope user`)', []],
     ['Project', ['/work/a', '/work/b']],
   ] as const)('%s scope', (_label, allowlist) => {
     it('exclude /work/a leaves /work/b forwarded', async () => {
@@ -163,5 +164,40 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: true }));
     await fire('/work/a');
     expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+  });
+
+  describe('AC4: native vs. managed (`codemie claude`) launch, CODEMIE_SESSION_ID present', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('disable-all stops forwarding identically for native and managed launches', async () => {
+      await writeSettings(undefined);
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
+
+      await fire('/work/a');
+      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+
+      vi.stubEnv('CODEMIE_SESSION_ID', 'managed-session-1');
+      await fire('/work/a');
+      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    });
+
+    it('exclude-one leaves the other project forwarded identically for native and managed launches', async () => {
+      await writeSettings(undefined);
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
+
+      await fire('/work/a');
+      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      await fire('/work/b');
+      expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+      forwardOtlpEventsToSpool.mockClear();
+
+      vi.stubEnv('CODEMIE_SESSION_ID', 'managed-session-1');
+      await fire('/work/a');
+      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      await fire('/work/b');
+      expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+    });
   });
 });

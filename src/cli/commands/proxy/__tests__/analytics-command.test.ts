@@ -101,6 +101,60 @@ describe('createProxyAnalyticsCommand', () => {
     expect(logSpy.mock.calls.flat().join(' ')).toContain('Nothing to change.');
   });
 
+  const isCaseInsensitiveFs = process.platform === 'win32' || process.platform === 'darwin';
+
+  it.runIf(isCaseInsensitiveFs)('exclude twice with different casing keeps a single entry (CR-003)', async () => {
+    await runCommand(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await runCommand(['exclude', '/WORK/A']);
+    const prefs = (await readPreferences()) as { excludedProjects: string[] };
+    expect(prefs.excludedProjects).toHaveLength(1);
+  });
+
+  it.runIf(isCaseInsensitiveFs)('include with different casing removes a previously excluded path (CR-003)', async () => {
+    await runCommand(['exclude', '/work/a']);
+    await runCommand(['include', '/WORK/A']);
+    expect(await readPreferences()).toMatchObject({ excludedProjects: [] });
+  });
+
+  it('include of a subdirectory still excluded via its parent names the parent instead of claiming nothing is tracked (CR-003)', async () => {
+    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+    await runCommand(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await runCommand(['include', '/work/a/nested']);
+
+    const prefs = (await readPreferences()) as { excludedProjects: string[] };
+    const parent = await canonicalizePath('/work/a');
+    expect(prefs.excludedProjects).toEqual([parent]);
+    expect(logSpy.mock.calls.flat().join(' ')).toContain(`still excluded via ${parent}`);
+  });
+
+  it('status prints formatted output through the real command wiring (CR-004)', async () => {
+    await runCommand(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await runCommand(['status']);
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Hooks:');
+    expect(output).toContain('Excluded projects:');
+  });
+
+  it('status --json prints parseable JSON through the real command wiring (CR-004)', async () => {
+    await runCommand(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await runCommand(['status', '--json']);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(parsed).toMatchObject({ excludedProjects: [expect.any(String)] });
+  });
+
+  it('createProxyAnalyticsCommand registers all five subcommands (CR-004)', async () => {
+    const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
+    const names = createProxyAnalyticsCommand()
+      .commands.map((c) => c.name())
+      .sort();
+    expect(names).toEqual(['disable', 'enable', 'exclude', 'include', 'status']);
+  });
+
   it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {
     const { getClaudeAnalyticsPreferencesPath } = await import(
       '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'

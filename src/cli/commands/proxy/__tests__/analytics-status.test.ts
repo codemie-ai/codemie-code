@@ -80,7 +80,7 @@ describe('analytics-status', () => {
       expect(status.trackedProjects).toEqual(['/work/a', '/work/b']);
     });
 
-    it('reports an excluded project under Global scope as not tracked', async () => {
+    it('reports an excluded project under Global scope as not tracked (CR-004: also asserts scope)', async () => {
       await writeSettings({
         hooks: { SessionStart: [HOOK_ENTRY] },
         env: { CODEMIE_ANALYTICS_PROJECT_FILTER: '[]' },
@@ -88,8 +88,19 @@ describe('analytics-status', () => {
       await writePreferences(JSON.stringify({ version: 1, enabled: true, excludedProjects: ['/work/a'] }));
       const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
       const status = await collectClaudeAnalyticsStatus('/work/a');
+      expect(status.scope).toBe('user');
       expect(status.current.tracked).toBe(false);
       expect(status.current.reason).toBe('project-excluded');
+    });
+
+    it('reports an invalid allowlist as scope "invalid" (CR-004)', async () => {
+      await writeSettings({
+        hooks: { SessionStart: [HOOK_ENTRY] },
+        env: { CODEMIE_ANALYTICS_PROJECT_FILTER: 'not-json' },
+      });
+      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
+      const status = await collectClaudeAnalyticsStatus('/work/a');
+      expect(status.scope).toBe('invalid');
     });
 
     it('reports disabled when preferences disable collection', async () => {
