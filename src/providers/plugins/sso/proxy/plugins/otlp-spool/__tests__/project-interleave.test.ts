@@ -291,4 +291,150 @@ describe('project gate — ingest vs forwarding', () => {
       expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('A');
     });
   });
+
+  describe('F. several sendable projects in one session, end to end through the real spool and forwarder', () => {
+    interface HookEvent {
+      type: string;
+      session_id: string;
+      codemie_project_name?: string;
+      tag: string;
+    }
+
+    const event = (project: string | undefined, tag: string, type = 'agent.tool.end'): HookEvent => ({
+      type,
+      session_id: SESSION,
+      ...(project === undefined ? {} : { codemie_project_name: project }),
+      tag,
+    });
+    const lineOf = (e: HookEvent): string =>
+      JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(e) }) + '\n';
+    const bodyOf = (...events: HookEvent[]): string => events.map((e) => `${JSON.stringify(e)}\n`).join('');
+
+    async function appendEvents(...events: HookEvent[]): Promise<void> {
+      const { appendSpool } = await import('../spool-io.js');
+      for (const e of events) {
+        await appendSpool(SESSION, 'hooks', lineOf(e), e.codemie_project_name === undefined ? [] : [e.codemie_project_name]);
+      }
+    }
+
+    function hooksRequests(): Array<{ project: string; body: string }> {
+      return fetchMock.mock.calls
+        .filter(([url]) => String(url).includes('event-hooks'))
+        .map(([, init]) => ({ project: init.headers['X-CodeMie-Project'], body: String(init.body) }));
+    }
+
+    async function hooksCursor(): Promise<number | undefined> {
+      const { readStatus } = await import('../session-status.js');
+      return (await readStatus(SESSION))?.cursors.hooks;
+    }
+
+    const a1 = event('A', 'a1');
+    const b1 = event('B', 'b1');
+    const a2 = event('A', 'a2');
+
+    it('sends one request per project and moves the cursor to the end only after both are accepted', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await seedBoundA(); // a1 is hookLine('A'); the OTLP streams are pending too
+      await appendEvents(b1, a2);
+      const total = Buffer.byteLength(hookLine('A') + lineOf(b1) + lineOf(a2));
+      const cursorAtEachHooksRequest: Array<number | undefined> = [];
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes('event-hooks')) cursorAtEachHooksRequest.push(await hooksCursor());
+        return { ok: true, status: 200 };
+      });
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      expect(hooksRequests()).toEqual([
+        { project: 'A', body: `${JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' })}\n${bodyOf(a2)}` },
+        { project: 'B', body: bodyOf(b1) },
+      ]);
+      expect(cursorAtEachHooksRequest).toEqual([0, 0]);
+      await cursorsAtEof(total);
+    });
+
+    it('B fails and then succeeds on the next tick: A is sent again byte for byte, endedAt waits for the whole batch', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      const end = event('B', 'end', 'agent.session.end');
+      await appendEvents(a1, b1, end);
+      const total = Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(end));
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }); // A
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // B
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      let status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(0);
+      expect(status?.endedAt).toBeUndefined();
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      const requests = hooksRequests();
+      expect(requests).toHaveLength(4);
+      expect(requests[0]).toEqual({ project: 'A', body: bodyOf(a1) });
+      expect(requests[1]).toEqual({ project: 'B', body: bodyOf(b1, end) });
+      expect(requests[2]).toEqual(requests[0]);
+      expect(requests[3]).toEqual(requests[1]);
+      status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(total);
+      expect(status?.endedAt).toEqual(expect.any(Number));
+    });
+
+    it('a rejected credential in the second group leaves the cursor and does not end the session', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      await appendEvents(a1, event('B', 'end', 'agent.session.end'));
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+      fetchMock.mockResolvedValue({ ok: false, status: 401 });
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      const status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(0);
+      expect(status?.endedAt).toBeUndefined();
+    });
+
+    it('events without a project name travel in the bound project request, in file order', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const unnamed = event(undefined, 'u1');
+      const lower = event('a', 'a-lower');
+      await appendEvents(a1, b1, unnamed, lower);
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      expect(hooksRequests()).toEqual([
+        { project: 'A', body: bodyOf(a1, unnamed, lower) }, // 'a' shares A's group and is not rewritten
+        { project: 'B', body: bodyOf(b1) },
+      ]);
+      expect(await hooksCursor()).toBe(Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(unnamed) + lineOf(lower)));
+    });
+
+    it('a sealed prefix is still one filtered request, even with another sendable project inside it', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await appendEvents(a1, b1);
+      const conflict = event('Bé', 'conflict');
+      await appendEvents(conflict); // unsendable name: seals the prefix before it
+
+      await forwardSession(SESSION, true, credentials as never);
+      await forwardSession(SESSION, true, credentials as never);
+
+      expect(hooksRequests()).toEqual([{ project: 'A', body: bodyOf(a1) }]);
+      // The second pass drains the conflicting record that follows the sealed prefix.
+      expect(await hooksCursor()).toBe(Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(conflict)));
+    });
+
+    it('OTLP streams keep the bound project header and their exact bytes for a multi-project session', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await seedBoundA();
+      await appendEvents(b1);
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      const otlp = fetchMock.mock.calls.filter(([url]) => !String(url).includes('event-hooks'));
+      expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
+      expect(otlp.map(([, init]) => Buffer.from(init.body).toString())).toEqual(['L', 'MM', 'TTT']);
+      expect(hooksRequests().map((r) => r.project)).toEqual(['A', 'B']);
+    });
+  });
 });
