@@ -168,6 +168,7 @@ async function disconnectOmp(): Promise<void> {
     process.exitCode = 1;
   }
 }
+
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
   const { targets } = opts;
   if (
