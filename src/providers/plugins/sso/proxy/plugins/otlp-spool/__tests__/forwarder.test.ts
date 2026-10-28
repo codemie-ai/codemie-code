@@ -404,6 +404,46 @@ describe('forwardSession (project header)', () => {
     expect(isSendAllowedMock).toHaveBeenNthCalledWith(1, 's1', 'hooks', 'Proj A', { cursor: 0, end: 10, filtered: false });
   });
 
+  it('sends one project header and untouched bytes on every OTLP stream of a multi-project session', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({
+      ...hooksBatch,
+      records: [
+        spoolLine({ type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'Proj A' }),
+        spoolLine({ type: 'agent.tool.end', session_id: 's1', codemie_project_name: 'Proj B' }),
+      ],
+    });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const otlp = fetchMock.mock.calls.slice(1);
+    expect(otlp).toHaveLength(3);
+    for (const [, init] of otlp) {
+      expect(init.headers['X-CodeMie-Project']).toBe('Proj A');
+    }
+    expect(otlp.map(([, init]) => init.body.toString())).toEqual(['logs-bytes', 'metrics-bytes', 'traces-bytes']);
+  });
+
+  it('warns when an OTLP response reports a project-gate rejection in partial_success', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/logs')
+        ? { ok: true, status: 200, text: async () => '\x0a\x1c\x08\x03\x12\x18project_context_conflict' }
+        : { ok: true, status: 200 }
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[otlp-forwarder] backend dropped analytics events',
+      expect.objectContaining({})
+    );
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 14);
+  });
+
   it('checks every OTLP stream under its own name and byte range, so a hooks-only seal cannot cover it', async () => {
     isSendAllowedMock.mockImplementation(async (_s: string, stream: string) => stream === 'hooks');
     snapshotPendingBytesMock.mockResolvedValue({ project: 'Proj A', cursor: 4, bytes: Buffer.alloc(10) });

@@ -93,7 +93,7 @@ const DROP_BODY_MAX_CHARS = 4_096;
 const DROP_WARN_INTERVAL_MS = 60_000;
 const lastDropWarn = new Map<string, number>();
 
-/** The drop reason and count from a response body, which may be longer than the cap we read. */
+/** The drop reason and count from a response body. The body is read whole; `DROP_BODY_MAX_CHARS` bounds only how much of it is parsed. */
 function parseDropBody(body: string): { reason?: unknown; dropped?: unknown } {
   if (body.length <= DROP_BODY_MAX_CHARS) {
     const parsed: unknown = JSON.parse(body);
@@ -106,8 +106,17 @@ function parseDropBody(body: string): { reason?: unknown; dropped?: unknown } {
 }
 
 /**
+ * The OTLP routes answer a discarded request with a protobuf `partial_success` whose
+ * `error_message` is the reason string; the reason is plain ASCII inside the binary body.
+ */
+function parseOtlpDropBody(body: string): { reason?: unknown; dropped?: unknown } {
+  const head = body.slice(0, DROP_BODY_MAX_CHARS);
+  return { reason: [...BACKEND_DROP_REASONS].find((reason) => head.includes(reason)) };
+}
+
+/**
  * The backend answers 200 even when its project gate discards a request. The hooks route says so
- * in its JSON body; surface it, without ever affecting the send result. The warning is throttled
+ * in its JSON body and the OTLP routes in `partial_success`; surface it, without ever affecting the send result. The warning is throttled
  * per session and reason so a persistent drop cannot flood the log.
  */
 async function warnOnBackendDrop(
@@ -124,7 +133,7 @@ async function warnOnBackendDrop(
         timer.unref();
       }),
     ]);
-    const { reason, dropped } = parseDropBody(body);
+    const { reason, dropped } = stream === 'hooks' ? parseDropBody(body) : parseOtlpDropBody(body);
     if (typeof reason !== 'string' || !BACKEND_DROP_REASONS.has(reason)) {
       return;
     }
@@ -204,9 +213,7 @@ async function send(
       }
     }
     if (response.ok) {
-      if (stream === 'hooks') {
-        void warnOnBackendDrop(response, sessionId, stream);
-      }
+      void warnOnBackendDrop(response, sessionId, stream);
       return 'ok';
     }
 

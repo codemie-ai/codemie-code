@@ -78,8 +78,9 @@ function normalizeStatus(raw: unknown): SessionStatus {
     status.projectConflict = (conflict as string[]).slice(0, MAX_CONFLICT_NAMES);
   }
   if (status.projectConflict && status.projectConflict.every(isSendableProjectName)) {
-    // Written under the old discard-on-conflict policy: several sendable names are no longer a
-    // conflict, the session pins to its first-seen project.
+    // Several sendable names are not a conflict: the session pins to the first recorded one. The
+    // list is already cut to MAX_CONFLICT_NAMES and holds only the names that were seen together
+    // with the conflict, so this entry is a best guess for the first-seen project, not a proof.
     status.project ??= status.projectConflict[0];
     delete status.projectConflict;
   }
