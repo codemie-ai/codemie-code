@@ -1,6 +1,6 @@
 # F2 findings: backend trace for P5 (EPMCDME-16441)
 
-Source: sibling checkout /Users/vponkratina/work/ai/codemie at commit 48fa31b56 (2026-10-27), read-only. It may differ from the
+Source: read-only checkout of the backend repository (state of 2026-10-27). It may differ from the
 deployed backend; no prod/live access, so nothing below is measured from prod. "Inferred" = deduced from code/guides only.
 Paths below are relative to `src/codemie/`, except guides (`.ai-run/guides/integration/`).
 
@@ -18,7 +18,7 @@ VERBATIM ANSWER: the `/event-hooks` discard body DOES carry a drop field; the `/
 
 Reason strings: `cli_analytics_disabled`, `project_context_required`, `project_context_conflict` (service/analytics/cli_analytics_project_gate.py:37-39).
 Always HTTP 200 (rest_api/routers/cli_analytics.py:155-156, `_ingest_response`). Doc: events.md:36-43.
-CLI Task 4 implication: hooks stream = parse JSON, test `dropped > 0` / `reason`. OTLP streams are posted as protobuf by the forwarder
+CLI implication: hooks stream = parse JSON, test `dropped > 0` / `reason`. OTLP streams are posted as protobuf by the forwarder
 (forwarder.ts:265-267), so the answer is protobuf `Export*ServiceResponse`: decode `partial_success` (field name per signal) or treat a
 non-empty body as a rejection signal; `error_message` holds the reason when the gate refused (also holds a content-rejection text
 "records the analytics storage cannot store were dropped", ingestor.py:99, for DB-rejected records, so match on the three reason
@@ -105,6 +105,6 @@ another task; not verified here).
 No suspected correctness defect found in the dedup hash, case-insensitive project canonicalisation, or the dirty/rollup subagent SQL by
 reading alone.
 
-## Not verified here (needs prod / owner)
+## Not verified here (needs prod access)
 `cli_analytics_enabled` history for EPMCDME and the factory project; any discard counts in prod logs; deployed backend version vs
-48fa31b56; which project the factory runs under; whether CLI posts oversize bodies. Event_id composition on the CLI side.
+the checked-out backend state; which project the factory runs under; whether CLI posts oversize bodies. Event_id composition on the CLI side.

@@ -1,7 +1,7 @@
 # Backend handoff: claude -p end-of-session loss and subagent usage/cost (EPMCDME-16441, P3 and P4)
 
 Audience: backend team. Built from findings-T2.md, findings-T3.md and findings-F2.md (CLI code reading plus a read-only trace of the
-sibling backend checkout at commit 48fa31b56). Nothing here was measured from prod. Anything marked "inferred, not measured from prod"
+backend repository checkout). Nothing here was measured from prod. Anything marked "inferred, not measured from prod"
 is deduced from code or guides only. No backend repo edits were made and no tickets were filed. CLI paths are relative to the
 codemie-code repo, backend paths to `src/codemie/` of the backend repo.
 
@@ -31,7 +31,7 @@ codemie-code repo, backend paths to `src/codemie/` of the backend repo.
 ### Open questions that need prod/backend access
 - How many factory/`-p` sessions on prod have usage rows but no `agent.session.end`? (query `hook_events` by session_id for type `agent.session.end` vs `agent.usage.request`)
 - Do those sessions appear in the sessions list and KPIs, with developer, repository, branch and cost?
-- Is the deployed backend the same as 48fa31b56?
+- Is the deployed backend the same as the checked-out backend state?
 
 ### Ticket draft (backend, file only if the prod check shows impact)
 Title: Sessions without agent.session.end (headless claude -p) lose duration/git snapshot in the sessions list
@@ -57,7 +57,7 @@ Only subagent check-ins with an empty `agent_type` are skipped. A stop without `
 CLI-side gaps (not fixed, inferred, not measured from prod): the allowlist is evaluated on the hook cwd, so a subagent in a worktree outside the allowlist drops its Start/Stop and usage; backstop `worktree`/`cwd` for a subagent is the SessionEnd cwd.
 
 ### What the backend must verify or change
-1. Ingest/project gate: `agent.subagent.*` events carry the pinned project, so no gate change. The CLI also rewrites any differing project in an event to the pinned one before sending.
+1. Ingest/project gate: `agent.subagent.*` events carry the pinned project, so no gate change. The CLI sends one hook request per project, each with an `X-CodeMie-Project` header equal to the project named by its events; events are never rewritten, and events without a project name go with the session's bound project (the first sendable name seen).
 2. Dedup: first stored version wins for the same `event_id` (otlp.py:621-627, events.md:435). The CLI changes `event_id` when the cumulative usage content grows, so updates are not dropped (CLI event-id read; inferred, not measured from prod). Confirm that "latest event with totals wins per agent" (rollups.py:627-651) holds with the resulting multiple rows.
 3. Aggregation (`rollups.py:575-660`, `_totals_are_a_source` at 589-607): `agent.subagent.usage` totals become a `session_usage` source (token_source=`subagent_usage`) only if there is no `usage_requests` row for that session+agent, no OTel `api_request` log for the session (any agent), no non-totals `session_usage` row for that agent, and no `attrs.otel_requests` row. The CLI sends both per-request rows and totals, so in a CLI-hook session the cost counts once through the requests (inferred, not measured from prod).
 4. Possible drop (inferred, not measured from prod): if a subagent's `agent.usage.request` events never arrived AND the session has any OTel `api_request` (Claude Code native OTEL on), the subagent totals are suppressed and its cost disappears. Totals rows have `source_cost_usd = NULL` (rollups.py:640).
@@ -67,7 +67,7 @@ CLI-side gaps (not fixed, inferred, not measured from prod): the allowlist is ev
 ### Open questions that need prod/backend access
 - For factory sessions with subagents: compare `subagent_invocations` token sums against `usage_requests` per `agent_id` and against `cost_daily` for the session.
 - Do any factory sessions have subagent totals but no per-request rows, with OTel `api_request` present?
-- Does the deployed reader (versus 48fa31b56) surface `session_usage` totals in KPI cost?
+- Does the deployed reader (versus the checked-out backend state) surface `session_usage` totals in KPI cost?
 - Is the Claude Code OTEL env enabled in the factory runs?
 
 ### Ticket draft (backend, file only if the prod check confirms)
@@ -83,7 +83,7 @@ Distinct drop reasons for project not found / no access; log and count every ing
 
 ## 4. Backend research feedback on sections 1 and 2 (supersedes the inferred items above)
 
-Source: backend-side research relayed by the ticket owner; not re-verified from the CLI repo. Backend references are as reported there.
+Source: backend-side research relayed in the ticket discussion; not re-verified from the CLI repo. Backend references are as reported there.
 
 ### P3 (sessions without `agent.session.end`): already handled in the backend
 - `ended_at` and `duration_ms` fall back to the last raw event (`rollups.py:1185-1200`, the EPMCDME-15584 fix).
@@ -103,9 +103,9 @@ Source: backend-side research relayed by the ticket owner; not re-verified from 
 - (c) (a) plus a P3 reader fallback to `activity_started_at` when `started_at` is NULL.
 Decision: superseded. The backend scope is the plan reviewed in section 9: query-time pricing of subagent totals (section 7), cost-less sessions listed with `cost_available` (sections 6 and 8), and a gate-discard log line and counter (section 6, decisions 4 and 4b). Options (a) to (c) are not taken as written.
 
-## 5. Second backend research pass (read-only, backend HEAD 83fad2f6)
+## 5. Second backend research pass (read-only, backend repository HEAD)
 
-Method: code read of `/Users/vponkratina/work/ai/codemie` only; nothing measured from prod. Paths relative to `src/codemie/` unless marked REPO. Supersedes inferred items in sections 1, 2 and 4.
+Method: code read of the backend repository only; nothing measured from prod. Paths relative to `src/codemie/` unless marked REPO. Supersedes inferred items in sections 1, 2 and 4.
 
 ### Project gate (P5) - confirmed
 Order per ingest route: authenticate (`rest_api/routers/cli_analytics.py:136`) -> feature flag `cliAnalytics` off = 404 (140) -> body over `ANALYTICS_INGEST_MAX_BODY_BYTES` = 413 -> hooks only: non-ndjson 415, empty 400, no parseable events 400 -> gate in the ingestor (`repository/cli_analytics/postgres/ingestor.py:366` OTLP, `379` hooks; gate code `service/analytics/cli_analytics_project_gate.py:52-81`):
@@ -114,7 +114,7 @@ Order per ingest route: authenticate (`rest_api/routers/cli_analytics.py:136`) -
 3. active project not found by name or deleted -> `project_context_required`
 4. user lacks application access -> `project_context_required`
 5. with `ENABLE_USER_MANAGEMENT`, non-admin without current `user_project` membership -> `project_context_required`
-6. `cli_analytics_enabled` false -> `cli_analytics_disabled` (default false: `core/models.py:397`; REPO `src/external/alembic/versions/a9c4e7b2d1f3_...py:26`; personal projects forced false: `service/project/personal_project_service.py:228`)
+6. `cli_analytics_enabled` false -> `cli_analytics_disabled` (default false: `core/models.py:397`; REPO `src/external/alembic/versions/<revision>_...py:26`; personal projects forced false: `service/project/personal_project_service.py:228`)
 A discard returns HTTP 200 (hooks body `{"accepted":0,"dropped":N,"reason":...}`; OTLP `partial_success` with `rejected_*` and `error_message`). The CLI treats any 2xx as final and deletes its spool. Discards are not logged or counted in the paths read (not searched repo-wide); a discard writes no rows, ledger entries or rollup keys. Several silent causes beyond "analytics not configured": unknown/deleted project name, no project membership, flag off, header/body mismatch.
 
 ### P3 (no end event) - confirmed with corrections
@@ -142,7 +142,7 @@ Scope choice from section 4 is decided: the backend plan in sections 6 to 9 (a g
 
 ## 6. Backend decisions (answers to the backend team's questions)
 
-Status: answers to the backend team's questions as recommended to the ticket owner. Decisions 2 and 3 are superseded by section 7 (query-time pricing); decision 1 is extended by section 8 (`cost_available`); decisions 4 and 4b stand.
+Status: answers to the backend team's questions as recommended. Decisions 2 and 3 are superseded by section 7 (query-time pricing); decision 1 is extended by section 8 (`cost_available`); decisions 4 and 4b stand.
 
 | # | Question | Decision | Notes |
 |---|---|---|---|
@@ -152,13 +152,13 @@ Status: answers to the backend team's questions as recommended to the ticket own
 | 4 | What counts as a project-gate discard "count"? | A: one structured log line per discard plus an in-process counter labelled by reason | Log carries reason code, route (OTLP or hooks) and event count; no email or project name; nothing persisted. Record zero-event OTLP discards explicitly, since `N == 0` is otherwise indistinguishable from success. For OTLP this is the only trace, because the CLI does not decode protobuf. |
 | 4b | Should the discard log line carry a pseudonymous user ID? | A: yes, an HMAC of the user ID, in the log line only | Not a counter label (metric cardinality). Key from existing secret config, never logged; rotating it breaks correlation across the rotation. Consider truncating to a short fixed length. Check log retention and access against data-handling rules. Allows a distinct-ID count of affected developers. |
 
-Not backend scope: the CLI hooks-stream drop warning (committed in 46bad8dc and hardened in 9e17fbb4) already logs the drop reason locally for hooks responses.
+Not backend scope: the CLI hooks-stream drop warning (already committed in the CLI) already logs the drop reason locally for hooks responses.
 
 Nothing is open in this table.
 
 ## 7. Verification result and redesign (supersedes decisions 2 and 3 and the null-cost idea in section 6)
 
-Source: read-only code check of the backend at HEAD 83fad2f6, plus the backend team's own analysis relayed by the ticket owner. Nothing measured from prod.
+Source: read-only code check of the backend repository HEAD, plus the backend team's own analysis relayed in the ticket discussion. Nothing measured from prod.
 
 ### Verified facts
 - Displayed cost is priced in Python at query time from `cost_daily` token columns using the live catalog (`service/analytics/handlers/coding_agent_pricing.py:62`, `CatalogPricer`; `reader.get_session_model_costs` at `reader.py:364-384`). No displayed total reads the stored `cost_usd`. A model absent from the catalog prices at 0.0 with a warning; `CatalogPricer` has no default-model fallback.
@@ -188,7 +188,7 @@ The backend team intends to send its spec back for this redesign (query-time pri
 
 ## 8. Decision: additive `cost_available` field on the session-list row
 
-Decided (ticket owner): yes, in scope.
+Decided: yes, in scope.
 - Add `cost_available: bool = True` to `LocalAnalyticsSessionRow` (`rest_api/models/cli_analytics.py`, next to `cost_usd` at line 224). Additive and non-breaking: existing consumers ignore it, and it does not affect sorting or `_pct`.
 - Semantics: `false` when the session has no cost rows (the sessions listed because of the relaxed cost join, section 6 decision 1); `true` otherwise. `cost_usd` stays a required float and is 0.0 when `cost_available` is false.
 - A session priced at 0.0 only because its model is missing from the catalog is a separate case; it has cost rows, so it stays `cost_available: true`. The warning logged by the pricer remains the signal for that case. Confirm this deliberately in the backend spec.

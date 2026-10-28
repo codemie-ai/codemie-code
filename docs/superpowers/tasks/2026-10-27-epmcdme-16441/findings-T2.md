@@ -1,6 +1,6 @@
 # T2 findings: `claude -p` end-of-session loss (code reading only)
 
-Paths relative to /Users/vponkratina/work/ai/codemie-code. Nothing here measured from prod; items marked "inferred" are not verified.
+Paths relative to the codemie-code repository root. Nothing here measured from prod; items marked "inferred" are not verified.
 
 ## 1. Trace of a headless run
 
