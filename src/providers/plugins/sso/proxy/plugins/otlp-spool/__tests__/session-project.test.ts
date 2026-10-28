@@ -55,17 +55,24 @@ describe('decideProject', () => {
     expect(decideProject(['B'], withProject('A'))).toEqual({ action: 'noop' });
   });
 
-  it('lists the unsendable name first when it conflicts next to the binding', () => {
-    expect(decideProject(['Проект'], withProject('A'))).toEqual({
-      action: 'conflict',
-      names: ['Проект', 'A'],
-    });
+  it('leaves a bound session alone when an unsendable name arrives', () => {
+    expect(decideProject(['Проект'], withProject('A'))).toEqual({ action: 'noop' });
   });
 
-  it('lists unsendable names first when an unbound batch conflicts', () => {
-    expect(decideProject(['A', 'B', 'Проект'], createStatus())).toEqual({
+  it.each([[' A'], ['A\n'], ['A\u0007']])('does not read %j as the bound name or as a conflict', (name) => {
+    expect(decideProject([name], withProject('A'))).toEqual({ action: 'noop' });
+  });
+
+  it('binds the first sendable name of an unbound batch, whatever else it holds', () => {
+    expect(decideProject(['A', 'B', 'Проект'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+    expect(decideProject(['Bé', 'A'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+    expect(decideProject([' A', 'A'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+  });
+
+  it('conflicts only when an unbound batch holds nothing but unsendable names', () => {
+    expect(decideProject(['Bé', 'Проект', ' A'], createStatus())).toEqual({
       action: 'conflict',
-      names: ['Проект', 'A', 'B'],
+      names: ['Bé', 'Проект', ' A'],
     });
   });
 
@@ -80,6 +87,11 @@ describe('decideProject', () => {
   it('is a noop once a conflict is stored', () => {
     const status = { ...createStatus(), projectConflict: ['A', 'B'] };
     expect(decideProject(['C'], status)).toEqual({ action: 'noop' });
+  });
+
+  it('keeps a stored conflict sticky when a sendable name arrives later', () => {
+    const status = { ...createStatus(), projectConflict: ['Bé'] };
+    expect(decideProject(['A'], status)).toEqual({ action: 'noop' });
   });
 
   it.each([[' A'], ['A\n'], ['Проект']])('treats %j as a conflict on its own', (name) => {
@@ -104,12 +116,13 @@ describe('applyProjectDecision / projectGate', () => {
     expect(status.project).toBe('A');
   });
 
-  it('keeps an unsendable name when the conflict list is cut', () => {
-    const sendable = Array.from({ length: 12 }, (_, i) => `P${i}`);
+  it('cuts the conflict list to the first eight unsendable names', () => {
+    const unsendable = Array.from({ length: 12 }, (_, i) => `Проект${i}`);
     const status = createStatus();
-    applyProjectDecision(status, decideProject([...sendable, 'Проект'], status));
-    expect(status.projectConflict).toHaveLength(8);
-    expect(status.projectConflict?.[0]).toBe('Проект');
+    const decision = decideProject(unsendable, status);
+    expect(decision).toEqual({ action: 'conflict', names: unsendable });
+    applyProjectDecision(status, decision);
+    expect(status.projectConflict).toEqual(unsendable.slice(0, 8));
   });
 
   it('keeps a conflict set-once', () => {

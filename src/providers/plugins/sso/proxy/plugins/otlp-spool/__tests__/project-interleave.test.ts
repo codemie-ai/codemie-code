@@ -124,12 +124,12 @@ describe('project gate — ingest vs forwarding', () => {
     });
   }
 
-  it('A. the queue order is the lock order', async () => {
+  it('A. an unsendable name queued before the snapshot does not stop it', async () => {
     const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
     const { withSessionLock } = await import('../session-lock.js');
     await seedBoundA();
 
-    // append(B) queued before the snapshot: the snapshot sees the conflict.
+    // append(Bé) queued before the snapshot: the session is bound, so the snapshot still returns A's bytes.
     const release = deferred();
     const held = withSessionLock(SESSION, () => release.promise);
     const append = appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
@@ -137,10 +137,10 @@ describe('project gate — ingest vs forwarding', () => {
     release.resolve();
     await held;
     await append;
-    expect(await snapshot).toBeNull();
+    expect(await snapshot).toMatchObject({ project: 'A' });
   });
 
-  it('A. a snapshot queued before the append sees project A, the append then persists the conflict', async () => {
+  it('A. a snapshot queued before the append sees project A, and the append leaves the binding alone', async () => {
     const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
     const { withSessionLock } = await import('../session-lock.js');
     const { readStatus } = await import('../session-status.js');
@@ -155,10 +155,12 @@ describe('project gate — ingest vs forwarding', () => {
     await append;
 
     expect(await snapshot).toMatchObject({ project: 'A' });
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['B\u00e9', 'A']);
+    const status = await readStatus(SESSION);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
   });
 
-  it('B. a request already in flight is the stated limit; nothing else is sent after the conflict', async () => {
+  it('B. an unsendable name arriving during a request in flight changes nothing: OTLP follows under A', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { forwardSession } = await import('../forwarder.js');
     await seedBoundA();
@@ -174,30 +176,33 @@ describe('project gate — ingest vs forwarding', () => {
     const pass = forwardSession(SESSION, false, credentials as never);
     await started.promise;
     await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
-    events.push('conflict-persisted');
+    events.push('unsendable-appended');
     response.resolve({ ok: true, status: 200 });
     await pass;
-    await forwardSession(SESSION, false, credentials as never); // next pass drains B's hook
+    await forwardSession(SESSION, false, credentials as never); // next pass drains the unsendable hook unsent
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(events).toEqual(['fetch:A', 'conflict-persisted']);
+    expect(fetchMock).toHaveBeenCalledTimes(4); // hooks, then logs, metrics and traces
+    expect(events).toEqual(['fetch:A', 'unsendable-appended', 'fetch:A', 'fetch:A', 'fetch:A']);
     const hooksSize = Buffer.byteLength(hookLine('A') + hookLine('B\u00e9'));
     await cursorsAtEof(hooksSize);
   });
 
-  it('C. a conflict persisted between the hooks snapshot and the OTLP snapshots stops all OTLP requests', async () => {
+  it('C. an unsendable name persisted between the hooks snapshot and the OTLP snapshots does not stop the OTLP requests', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { forwardSession } = await import('../forwarder.js');
     await seedBoundA();
-    fetchMock.mockImplementation(async () => {
+    fetchMock.mockImplementationOnce(async () => {
       await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
       return { ok: true, status: 200 };
     });
 
     await forwardSession(SESSION, false, credentials as never);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(String(fetchMock.mock.calls[0][0])).toContain('event-hooks');
+    const otlp = fetchMock.mock.calls.slice(1);
+    expect(otlp.map(([url]) => String(url)).some((url) => url.includes('event-hooks'))).toBe(false);
+    expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
   });
 
   describe('D. hooks seal, end to end through the real spool and forwarder', () => {
@@ -437,10 +442,11 @@ describe('project gate — ingest vs forwarding', () => {
     });
 
     it('a sealed prefix is still one filtered request, even with another sendable project inside it', async () => {
+      const seedConflict = await conflictSeeder();
       const { forwardSession } = await import('../forwarder.js');
       await appendEvents(a1, b1);
       const conflict = event('Bé', 'conflict');
-      await appendEvents(conflict); // unsendable name: seals the prefix before it
+      await seedConflict(lineOf(conflict)); // a stored conflict seals the prefix before the line
 
       await forwardSession(SESSION, true, credentials as never);
       await forwardSession(SESSION, true, credentials as never);
@@ -448,6 +454,30 @@ describe('project gate — ingest vs forwarding', () => {
       expect(hooksRequests()).toEqual([{ project: 'A', body: bodyOf(a1) }]);
       // The second pass drains the conflicting record that follows the sealed prefix.
       expect(await hooksCursor()).toBe(Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(conflict)));
+    });
+
+    it('a bound session keeps flowing when unsendable names appear: only their groups are dropped', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      await seedBoundA(); // hooks A + OTLP streams pending
+      const unsendable = event('Bé', 'u1');
+      const a2 = event('A', 'a2');
+      const padded = event(' A', 'p1'); // its own dropped group, not trimmed into A's
+      await appendEvents(unsendable, a2, padded);
+      const total = Buffer.byteLength(hookLine('A') + lineOf(unsendable) + lineOf(a2) + lineOf(padded));
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      const aHook = `${JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' })}\n`;
+      expect(hooksRequests()).toEqual([{ project: 'A', body: `${aHook}${bodyOf(a2)}` }]);
+      const otlp = fetchMock.mock.calls.filter(([url]) => !String(url).includes('event-hooks'));
+      expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
+      expect(otlp.map(([, init]) => Buffer.from(init.body).toString())).toEqual(['L', 'MM', 'TTT']);
+      expect(fetchMock.mock.calls.some(([, init]) => /B\u00e9|"\sA"/.test(String(init.body)))).toBe(false);
+      const status = await readStatus(SESSION);
+      expect(status?.project).toBe('A');
+      expect(status?.projectConflict).toBeUndefined();
+      await cursorsAtEof(total);
     });
 
     it('OTLP streams keep the bound project header and their exact bytes for a multi-project session', async () => {

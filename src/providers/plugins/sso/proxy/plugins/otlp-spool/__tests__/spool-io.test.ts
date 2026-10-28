@@ -88,14 +88,40 @@ describe('appendSpool — project binding', () => {
     await rm(state.root, { recursive: true, force: true });
   });
 
-  it('records a conflict for a mixed first batch and binds nothing', async () => {
+  it('binds the sendable name of a first batch that also holds an unsendable one, without a conflict', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { readStatus } = await import('../session-status.js');
 
     await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B\u00e9'), ['A', 'B\u00e9']);
 
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['B\u00e9', 'A']);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
+    expect(status?.projectSeal).toBeUndefined();
+  });
+
+  it('keeps a bound session unconflicted when an unsendable name arrives later', async () => {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9') + hookLine(' A'), ['B\u00e9', ' A']);
+
+    const status = await readStatus(SESSION);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
+    expect(status?.projectSeal).toBeUndefined();
+  });
+
+  it('keeps an unbound conflict sticky when a sendable name arrives afterwards', async () => {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+
+    const status = await readStatus(SESSION);
+    expect(status?.projectConflict).toEqual(['B\u00e9']);
     expect(status?.project).toBeUndefined();
   });
 
@@ -557,6 +583,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     const torn = '{"agentName":"x","hookEvent":"{\\"codemie_pro';
     await appendSpool(SESSION, 'hooks', a, ['A']);
     await appendSpool(SESSION, 'hooks', torn, []); // crash left a partial record
+    await storeConflict();
     await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
 
     const first = await snapshotPendingHookRecords(SESSION);

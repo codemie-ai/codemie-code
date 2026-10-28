@@ -27,29 +27,28 @@ export type ProjectDecision =
   | { action: 'conflict'; names: string[] };
 
 /**
- * Pure decision over the incoming names plus the stored binding. Several distinct sendable names pin
- * the session to the first-bound one (stored binding, else the first candidate); the others are not
- * a conflict. Only an unsendable name conflicts, and it is listed first so that cutting the list to
- * `MAX_CONFLICT_NAMES` can never drop it.
+ * Pure decision over the incoming names plus the stored binding. A stored conflict is final. A session
+ * bound to a sendable project is never changed by incoming names: an unsendable one is dropped when its
+ * hooks are forwarded, a different sendable one is its own request. An unbound session binds the first
+ * sendable name (names are compared case-insensitively, the first spelling is kept) and conflicts only
+ * when every incoming name is unsendable, listing them. The outcome therefore depends on order:
+ * `[Bé]` alone conflicts for good, while `[Bé, A]` binds `A`.
  */
 export function decideProject(names: string[], status: SessionStatus): ProjectDecision {
   if (status.projectConflict) return { action: 'noop' };
+  if (status.project && isSendableProjectName(status.project)) return { action: 'noop' };
 
   const distinct = new Map<string, string>();
-  for (const name of [...(status.project ? [status.project] : []), ...names]) {
+  for (const name of names) {
     if (blank(name)) continue;
     const key = name.toLowerCase();
     if (!distinct.has(key)) distinct.set(key, name);
   }
   const candidates = [...distinct.values()];
 
-  const unsendable = candidates.filter((name) => !isSendableProjectName(name));
-  if (unsendable.length > 0) {
-    return { action: 'conflict', names: [...unsendable, ...candidates.filter(isSendableProjectName)] };
-  }
-  if (candidates.length > 0 && !status.project) {
-    return { action: 'bind', project: candidates[0] };
-  }
+  const sendable = candidates.find(isSendableProjectName);
+  if (sendable !== undefined) return { action: 'bind', project: sendable };
+  if (candidates.length > 0) return { action: 'conflict', names: candidates };
   return { action: 'noop' };
 }
 
