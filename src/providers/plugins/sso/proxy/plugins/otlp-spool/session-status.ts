@@ -77,13 +77,6 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (Array.isArray(conflict) && conflict.length > 0 && conflict.every((n) => typeof n === 'string')) {
     status.projectConflict = (conflict as string[]).slice(0, MAX_CONFLICT_NAMES);
   }
-  if (status.projectConflict && status.projectConflict.every(isSendableProjectName)) {
-    // Several sendable names are not a conflict: the session pins to the first recorded one. The
-    // list is already cut to MAX_CONFLICT_NAMES and holds only the names that were seen together
-    // with the conflict, so this entry is a best guess for the first-seen project, not a proof.
-    status.project ??= status.projectConflict[0];
-    delete status.projectConflict;
-  }
   const seal = parseProjectSeal(source['projectSeal'], status.projectConflict);
   if (seal) {
     status.projectSeal = seal;

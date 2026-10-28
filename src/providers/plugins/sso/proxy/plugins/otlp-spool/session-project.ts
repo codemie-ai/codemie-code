@@ -14,17 +14,11 @@ export function isSendableProjectName(name: string): boolean {
   return !blank(name) && name === name.trim() && /^[\x20-\x7e]+$/.test(name);
 }
 
-/** String values of `codemie_project_name` at the top level and inside `raw` of a hook event. */
+/** The string `codemie_project_name` at the top level of a hook event; `raw` is not consulted. */
 export function hookEventProjectNames(event: unknown): string[] {
-  const names: string[] = [];
-  const collect = (holder: unknown): void => {
-    if (typeof holder !== 'object' || holder === null) return;
-    const value = (holder as Record<string, unknown>)['codemie_project_name'];
-    if (typeof value === 'string') names.push(value);
-  };
-  collect(event);
-  collect((event as Record<string, unknown> | null)?.['raw']);
-  return names;
+  if (typeof event !== 'object' || event === null) return [];
+  const value = (event as Record<string, unknown>)['codemie_project_name'];
+  return typeof value === 'string' ? [value] : [];
 }
 
 export type ProjectDecision =
@@ -94,7 +88,7 @@ export function parseProjectSeal(raw: unknown, conflict: string[] | undefined): 
   return { v: 1, project, hooksEnd };
 }
 
-/** A hook record is provably `project`'s only if every name it carries is non-blank and equals it. */
+/** A hook record is provably `project`'s only if its top-level name is non-blank and equals it. */
 export function hookRecordIsProject(record: string, project: string): boolean {
   try {
     const { hookEvent } = JSON.parse(record) as { hookEvent: string };

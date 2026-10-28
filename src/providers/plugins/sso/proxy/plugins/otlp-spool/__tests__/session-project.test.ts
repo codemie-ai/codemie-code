@@ -133,10 +133,11 @@ describe('isSendableProjectName / hookEventProjectNames', () => {
     expect(isSendableProjectName('Café')).toBe(false);
   });
 
-  it('collects top-level and raw names', () => {
+  it('collects the top-level name only and ignores raw', () => {
     expect(
       hookEventProjectNames({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } })
-    ).toEqual(['A', 'B']);
+    ).toEqual(['A']);
+    expect(hookEventProjectNames({ raw: { codemie_project_name: 'B' } })).toEqual([]);
     expect(hookEventProjectNames({ codemie_project_name: 5, raw: 'x' })).toEqual([]);
     expect(hookEventProjectNames(null)).toEqual([]);
   });
@@ -170,23 +171,16 @@ describe('status persistence', () => {
     expect(status?.cursors.hooks).toBe(7);
   });
 
-  it('re-evaluates a legacy conflict of sendable names by pinning the first one', async () => {
+  it('keeps a stored all-sendable conflict and a valid seal as stored, sets no project', async () => {
     const { readStatus } = await import('../session-status.js');
     await writeFile(
       join(state.root, 'legacy1.status'),
       JSON.stringify({ cursors: {}, projectConflict: ['A', 'B'], projectSeal: { v: 1, project: 'A', hooksEnd: 4 } })
     );
-    await writeFile(
-      join(state.root, 'legacy2.status'),
-      JSON.stringify({ cursors: {}, project: 'B', projectConflict: ['A', 'B'] })
-    );
-    const first = await readStatus('legacy1');
-    expect(first?.project).toBe('A');
-    expect(first?.projectConflict).toBeUndefined();
-    expect(first?.projectSeal).toBeUndefined();
-    const second = await readStatus('legacy2');
-    expect(second?.project).toBe('B');
-    expect(second?.projectConflict).toBeUndefined();
+    const status = await readStatus('legacy1');
+    expect(status?.project).toBeUndefined();
+    expect(status?.projectConflict).toEqual(['A', 'B']);
+    expect(status?.projectSeal).toEqual({ v: 1, project: 'A', hooksEnd: 4 });
   });
 
   it('keeps a legacy conflict that contains an unsendable name', async () => {
@@ -289,13 +283,13 @@ describe('hooks seal: decision, validation and record proof', () => {
   const record = (event: Record<string, unknown>): string =>
     JSON.stringify({ agentName: 'x', hookEvent: JSON.stringify(event) });
 
-  it('hookRecordIsProject proves A only when every name in the record is A', () => {
+  it('hookRecordIsProject proves A only by its top-level name', () => {
     expect(hookRecordIsProject(record({ codemie_project_name: 'A' }), 'a')).toBe(true);
-    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'A' } }), 'A')).toBe(true);
+    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } }), 'A')).toBe(true);
+    expect(hookRecordIsProject(record({ raw: { codemie_project_name: 'A' } }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ codemie_project_name: 'B' }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ codemie_project_name: '' }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ type: 'x' }), 'A')).toBe(false);
-    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } }), 'A')).toBe(false);
     expect(hookRecordIsProject('not json', 'A')).toBe(false);
   });
 });
