@@ -767,5 +767,60 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       const stdoutText = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
       expect(stdoutText).not.toContain(line);
     });
+
+    describe('linked .codemie project vs global profile (AC7)', () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+
+      async function setup(globalProject?: string, localProject?: string) {
+        await writeGlobal('g', { g: { provider: 'ai-run-sso', model: 'm', name: 'g' } });
+        if (globalProject) {
+          const raw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: globalProject, codeMieUrl: 'https://g.example.com' };
+          await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+        if (localProject) {
+          await writeLocal('other', { other: { name: 'other' } });
+          const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: localProject };
+          await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+      }
+
+      const ambientSessionId = process.env.CODEMIE_SESSION_ID;
+      beforeEach(() => {
+        delete process.env.CODEMIE_SESSION_ID;
+      });
+      afterEach(() => {
+        if (ambientSessionId === undefined) delete process.env.CODEMIE_SESSION_ID;
+        else process.env.CODEMIE_SESSION_ID = ambientSessionId;
+      });
+
+      it('native: linked project beats global profile project, origin linked_folder', async () => {
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+        expect(ws.codeMieProject).toBe('linked-proj');
+        expect(ws.codeMieUrl).toBe('https://g.example.com');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('linked_folder');
+      });
+
+      it('managed: keeps the profile project, origin profile', async () => {
+        process.env.CODEMIE_SESSION_ID = 'sess';
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+        expect(ws.codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('no linked project: profile origin', async () => {
+        await setup('global-proj');
+        expect((await ConfigLoader.resolveProfileWorkspace(workingDir, false)).codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('no project anywhere: none', async () => {
+        await setup();
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('none');
+      });
+    });
   });
 });

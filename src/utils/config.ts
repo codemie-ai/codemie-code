@@ -232,9 +232,34 @@ export class ConfigLoader {
    * @param isLocalProfile - Whether the profile in use is defined in the local config
    */
   static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
+    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile)).workspace;
+  }
+
+  /**
+   * Where the resolved codeMieProject came from: `linked_folder` (local `.codemie`
+   * workspace), `profile` (global profile scope) or `none`. Consumed by the
+   * evidence record's `project_source`.
+   */
+  static async resolveProjectOrigin(
+    workingDir: string,
+    isLocalProfile: boolean,
+    env: Record<string, string | undefined> = process.env
+  ): Promise<'linked_folder' | 'profile' | 'none'> {
+    return (await this.resolveProfileWorkspaceWithOrigin(workingDir, isLocalProfile, env)).projectOrigin;
+  }
+
+  private static async resolveProfileWorkspaceWithOrigin(
+    workingDir: string,
+    isLocalProfile: boolean,
+    env: Record<string, string | undefined> = process.env
+  ): Promise<{ workspace: WorkspaceConfig; projectOrigin: 'linked_folder' | 'profile' | 'none' }> {
     const workspace = await this.resolveWorkspace(workingDir);
+    const localProject = (await this.loadLocalMultiProviderConfig(workingDir)).workspace?.codeMieProject;
+    // Managed = CODEMIE_SESSION_ID (same rule as evidence/routing.ts launchMode; not imported:
+    // utils must not depend on agents/core).
+    const native = !env.CODEMIE_SESSION_ID;
     if (isLocalProfile) {
-      return workspace;
+      return { workspace, projectOrigin: workspace.codeMieProject ? 'linked_folder' : 'none' };
     }
 
     const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
@@ -245,7 +270,15 @@ export class ConfigLoader {
         result[key] = globalWorkspace[key];
       }
     }
-    return result as WorkspaceConfig;
+    // Native: a linked `.codemie` project beats the global profile's project (D2: managed keeps it).
+    if (native && localProject) {
+      result.codeMieProject = localProject;
+      return { workspace: result as WorkspaceConfig, projectOrigin: 'linked_folder' };
+    }
+    return {
+      workspace: result as WorkspaceConfig,
+      projectOrigin: result.codeMieProject ? 'profile' : 'none'
+    };
   }
 
   /**
