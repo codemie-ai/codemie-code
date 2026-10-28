@@ -791,3 +791,16 @@ export async function removeClaudeCodeOtlpConfig(
   );
   return { removed: true, path: settingsPath, mode: 'full' };
 }
+
+/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return false;
+  }
+  return Object.values(existing.hooks ?? {}).some(
+    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+  );
+}

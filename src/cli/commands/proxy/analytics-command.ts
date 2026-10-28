@@ -15,6 +15,7 @@ import {
   updateClaudeAnalyticsPreferences,
   type ClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
+import { collectClaudeAnalyticsStatus, formatClaudeAnalyticsStatus } from './analytics-status.js';
 
 async function withErrorHandling(action: () => Promise<void>): Promise<void> {
   try {
@@ -102,6 +103,15 @@ export function createProxyAnalyticsCommand(): Command {
     .command('include [path]')
     .description('Remove a project from the exclusion list (default: the current project root)')
     .action((path?: string) => includeProject(path));
+
+  analytics
+    .command('status')
+    .description('Show the effective Claude Code analytics configuration')
+    .option('--json', 'Emit status as JSON instead of formatted output')
+    .action(async (opts: { json?: boolean }) => {
+      const status = await collectClaudeAnalyticsStatus(process.cwd());
+      console.log(opts.json ? JSON.stringify(status, null, 2) : formatClaudeAnalyticsStatus(status));
+    });
 
   return analytics;
 }
