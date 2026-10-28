@@ -2,16 +2,24 @@
  * MCP OAuth Client Provider
  *
  * Implements the OAuthClientProvider interface from the MCP SDK for browser-based
- * OAuth authorization code flow. All state is memory-only (no persistent storage).
+ * OAuth authorization code flow.
  *
  * Flow: 401 → resource metadata → auth server metadata → dynamic client registration
  * (client_name from MCP_CLIENT_NAME env var, default "CodeMie CLI") → browser authorization → callback → token exchange.
+ *
+ * Tokens and client registration info are persisted to disk (encrypted, keyed by server
+ * URL — see mcp-token-store.ts) so a new proxy process — one is spawned per MCP server on
+ * every Claude Code session start — can reuse a still-valid token instead of forcing a new
+ * browser authorization each time. See https://github.com/codemie-ai/codemie-code/issues/643.
+ * The PKCE code verifier stays memory-only: it is only ever needed within the single
+ * authorization flow that generated it and must not leak across sessions.
  */
 
 import { execFile } from 'child_process';
 import { logger } from '../../utils/logger.js';
 import { getMcpClientName } from '../constants.js';
 import { startCallbackServer, type CallbackResult } from './callback-server.js';
+import { loadMcpCredentials, saveMcpCredentials, clearMcpCredentials } from './mcp-token-store.js';
 
 import type {
   OAuthClientProvider,
@@ -21,18 +29,22 @@ import type {
 } from '@modelcontextprotocol/client';
 
 /**
- * In-memory OAuth provider for MCP authorization code flow.
- * Tokens and client info are stored in memory only — re-auth required each session.
+ * OAuth provider for the MCP authorization code flow. When constructed with a
+ * `serverUrl`, tokens and client info are persisted to disk and reloaded on the next
+ * process start; without one it behaves exactly as before (memory-only, for tests).
  */
 export class McpOAuthProvider implements OAuthClientProvider {
   private _redirectUrl: string | undefined;
   private _clientInfo: OAuthClientInformationMixed | undefined;
   private _tokens: OAuthTokens | undefined;
   private _codeVerifier: string | undefined;
+  private loadedFromDisk = false;
 
   // Callback server state (active during authorization)
   private callbackWait: Promise<CallbackResult> | undefined;
   private callbackClose: (() => void) | undefined;
+
+  constructor(private readonly serverUrl?: string) {}
 
   get redirectUrl(): string | undefined {
     return this._redirectUrl;
@@ -62,22 +74,51 @@ export class McpOAuthProvider implements OAuthClientProvider {
     logger.debug(`[mcp-proxy] Callback server pre-started: ${redirectUrl}`);
   }
 
-  clientInformation(): OAuthClientInformationMixed | undefined {
+  /**
+   * Loads persisted tokens/client info from disk at most once per instance. A value
+   * already set in memory (e.g. by a test, or saved earlier this process) wins over
+   * whatever is on disk.
+   */
+  private async ensureLoadedFromDisk(): Promise<void> {
+    if (this.loadedFromDisk || !this.serverUrl) return;
+    this.loadedFromDisk = true;
+    const stored = await loadMcpCredentials(this.serverUrl);
+    if (!stored) return;
+    if (this._tokens === undefined) this._tokens = stored.tokens;
+    if (this._clientInfo === undefined) this._clientInfo = stored.clientInformation;
+    if (stored.tokens || stored.clientInformation) {
+      logger.debug('[mcp-proxy] Loaded persisted MCP OAuth credentials from disk');
+    }
+  }
+
+  private async persistToDisk(): Promise<void> {
+    if (!this.serverUrl) return;
+    await saveMcpCredentials(this.serverUrl, {
+      clientInformation: this._clientInfo,
+      tokens: this._tokens,
+    });
+  }
+
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    await this.ensureLoadedFromDisk();
     return this._clientInfo;
   }
 
-  saveClientInformation(info: OAuthClientInformationMixed): void {
+  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
     this._clientInfo = info;
-    logger.debug('[mcp-proxy] Saved client information (memory-only)');
+    logger.debug('[mcp-proxy] Saved client information');
+    await this.persistToDisk();
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
+    await this.ensureLoadedFromDisk();
     return this._tokens;
   }
 
-  saveTokens(tokens: OAuthTokens): void {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     this._tokens = tokens;
-    logger.debug('[mcp-proxy] Saved OAuth tokens (memory-only)');
+    logger.debug('[mcp-proxy] Saved OAuth tokens');
+    await this.persistToDisk();
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -104,7 +145,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return this._codeVerifier || '';
   }
 
-  invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): void {
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
     if (scope === 'all' || scope === 'tokens') {
       this._tokens = undefined;
     }
@@ -115,6 +156,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
       this._codeVerifier = undefined;
     }
     logger.debug(`[mcp-proxy] Invalidated credentials: ${scope}`);
+
+    if (this.serverUrl && (scope === 'all' || scope === 'tokens' || scope === 'client')) {
+      if (scope === 'all') {
+        await clearMcpCredentials(this.serverUrl);
+      } else {
+        await this.persistToDisk();
+      }
+    }
   }
 
   /**
