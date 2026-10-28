@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
@@ -49,6 +50,8 @@ interface FakeInput {
 class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   readonly name = 'fake';
   tracked = true;
+  enforced = false;
+  untrackedCalls: FakeInput[] = [];
 
   protected parseHookInput(raw: string): FakeInput | null {
     const parsed = JSON.parse(raw) as Partial<FakeInput>;
@@ -59,6 +62,12 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   }
   protected async isTracked(): Promise<boolean> {
     return this.tracked;
+  }
+  protected requiresSpoolAcceptance(): boolean {
+    return this.enforced;
+  }
+  protected async onUntrackedHook(input: FakeInput): Promise<void> {
+    this.untrackedCalls.push(input);
   }
   protected async evaluate(input: FakeInput): Promise<Decision> {
     if (input.block) {
@@ -133,6 +142,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     await run();
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
     expect(forwardToSpool).not.toHaveBeenCalled();
+  });
+
+  it('calls onUntrackedHook with the parsed input when a project is not tracked', async () => {
+    adapter.tracked = false;
+    await run({ cwd: '/untracked-repo' });
+    expect(adapter.untrackedCalls).toHaveLength(1);
+    expect(adapter.untrackedCalls[0]).toMatchObject({ cwd: '/untracked-repo' });
   });
 
   it('ignores a payload parseHookInput rejects', async () => {
@@ -619,6 +635,75 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwardToSpool).not.toHaveBeenCalled();
       expect(detectGitBranchMock).not.toHaveBeenCalled();
       expect(finalize).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('fail-closed enforcement (requiresSpoolAcceptance)', () => {
+    it('does not throw when the spool rejects a non-enforced event', async () => {
+      adapter.enforced = false;
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('throws AnalyticsSourceError when an enforced event is rejected by the spool, and the default onHookError rethrows it', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).rejects.toThrow(AnalyticsSourceError);
+    });
+
+    it('calls finalize(false) before the fail-closed throw propagates', async () => {
+      adapter.enforced = true;
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        finalize,
+      });
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).rejects.toThrow(AnalyticsSourceError);
+      expect(finalize).toHaveBeenCalledWith(false);
+    });
+
+    it('does not throw when an enforced event is accepted by the spool', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(true);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('honors a successful retry for an enforced event, without throwing', async () => {
+      adapter.enforced = true;
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        retryOnce: true,
+      });
+      forwardToSpool.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      await expect(run()).resolves.toBeUndefined();
+      expect(forwardToSpool).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('onHookError override', () => {
+    it('is invoked with the thrown error and the parsed hook input', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await run({ cwd: '/repo' });
+      expect(onHookError).toHaveBeenCalledWith(expect.any(AnalyticsSourceError), expect.objectContaining({ cwd: '/repo' }));
+    });
+
+    it('swallows the error and resolves when overridden to not rethrow', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('is not invoked when ensureOtlpProxy throws: a daemon-start failure is non-blocking', async () => {
+      ensureOtlpProxy.mockRejectedValueOnce(new Error('daemon start failed'));
+      const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await run();
+      expect(onHookError).not.toHaveBeenCalled();
     });
   });
 });

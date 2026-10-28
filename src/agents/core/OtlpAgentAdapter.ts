@@ -1,5 +1,6 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
@@ -74,58 +75,94 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     // data to the backend.
     if (!(await this.isTracked(hookInput))) {
       logger.debug(`[${this.name}] project not in analytics allowlist, ignoring hook event`);
+      await this.onUntrackedHook(hookInput);
       return;
     }
 
     try {
-      await ensureOtlpProxy(this.name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
-    }
+      try {
+        await ensureOtlpProxy(this.name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
+      }
 
-    const decision = await this.evaluate(hookInput);
-    if (decision.decision === 'block') {
-      logger.error(`[${this.name}] Blocking prompt: ${decision.reason}`);
-      // Claude Code hook protocol: a blocking decision is returned as JSON on stdout.
-      // A new adapter whose tool uses a different block protocol must make this step
-      // overridable (e.g. an `emitBlock()` method) instead of reusing it as is.
-      console.log(JSON.stringify(decision));
-      return;
-    }
-
-    // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
-    // back `finalize`, which persists its state only when `accepted` is true. This keeps
-    // the whole invocation's events a single all-or-nothing unit: on failure nothing is
-    // committed, so the next hook re-derives and re-sends the same events.
-    let accepted = false;
-    try {
-      if (decision.payload.length === 0) {
-        accepted = true; // nothing to send, nothing to lose
+      const decision = await this.evaluate(hookInput);
+      if (decision.decision === 'block') {
+        logger.error(`[${this.name}] Blocking prompt: ${decision.reason}`);
+        this.emitBlock(decision);
         return;
       }
 
-      const context = this.extractHookContext(hookInput);
-      const [commonFields, agentFields] = await Promise.all([
-        this.resolveCommonFields(context),
-        this.resolveAgentFields(),
-      ]);
-      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
-
-      // Built once: a retry below resends these exact bytes, event_ids included.
-      const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
-
-      accepted = await forwardOtlpEventsToSpool(events, this.name);
-      if (!accepted && decision.retryOnce) {
-        accepted = await forwardOtlpEventsToSpool(events, this.name);
-      }
-    } finally {
+      // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
+      // back `finalize`, which persists its state only when `accepted` is true. This keeps
+      // the whole invocation's events a single all-or-nothing unit: on failure nothing is
+      // committed, so the next hook re-derives and re-sends the same events.
+      let accepted = false;
       try {
-        await decision.finalize?.(accepted);
-      } catch (err) {
-        logger.warn(`[${this.name}] finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (decision.payload.length === 0) {
+          accepted = true; // nothing to send, nothing to lose
+          return;
+        }
+
+        const context = this.extractHookContext(hookInput);
+        const [commonFields, agentFields] = await Promise.all([
+          this.resolveCommonFields(context),
+          this.resolveAgentFields(),
+        ]);
+        const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+
+        // Built once: a retry below resends these exact bytes, event_ids included.
+        const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
+
+        accepted = await forwardOtlpEventsToSpool(events, this.name);
+        if (!accepted && decision.retryOnce) {
+          accepted = await forwardOtlpEventsToSpool(events, this.name);
+        }
+        if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
+          throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
+        }
+      } finally {
+        try {
+          await decision.finalize?.(accepted);
+        } catch (err) {
+          logger.warn(`[${this.name}] finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
+    } catch (err) {
+      await this.onHookError(err, hookInput);
     }
+  }
+
+  /**
+   * Claude Code hook protocol: a blocking decision is returned as JSON on stdout.
+   * A subclass whose tool uses a different block protocol (e.g. Copilot's
+   * `{"continue": false}` / `{"modifiedTransformedPrompt": ...}` / `{"permissionDecision": "deny"}`)
+   * overrides this instead of changing the shared flow above.
+   */
+  protected emitBlock(decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'block' }>): void {
+    console.log(JSON.stringify(decision));
+  }
+
+  /**
+   * Called when `evaluate` or the forward/finalize step throws (e.g. an enforced event whose
+   * spool write was rejected). A daemon-start failure from `ensureOtlpProxy` is logged and
+   * does not reach here. `input` is the already-parsed, already-tracked hook input,
+   * so a subclass can tell an enforcement event (which must still produce its host's
+   * block/replacement output on an internal failure) from one where logging and swallowing
+   * the error is enough. Default rethrows, so Claude's existing behavior (the error propagates
+   * to the hook command's own catch-all) is unchanged.
+   */
+  protected async onHookError(err: unknown, _input: TInput): Promise<void> {
+    throw err;
+  }
+
+  /** Optional host-specific response when a recognized hook cannot be tracked. */
+  protected async onUntrackedHook(_input: TInput): Promise<void> {}
+
+  /** Enforcement adapters opt in; other adapters retain commit-after-send retry behavior. */
+  protected requiresSpoolAcceptance(_input: TInput): boolean {
+    return false;
   }
 
   /** Returns null to ignore a payload of an unknown shape. May throw on malformed JSON. */

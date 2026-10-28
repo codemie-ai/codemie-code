@@ -99,6 +99,24 @@ async function readStdin(): Promise<string> {
 }
 
 /**
+ * Stamps `--event <name>` onto the parsed JSON body as `codemieEventName`, for hosts whose
+ * native hook payload carries no event-name field (e.g. Copilot CLI's camelCase events). Falls
+ * back to the raw, unmodified input on a parse failure, so `OtlpAgentAdapter.processOtlpEvent`'s
+ * own `JSON.parse` — not this helper — is what surfaces a malformed-input error.
+ */
+export function injectEventName(raw: string, eventName: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return raw;
+    }
+    return JSON.stringify({ ...(parsed as Record<string, unknown>), codemieEventName: eventName });
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Helper function to get configuration value from config object or environment variable
  * @param envKey - Environment variable key (e.g., 'CODEMIE_AGENT')
  * @param config - Optional config object
@@ -1498,7 +1516,8 @@ export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
     .option('--agent <name>', 'Agent name for hook attribution')
-    .action(async (opts: { agent?: string }) => {
+    .option('--event <name>', 'Event name for hosts whose hook payload carries none (e.g. Copilot CLI)')
+    .action(async (opts: { agent?: string; event?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
 
@@ -1538,7 +1557,8 @@ export function createHookCommand(): Command {
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
-          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+          const otlpInput = opts.event ? injectEventName(input, opts.event) : input;
+          await analyticsAgent.processOtlpEvent(otlpInput, { ensureOtlpProxy, forwardOtlpEventsToSpool });
           await logger.close();
           process.exitCode = 0;
           return;

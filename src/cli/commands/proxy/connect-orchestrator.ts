@@ -47,8 +47,12 @@ import {
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
 import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
+import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { isProcessAlive } from '@/utils/processes.js';
+import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
+import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -58,6 +62,8 @@ export const DEFAULT_DAEMON_PORT = 4001;
 export interface ConnectTargets {
   claudeDesktop?: boolean;
   claudeCodeOtlp?: boolean;
+  copilotChatOtlp?: boolean;
+  copilotCliOtlp?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
   codexDesktop?: boolean;
@@ -80,7 +86,13 @@ export interface ConnectOptions {
 }
 
 /** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop' | typeof CLAUDE_CODE_OTLP_AGENT_NAME;
+export type EffectiveClientType =
+  | 'claude-desktop'
+  | 'vscode-byok'
+  | 'codex-desktop'
+  | typeof CLAUDE_CODE_OTLP_AGENT_NAME
+  | typeof COPILOT_CHAT_OTLP_AGENT_NAME
+  | typeof COPILOT_CLI_OTLP_AGENT_NAME;
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -92,10 +104,12 @@ export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desk
 export interface DaemonIdentity {
   clientType: EffectiveClientType;
   spawnOptions:
-  | { telemetryMode: 'claude-desktop' }
-  | { clientType: 'vscode-byok' }
-  | { clientType: 'codex-desktop' }
-  | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME };
+    | { telemetryMode: 'claude-desktop' }
+    | { clientType: 'vscode-byok' }
+    | { clientType: 'codex-desktop' }
+    | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME }
+    | { clientType: typeof COPILOT_CHAT_OTLP_AGENT_NAME }
+    | { clientType: typeof COPILOT_CLI_OTLP_AGENT_NAME };
 }
 
 /**
@@ -103,6 +117,11 @@ export interface DaemonIdentity {
  * priority: `claude-desktop` > `vscode-claude-code` > `vscode-byok`). The two
  * Anthropic-gateway targets share the `claude-desktop` identity, so the priority
  * collapses onto exactly the two existing identities — no new telemetry value.
+ *
+ * The hooks-only Copilot targets never export OTel through this daemon and only need it
+ * running by the time their first real hook fires (`ensureOtlpProxy`, started lazily);
+ * this identity exists so a bare `connect --copilot-chat-otlp` / `--copilot-cli-otlp` run
+ * still has something to spawn/match against, consistent with every other target.
  */
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
@@ -110,6 +129,12 @@ export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   }
   if (targets.claudeCodeOtlp) {
     return { clientType: CLAUDE_CODE_OTLP_AGENT_NAME, spawnOptions: { clientType: CLAUDE_CODE_OTLP_AGENT_NAME } };
+  }
+  if (targets.copilotChatOtlp) {
+    return { clientType: COPILOT_CHAT_OTLP_AGENT_NAME, spawnOptions: { clientType: COPILOT_CHAT_OTLP_AGENT_NAME } };
+  }
+  if (targets.copilotCliOtlp) {
+    return { clientType: COPILOT_CLI_OTLP_AGENT_NAME, spawnOptions: { clientType: COPILOT_CLI_OTLP_AGENT_NAME } };
   }
   if (targets.codexDesktop) {
     return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
@@ -299,6 +324,8 @@ const TARGET_LIST = [
   '  --vscode-claude-code   VS Code Claude Code extension',
   '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
+  `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
+  `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -306,12 +333,17 @@ const TARGET_LIST = [
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
+  `  codemie proxy connect --${COPILOT_CHAT_OTLP_AGENT_NAME}`,
+  `  codemie proxy connect --${COPILOT_CLI_OTLP_AGENT_NAME}`,
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.claudeCodeOtlp || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
+  return Boolean(
+    t.claudeDesktop || t.claudeCodeOtlp || t.copilotChatOtlp || t.copilotCliOtlp ||
+    t.vscode || t.vscodeClaudeCode || t.codexDesktop
+  );
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -320,6 +352,8 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
   if (t.claudeCodeOtlp) { flags.push(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`); labels.push('Claude Code OTLP'); }
+  if (t.copilotChatOtlp) { flags.push(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`); labels.push('Copilot Chat OTLP'); }
+  if (t.copilotCliOtlp) { flags.push(`--${COPILOT_CLI_OTLP_AGENT_NAME}`); labels.push('Copilot CLI OTLP'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
@@ -707,6 +741,63 @@ async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<Tar
   }
 }
 
+interface CopilotOtlpRunOptions {
+  scope?: 'user' | 'project';
+}
+
+async function runCopilotChatOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
+  const label = 'Copilot Chat Analytics';
+  try {
+    const result = await writeCopilotChatOtlpConfig({ scope: options.scope });
+    console.log(chalk.green('✓ Copilot Chat analytics configured (hooks-only, no OTel)'));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`));
+    console.log(chalk.dim(`  Hook file:     ${result.hookFilePath}`));
+    console.log(chalk.dim(`  Settings:      ${result.settingsPath}`));
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  Token usage is unavailable in v1 (no native OTel export is configured).'));
+    console.log(chalk.yellow('  Restart VS Code to apply changes.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Copilot Chat analytics', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Copilot Chat analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
+async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
+  const label = 'Copilot CLI Analytics';
+  try {
+    const result = await writeCopilotCliOtlpConfig({ scope: options.scope });
+    console.log(chalk.green('✓ Copilot CLI analytics configured (hooks-only, no OTel)'));
+    console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CLI_OTLP_AGENT_NAME}`));
+    console.log(chalk.dim(`  Hook file: ${result.hookFilePath}`));
+    if (result.allowlist.length > 0) {
+      console.log(chalk.dim('  Tracked projects:'));
+      for (const projectPath of result.allowlist) {
+        console.log(chalk.dim(`    - ${projectPath}`));
+      }
+    } else {
+      console.log(chalk.dim('  Tracked projects: all projects'));
+    }
+    console.log(chalk.dim('  Managed `copilot-cli` launches are ignored by this adapter (no double counting).'));
+    console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Failed to configure Copilot CLI analytics', ...sanitizeLogArgs({ error: message }));
+    console.log(chalk.yellow(`  Could not configure Copilot CLI analytics: ${message}`));
+    return { label, ok: false, error: message };
+  }
+}
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
 
@@ -830,6 +921,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         ? resolveProfileCodeMieUrl(config.baseUrl, config.codeMieUrl)
         : undefined,
     }));
+  }
+  if (targets.copilotChatOtlp) {
+    results.push(await runCopilotChatOtlp({ scope: opts.scope }));
+  }
+  if (targets.copilotCliOtlp) {
+    results.push(await runCopilotCliOtlp({ scope: opts.scope }));
   }
 
   const anyFailed = results.some((r) => !r.ok);
