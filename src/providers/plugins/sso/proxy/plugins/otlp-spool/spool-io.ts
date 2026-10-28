@@ -250,9 +250,14 @@ export async function isSendAllowed(
       hooksOnlyAllowed: hooksOnlyForwardAllowed(),
     });
     const streamPolicy = stream === 'hooks' ? policy.hooks : policy.otel;
-    if (streamPolicy.kind !== 'send' || streamPolicy.project.toLowerCase() !== project.toLowerCase()) {
-      return false;
-    }
+    if (streamPolicy.kind !== 'send') return false;
+    // An unsealed hooks batch carries its own project per record group, so any name that can be sent is
+    // allowed; a sealed prefix and every OTLP stream are pinned to the one project of the policy.
+    const projectAllowed =
+      stream === 'hooks' && !streamPolicy.onlyProject
+        ? isSendableProjectName(project)
+        : streamPolicy.project.toLowerCase() === project.toLowerCase();
+    if (!projectAllowed) return false;
     if (status.cursors[stream] !== range.cursor) return false;
     if (Boolean(streamPolicy.onlyProject) !== range.filtered) return false;
     return streamPolicy.limit === undefined || range.end <= streamPolicy.limit;
@@ -326,7 +331,7 @@ export async function appendSpool(
 /* --------------------------------------------------------------- consumers --- */
 
 export interface PendingBytes {
-  /** Project the session is bound to; sent as `X-CodeMie-Project`. */
+  /** Bound or sealed project; default for unnamed events. Sent as `X-CodeMie-Project`. */
   project: string;
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
   cursor: number;
@@ -356,7 +361,7 @@ export async function snapshotPendingBytes(
 }
 
 export interface PendingHookBatch {
-  /** Project the session is bound to; sent as `X-CodeMie-Project`. */
+  /** Bound or sealed project; default for unnamed events. Sent as `X-CodeMie-Project`. */
   project: string;
   cursor: number;
   /** Complete, newline-terminated NDJSON records that may be sent. */

@@ -380,6 +380,21 @@ describe('snapshots — project gate under the lock', () => {
     expect(await isSendAllowed(SESSION, 'hooks', 'B\u00e9', range)).toBe(false);
     expect(await isSendAllowed(SESSION, 'hooks', 'C', range)).toBe(false);
   });
+
+  it('isSendAllowed admits any sendable project for a bound session\'s hooks, but still pins every other check', async () => {
+    const { appendSpool, isSendAllowed } = await import('../spool-io.js');
+    const range = { cursor: 0, end: 1, filtered: false };
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+    await seedOtel();
+
+    expect(await isSendAllowed(SESSION, 'hooks', 'B', range)).toBe(true); // not the bound project, but sendable
+    expect(await isSendAllowed(SESSION, 'hooks', 'B\u00e9', range)).toBe(false); // unsendable name
+    expect(await isSendAllowed(SESSION, 'hooks', ' ', range)).toBe(false); // blank
+    expect(await isSendAllowed(SESSION, 'hooks', 'B', { ...range, cursor: 5, end: 9 })).toBe(false); // stale cursor
+    expect(await isSendAllowed(SESSION, 'hooks', 'B', { ...range, filtered: true })).toBe(false); // wrong filter
+    expect(await isSendAllowed(SESSION, 'logs', 'B', { cursor: 0, end: 1, filtered: false })).toBe(false); // OTLP keeps equality
+    expect(await isSendAllowed(SESSION, 'logs', 'A', { cursor: 0, end: 1, filtered: false })).toBe(true);
+  });
 });
 
 describe('hooks seal — provably-original hooks survive a project switch', () => {
