@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16441",
+  "head": "279366c9abef5bf6149fd4964a6c44007824bb14",
+  "runner": "npm",
+  "started_at": "2026-10-28T14:16:49Z",
+  "completed_at": "2026-10-28T14:17:47Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "390 files, 6214 tests passed; none of the 14 known base SSO failures reproduced on this HEAD"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 files passed, 1 skipped; 282 tests passed, 10 skipped; none of the 4 known base SSO integration failures reproduced"
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan' (script scans only git diff --staged). Docker is up; to run locally, stage the changes and rerun. CI runs gitleaks-action unconditionally. Nothing was staged because the working tree must stay untouched."
+    },
+    {
+      "id": "commitlint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Verifies HEAD~1..HEAD only (last commit); hook-sourced commit-msg check"
+    },
+    {
+      "id": "ui",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "exit_code": null,
+      "notes": "Diff touches no UI globs"
+    },
+    {
+      "id": "windows-ci",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "",
+      "exit_code": null,
+      "notes": "test-windows CI job needs windows-latest runner; cannot run locally"
+    }
+  ],
+  "failures": {}
+}
