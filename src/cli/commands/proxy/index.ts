@@ -340,6 +340,9 @@ export function createProxyCommand(): Command {
   proxy
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
+    .option('--claude-desktop', 'Remove the CodeMie gateway config and managed MCP servers from Claude Desktop')
+    .option('--vscode-claude-code', 'Remove the CodeMie ANTHROPIC_BASE_URL/token from the VS Code Claude Code extension settings.json')
+    .option('--insiders', 'Target VS Code Insiders (applies to --vscode-claude-code)')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
     .addOption(
@@ -350,13 +353,23 @@ export function createProxyCommand(): Command {
       .default('user')
       .choices(['user', 'project']),
     )
-    .action(async (opts: { claudeCodeOtlp?: boolean; codexDesktop?: boolean; scope?: 'user' | 'project' }) => {
+    .action(async (opts: {
+      claudeCodeOtlp?: boolean;
+      claudeDesktop?: boolean;
+      vscodeClaudeCode?: boolean;
+      codexDesktop?: boolean;
+      insiders?: boolean;
+      scope?: 'user' | 'project';
+    }) => {
       await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
+          claudeDesktop: Boolean(opts.claudeDesktop),
+          vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
         },
         scope: opts.scope,
+        insiders: Boolean(opts.insiders),
       });
     });
 

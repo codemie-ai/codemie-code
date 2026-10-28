@@ -210,7 +210,13 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, codexDesktop: true},
+      insiders: false,
+      targets: {
+        claudeCodeOtlp: false,
+        claudeDesktop: false,
+        vscodeClaudeCode: false,
+        codexDesktop: true,
+      },
     });
   });
 });
