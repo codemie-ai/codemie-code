@@ -2,10 +2,10 @@
 All drafts: emulated/inferred from ticket text + repo + read-only backend repository checkout, NOT measured from prod. A human with prod access must run the F1 queries (findings-F1.md) and confirm the deployed backend version before posting root causes as confirmed. Nothing posted to Jira.
 
 ## P1 - not product defects (list separately, AC4)
-Developers with no analytics configured, no SSO auth, CLI < 0.16.0 or stale daemon. Needs Q2/Q3/Q6 from prod; no developer list exists yet.
+Developers with no analytics configured, no SSO auth, a CLI without the project gate or a stale daemon. Needs Q2/Q3/Q6 from prod; no developer list exists yet.
 
 ## P2 - project gate drops
-Cause: CLI < 0.16.0 sends no X-CodeMie-Project (gate added in v0.16.0) -> backend 200 + project_context_required (inferred). For >= 0.16.0, sessions naming several projects were discarded locally.
+Cause: A CLI without the project gate sends no X-CodeMie-Project -> backend 200 + project_context_required (inferred). With the gate, sessions naming several projects were discarded locally.
 Fix: split by project (the forwarder sends one hook request per project, each with a matching X-CodeMie-Project header and the unmodified event lines; the bound project is only the default for events without a project name and the header of the OTLP streams; no event is rewritten). Unsendable (non-ASCII/whitespace) names still discarded, now with logger.warn.
 
 ## P3 - `claude -p` end-of-session loss

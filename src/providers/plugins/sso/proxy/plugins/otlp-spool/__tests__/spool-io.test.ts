@@ -551,6 +551,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     expect(await isSendAllowed(SESSION, 'hooks', 'A', range)).toBe(true);
     expect(await isSendAllowed(SESSION, 'hooks', 'a', range)).toBe(true);
     expect(await isSendAllowed(SESSION, 'hooks', 'B\u00e9', range)).toBe(false);
+    expect(await isSendAllowed(SESSION, 'hooks', 'B', range)).toBe(false); // sendable, but not the seal project
     expect(await isSendAllowed(SESSION, 'hooks', 'A', { ...range, end: sealEnd + 1 })).toBe(false);
     expect(await isSendAllowed(SESSION, 'hooks', 'A', { ...range, cursor: 3 })).toBe(false);
     for (const stream of ['logs', 'metrics', 'traces'] as const) {

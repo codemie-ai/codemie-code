@@ -155,7 +155,7 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     expect(decoded.map((e) => e['n'])).toEqual([1, 2, 3]);
   });
 
-  it('passes the project names of the spooled events as the fourth argument', async () => {
+  it('passes the top-level project names of the spooled events as the fourth argument, ignoring raw names', async () => {
     const res = await postHooks({
       agentName: 'claude-code-otlp',
       hookEvents: [
@@ -167,7 +167,7 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     });
 
     expect(res.statusCode).toBe(202);
-    expect(appendSpoolMock.mock.calls[0][3]).toEqual(['A', 'B']);
+    expect(appendSpoolMock.mock.calls[0][3]).toEqual(['A']);
   });
 
   it('passes an empty name list when no event carries a project name', async () => {

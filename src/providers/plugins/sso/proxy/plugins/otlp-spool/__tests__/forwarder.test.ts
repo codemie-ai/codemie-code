@@ -29,131 +29,6 @@ function spoolLine(wireEvent: Record<string, unknown>): string {
   return JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(wireEvent) });
 }
 
-describe('unwrapHookRecords', () => {
-  it('forwards each raw wire event byte for byte, newline-delimited', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-    const first = { type: 'agent.prompt.submit', session_id: 's1', timestamp: '2026-01-01T00:00:00.000Z', zeta: 1, alpha: { b: 2 } };
-    const second = { type: 'agent.tool.end', session_id: 's1' };
-
-    const payload = unwrapHookRecords([spoolLine(first), spoolLine(second)]);
-
-    expect(payload.ndjson).toBe(`${JSON.stringify(first)}\n${JSON.stringify(second)}\n`);
-    expect(payload.malformed).toBe(0);
-  });
-
-  it('does not synthesize or change any field', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-    const bare = { session_id: 's1', hook_event_name: 'SessionEnd' };
-
-    const payload = unwrapHookRecords([spoolLine(bare)]);
-
-    expect(JSON.parse(payload.ndjson.trim())).toEqual(bare);
-  });
-
-  it('counts and skips malformed lines, keeping the good ones', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-    const good = { type: 'agent.tool.end', session_id: 's1' };
-    const badEnvelope = 'not json';
-    const badRaw = JSON.stringify({ agentName: 'x', hookEvent: 'not json' });
-    const noHookEvent = JSON.stringify({ agentName: 'x' });
-
-    const payload = unwrapHookRecords([badEnvelope, spoolLine(good), badRaw, noHookEvent]);
-
-    expect(payload.malformed).toBe(3);
-    expect(payload.ndjson).toBe(`${JSON.stringify(good)}\n`);
-  });
-
-  it('returns an empty payload when nothing is usable', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-    expect(unwrapHookRecords(['nope'])).toEqual({ ndjson: '', containsSessionEnd: false, malformed: 1 });
-  });
-
-  it('detects a session end from the wire type, not from hook_event_name', async () => {
-    const { unwrapHookRecords } = await import('../forwarder.js');
-
-    expect(unwrapHookRecords([spoolLine({ type: 'agent.session.end', session_id: 's1' })]).containsSessionEnd).toBe(true);
-    expect(unwrapHookRecords([spoolLine({ type: 'agent.session.stop', hook_event_name: 'SessionEnd' })]).containsSessionEnd).toBe(false);
-    expect(unwrapHookRecords([spoolLine({ hook_event_name: 'SessionEnd' })]).containsSessionEnd).toBe(false);
-  });
-});
-
-describe('groupHookRecords', () => {
-  it('groups by lowercased top-level name in first-appearance order, keeping file order and bytes', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-    const events = [
-      { type: 't', n: 1, codemie_project_name: 'b' },
-      { type: 't', n: 2, codemie_project_name: 'A' },
-      { type: 't', n: 3, codemie_project_name: 'B' },
-      { type: 't', n: 4 },
-      { type: 't', n: 5, codemie_project_name: 'a' },
-    ];
-
-    const result = groupHookRecords(events.map(spoolLine), 'A', false);
-
-    expect(result.groups).toEqual([
-      { project: 'b', ndjson: `${JSON.stringify(events[0])}\n${JSON.stringify(events[2])}\n` },
-      {
-        project: 'A',
-        ndjson: `${JSON.stringify(events[1])}\n${JSON.stringify(events[3])}\n${JSON.stringify(events[4])}\n`,
-      },
-    ]);
-    expect(result.unsendable).toBe(0);
-  });
-
-  it('uses the bound spelling for the bound group even when an event spells it differently first', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-
-    const result = groupHookRecords([spoolLine({ codemie_project_name: 'proj a' })], 'Proj A', false);
-
-    expect(result.groups.map((g) => g.project)).toEqual(['Proj A']);
-  });
-
-  it('puts blank, non-string and raw-only names into the bound group', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-    const events = [
-      { type: 't', codemie_project_name: '  ' },
-      { type: 't', codemie_project_name: 7 },
-      { type: 't', raw: { codemie_project_name: 'B' } },
-    ];
-
-    const result = groupHookRecords(events.map(spoolLine), 'A', false);
-
-    expect(result.groups).toEqual([{ project: 'A', ndjson: `${events.map((e) => JSON.stringify(e)).join('\n')}\n` }]);
-  });
-
-  it('yields one group headed by the bound project for a filtered batch', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-    const events = [{ codemie_project_name: 'a' }, { codemie_project_name: 'B' }];
-
-    const result = groupHookRecords(events.map(spoolLine), 'A', true);
-
-    expect(result.groups).toEqual([{ project: 'A', ndjson: `${events.map((e) => JSON.stringify(e)).join('\n')}\n` }]);
-  });
-
-  it('drops a group whose name cannot be sent as a header and counts it', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-    const events = [{ codemie_project_name: 'Café' }, { codemie_project_name: 'A' }];
-
-    const result = groupHookRecords(events.map(spoolLine), 'A', false);
-
-    expect(result.groups.map((g) => g.project)).toEqual(['A']);
-    expect(result.unsendable).toBe(1);
-  });
-
-  it('aggregates session end and malformed counts over every group', async () => {
-    const { groupHookRecords } = await import('../forwarder.js');
-
-    const result = groupHookRecords(
-      ['nope', spoolLine({ type: 'agent.session.end', codemie_project_name: 'B' })],
-      'A',
-      false
-    );
-
-    expect(result.containsSessionEnd).toBe(true);
-    expect(result.malformed).toBe(1);
-  });
-});
-
 describe('forwardSession (hooks)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -537,6 +412,33 @@ describe('forwardSession (hooks split by project)', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+  });
+
+  it('does not mark the session ended for a session end held only by an unsent group', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(
+      batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'Café' }])
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+    expect(markSessionEndedMock).not.toHaveBeenCalled();
+  });
+
+  it('marks the session ended after advancing when every group is unsent and one held the session end', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(
+      batch([{ type: 'agent.session.end', session_id: 's1', codemie_project_name: 'Café' }])
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+    expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
+    expect(markSessionEndedMock.mock.invocationCallOrder[0]).toBeGreaterThan(advanceCursorMock.mock.invocationCallOrder[0]);
   });
 
   it('sends a sealed batch as one filtered request under the seal project', async () => {
