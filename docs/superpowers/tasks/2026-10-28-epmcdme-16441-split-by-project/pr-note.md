@@ -21,7 +21,7 @@ There is still one byte cursor for hooks. Groups are sent in order and the batch
 - The cursor advances (and `markSessionEnded` runs) only after every group returned `ok`. A session end in any group counts.
 - On `failed` or `auth-expired` the cursor stays put, and the next tick re-sends the whole range. Groups the backend already accepted are sent again and de-duplicated by the backend `ingest_dedup`. This is the same assumption that already covers a crash between a 2xx and the cursor write.
 - Trade-off: one persistently failing group holds back the acknowledgement of the whole range. I did not add per-project cursors, to avoid a status schema change.
-- A group whose name cannot travel as a header is never posted (debug log, counted), and the rest is sent.
+- A group whose name cannot travel as a header (non-ASCII, padded, control characters) is never posted and the rest is sent. The forwarder logs one WARN per session with the session id and the group count (never the name) and a debug line per batch. A padded variant of the bound name (`" A"`) is its own dropped group, not trimmed into A's. A session bound to a sendable project is not conflicted by such a name, so its hooks and OTLP keep flowing. An unbound session still binds the first sendable name of its first batch and conflicts (sticky) only when every name is unsendable, so the outcome depends on order: `[Bé]` conflicts, `[Bé, A]` binds `A`.
 
 ### Legacy and observability
 
@@ -36,6 +36,6 @@ Restart the daemon after upgrading. A running daemon keeps the old pin-and-rewri
 
 ### Not changed
 
-No per-project cursors, no OTLP change, no change to the hook-side session pin, the completeness gate or the sealed-prefix mechanism, and no client-side access checks. The backend decides per group.
+No per-project cursors, no OTLP change, no change to the hook-side session pin or the completeness gate, and no client-side access checks. The backend decides per group. The sealed-prefix mechanism is unchanged for seals already stored, but no ingest path creates a new bound-to-conflict seal any more, because an unsendable name no longer conflicts a bound session.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -16,9 +16,9 @@ Split by project: each project's hook events travel in their own request with a 
 
 **Sealed prefix.** A sealed session stays one group: the already filtered records, header = seal project. No splitting there.
 
-**Unsendable names.** A name that cannot travel as a header is never posted. Ingest already turns it into a session conflict (status is written before the bytes). Defensive rule for a bound snapshot that still contains one (corrupt or legacy disk state): drop that group, log at debug, send the rest, advance as usual. This matches the discard semantics of a conflicted session.
+**Unsendable names.** A name that cannot travel as a header is never posted. A bound session is not conflicted by it (ingest leaves the binding alone), so the bound snapshot may contain such a group: drop that group, warn once per session with the group count only, send the rest, advance as usual. An unbound session conflicts only when every name it has seen is unsendable.
 
-**Session conflict, now.** Only an unsendable top-level name (`decideProject`). Several distinct sendable names are neither a conflict nor a pin: the bound project is the first sendable name seen. It is only the default for events without a name and the header of the OTLP streams; it never overrides an event's own project.
+**Session conflict, now.** Only an unbound session whose names are all unsendable (`decideProject`); the result depends on order (`[Bé]` conflicts, `[Bé, A]` binds `A`). Several distinct sendable names are neither a conflict nor a pin: the bound project is the first sendable name seen. It is only the default for events without a name and the header of the OTLP streams; it never overrides an event's own project.
 
 **Cursor semantics (one byte cursor, many requests).**
 - Send groups sequentially; stop at the first non-`ok`.
@@ -46,7 +46,7 @@ Split by project: each project's hook events travel in their own request with a 
 3. Group order is deterministic (first appearance); case-only variants share one group.
 4. A OK + B failed: cursor unchanged, no `markSessionEnded`; retry re-sends A with identical bytes, then B; cursor advances only when both are ok. Auth-expired marks credentials stale and leaves the cursor.
 5. A session end in a non-bound group sets `endedAt` only after the whole batch is acknowledged.
-6. Unsendable group is never posted; sealed prefix remains one filtered request; OTLP streams keep the bound project header and bytes.
+6. Unsendable group is never posted and does not conflict a bound session; sealed prefix remains one filtered request; OTLP streams keep the bound project header and bytes.
 7. `isSendAllowed` admits non-bound projects for unsealed hooks only; still refuses stale cursor, wrong `filtered`, beyond `limit`.
 8. Drop warnings throttle per session, project and reason (60 s).
 9. Binding, conflict and seal proof use top-level names only; the `normalizeStatus` guess is removed.
