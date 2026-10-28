@@ -708,7 +708,7 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries)';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
       }
       return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
