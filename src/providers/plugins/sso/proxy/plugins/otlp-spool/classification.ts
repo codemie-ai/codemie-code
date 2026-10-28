@@ -5,7 +5,7 @@ import { classify, decide, type ClassResult, type Consumer, type Evidence } from
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
-import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
+import { buildAuthHeaders, ensureApiBase } from '../../../../../core/codemie-auth-helpers.js';
 import { getPolicyState, refreshPolicy, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { forwardDecisionWithoutPolicy, readVerdictState, recordVerdict, replaceVerdict } from './verdict-store.js';
 
@@ -115,19 +115,28 @@ export interface AnalyticsEndpoint {
 export async function resolveAnalyticsEndpoint(credentials: SSOCredentials | JWTCredentials): Promise<AnalyticsEndpoint | null> {
   const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
   const state = await readState();
-  const baseUrl = state?.syncCodeMieUrl ?? state?.targetUrl ?? state?.url ?? '';
+  // Sync producers: syncApiUrl = the profile's resolved CodeMie API URL (ssoConfig.apiUrl, config.js
+  // VITE_API_URL aware); syncCodeMieUrl = the raw org host, which SSO login turns into the API base with
+  // ensureApiBase. With neither (legacy daemon) the target is the API. The model gateway is never a candidate
+  // next to a sync URL.
+  const candidates = state?.syncApiUrl || state?.syncCodeMieUrl
+    ? [state.syncApiUrl, state.syncCodeMieUrl && ensureApiBase(state.syncCodeMieUrl)]
+    : [state?.targetUrl ?? state?.url];
+  const urls = candidates.filter((u): u is string => !!u);
   const identity = forwarderIdentity(credentials);
-  if (identity) {
-    let wire: string | undefined;
+  if (!identity) return { baseUrl: urls[0] ?? '', profile: state?.profile, identity };
+  const wireOf = (u: string): string | undefined => {
     try {
-      wire = apiIdentity(baseUrl);
+      return apiIdentity(u);
     } catch {
-      wire = undefined;
+      return undefined;
     }
-    if (wire !== identity.api_identity) {
-      logger.debug('[otlp-classification] analytics endpoint does not match the credential identity; nothing sent or fetched');
-      return null;
-    }
+  };
+  // Origin AND base path must equal the credentials' api_identity.
+  const baseUrl = urls.find((u) => wireOf(u) === identity.api_identity);
+  if (baseUrl === undefined) {
+    logger.debug('[otlp-classification] analytics endpoint does not match the credential identity; nothing sent or fetched');
+    return null;
   }
   return { baseUrl, profile: state?.profile, identity };
 }

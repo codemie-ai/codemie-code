@@ -718,8 +718,40 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       vi.stubGlobal('fetch', policyFetch({ organizations: ['acme'], version: 'v9' }));
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
-        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate' }), expect.objectContaining({ baseUrl: API + '/' })
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate' }), expect.objectContaining({ baseUrl: API })
       );
+    });
+
+    it('IR-CLI003: real profile shapes resolve the analytics endpoint; mismatches still fail closed', async () => {
+      const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+      const { forwardSession } = await import('../forwarder.js');
+      const ORIGIN = new URL(API).origin; // bare host: connect-orchestrator passes raw config.codeMieUrl
+      const GW = 'https://llm-gateway.example.com';
+      const sent = async (state: Record<string, unknown>): Promise<string | undefined> => {
+        vi.mocked(forwardSession).mockClear();
+        vi.mocked(readState).mockResolvedValue(state as never);
+        vi.stubGlobal('fetch', policyFetch({ organizations: ['acme'], version: 'v9' }));
+        await tick();
+        return vi.mocked(forwardSession).mock.calls[0]?.[4]?.baseUrl;
+      };
+      await seedStamped();
+      // Standard SSO: bare-host syncCodeMieUrl + separate model gateway; the base path is the CodeMie API's.
+      expect(await sent({ targetUrl: GW, syncCodeMieUrl: ORIGIN })).toBe(API);
+      expect(await sent({ targetUrl: GW, syncCodeMieUrl: ORIGIN + '/' })).toBe(API);
+      // Explicit/discovered syncApiUrl wins over a host that would derive a different base path.
+      expect(await sent({ targetUrl: GW, syncApiUrl: API, syncCodeMieUrl: 'https://other.example.net' })).toBe(API);
+      expect(await sent({ targetUrl: GW, syncApiUrl: API + '/' })).toBe(API + '/');
+      // Stale syncApiUrl but a syncCodeMieUrl that does match the credentials.
+      expect(await sent({ targetUrl: GW, syncApiUrl: 'https://old.example.net/code-assistant-api', syncCodeMieUrl: ORIGIN })).toBe(API);
+      // Legacy / no sync URLs: the daemon target is the analytics endpoint.
+      expect(await sent({ targetUrl: API })).toBe(API);
+      // Genuine mismatches fail closed (cross-host, cross-base-path, gateway only, bare target without sync).
+      for (const state of [
+        { targetUrl: GW, syncCodeMieUrl: 'https://other.example.net' },
+        { targetUrl: GW, syncApiUrl: ORIGIN + '/another-deployment' },
+        { targetUrl: GW },
+        { targetUrl: ORIGIN },
+      ]) expect(await sent(state)).toBeUndefined();
     });
 
     it('AC18: a backend discard recorded with the cursor advance is persisted as lastDiscard', async () => {
