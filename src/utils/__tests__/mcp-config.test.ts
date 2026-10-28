@@ -39,10 +39,17 @@ beforeAll(() => {
   writeJson('oc-both/opencode.json', { mcp: { fromJson: {} } });
   writeJson('oc-both/opencode.jsonc', { mcp: { fromJsonc: {} } });
 
-  // A .jsonc carrying comments cannot be JSON.parse'd; it must be skipped
-  // rather than throwing, and the next candidate should still be tried.
-  writeJson('oc-comments/opencode.jsonc', '{ // a comment\n "mcp": { "x": {} } }');
+  // Invalid JSONC must be rejected rather than partially recovering a map.
+  writeJson('oc-comments/opencode.jsonc', '{ "mcp": { "x": {} }, BROKEN }');
   writeJson('oc-comments/opencode.json', { mcp: { recovered: {} } });
+  writeJson('oc-valid-comments/opencode.jsonc', '{ // a comment\n "mcp": { "servers": { "x": {}, }, }, }');
+  writeJson('oc-v2/opencode.json', { mcp: { servers: { fetch: { url: 'secret-url' }, sonar: {} }, enabled: true } });
+  writeJson('oc-empty-v2/opencode.json', { mcp: { servers: {}, enabled: true } });
+  writeJson('oc-null-v2/opencode.json', { mcp: { servers: null, legacy: {} } });
+  writeJson('oc-strict-json/opencode.json', '{ // invalid for .json\n "mcp": { "servers": { "x": {} } } }');
+  writeJson('oc-strict-json/opencode.jsonc', { mcp: { servers: { fallback: {} } } });
+  writeJson('oc-missing-map/opencode.json', { model: 'example/model' });
+  writeJson('oc-missing-map/opencode.jsonc', { mcp: { servers: { later: {} } } });
 });
 
 afterAll(() => {
@@ -50,6 +57,48 @@ afterAll(() => {
 });
 
 describe('getMCPConfigSummary', () => {
+  const nativePaths: AgentMCPConfig = {
+    project: { path: ['opencode.json', 'opencode.jsonc'], jsonPath: ['mcp.servers', 'mcp'] },
+  };
+
+  it('accepts JSONC comments and trailing commas without falling through', async () => {
+    const summary = await getMCPConfigSummary(nativePaths, join(root, 'oc-valid-comments'));
+    expect(summary.serverNames).toEqual(['x']);
+  });
+
+  it('selects the native nested map and returns names only', async () => {
+    const summary = await getMCPConfigSummary(nativePaths, join(root, 'oc-v2'));
+    expect(summary.serverNames).toEqual(['fetch', 'sonar']);
+    expect(JSON.stringify(summary)).not.toContain('secret-url');
+    expect(summary.serverNames).not.toContain('servers');
+  });
+
+  it('does not fall back to wrapper keys when the native map is empty', async () => {
+    const summary = await getMCPConfigSummary(nativePaths, join(root, 'oc-empty-v2'));
+    expect(summary.projectServers).toBe(0);
+    expect(summary.serverNames).toEqual([]);
+  });
+
+  it('keeps legacy top-level MCP compatible with ordered shape alternatives', async () => {
+    expect((await getMCPConfigSummary(nativePaths, join(root, 'oc-json'))).serverNames)
+      .toEqual(['fetch', 'sonar']);
+  });
+
+  it('ignores a non-object native shape before trying the legacy map', async () => {
+    const summary = await getMCPConfigSummary(nativePaths, join(root, 'oc-null-v2'));
+    expect(summary.serverNames).toEqual(['legacy', 'servers']);
+  });
+
+  it('keeps .json strict instead of interpreting it as JSONC', async () => {
+    expect((await getMCPConfigSummary(nativePaths, join(root, 'oc-strict-json'))).serverNames)
+      .toEqual(['fallback']);
+  });
+
+  it('returns no servers when the first valid document has no matching object path', async () => {
+    const summary = await getMCPConfigSummary(nativePaths, join(root, 'oc-missing-map'));
+    expect(summary.serverNames).toEqual([]);
+  });
+
   it('returns an empty summary when the agent declares no MCP config', async () => {
     const summary = await getMCPConfigSummary(undefined, root);
 

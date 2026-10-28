@@ -191,6 +191,34 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
   // observable side effects of the real SessionStore.
   // ---------------------------------------------------------------------------
   describe('routeHookEvent dispatch', () => {
+    it('uses an explicit extraction source ID without rewriting lifecycle correlation', async () => {
+      const sessionId = `route-source-${process.pid}`;
+      createdSessions.add([sessionId]);
+      writeActiveSession(sessionId, { correlation: { agentSessionId: sessionId, status: 'matched' } });
+      const processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 0, failedProcessors: [], processors: {} });
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ processSession }) } as never);
+      const transcript = transcriptFile('source');
+      const event = { session_id: sessionId, hook_event_name: 'SessionEnd', transcript_path: transcript,
+        permission_mode: 'default', cwd: TMP, reason: 'exit' } as BaseHookEvent;
+      await processEvent(event, { ...baseConfig, sessionId, sourceSessionId: 'ses_source' });
+      expect(processSession).toHaveBeenCalledWith(transcript, sessionId,
+        expect.objectContaining({ sessionId, agentSessionId: 'ses_source' }));
+      expect(event.session_id).toBe(sessionId);
+      expect(JSON.parse(readFileSync(completedPath(sessionId), 'utf8')).correlation.agentSessionId).toBe(sessionId);
+    });
+
+    it('keeps native hook session_id as the source when no override is supplied', async () => {
+      const sessionId = `route-native-source-${process.pid}`;
+      createdSessions.add([sessionId]);
+      writeActiveSession(sessionId);
+      const processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 0, failedProcessors: [], processors: {} });
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ processSession }) } as never);
+      const transcript = transcriptFile('native-source');
+      await processEvent({ session_id: 'ses_native', hook_event_name: 'Stop', transcript_path: transcript,
+        permission_mode: 'default', cwd: TMP } as BaseHookEvent, { ...baseConfig, sessionId });
+      expect(processSession).toHaveBeenCalledWith(transcript, sessionId, expect.objectContaining({ agentSessionId: 'ses_native' }));
+    });
+
     it('SessionStart → handleSessionStart creates an active session record with matched correlation', async () => {
       const sessionId = `route-start-${process.pid}`;
       const claudeId = 'claude-start-1';

@@ -133,9 +133,36 @@ Both share: SSO/proxy routing, session analytics, model config injection.
 
 CodeMie injects model config via env vars before spawning OpenCode:
 - `OPENCODE_CONFIG_CONTENT` (primary) — inline JSON
-- `OPENCODE_CONFIG` (fallback) — path to temp file
+- `OPENCODE_CONFIG` (fallback) — path to temp file when the document exceeds the env size limit (same rule for both schemas)
 
-`file:src/agents/plugins/opencode/opencode.plugin.ts:215-260`
+The emitted shape follows the installed OpenCode major version, probed via `opencode --version` and cached with a TTL (`resolveOpenCodeConfigVersion()` — `PATH` resolution, shell execution on Windows for `.cmd` shims, 3s timeout, warn-and-fallback to v1 so startup never blocks on detection; a successful probe is trusted for 5 minutes — a per-invocation CLI process still probes at most once per run — and a failed probe's v1 fallback only for 30 seconds, so a long-lived process picks up an installed/upgraded binary without a restart):
+
+A probe is successful only with exit code `0` and a complete version response (`major.minor.patch`, optional OpenCode label / `v` prefix and prerelease/build suffixes). Empty, malformed, partial or unrelated stdout and nonzero exits use the same warning + 30-second v1 fallback as execution failures, not the five-minute success cache. Raw stdout/stderr is not included in this validation warning. Windows executable quoting matches the launcher for resolved and fallback metadata paths; POSIX remains `shell: false`. Forced schema overrides and valid v1 classification are unchanged.
+
+- OpenCode 1.x: `provider` (singular) + `npm` + `options`
+- OpenCode 2.x: native `providers` (plural) + `package` + `settings` via `injectV2Config()` (inline primary, temp-file fallback); Responses-API models carry a per-model `/responses` package override
+
+Both v2 proxy model loops explicitly preserve existing capabilities: `tool_call` → `capabilities.tools`, `modalities.input` → `capabilities.input`, and `modalities.output` → `capabilities.output`. A known `false` tool flag or text-only input must not fall back to OpenCode's custom-model defaults (`tools: true`, image input). This is a field translation only: the dynamic/static catalogue, v1 emission, reasoning/variants, limits, pricing and direct Ollama/Bedrock branches are unchanged.
+
+`CODEMIE_OPENCODE_CONFIG_VERSION=1|2` forces a schema explicitly (e.g. to test v2 output without a v2 binary).
+
+V2 standalone enrichment uses private flag-capability classification, independent of legacy `ownedSubcommands`. Existing server-backed commands with `ServerParams` retain isolation (`run`, `mini`, `api`, `models`, `stats`, `reload`, and the supported leaves under `auth`/`session`); bare `auth`/`session` groups and commands without that flag (`debug`, `mcp`, `plugin`, `upgrade/update`, `uninstall`, `serve`, `service`, `acp`, `pair`) pass through unchanged. Unknown words are not automatically TUI commands: only an existing directory argument or a root invocation without a positional command receives root isolation. Leading root option values are skipped during classification; explicit server/standalone flags are respected before `--`, and an injected flag is inserted before that separator. This does not change v1 argv/ownership or add support for new v2 command/model/resume APIs.
+
+Each v2 branch pins `enabled_providers` to the single provider it declares, excluding other providers from the picker and default fallback. This does **not** prevent fallback to another model within that provider. The v2 proxy branch therefore rejects a selected model absent from the emitted catalogue with `ConfigurationError` before spawning OpenCode, for both explicit CLI/env choices and profile defaults. It neither picks a replacement nor invents a catalogue entry from fallback metadata. Catalogue-fetch fallback to the existing static configs is unchanged; membership in that fallback catalogue is not proof of live backend availability. The v1 emission, full-selector/resume contract and direct Ollama/Bedrock branches are unchanged by this guard.
+
+The missing-model error names the profile when known and uses `CODEMIE_MODEL_SOURCE` to give source-specific recovery: correct `--model` for a CLI override; update/unset `CODEMIE_MODEL` for an env override; use `codemie setup` → **Update an existing profile** → the named profile → select and save an available model for a saved default. A one-run `codemie-opencode --profile <profile-name> --model <model-id>` does not persist the default. Use bare catalogue IDs while the full-selector contract remains unresolved. `codemie models list` lists the active profile only; select the matching profile first when needed. Without a provenance marker, the message does not claim that the model came from a saved profile.
+
+Per-provider behaviour on 2.x:
+
+| Provider | v2 emission | Requirement |
+|----------|-------------|-------------|
+| SSO/proxy | native `providers.codemie-proxy` with the full catalogue | — |
+| Ollama | native endpoint-only block, no `models` map | OpenCode 2.x has no built-in `ollama` provider package. Inventory comes from its bundled discovery plugin, which reads the declared `baseURL`, enumerates `/api/tags` + `/api/show` (1s per request) and keeps only models whose capabilities include `completion`. An unreachable endpoint leaves the provider model-less — the allowlist turns that into an explicit error |
+| Bedrock | native `providers.amazon-bedrock` using the built-in `@opencode/ai/providers/amazon-bedrock` package, declaring `region` and the selected model. Reasoning effort on Claude 3.7+ is declared as per-model `variants` mirroring OpenCode's `bedrockConverse` protocol (`output_config.effort` for 4.6+, `settings.thinking.budgetTokens` for 3.7 / 4.0-4.5) plus a `#<level>` reference suffix; The model entry declares the model's real limits, resolved from its Claude version — from the AWS Bedrock model cards (200k / 64k for Sonnet 4 / 4.5, Opus 4.5, Haiku 4.5; 200k / 32k for Opus 4.1; 1M / 64k for Sonnet 4.6; 1M / 128k for Opus 4.6+ and Sonnet 5 / Opus 5). Sonnet 4 uses the budget path; `xhigh` on Sonnet 4.6 is downgraded to `high` — so `fitThinkingBudget` is not clamped by the generic `getModelConfig()` fallback | Region and credentials resolve through the standard AWS environment / default credential chain |
+
+`file:src/agents/plugins/opencode/opencode.plugin.ts:48,96,433-540`
+
+The shared Bedrock model-ID helper preserves the existing `us.` geography when no region is supplied, including the v1 and built-in agent paths. Explicit regions select their routing geography; already-qualified model IDs and ARNs pass through unchanged, including an explicitly selected `global.` profile. Required version suffixes are not invented.
 
 ### Session Analytics Flow
 
@@ -143,15 +170,44 @@ CodeMie injects model config via env vars before spawning OpenCode:
 2. `onSessionEnd` hook: discovers and processes latest session → writes JSONL deltas
 3. `SessionSyncer` reads JSONL → POSTs to `v1/metrics` API
 
+Turn boundaries arrive earlier, from the injected hooks plugin (`UserPromptSubmit` / `Stop` → `codemie hook`); the hook payloads point `transcript_path` at `opencode.db`, so a reader that returns nothing leaves every metric consumer empty while looking healthy.
+
 `file:src/agents/plugins/opencode/opencode.plugin.ts:145-326`
 
-### XDG Storage Paths
+### Session Database Layout
 
-| Platform | Path |
+The analytics reader queries `opencode.db`, whose layout differs per OpenCode major. The layout is detected from `sqlite_master` (cached per database path), not from a version probe — the database on disk may have been written by a different release than the binary on `PATH`, and `codemie opencode-metrics` runs without launching the binary.
+
+| Concern | OpenCode 1.x | OpenCode 2.x |
+|---------|--------------|--------------|
+| Sessions | `session` | `session_v2` (superset of the 1.x columns, plus `cost` / `tokens_*` / `time_idle`) |
+| Messages | `message`, role in `data.role` | `session_message`, role in the `type` column, order in `seq` |
+| Parts | `part` table, one row per part | no table — nested in the message row's `data.content[]` |
+| Tool parts | `callID` / `tool` / `state.output` | `id` / `name` / `state.content[]`, translated on read; part ids are synthetic (`<messageId>:<index>`) |
+
+2.x also stores non-message rows in the same table (`idle`, `system`, `shell`, `synthetic`, `agent-switched`, `model-switched`); only `user` and `assistant` are read.
+
+V2 `edit` and `patch` metadata contains `files[]` entries shaped as `{file, patch, additions, deletions, status}`. The metrics processor translates these into existing file operations: `added` → `write`, `deleted` → `delete`, `modified` → `edit`, and `file` → `path`. Nonnegative integer additions/deletions are used directly (including zero); missing/invalid counts fall back to the existing unified-diff counter. Legacy patch `filePath/relativePath/type` and edit `filediff/diff` retain precedence, including mixed patch lists. No raw metadata rewrite, new delta/API fields, dedup reset or historical backfill is introduced.
+
+Read failures throw instead of returning an empty list, so `discoverSessions` can distinguish "no sessions" from "could not read" and fall back to file-based discovery with a warning. Node 22.5+ uses `node:sqlite`; older Node falls back to the `sqlite3` CLI. The database is always opened read-only — it is the user's live file, possibly being written concurrently.
+
+For a detected v2 database on Windows, `readSessionsFromDb()` converts cwd separators to `/` before binding the SQL filter, then converts returned Windows drive/UNC directory paths back to native `\` for filesystem callers. This mirrors upstream storage/fromDriver representation; it does not change casing, source IDs, query ordering/limits or discovery policy. The v1 layout, file fallback and POSIX paths (including literal backslashes) retain their existing representation. The gate uses the database layout, not the installed CLI version.
+
+`file:src/agents/plugins/opencode/opencode.sqlite-reader.ts`
+
+### Storage Paths and Database Resolution
+
+The table below describes CodeMie's **legacy/file-backed fallback**, not universal OpenCode v2 defaults. SQLite resolution asks the actual metadata CLI binary via `debug paths db` with the launch's child environment. `OpenCodePathContext` carries the command, environment and optional legacy data directory; neither that directory nor platform defaults rewrite the probe's `XDG_DATA_HOME`.
+
+| Platform | Legacy/file-backed fallback |
 |----------|------|
 | Linux | `~/.local/share/opencode/storage/` |
 | macOS | `~/Library/Application Support/opencode/storage/` |
 | Windows | `%LOCALAPPDATA%\opencode\storage\` |
+
+OpenCode v2 uses `$XDG_DATA_HOME/opencode`, or `~/.local/share/opencode` when XDG is absent, across these platforms. Its binary reports the release-channel database and resolves relative `OPENCODE_DB` under its actual data root. Absolute `OPENCODE_DB` and `:memory:` do not depend on the root. If probing is unavailable, fallback is cached only for 30 seconds and does not certify channel selection; successful results are cached for five minutes with binary/path-environment-sensitive keys.
+
+The built-in agent retains its deliberate `XDG_DATA_HOME=<codemie-home>/opencode-storage` redirect and uses its own resolved binary. SessionEnd discovery receives that per-run context instead of temporarily mutating/deleting the parent's `OPENCODE_STORAGE_PATH`. Default standalone installation remains `opencode-ai` / v1; v2 support does not change this policy.
 
 `file:src/agents/plugins/opencode/opencode.paths.ts`
 

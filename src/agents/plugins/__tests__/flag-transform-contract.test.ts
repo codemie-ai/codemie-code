@@ -15,7 +15,7 @@
  * from it.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { transformFlags } from '../../core/flag-transform.js';
 import type { AgentConfig, AgentMetadata } from '../../core/types.js';
 import { ClaudePluginMetadata } from '../claude/claude.plugin.js';
@@ -39,6 +39,11 @@ async function finalArgs(meta: AgentMetadata, raw: string[]): Promise<string[]> 
 
 let originalModel: string | undefined;
 let originalSessionId: string | undefined;
+beforeEach(() => {
+  vi.stubEnv('CODEMIE_OPENCODE_RESOLVED_CONFIG_VERSION', 'v2');
+  vi.stubEnv('CODEMIE_OPENCODE_V2_MODEL_REF', undefined);
+});
+afterEach(() => { vi.unstubAllEnvs(); });
 beforeAll(() => {
   originalModel = process.env.CODEMIE_MODEL;
   process.env.CODEMIE_MODEL = 'test-model';
@@ -68,8 +73,10 @@ describe('flag-transform contract — --task', () => {
     expect(await finalArgs(GeminiPluginMetadata, ['--task', 'do X'])).toEqual(['-m', 'test-model', '-p', 'do X']);
   });
 
-  it('opencode: --task X → run X', async () => {
-    expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X'])).toEqual(['run', 'do X']);
+  it.each(['v1', 'v2'])('opencode %s: --task X → run X with version-gated isolation', async version => {
+    vi.stubEnv('CODEMIE_OPENCODE_RESOLVED_CONFIG_VERSION', version);
+    expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X']))
+      .toEqual(version === 'v2' ? ['run', '--standalone', 'do X'] : ['run', 'do X']);
   });
 
   it('codex: --task X → exec subcommand with the task last + injected --model', async () => {
@@ -112,9 +119,10 @@ describe('flag-transform contract — --resume', () => {
       .toEqual(['-p', 'do X', '-S', 'abc-123']);
   });
 
-  it('opencode: --resume ID → -s ID', async () => {
+  it.each(['v1', 'v2'])('opencode %s: --resume ID → -s ID with version-gated isolation', async version => {
+    vi.stubEnv('CODEMIE_OPENCODE_RESOLVED_CONFIG_VERSION', version);
     expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X', '--resume', 'abc-123']))
-      .toEqual(['run', 'do X', '-s', 'abc-123']);
+      .toEqual(version === 'v2' ? ['run', '--standalone', 'do X', '-s', 'abc-123'] : ['run', 'do X', '-s', 'abc-123']);
   });
 
   it('codex: --resume ID + --task → exec resume ID … task', async () => {

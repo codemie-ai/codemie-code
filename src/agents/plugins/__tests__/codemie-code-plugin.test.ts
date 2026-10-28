@@ -4,7 +4,8 @@
  * @group unit
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { join } from 'node:path';
 
 // Mock BaseAgentAdapter to avoid dependency tree
 vi.mock('../../core/BaseAgentAdapter.js', () => ({
@@ -83,6 +84,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
     };
   }),
 }));
+vi.mock('../opencode/opencode.paths.js', () => ({ resolveOpenCodeDbPath: vi.fn(async () => '/fixture/db') }));
 
 // Mock getModelConfig and model config helpers
 vi.mock('../opencode/opencode-model-configs.js', () => ({
@@ -123,6 +125,7 @@ const { resolveCodemieOpenCodeBinary, getPlatformPackage } = await import('../co
 const { installGlobal, uninstallGlobal } = await import('../../../utils/processes.js');
 const { logger } = await import('../../../utils/logger.js');
 const { OpenCodeSessionAdapter } = await import('../opencode/opencode.session.js');
+const { resolveOpenCodeDbPath } = await import('../opencode/opencode.paths.js');
 const { CodeMieCodePlugin, CodeMieCodePluginMetadata, BUILTIN_AGENT_NAME } = await import('../codemie-code.plugin.js');
 const { fetchDynamicModelConfigs } = await import('../opencode/opencode-dynamic-models.js');
 
@@ -282,6 +285,23 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('uses the built-in child root/binary and preserves the parent storage override', async () => {
+    vi.stubEnv('OPENCODE_STORAGE_PATH', '/parent/storage');
+    mockDiscoverSessionsCC.mockResolvedValue([{ sessionId: 'ses_built_in', filePath: '/fixture/db' }]);
+    mockProcessEvent.mockResolvedValue(undefined);
+    const env = { CODEMIE_SESSION_ID: 'lifecycle-id', XDG_DATA_HOME: '/child/data' };
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, env);
+    expect(OpenCodeSessionAdapter).toHaveBeenCalledWith(CodeMieCodePluginMetadata, {
+      command: CodeMieCodePluginMetadata.cliCommand, env, dataDir: join(env.XDG_DATA_HOME, 'opencode'),
+    });
+    expect(mockDiscoverSessionsCC).toHaveBeenCalledWith({ maxAgeDays: 1, limit: 1, cwd: process.cwd() });
+    expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'lifecycle-id' }),
+      expect.objectContaining({ sessionId: 'lifecycle-id', sourceSessionId: 'ses_built_in' }));
+    expect(process.env.OPENCODE_STORAGE_PATH).toBe('/parent/storage');
+  });
+
   it('uses clientType codemie-code in context', async () => {
     mockDiscoverSessionsCC.mockResolvedValue([
       { sessionId: 'test-session', filePath: '/path/to/session' },
@@ -329,5 +349,16 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('failed')
     );
+  });
+});
+
+describe('CodeMieCodePlugin beforeRun storage context', () => {
+  it('resolves the hooks transcript after its intentional child XDG redirect', async () => {
+    vi.mocked(resolveOpenCodeDbPath).mockResolvedValue('/fixture/db');
+    const env = { CODEMIE_BASE_URL: 'http://localhost:3000', CODEMIE_AGENT: 'codemie-code' };
+    await CodeMieCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+    expect(resolveOpenCodeDbPath).toHaveBeenCalledWith(join('/mock/.codemie', 'opencode-storage', 'opencode'),
+      expect.objectContaining({ command: '/mock/bin/codemie', env }));
+    expect((env as NodeJS.ProcessEnv).CODEMIE_OPENCODE_TRANSCRIPT).toBe('/fixture/db');
   });
 });

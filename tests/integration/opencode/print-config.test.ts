@@ -17,7 +17,17 @@ describe('print-config against the real opencode plugin', () => {
       CODEMIE_TIMEOUT: '600',
     } as NodeJS.ProcessEnv;
 
-    const resultEnv = await OpenCodePluginMetadata.lifecycle!.beforeRun!(env, {});
+    // Pin the v1 schema: this test asserts the v1 emission shape and must
+    // not depend on the binary installed on the machine running it.
+    const previousOverride = process.env.CODEMIE_OPENCODE_CONFIG_VERSION;
+    process.env.CODEMIE_OPENCODE_CONFIG_VERSION = '1';
+    let resultEnv: NodeJS.ProcessEnv;
+    try {
+      resultEnv = await OpenCodePluginMetadata.lifecycle!.beforeRun!(env, {});
+    } finally {
+      if (previousOverride === undefined) delete process.env.CODEMIE_OPENCODE_CONFIG_VERSION;
+      else process.env.CODEMIE_OPENCODE_CONFIG_VERSION = previousOverride;
+    }
 
     const generated = extractGeneratedConfig(resultEnv);
     const redacted = redactSecrets(generated) as Record<string, unknown>;

@@ -515,6 +515,16 @@ codemie-opencode --print-config --profile work --model claude-sonnet-4-6
 
 Other agents (`codemie-claude`, `codemie-codex`, `codemie-gemini`) reject `--print-config` and exit with an error — only opencode generates its config this way.
 
+`codemie-opencode` auto-detects the installed OpenCode major version (`opencode --version`, probed with a 3s timeout and cached with a TTL — a successful probe is trusted for 5 minutes, a failed probe's v1 fallback for 30 seconds) and generates a matching config schema: v1 (`provider` + `npm` + `options`) for OpenCode 1.x, native v2 (`providers` + `package` + `settings`, Responses models get a per-model `.../responses` package override) for OpenCode 2.x. Both schemas share the same delivery (inline via `OPENCODE_CONFIG_CONTENT` primary, `OPENCODE_CONFIG` temp-file fallback above the env size limit). An undetectable version falls back to v1 with a warning and never blocks startup. Force a schema explicitly (e.g. to test v2 output without a v2 binary) with `CODEMIE_OPENCODE_CONFIG_VERSION=1|2`.
+
+On a v2 binary each provider gets its own block and the config pins `enabled_providers` to that provider. Practical consequences:
+
+- **Ollama** needs a reachable endpoint. OpenCode 2.x has no built-in Ollama provider package — it discovers models through its own `/api/tags` + `/api/show` calls (1s timeout each) and keeps only models whose capabilities include `completion`. If the endpoint is down, the session fails with `No model is available for session <id>` rather than silently switching to another provider.
+- **Bedrock** uses OpenCode's built-in `amazon-bedrock` provider package; region and credentials resolve through the standard AWS environment variables and default credential chain.
+- **SSO/proxy** needs nothing beyond the generated config.
+
+Session metrics on 2.x come from the same `opencode.db` as on 1.x, read with the layout that release wrote (1.x `session`/`message`/`part`, 2.x `session_v2`/`session_message` with parts nested in the message row). The layout is detected from the database itself, so an upgraded OpenCode is picked up without reconfiguring CodeMie. If the database cannot be read, CodeMie logs a warning instead of reporting an empty session history.
+
 ### Capturing Output
 
 ```bash

@@ -9,6 +9,7 @@ import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
 import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
+import { resolveOpenCodeDbPath, type OpenCodePathContext } from './opencode/opencode.paths.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
@@ -48,10 +49,19 @@ function determineActiveProvider(provider: string | undefined): string {
 
 /**
  * Get the base storage path for OpenCode sessions.
- * Used by both beforeRun (XDG_DATA_HOME) and onSessionEnd (OPENCODE_STORAGE_PATH).
+ * beforeRun sets XDG_DATA_HOME; onSessionEnd reuses that child's path context.
  */
 function getOpenCodeStorageBase(): string {
   return join(getCodemieHome(), 'opencode-storage');
+}
+
+/** Preserve this launch's deliberate XDG redirect without mutating process.env. */
+function buildOpenCodePathContext(env: NodeJS.ProcessEnv): OpenCodePathContext {
+  return {
+    command: CodeMieCodePluginMetadata.cliCommand,
+    env,
+    ...(env.XDG_DATA_HOME && { dataDir: join(env.XDG_DATA_HOME, 'opencode') }),
+  };
 }
 
 /**
@@ -365,6 +375,12 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       logger.debug(`[codemie-code] Setting XDG_DATA_HOME=${env.XDG_DATA_HOME} for OpenCode sessions`);
 
+      // The shared hooks payload needs the same DB selected by this binary and
+      // child environment; do not probe a standalone opencode installation.
+      const pathContext = buildOpenCodePathContext(env);
+      const dbPath = await resolveOpenCodeDbPath(pathContext.dataDir, pathContext);
+      env.CODEMIE_OPENCODE_TRANSCRIPT = dbPath === ':memory:' ? '' : dbPath;
+
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
 
@@ -419,18 +435,18 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       }
 
       try {
-        // 1. Discover OpenCode session for transcript_path (best effort)
-        //    Set OPENCODE_STORAGE_PATH so getOpenCodeStoragePath() resolves to the
-        //    same location that beforeRun configured via XDG_DATA_HOME on the child process.
-        const expectedStoragePath = join(getOpenCodeStorageBase(), 'opencode', 'storage');
-        process.env.OPENCODE_STORAGE_PATH = expectedStoragePath;
-
+        // Discover with the actual per-run environment (including any XDG
+        // redirect made by beforeRun), not a fabricated parent-process override.
         let transcriptPath = '';
+        let sourceSessionId: string | undefined;
         try {
-          const adapter = new OpenCodeSessionAdapter(CodeMieCodePluginMetadata);
-          const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
+          const adapter = new OpenCodeSessionAdapter(CodeMieCodePluginMetadata, buildOpenCodePathContext(env));
+          // The shared storage can contain other projects: carry the exact ID
+          // from the same cwd-filtered descriptor as its transcript path.
+          const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 1, cwd: process.cwd() });
           if (sessions.length > 0) {
             transcriptPath = sessions[0].filePath;
+            sourceSessionId = sessions[0].sessionId;
             logger.debug(`[codemie-code] Discovered OpenCode session: ${sessions[0].sessionId}`);
           } else {
             logger.debug('[codemie-code] No recent OpenCode sessions found');
@@ -452,13 +468,12 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
           cwd: process.cwd(),
           reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
         };
-        await processEvent(event, buildHookConfig(env, sessionId));
+        await processEvent(event, { ...buildHookConfig(env, sessionId), sourceSessionId });
         logger.info(`[codemie-code] SessionEnd hook completed for session ${sessionId}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[codemie-code] SessionEnd hook failed (non-blocking): ${errorMessage}`);
       } finally {
-        delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
         cleanupReasoningSanitizerPlugin();
       }

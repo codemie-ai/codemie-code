@@ -57,9 +57,9 @@ type DeltaFileOperation = NonNullable<MetricDelta['fileOperations']>[number];
 /**
  * Count added/removed lines in a unified diff.
  *
- * OpenCode reports edits as patch text (`state.metadata.filediff.patch`,
- * `state.metadata.diff`, `apply_patch` per-file `patch`); unlike Claude it never
- * emits numeric additions/deletions, so the counts have to come from the diff.
+ * Legacy OpenCode reports edits as patch text (`state.metadata.filediff.patch`,
+ * `state.metadata.diff`, `apply_patch` per-file `patch`). V2 file-diff metadata
+ * carries numeric counts; this remains the legacy path and its fallback.
  */
 export function countDiffLines(patch: unknown): { linesAdded: number; linesRemoved: number } {
   if (typeof patch !== 'string' || patch.length === 0) {
@@ -81,6 +81,45 @@ export function countDiffLines(patch: unknown): { linesAdded: number; linesRemov
   }
 
   return { linesAdded, linesRemoved };
+}
+
+/** Translate a v2 FileDiff entry without changing legacy metadata or delta shape. */
+function toV2FileOperation(value: unknown): DeltaFileOperation | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const file = value as Record<string, unknown>;
+  if (typeof file.file !== 'string' || file.file.length === 0) return undefined;
+
+  let type: FileOperationType;
+  switch (file.status) {
+    case 'added':
+      type = 'write';
+      break;
+    case 'deleted':
+      type = 'delete';
+      break;
+    case 'modified':
+      type = 'edit';
+      break;
+    default:
+      return undefined;
+  }
+
+  const readCount = (count: unknown): number | undefined =>
+    typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : undefined;
+  const additions = readCount(file.additions);
+  const deletions = readCount(file.deletions);
+  const diffCounts = additions === undefined || deletions === undefined
+    ? countDiffLines(file.patch)
+    : { linesAdded: 0, linesRemoved: 0 };
+  const linesAdded = additions ?? diffCounts.linesAdded;
+  const linesRemoved = deletions ?? diffCounts.linesRemoved;
+
+  return {
+    type,
+    path: file.file,
+    ...(linesAdded > 0 && { linesAdded }),
+    ...(linesRemoved > 0 && { linesRemoved }),
+  };
 }
 
 /**
@@ -438,6 +477,15 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     const mappedType = typeMapping[toolLower];
     if (!mappedType) return [];
 
+    // V2 edit returns per-file diffs instead of filediff/diff. Keep existing
+    // legacy fields authoritative when both forms are present.
+    if (toolLower === 'edit' && metadata?.filediff === undefined && metadata?.diff === undefined && Array.isArray(metadata?.files)) {
+      const fileOperations = metadata.files
+        .map(toV2FileOperation)
+        .filter((operation): operation is DeltaFileOperation => operation !== undefined);
+      if (fileOperations.length > 0) return fileOperations;
+    }
+
     // apply_patch / patch — state.metadata.files carries one entry per touched
     // file with its own operation kind and diff (ADR-17). The per-file `type` is
     // what makes files_deleted reachable; mapping every entry to 'edit' left it
@@ -452,8 +500,12 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
 
       if (Array.isArray(files)) {
         for (const file of files) {
-          const path = file.filePath || file.relativePath;
-          if (typeof path !== 'string') continue;
+          const path = file?.filePath || file?.relativePath;
+          if (typeof path !== 'string') {
+            const v2Operation = toV2FileOperation(file);
+            if (v2Operation) operations.push(v2Operation);
+            continue;
+          }
 
           const { linesAdded, linesRemoved } = countDiffLines(file.patch);
           operations.push({
