@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16441",
+  "head": "c1bafb52fb5056e77cae5a00a05e9084270f5066",
+  "runner": "npm",
+  "started_at": "2026-10-28T17:25:00Z",
+  "completed_at": "2026-10-28T17:28:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "390 files, 6242 tests passed, 0 failed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "37 files passed, 1 skipped; 283 tests passed, 10 skipped (pre-existing skips), 0 failed"
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' (scans staged changes only; nothing staged by design). CI secrets-detection re-runs it."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "HEAD~1..HEAD only: found 0 problems"
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Operates on staged files only; nothing staged. Its license-check/lint components are covered by guide gates."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "reusable-secrets-detection.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow; cannot run locally."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "vitest on windows-latest",
+      "exit_code": null,
+      "notes": "Needs Windows runner; same vitest commands pass on macOS."
+    }
+  ],
+  "failures": {}
+}
