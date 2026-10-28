@@ -125,6 +125,33 @@ describe('appendSpool — project binding', () => {
     expect(status?.project).toBeUndefined();
   });
 
+  it('warns once, by cause and without the raw name, when an unbound first batch holds only unsendable names', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    vi.mocked(logger.warn).mockClear();
+
+    await appendSpool(SESSION, 'hooks', hookLine('Bé'), ['Bé']);
+
+    expect((await readStatus(SESSION))?.projectConflict).toEqual(['Bé']);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls[0]);
+    expect(logged).toContain('cannot be sent as a header');
+    expect(logged).not.toContain('Bé');
+    expect(logged).not.toContain('switched project');
+  });
+
+  it('does not warn when a sendable name binds, even beside an unsendable one', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    const { appendSpool } = await import('../spool-io.js');
+    vi.mocked(logger.warn).mockClear();
+
+    await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('Bé'), ['A', 'Bé']);
+    await appendSpool(SESSION, 'hooks', hookLine('Cé'), ['Cé']);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it('pins a mixed first batch of sendable names to the first one, without a conflict', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { readStatus } = await import('../session-status.js');
