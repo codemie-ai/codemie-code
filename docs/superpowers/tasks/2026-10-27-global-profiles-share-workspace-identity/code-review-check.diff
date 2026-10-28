@@ -1,0 +1,202 @@
+diff --git a/src/migrations/008-isolate-global-profile-identity.migration.ts b/src/migrations/008-isolate-global-profile-identity.migration.ts
+index 00e543d3..9d08e4a8 100644
+--- a/src/migrations/008-isolate-global-profile-identity.migration.ts
++++ b/src/migrations/008-isolate-global-profile-identity.migration.ts
+@@ -6,10 +6,28 @@ import type { MultiProviderConfig, ProviderProfile, WorkspaceConfig } from '../e
+ /**
+  * CodeMie connectivity identity — isolated per global profile so switching
+  * between global profiles never leaks one profile's identity onto another
+- * (EPMCDME-15411). Kept as an independent literal here, mirroring migration
+- * 007, so the migration has no runtime dependency on ConfigLoader internals.
++ * (EPMCDME-15411). Handled as three explicit fields rather than a generic
++ * keyof loop, mirroring migration 007's independence from ConfigLoader
++ * internals: a generic loop over a mixed-type key union (codeMieIntegration
++ * is an object, the other two are strings) cannot stay type-safe without an
++ * `any` escape hatch, so each field is copied/stripped by name instead.
+  */
+-const IDENTITY_KEYS: (keyof WorkspaceConfig)[] = ['codeMieUrl', 'codeMieProject', 'codeMieIntegration'];
++function hasIdentity(source: WorkspaceConfig | ProviderProfile): boolean {
++  return source.codeMieUrl !== undefined || source.codeMieProject !== undefined || source.codeMieIntegration !== undefined;
++}
++
++function withIdentityFrom(profile: ProviderProfile, source: WorkspaceConfig): ProviderProfile {
++  const cloned: ProviderProfile = { ...profile };
++  if (source.codeMieUrl !== undefined) cloned.codeMieUrl = source.codeMieUrl;
++  if (source.codeMieProject !== undefined) cloned.codeMieProject = source.codeMieProject;
++  if (source.codeMieIntegration !== undefined) cloned.codeMieIntegration = source.codeMieIntegration;
++  return cloned;
++}
++
++function withoutIdentity(workspace: WorkspaceConfig): WorkspaceConfig {
++  const { codeMieUrl: _codeMieUrl, codeMieProject: _codeMieProject, codeMieIntegration: _codeMieIntegration, ...rest } = workspace;
++  return rest;
++}
+ 
+ class IsolateGlobalProfileIdentityMigration implements Migration {
+   id = '008-isolate-global-profile-identity';
+@@ -32,34 +50,15 @@ class IsolateGlobalProfileIdentityMigration implements Migration {
+   }
+ 
+   migrate(config: MultiProviderConfig): MultiProviderConfig {
+-    const hasIdentity = IDENTITY_KEYS.some(key => (config.workspace as any)?.[key] !== undefined);
+-    if (!hasIdentity) return config;
++    const sharedWorkspace: WorkspaceConfig = config.workspace ?? {};
++    if (!hasIdentity(sharedWorkspace)) return config;
+ 
+-    const sharedWorkspace = config.workspace as WorkspaceConfig;
+     const profiles: Record<string, ProviderProfile> = {};
+     for (const [name, profile] of Object.entries(config.profiles ?? {})) {
+-      const definesOwnIdentity = IDENTITY_KEYS.some(key => (profile as any)[key] !== undefined);
+-      if (definesOwnIdentity) {
+-        profiles[name] = profile;
+-        continue;
+-      }
+-
+-      const cloned: ProviderProfile = { ...profile };
+-      for (const key of IDENTITY_KEYS) {
+-        const value = (sharedWorkspace as any)[key];
+-        if (value !== undefined) {
+-          (cloned as any)[key] = value;
+-        }
+-      }
+-      profiles[name] = cloned;
+-    }
+-
+-    const workspace: WorkspaceConfig = { ...sharedWorkspace };
+-    for (const key of IDENTITY_KEYS) {
+-      delete (workspace as any)[key];
++      profiles[name] = hasIdentity(profile) ? profile : withIdentityFrom(profile, sharedWorkspace);
+     }
+ 
+-    return { ...config, profiles, workspace };
++    return { ...config, profiles, workspace: withoutIdentity(sharedWorkspace) };
+   }
+ }
+ 
+diff --git a/src/utils/__tests__/config-project-override.test.ts b/src/utils/__tests__/config-project-override.test.ts
+index 172b8555..53a5ea63 100644
+--- a/src/utils/__tests__/config-project-override.test.ts
++++ b/src/utils/__tests__/config-project-override.test.ts
+@@ -411,6 +411,32 @@ describe('ConfigLoader - Project-Level Configuration', () => {
+       expect(config.workspace?.claudeAutocompactPct).toBe(85);
+     });
+ 
++    it('saveProfile merges onto the existing profile instead of replacing it, so an update that omits identity does not wipe previously saved identity (EPMCDME-15411)', async () => {
++      await ConfigLoader.saveProfile('p1', {
++        provider: 'ai-run-sso',
++        codeMieUrl: 'https://x',
++        codeMieProject: 'proj',
++        baseUrl: 'https://x/code-assistant-api',
++        model: 'claude-sonnet-4-6'
++      } as any);
++
++      // A later update — e.g. re-running setup to change just the model — omits
++      // the identity fields entirely, the way a caller naturally would if it
++      // isn't re-collecting CodeMie URL/project on every update.
++      await ConfigLoader.saveProfile('p1', {
++        provider: 'ai-run-sso',
++        baseUrl: 'https://x/code-assistant-api',
++        model: 'claude-opus-5-5'
++      } as any);
++
++      const content = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
++      const config: MultiProviderConfig = JSON.parse(content);
++
++      expect((config.profiles.p1 as any).codeMieUrl).toBe('https://x');
++      expect((config.profiles.p1 as any).codeMieProject).toBe('proj');
++      expect(config.profiles.p1.model).toBe('claude-opus-5-5');
++    });
++
+     it('initProjectConfig routes workspace fields into the local scope workspace, not into profiles[name]', async () => {
+       const workingDir = path.join(TEST_DIR, 'project');
+       await ConfigLoader.initProjectConfig(workingDir, {
+@@ -617,6 +643,69 @@ describe('ConfigLoader - workspace resolution and project-only composition', ()
+       expect(cfg.codeMieUrl).toBe('https://global.example.com');
+     });
+ 
++    it('falls back to the matching global profile\'s own identity when the global workspace no longer carries it (post migration 008, EPMCDME-15411)', async () => {
++      // Post-008 shape: identity lives on the global profile itself, not on the
++      // shared global workspace. A local profile with no local workspace of its
++      // own must still resolve identity via this path, not go empty.
++      await writeGlobal('personal-anthropic', {
++        'personal-anthropic': {
++          provider: 'anthropic-subscription',
++          codeMieUrl: 'https://global.example.com',
++          codeMieProject: 'global-proj',
++          baseUrl: 'https://api.anthropic.com',
++          model: 'claude-sonnet-4-6',
++          name: 'personal-anthropic'
++        }
++      });
++
++      await writeLocal('personal-anthropic', {
++        'personal-anthropic': {
++          provider: 'anthropic-subscription',
++          baseUrl: 'https://api.anthropic.com',
++          model: 'claude-sonnet-4-6',
++          name: 'personal-anthropic'
++        }
++      });
++
++      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'));
++
++      expect(cfg.codeMieProject).toBe('global-proj');
++      expect(cfg.codeMieUrl).toBe('https://global.example.com');
++    });
++
++    it('resolves no identity (not a crash, not a stale leaked value) for a purely local-only profile name with no global counterpart and no own identity', async () => {
++      // 'local-only-profile' exists only in the local config — it has no matching
++      // key in global `profiles`, so migration 008 never had anything to clone onto
++      // it, and it never defines codeMieUrl/codeMieProject itself either. This is a
++      // narrow, pre-existing edge case (EPMCDME-15411): before this fix it would
++      // have read whatever was in the shared global workspace — exactly the kind of
++      // cross-profile identity leak this ticket removes. The correct outcome is no
++      // identity at all, not a crash and not another profile's leaked value.
++      await writeGlobal('unrelated-global', {
++        'unrelated-global': {
++          provider: 'ai-run-sso',
++          codeMieUrl: 'https://unrelated.example.com',
++          codeMieProject: 'unrelated-proj',
++          baseUrl: 'https://unrelated.example.com/code-assistant-api',
++          model: 'claude-sonnet-4-6',
++          name: 'unrelated-global'
++        }
++      });
++      await writeLocal('local-only-profile', {
++        'local-only-profile': {
++          provider: 'anthropic-subscription',
++          baseUrl: 'https://api.anthropic.com',
++          model: 'claude-sonnet-4-6',
++          name: 'local-only-profile'
++        }
++      });
++
++      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'));
++
++      expect(cfg.codeMieUrl).toBeUndefined();
++      expect(cfg.codeMieProject).toBeUndefined();
++    });
++
+     it('does not crash and falls back to the global workspace when the local config has an explicit "workspace": null', async () => {
+       await writeGlobal('personal-anthropic', {
+         'personal-anthropic': {
+diff --git a/src/utils/config.ts b/src/utils/config.ts
+index f0581e24..74d51b5d 100644
+--- a/src/utils/config.ts
++++ b/src/utils/config.ts
+@@ -681,7 +681,14 @@ export class ConfigLoader {
+     );
+ 
+     (profileFields as any).name = profileName;
+-    config.profiles[profileName] = profileFields as ProviderProfile;
++    // Merge onto the existing stored profile rather than replacing it outright
++    // (EPMCDME-15411): identity now lives directly on the profile, so a caller
++    // that updates unrelated fields (e.g. just `model`) without resupplying
++    // codeMieUrl/codeMieProject/codeMieIntegration must not silently wipe them.
++    config.profiles[profileName] = {
++      ...config.profiles[profileName],
++      ...profileFields
++    } as ProviderProfile;
+ 
+     if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
+       config.workspace = { ...config.workspace, ...workspaceFields };

@@ -56,11 +56,14 @@ export class ProfileDisplay {
    * Display list of profiles
    *
    * @param profiles - Array of profile information
-   * @param workspaceCodeMieUrls - Workspace codeMieUrl for local and for global profiles
+   * @param workspaceCodeMieUrls - Per-profile-name fallback codeMieUrl (keyed by
+   *   ProfileInfo.name) — each profile resolves its own, since two global profiles
+   *   can target different CodeMie environments; a single shared value for every
+   *   global row would show the wrong URL for all but one of them.
    */
   static formatList(
     profiles: ProfileInfo[],
-    workspaceCodeMieUrls: { local?: string; global?: string } = {}
+    workspaceCodeMieUrls: Map<string, string | undefined> = new Map()
   ): void {
     if (profiles.length === 0) {
       console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
@@ -70,9 +73,7 @@ export class ProfileDisplay {
     console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
     profiles.forEach((profile, index) => {
-      const workspaceCodeMieUrl = profile.source === 'local'
-        ? workspaceCodeMieUrls.local
-        : workspaceCodeMieUrls.global;
+      const workspaceCodeMieUrl = workspaceCodeMieUrls.get(profile.name);
       const formatted = this.format(profile, workspaceCodeMieUrl);
       console.log(formatted);
 

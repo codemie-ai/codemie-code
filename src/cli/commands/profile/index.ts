@@ -54,18 +54,29 @@ async function listProfiles(): Promise<void> {
     const workingDir = process.cwd();
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
-    const localWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, true);
-    const globalWorkspace = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+
+    // Each profile resolves its own fallback identity by name — two global
+    // profiles can target different CodeMie environments (see
+    // ConfigLoader.resolveProfileWorkspace()'s per-profile canUseSharedIdentity
+    // guard), so a single shared lookup for the whole list would show the wrong
+    // URL for all but one of them.
+    const workspaceCodeMieUrls = new Map<string, string | undefined>();
+    for (const p of profiles) {
+      const identity = {
+        codeMieUrl: p.profile.codeMieUrl,
+        codeMieProject: p.profile.codeMieProject,
+        codeMieIntegration: p.profile.codeMieIntegration
+      };
+      const workspace = await ConfigLoader.resolveProfileWorkspace(workingDir, p.source === 'local', identity, p.name);
+      workspaceCodeMieUrls.set(p.name, workspace.codeMieUrl);
+    }
 
     // Show context indicator
     if (hasLocal) {
       console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
     }
 
-    ProfileDisplay.formatList(profiles, {
-      local: localWorkspace.codeMieUrl,
-      global: globalWorkspace.codeMieUrl
-    });
+    ProfileDisplay.formatList(profiles, workspaceCodeMieUrls);
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);

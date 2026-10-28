@@ -148,4 +148,33 @@ describe('listProfiles — workspace-resolved codeMieUrl display', () => {
       formatSpy.mockRestore();
     }
   });
+
+  it('resolves each global profile\'s own codeMieUrl separately, instead of one shared value for every row', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    (ConfigLoader.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'pa', active: true, profile: { provider: 'ai-run-sso', codeMieUrl: 'https://a.example.com' }, source: 'global' },
+      { name: 'pb', active: false, profile: { provider: 'ai-run-sso', codeMieUrl: 'https://b.example.com' }, source: 'global' },
+    ]);
+    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    // Real resolveProfileWorkspace() falls back per-profile-name; a mock that ignores the
+    // profile name and returns one value for every row is exactly the bug under test.
+    (ConfigLoader.resolveProfileWorkspace as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_workingDir: string, _isLocalProfile: boolean, _identity: unknown, profileName?: string) => ({
+        codeMieUrl: profileName === 'pa' ? 'https://a.example.com' : profileName === 'pb' ? 'https://b.example.com' : undefined,
+      })
+    );
+
+    const formatSpy = vi.spyOn(ProfileDisplay, 'format');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const command = createProfileCommand();
+      await command.parseAsync([], { from: 'user' });
+
+      expect(formatSpy).toHaveBeenCalledWith(expect.objectContaining({ name: 'pa' }), 'https://a.example.com');
+      expect(formatSpy).toHaveBeenCalledWith(expect.objectContaining({ name: 'pb' }), 'https://b.example.com');
+    } finally {
+      logSpy.mockRestore();
+      formatSpy.mockRestore();
+    }
+  });
 });
