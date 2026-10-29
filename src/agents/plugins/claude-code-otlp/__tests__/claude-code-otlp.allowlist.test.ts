@@ -85,6 +85,8 @@ describe('readPromptHookTimeoutSeconds', () => {
   const writeSettings = (settings: unknown): void => {
     home = mkdtempSync(join(tmpdir(), 'cc-otlp-timeout-'));
     vi.stubEnv('HOME', home);
+    // os.homedir() reads USERPROFILE on Windows
+    vi.stubEnv('USERPROFILE', home);
     mkdirSync(join(home, '.claude'));
     writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings));
   };
