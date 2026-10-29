@@ -6,7 +6,7 @@ import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/ss
 import { ConfigLoader } from '@/utils/config.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
-import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import { readCopilotEventsTolerant } from '@/agents/plugins/copilot-cli/copilot-cli.storage-utils.js';
 import { extractCopilotUsage } from '@/agents/plugins/copilot-cli/copilot-cli.usage.js';
@@ -55,7 +55,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     if (process.env.CODEMIE_SESSION_ID) {
       return false;
     }
-    return isCopilotProjectTracked(input.cwd, await readCopilotConnectorScope(this.name));
+    return (await evaluateCopilotAnalyticsGate(this.name, input.cwd)).tracked;
   }
 
   protected async resolveAgentFields(): Promise<Record<string, unknown>> {
