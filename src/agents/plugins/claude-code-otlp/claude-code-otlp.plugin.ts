@@ -1,5 +1,5 @@
 
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import type {
   ConfigChangeHookInput,
   HookInput,
@@ -51,13 +51,12 @@ import {
   type SubagentFile,
 } from './transcript/orchestrator.js';
 import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
-import { resolveHomeDir } from '@/utils/paths.js';
 import { ProviderRegistry } from '@/providers/index.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
 import { routedViaCodemie } from '@/agents/core/evidence/routing.js';
 import { loadHookConfig } from '@/agents/core/event-fields/identity-fields.js';
 import { readClaudeOrganization } from './event-fields/claude-org.js';
-import { readJsonFile } from './event-fields/session-env-fields.js';
+import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -97,14 +96,6 @@ const ALWAYS_DROPPED_FIELDS: readonly string[] = [
 const LEGACY_HOOK_TIMEOUT_SECONDS = 30;
 const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
-/** Enterprise managed settings (highest precedence); absent files read as null. */
-const MANAGED_SETTINGS = [
-  'C:/Program Files/ClaudeCode/managed-settings.json',
-  'C:/ProgramData/ClaudeCode/managed-settings.json',
-  '/Library/Application Support/ClaudeCode/managed-settings.json',
-  '/etc/claude-code/managed-settings.json',
-];
-
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
 
@@ -123,28 +114,24 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   /** Claude-specific evidence: organization from .claude.json and routing from settings.json env + profile. */
   protected override async resolveEvidenceInputs(context: OtlpHookContext): Promise<EvidenceInputs> {
-    // Claude Code settings layers, lowest to highest precedence (later wins): user, project, local, managed.
-    const layers = [
-      join(resolveHomeDir(), '.claude', 'settings.json'),
-      join(context.cwd, '.claude', 'settings.json'),
-      join(context.cwd, '.claude', 'settings.local.json'),
-      ...MANAGED_SETTINGS,
-    ];
-    const [organization, files, hookConfig] = await Promise.all([
+    // Settings layers follow Claude's own roots (CLAUDE_PROJECT_DIR, CLAUDE_CONFIG_DIR, platform managed file).
+    const [organization, settings, hookConfig] = await Promise.all([
       readClaudeOrganization(),
-      Promise.all(layers.map((f) => readJsonFile(f))),
+      readClaudeSettingsEnv(context.cwd),
       loadHookConfig(context.cwd),
     ]);
-    const settingsEnv = Object.assign(
-      {},
-      ...files.map((f) => (f?.env && typeof f.env === 'object' ? (f.env as Record<string, string | undefined>) : {}))
-    ) as Record<string, string | undefined>;
     const config = hookConfig?.config;
     const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
     const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');
     return {
       organization,
-      routing: routedViaCodemie({ env: process.env, settingsEnv, codemieProvider, profileBaseUrl: config?.baseUrl }),
+      routing: routedViaCodemie({
+        env: process.env,
+        settingsEnv: settings.env,
+        settingsUnknown: !settings.complete,
+        codemieProvider,
+        profileBaseUrl: config?.baseUrl,
+      }),
     };
   }
 
