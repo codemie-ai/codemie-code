@@ -1,12 +1,15 @@
 /**
  * Turns per-session evidence into the report's `tickets` field. Pure.
  *
- * Prompt ids are the noisy source: `TICKET_RE` is case-insensitive, so free text matches
- * `gpt-4`, `utf-8`, `node-18`. Two rules keep them honest instead of a denylist:
- *  - prompts are matched case-sensitively (an upper-case project prefix is required);
- *  - a prompt id is kept only if its project prefix also appears in a tool or branch id
- *    somewhere in the same report ("corroboration"). Tool and branch evidence counts for this
- *    even when those sources are not requested — they are just not emitted then.
+ * Tool-call ids are the ground truth: an agent passed that key to the issue tracker. Branch names
+ * and prompts are free text, where a ticket-shaped string is often something else — a library
+ * version in a branch (`react-17`, `modal-19`), a model or encoding in a prompt (`GPT-4`, `UTF-8`).
+ * So a branch or prompt id is kept only when its project key (`CAKE` in `CAKE-807`) also appears
+ * in a tool-call id somewhere in the same report. Report-wide rather than per session: a session
+ * often works on its ticket's branch without calling the tracker itself. Tool evidence counts for
+ * this even when the `tool` source is not requested — it is just not emitted then.
+ *
+ * Prompts are also matched case-sensitively (an upper-case project key is required).
  */
 
 import { TICKET_RE } from '@/agents/core/ticket-parser.js';
@@ -35,10 +38,23 @@ function compareIds(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true });
 }
 
-/** Prompt ids: the shared pattern without its `i` flag, so the project prefix must be upper case. */
+/**
+ * Ids in free text whose number does not run on into a `.` or a letter: `lodash-4.17`, `node-20.x`,
+ * `ABC-7.1` (a version) and `bug-011CUabc`, `ABC-6x` (a suffix) are not tickets.
+ */
+function standaloneIds(text: string, flags: string): string[] {
+  const ids = new Set<string>();
+  for (const match of text.matchAll(new RegExp(TICKET_RE.source, flags))) {
+    if (/[.A-Za-z]/.test(text[match.index + match[0].length] ?? '')) continue;
+    ids.add(match[0].toUpperCase());
+    if (ids.size >= MAX_IDS_PER_TEXT) break;
+  }
+  return [...ids];
+}
+
+/** Prompt ids: case-sensitive (the project key must be upper case), standalone like branch ids. */
 function promptTicketIds(text: string): string[] {
-  const matches = text.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? [];
-  return [...new Set(matches)].slice(0, MAX_IDS_PER_TEXT);
+  return standaloneIds(text, TICKET_RE.flags.replace('i', ''));
 }
 
 /** Branches bots create for dependency bumps: `dependabot/npm_and_yarn/lodash-4.17.21`, `renovate/node-20.x`. */
@@ -46,17 +62,12 @@ const BOT_BRANCH = /^(dependabot|renovate)\//i;
 
 /**
  * Branch ids: matched case-insensitively (branches are usually lower case), except on bot
- * dependency branches, and never when the match runs into a version (`lodash-4.17`, `node-20.x`).
+ * dependency branches, and never when the number runs on into a `.` or a letter — a version
+ * (`lodash-4.17`, `node-20.x`) or a generated suffix (`claude/fix-login-bug-011CUabc`,
+ * `hotfix/abc-12x`). A real id in a branch ends at `-`, `_`, `/` or the end of the name.
  */
 function branchTicketIds(branch: string): string[] {
-  if (BOT_BRANCH.test(branch)) return [];
-  const ids = new Set<string>();
-  for (const match of branch.matchAll(new RegExp(TICKET_RE.source, TICKET_RE.flags))) {
-    if (branch[match.index + match[0].length] === '.') continue;
-    ids.add(match[0].toUpperCase());
-    if (ids.size >= MAX_IDS_PER_TEXT) break;
-  }
-  return [...ids];
+  return BOT_BRANCH.test(branch) ? [] : standaloneIds(branch, TICKET_RE.flags);
 }
 
 function prefixOf(id: string): string {
@@ -76,17 +87,31 @@ function total(ticket: SessionTicket): number {
   return (ticket.sources.tool ?? 0) + (ticket.sources.branch ?? 0) + (ticket.sources.prompt ?? 0);
 }
 
+/** Per-session tickets, plus the sessions whose list was cut at {@link MAX_TICKETS_PER_SESSION}. */
+export interface TicketReport {
+  tickets: Map<string, SessionTicket[]>;
+  truncated: Set<string>;
+}
+
 export function buildSessionTickets(
   evidence: ReadonlyMap<string, SessionEvidence>,
   sources: ReadonlySet<TicketSource>
 ): Map<string, SessionTicket[]> {
+  return buildTicketReport(evidence, sources).tickets;
+}
+
+export function buildTicketReport(
+  evidence: ReadonlyMap<string, SessionEvidence>,
+  sources: ReadonlySet<TicketSource>
+): TicketReport {
   const perSession = new Map<string, { tool: Map<string, number>; branch: Map<string, number>; prompt: Map<string, number> }>();
-  const corroborated = new Set<string>();
+  /** Project keys seen in tool-call ids anywhere in the report. */
+  const confirmedKeys = new Set<string>();
 
   for (const [sessionId, e] of evidence) {
     const tool = e.tool;
     const branch = countByText(e.branches, branchTicketIds);
-    for (const id of [...tool.keys(), ...branch.keys()]) corroborated.add(prefixOf(id));
+    for (const id of tool.keys()) confirmedKeys.add(prefixOf(id));
     const empty = new Map<string, number>();
     perSession.set(sessionId, {
       tool: sources.has('tool') ? tool : empty,
@@ -96,6 +121,7 @@ export function buildSessionTickets(
   }
 
   const result = new Map<string, SessionTicket[]>();
+  const truncated = new Set<string>();
   for (const [sessionId, { tool, branch, prompt }] of perSession) {
     const byId = new Map<string, SessionTicket>();
     const add = (source: TicketSource, counts: Map<string, number>): void => {
@@ -105,9 +131,11 @@ export function buildSessionTickets(
         byId.set(id, ticket);
       }
     };
+    const confirmed = (counts: Map<string, number>): Map<string, number> =>
+      new Map([...counts].filter(([id]) => confirmedKeys.has(prefixOf(id))));
     add('tool', tool);
-    add('branch', branch);
-    add('prompt', new Map([...prompt].filter(([id]) => corroborated.has(prefixOf(id)))));
+    add('branch', confirmed(branch));
+    add('prompt', confirmed(prompt));
     if (byId.size === 0) continue;
 
     // Keep the most-evidenced ids when over the cap, then order by id for stable output.
@@ -116,6 +144,7 @@ export function buildSessionTickets(
       .slice(0, MAX_TICKETS_PER_SESSION)
       .sort((a, b) => compareIds(a.id, b.id));
     result.set(sessionId, tickets);
+    if (byId.size > MAX_TICKETS_PER_SESSION) truncated.add(sessionId);
   }
-  return result;
+  return { tickets: result, truncated };
 }

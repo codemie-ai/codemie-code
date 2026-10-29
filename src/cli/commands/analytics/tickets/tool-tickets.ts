@@ -13,10 +13,21 @@ import { TICKET_RE, extractTicketMentions } from '@/agents/core/ticket-parser.js
  */
 export const DEFAULT_TICKET_TOOLS: readonly string[] = ['mcp__*jira*', 'mcp__*atlassian*__*issue*'];
 
-/** Input fields that carry an issue key rather than free text. */
-export const TICKET_KEY_FIELDS: ReadonlySet<string> = new Set([
-  'issueIdOrKey', 'issueKey', 'issue_key', 'key', 'parent', 'jql', 'inwardIssue', 'outwardIssue',
-]);
+/** Input fields that carry an issue key rather than free text, by exact name. */
+export const TICKET_KEY_FIELDS: ReadonlySet<string> = new Set(['key', 'parent', 'jql', 'inwardIssue', 'outwardIssue']);
+
+/**
+ * Key fields by naming convention, so MCP servers with different spellings are covered without a
+ * list per server: `issueIdOrKey`, `issueKey`, `issueKeys` (jira_add_issues_to_sprint), `epicKey` /
+ * `parentKey` (jira_create_issue), `issue_key`, `issue_keys`, `epic_key`, `inward_issue_key`,
+ * `issue_ids_or_keys`. `projectKey` is not one: a project key carries no issue number.
+ */
+const TICKET_KEY_FIELD_PATTERN = /^(issue|epic|parent|inward|outward)\w*keys?$/i;
+
+/** Whether a tool-input field carries issue keys. */
+export function isTicketKeyField(name: string): boolean {
+  return TICKET_KEY_FIELDS.has(name) || TICKET_KEY_FIELD_PATTERN.test(name);
+}
 
 /** Longest field value scanned, so a pasted log inside a JQL string cannot stall the report. */
 const MAX_VALUE_CHARS = 64 * 1024;
@@ -48,22 +59,53 @@ export function compileToolMatcher(globs: readonly string[]): (name: string) => 
  */
 const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 
-/** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
-const JQL_KEY_CLAUSE = /\b(?:key|issue|issuekey|parent)\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)/gi;
+/** A quoted JQL string, honouring backslash escapes (`"say \\"hi\\""`, `'it\\'s'`). */
+const JQL_STRING = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
 
-/** Text-search values (`summary ~ "…"`, `text !~ '…'`): free text, never read as clauses. */
-const JQL_TEXT_SEARCH = /!?~\s*(?:"[^"]*"|'[^']*')/g;
+/** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
+const JQL_KEY_CLAUSE = new RegExp(String.raw`\b(?:key|issue|issuekey|parent)\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
+
+/** Text-search values (`summary ~ "…"`, `text !~ '…'`, unquoted `summary ~ UTF-8`): free text, never read. */
+const JQL_TEXT_SEARCH = new RegExp(String.raw`!?~\s*(?:${JQL_STRING}|[^\s()]+)`, 'g');
+
+/** Arguments of JQL functions that take issue keys (`issue in linkedIssues(abc-7)`); any case, like Jira. */
+const JQL_ISSUE_FUNCTION = /\b(?:linkedIssues|parentEpic|childIssuesOf|portfolioChildIssuesOf|issuesWithRemoteLinksByGlobalId|epicsOf)\s*\(([^)]*)\)/gi;
+
+/**
+ * A JQL condition on any field: `field operator value`. Used to drop the conditions on fields that
+ * do not hold issue keys (`fixVersion = "APP-2"`, `labels in (gpt-4)`, `sprint = OPS-3`) before the
+ * last, case-sensitive pass, which would otherwise read their values as ids.
+ */
+const JQL_CONDITION = new RegExp(
+  String.raw`(?:\b[A-Za-z_][\w.]*|"[^"]+")\s*(?:!?=|!?~|>=|<=|>|<|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b|changed\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+)`,
+  'gi'
+);
+const JQL_KEY_FIELD = /^(?:key|issue|issuekey|parent)\s/i;
 
 function jqlIds(text: string): string[] {
   const ids = new Set<string>();
-  for (const clause of text.replace(JQL_TEXT_SEARCH, ' ').matchAll(JQL_KEY_CLAUSE)) {
-    for (const id of extractTicketMentions(clause[1], MAX_IDS_PER_CALL)) ids.add(id);
+  // Every pass reads the query with its text-search values removed: words searched for
+  // (`summary ~ "UTF-8 crash"`) are free text, whichever case they are in.
+  const query = text.replace(JQL_TEXT_SEARCH, ' ');
+  for (const pattern of [JQL_KEY_CLAUSE, JQL_ISSUE_FUNCTION]) {
+    for (const clause of query.matchAll(pattern)) {
+      for (const id of extractTicketMentions(clause[1], MAX_IDS_PER_CALL)) ids.add(id);
+    }
   }
-  for (const id of text.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? []) ids.add(id);
+  // Last, upper-case ids anywhere else in the query — but not in conditions on other fields.
+  const rest = query.replace(JQL_CONDITION, (condition) => (JQL_KEY_FIELD.test(`${condition} `) ? condition : ' '));
+  for (const id of rest.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? []) ids.add(id);
   return [...ids].slice(0, MAX_IDS_PER_CALL);
 }
 
-/** A string holding a JSON object or array (e.g. `additional_fields: '{"parent":"X-1"}'`), parsed; else undefined. */
+/**
+ * Fields whose string value may be JSON-encoded structure (`additional_fields: '{"parent":"X-1"}'`
+ * on jira_create_issue). Only these are decoded: JSON pasted into free text — an API response in a
+ * `comment` or `description` — is still free text and is never read.
+ */
+const STRUCTURAL_JSON_FIELD = /^(?:additional_?fields|fields|update)$/i;
+
+/** A string holding a JSON object or array, parsed; else undefined. */
 function embeddedJson(value: string): unknown {
   const trimmed = value.trim();
   if (trimmed.length > MAX_VALUE_CHARS || !/^[[{]/.test(trimmed)) return undefined;
@@ -77,21 +119,22 @@ function embeddedJson(value: string): unknown {
 /**
  * Distinct ticket ids found in the key-like fields of a tool input, at any nesting depth,
  * upper-cased, first-seen order. A key field may hold a string or an array of strings; JSON
- * encoded inside any string is walked too. Plain strings in other fields are ignored.
+ * encoded in a structural field (`additional_fields`, `fields`, `update`) is walked too. Every
+ * other string — free text, including JSON pasted into it — is ignored.
  */
-export function ticketsFromToolInput(input: unknown, fields: ReadonlySet<string> = TICKET_KEY_FIELDS): string[] {
+export function ticketsFromToolInput(input: unknown, isKeyField: (name: string) => boolean = isTicketKeyField): string[] {
   const found = new Set<string>();
   const scan = (text: string, field: string): void => {
     const value = text.slice(0, MAX_VALUE_CHARS);
     const ids = QUERY_FIELDS.has(field) ? jqlIds(value) : extractTicketMentions(value, MAX_IDS_PER_CALL);
     for (const id of ids) found.add(id);
   };
-  /** `field` is the key-like field being read, or null outside one. */
+  /** `field` is the name of the field holding `value` (null at the top level). */
   const walk = (value: unknown, depth: number, field: string | null): void => {
     if (depth > MAX_DEPTH || value === null || value === undefined) return;
     if (typeof value === 'string') {
-      if (field !== null) scan(value, field);
-      else {
+      if (field !== null && isKeyField(field)) scan(value, field);
+      else if (field !== null && STRUCTURAL_JSON_FIELD.test(field)) {
         const parsed = embeddedJson(value);
         if (parsed !== undefined) walk(parsed, depth + 1, null);
       }
@@ -102,7 +145,7 @@ export function ticketsFromToolInput(input: unknown, fields: ReadonlySet<string>
       for (const item of value) walk(item, depth + 1, field);
       return;
     }
-    for (const [key, item] of Object.entries(value)) walk(item, depth + 1, fields.has(key) ? key : null);
+    for (const [key, item] of Object.entries(value)) walk(item, depth + 1, key);
   };
   walk(input, 0, null);
   return [...found];

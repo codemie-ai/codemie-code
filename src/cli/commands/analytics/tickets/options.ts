@@ -20,6 +20,9 @@ export function resolveTicketSources(raw: string | undefined, redact: boolean): 
   }
   const names = raw.split(',').map((name) => name.trim().toLowerCase()).filter(Boolean);
   if (names.length === 1 && names[0] === 'none') return new Set();
+  if (names.includes('none')) {
+    throw new TicketOptionsError('--ticket-sources: none turns ticket extraction off and cannot be combined with other sources.');
+  }
   const invalid = names.filter((name) => !TICKET_SOURCES.includes(name as TicketSource));
   if (names.length === 0 || invalid.length > 0) {
     throw new TicketOptionsError(

@@ -10,7 +10,9 @@
  * Redaction is an allowlist-by-omission over the three leaking fields only; every metric
  * (tokens, cost, turns, tools, models, timings) is left untouched so analytics stay intact.
  * Kept: `userEmail` (attribution) and `branch` (branch names may still hint at a ticket or
- * topic — callers that need stricter handling should filter before exporting).
+ * topic — callers that need stricter handling should filter before exporting). `tickets` passes
+ * through unchanged: with `--redact` it holds ids from tool calls and branches only, unless
+ * `--ticket-sources` explicitly adds `prompt`, in which case prompt-derived ids are kept too.
  *
  * Pure: returns a new payload and never mutates its input.
  */

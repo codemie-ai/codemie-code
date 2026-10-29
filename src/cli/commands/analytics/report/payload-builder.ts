@@ -18,6 +18,7 @@ export interface PayloadContext {
   periodStart?: string; // ISO — caller stamps from filter or session start
   periodEnd?: string;   // ISO — caller stamps from filter or session end
   tickets?: ReadonlyMap<string, SessionTicket[]>; // per-session ticket ids (tickets/); absent = none computed
+  ticketsTruncated?: ReadonlySet<string>; // sessions whose ticket list hit the per-session cap
 }
 
 /** Public projections allowlist fields so internal transcript data cannot enter either export. */
@@ -188,6 +189,7 @@ export function buildPayload(
           commandInvocations,
           sessionSource: detectSessionSource({ skillInvocations, agentInvocations, commandInvocations }),
           ...(ctx.tickets?.get(s.sessionId)?.length ? { tickets: ctx.tickets.get(s.sessionId) } : {}),
+          ...(ctx.ticketsTruncated?.has(s.sessionId) ? { ticketsTruncated: true as const } : {}),
         });
       }
     }

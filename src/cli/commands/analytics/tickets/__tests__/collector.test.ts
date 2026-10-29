@@ -25,6 +25,11 @@ function view(sessionId: string, messages: unknown[], extra: Partial<ParsedSessi
   return { sessionId, agentName: 'claude', parsed, startTime: T0, windowEnd: undefined, ...extra };
 }
 
+/** A separate session whose Jira calls confirm these project keys, as branch and prompt ids require. */
+function confirmKeys(collector: TicketCollector, ...keys: string[]): void {
+  collector.observe(view('confirm', keys.map((key, i) => jiraCall(`toolu_confirm_${i}`, `${key}-1`, 0))));
+}
+
 describe('TicketCollector', () => {
   it('attributes a tool call replayed into a resumed session once, to the earlier session', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
@@ -67,6 +72,21 @@ describe('TicketCollector', () => {
     ]);
   });
 
+  it('counts a multi-block prompt once when CodeMie recorded only its first text block', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    confirmKeys(collector, 'CAKE');
+    collector.observe(view('s1', [{ type: 'user', uuid: 'u1', message: { role: 'user', content: [
+      { type: 'text', text: 'plan CAKE-5' }, { type: 'text', text: 'and CAKE-6' },
+    ] } }]));
+    collector.addDeltas([{ sessionId: 's1', deltas: [{ userPrompts: [{ count: 1, text: 'plan CAKE-5' }] }] }] as unknown as RawSessionData[]);
+
+    // One prompt, both ids found (the second block is still read), each counted once.
+    expect(collector.build().get('s1')).toEqual([
+      { id: 'CAKE-5', sources: { prompt: 1 } },
+      { id: 'CAKE-6', sources: { prompt: 1 } },
+    ]);
+  });
+
   it('ignores tools outside the configured patterns', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: ['mcp__*rally*'] });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0)]));
@@ -77,6 +97,7 @@ describe('TicketCollector', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
     const prompt = { type: 'user', uuid: 'u1', timestamp: at(0), gitBranch: 'feature/CAKE-807', message: { role: 'user', content: 'start CAKE-807' } };
     const later = { type: 'user', uuid: 'u2', timestamp: at(1000), gitBranch: 'feature/CAKE-807', message: { role: 'user', content: [{ type: 'text', text: 'now CAKE-808' }] } };
+    confirmKeys(collector, 'CAKE');
     collector.observe(view('s1', [prompt, later]));
     collector.observe(view('s2', [prompt]));
 
@@ -92,6 +113,7 @@ describe('TicketCollector', () => {
   it('drops the branch of a replayed row but keeps the branch of the resumed session', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
     const original = { type: 'user', uuid: 'u1', timestamp: at(0), gitBranch: 'ops/OPS-3', message: { role: 'user', content: 'hi' } };
+    confirmKeys(collector, 'OPS');
     collector.observe(view('s1', [original]));
     collector.observe(view('s2', [original, { type: 'assistant', uuid: 'u9', timestamp: at(5000), gitBranch: 'ops/OPS-4' }]));
 
@@ -130,6 +152,7 @@ describe('TicketCollector', () => {
 
   it('adds tracked prompts and branches from deltas without double counting the same text', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    confirmKeys(collector, 'CAKE');
     collector.observe(view('s1', [{ type: 'user', uuid: 'u1', message: { role: 'user', content: 'fix CAKE-5' } }]));
     collector.addDeltas([{
       sessionId: 's1',

@@ -659,6 +659,12 @@ describe('buildPayload tickets', () => {
     expect(payload.sessions[0].tickets).toEqual(tickets);
   });
 
+  it('marks a session whose ticket list was cut at the cap', () => {
+    const tickets = new Map([['s1', [{ id: 'CAKE-1', sources: { tool: 1 } }]]]);
+    expect(buildPayload(root, costIndex, summary, { ...ctx, tickets, ticketsTruncated: new Set(['s1']) }).sessions[0].ticketsTruncated).toBe(true);
+    expect('ticketsTruncated' in buildPayload(root, costIndex, summary, { ...ctx, tickets, ticketsTruncated: new Set() }).sessions[0]).toBe(false);
+  });
+
   it('leaves the record shape unchanged without tickets', () => {
     for (const extra of [{}, { tickets: new Map() }, { tickets: new Map([['s1', []]]) }]) {
       const record = buildPayload(root, costIndex, summary, { ...ctx, ...extra }).sessions[0];

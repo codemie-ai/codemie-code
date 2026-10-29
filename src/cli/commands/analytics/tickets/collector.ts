@@ -11,14 +11,14 @@
  *
  * CodeMie-tracked prompts and branches come from the session deltas via {@link addDeltas}.
  *
- * Tool and branch evidence is gathered whenever the prompt source is on, even if those sources
- * are not requested: prompt ids are only kept when corroborated by them (merge.ts).
+ * Tool evidence is gathered whenever any source is on, even if `tool` is not requested: branch and
+ * prompt ids are only kept when a tool-call id confirms their project key (merge.ts).
  */
 
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSessionView } from '../cost/cost-enricher.js';
 import type { SessionTicket } from '../report/types.js';
-import { buildSessionTickets, type SessionEvidence, type TicketSource } from './merge.js';
+import { buildSessionTickets, buildTicketReport, type SessionEvidence, type TicketReport, type TicketSource } from './merge.js';
 import { normalizePromptText, readNativeSignals } from './native-signals.js';
 import { readToolCalls } from './tool-calls.js';
 import { compileToolMatcher, ticketsFromToolInput } from './tool-tickets.js';
@@ -45,6 +45,8 @@ export class TicketCollector {
   private readonly evidence = new Map<string, SessionEvidence>();
   private readonly seenCalls = new Set<string>();
   private readonly seenRows = new Set<string>();
+  /** Per session: prompts already counted, keyed the way CodeMie records them (first text block). */
+  private readonly countedPrompts = new Map<string, Set<string>>();
   private readonly matchesTool: (name: string) => boolean;
   private readonly collectTool: boolean;
   private readonly collectBranch: boolean;
@@ -53,8 +55,8 @@ export class TicketCollector {
   constructor(private readonly options: TicketCollectorOptions) {
     this.matchesTool = compileToolMatcher(options.toolGlobs);
     this.collectPrompt = options.sources.has('prompt');
-    this.collectTool = options.sources.has('tool') || this.collectPrompt;
-    this.collectBranch = options.sources.has('branch') || this.collectPrompt;
+    this.collectBranch = options.sources.has('branch');
+    this.collectTool = options.sources.size > 0;
   }
 
   private session(sessionId: string): SessionEvidence {
@@ -64,6 +66,15 @@ export class TicketCollector {
       this.evidence.set(sessionId, e);
     }
     return e;
+  }
+
+  /** Adds a prompt once per session, however many of the two records (native log, deltas) carry it. */
+  private addPrompt(sessionId: string, e: SessionEvidence, text: string, key: string): void {
+    let counted = this.countedPrompts.get(sessionId);
+    if (!counted) this.countedPrompts.set(sessionId, (counted = new Set()));
+    if (counted.has(key)) return;
+    counted.add(key);
+    e.prompts.add(text);
   }
 
   /** A {@link ParsedSessionObserver} for `enrichCosts`; bound so it can be passed directly. */
@@ -92,7 +103,7 @@ export class TicketCollector {
           this.seenRows.add(row.key);
         }
         if (this.collectBranch && row.branch) e.branches.add(row.branch);
-        if (this.collectPrompt && row.prompt) e.prompts.add(row.prompt);
+        if (this.collectPrompt && row.prompt) this.addPrompt(view.sessionId, e, row.prompt, row.promptKey ?? row.prompt);
       }
     }
   };
@@ -108,7 +119,7 @@ export class TicketCollector {
         if (this.collectPrompt) {
           for (const prompt of delta.userPrompts ?? []) {
             const text = prompt?.text ? normalizePromptText(prompt.text) : '';
-            if (text) e.prompts.add(text);
+            if (text) this.addPrompt(raw.sessionId, e, text, text);
           }
         }
       }
@@ -117,5 +128,10 @@ export class TicketCollector {
 
   build(): Map<string, SessionTicket[]> {
     return buildSessionTickets(this.evidence, this.options.sources);
+  }
+
+  /** {@link build} plus the sessions whose ticket list hit the per-session cap. */
+  buildReport(): TicketReport {
+    return buildTicketReport(this.evidence, this.options.sources);
   }
 }

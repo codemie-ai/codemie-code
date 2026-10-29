@@ -299,3 +299,13 @@ Decisions taken while implementing, where the design left room:
    report catches a prompt-only ticket from a project seen elsewhere; same-session is stricter.
 3. Should the dashboard show tickets per session?
 4. Should `analytics.ticketTools` live in the profile or the global config section?
+
+## Revision: tool-call confirmation (review round 6)
+
+Branch and prompt ids are now kept only when their project key appears in a tool-call id in the same
+report; tool-call ids alone confirm keys (previously branch ids could confirm prompt ids, and branch
+ids stood on their own). On real logs this removed exactly the non-tickets `REACT-17` (a library
+version in a branch, which had also confirmed itself in an unrelated session's prompt) and
+`MODAL-19`, and kept all 53 other branch and prompt ids. Per-session confirmation was rejected: it
+drops real branch tickets in sessions that never call the tracker. Trade-off: a report without
+matching tool calls has no branch or prompt ids.

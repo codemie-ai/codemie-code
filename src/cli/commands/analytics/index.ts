@@ -193,7 +193,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       tickets?.addDeltas(rawSessions);
     }
     // A source with authoritative cost (OTEL) never ran the native pass, so it has no tickets.
-    const ticketsBySession = cost ? undefined : tickets?.build();
+    const ticketReport = cost ? undefined : tickets?.buildReport();
     const keepSessionIds = new Set(
       [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
     );
@@ -257,7 +257,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(userEmail !== undefined && { userEmail }),
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
-        ...(ticketsBySession !== undefined && { tickets: ticketsBySession }),
+        ...(ticketReport !== undefined && { tickets: ticketReport.tickets, ticketsTruncated: ticketReport.truncated }),
       });
       const payload = options.redact ? redactPayload(builtPayload) : builtPayload;
 

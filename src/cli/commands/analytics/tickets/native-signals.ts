@@ -21,8 +21,13 @@ export interface NativeRow {
    */
   key: string | null;
   ts: number | null;
-  /** User-authored prompt text on this row, if any. */
+  /** User-authored prompt text on this row, if any: every text block, so no id is missed. */
   prompt?: string;
+  /**
+   * The same prompt as CodeMie records it — its first text block only (claude.metrics-processor.ts)
+   * — so a prompt seen in both CodeMie's deltas and the native log is recognised as one.
+   */
+  promptKey?: string;
   /** Branch recorded on this row, if any. */
   branch?: string;
 }
@@ -76,31 +81,31 @@ export function normalizePromptText(text: string): string {
  * attachments), sidechain rows and compaction summaries are not prompts, and neither are rows
  * holding only tool results.
  */
-function claudeUserText(row: ClaudeRow): string {
-  if ((row.message?.role ?? row.type) !== 'user' || row.isMeta || row.isSidechain || row.isCompactSummary) return '';
+function claudeUserText(row: ClaudeRow): { text: string; key: string } {
+  if ((row.message?.role ?? row.type) !== 'user' || row.isMeta || row.isSidechain || row.isCompactSummary) return { text: '', key: '' };
   const content = row.message?.content;
-  const text = typeof content === 'string'
-    ? content
-    : Array.isArray(content)
-      ? content
-        .filter((block): block is { type: string; text: string } => block?.type === 'text' && typeof block.text === 'string')
-        .map((block) => block.text)
-        .join('\n')
-      : '';
-  return normalizePromptText(text);
+  if (typeof content === 'string') {
+    const text = normalizePromptText(content);
+    return { text, key: text };
+  }
+  if (!Array.isArray(content)) return { text: '', key: '' };
+  const blocks = content
+    .filter((block): block is { type: string; text: string } => block?.type === 'text' && typeof block.text === 'string' && !!block.text)
+    .map((block) => block.text);
+  return { text: normalizePromptText(blocks.join('\n')), key: normalizePromptText(blocks[0] ?? '') };
 }
 
 function claudeRows(parsed: ParsedSession): NativeRow[] {
   const rows: NativeRow[] = [];
   for (const row of (Array.isArray(parsed.messages) ? parsed.messages : []) as ClaudeRow[]) {
     if (!row || typeof row !== 'object') continue;
-    const prompt = claudeUserText(row);
+    const { text: prompt, key: promptKey } = claudeUserText(row);
     const branch = typeof row.gitBranch === 'string' && row.gitBranch ? row.gitBranch : undefined;
     if (!prompt && !branch) continue;
     rows.push({
       key: typeof row.uuid === 'string' && row.uuid ? `claude:${row.uuid}` : null,
       ts: toMs(row.timestamp),
-      ...(prompt && { prompt }),
+      ...(prompt && { prompt, promptKey: promptKey || prompt }),
       ...(branch && { branch }),
     });
   }

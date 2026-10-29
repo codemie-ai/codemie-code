@@ -104,6 +104,8 @@ export interface ReportSessionRecord {
   usageUnavailableReason?: string;
   /** Ticket ids found for this session (ids only, never text); absent when none or extraction is off. */
   tickets?: SessionTicket[];
+  /** Present (true) only when `tickets` was cut at the per-session cap of 20; absent otherwise. */
+  ticketsTruncated?: true;
 }
 
 export interface ReportMeta {

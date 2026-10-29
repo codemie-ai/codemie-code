@@ -351,6 +351,17 @@ describe('analytics ticket options', () => {
     deltas: [{ gitBranch: 'feature/CAKE-1', userPrompts: [{ count: 1, text: 'also CAKE-2' }] }],
   };
 
+  /** The cost pass hands s1's parsed log, holding one Jira call (CAKE-3), to the ticket observer. */
+  function costPassWithJiraCall(): void {
+    enrichCostsMock.mockImplementation(async (_raw: unknown, _deps: unknown, observers: Array<(v: unknown) => void> = []) => {
+      const parsed = { sessionId: 's1', agentName: 'claude', metadata: {}, messages: [
+        { message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__jira__get_issue', input: { issueKey: 'CAKE-3' } }] } },
+      ] };
+      for (const observe of observers) observe({ sessionId: 's1', agentName: 'claude', parsed, startTime: 0, windowEnd: undefined });
+      return enrichResult;
+    });
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     enrichCostsMock.mockResolvedValue(enrichResult);
@@ -376,22 +387,32 @@ describe('analytics ticket options', () => {
 
   it('passes a ticket observer to the cost pass and tickets to the payload on export', async () => {
     const { runAnalytics } = await import('../index.js');
+    costPassWithJiraCall();
     await runAnalytics({ export: 'json' } as never, mockSource([ticketSession as never]) as never);
     expect(enrichCostsMock.mock.calls[0][2]).toHaveLength(1);
     expect(payloadContext().tickets?.get('s1')).toEqual([
       { id: 'CAKE-1', sources: { branch: 1 } },
       { id: 'CAKE-2', sources: { prompt: 1 } },
+      { id: 'CAKE-3', sources: { tool: 1 } },
     ]);
   });
 
   it('reads nothing from prompts under --redact unless asked', async () => {
     const { runAnalytics } = await import('../index.js');
+    costPassWithJiraCall();
     await runAnalytics({ export: 'json', redact: true } as never, mockSource([ticketSession as never]) as never);
-    expect(payloadContext().tickets?.get('s1')).toEqual([{ id: 'CAKE-1', sources: { branch: 1 } }]);
+    expect(payloadContext().tickets?.get('s1')).toEqual([
+      { id: 'CAKE-1', sources: { branch: 1 } },
+      { id: 'CAKE-3', sources: { tool: 1 } },
+    ]);
 
     buildPayloadMock.mockClear();
     await runAnalytics({ export: 'json', redact: true, ticketSources: 'branch,prompt' } as never, mockSource([ticketSession as never]) as never);
-    expect(payloadContext().tickets?.get('s1')).toHaveLength(2);
+    // The Jira call still confirms CAKE, but `tool` is not requested, so it is not emitted.
+    expect(payloadContext().tickets?.get('s1')).toEqual([
+      { id: 'CAKE-1', sources: { branch: 1 } },
+      { id: 'CAKE-2', sources: { prompt: 1 } },
+    ]);
   });
 
   it('skips ticket work with --ticket-sources none and without an export', async () => {

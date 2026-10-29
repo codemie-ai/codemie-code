@@ -16,6 +16,10 @@ describe('resolveTicketSources', () => {
     expect(resolveTicketSources('none', false).size).toBe(0);
   });
 
+  it('says that none cannot be combined, instead of calling it invalid', () => {
+    expect(() => resolveTicketSources('none,tool', false)).toThrow(/none turns ticket extraction off and cannot be combined/);
+  });
+
   it('rejects unknown and empty values', () => {
     expect(() => resolveTicketSources('tool,title', false)).toThrow(TicketOptionsError);
     expect(() => resolveTicketSources(' , ', false)).toThrow(TicketOptionsError);
