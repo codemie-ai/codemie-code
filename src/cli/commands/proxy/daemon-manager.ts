@@ -25,6 +25,8 @@ export interface DaemonState {
   // backward-compatible — absent means "unknown / assume ok").
   health?: 'ok' | 'unhealthy';
   healthReason?: string;
+  /** True while the daemon waits for a new SSO sign-in (port bound, requests answered with 401). */
+  authRequired?: boolean;
   lastHealthyAt?: string;
   lastRecoveryAt?: string;
   recoveryAttempts?: number;

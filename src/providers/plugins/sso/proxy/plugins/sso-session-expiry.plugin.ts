@@ -45,6 +45,18 @@ import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../.
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
 
+/**
+ * The synthetic 401 body for an expired SSO session. Shared with the proxy daemon's
+ * auth-required listener (cli/commands/proxy/auth-required-server.ts) so a client sees the same
+ * message whether the full proxy or the fallback listener answered.
+ */
+export function buildSessionExpiredBody(outcome?: DetachedLoginOutcome): Buffer {
+  return Buffer.from(JSON.stringify({
+    type: 'error',
+    error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome)}` },
+  }), 'utf-8');
+}
+
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
   name = 'SSO Session Expiry Detector';
@@ -107,10 +119,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       );
     }
 
-    const body = Buffer.from(JSON.stringify({
-      type: 'error',
-      error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome)}` },
-    }), 'utf-8');
+    const body = buildSessionExpiredBody(outcome);
     const synthetic = tools.fromBuffer(response, body);
     synthetic.statusCode = 401;
     synthetic.statusMessage = 'Unauthorized';

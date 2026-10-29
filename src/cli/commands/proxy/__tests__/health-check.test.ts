@@ -87,7 +87,7 @@ describe('checkProxyHealth', () => {
     expect(result.level).toBe('deep');
     expect(result.code).toBe('unauthorized');
     expect(result.reason).toBe(
-      'SSO session expired — run `codemie profile login` and restart the proxy.'
+      'SSO session expired — run `codemie profile login`; the proxy resumes automatically.'
     );
   });
 

@@ -91,7 +91,7 @@ export async function checkProxyHealth(
         healthy: false,
         level: 'deep',
         code: 'unauthorized',
-        reason: 'SSO session expired — run `codemie profile login` and restart the proxy.',
+        reason: 'SSO session expired — run `codemie profile login`; the proxy resumes automatically.',
       };
     }
     if (!res.ok) {
@@ -108,7 +108,7 @@ export async function checkProxyHealth(
         healthy: false,
         level: 'deep',
         code: 'unauthorized',
-        reason: 'SSO session expired — run `codemie proxy stop && codemie profile login` to re-authenticate.',
+        reason: 'SSO session expired — run `codemie profile login`; the proxy resumes automatically.',
       };
     }
     return { healthy: true, level: 'deep', code: 'ok' };

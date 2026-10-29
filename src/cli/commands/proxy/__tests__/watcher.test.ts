@@ -21,18 +21,24 @@ const UNAUTHORIZED: ProxyHealthResult = {
   healthy: false,
   level: 'deep',
   code: 'unauthorized',
-  reason: 'SSO session expired — run `codemie profile login` and restart the proxy.',
+  reason: 'SSO session expired — run `codemie profile login`; the proxy resumes automatically.',
 };
 
 function makeCallbacks(): WatcherCallbacks & {
   restart: ReturnType<typeof vi.fn>;
   onHealthy: ReturnType<typeof vi.fn>;
   onGiveUp: ReturnType<typeof vi.fn>;
+  onAuthRequired: ReturnType<typeof vi.fn>;
+  hasNewCredentials: ReturnType<typeof vi.fn>;
+  onCredentialsRestored: ReturnType<typeof vi.fn>;
 } {
   return {
     restart: vi.fn().mockResolvedValue(undefined),
     onHealthy: vi.fn().mockResolvedValue(undefined),
     onGiveUp: vi.fn().mockResolvedValue(undefined),
+    onAuthRequired: vi.fn().mockResolvedValue(undefined),
+    hasNewCredentials: vi.fn().mockResolvedValue(false),
+    onCredentialsRestored: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -83,20 +89,70 @@ describe('ProxyWatcher', () => {
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('did not recover after 3 restart attempts');
   });
 
-  it('gives up immediately on an unauthorized failure without restarting', async () => {
+  it('waits for a sign-in on an unauthorized failure instead of restarting or giving up', async () => {
     mockedHealth.mockResolvedValue(UNAUTHORIZED);
     const cb = makeCallbacks();
-    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, authPollMs: 200 },
+      cb
+    );
 
     watcher.start();
     await vi.advanceTimersByTimeAsync(1000);
-    // Further time must not produce more activity (watcher stopped itself).
+    // Many poll periods later: still waiting, still polling the credential store.
     await vi.advanceTimersByTimeAsync(5000);
     watcher.stop();
 
+    expect(cb.onAuthRequired).toHaveBeenCalledTimes(1);
+    expect(cb.onAuthRequired.mock.calls[0][0]).toContain('SSO session expired');
     expect(cb.restart).not.toHaveBeenCalled();
-    expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
-    expect(cb.onGiveUp.mock.calls[0][0]).toContain('SSO session expired');
+    expect(cb.onGiveUp).not.toHaveBeenCalled();
+    expect(cb.hasNewCredentials.mock.calls.length).toBeGreaterThan(5);
+    // Deep checks go through the proxy and would re-open the browser sign-in: only the first one runs.
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes after a new sign-in: restores the proxy, re-checks health, reports healthy', async () => {
+    mockedHealth
+      .mockResolvedValueOnce(UNAUTHORIZED)
+      .mockResolvedValue(HEALTHY);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, authPollMs: 200 },
+      cb
+    );
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(cb.onAuthRequired).toHaveBeenCalledTimes(1);
+
+    cb.hasNewCredentials.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(400);
+    watcher.stop();
+
+    expect(cb.onCredentialsRestored).toHaveBeenCalledTimes(1);
+    expect(mockedHealth).toHaveBeenCalledTimes(2);
+    expect(cb.onHealthy).toHaveBeenCalled();
+    expect(cb.restart).not.toHaveBeenCalled();
+  });
+
+  it('re-enters the waiting state if the new credentials are rejected too', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, authPollMs: 200 },
+      cb
+    );
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    cb.hasNewCredentials.mockResolvedValueOnce(true).mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    watcher.stop();
+
+    expect(cb.onCredentialsRestored).toHaveBeenCalledTimes(1);
+    expect(cb.onAuthRequired).toHaveBeenCalledTimes(2);
+    expect(cb.onGiveUp).not.toHaveBeenCalled();
   });
 
   it('recovers and resets attempts when health returns after a restart', async () => {

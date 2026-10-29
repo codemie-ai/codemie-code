@@ -18,6 +18,9 @@ import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
+import { AuthRequiredServer } from '../cli/commands/proxy/auth-required-server.js';
+import { ProxyHost, isSsoAuthFailure, fingerprintCredentials } from '../cli/commands/proxy/proxy-host.js';
+import { getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
 
 function readCliVersion(): string {
   try {
@@ -98,10 +101,44 @@ const config: ProxyConfig = {
 // independent of PAC availability and lets a running daemon recover with VPN.
 installSystemProxyDispatcher();
 
-let proxy = new CodeMieProxy(config);
 let telemetryRuntime: DesktopTelemetryRuntime | undefined;
 let watcher: ProxyWatcher | undefined;
 let currentState: Record<string, unknown> = {};
+
+// Owns whichever server is bound to the port: the full proxy, or (when the SSO login has
+// expired and the proxy cannot be rebuilt) a listener that answers 401 with a sign-in prompt
+// instead of leaving the port dead for the client.
+const host = new ProxyHost({
+  createProxy: () => new CodeMieProxy(config),
+  createAuthServer: () => new AuthRequiredServer({
+    host: config.host ?? '127.0.0.1',
+    port: config.port!,
+    loginUrl: config.targetApiUrl,
+  }),
+  // JWT profiles have no browser sign-in to wait for; their failures keep the retry path.
+  isAuthFailure: (error) => authMethod === 'sso' && isSsoAuthFailure(error),
+});
+
+const AUTH_REQUIRED_REASON =
+  'SSO session expired. Sign in with `codemie profile login` (a browser sign-in is started automatically); the proxy resumes once you do.';
+
+// Fingerprint of the stored login the gateway last rejected. A different one means the user
+// signed in again; the same one means we would just be retrying rejected credentials.
+let rejectedFingerprint: string | null = null;
+
+async function storedFingerprint(): Promise<string | null> {
+  try {
+    const stored = await getStoredPlatformCredentials({
+      provider: config.provider,
+      baseUrl: config.targetApiUrl,
+      codeMieUrl: config.syncCodeMieUrl,
+    });
+    return fingerprintCredentials(stored?.credentials as { cookies?: Record<string, string> } | undefined);
+  } catch (error) {
+    logger.debug('[proxy-daemon] Failed to read stored credentials', error);
+    return null;
+  }
+}
 
 async function persistState(patch: Record<string, unknown>): Promise<void> {
   currentState = { ...currentState, ...patch };
@@ -113,24 +150,30 @@ async function persistState(patch: Record<string, unknown>): Promise<void> {
 async function cleanup(): Promise<void> {
   watcher?.stop();
   try { await telemetryRuntime?.stop(); } catch { /* ignore */ }
-  try { await proxy.stop(); } catch { /* ignore */ }
+  try { await host.stop(); } catch { /* ignore */ }
   try { await unlink(stateFile!); } catch { /* ignore */ }
 }
 
+async function persistAuthRequired(): Promise<void> {
+  await persistState({ health: 'unhealthy', healthReason: AUTH_REQUIRED_REASON, authRequired: true });
+}
+
 async function restartProxy(): Promise<void> {
-  try {
-    await proxy.stop();
-  } catch (error) {
-    logger.warn(`[proxy-daemon] proxy.stop() during restart failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
   // Pin to the port we already bound so Claude Desktop's URL stays valid.
   config.pinnedPort = true;
-  proxy = new CodeMieProxy(config);
-  const { url } = await proxy.start();
+  const result = await host.restart();
+  if (result.mode === 'auth-required') {
+    // The login is gone and cannot be rebuilt without the user. The port stays bound and
+    // answers 401, so record why instead of letting the next health check say "not responding".
+    rejectedFingerprint = null;
+    await persistAuthRequired();
+    return;
+  }
   await persistState({
-    url,
+    url: result.url,
     health: 'ok',
     healthReason: undefined,
+    authRequired: undefined,
     lastHealthyAt: new Date().toISOString(),
     lastRecoveryAt: new Date().toISOString(),
   });
@@ -140,7 +183,7 @@ process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
 process.on('SIGINT',  async () => { await cleanup(); process.exit(0); });
 
 try {
-  const { port: actualPort, url } = await proxy.start();
+  const { port: actualPort, url } = await host.start();
 
   // Pin future restarts to the port we actually bound. The initial bind may
   // have fallen back to a random port if 4001 was busy; recovery must reuse
@@ -204,11 +247,24 @@ try {
         await persistState({
           health: 'ok',
           healthReason: undefined,
+          authRequired: undefined,
           lastHealthyAt: new Date().toISOString(),
         });
       },
       onGiveUp: async (reason) => {
         await persistState({ health: 'unhealthy', healthReason: reason });
+      },
+      onAuthRequired: async () => {
+        rejectedFingerprint = await storedFingerprint();
+        await persistAuthRequired();
+      },
+      hasNewCredentials: async () => {
+        const current = await storedFingerprint();
+        return current !== null && current !== rejectedFingerprint;
+      },
+      onCredentialsRestored: async () => {
+        // The full proxy re-reads credentials per request; only the fallback listener must be swapped out.
+        if (host.mode === 'auth-required') await restartProxy();
       },
     }
   );
