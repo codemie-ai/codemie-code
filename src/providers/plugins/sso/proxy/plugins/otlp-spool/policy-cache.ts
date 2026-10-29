@@ -43,6 +43,8 @@ export interface PolicyState {
   policy: Policy | null; // only when usable
   capability: Capability;
   usable: boolean;
+  /** When the usable policy was fetched. */
+  fetchedAt?: number;
   backoffUntil?: number;
   /** Caller should call refreshPolicy now (no usable policy, backoff over, legacy re-probe due). */
   refreshDue: boolean;
@@ -76,7 +78,11 @@ function validPolicy(v: unknown): Policy | null {
   if (typeof version !== 'string' || !version || version.length > 128) return null;
   if (!Array.isArray(organizations) || organizations.length > 10_000) return null;
   if (!organizations.every((o) => typeof o === 'string' && o.length <= 256)) return null;
-  return { organizations: organizations as string[], version };
+  // Optional and additive: anything but a short array of short strings is treated as "none advertised".
+  const enc = (v as Record<string, unknown>).organization_encodings;
+  const encodings =
+    Array.isArray(enc) && enc.length <= 16 && enc.every((e) => typeof e === 'string' && e.length <= 64) ? (enc as string[]) : undefined;
+  return { organizations: organizations as string[], version, ...(encodings?.length ? { organization_encodings: encodings } : {}) };
 }
 
 async function load(id: NamespaceId): Promise<CacheFile | null> {
@@ -104,6 +110,7 @@ export async function getPolicyState(id: NamespaceId, opts: PolicyOpts = {}): Pr
     policy: usable ? c.policy! : null,
     capability: c.capability,
     usable,
+    fetchedAt: usable ? c.fetchedAt : undefined,
     backoffUntil: inBackoff ? c.backoffUntil : undefined,
     refreshDue: !usable && !inBackoff && !legacyWait,
   };
@@ -164,7 +171,7 @@ export async function refreshPolicy(id: NamespaceId, input: RefreshInput): Promi
         backoffUntil: now + BACKOFF_MS,
       };
     }
-    await mkdir(evidenceDir(), { recursive: true });
+    await mkdir(evidenceDir(), { recursive: true, mode: 0o700 });
     await atomicReplace(fileOf(id), JSON.stringify(next));
   } catch (err) {
     logger.debug(`[policy-cache] refresh failed: ${(err as NodeJS.ErrnoException).code ?? 'error'}`);

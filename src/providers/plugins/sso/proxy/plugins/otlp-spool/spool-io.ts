@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
@@ -10,7 +10,6 @@ import {
   decideProject,
   evaluateProjectPolicy,
   holdOrLose,
-  hookEventProjectNames,
   hookRecordIsProject,
   type HoldReason,
   type LossReason,
@@ -18,6 +17,7 @@ import {
   type StreamPolicy,
 } from './session-project.js';
 import { readOrCreateEpoch } from './epoch.js';
+import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
 import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
 import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
 import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
@@ -53,72 +53,8 @@ function warnConflictStarted(sessionId: string, status: SessionStatus): void {
   );
 }
 
-async function hooksFileState(sessionId: string): Promise<{ exists: boolean; size: number }> {
-  try {
-    return { exists: true, size: (await stat(streamFile(sessionId, 'hooks'))).size };
-  } catch {
-    return { exists: false, size: 0 };
-  }
-}
-
 /* ------------------------------------------------------- unlocked internals --- */
 // These assume the caller already holds the session lock.
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Range-read everything after `cursor`, up to `end` when given. Never touches the acknowledged prefix. */
-async function readRange(
-  sessionId: string,
-  stream: SpoolStream,
-  cursor: number,
-  end?: number
-): Promise<Buffer | null> {
-  let handle;
-  try {
-    handle = await open(streamFile(sessionId, stream), 'r');
-  } catch {
-    return null; // missing file => nothing pending
-  }
-  try {
-    const { size: fileSize } = await handle.stat();
-    const size = end === undefined ? fileSize : Math.min(fileSize, end);
-    if (size <= cursor) return null; // drained
-    const buffer = Buffer.allocUnsafe(size - cursor);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, cursor);
-    return bytesRead > 0 ? buffer.subarray(0, bytesRead) : null;
-  } finally {
-    await handle.close();
-  }
-}
-
-/** Project names of every hook on disk, acknowledged prefix included. Malformed lines are skipped. */
-async function readHookProjectNames(sessionId: string): Promise<string[]> {
-  let text: string;
-  try {
-    text = await readFile(streamFile(sessionId, 'hooks'), 'utf-8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-  const names: string[] = [];
-  for (const line of text.split('\n')) {
-    if (line.trim().length === 0) continue;
-    try {
-      const { hookEvent } = JSON.parse(line) as { hookEvent: string };
-      names.push(...hookEventProjectNames(JSON.parse(hookEvent)));
-    } catch {
-      // unusable record: carries no usable project
-    }
-  }
-  return names;
-}
 
 /**
  * Legacy recovery: scan the hooks already on disk once and bind or conflict.
@@ -375,7 +311,7 @@ export async function appendSpool(
   await withSessionLock(sessionId, async () => {
     // The epoch exists before this version writes any session status: a new session is never pre-epoch.
     await readOrCreateEpoch();
-    await mkdir(spoolRoot(), { recursive: true });
+    await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
 
     const path = streamFile(sessionId, stream);
     const exists = await fileExists(path);
@@ -404,11 +340,11 @@ export async function appendSpool(
       }
       await writeStatus(sessionId, status);
       if (!hadConflict && status.projectConflict) warnConflictStarted(sessionId, status);
-      await appendFile(path, data);
+      await appendFile(path, data, { mode: 0o600 });
       return;
     }
 
-    await appendFile(path, data);
+    await appendFile(path, data, { mode: 0o600 });
 
     const status = await readStatus(sessionId);
     if (!status) {

@@ -44,16 +44,16 @@ export async function readOrCreateEpoch(now: number = Date.now()): Promise<numbe
   let created = await readEpoch(path);
   if (created === undefined) {
     try {
-      await mkdir(spoolRoot(), { recursive: true });
+      await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
       const content = JSON.stringify({ v: 1, created: now });
       const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
-      await writeFile(tmp, content);
+      await writeFile(tmp, content, { mode: 0o600 });
       try {
         await link(tmp, path);
       } catch (err) {
         // EEXIST: another writer won. Anything else: no hard links here, fall back to an exclusive create.
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-          await writeFile(path, content, { flag: 'wx' }).catch(() => undefined);
+          await writeFile(path, content, { flag: 'wx', mode: 0o600 }).catch(() => undefined);
         }
       } finally {
         await unlink(tmp).catch(() => undefined);

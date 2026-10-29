@@ -1,12 +1,13 @@
 import { apiIdentity } from '@/agents/core/evidence/api-identity.js';
 import { logger } from '@/utils/logger.js';
 import { forwarderIdentity } from './spool-io.js';
+import { organizationSendable } from '@/agents/core/evidence/org-encoding.js';
 import { classify, decide, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders, ensureApiBase } from '../../../../../core/codemie-auth-helpers.js';
-import { getPolicyState, refreshPolicy, type NamespaceId, type PolicyState } from './policy-cache.js';
+import { LEGACY_REPROBE_MS, getPolicyState, refreshPolicy, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { forwardDecisionWithoutPolicy, readVerdictState, recordVerdict, replaceVerdict } from './verdict-store.js';
 
 /*
@@ -29,7 +30,7 @@ export function setClassificationConsumer(c: Consumer | undefined): void {
 
 export type SessionClassification =
   | { action: 'send'; result: ClassResult }
-  | { action: 'hold'; reason: 'classification_unresolved' | 'personal_not_forwardable' | 'verdict_unavailable' }
+  | { action: 'hold'; reason: 'classification_unresolved' | 'personal_not_forwardable' | 'verdict_unavailable' | 'organization_encoding_unsupported' }
   | { action: 'suppress' };
 
 export function authHeadersFor(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
@@ -43,10 +44,17 @@ export async function sessionPolicyState(
   ns: NamespaceId,
   baseUrl: string,
   credentials: SSOCredentials | JWTCredentials,
-  force?: true
+  force?: true,
+  reprobe?: boolean
 ): Promise<PolicyState> {
   const state = force ? undefined : await getPolicyState(ns);
-  if (state && (state.policy || !state.refreshDue || !baseUrl)) return state;
+  // A session held on organization_encoding_unsupported re-reads a usable policy that does not advertise
+  // the encoding at most hourly (refreshPolicy's own backoff applies), so a backend upgrade is noticed
+  // without waiting for the 24 h policy expiry.
+  const staleForReprobe =
+    reprobe && !!state?.policy && !state.policy.organization_encodings?.length && !state.backoffUntil &&
+    state.fetchedAt !== undefined && Date.now() - state.fetchedAt >= LEGACY_REPROBE_MS;
+  if (state && !staleForReprobe && (state.policy || !state.refreshDue || !baseUrl)) return state;
   return refreshPolicy(ns, { baseUrl, headers: authHeadersFor(credentials), force });
 }
 
@@ -95,6 +103,14 @@ export async function classifySession(
   const decision = decide(result, consumer);
   if (decision === 'withhold') return { action: 'hold', reason: 'classification_unresolved' };
   if (decision === 'suppress') return { action: 'suppress' };
+  // An organization only the encoded header can carry is sent only when this namespace's usable policy
+  // advertises that encoding (also on the sticky-Personal path, where no policy means no advertisement):
+  // otherwise held with the full evidence, never sent without it and never downgraded. CodeMie-routed and
+  // routing-unproven sends carry no organization.
+  const org = record.organization;
+  if (!record.routed_via_codemie && org && result.basis !== 'routing_unproven' && !organizationSendable(org, state.policy?.organization_encodings)) {
+    return { action: 'hold', reason: 'organization_encoding_unsupported' };
+  }
   return { action: 'send', result };
 }
 

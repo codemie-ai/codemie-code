@@ -47,7 +47,7 @@ export async function readVerdict(key: string): Promise<Verdict | null> {
 }
 
 async function write(key: string, r: ClassResult): Promise<void> {
-  await mkdir(evidenceDir(), { recursive: true });
+  await mkdir(evidenceDir(), { recursive: true, mode: 0o700 });
   const v: Verdict = { schema: 1, class: r.class, ...(r.policy_version ? { policy_version: r.policy_version } : {}), created: Date.now() };
   await atomicReplace(path(key), JSON.stringify(v));
 }

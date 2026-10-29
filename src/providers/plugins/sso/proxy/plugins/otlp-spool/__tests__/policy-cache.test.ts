@@ -122,4 +122,25 @@ describe('policy-cache', () => {
     const f = readdirSync(evidenceDir()).find((n) => n.endsWith('.policy.json'))!;
     expect(readFileSync(join(evidenceDir(), f), 'utf-8')).not.toContain('fabricated');
   });
+
+  describe('organization_encodings advertisement (CR-011)', () => {
+    it('is cached with the usable policy of the same namespace and dies with it at expiry', async () => {
+      await run(json(200, { organizations: ['Org A'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] }), T0);
+      expect((await getPolicyState(ns, { now: T0 + 1 })).policy?.organization_encodings).toEqual(['utf8-b64u.v1']);
+      expect((await getPolicyState(ns, { now: T0 + POLICY_USABLE_MS })).policy).toBeNull();
+      const other: NamespaceId = { ...ns, owner_hash: 'c'.repeat(64) };
+      expect((await getPolicyState(other, { now: T0 + 1 })).policy).toBeNull();
+    });
+
+    it.each([['absent', undefined], ['not an array', 'utf8-b64u.v1'], ['non-string entries', [1, null]], ['empty', []]])(
+      '%s => nothing advertised, policy still valid (old backend unchanged)',
+      async (_n, value) => {
+        const body: Record<string, unknown> = { organizations: ['Org A'], version: 'v1' };
+        if (value !== undefined) body.organization_encodings = value;
+        const s = await run(json(200, body), T0);
+        expect(s).toMatchObject({ usable: true, policy: { version: 'v1' } });
+        expect(s.policy?.organization_encodings).toBeUndefined();
+      }
+    );
+  });
 });

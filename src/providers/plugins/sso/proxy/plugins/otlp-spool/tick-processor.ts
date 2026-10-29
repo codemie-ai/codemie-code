@@ -45,12 +45,13 @@ async function stickyPersonalOf(key: string): Promise<boolean> {
  */
 async function tickPolicyState(
   credentials: SSOCredentials | JWTCredentials,
-  endpoint: AnalyticsEndpoint
+  endpoint: AnalyticsEndpoint,
+  reprobe: boolean
 ): Promise<PolicyState | undefined> {
   const id = endpoint.identity;
   if (!id) return undefined;
   const ns = { ...id, ...(endpoint.profile ? { profile: endpoint.profile } : {}) };
-  return sessionPolicyState(ns, endpoint.baseUrl, credentials);
+  return sessionPolicyState(ns, endpoint.baseUrl, credentials, undefined, reprobe);
 }
 
 /**
@@ -123,6 +124,31 @@ async function applySessionEvidenceLocked(
 }
 
 /**
+ * The daemon's analytics URL does not match the credentials' identity: nothing is sent or fetched, but the
+ * session is held under a named reason (and lost, recorded, only past the retention bound) instead of
+ * silently stalling. Sessions with nothing pending are left untouched.
+ */
+async function holdEndpointMismatch(sessionId: string, now: number = Date.now()): Promise<void> {
+  await withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return;
+    if (!hasPendingData(await readSpoolState(sessionId, status))) return;
+    const heldSince = status.holds?.session?.since;
+    const decision = holdOrLose('analytics_endpoint_mismatch', heldSince, now, heldRetentionMs());
+    if (decision.action === 'lose') {
+      clearHold(status, 'session');
+      await recordLossLocked(sessionId, status, decision.reason, undefined, now);
+    } else {
+      if (status.holds?.session?.reason !== decision.reason) {
+        logger.warn('[otlp-tick] analytics endpoint does not match the credential identity; session held', ...sanitizeLogArgs({ sessionId }));
+      }
+      status.holds = { ...status.holds, session: { reason: decision.reason, since: heldSince ?? now } };
+    }
+    await writeStatus(sessionId, status);
+  });
+}
+
+/**
  * Process one tick for a single session: evaluate the completeness gate and,
  * when it permits forwarding, dispatch a forward pass for the streams that
  * actually have bytes after their cursor.
@@ -141,8 +167,9 @@ export async function processSessionTick(
   // Re-decided every tick: the policy is refreshed (when due) before the classification below.
   // One analytics endpoint per tick, validated against the credential identity before any network call.
   const endpoint = areCredentialsStale() ? undefined : await resolveAnalyticsEndpoint(credentials);
-  if (endpoint === null) return;
-  const policyState = endpoint ? await tickPolicyState(credentials, endpoint) : undefined;
+  if (endpoint === null) return holdEndpointMismatch(sessionId);
+  const reprobe = (await readStatus(sessionId))?.holds?.session?.reason === 'organization_encoding_unsupported';
+  const policyState = endpoint ? await tickPolicyState(credentials, endpoint, reprobe) : undefined;
 
   await withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);

@@ -12,6 +12,8 @@ export const HOLD_REASONS = [
   'classification_unresolved',
   'session_mismatch',
   'session_id_absent',
+  'analytics_endpoint_mismatch',
+  'organization_encoding_unsupported',
   'project_conflict',
   'otlp_unparseable',
   'otlp_entry_too_large',

@@ -626,7 +626,8 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
 
       vi.mocked(readState).mockResolvedValue(null); // no daemon endpoint: nothing is decided, fetched or sent
       await tick();
-      expect((await current()).holds).toBeUndefined();
+      // CR-009: not a silent stall: the session is held under a named reason.
+      expect((await current()).holds?.session?.reason).toBe('analytics_endpoint_mismatch');
       expect(forwardSession).not.toHaveBeenCalled();
 
       vi.mocked(readState).mockResolvedValue({ targetUrl: API } as never);
@@ -634,6 +635,29 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
       await tick();
       expect(forwardSession).toHaveBeenCalledWith(
         SESSION, false, evidenceCreds, expect.objectContaining({ class: 'corporate', policy_version: 'v7' }), expect.anything()
+      );
+      expect((await current()).holds).toBeUndefined();
+    });
+
+    it('CR-011: an unrepresentable known org is held organization_encoding_unsupported (bytes kept), sent once the policy advertises it', async () => {
+      const { writeStatus, createStatus } = await import('../session-status.js');
+      const { forwardSession } = await import('../forwarder.js');
+      const { readState } = await import('@/cli/commands/proxy/daemon-manager.js');
+      vi.mocked(readState).mockResolvedValue({ targetUrl: API } as never);
+      await stamp('A', 'Яндекс');
+      await seed({ [`${SESSION}.otel_logs.bin`]: 'abcde' });
+      await writeStatus(SESSION, createStatus());
+
+      await cachePolicy({ organizations: ['Other'], version: 'v1' });
+      await tick();
+      expect((await current()).holds?.session?.reason).toBe('organization_encoding_unsupported');
+      expect(forwardSession).not.toHaveBeenCalled();
+      expect((await current()).lastLoss).toBeUndefined();
+
+      await cachePolicy({ organizations: ['Other'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] });
+      await tick();
+      expect(forwardSession).toHaveBeenCalledWith(
+        SESSION, false, evidenceCreds, expect.objectContaining({ class: 'personal' }), expect.anything()
       );
       expect((await current()).holds).toBeUndefined();
     });

@@ -173,8 +173,8 @@ export async function readStatus(sessionId: string): Promise<SessionStatus | nul
 }
 
 export async function writeStatus(sessionId: string, status: SessionStatus): Promise<void> {
-  await mkdir(spoolRoot(), { recursive: true });
-  await writeFile(statusFile(sessionId), JSON.stringify(status), 'utf-8');
+  await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
+  await writeFile(statusFile(sessionId), JSON.stringify(status), { encoding: 'utf-8', mode: 0o600 });
 }
 
 /**

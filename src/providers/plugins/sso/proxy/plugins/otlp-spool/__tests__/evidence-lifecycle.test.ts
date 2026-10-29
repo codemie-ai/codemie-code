@@ -34,6 +34,7 @@ vi.mock('@/utils/config.js', () => ({
     load: async () => ({ name: 'p', codeMieProject: h.cfg.project }),
     hasLocalConfig: async () => false,
     resolveProjectOrigin: async () => 'profile',
+    isLocalProfile: async () => false,
   },
 }));
 vi.mock('@/agents/core/session-project-pin.js', () => ({
