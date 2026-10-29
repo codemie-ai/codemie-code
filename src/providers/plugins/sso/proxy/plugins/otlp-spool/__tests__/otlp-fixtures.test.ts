@@ -1,95 +1,27 @@
 /**
- * EPMCDME-16440 task 1: OTLP wire fixtures + plan-time evidence.
+ * OTLP wire fixtures for the structural OTLP reader.
  * @group unit
  *
- * FIXTURES (fixtures/*.bin + manifest.json) are produced by a real protobuf encoder, not by hand:
- *   generator (kept OUTSIDE the repo): C:/codemie-dev/_local/epmcdme-16440/scratch/gen_otlp_fixtures.py
- *   rerun: C:/codemie-dev/codemie/.venv/Scripts/python.exe -I C:/codemie-dev/_local/epmcdme-16440/scratch/gen_otlp_fixtures.py \
- *            <this repo>/src/providers/plugins/sso/proxy/plugins/otlp-spool/__tests__/fixtures
- * It uses the backend venv READ-ONLY (opentelemetry.proto + protobuf 5.29.6). The manifest (session/project observations,
- * top-level resource-entry boundaries, sizes, sha256) is re-derived by re-parsing the bytes with the real proto classes;
- * only the intended verdict is typed, and the generator asserts it equals the verdict computed from the parsed message.
- * Verdict sources: spec.md item 6; backend otlp.py (_log_from_record, decode_traces, _append_metric_point, _decode_metric,
- * _note_project, parse_request) and session_binding.check_boundary (every stored row must carry the declared id; "" fails).
- * Deliberate spec-vs-backend differences (manifest `note`): session.id/session_id contradiction (backend would accept
- * session.id; spec holds it) and non-string ids. Histogram/summary/exp-histogram points are never stored by the backend
- * (only their project is noted), so the backend cannot reject them on session id; the client check is stricter.
- * Task 11's OTLP reader is validated against this manifest. The 5 MiB+1 oversize case is generated in-test, not stored.
+ * The fixtures (fixtures/*.bin) are synthetic and were encoded with the real OpenTelemetry protobuf encoder
+ * (opentelemetry-proto Python classes, protobuf 5.29.6), not by hand. manifest.json describes each one: the session
+ * and project attribute observations, the top-level resource-entry [start,end) offsets, the size, the sha256 and the
+ * verdict the reader must reach (ok, session_id_absent, session_mismatch, project_conflict, otlp_unparseable).
+ * The tests only read the bundled files; no generator is needed to run them.
  *
- * WIRE FIELD NUMBERS (opentelemetry-proto, confirmed by the encoder; top level of every Export*ServiceRequest):
+ * The reader tests (mixed or missing session ids, project conflicts, malformed data) are validated against this manifest.
+ * Two deliberate differences from the backend decoder: a session.id/session_id contradiction is held, and so are
+ * non-string ids. Histogram, summary and exponential-histogram points are never stored by the backend, so only their
+ * project is checked there; the client check is stricter. The 5 MiB + 1 oversize case is generated in the test,
+ * not stored.
+ *
+ * WIRE FIELD NUMBERS (opentelemetry-proto; top level of every Export*ServiceRequest):
  *   field 1 (tag 0x0a, length-delimited) = repeated ResourceLogs / ResourceSpans / ResourceMetrics. Concatenated
  *   requests are legal and merge by appending field 1 entries; boundaries are the entry [start,end) offsets in the manifest.
  *   Resource{1 attributes}; ResourceX{1 resource, 2 scope_X}; ScopeX{2 log_records|spans|metrics}; LogRecord.attributes=6,
  *   Span.attributes=9, Metric{1 name, 5 gauge, 7 sum, 9 histogram, 10 exponential_histogram, 11 summary}, data points'
  *   attributes: NumberDataPoint=7, HistogramDataPoint=9, ExponentialHistogramDataPoint=1, SummaryDataPoint=7.
  *   KeyValue{1 key, 2 AnyValue}; AnyValue{1 string, 2 bool, 3 int, 4 double, 5 array, 6 kvlist, 7 bytes}.
- *   Also ResourceX.scope_X=2, ScopeX.scope=1, Metric.name=1, LogRecord.body=5. All numbers dumped from the real
- *   protobuf descriptors (backend venv) during this task.
- *
- * PLAN-TIME EVIDENCE (read from source at base fd7d2ace unless marked):
- * (a) OTLP resource project origin: nothing in src sets `codemie_project_name` on the OTLP resource, nor OTEL_RESOURCE_ATTRIBUTES
- *     (grep of src, non-test: no match). Claude's own OTLP export gets only the env that connectors/claude-code-otlp.ts writes
- *     into ~/.claude/settings.json (CODEMIE_ENV_KEYS: ENABLE_TELEMETRY, ENHANCED_TELEMETRY_BETA, OTEL_EXPORTER_OTLP_ENDPOINT/
- *     HEADERS/PROTOCOL, OTEL_{LOGS,METRICS,TRACES}_EXPORTER, OTEL_LOG_TOOL_DETAILS; :82-90, values :104-112, :455-456). The only
- *     CLI-side producer of `codemie_project_name` is the hook event body (agents/core/event-fields/identity-fields.ts:21,46,
- *     read by spool session-project.ts:17-22). So a project value on OTLP records/resources can only come from the user's
- *     own OTEL_RESOURCE_ATTRIBUTES / Claude config: it is foreign evidence and must be checked for conflict, never trusted.
- * (b) .claude.json placement: KEY-NAMES-ONLY probe on this machine with CLAUDE_CONFIG_DIR unset found ~/.claude.json (home root,
- *     NOT inside ~/.claude/). Top-level key names include: userID, machineID, oauthAccount, hasAvailableSubscription,
- *     hasCompletedOnboarding, customApiKeyResponses, mcpServers, projects (+ ~70 caches). oauthAccount key names: accountUuid,
- *     emailAddress, organizationUuid, hasExtraUsageEnabled, billingType, accountCreatedAt, subscriptionCreatedAt,
- *     ccOnboardingFlags, claudeCodeTrialEndsAt, claudeCodeTrialDurationDays, seatTier, displayName, fullName, profileFetchedAt,
- *     organizationRole, workspaceRole, organizationName, organizationType, organizationRateLimitTier, userRateLimitTier.
- *     There is no key literally named subscriptionType. Values were never read into output. The CLAUDE_CONFIG_DIR placement
- *     (believed `<CLAUDE_CONFIG_DIR>/.claude.json`) could NOT be verified offline here (var unset; not run against Claude):
- *     treat as an assumption and probe both locations. Note this repo's getClaudeSettingsPath()
- *     (claude-code-otlp.allowlist.ts:52-54) ignores CLAUDE_CONFIG_DIR (always ~/.claude/settings.json), while claude.session.ts:73
- *     honours it for projects/.
- * (c) daemon state: DaemonState (cli/commands/proxy/daemon-manager.ts:9-31) has pid, port, url, profile (string, required),
- *     gatewayKey, telemetryMode?, targetUrl?, provider?, project?, model?, clientType?, syncApiUrl?, syncCodeMieUrl?, startedAt, health*.
- *     readState(stateFile = <codemie home>/proxy-daemon.json) returns null on any error (:35-42). There is NO base-path field;
- *     targetUrl is the model upstream, url the local loopback proxy.
- * (d) spool retention bound: spool-config.ts has only endedSessionGraceMs (OTLP_ENDED_SESSION_GRACE_MINUTES, 15 min, :64),
- *     abandonedSessionGraceMs (OTLP_ABANDONED_SESSION_GRACE_MINUTES, 60 min, :73), hooksOnlyWaitTicks (OTLP_SEND_MAX_ATTEMPTS,
- *     3 ticks x OTLP_SEND_INTERVAL_MINUTES 2 min, :50) and sweepIntervalMs (15 min). sweep.ts isDeletable() deletes ONLY
- *     fully drained sessions (isSessionDrained: size <= cursor for every stream), measured from the last spool-file mtime
- *     (ended: max(endedAt, mtime)). So a HELD (undrained) range has NO existing retention bound: it is never swept. Spec item 6's
- *     "existing spool retention bound" for head-of-line holds must therefore be defined by the implementer (natural choice:
- *     abandonedSessionGraceMs() since last spool write), then record loss with the hold reason.
- * (e) session birth vs epoch.json: SessionStatus (session-status.ts:44-46 createStatus, normalizeStatus :56) has NO created
- *     timestamp; writeStatus (:101-104) is an in-place writeFile (no rename), so the .status file birthtime is the session's
- *     local creation time until a sweep deletes it (sweep.ts deleteSession removes .status and stream files together) and a
- *     later producer write recreates it. mtime of status changes on every cursor write; spool-file mtimes are last-write only.
- *     Use statusFile birthtime (fallback: min spool-file birthtime, then mtime) vs epoch.json; birthtime support varies by
- *     filesystem (may be 0): a missing/zero birthtime must resolve to the conservative side (not legacy). No epoch code exists yet.
- * (f) Claude exporting settings.json `env` to hook processes: NOT verifiable offline here (needs running Claude). The repo
- *     itself relies on settings.json env for the Claude process (connectors/claude-code-otlp.ts writes OTEL_* there), and cli/commands/hook.ts
- *     reads CODEMIE_* from process.env (hook.ts:138,297). Conservative assumption: hook processes may NOT see settings.json
- *     env; read the effective endpoint from settings.json explicitly, and treat anything derived solely from a settings env
- *     inside a hook as unproven.
- * (g) cursor semantics: cursors are byte offsets into the per-stream spool file. advanceCursor (session-status.ts:131-139)
- *     is monotonic (Math.max), runs under updateStatus's session lock, no upper-bound check. isSendAllowed (spool-io.ts:225-243)
- *     is a pure locked re-check: status exists; policy kind is send for the stream; project equals case-insensitively;
- *     status.cursors[stream] === range.cursor EXACTLY; `filtered` flag matches; and range.end <= policy limit if any.
- *     Hooks: snapshotPendingHookRecords cuts at the last 0x0a, byteLength is the exact byte count (utf-8 safe), cursor advances
- *     to cursor+byteLength (forwarder.ts:224,244). OTLP: snapshotPendingBytes returns the WHOLE pending tail from cursor with no
- *     boundary cut (spool-io.ts:330-342; ack forwarder.ts:274 = cursor + bytes.length). A verified-prefix send can ack any
- *     prefix length because cursor/range.end are plain byte numbers; a recreated file resets cursor to 0 (appendSpool :301-306).
- * (h) URL roles (BaseAgentAdapter.ts, base fd7d2ace): buildProxyConfig (:996-1046) sets targetApiUrl = env.CODEMIE_BASE_URL
- *     (the MODEL upstream, throws if absent :1000-1003), syncApiUrl = CODEMIE_SYNC_API_URL, syncCodeMieUrl = CODEMIE_URL (:1044-1045;
- *     CodeMie/SSO base used for credential lookup, ssoUrl in plugins, and analytics sync). setupProxy (:1059-1091), only when
- *     shouldUseProxy (:974-989: provider set, authType != 'none', (sso provider || CODEMIE_AUTH_METHOD=jwt) && ssoConfig.enabled),
- *     starts CodeMieProxy, sets env.CODEMIE_TARGET_API_URL = original upstream (:1081), then overwrites env.CODEMIE_BASE_URL with
- *     the loopback proxy url and CODEMIE_API_KEY='proxy-handled' (:1084-1085). Agent envMapping then copies CODEMIE_BASE_URL
- *     into e.g. ANTHROPIC_BASE_URL (claude.plugin.ts:160). forwarder.resolveBaseUrl (forwarder.ts:195-200) uses daemon state
- *     targetUrl ?? url for the ANALYTICS POST. The four can all differ. config.ts:1488 exports config.baseUrl as CODEMIE_BASE_URL;
- *     config.ts:483 maps CODEMIE_URL to codeMieUrl (the analytics/SSO base).
- *     Native (no proxy) configured-model-route proof inputs, separate from the analytics destination: profile config baseUrl
- *     (CODEMIE_BASE_URL before setupProxy, or CODEMIE_PROFILE_CONFIG.baseUrl), CODEMIE_PROVIDER + provider registry (authType),
- *     CODEMIE_INTEGRATION_ID, CODEMIE_AUTH_METHOD, and Claude's effective ANTHROPIC_BASE_URL (settings.json env over process env;
- *     claude.plugin.ts:368-406 already detects a settings.json override). Analytics-side values (CODEMIE_URL,
- *     CODEMIE_SYNC_API_URL, daemon syncCodeMieUrl/url) must not be used as that proof. If none of the model-route inputs can be
- *     validated, routed=false and class Unknown.
+ *   Also ResourceX.scope_X=2, ScopeX.scope=1, Metric.name=1, LogRecord.body=5.
  */
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';

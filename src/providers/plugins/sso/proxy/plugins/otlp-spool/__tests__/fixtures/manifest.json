@@ -1,5 +1,5 @@
 {
- "generator": "C:/codemie-dev/_local/epmcdme-16440/scratch/gen_otlp_fixtures.py (backend venv opentelemetry.proto, protobuf 5.29.6)",
+ "generator": "synthetic payloads encoded with the OpenTelemetry protobuf encoder (opentelemetry-proto Python classes, protobuf 5.29.6); no generator script is shipped in this repository",
  "expected_session_id": "sess-0001-fixture",
  "expected_project": "proj-alpha",
  "max_attributes_per_record": 256,
