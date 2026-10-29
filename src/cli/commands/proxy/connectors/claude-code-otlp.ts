@@ -234,11 +234,17 @@ export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
  * `compact_boundary` line (`POST_COMPACT_WAIT_BUDGET_MS`). `async` keeps Claude Code — and the
  * user's own turn — from ever waiting on that; the larger `timeout` here is what keeps Claude
  * Code itself from killing the subprocess before that wait, plus the lock-held merge/send/commit
- * afterward, can finish. Every other event keeps the default `CODEMIE_HOOK_TIMEOUT_SECONDS`
- * (synchronous — e.g. `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for
- * its block decision, so it can never be async).
+ * afterward, can finish. Every other event is synchronous and keeps the default
+ * `CODEMIE_HOOK_TIMEOUT_SECONDS`, except `UserPromptSubmit` (see below).
  */
 export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
+
+/**
+ * `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for its decision, so it is
+ * never async, and it may hold the prompt for up to `SSO_LOGIN_WAIT_MS` (150s) while a browser
+ * sign-in completes. This timeout must stay above that wait: the hook must never reach it.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -577,13 +583,17 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  // `PostCompact` alone is async with a longer timeout — see `CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS`.
+  // `PostCompact` alone is async with a longer timeout; `UserPromptSubmit` gets the SSO-wait timeout.
   const buildCodemieEntry = (eventName: string): HookGroup => {
     const isPostCompact = eventName === 'PostCompact';
     const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-      timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+      timeout: isPostCompact
+        ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+        : eventName === 'UserPromptSubmit'
+          ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+          : CODEMIE_HOOK_TIMEOUT_SECONDS,
       ...(isPostCompact ? { async: true } : {}),
     };
     return { matcher: '', hooks: [hook] };

@@ -74,7 +74,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 60
+            "timeout": 180
           },
           {
             "type": "command",
