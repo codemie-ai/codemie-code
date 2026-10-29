@@ -33,6 +33,7 @@ vi.mock('@/utils/config.js', () => ({
     load: async () => ({ codeMieProject: m.project }),
     hasLocalConfig: async () => false,
     resolveProjectOrigin: async () => 'profile',
+    isLocalProfile: async () => false,
   },
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: async () => '1.0.0' }));

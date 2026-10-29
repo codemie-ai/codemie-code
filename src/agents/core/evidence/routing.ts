@@ -8,7 +8,9 @@ export interface RoutingInput {
   /** Process env as seen by the agent/hook (CODEMIE_* and ANTHROPIC_BASE_URL). */
   env: Record<string, string | undefined>;
   /** Claude settings.json `env` block; wins over process env (Claude reads it at startup). */
-  settingsEnv?: Record<string, string | undefined>;
+  settingsEnv?: Record<string, unknown>;
+  /** True when a settings layer exists but could not be read: the endpoint may be overridden there, so nothing is provable. */
+  settingsUnknown?: boolean;
   /**
    * True when the configured provider is CodeMie-routed: the inputs of BaseAgentAdapter.shouldUseProxy
    * (provider authType 'sso', or CODEMIE_AUTH_METHOD 'jwt', and authType != 'none').
@@ -63,6 +65,37 @@ function isLoopback(url: string | undefined): boolean {
 
 const truthy = (v: string | undefined): boolean => v === '1' || v?.toLowerCase() === 'true';
 
+const ENDPOINT_KEYS = [
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'ANTHROPIC_VERTEX_BASE_URL',
+  'ANTHROPIC_BASE_URL',
+];
+
+/**
+ * The effective value of each endpoint-selecting variable (settings.json `env` wins over process env, as
+ * Claude applies it). Undefined = unknown: a non-scalar settings value, or an empty settings value that
+ * would override a non-empty process value, cannot be classified either way.
+ */
+function effectiveEndpointEnv(input: RoutingInput): Record<string, string | undefined> | undefined {
+  const out: Record<string, string | undefined> = {};
+  for (const name of ENDPOINT_KEYS) {
+    const s = input.settingsEnv?.[name];
+    const fromProcess = input.env[name] || undefined;
+    if (s === undefined) {
+      out[name] = fromProcess;
+    } else if (typeof s === 'string' || typeof s === 'number' || typeof s === 'boolean') {
+      const v = String(s);
+      if (!v && fromProcess) return undefined;
+      out[name] = v || undefined;
+    } else {
+      return undefined;
+    }
+  }
+  return out;
+}
+
 /** `candidate` is `base` itself or lies under it at a path-segment boundary (same scheme/host/port). */
 function underBase(candidate: string | undefined, base: string | undefined): boolean {
   return !!candidate && !!base && (candidate === base || candidate.startsWith(`${base}/`));
@@ -70,7 +103,9 @@ function underBase(candidate: string | undefined, base: string | undefined): boo
 
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
-  const get = (name: string): string | undefined => input.settingsEnv?.[name] || env[name] || undefined;
+  const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);
+  if (!effective) return UNPROVEN;
+  const get = (name: string): string | undefined => effective[name];
   // Claude Code's own resolution (session-env-fields.ts): the Bedrock/Vertex flags select a cloud provider
   // on its default endpoint unless a provider base URL overrides it; otherwise ANTHROPIC_BASE_URL, empty =
   // api.anthropic.com.

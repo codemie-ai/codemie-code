@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -170,5 +170,55 @@ describe('record-store', () => {
     const r = await createOrRead(keyOf(n), n, { pendingKeys: new Set() });
     expect(r.kind).toBe('created');
     expect(readdirSync(evidenceDir())).toEqual([`${keyOf(n)}.json`]);
+  });
+
+  describe('creation and read validation agree (CR-002)', () => {
+    const LIMITS: Array<[keyof EvidenceFields, number]> = [
+      ['project', 256], ['organization', 256], ['profile', 128], ['repo_key', 512], ['session_id', 200],
+    ];
+    const published = () => (existsSync(evidenceDir()) ? readdirSync(evidenceDir()).filter((n) => n.endsWith('.json')) : []);
+
+    it.each(LIMITS)('%s: exactly the maximum is created AND reads back; one over is a named refusal, nothing published', async (name, max) => {
+      // Keep the whole record under the total bound so only this field's limit is under test.
+      const at = fields('s', { project: 'p', organization: 'o', repo_key: 'r', profile: 'p' });
+      const okFields = { ...at, [name]: 'x'.repeat(max) } as EvidenceFields;
+      const ok = await createOrRead(keyOf(okFields), okFields);
+      expect(ok.kind === 'created' || (name === 'repo_key' && ok.kind === 'stamp_invalid')).toBe(true);
+      if (ok.kind === 'created') expect((await readRecord(keyOf(okFields)))?.kind).toBe('existing');
+
+      const over = { ...at, ...(name === 'session_id' ? {} : { session_id: 'other' }), [name]: 'x'.repeat(max + 1) } as EvidenceFields;
+      const before = published().length;
+      const refused = await createOrRead(keyOf(over), over);
+      expect(refused).toMatchObject({ kind: 'stamp_invalid' });
+      expect(published()).toHaveLength(before);
+      expect(await readRecord(keyOf(over))).toBeUndefined();
+    });
+
+    it('per-field maxima that sum past the total bound are refused as record_too_large and never published', async () => {
+      const big = fields('s2', { project: 'p'.repeat(256), organization: 'o'.repeat(256), repo_key: 'r'.repeat(512), profile: 'q'.repeat(128) });
+      expect(await createOrRead(keyOf(big), big)).toEqual({ kind: 'stamp_invalid', reason: 'record_too_large' });
+      expect(published()).toHaveLength(0);
+    });
+
+    it('a refused field names itself (no value) and a corrected retry for the same key succeeds', async () => {
+      const long = fields('s3', { project: 'x'.repeat(257) });
+      expect(await createOrRead(keyOf(long), long)).toEqual({ kind: 'stamp_invalid', reason: 'project_too_long' });
+      const fixed = fields('s3', { project: 'x'.repeat(256) });
+      expect((await createOrRead(keyOf(fixed), fixed)).kind).toBe('created');
+    });
+
+    it('a stored record with an over-long session_id or total size is rejected on read', async () => {
+      const f = fields('s4');
+      await createOrRead(keyOf(f), f);
+      const r = JSON.parse(readFileSync(file(keyOf(f)), 'utf-8'));
+      writeFileSync(file(keyOf(f)), JSON.stringify({ ...r, pad: 'z'.repeat(1100) }));
+      expect((await readRecord(keyOf(f)))?.kind).toBe('stamp_invalid');
+    });
+  });
+
+  it('creates the evidence directory 0700 (POSIX; Windows modes are not ACL guarantees)', async () => {
+    const f = fields('m1');
+    await createOrRead(keyOf(f), f);
+    if (process.platform !== 'win32') expect(statSync(evidenceDir()).mode & 0o777).toBe(0o700);
   });
 });

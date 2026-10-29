@@ -184,4 +184,33 @@ describe('routedViaCodemie - native', () => {
     const r = routedViaCodemie({ env: { ANTHROPIC_BASE_URL: 'not a url' }, codemieProvider: true, profileBaseUrl });
     expect(r).toEqual({ routed: false, routing_proof: 'unproven' });
   });
+
+  describe('settings env validation (CR-004, CR-006)', () => {
+    const UNPROVEN = { routed: false, routing_proof: 'unproven' };
+    const base = { env: {}, codemieProvider: true, profileBaseUrl } as const;
+
+    it('a boolean/numeric flag in settings.json does not throw and selects the cloud provider', () => {
+      expect(() => routedViaCodemie({ ...base, settingsEnv: { CLAUDE_CODE_USE_BEDROCK: true } })).not.toThrow();
+      // Bedrock flag on its default endpoint, even with a gateway URL set: not the gateway.
+      expect(routedViaCodemie({ ...base, settingsEnv: { CLAUDE_CODE_USE_BEDROCK: 1, ANTHROPIC_BASE_URL: GATEWAY } }))
+        .toEqual({ routed: false, routing_proof: 'proven' });
+    });
+
+    it.each([
+      ['object', { x: 1 }],
+      ['null', null],
+      ['array', ['a']],
+    ])('a %s endpoint value is unknown: unproven, never direct', (_n, value) => {
+      expect(routedViaCodemie({ ...base, settingsEnv: { ANTHROPIC_BASE_URL: value } })).toEqual(UNPROVEN);
+    });
+
+    it('an empty settings value overriding a non-empty process endpoint is unproven', () => {
+      expect(routedViaCodemie({ ...base, env: { ANTHROPIC_BASE_URL: GATEWAY }, settingsEnv: { ANTHROPIC_BASE_URL: '' } })).toEqual(UNPROVEN);
+    });
+
+    it('unreadable settings (settingsUnknown) is unproven even with no endpoint anywhere', () => {
+      expect(routedViaCodemie({ ...base, settingsUnknown: true })).toEqual(UNPROVEN);
+      expect(routedViaCodemie({ ...base })).toEqual({ routed: false, routing_proof: 'proven' });
+    });
+  });
 });

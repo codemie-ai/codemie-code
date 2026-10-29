@@ -15,6 +15,8 @@ export interface Evidence {
 export interface Policy {
   organizations: string[];
   version: string;
+  /** Optional backend advertisement (e.g. `utf8-b64u.v1`); not part of the policy version. */
+  organization_encodings?: string[];
 }
 
 export interface ClassResult {

@@ -75,7 +75,22 @@ export async function atomicReplace(path: string, content: string): Promise<void
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
-const str = (v: unknown, max: number) => v === undefined || (typeof v === 'string' && v.length <= max);
+const MAX_RECORD_CHARS = 1024;
+
+/**
+ * First limit a serialized record breaks, as a named reason. One rule for creation and for reads, so a
+ * record is never published that the next read rejects (and nothing is truncated to fit).
+ */
+function limitViolation(r: Record<string, unknown>, serialized: string): string | undefined {
+  if (serialized.length >= MAX_RECORD_CHARS) return 'record_too_large';
+  for (const [field, max] of Object.entries(MAX_LEN)) {
+    const v = r[field];
+    if (v === undefined) continue;
+    if (typeof v !== 'string') return `${field}_invalid`;
+    if (v.length > max) return `${field}_too_long`;
+  }
+  return undefined;
+}
 
 function validate(key: string, raw: string): EvidenceRecord | undefined {
   let r: Record<string, unknown>;
@@ -92,8 +107,7 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (r.routing_proof !== 'proven' && r.routing_proof !== 'unproven') return undefined;
   if (!['linked_folder', 'profile', 'none'].includes(r.project_source as string)) return undefined;
   if (typeof r.created !== 'number' || typeof r.last_used !== 'number') return undefined;
-  if (!str(r.organization, MAX_LEN.organization) || !str(r.project, MAX_LEN.project) ||
-      !str(r.profile, MAX_LEN.profile) || !str(r.repo_key, MAX_LEN.repo_key)) return undefined;
+  if (limitViolation(r, raw)) return undefined;
   return r as unknown as EvidenceRecord;
 }
 
@@ -158,10 +172,12 @@ export async function createOrRead(
   const now = Date.now();
   const record: EvidenceRecord = { schema: 1, ...fields, created: now, last_used: now };
   const content = JSON.stringify(record);
-  if (content.length >= 1024) return { kind: 'stamp_invalid', reason: 'record_too_large' };
+  const violation = limitViolation(record as unknown as Record<string, unknown>, content);
+  if (violation) return { kind: 'stamp_invalid', reason: violation };
+  if (!validate(key, content)) return { kind: 'stamp_invalid', reason: 'record_invalid' };
 
   try {
-    await mkdir(evidenceDir(), { recursive: true });
+    await mkdir(evidenceDir(), { recursive: true, mode: 0o700 });
     // New session at/over the cap: evict only when the caller told us what is pending.
     if ((await listRecordFiles()).length >= evidenceRecordMaxFiles()) {
       const blocked = opts.pendingKeys || opts.pendingSessionIds
