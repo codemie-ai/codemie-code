@@ -14,38 +14,8 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { extractMessageText, type GeminiContent } from '../utils/message-text.js';
 import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
-
-/**
- * Strip <session_context>...</session_context> blocks and trim the result.
- */
-function filterSessionContext(text: string): string | null {
-  const cleaned = text.replace(/<session_context>[\s\S]*?<\/session_context>/gi, '').trim();
-  return cleaned || null;
-}
-
-/**
- * Extract user prompt text from varied content formats.
- */
-function extractPromptText(content: unknown): string | null {
-  if (typeof content === 'string') {
-    return filterSessionContext(content);
-  }
-  if (Array.isArray(content)) {
-    const textParts = content
-      .map((part) => {
-        if (part && typeof part === 'object' && typeof part.text === 'string') {
-          return part.text;
-        }
-        return '';
-      })
-      .filter(Boolean);
-    if (textParts.length > 0) {
-      return filterSessionContext(textParts.join('\n'));
-    }
-  }
-  return null;
-}
 
 /**
  * Gemini message structure (from gemini.session-adapter.ts)
@@ -54,7 +24,7 @@ interface GeminiMessage {
   id: string;
   timestamp: string;
   type: 'user' | 'gemini';
-  content: string;
+  content: GeminiContent;
   toolCalls?: Array<{
     id: string;
     name: string;
@@ -153,7 +123,7 @@ export class GeminiMetricsProcessor implements SessionProcessor {
     for (const msg of messages) {
       // Track user prompts
       if (msg.type === 'user') {
-        lastUserPrompt = extractPromptText(msg.content);
+        lastUserPrompt = extractMessageText(msg.content);
         continue; // User messages don't generate deltas
       }
 
