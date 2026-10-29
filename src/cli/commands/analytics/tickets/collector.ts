@@ -17,8 +17,7 @@
 
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSessionView } from '../cost/cost-enricher.js';
-import type { SessionTicket } from '../report/types.js';
-import { buildSessionTickets, buildTicketReport, type SessionEvidence, type TicketReport, type TicketSource } from './merge.js';
+import { buildTicketReport, type SessionEvidence, type TicketReport, type TicketSource } from './merge.js';
 import { normalizePromptText, readNativeSignals } from './native-signals.js';
 import { readToolCalls } from './tool-calls.js';
 import { compileToolMatcher, ticketsFromToolInput } from './tool-tickets.js';
@@ -128,11 +127,7 @@ export class TicketCollector {
     }
   }
 
-  build(): Map<string, SessionTicket[]> {
-    return buildSessionTickets(this.evidence, this.options.sources);
-  }
-
-  /** {@link build} plus the sessions whose ticket list hit the per-session cap. */
+  /** Per-session tickets, plus the sessions whose ticket list hit the per-session cap. */
   buildReport(): TicketReport {
     return buildTicketReport(this.evidence, this.options.sources);
   }

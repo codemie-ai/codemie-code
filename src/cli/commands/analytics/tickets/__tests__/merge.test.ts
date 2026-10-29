@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildSessionTickets, buildTicketReport, MAX_TICKETS_PER_SESSION, type SessionEvidence, type TicketSource } from '../merge.js';
+import { buildTicketReport, MAX_TICKETS_PER_SESSION, type SessionEvidence, type TicketSource } from '../merge.js';
+
+const buildSessionTickets = (evidence: Map<string, SessionEvidence>, sources: ReadonlySet<TicketSource>) => buildTicketReport(evidence, sources).tickets;
 
 const ALL: ReadonlySet<TicketSource> = new Set(['tool', 'branch', 'prompt']);
 

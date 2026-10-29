@@ -88,6 +88,20 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ jql: 'labels in (GPT-4, UTF-8) AND sprint = OPS-3 AND issuekey = NUTLA-5' })).toEqual(['NUTLA-5']);
   });
 
+  it('blanks NOT groups with nested parentheses, and negated issue functions', () => {
+    expect(ticketsFromToolInput({ jql: 'NOT (key in (ABC-9))' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'NOT (key in (ABC-9, ABC-8)) AND project = ABC' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'NOT (key in (ABC-9) OR (key = ABC-8)) AND key = ABC-7' })).toEqual(['ABC-7']);
+    expect(ticketsFromToolInput({ jql: 'issue not in linkedIssues(ABC-2)' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'NOT issue in linkedIssues(ABC-2) AND issue in linkedIssues(ABC-3)' })).toEqual(['ABC-3']);
+    expect(ticketsFromToolInput({ jql: 'NOT (summary ~ "a (b)" OR key = ABC-4) AND key = ABC-5' })).toEqual(['ABC-5']);
+  });
+
+  it('never reads range comparisons as tickets', () => {
+    expect(ticketsFromToolInput({ jql: 'key >= ABC-1 AND key <= ABC-100' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'key > ABC-5 OR key < ABC-2 AND key = ABC-3' })).toEqual(['ABC-3']);
+  });
+
   it('treats NOT before a condition or a bracketed group as negative', () => {
     expect(ticketsFromToolInput({ jql: 'NOT key = ABC-9' })).toEqual([]);
     expect(ticketsFromToolInput({ jql: 'NOT (key = ABC-9 OR key = ABC-10) AND key = ABC-2' })).toEqual(['ABC-2']);

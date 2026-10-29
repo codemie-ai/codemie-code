@@ -38,7 +38,7 @@ describe('TicketCollector', () => {
     collector.observe(view('s1', [original]));
     collector.observe(view('s2', [original, jiraCall('toolu_2', 'CAKE-900', 60_000)]));
 
-    const tickets = collector.build();
+    const tickets = collector.buildReport().tickets;
     expect(tickets.get('s1')).toEqual([{ id: 'CAKE-807', sources: { tool: 1 } }]);
     expect(tickets.get('s2')).toEqual([{ id: 'CAKE-900', sources: { tool: 1 } }]);
   });
@@ -49,7 +49,7 @@ describe('TicketCollector', () => {
       [jiraCall('toolu_sub', 'CAKE-3', 30_000)],
     ]));
 
-    expect(collector.build().get('s1')).toEqual([
+    expect(collector.buildReport().tickets.get('s1')).toEqual([
       { id: 'CAKE-1', sources: { tool: 1 } },
       { id: 'CAKE-3', sources: { tool: 1 } },
     ]);
@@ -59,14 +59,14 @@ describe('TicketCollector', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
     const call = { type: 'response_item', payload: { type: 'function_call', name: 'jira__get_issue', arguments: '{"issueKey":"CAKE-7"}', call_id: 'c1' } };
     collector.observe({ ...view('s1', [call]), agentName: 'codex' });
-    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-7', sources: { tool: 1 } }]);
+    expect(collector.buildReport().tickets.get('s1')).toEqual([{ id: 'CAKE-7', sources: { tool: 1 } }]);
   });
 
   it('counts a prompt once when CodeMie recorded it with different wrapping than the native log', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0), { type: 'user', uuid: 'u1', message: { role: 'user', content: 'fix  CAKE-5<system-reminder>x</system-reminder>' } }]));
     collector.addDeltas([{ sessionId: 's1', deltas: [{ userPrompts: [{ count: 1, text: 'fix CAKE-5' }] }] }] as unknown as RawSessionData[]);
-    expect(collector.build().get('s1')).toEqual([
+    expect(collector.buildReport().tickets.get('s1')).toEqual([
       { id: 'CAKE-1', sources: { tool: 1 } },
       { id: 'CAKE-5', sources: { prompt: 1 } },
     ]);
@@ -81,7 +81,7 @@ describe('TicketCollector', () => {
     collector.addDeltas([{ sessionId: 's1', deltas: [{ userPrompts: [{ count: 1, text: 'plan CAKE-5' }] }] }] as unknown as RawSessionData[]);
 
     // One prompt, both ids found (the second block is still read), each counted once.
-    expect(collector.build().get('s1')).toEqual([
+    expect(collector.buildReport().tickets.get('s1')).toEqual([
       { id: 'CAKE-5', sources: { prompt: 1 } },
       { id: 'CAKE-6', sources: { prompt: 1 } },
     ]);
@@ -93,15 +93,15 @@ describe('TicketCollector', () => {
     collector.observe(view('s1', [noId]));
     collector.observe(view('s2', [noId, { timestamp: at(5000), message: { content: [{ type: 'tool_use', name: 'mcp__jira__get', input: { issueKey: 'CAKE-1' } }] } }]));
 
-    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+    expect(collector.buildReport().tickets.get('s1')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
     // s2 keeps its own later call to the same issue, not the replayed one.
-    expect(collector.build().get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+    expect(collector.buildReport().tickets.get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
   });
 
   it('ignores tools outside the configured patterns', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: ['mcp__*rally*'] });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0)]));
-    expect(collector.build().has('s1')).toBe(false);
+    expect(collector.buildReport().tickets.has('s1')).toBe(false);
   });
 
   it('reads every native prompt and branch, and drops rows replayed into a later session', () => {
@@ -112,7 +112,7 @@ describe('TicketCollector', () => {
     collector.observe(view('s1', [prompt, later]));
     collector.observe(view('s2', [prompt]));
 
-    const tickets = collector.build();
+    const tickets = collector.buildReport().tickets;
     expect(tickets.get('s1')).toEqual([
       { id: 'CAKE-807', sources: { branch: 1, prompt: 1 } },
       { id: 'CAKE-808', sources: { prompt: 1 } },
@@ -128,7 +128,7 @@ describe('TicketCollector', () => {
     collector.observe(view('s1', [original]));
     collector.observe(view('s2', [original, { type: 'assistant', uuid: 'u9', timestamp: at(5000), gitBranch: 'ops/OPS-4' }]));
 
-    expect(collector.build().get('s2')).toEqual([{ id: 'OPS-4', sources: { branch: 1 } }]);
+    expect(collector.buildReport().tickets.get('s2')).toEqual([{ id: 'OPS-4', sources: { branch: 1 } }]);
   });
 
   it('drops Codex prompts replayed with their original timestamp', () => {
@@ -138,7 +138,7 @@ describe('TicketCollector', () => {
     collector.observe(codexView('s1', [prompt, { type: 'response_item', payload: { type: 'function_call', name: 'mcp__jira__get', arguments: '{"issueKey":"CAKE-7"}', call_id: 'c1' } }]));
     collector.observe(codexView('s2', [prompt, { type: 'event_msg', timestamp: at(9000), payload: { type: 'user_message', message: 'now CAKE-8' } }]));
 
-    const tickets = collector.build();
+    const tickets = collector.buildReport().tickets;
     expect(tickets.get('s1')).toEqual([{ id: 'CAKE-7', sources: { tool: 1, prompt: 1 } }]);
     expect(tickets.get('s2')).toEqual([{ id: 'CAKE-8', sources: { prompt: 1 } }]);
   });
@@ -151,14 +151,14 @@ describe('TicketCollector', () => {
       deltas: [{ recordId: 's2-native', gitBranch: 'CAKE-50-old', userPrompts: [{ count: 1, text: 'replayed CAKE-51' }] }],
     }] as unknown as RawSessionData[]);
 
-    expect(collector.build().get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+    expect(collector.buildReport().tickets.get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
   });
 
   it('finds prompt tickets with the prompt source alone, corroborated by evidence it does not emit', () => {
     const collector = new TicketCollector({ sources: new Set<TicketSource>(['prompt']), toolGlobs: JIRA });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0), { type: 'user', uuid: 'u1', message: { role: 'user', content: 'see CAKE-2' } }]));
 
-    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-2', sources: { prompt: 1 } }]);
+    expect(collector.buildReport().tickets.get('s1')).toEqual([{ id: 'CAKE-2', sources: { prompt: 1 } }]);
   });
 
   it('adds tracked prompts and branches from deltas without double counting the same text', () => {
@@ -173,7 +173,7 @@ describe('TicketCollector', () => {
       ],
     }] as unknown as RawSessionData[]);
 
-    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-5', sources: { branch: 1, prompt: 2 } }]);
+    expect(collector.buildReport().tickets.get('s1')).toEqual([{ id: 'CAKE-5', sources: { branch: 1, prompt: 2 } }]);
   });
 
   it('reads nothing from prompts when the prompt source is off', () => {
@@ -181,6 +181,6 @@ describe('TicketCollector', () => {
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0), { type: 'user', message: { role: 'user', content: 'CAKE-2' } }]));
     collector.addDeltas([{ sessionId: 's1', deltas: [{ userPrompts: [{ count: 1, text: 'CAKE-3' }] }] }] as unknown as RawSessionData[]);
 
-    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+    expect(collector.buildReport().tickets.get('s1')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
   });
 });

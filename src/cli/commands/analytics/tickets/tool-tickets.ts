@@ -60,66 +60,95 @@ export function compileToolMatcher(globs: readonly string[]): (name: string) => 
  */
 const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 
-/** A quoted JQL string, honouring backslash escapes (`"say \\"hi\\""`, `'it\\'s'`). */
+/** A quoted JQL string, honouring backslash escapes (`"say \"hi\""`, `'it\'s'`). */
 const JQL_STRING = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
+/** A JQL function call with its (unnested) arguments: `linkedIssues(ABC-2, "blocks")`. */
+const JQL_FUNCTION_CALL = String.raw`[A-Za-z_]\w*\s*\([^()]*\)`;
+/** Any condition value: a list, a function call, a quoted string or a bare token. */
+const JQL_VALUE = String.raw`\([^()]*\)|${JQL_FUNCTION_CALL}|${JQL_STRING}|[^\s()]+`;
+/** A field name: `key`, `project.id`, `"Epic Link"`. */
+const JQL_FIELD = String.raw`\b[A-Za-z_][\w.]*|"[^"]+"|'[^']+'`;
 
-/** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
+/**
+ * JQL is read in two steps. First everything that is not positive evidence is blanked out:
+ * text searches, history predicates, anything negated (`NOT …`, `!=`, `not in`, `!~`) and range
+ * comparisons (`key >= ABC-1`). What remains are positive conditions, from which three passes take
+ * ids: key conditions (`key = abc-7`, any case), issue functions (`linkedIssues(abc-7)`, any case)
+ * and upper-case keys outside conditions on other fields.
+ */
+
+/** Text-search values (`summary ~ "…"`, `text !~ '…'`, unquoted `summary ~ UTF-8`): free text. */
+const JQL_TEXT_SEARCH = new RegExp(String.raw`!?~\s*(?:${JQL_STRING}|[^\s()]+)`, 'g');
+
+/** History-predicate values (`status changed to "IN-1"`, `was "x" by y before "2026-01-01"`). */
+const JQL_HISTORY_PREDICATE = new RegExp(String.raw`\b(?:from|to|by|after|before|during|on)\s+(?:${JQL_VALUE})`, 'gi');
+
+/** A negative or range condition on any field: `!=`, `not in`, `<`, `<=`, `>`, `>=`. */
+const JQL_NON_POSITIVE_CONDITION = new RegExp(
+  String.raw`(?:${JQL_FIELD})\s*(?:!=|<=|>=|<|>|not\s+in\b)\s*(?:${JQL_VALUE})`,
+  'gi'
+);
+
+/** A condition negated with `NOT` (`NOT key = ABC-9`, `NOT issue in linkedIssues(ABC-2)`). */
+const JQL_NOT_CONDITION = new RegExp(
+  String.raw`\bnot\s+(?:${JQL_FIELD})\s*(?:=|!=|<=|>=|<|>|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b)\s*(?:${JQL_VALUE})`,
+  'gi'
+);
+
+/** Blanks every `NOT ( … )` group, matching nested parentheses and skipping quoted strings. */
+function blankNotGroups(query: string): string {
+  const out = query.split('');
+  const not = /\bnot\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = not.exec(query)) !== null) {
+    let depth = 0;
+    let i = match.index + match[0].length - 1;
+    for (; i < query.length; i++) {
+      const c = query[i];
+      if (c === '"' || c === "'") {
+        for (i++; i < query.length && query[i] !== c; i++) if (query[i] === '\\') i++;
+      } else if (c === '(') depth++;
+      else if (c === ')' && --depth === 0) break;
+    }
+    for (let j = match.index; j <= Math.min(i, query.length - 1); j++) out[j] = ' ';
+    not.lastIndex = i + 1;
+  }
+  return out.join('');
+}
+
 /** Key field names as a field of their own: `id`, not `project.id`. */
 const JQL_KEY_FIELD_NAMES = String.raw`(?<![\w.])(?:key|id|issue|issuekey|parent|parentEpic)\b|"epic link"|'epic link'`;
-/**
- * Only positive conditions: `key != ABC-1` and `key not in (ABC-9)` name issues the query excludes,
- * which is no evidence the session worked on them.
- */
-const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:(?<!!)=|(?<!not\s+)\bin\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_.-]+)`, 'gi');
-/** A negative condition (`!=`, `not in`) — on any field. */
-const JQL_NEGATIVE_CONDITION = /^(?:"[^"]+"|'[^']+'|[\w.]+)\s*(?:!=|not\s+in\b)/i;
 
-/** Text-search values (`summary ~ "…"`, `text !~ '…'`, unquoted `summary ~ UTF-8`): free text, never read. */
-const JQL_TEXT_SEARCH = new RegExp(String.raw`!?~\s*(?:${JQL_STRING}|[^\s()]+)`, 'g');
+/** Positive key conditions (`=`, `in`) and their value: one key, quoted or not, or a list. */
+const JQL_KEY_CLAUSE = new RegExp(
+  String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:(?<![!<>])=|\bin\b)\s*(\([^()]*\)|${JQL_STRING}|[A-Za-z0-9_.-]+)`,
+  'gi'
+);
 
 /** Arguments of JQL functions that take issue keys (`issue in linkedIssues(abc-7)`); any case, like Jira. */
 const JQL_ISSUE_FUNCTION = /\b(?:linkedIssues|parentEpic|childIssuesOf|portfolioChildIssuesOf|issuesWithRemoteLinksByGlobalId|epicsOf)\s*\(([^)]*)\)/gi;
 
-/**
- * A JQL condition on any field: `field operator value`. Used to drop the conditions on fields that
- * do not hold issue keys (`fixVersion = "APP-2"`, `labels in (gpt-4)`, `sprint = OPS-3`) before the
- * last, case-sensitive pass, which would otherwise read their values as ids.
- */
+/** Any remaining condition; those on fields that hold no issue keys are dropped before the last pass. */
 const JQL_CONDITION = new RegExp(
-  String.raw`(?:\b[A-Za-z_][\w.]*|"[^"]+")\s*(?:!?=|!?~|>=|<=|>|<|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b|changed\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+)`,
+  String.raw`(?:${JQL_FIELD})\s*(?:=|~|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b|changed\b)\s*(?:${JQL_VALUE})`,
   'gi'
 );
-/**
- * History-predicate values (`status changed to "IN-1"`, `was "AB-1" by x before "2026-01-01"`):
- * statuses, users and dates, never issue keys.
- */
-const JQL_HISTORY_PREDICATE = new RegExp(String.raw`\b(?:from|to|by|after|before|during|on)\s+(?:${JQL_STRING}|\([^)]*\)|[^\s()]+)`, 'gi');
-
-/** A condition or a bracketed group negated with `NOT` (`NOT key = ABC-9`, `NOT (key = ABC-9)`). */
-const JQL_NOT = new RegExp(
-  String.raw`\bnot\s*(?:\([^()]*\)|(?:\b[A-Za-z_][\w.]*|"[^"]+"|'[^']+')\s*(?:!?=|(?:not\s+)?in\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+))`,
-  'gi'
-);
-
 /** Conditions on fields holding issue keys: `key` and its alias `id`, `issue`, `parent`, `"Epic Link"`. */
 const JQL_KEY_FIELD = /^(?:(?:key|id|issue|issuekey|parent|parentEpic)|"epic link"|'epic link')\s/i;
 
 function jqlIds(text: string): string[] {
   const ids = new Set<string>();
-  // Every pass reads the query without text-search values (`summary ~ "UTF-8 crash"`: free text,
-  // whichever case), history-predicate values (`changed to "IN-1"`) and NOT-negated conditions.
-  const query = text.replace(JQL_TEXT_SEARCH, ' ').replace(JQL_HISTORY_PREDICATE, ' ').replace(JQL_NOT, ' ');
+  const positive = blankNotGroups(text.replace(JQL_TEXT_SEARCH, ' '))
+    .replace(JQL_HISTORY_PREDICATE, ' ')
+    .replace(JQL_NOT_CONDITION, ' ')
+    .replace(JQL_NON_POSITIVE_CONDITION, ' ');
   for (const pattern of [JQL_KEY_CLAUSE, JQL_ISSUE_FUNCTION]) {
-    for (const clause of query.matchAll(pattern)) {
+    for (const clause of positive.matchAll(pattern)) {
       for (const id of standaloneIds(clause[1], ANY_CASE, MAX_IDS_PER_CALL)) ids.add(id);
     }
   }
-  // Last, upper-case ids anywhere else in the query — but not in conditions on other fields.
-  // Conditions on key fields stay (an upper-case key inside an issue function is read from them),
-  // unless they are negative.
-  const rest = query.replace(JQL_CONDITION, (condition) =>
-    JQL_KEY_FIELD.test(`${condition} `) && !JQL_NEGATIVE_CONDITION.test(condition) ? condition : ' '
-  );
+  // Last, upper-case ids anywhere else, except in conditions on fields that hold no issue keys.
+  const rest = positive.replace(JQL_CONDITION, (condition) => (JQL_KEY_FIELD.test(`${condition} `) ? condition : ' '));
   for (const id of standaloneIds(rest, UPPER_CASE, MAX_IDS_PER_CALL)) ids.add(id);
   return [...ids].slice(0, MAX_IDS_PER_CALL);
 }

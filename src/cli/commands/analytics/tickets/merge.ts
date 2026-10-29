@@ -79,13 +79,6 @@ export interface TicketReport {
   truncated: Set<string>;
 }
 
-export function buildSessionTickets(
-  evidence: ReadonlyMap<string, SessionEvidence>,
-  sources: ReadonlySet<TicketSource>
-): Map<string, SessionTicket[]> {
-  return buildTicketReport(evidence, sources).tickets;
-}
-
 export function buildTicketReport(
   evidence: ReadonlyMap<string, SessionEvidence>,
   sources: ReadonlySet<TicketSource>
