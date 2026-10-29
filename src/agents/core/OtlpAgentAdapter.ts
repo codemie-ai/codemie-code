@@ -43,6 +43,7 @@ interface InvocationContext {
 
 const SCHEMA_VERSION = 2;
 const MAX_PROMPT_CHARS = 200;
+export const MAX_ORIGINAL_PROMPT_CHARS = 4000;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
 /** Top-level identifier fields that are never free text; masking must not touch them. */
@@ -213,9 +214,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   }
 
   /**
-   * Masks secrets in every field, then truncates the free-text fields (mask first, so a
-   * secret straddling a cut is never half-shown). An incoming `raw` is dropped so it cannot
-   * bypass the limits.
+   * Masks secrets in every field, then truncates the free-text fields: `prompt`, the longer
+   * `prompt_original` and the tool fields (mask first, so a secret straddling a cut is never
+   * half-shown). An incoming `raw` is dropped so it cannot bypass the limits.
    */
   private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
     const dropped = new Set(this.droppedFields(hookEvent));
@@ -237,6 +238,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(limited, 'prompt')) {
       limited['prompt'] = this.boundedText(limited['prompt'], MAX_PROMPT_CHARS);
+    }
+    if (Object.prototype.hasOwnProperty.call(limited, 'prompt_original')) {
+      limited['prompt_original'] = this.boundedText(limited['prompt_original'], MAX_ORIGINAL_PROMPT_CHARS);
     }
     for (const field of ['tool_input', 'tool_response', 'error', 'description']) {
       if (Object.prototype.hasOwnProperty.call(limited, field)) {
