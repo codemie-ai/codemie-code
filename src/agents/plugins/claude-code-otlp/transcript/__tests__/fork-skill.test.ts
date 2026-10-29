@@ -218,6 +218,29 @@ describe('closed calls and result shapes', () => {
     expect((await resolveForkSkills(main, await findSubagentFiles(main))).slashPromptIds).toEqual(new Set(['p2']));
   });
 
+  it.each(['Agent', 'Task'])('a same-prompt %s call that succeeded naming no agent may have started an unidentified child: never a slash fork', async (tool) => {
+    const { main } = session(
+      [user('p1', '/forkme'), toolUse('t1', tool, {}), toolResult('t1', undefined, 'Completed ordinary agent task.')],
+      [{ id: 'a', promptId: 'p1', meta: {} }]
+    );
+    expect(await kinds(main, false)).toEqual({ a: 'pending' });
+    expect(await kinds(main, true)).toEqual({ a: 'agent' });
+    expect((await resolveForkSkills(main, await findSubagentFiles(main), undefined, { final: true })).slashPromptIds.size).toBe(0);
+  });
+
+  it('a same-prompt failed or denied launch started nothing, so a lone slash fork still resolves', async () => {
+    const { main } = session([user('p1', '/forkme'), toolUse('t1', 'Agent', {}), failed('t1'), toolUse('t2', 'Task', {}), failed('t2')], [{ id: 'a', promptId: 'p1', meta: {} }]);
+    expect(await kinds(main, true)).toEqual({ a: 'forkme' });
+  });
+
+  it('a completed no-agent call named by another child meta is accounted for', async () => {
+    const { main } = session(
+      [user('p1', '/forkme'), toolUse('t1', 'Agent', {}), toolResult('t1', undefined, 'done')],
+      [{ id: 'child', promptId: 'p1', meta: { toolUseId: 't1' } }, { id: 'fork', promptId: 'p1', meta: {} }]
+    );
+    expect(await kinds(main, true)).toEqual({ child: 'agent', fork: 'forkme' });
+  });
+
   it('a failed Skill call is closed too, and an open call of an unrelated prompt does not hold a fork pending', async () => {
     const { main } = session(
       [user('p1', 'x'), toolUse('s1', 'Skill', { skill: 'nope' }), failed('s1'), user('p2', '/forkme'), toolUse('other', 'Agent', {})],

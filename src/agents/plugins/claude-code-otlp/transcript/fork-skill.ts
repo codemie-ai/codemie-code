@@ -79,6 +79,8 @@ interface Scan {
   resultAgentIdByToolUseId: Map<string, string>;
   /** tool_use_id -> promptId of the user turn it was made in ('' when unknown). */
   promptByToolUseId: Map<string, string>;
+  /** tool_use_ids whose result is an error or denial: no launch happened. */
+  failedToolUseIds: Set<string>;
   slashByPrompt: Map<string, string[]>;
   /** Every promptId that has a line in the scanned transcript (main only: a flush-lag probe). */
   promptsSeen: Set<string>;
@@ -87,6 +89,7 @@ interface Scan {
 function newScan(): Scan {
   return {
     promptsSeen: new Set(),
+    failedToolUseIds: new Set(),
     toolNameById: new Map(),
     skillByToolUseId: new Map(),
     resultAgentIdByToolUseId: new Map(),
@@ -153,6 +156,7 @@ function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt
         const skill = block.name === 'Skill' && typeof block.input?.skill === 'string' ? block.input.skill.trim() : '';
         if (skill) into.skillByToolUseId.set(block.id, skill);
       } else if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+        if (block.is_error === true) into.failedToolUseIds.add(block.tool_use_id);
         into.resultAgentIdByToolUseId.set(block.tool_use_id, resultAgentId(line, block));
       }
     }
@@ -224,8 +228,9 @@ export async function resolveForkSkills(
 
   const skillForks = new Map<string, string>(); // agentId -> skill, from a Skill result
   const startedByOtherTool = new Set<string>(); // agentIds an Agent/Task call started
-  // Calls that may still be about to start a fork: those with no result yet. A result of any kind
-  // (an error, a denial, a completion that names no agent) closes the call. Counted per user turn.
+  // Calls that may still be about to start (or already have started) an unidentified child: an
+  // Agent/Task call with no result, or with a success naming no agent; a Skill call with no result.
+  // An error/denial, or a result/meta naming the agent, closes the call. Counted per user turn.
   const openSkillCalls = new Map<string, number>();
   const openAgentCalls = new Map<string, number>();
   const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
@@ -238,7 +243,11 @@ export async function resolveForkSkills(
       else if (agentId) skillForks.set(agentId, scan.skillByToolUseId.get(toolUseId) ?? '');
     } else if (AGENT_TOOLS.has(name)) {
       if (agentId) startedByOtherTool.add(agentId);
-      else if (!answered) bump(openAgentCalls, callPrompt);
+      else if (!scan.failedToolUseIds.has(toolUseId) && !files.some((f) => f.toolUseId === toolUseId)) {
+        // No result yet, or a success that names no agent: an ordinary child may exist that nothing
+        // identifies. Only an error/denial (no launch) or a child whose meta names the call lifts it.
+        bump(openAgentCalls, callPrompt);
+      }
     }
   }
   /** Open calls that can concern a subagent of `promptId` (all of them when its prompt is unknown). */

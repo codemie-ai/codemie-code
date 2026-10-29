@@ -1,7 +1,7 @@
 # Evidence: EPMCDME-16352 + EPMCDME-16391
 
 - Baseline: `8b8bedb69389228c51e77a809e762963d925726d` (origin/main). Branch `EPMCDME-16352_16391_skill-invocation-analytics`.
-- Reviewed code HEAD: `5a2907036bf11afd80727f7ecf66995cc542a042` (commits `c7f6273e`, `72f911d0`, `5f78ee10`, `5a290703` over the baseline; the first two were rejected by review and superseded). Later commits on this branch are documentation only. Local only, not pushed.
+- Code commits over the baseline: `c7f6273e`, `72f911d0`, `5f78ee10`, `5a290703` (rejected/superseded by review as noted), and revision 5 (the commit after `e599ac62`: completed-but-unidentified Agent/Task call). Documentation commit `e599ac62` preceded revision 5. Local only, not pushed.
 - Status: **implementation done; targeted checks, real Desktop capture replay and CLI control pass; awaiting user change approval; not MR-ready.** Complexity assessment follows approval and precedes the PR; no push/PR/merge before.
 
 ## Design (why)
@@ -10,7 +10,7 @@ Backend `origin/main` `7578a3e36`, `postgres/rollups.py` `tr` CTE (~435-458): re
 Classification (`transcript/fork-skill.ts`), exact ids only, never names or time proximity:
 - Skill fork: a `Skill` `tool_use` whose result `agentId` (typed `toolUseResult.agentId`, else a JSON-object result text incl. text-block arrays; prose never searched) or the fork's `meta.toolUseId` names it.
 - Slash fork: plain user line `/name` (no wrapper) + exactly one tool-less subagent with that `promptId` + exactly one `/name` line + no `Agent`/`Task`/`Skill` call without a result in that prompt (main and subagent transcripts, so nested/concurrent calls count). An Agent/Task result `agentId` or `meta.toolUseId` makes a child definitively an agent.
-- Open call = no result yet; any result (error, denial, completion without agent) closes it; counted per user turn.
+- Open call (revision 5): an `Agent`/`Task` call with no result, **or with a successful result naming no agent** (an ordinary child may exist that nothing identifies), holds a same-prompt slash candidate `pending` (an agent at `final`). Only an error/denial (`is_error`, no launch), a result `agentId`, or a child whose `meta.toolUseId` names the call closes it. A `Skill` call is open while it has no result. Counted per user turn, so calls of other prompts do not block.
 - Flush ordering (found on real Desktop data): Desktop writes a prompt's user line to the main transcript only after `SubagentStop` and the immediate `Stop`. A metadata-less subagent whose `promptId` the main transcript does not contain yet, or whose own file has no complete line yet, is `pending`.
 - Summary: a plain `/name` line is counted in `commands`/`primary_command` once, in order, only for a prompt whose fork is confirmed; wrapper lines untouched; CLI behaviour without the set unchanged.
 
@@ -20,7 +20,8 @@ Classification (`transcript/fork-skill.ts`), exact ids only, never names or time
 ## Checks (on `5a290703`; logs in `C:/codemie-dev/_local/epmcdme-16352-16391/`)
 | Check | Exit |
 |---|---|
-| `npx vitest run src/agents/plugins/claude-code-otlp src/agents/plugins/claude/session/__tests__` (22 files, 570 tests; `vitest11.log`) | 0 |
+| `npx vitest run src/agents/plugins/claude-code-otlp src/agents/plugins/claude/session/__tests__` (22 files, 574 tests incl. 4 revision-5 regressions; `vitest12.log`; 570 at `5a290703`) | 0 |
+| revision 5: `tsc --noEmit` 0, `eslint --max-warnings=0` 0, `npm run build` 0 (`build3.log`); the three real-capture hook-path replays (Desktop 960d0bb8, 463c32c8, CLI b660e2be) re-run on the rebuilt `dist` give unchanged scopes, requests and `commands` | 0 |
 | `npx tsc --noEmit` (`tsc2.log`) | 0 |
 | `npx eslint --max-warnings=0 src/agents/plugins/claude-code-otlp` (`eslint2.log`) | 0 |
 | `npm run build` (needed for the replays; `build2.log`) | 0 |
@@ -45,7 +46,7 @@ Harness: `replay-desktop-hookpath.mjs` feeds the captured native hook payloads, 
 1. **Live backend not exercised**: live CodeMie ingest, SQL execution, pricing/cost and the rendered Timeline row / Slash-commands chart were not run. This is a validation boundary, not a known source defect; no end-to-end UI or cost claim is made. Deployment/API smoke remains to be done.
 2. A deferred fork's `agent.subagent.stop` is forwarded at hook time without `skill_name`/`started_at`/`duration_ms`/derived description (never replayed, to avoid a duplicate stop row); `SubagentStart` has no `skill_name` when the fork is pending or its file is missing. The server joins by `prompt_id`/`agent_id`; rendering of that row is part of limitation 1.
 3. Deferred usage is sent only on a later `Stop`/`SessionEnd` (about one prompt later); a session killed before either loses it (same exposure as other backstop data).
-4. An unflushed Agent `tool_use` with the user line already present cannot be detected; it relies on `meta.toolUseId`, now confirmed on real Desktop Agents (`background`), and on result `agentId`. An Agent result that completes without `agentId` and a child with no `meta.toolUseId` could still be read as a slash fork (narrow, accepted).
+4. An unflushed Agent `tool_use` with the user line already present cannot be detected; it relies on `meta.toolUseId`, now confirmed on real Desktop Agents (`background`), and on result `agentId`. (Review of `e599ac62` found that a same-prompt Agent/Task call completing successfully without `agentId` plus a metadata-less sole child was classified as a slash fork; fixed in revision 5, which keeps such a case pending and, at `final`, an agent. No misclassification is accepted as a limitation. Cost: a slash fork in a prompt that also had such an unidentified successful Agent/Task call is not recognised and stays `agent:general-purpose`, its `/name` is not counted in `commands`.)
 5. Real nested-agent runs were not captured (source/fixture coverage only). The Desktop `SessionEnd` was never captured live (synthetic backstop).
 6. Cost: pending checks read the main and subagent transcripts on SubagentStop/Stop for sessions with unresolved subagents.
 7. Next: user change approval, then actual complexity assessment of the final approved diff, then `mr-creator`. No push/PR/merge before.
