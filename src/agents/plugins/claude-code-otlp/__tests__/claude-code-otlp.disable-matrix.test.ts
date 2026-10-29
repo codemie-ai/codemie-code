@@ -166,12 +166,24 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
   });
 
-  describe('AC4: native vs. managed (`codemie claude`) launch, CODEMIE_SESSION_ID present', () => {
+  /**
+   * These do NOT drive the real managed `codemie claude` route (`hook.ts`'s own
+   * `CODEMIE_SESSION_ID`-based logging/session-id logic) — that is out of scope per the
+   * documented AC4 decision (unreliable, needs a live authenticated invocation). What they do
+   * prove: `evaluateClaudeAnalyticsGate`/`ClaudeCodeOtlpPlugin.isTracked` never read
+   * `CODEMIE_SESSION_ID` (confirmed by grep across claude-code-otlp.*.ts — unlike
+   * `copilot-cli-otlp`, which does), so the gate cannot have a managed-only or native-only
+   * code path to regress; a managed session goes through the exact same `~/.claude/settings.json`
+   * hooks and is covered by the scope/exclusion assertions above. Because nothing branches on
+   * the env var, these two tests can never fail on their own — they are a pinned invariant, not
+   * independent AC4 coverage.
+   */
+  describe('AC4: CODEMIE_SESSION_ID is irrelevant to the gate (native == managed, by construction)', () => {
     afterEach(() => {
       vi.unstubAllEnvs();
     });
 
-    it('disable-all stops forwarding identically for native and managed launches', async () => {
+    it('disable-all stops forwarding the same way whether CODEMIE_SESSION_ID is set or not', async () => {
       await writeSettings(undefined);
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
 
@@ -183,7 +195,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     });
 
-    it('exclude-one leaves the other project forwarded identically for native and managed launches', async () => {
+    it('exclude-one leaves the other project forwarded the same way whether CODEMIE_SESSION_ID is set or not', async () => {
       await writeSettings(undefined);
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
 

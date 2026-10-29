@@ -129,6 +129,42 @@ describe('createProxyAnalyticsCommand', () => {
     expect(logSpy.mock.calls.flat().join(' ')).toContain(`still excluded via ${parent}`);
   });
 
+  it('include of a redundant nested entry does not claim success while the parent still excludes it', async () => {
+    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+    await runCommand(['exclude', '/work/a']);
+    // Excluding a path already covered by a stored parent still creates a direct entry today
+    // (addProjectPath only dedupes exact matches) — this reproduces a redundant child entry.
+    await runCommand(['exclude', '/work/a/nested']);
+    logSpy.mockClear();
+    await runCommand(['include', '/work/a/nested']);
+
+    const parent = await canonicalizePath('/work/a');
+    const nested = await canonicalizePath('/work/a/nested');
+    const prefs = (await readPreferences()) as { excludedProjects: string[] };
+    expect(prefs.excludedProjects).not.toContain(nested);
+    expect(logSpy.mock.calls.flat().join(' ')).toContain(`still excluded via ${parent}`);
+  });
+
+  it('exclude of a path already covered by a stored parent reports Nothing to change instead of adding a redundant entry', async () => {
+    await runCommand(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await runCommand(['exclude', '/work/a/nested']);
+
+    const prefs = (await readPreferences()) as { excludedProjects: string[] };
+    expect(prefs.excludedProjects).toHaveLength(1);
+    expect(logSpy.mock.calls.flat().join(' ')).toContain('Nothing to change');
+  });
+
+  it('excluding a parent after a child was already excluded drops the now-redundant child entry', async () => {
+    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+    await runCommand(['exclude', '/work/a/nested']);
+    await runCommand(['exclude', '/work/a']);
+
+    const parent = await canonicalizePath('/work/a');
+    const prefs = (await readPreferences()) as { excludedProjects: string[] };
+    expect(prefs.excludedProjects).toEqual([parent]);
+  });
+
   it('status prints formatted output through the real command wiring (CR-004)', async () => {
     await runCommand(['exclude', '/work/a']);
     logSpy.mockClear();
