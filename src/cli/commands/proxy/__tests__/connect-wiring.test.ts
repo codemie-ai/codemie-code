@@ -44,7 +44,97 @@ describe('proxy connect — unified command and deprecated aliases', () => {
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeCodeOtlp: false, claudeDesktop: true, vscode: true, vscodeClaudeCode: true, codexDesktop: false },
+        targets: {
+          claudeCodeOtlp: false,
+          copilotChatOtlp: false,
+          copilotCliOtlp: false,
+          claudeDesktop: true,
+          vscode: true,
+          vscodeClaudeCode: true,
+          codexDesktop: false,
+        },
+      })
+    );
+  });
+
+  it('defaults the Claude Code analytics scope to Global (user)', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
+        silent: false,
+      })
+    );
+  });
+
+  it('forwards an explicit --scope project as the opt-in Project scope', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--scope', 'project'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'project' })
+    );
+  });
+
+  it('forwards --silent for the Claude Code analytics target', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--silent'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
+        silent: true,
+      })
+    );
+  });
+
+  it('exposes --silent on connect only, not on start, disconnect or the aliases', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const hasSilent = (name: string): boolean =>
+      Boolean(proxy.commands.find((c) => c.name() === name)?.options.some((o) => o.long === '--silent'));
+
+    expect(hasSilent('connect')).toBe(true);
+    expect(hasSilent('start')).toBe(false);
+    expect(hasSilent('disconnect')).toBe(false);
+    const connect = proxy.commands.find((c) => c.name() === 'connect');
+    for (const alias of connect?.commands ?? []) {
+      expect(alias.options.some((o) => o.long === '--silent')).toBe(false);
+    }
+  });
+
+  it('forwards an explicitly selected Claude Code analytics scope', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-code-otlp', '--scope', 'user'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ claudeCodeOtlp: true }),
+        scope: 'user',
       })
     );
   });
@@ -175,10 +265,89 @@ describe('deprecated aliases forward their flags under real CLI nesting', () => 
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeCodeOtlp: false, claudeDesktop: false, vscode: true, vscodeClaudeCode: false, codexDesktop: false },
+        targets: {
+          claudeCodeOtlp: false,
+          copilotChatOtlp: false,
+          copilotCliOtlp: false,
+          claudeDesktop: false,
+          vscode: true,
+          vscodeClaudeCode: false,
+          codexDesktop: false,
+        },
         profile: 'p',
       })
     );
+  });
+});
+
+describe('proxy connect --copilot-chat-otlp / --copilot-cli-otlp and proxy disconnect', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  it('maps --copilot-chat-otlp onto the connect targets, routed to the Chat connector only', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['connect', '--copilot-chat-otlp'], { from: 'user' });
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ copilotChatOtlp: true, copilotCliOtlp: false }),
+      })
+    );
+  });
+
+  it('maps --copilot-cli-otlp onto the connect targets, routed to the CLI connector only', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['connect', '--copilot-cli-otlp'], { from: 'user' });
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ copilotChatOtlp: false, copilotCliOtlp: true }),
+      })
+    );
+  });
+
+  it('maps --copilot-chat-otlp --copilot-cli-otlp --scope project onto both connector targets', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--copilot-chat-otlp', '--copilot-cli-otlp', '--scope', 'project'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ copilotChatOtlp: true, copilotCliOtlp: true }),
+        scope: 'project',
+      })
+    );
+  });
+
+  it('routes `proxy disconnect --copilot-chat-otlp` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--copilot-chat-otlp'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: 'user',
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: true, copilotCliOtlp: false, codexDesktop: false },
+    });
+  });
+
+  it('routes `proxy disconnect --copilot-cli-otlp --scope project` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--copilot-cli-otlp', '--scope', 'project'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({
+      scope: 'project',
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: true, codexDesktop: false },
+    });
   });
 });
 
@@ -210,7 +379,7 @@ describe('proxy connect --codex-desktop and proxy disconnect', () => {
 
     expect(disconnectTargets).toHaveBeenCalledWith({
       scope: 'user',
-      targets: { claudeCodeOtlp: false, codexDesktop: true},
+      targets: { claudeCodeOtlp: false, copilotChatOtlp: false, copilotCliOtlp: false, codexDesktop: true },
     });
   });
 });

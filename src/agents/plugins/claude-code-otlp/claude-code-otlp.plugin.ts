@@ -5,6 +5,7 @@ import type {
   HookInput,
   PostCompactHookInput,
   PostModelSwitchHookInput,
+  PostToolUseFailureHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
@@ -54,6 +55,7 @@ import {
   resolveSkillForkFields,
   resolveToolContextFields,
   resolveToolDiffFields,
+  withoutSensitiveFileContent,
 } from './event-fields/tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
@@ -71,6 +73,14 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   PreCompact: 'agent.session.compact',
   Notification: 'agent.notification',
 };
+
+/** Hook fields never forwarded: unbounded, and unused by analytics. */
+const ALWAYS_DROPPED_FIELDS: readonly string[] = [
+  'last_assistant_message',
+  'session_crons',
+  'background_tasks',
+  'custom_instructions',
+];
 
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
@@ -129,6 +139,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
     if (hookInput.hook_event_name === 'PostToolUse') {
       return await this.onPostToolUse(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PostToolUseFailure') {
+      return await this.onPostToolUseFailure(hookInput);
     }
     if (hookInput.hook_event_name === 'Stop') {
       return await this.onStopEvent(hookInput);
@@ -453,16 +466,37 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
   }
 
+  // Tool events go through withoutSensitiveFileContent: a call on a credentials file would otherwise
+  // forward the file's content in tool_input (Edit/Write) or tool_response (Read/Edit/Write).
   private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
-    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields }] };
+    return { decision: 'forward', payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields }] };
   }
 
   private async onPostToolUse(hookInput: PostToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
+    // Line counts and the fork id are derived from the uncut input, before its content is dropped.
     const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
     const forkFields = resolveSkillForkFields(hookInput.tool_name, hookInput.tool_response);
-    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields, ...diffFields, ...forkFields }] };
+    return {
+      decision: 'forward',
+      payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields, ...diffFields, ...forkFields }],
+    };
+  }
+
+  private async onPostToolUseFailure(hookInput: PostToolUseFailureHookInput): Promise<ClaudeForwardDecision> {
+    return { decision: 'forward', payload: [withoutSensitiveFileContent(hookInput)] };
+  }
+
+  /**
+   * Drops the fields no analytics consumer uses and that can be arbitrarily large. A Notification's
+   * `message` and `title` go too, but other events keep `message` (e.g. Elicitation) and the session
+   * summary keeps its own `title` (it carries no `hook_event_name`).
+   */
+  protected droppedFields(hookEvent: Record<string, unknown>): readonly string[] {
+    return hookEvent['hook_event_name'] === 'Notification'
+      ? [...ALWAYS_DROPPED_FIELDS, 'message', 'title']
+      : ALWAYS_DROPPED_FIELDS;
   }
 }
 

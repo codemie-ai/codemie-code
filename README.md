@@ -608,11 +608,14 @@ an alias or function in your interactive shell does not configure the scheduler.
 Connect Claude Code's native hooks and OpenTelemetry output to CodeMie's analytics:
 
 ```bash
-# Track every project (the default user scope)
+# Track every project (the default; same as --scope user). Asks for confirmation first.
 codemie proxy connect --claude-code-otlp
 
-# Track only the current project; run from its root
+# Track only the current project; run from its root (explicit opt-in)
 codemie proxy connect --claude-code-otlp --scope project
+
+# Unattended or CI run: skip the confirmation prompt
+codemie proxy connect --claude-code-otlp --silent
 
 # Optional: use the preview profile for this command only
 codemie proxy connect --claude-code-otlp --scope project --profile preview
@@ -620,11 +623,14 @@ codemie proxy connect --claude-code-otlp --scope project --profile preview
 
 | Option | Description |
 |---|---|
-| `--scope user` | Track every project by clearing the project allowlist (default). |
-| `--scope project` | Add the current project root to the allowlist. Run once from each project to track. |
+| `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
+| `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
+| `--silent` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
 | `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
 | `--force` | Discard an invalid project allowlist so setup can continue; valid allowlists are not changed. |
 | `--verbose` | Show detailed command output. |
+
+Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, `--silent` writes the Global scope and replaces any listed projects; with `--scope project --silent` the current project is added and existing entries are kept.
 
 Disconnect a project or remove the integration entirely:
 

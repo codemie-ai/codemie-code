@@ -267,6 +267,17 @@ describe('convertLlmModelToPiEntry — cost', () => {
     expect(entry.reasoning).toBe(true);
     expect(entry.compat).toEqual({ forceAdaptiveThinking: true });
   });
+
+  it('should enable forceAdaptiveThinking for claude-haiku-5-5', () => {
+    vi.mocked(lookupPrice).mockReturnValue(VENDORED_CLAUDE);
+
+    const entry = convertLlmModelToPiEntry(
+      llmModel({ deployment_name: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' }),
+    );
+
+    expect(entry.id).toBe('claude-haiku-5-5');
+    expect(entry.compat).toEqual({ forceAdaptiveThinking: true });
+  });
 });
 
 describe('convertLlmModelToPiEntry — GPT-6 limits and routing', () => {

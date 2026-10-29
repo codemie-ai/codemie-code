@@ -1,5 +1,7 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
+import { AnalyticsSourceError } from '@/utils/errors.js';
+import { maskSecretsDeep } from '@/utils/security.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
@@ -43,6 +45,13 @@ const SCHEMA_VERSION = 2;
 const MAX_PROMPT_CHARS = 200;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
+/** Top-level identifier fields that are never free text; masking must not touch them. */
+const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
+  'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
+  'hook_event_name', 'tool_name', 'tool_use_id', 'agent_id', 'agent_type', 'agent_name',
+  'notification_type', 'error_type',
+]);
+
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
  * analytics spool. Owns the fixed flow (parse, allowlist gate, daemon start, evaluate,
@@ -74,58 +83,94 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     // data to the backend.
     if (!(await this.isTracked(hookInput))) {
       logger.debug(`[${this.name}] project not in analytics allowlist, ignoring hook event`);
+      await this.onUntrackedHook(hookInput);
       return;
     }
 
     try {
-      await ensureOtlpProxy(this.name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
-    }
+      try {
+        await ensureOtlpProxy(this.name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
+      }
 
-    const decision = await this.evaluate(hookInput);
-    if (decision.decision === 'block') {
-      logger.error(`[${this.name}] Blocking prompt: ${decision.reason}`);
-      // Claude Code hook protocol: a blocking decision is returned as JSON on stdout.
-      // A new adapter whose tool uses a different block protocol must make this step
-      // overridable (e.g. an `emitBlock()` method) instead of reusing it as is.
-      console.log(JSON.stringify(decision));
-      return;
-    }
-
-    // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
-    // back `finalize`, which persists its state only when `accepted` is true. This keeps
-    // the whole invocation's events a single all-or-nothing unit: on failure nothing is
-    // committed, so the next hook re-derives and re-sends the same events.
-    let accepted = false;
-    try {
-      if (decision.payload.length === 0) {
-        accepted = true; // nothing to send, nothing to lose
+      const decision = await this.evaluate(hookInput);
+      if (decision.decision === 'block') {
+        logger.error(`[${this.name}] Blocking prompt: ${decision.reason}`);
+        this.emitBlock(decision);
         return;
       }
 
-      const context = this.extractHookContext(hookInput);
-      const [commonFields, agentFields] = await Promise.all([
-        this.resolveCommonFields(context),
-        this.resolveAgentFields(),
-      ]);
-      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
-
-      // Built once: a retry below resends these exact bytes, event_ids included.
-      const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
-
-      accepted = await forwardOtlpEventsToSpool(events, this.name);
-      if (!accepted && decision.retryOnce) {
-        accepted = await forwardOtlpEventsToSpool(events, this.name);
-      }
-    } finally {
+      // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
+      // back `finalize`, which persists its state only when `accepted` is true. This keeps
+      // the whole invocation's events a single all-or-nothing unit: on failure nothing is
+      // committed, so the next hook re-derives and re-sends the same events.
+      let accepted = false;
       try {
-        await decision.finalize?.(accepted);
-      } catch (err) {
-        logger.warn(`[${this.name}] finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (decision.payload.length === 0) {
+          accepted = true; // nothing to send, nothing to lose
+          return;
+        }
+
+        const context = this.extractHookContext(hookInput);
+        const [commonFields, agentFields] = await Promise.all([
+          this.resolveCommonFields(context),
+          this.resolveAgentFields(),
+        ]);
+        const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+
+        // Built once: a retry below resends these exact bytes, event_ids included.
+        const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
+
+        accepted = await forwardOtlpEventsToSpool(events, this.name);
+        if (!accepted && decision.retryOnce) {
+          accepted = await forwardOtlpEventsToSpool(events, this.name);
+        }
+        if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
+          throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
+        }
+      } finally {
+        try {
+          await decision.finalize?.(accepted);
+        } catch (err) {
+          logger.warn(`[${this.name}] finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
+    } catch (err) {
+      await this.onHookError(err, hookInput);
     }
+  }
+
+  /**
+   * Claude Code hook protocol: a blocking decision is returned as JSON on stdout.
+   * A subclass whose tool uses a different block protocol (e.g. Copilot's
+   * `{"continue": false}` / `{"modifiedTransformedPrompt": ...}` / `{"permissionDecision": "deny"}`)
+   * overrides this instead of changing the shared flow above.
+   */
+  protected emitBlock(decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'block' }>): void {
+    console.log(JSON.stringify(decision));
+  }
+
+  /**
+   * Called when `evaluate` or the forward/finalize step throws (e.g. an enforced event whose
+   * spool write was rejected). A daemon-start failure from `ensureOtlpProxy` is logged and
+   * does not reach here. `input` is the already-parsed, already-tracked hook input,
+   * so a subclass can tell an enforcement event (which must still produce its host's
+   * block/replacement output on an internal failure) from one where logging and swallowing
+   * the error is enough. Default rethrows, so Claude's existing behavior (the error propagates
+   * to the hook command's own catch-all) is unchanged.
+   */
+  protected async onHookError(err: unknown, _input: TInput): Promise<void> {
+    throw err;
+  }
+
+  /** Optional host-specific response when a recognized hook cannot be tracked. */
+  protected async onUntrackedHook(_input: TInput): Promise<void> {}
+
+  /** Enforcement adapters opt in; other adapters retain commit-after-send retry behavior. */
+  protected requiresSpoolAcceptance(_input: TInput): boolean {
+    return false;
   }
 
   /** Returns null to ignore a payload of an unknown shape. May throw on malformed JSON. */
@@ -140,10 +185,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
 
-  /**
-   * Assembles the final event. `raw` mirrors the full enriched event, so the top
-   * level and `raw` carry the same fields.
-   */
+  /** Assembles the final event: masked and truncated hook fields plus the common and agent fields, all at the top level. */
   private buildEvent(hookEvent: Record<string, unknown>, ctx: InvocationContext): Record<string, unknown> {
     const limited = this.limitPayload(hookEvent);
     const explicitType = hookEvent['type'];
@@ -155,34 +197,52 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: this.boundedText(limited['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
     };
     event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
-    return { ...event, raw: { ...event } };
+    return event;
   }
 
-  /** Truncates the free-text fields; a nested `raw` is dropped so it cannot bypass the limits. */
+  /**
+   * Fields a subclass never forwards (e.g. unbounded, unused ones). Removed before masking
+   * and truncation, so they never reach the spool. Default: none.
+   */
+  protected droppedFields(_hookEvent: Record<string, unknown>): readonly string[] {
+    return [];
+  }
+
+  /**
+   * Masks secrets in every field, then truncates the free-text fields (mask first, so a
+   * secret straddling a cut is never half-shown). An incoming `raw` is dropped so it cannot
+   * bypass the limits.
+   */
   private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
-    const limited: Record<string, unknown> = { ...hookEvent };
-    const effort = limited['effort'];
+    const dropped = new Set(this.droppedFields(hookEvent));
+    const unmasked: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(hookEvent)) {
+      if (!dropped.has(key) && key !== 'raw') {
+        unmasked[key] = value;
+      }
+    }
+    const effort = unmasked['effort'];
     if (typeof effort === 'object' && effort !== null && !Array.isArray(effort)) {
       const level: unknown = Reflect.get(effort, 'level');
       if (typeof level === 'string') {
-        limited['effort'] = level;
+        unmasked['effort'] = level;
       } else {
-        delete limited['effort'];
+        delete unmasked['effort'];
       }
     }
-    if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
-      limited['prompt'] = this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS);
+    const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(limited, 'prompt')) {
+      limited['prompt'] = this.boundedText(limited['prompt'], MAX_PROMPT_CHARS);
     }
     for (const field of ['tool_input', 'tool_response', 'error', 'description']) {
-      if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
-        limited[field] = this.boundedText(hookEvent[field], MAX_TOOL_FIELD_CHARS);
+      if (Object.prototype.hasOwnProperty.call(limited, field)) {
+        limited[field] = this.boundedText(limited[field], MAX_TOOL_FIELD_CHARS);
       }
     }
-    delete limited['raw'];
     return limited;
   }
 

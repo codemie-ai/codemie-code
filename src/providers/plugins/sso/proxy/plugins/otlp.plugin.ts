@@ -3,6 +3,7 @@ import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import { listSessionIds } from './otlp-spool/spool-paths.js';
@@ -10,6 +11,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
+import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
@@ -237,6 +239,9 @@ class OtlpInterceptor implements ProxyInterceptor {
         logger.debug('[otlp-ingest] hooks: no session_id in hookEvent, discarding');
         continue;
       }
+      if (!isSafeSessionId(eventSessionId)) {
+        return sendError(res, 400, 'invalid_request_error', 'Invalid session_id');
+      }
       if (!sessionId) {
         sessionId = eventSessionId;
       } else if (sessionId !== eventSessionId) {
@@ -261,6 +266,13 @@ class OtlpInterceptor implements ProxyInterceptor {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
       return sendError(res, 500, 'api_error', 'Failed to persist hooks batch');
+    }
+
+    // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
+    try {
+      scheduleCopilotUsageEnrichment(batch.agentName, batch.hookEvents as Record<string, unknown>[]);
+    } catch (err) {
+      logger.warn('[otlp-ingest] copilot usage scheduling failed', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
     }
 
     res.statusCode = 202;
