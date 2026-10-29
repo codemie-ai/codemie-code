@@ -258,6 +258,18 @@ describe('showUpgradeNotice', () => {
     expect(await readMarker()).toBe('0.16.2');
   });
 
+  it('prints nothing and keeps the marker when CODEMIE_TIPS is off', async () => {
+    changelog.content = rangeFixture(RANGE_VERSIONS);
+    await writeMarker('0.15.1');
+    process.env.CODEMIE_TIPS = 'false';
+    const { showUpgradeNotice } = await import('../whatsnew.js');
+
+    showUpgradeNotice('0.16.2');
+
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+    expect(await readMarker()).toBe('0.15.1');
+  });
+
   it('records an unparseable marker silently', async () => {
     changelog.content = rangeFixture(RANGE_VERSIONS);
     await writeMarker('garbage');

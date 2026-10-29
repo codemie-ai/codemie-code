@@ -46,6 +46,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Added
 
 - Feature tips: short "did you know" hints shown at session start and end, with no-repeat rotation and a `CODEMIE_TIPS` off switch
+- Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
 - `codemie tips` command to browse the full tip catalog, grouped by category
 - `codemie whatsnew` command showing release notes from this changelog
 - Once-per-upgrade "What's new" notice on CLI start after an update

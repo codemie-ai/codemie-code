@@ -901,7 +901,12 @@ describe('proxy restart', () => {
     const daemon = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
-    vi.mocked(daemon.checkStatus).mockResolvedValue(status);
+    // First call: the daemon being restarted. Later calls (the pre-spawn
+    // re-check): nothing running, as after a real stop.
+    vi.mocked(daemon.checkStatus)
+      .mockReset()
+      .mockResolvedValueOnce(status)
+      .mockResolvedValue({ running: false, state: null });
     vi.mocked(daemon.stopDaemon).mockResolvedValue(undefined);
     vi.mocked(ConfigLoader.load).mockImplementation(async (_cwd, options) => ({
       name: (options as { name?: string } | undefined)?.name ?? configName,
@@ -980,6 +985,70 @@ describe('proxy restart', () => {
       telemetryMode: 'claude-desktop',
       project: 'config-project',
     });
+    // The old profile's model may not exist on the new profile's tenant.
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
+  });
+
+  it('leaves the running daemon untouched when SSO credentials are missing', async () => {
+    const { daemon, command } = await setup({ running: true, state: runningState });
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
+    } as unknown as typeof CodeMieSSO);
+
+    await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+    expect(daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('leaves the running daemon untouched when the profile has no base URL', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockResolvedValue(
+      { name: 'work', provider: 'ai-run-sso' } as Awaited<ReturnType<typeof ConfigLoader.load>>
+    );
+
+    await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+    expect(daemon.stopDaemon).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain('No API URL configured');
+  });
+
+  it('leaves the running daemon untouched when the profile cannot be loaded', async () => {
+    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(ConfigLoader.load).mockRejectedValue(new Error("Profile 'typo' not found"));
+
+    await expect(
+      command.parseAsync(['restart', '--profile', 'typo'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(daemon.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it('syncs skills before stopping the running daemon', async () => {
+    const { daemon, command } = await setup({ running: true, state: runningState });
+    const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(vi.mocked(syncRegisteredSkills).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(daemon.stopDaemon).mock.invocationCallOrder[0]);
+  });
+
+  it('stops a daemon that started during the restart window before re-spawning', async () => {
+    const { daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(daemon.checkStatus)
+      .mockReset()
+      .mockResolvedValueOnce({ running: true, state: runningState })
+      .mockResolvedValueOnce({ running: true, state: { ...runningState, pid: 777, clientType: 'claude-code-otlp' } })
+      .mockResolvedValue({ running: false, state: null });
+
+    await command.parseAsync(['restart'], { from: 'user' });
+
+    expect(daemon.stopDaemon).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(daemon.stopDaemon).mock.invocationCallOrder[1])
+      .toBeLessThan(vi.mocked(daemon.spawnDaemon).mock.invocationCallOrder[0]);
+    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ clientType: 'claude-desktop', port: 4001 });
   });
 
   it('behaves like start when the recorded daemon is not running', async () => {
@@ -1006,6 +1075,11 @@ describe('proxy restart', () => {
 
     expect(daemon.stopDaemon).toHaveBeenCalledTimes(2);
     expect(errorOutput()).toContain('4001');
+    // A plain re-run would hit the not-running branch and drop the identity,
+    // so the error names what is lost and the command that restores the port.
+    expect(errorOutput()).not.toContain('run: codemie proxy restart');
+    expect(errorOutput()).toContain('codemie proxy start --port 4001 --profile work');
+    expect(errorOutput()).toContain('claude-desktop');
     expect(loggedOutput()).not.toContain('✓');
   });
 
