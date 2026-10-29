@@ -4,7 +4,14 @@ import {
   getStoredAnalyticsCredentials,
 } from '@/providers/core/codemie-auth-helpers.js';
 import { getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { startDetachedSsoLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
+import {
+  describeLogin,
+  SSO_LOGIN_WAIT_MS,
+  startDetachedSsoLogin,
+  waitForDetachedSsoLogin,
+  type DetachedLoginOutcome,
+  type LoginWaitResult,
+} from '@/providers/plugins/sso/sso.detached-login.js';
 import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
 
@@ -22,7 +29,7 @@ export interface AuthGateInput {
 
 export type AuthGateResult =
   | { ok: true }
-  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined };
+  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined; waitResult?: LoginWaitResult };
 
 /**
  * The analytics-auth-status marker is a single global file, written by multiple profiles'
@@ -111,4 +118,24 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     logger.debug('[sso-auth-gate] Auth gate check failed:', error);
     return { ok: false, reason: 'CodeMie SSO auth gate check failed unexpectedly', loginOutcome };
   }
+}
+
+/**
+ * Like ensureCodeMieSsoAuth, but when the gate started (or found) a browser sign-in, waits for it
+ * and re-checks once, so a hook that can hold the prompt lets it through without a resubmit.
+ * Never waits for other failures (api key, cooldown, failed start, unexpected gate error).
+ */
+export async function ensureCodeMieSsoAuthOrWait(
+  input: AuthGateInput,
+  opts: { waitMs?: number; onWaitStart?: (message: string) => void } = {}
+): Promise<AuthGateResult> {
+  const first = await ensureCodeMieSsoAuth(input);
+  if (first.ok || (first.loginOutcome !== 'started' && first.loginOutcome !== 'in-progress')) {
+    return first;
+  }
+
+  opts.onWaitStart?.(describeLogin(first.loginOutcome, { resume: 'auto' }));
+  const waitResult = await waitForDetachedSsoLogin({ timeoutMs: opts.waitMs ?? SSO_LOGIN_WAIT_MS });
+  // The lock may have been released by another profile's login, so success still needs a re-check.
+  return waitResult.status === 'succeeded' ? ensureCodeMieSsoAuth(input) : { ...first, waitResult };
 }

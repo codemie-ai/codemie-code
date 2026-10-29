@@ -8,14 +8,19 @@ vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   }),
 }));
 vi.mock('@/utils/analytics-auth-status.js', () => ({ getAnalyticsAuthStatus: vi.fn() }));
-vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({ startDetachedSsoLogin: vi.fn() }));
+vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
+  startDetachedSsoLogin: vi.fn(),
+  waitForDetachedSsoLogin: vi.fn(),
+  describeLogin: vi.fn((outcome: string, opts?: { resume?: string }) => `login:${outcome}:${opts?.resume ?? 'manual'}`),
+  SSO_LOGIN_WAIT_MS: 150_000,
+}));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { ensureCodeMieSsoAuth } from '../sso.auth-gate.js';
+import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait } from '../sso.auth-gate.js';
 import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { startDetachedSsoLogin } from '@/providers/plugins/sso/sso.detached-login.js';
+import { startDetachedSsoLogin, waitForDetachedSsoLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
 const configured = { provider: 'ai-run-sso', ssoUrl: 'https://codemie.example.com', syncApiUrl: 'https://api.example.com' };
 const PROD = 'https://prod.example.com';
@@ -186,5 +191,82 @@ describe('ensureCodeMieSsoAuth', () => {
 
       expect(result).toEqual({ ok: true });
     });
+  });
+});
+
+describe('ensureCodeMieSsoAuthOrWait', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue(null);
+    vi.mocked(startDetachedSsoLogin).mockResolvedValue('started');
+    vi.mocked(waitForDetachedSsoLogin).mockResolvedValue({ status: 'succeeded' });
+  });
+
+  it('allows the prompt after a successful wait and re-check', async () => {
+    getStoredCredentials.mockResolvedValueOnce(null).mockResolvedValue({ cookies: { a: 'b' } });
+    const onWaitStart = vi.fn();
+
+    expect(await ensureCodeMieSsoAuthOrWait(configured, { onWaitStart })).toEqual({ ok: true });
+    expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+    expect(onWaitStart).toHaveBeenCalledTimes(1);
+    expect(onWaitStart).toHaveBeenCalledWith('login:started:auto');
+    expect(waitForDetachedSsoLogin).toHaveBeenCalledWith({ timeoutMs: 150_000 });
+  });
+
+  it('still blocks when the re-check fails after a succeeded wait (another profile signed in)', async () => {
+    getStoredCredentials.mockResolvedValue(null);
+    vi.mocked(startDetachedSsoLogin).mockResolvedValueOnce('started').mockResolvedValue('cooldown');
+
+    const result = await ensureCodeMieSsoAuthOrWait(configured);
+
+    expect(result.ok).toBe(false);
+    expect(waitForDetachedSsoLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ status: 'failed' as const, error: 'Authentication cancelled by user' }],
+    [{ status: 'timeout' as const }],
+  ])('blocks with the wait result when the wait ends %j', async (waitResult) => {
+    getStoredCredentials.mockResolvedValue(null);
+    vi.mocked(waitForDetachedSsoLogin).mockResolvedValue(waitResult);
+
+    const result = await ensureCodeMieSsoAuthOrWait(configured);
+
+    expect(result).toMatchObject({ ok: false, loginOutcome: 'started', waitResult });
+  });
+
+  it('waits for an in-progress sign-in started by an earlier prompt', async () => {
+    getStoredCredentials.mockResolvedValueOnce(null).mockResolvedValue({ cookies: { a: 'b' } });
+    vi.mocked(startDetachedSsoLogin).mockResolvedValue('in-progress');
+
+    expect(await ensureCodeMieSsoAuthOrWait(configured)).toEqual({ ok: true });
+    expect(waitForDetachedSsoLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([['cooldown' as const], ['failed' as const]])('does not wait on a %s outcome', async (outcome) => {
+    getStoredCredentials.mockResolvedValue(null);
+    vi.mocked(startDetachedSsoLogin).mockResolvedValue(outcome);
+
+    const result = await ensureCodeMieSsoAuthOrWait(configured);
+
+    expect(result).toMatchObject({ ok: false, loginOutcome: outcome });
+    expect(waitForDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('does not wait when an api key is set', async () => {
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401' } as never);
+
+    expect((await ensureCodeMieSsoAuthOrWait({ ...configured, apiKey: 'key' })).ok).toBe(false);
+    expect(waitForDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('does not wait when the gate check failed unexpectedly', async () => {
+    getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
+    vi.mocked(getAnalyticsAuthStatus).mockRejectedValue(new Error('boom'));
+
+    const result = await ensureCodeMieSsoAuthOrWait(configured);
+
+    expect(result).toMatchObject({ ok: false, reason: 'CodeMie SSO auth gate check failed unexpectedly' });
+    expect(waitForDetachedSsoLogin).not.toHaveBeenCalled();
   });
 });
