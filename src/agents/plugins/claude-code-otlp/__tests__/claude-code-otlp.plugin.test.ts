@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../claude-code-otlp.allowlist.js', () => ({
   readAllowlistState: vi.fn(async () => ({ kind: 'valid', paths: ['/proj'] })),
   isProjectTracked: vi.fn(),
+  readPromptHookTimeoutSeconds: vi.fn(async () => undefined),
 }));
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
@@ -82,7 +83,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
   resolveSessionEnvFields: resolveSessionEnvFieldsMock,
 }));
 
-import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
+import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
@@ -1576,6 +1577,19 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(stderr).toHaveBeenCalledWith('waiting for sign-in\n');
     log.mockRestore();
     stderr.mockRestore();
+  });
+
+  it.each([
+    [undefined, 15_000],
+    [30, 15_000],
+    [180, 150_000],
+  ])('caps the sign-in wait below the installed UserPromptSubmit timeout (%s s)', async (timeout, waitMs) => {
+    vi.mocked(readPromptHookTimeoutSeconds).mockResolvedValueOnce(timeout);
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValueOnce({ ok: true });
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ waitMs }));
   });
 
   it('blocks with manual re-send text and forwards nothing when the wait times out', async () => {

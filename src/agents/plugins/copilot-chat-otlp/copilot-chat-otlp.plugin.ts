@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
@@ -130,7 +131,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
       return { decision: 'forward', payload: [hookInput] };
     }
 
-    return this.buildBlock(hookInput.hook_event_name, authResult.reason);
+    return this.buildBlock(hookInput.hook_event_name, authResult.reason, true, authResult.loginOutcome);
   }
 
   private hasRequiredIdentity(input: CopilotChatHookInput): input is CopilotChatHookInput & {
@@ -148,14 +149,11 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   private buildBlock(
     eventName: CopilotChatHookInput['hook_event_name'],
     reason: string | undefined,
-    authenticationFailure = true
+    authenticationFailure = true,
+    loginOutcome?: DetachedLoginOutcome
   ): Extract<ChatForwardDecision, { decision: 'block' }> {
     const message = authenticationFailure
-      ? [
-          `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`,
-          'A browser sign-in window has been opened automatically.',
-          'Complete the sign-in, then re-send your prompt.',
-        ].join(' ')
+      ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).\n${describeLogin(loginOutcome)}`
       : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}). Fix the issue, then re-send your prompt.`;
 
     const hookSpecificOutput: ChatBlockOutput =

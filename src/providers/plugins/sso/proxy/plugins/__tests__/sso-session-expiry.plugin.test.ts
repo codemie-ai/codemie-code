@@ -229,7 +229,7 @@ describe('SSOSessionExpiryPlugin', () => {
     const body = JSON.parse(
       ((result as unknown as { _syntheticBody: Buffer })._syntheticBody).toString('utf-8')
     );
-    expect(body.error.message).toBe(`CodeMie SSO session expired. ${describeLogin()}`);
+    expect(body.error.message).toBe(`CodeMie SSO session expired. ${describeLogin('failed')}`);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const [message] = errorSpy.mock.calls[0];
     expect(message).toContain('startDetachedSsoLogin');

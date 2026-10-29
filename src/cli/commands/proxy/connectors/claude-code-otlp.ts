@@ -246,6 +246,13 @@ export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
  */
 export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
 
+/**
+ * Claude Code shows exit-0 hook stderr only in verbose mode, so the "continue automatically" notice
+ * goes in the spinner text it displays while the hook runs.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
+  'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
+
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
     return {};
@@ -595,6 +602,7 @@ export async function writeClaudeCodeOtlpConfig(
           ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
           : CODEMIE_HOOK_TIMEOUT_SECONDS,
       ...(isPostCompact ? { async: true } : {}),
+      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };

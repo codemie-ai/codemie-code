@@ -227,8 +227,15 @@ describe('describeLogin', () => {
     expect(describeLogin('cooldown')).toContain('codemie profile login');
   });
 
-  it.each([['failed' as const], [undefined]])('describes a failure (%s)', (outcome) => {
-    expect(describeLogin(outcome)).toContain('Could not open the browser sign-in');
+  it('describes a failure', () => {
+    expect(describeLogin('failed')).toContain('Could not open the browser sign-in');
+  });
+
+  it('gives neutral text without the expected-expiry lead when no sign-in was attempted', () => {
+    const text = describeLogin(undefined);
+    expect(text).not.toContain('expired');
+    expect(text).not.toContain('codemie profile login');
+    expect(text).toContain('re-send your prompt');
   });
 });
 

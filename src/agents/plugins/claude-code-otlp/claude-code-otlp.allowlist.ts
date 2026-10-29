@@ -18,6 +18,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { resolveHomeDir } from '@/utils/paths.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import {
   type AllowlistState,
   parseAllowlist,
@@ -85,5 +86,27 @@ export async function readAllowlistState(): Promise<AllowlistState> {
     return parseAllowlist((env as Record<string, unknown>)[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]);
   } catch {
     return { kind: 'invalid' };
+  }
+}
+
+/**
+ * Timeout (seconds) of the codemie `UserPromptSubmit` hook installed in `~/.claude/settings.json`,
+ * or undefined when it cannot be read. Never throws.
+ */
+export async function readPromptHookTimeoutSeconds(): Promise<number | undefined> {
+  try {
+    const settings = JSON.parse(await readFile(getClaudeSettingsPath(), 'utf-8')) as {
+      hooks?: { UserPromptSubmit?: Array<{ hooks?: Array<{ command?: unknown; timeout?: unknown }> }> };
+    };
+    const groups = settings?.hooks?.UserPromptSubmit;
+    if (!Array.isArray(groups)) {
+      return undefined;
+    }
+    const hook = groups
+      .flatMap((g) => (Array.isArray(g?.hooks) ? g.hooks : []))
+      .find((h) => typeof h?.command === 'string' && h.command.includes(`hook --agent ${CLAUDE_CODE_OTLP_AGENT_NAME}`));
+    return typeof hook?.timeout === 'number' ? hook.timeout : undefined;
+  } catch {
+    return undefined;
   }
 }

@@ -306,12 +306,19 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
 const EXPIRED_LEAD = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
 const MANUAL_RESUME = 'After login completes, re-send your prompt.';
 
-/** All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in. */
+/**
+ * All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in.
+ * An undefined outcome means no browser sign-in was attempted (API key, unexpected gate error), so
+ * the expiry is not assumed and no `codemie profile login` is suggested.
+ */
 export function describeLogin(
-  outcome: DetachedLoginOutcome = 'failed',
+  outcome: DetachedLoginOutcome | undefined,
   opts: { resume?: 'auto' | 'manual'; wait?: LoginWaitResult } = {}
 ): string {
   const { resume = 'manual', wait } = opts;
+  if (outcome === undefined && !wait) {
+    return 'CodeMie could not verify your credentials. Check your CodeMie API key or profile configuration, then re-send your prompt.';
+  }
   if (wait?.status === 'failed') {
     return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}`;
   }
