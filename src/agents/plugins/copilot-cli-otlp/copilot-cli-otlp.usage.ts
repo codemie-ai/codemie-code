@@ -116,7 +116,6 @@ export function buildDeferredUsageEvents(
   ];
   return raw.map((event) => {
     const discriminator = String(event['request_id'] ?? 'summary');
-    const wire = { ...common, ...event, event_id: stableEventId(String(event['type']), sessionId, discriminator) };
-    return { ...wire, raw: { ...wire } };
+    return { ...common, ...event, event_id: stableEventId(String(event['type']), sessionId, discriminator) };
   });
 }

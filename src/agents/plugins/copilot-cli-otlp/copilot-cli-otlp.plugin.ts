@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
@@ -199,10 +200,14 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     return normalized;
   }
 
-  /** R11: free-text fields outside the base class's four truncated keys must still be bounded. */
+  /**
+   * R11: free-text fields outside the base class's four truncated keys must still be bounded.
+   * Masked before the cut: the base class only sees the already-cut text, where a secret
+   * straddling the limit would be left as a fragment too short to recognise.
+   */
   private boundedFreeText(value: unknown): string {
     const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
-    return text.slice(0, FREE_TEXT_MAX_CHARS);
+    return maskSecretsInText(text).slice(0, FREE_TEXT_MAX_CHARS);
   }
 
   private buildBlock(

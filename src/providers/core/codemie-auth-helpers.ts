@@ -115,7 +115,7 @@ function originOf(url: string): string {
   }
 }
 
-export function isCodeMiePlatformProvider(provider: string | undefined): boolean {
+function isCodeMiePlatformProvider(provider: string | undefined): boolean {
   return provider === ProviderName.AI_RUN_SSO || provider === ProviderName.BEARER_AUTH;
 }
 

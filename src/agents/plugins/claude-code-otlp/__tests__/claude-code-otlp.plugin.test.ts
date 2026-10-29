@@ -85,6 +85,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
+import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
 
 // Deferred past the mock-backing consts above: a static import of the plugin would be
 // hoisted ahead of them (ESM import hoisting), tripping a TDZ error inside the
@@ -210,7 +211,8 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
 
   it('enriches the forwarded event with platform, entrypoint, and client_version', async () => {
     process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
-    const rawEvent = JSON.stringify(hookEvent());
+    const github = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+    const rawEvent = JSON.stringify(hookEvent({ future_field: `token ${github} end` }));
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
@@ -219,6 +221,11 @@ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
     expect(forwarded.platform).toBe('claude-code');
     expect(forwarded.entrypoint).toBe('cli');
     expect(forwarded.client_version).toBe('2.1.23');
+    // an unknown field is masked, no raw mirror is emitted, and the project gate reads the top level
+    expect(forwarded.future_field).toBe('token [REDACTED] end');
+    expect(JSON.stringify(forwarded)).not.toContain(github);
+    expect(forwarded).not.toHaveProperty('raw');
+    expect(hookEventProjectNames(forwarded)).toEqual([forwarded['codemie_project_name']]);
   });
 
   it('stamps git_branch and repo_remote resolved at hook time', async () => {
@@ -334,11 +341,19 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
   });
 
   it.each(['Stop', 'PreCompact', 'StopFailure'] as const)(
-    'invokes openMainTranscriptPass with the extracted session/transcript/trigger on %s',
+    'invokes openMainTranscriptPass with the extracted session/transcript/trigger on %s, dropping the unused unbounded fields',
     async (hookEventName) => {
       const plugin = new ClaudeCodeOtlpPlugin();
       const parsedEvent = hookEvent({ hook_event_name: hookEventName });
-      const rawEvent = JSON.stringify(parsedEvent);
+      const extraFields = {
+        last_assistant_message: 'a very long final reply',
+        session_crons: [{ id: 'c1' }],
+        background_tasks: [{ id: 'b1' }],
+        custom_instructions: 'be terse',
+      };
+      // `message` and `title` are dropped only on a Notification, so other events keep them.
+      const keptFields = { message: 'elicitation text', title: 'a title' };
+      const rawEvent = JSON.stringify({ ...parsedEvent, ...extraFields, ...keptFields });
 
       await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
@@ -349,9 +364,136 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
         NO_ENV_CHECK
       );
       const [forwarded] = forwardedEvents();
-      expect(forwarded).toMatchObject({ ...parsedEvent, cwd: 'repo' });
+      expect(forwarded).toMatchObject({ ...parsedEvent, ...keptFields, cwd: 'repo' });
+      for (const field of Object.keys(extraFields)) {
+        expect(forwarded).not.toHaveProperty(field);
+      }
     }
   );
+
+  describe('Notification drops and sensitive-file reads', () => {
+    it('drops the message and title of a Notification', async () => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ hook_event_name: 'Notification', message: 'notification text', title: 'a title' })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(forwarded).not.toHaveProperty('message');
+      expect(forwarded).not.toHaveProperty('title');
+    });
+
+    it.each([
+      ['.env', true],
+      ['/repo/.env.local', true],
+      ['C:\\x\\id_rsa', true],
+      ['a/.aws/config', true],
+      ['/home/u/server.PEM', true],
+      ['/repo/src/index.ts', false],
+    ])('Read of %s: tool_response omitted = %s', async (filePath, omitted) => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Read',
+          tool_input: { file_path: filePath },
+          tool_response: { type: 'text', file: { content: 'line one' } },
+        })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(forwarded['tool_name']).toBe('Read');
+      expect(String(forwarded['tool_input'])).toContain('file_path');
+      expect(Object.prototype.hasOwnProperty.call(forwarded, 'tool_response')).toBe(!omitted);
+    });
+
+    // Unlabelled on purpose: regex masking cannot catch it, so only the file guard can keep it out.
+    const CONTENT = 'unlabelled-content-marker';
+    const FILE_CONTENT_TOOLS: Array<[string, string]> = [
+      ['Read', 'file_path'],
+      ['Edit', 'file_path'],
+      ['MultiEdit', 'file_path'],
+      ['Write', 'file_path'],
+      ['NotebookEdit', 'notebook_path'],
+    ];
+    const toolEvents = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'];
+
+    it.each(toolEvents.flatMap((hookName) => FILE_CONTENT_TOOLS.map(([toolName, pathKey]) => [hookName, toolName, pathKey])))(
+      '%s of %s on a credentials file forwards the path but none of the content',
+      async (hookName, toolName, pathKey) => {
+        const result =
+          hookName === 'PostToolUse' ? { tool_response: { originalFile: CONTENT, content: CONTENT } }
+          : hookName === 'PostToolUseFailure' ? { error: `String to replace not found: ${CONTENT}` }
+          : {};
+        const plugin = new ClaudeCodeOtlpPlugin();
+        await plugin.processOtlpEvent(
+          JSON.stringify(hookEvent({
+            hook_event_name: hookName,
+            tool_name: toolName,
+            tool_input: { [pathKey]: '/repo/.env', content: CONTENT, old_string: CONTENT, new_string: CONTENT, edits: [{ old_string: CONTENT }] },
+            ...result,
+          })),
+          { ensureOtlpProxy, forwardOtlpEventsToSpool }
+        );
+        const [forwarded] = forwardedEvents();
+        expect(forwarded['tool_name']).toBe(toolName);
+        expect(String(forwarded['tool_input'])).toContain('/repo/.env');
+        expect(JSON.stringify(forwarded)).not.toContain(CONTENT);
+        expect(forwarded).not.toHaveProperty('tool_response');
+        expect(forwarded).not.toHaveProperty('error');
+      }
+    );
+
+    it.each(['PreToolUse', 'PostToolUse'])('%s of an ordinary file keeps the tool content', async (hookName) => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({
+          hook_event_name: hookName,
+          tool_name: 'Write',
+          tool_input: { file_path: '/repo/src/index.ts', content: CONTENT },
+          ...(hookName === 'PostToolUse' ? { tool_response: { content: CONTENT } } : {}),
+        })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(String(forwarded['tool_input'])).toContain(CONTENT);
+      if (hookName === 'PostToolUse') {
+        expect(String(forwarded['tool_response'])).toContain(CONTENT);
+      }
+    });
+
+    it('still reports the line count of a Write to a credentials file, from the uncut input', async () => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Write',
+          tool_input: { file_path: '/repo/.env', content: `${CONTENT}\n${CONTENT}` },
+          tool_response: { type: 'create' },
+        })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(forwarded['file_path']).toBe('/repo/.env');
+      expect(forwarded['lines_added']).toBe(2);
+      expect(JSON.stringify(forwarded)).not.toContain(CONTENT);
+    });
+  });
+
+  describe('free-text fields kept on events other than a Notification', () => {
+    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+
+    it.each(['message', 'title'])('masks a secret in the %s of an Elicitation', async (field) => {
+      const plugin = new ClaudeCodeOtlpPlugin();
+      await plugin.processOtlpEvent(
+        JSON.stringify(hookEvent({ hook_event_name: 'Elicitation', [field]: `ask for ${secret} now` })),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+      const [forwarded] = forwardedEvents();
+      expect(forwarded[field]).toBe('ask for [REDACTED] now');
+      expect(JSON.stringify(forwarded)).not.toContain(secret);
+    });
+  });
 
   it('invokes openPostCompactPass with the session/transcript on PostCompact, and forwards only its derived events', async () => {
     const compactDoneEvent = {
@@ -496,7 +638,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
       const [forwarded] = forwardedEvents();
       expect(forwarded.subagent_type).toBe('Explore');
       expect(forwarded.description).toBe('d'.repeat(300));
-      expect(forwarded.raw.description).toBe('d'.repeat(300));
+      expect(forwarded).not.toHaveProperty('raw');
     }
   });
 
@@ -529,7 +671,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     );
     const [forwarded] = forwardedEvents();
     expect(forwarded.fork_agent_id).toBe('a861e999c42f7f90c');
-    expect((forwarded.raw as Record<string, unknown>).fork_agent_id).toBe('a861e999c42f7f90c');
+    expect(forwarded).not.toHaveProperty('raw');
     expect(String(forwarded.tool_response)).toHaveLength(300);
     expect(String(forwarded.tool_response)).not.toContain('a861e999c42f7f90c');
   });
@@ -846,7 +988,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
   it('forwards every event a pass returns (the raw event plus any derived events) as one batch, in order', async () => {
     const derivedUsageEvent = { type: 'agent.usage.request' };
-    const derivedSummaryEvent = { type: 'agent.session.summary' };
+    // a session summary keeps its title, unlike a Notification
+    const derivedSummaryEvent = { type: 'agent.session.summary', title: 'My session' };
     openMainTranscriptPassMock.mockResolvedValue({
       events: [derivedUsageEvent, derivedSummaryEvent],
       finalize: vi.fn(async () => {}),
@@ -1004,13 +1147,11 @@ describe('ClaudeCodeOtlpPlugin agent.skill.dispatch (UserPromptExpansion)', () =
     const [forwarded] = forwardedEvents();
     expect(forwarded.type).toBe('agent.skill.dispatch');
     expect(forwarded.prompt_id).toBe('p-1');
-    expect(forwarded.raw.prompt_id).toBe('p-1');
+    expect(forwarded).not.toHaveProperty('raw');
     expect(forwarded.skill_name).toBe('superpowers:brainstorming');
     expect(forwarded.command_name).toBe('superpowers:brainstorming');
     expect(forwarded).not.toHaveProperty('command_args');
     expect(forwarded).not.toHaveProperty('prompt');
-    expect(forwarded.raw).not.toHaveProperty('command_args');
-    expect(forwarded.raw).not.toHaveProperty('prompt');
   });
 
   it('does not forward an mcp_prompt expansion as a skill dispatch', async () => {

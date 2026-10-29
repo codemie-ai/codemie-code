@@ -1,6 +1,7 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
+import { maskSecretsDeep } from '@/utils/security.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
@@ -43,6 +44,13 @@ interface InvocationContext {
 const SCHEMA_VERSION = 2;
 const MAX_PROMPT_CHARS = 200;
 export const MAX_TOOL_FIELD_CHARS = 300;
+
+/** Top-level identifier fields that are never free text; masking must not touch them. */
+const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
+  'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
+  'hook_event_name', 'tool_name', 'tool_use_id', 'agent_id', 'agent_type', 'agent_name',
+  'notification_type', 'error_type',
+]);
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
@@ -177,10 +185,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
 
-  /**
-   * Assembles the final event. `raw` mirrors the full enriched event, so the top
-   * level and `raw` carry the same fields.
-   */
+  /** Assembles the final event: masked and truncated hook fields plus the common and agent fields, all at the top level. */
   private buildEvent(hookEvent: Record<string, unknown>, ctx: InvocationContext): Record<string, unknown> {
     const limited = this.limitPayload(hookEvent);
     const explicitType = hookEvent['type'];
@@ -192,34 +197,52 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: this.boundedText(limited['prompt'], MAX_PROMPT_CHARS),
       schema_version: SCHEMA_VERSION,
     };
     event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
-    return { ...event, raw: { ...event } };
+    return event;
   }
 
-  /** Truncates the free-text fields; a nested `raw` is dropped so it cannot bypass the limits. */
+  /**
+   * Fields a subclass never forwards (e.g. unbounded, unused ones). Removed before masking
+   * and truncation, so they never reach the spool. Default: none.
+   */
+  protected droppedFields(_hookEvent: Record<string, unknown>): readonly string[] {
+    return [];
+  }
+
+  /**
+   * Masks secrets in every field, then truncates the free-text fields (mask first, so a
+   * secret straddling a cut is never half-shown). An incoming `raw` is dropped so it cannot
+   * bypass the limits.
+   */
   private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
-    const limited: Record<string, unknown> = { ...hookEvent };
-    const effort = limited['effort'];
+    const dropped = new Set(this.droppedFields(hookEvent));
+    const unmasked: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(hookEvent)) {
+      if (!dropped.has(key) && key !== 'raw') {
+        unmasked[key] = value;
+      }
+    }
+    const effort = unmasked['effort'];
     if (typeof effort === 'object' && effort !== null && !Array.isArray(effort)) {
       const level: unknown = Reflect.get(effort, 'level');
       if (typeof level === 'string') {
-        limited['effort'] = level;
+        unmasked['effort'] = level;
       } else {
-        delete limited['effort'];
+        delete unmasked['effort'];
       }
     }
-    if (Object.prototype.hasOwnProperty.call(hookEvent, 'prompt')) {
-      limited['prompt'] = this.boundedText(hookEvent['prompt'], MAX_PROMPT_CHARS);
+    const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(limited, 'prompt')) {
+      limited['prompt'] = this.boundedText(limited['prompt'], MAX_PROMPT_CHARS);
     }
     for (const field of ['tool_input', 'tool_response', 'error', 'description']) {
-      if (Object.prototype.hasOwnProperty.call(hookEvent, field)) {
-        limited[field] = this.boundedText(hookEvent[field], MAX_TOOL_FIELD_CHARS);
+      if (Object.prototype.hasOwnProperty.call(limited, field)) {
+        limited[field] = this.boundedText(limited[field], MAX_TOOL_FIELD_CHARS);
       }
     }
-    delete limited['raw'];
     return limited;
   }
 

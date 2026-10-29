@@ -680,41 +680,6 @@ async function gitBranch(cwd) {
   }
 }
 
-function isCodeMiePlatformProvider(provider) {
-  return provider === 'ai-run-sso' || provider === 'bearer-auth';
-}
-
-function originOf(url) {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-// Mirrors canUseSharedIdentity() in src/utils/config.ts exactly. Duplicated here (not imported)
-// because this file is deployed standalone — see the header comment on bundling. Refuses the
-// pre-migration-008 shared-identity fallback only on positive evidence the shared value belongs
-// to a *different* profile: the profile talks to the CodeMie platform directly, its baseUrl
-// origin differs from the shared codeMieUrl's, AND another platform profile's baseUrl is on
-// exactly that shared origin. A vendor-subscription profile or a lone split-host ai-run-sso
-// profile (no sibling evidence) is always allowed.
-function canUseSharedIdentity(profile, siblingProfiles: Record<string, any>, ownName, sharedCodeMieUrl) {
-  if (!isCodeMiePlatformProvider(profile?.provider)) return true;
-  if (!sharedCodeMieUrl || !profile?.baseUrl) return true;
-
-  const sharedOrigin = originOf(sharedCodeMieUrl);
-  const ownOrigin = originOf(profile.baseUrl);
-  if (!sharedOrigin || !ownOrigin || sharedOrigin === ownOrigin) return true;
-
-  const claimedBySibling = Object.entries(siblingProfiles ?? {}).some(([name, sibling]: [string, any]) => {
-    if (name === ownName) return false;
-    if (!isCodeMiePlatformProvider(sibling?.provider) || !sibling?.baseUrl) return false;
-    return originOf(sibling.baseUrl) === sharedOrigin;
-  });
-  return !claimedBySibling;
-}
-
 // --- Budget resolution (network/filesystem; dependencies injectable for tests) ---
 
 export async function resolveBudget({
@@ -760,24 +725,9 @@ export async function resolveBudget({
 
   const profile = config.profiles?.[profileName];
   const { baseUrl } = profile ?? {};
-  // Per-profile identity: each profile resolves its own CodeMie URL. A profile that
-  // predates migration 008 (e.g. this statusline ran before `bin/codemie.js` ever had
-  // a chance to migrate it — only that launcher runs pending migrations), or that
-  // migration 008 refused to clone the identity onto (vendor-subscription providers,
-  // split-host ai-run-sso with no sibling evidence), has none of its own yet, so fall
-  // back to the shared workspace value — migration 008 never strips it, precisely so
-  // this fallback (and the equivalent one for local profiles) keeps working forever,
-  // not just pre-migration. Guarded by canUseSharedIdentity(), same as the migration
-  // and the read-time fallback in src/utils/config.ts.
-  let codeMieUrl = profile?.codeMieUrl;
-  // Atomic trio, not just codeMieUrl: a profile that already owns ANY of its own
-  // identity fields (e.g. codeMieProject from a partial write) must not receive the
-  // shared codeMieUrl either — mirrors config.ts's ownHasAnyIdentity gate exactly.
-  const ownHasAnyIdentity = Boolean(codeMieUrl || profile?.codeMieProject || profile?.codeMieIntegration);
-  if (!ownHasAnyIdentity && config.workspace?.codeMieUrl
-    && canUseSharedIdentity(profile, config.profiles, profileName, config.workspace.codeMieUrl)) {
-    codeMieUrl = config.workspace.codeMieUrl;
-  }
+  // codeMieUrl now lives on the scope-level workspace object (migration 006), and
+  // userEmail is a top-level MultiProviderConfig field — neither is per-profile anymore.
+  const codeMieUrl = config.workspace?.codeMieUrl;
   const userEmail = config.userEmail;
   if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
