@@ -46,6 +46,16 @@ const MAX_PROMPT_CHARS = 200;
 export const MAX_ORIGINAL_PROMPT_CHARS = 4000;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
+/** Free-text fields cut after masking, each to its own limit. */
+const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
+  prompt: MAX_PROMPT_CHARS,
+  prompt_original: MAX_ORIGINAL_PROMPT_CHARS,
+  tool_input: MAX_TOOL_FIELD_CHARS,
+  tool_response: MAX_TOOL_FIELD_CHARS,
+  error: MAX_TOOL_FIELD_CHARS,
+  description: MAX_TOOL_FIELD_CHARS,
+};
+
 /** Top-level identifier fields that are never free text; masking must not touch them. */
 const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
   'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
@@ -236,15 +246,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       }
     }
     const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
-    if (Object.prototype.hasOwnProperty.call(limited, 'prompt')) {
-      limited['prompt'] = this.boundedText(limited['prompt'], MAX_PROMPT_CHARS);
-    }
-    if (Object.prototype.hasOwnProperty.call(limited, 'prompt_original')) {
-      limited['prompt_original'] = this.boundedText(limited['prompt_original'], MAX_ORIGINAL_PROMPT_CHARS);
-    }
-    for (const field of ['tool_input', 'tool_response', 'error', 'description']) {
+    for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
       if (Object.prototype.hasOwnProperty.call(limited, field)) {
-        limited[field] = this.boundedText(limited[field], MAX_TOOL_FIELD_CHARS);
+        limited[field] = this.boundedText(limited[field], maxChars);
       }
     }
     return limited;
@@ -264,7 +268,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         text = String(value);
       }
     }
-    return text.slice(0, maxChars);
+    const cut = text.slice(0, maxChars);
+    // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
+    return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
 
   /**

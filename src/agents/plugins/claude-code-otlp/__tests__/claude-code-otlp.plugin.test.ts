@@ -1565,6 +1565,12 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
   });
 
   describe('pasted-content markup', () => {
+    beforeEach(() => {
+      process.env.CODEMIE_SEND_PROMPT_ORIGINAL = 'true';
+    });
+    afterEach(() => {
+      delete process.env.CODEMIE_SEND_PROMPT_ORIGINAL;
+    });
     const send = async (raw: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
       await plugin.processOtlpEvent(promptEvent(raw, overrides), { ensureOtlpProxy, forwardOtlpEventsToSpool });
       return forwardedEvents()[0];
@@ -1600,6 +1606,14 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
 
       expect(forwarded['prompt']).toBe('text');
       expect(forwarded['prompt_original']).toBe('<pasted_content id="x">\ntext');
+    });
+
+    it('keeps prompt_original off by default, even when a hook supplies one', async () => {
+      delete process.env.CODEMIE_SEND_PROMPT_ORIGINAL;
+      const forwarded = await send(paste('real'), { prompt_original: 'spoofed' });
+
+      expect(forwarded['prompt']).toBe('real');
+      expect(forwarded).not.toHaveProperty('prompt_original');
     });
 
     it('does not set prompt_original for a typed prompt', async () => {

@@ -19,7 +19,6 @@ import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { extractNamedInvocations } from '../claude-named-invocations.js';
 import { stripClear } from '../strip-clear.js';
 import { takeMessagesBefore } from './messages-before.js';
-import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -251,7 +250,7 @@ export class MetricsProcessor implements SessionProcessor {
         }
 
         if (textContent) {
-          userPromptsMap.set(msg.uuid, stripPastedContentTags(textContent));
+          userPromptsMap.set(msg.uuid, textContent);
         }
       }
     }

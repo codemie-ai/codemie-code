@@ -59,7 +59,7 @@ export interface PromptFields {
   story_marker: string;
   /** Every distinct ticket-shaped id, upper-cased, first-seen order, capped. */
   ticket_mentions: string[];
-  /** Full prompt length in UTF-16 code units (the unit of the 200-char `prompt_body` cut). */
+  /** Length of the raw prompt as typed, pasted-content tags included, in UTF-16 code units; not the length of the cleaned `prompt_body` source. */
   prompt_length: number;
 }
 
