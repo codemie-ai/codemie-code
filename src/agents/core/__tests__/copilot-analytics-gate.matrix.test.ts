@@ -114,10 +114,19 @@ describe.each(CONNECTORS)('regression: EPMCDME-16396 — copilot analytics matri
       });
     });
 
-    it('an undefined cwd never throws', async () => {
+    it('an undefined or empty cwd never throws and fails closed when something is excluded', async () => {
       await updateCopilotAnalyticsPreferences(connectorId, (c) => ({ ...c, excludedProjects: ['/work/a'] }));
 
-      await expect(evaluateCopilotAnalyticsGate(connectorId, undefined)).resolves.toBeDefined();
+      for (const cwd of [undefined, '']) {
+        expect(await evaluateCopilotAnalyticsGate(connectorId, cwd)).toEqual({ tracked: false, reason: 'project-excluded' });
+      }
+    });
+
+    it('an undefined or empty cwd with nothing excluded behaves exactly as before the exclusion layer', async () => {
+      for (const cwd of [undefined, '']) {
+        const decision = await evaluateCopilotAnalyticsGate(connectorId, cwd);
+        expect(decision).toEqual(scope.scope === 'user' ? { tracked: true } : { tracked: false, reason: 'scope-untracked' });
+      }
     });
   });
 

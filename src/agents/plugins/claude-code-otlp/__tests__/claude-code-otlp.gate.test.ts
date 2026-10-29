@@ -97,8 +97,15 @@ describe('evaluateClaudeAnalyticsGate', () => {
     expect((await evaluateClaudeAnalyticsGate('/proj')).tracked).toBe(false);
   });
 
-  it('cwd undefined with an exclusion configured falls through to the allowlist check', async () => {
-    isProjectExcluded.mockResolvedValue(false); // isProjectExcluded(undefined, …) === false per Task 1
+  it('cwd undefined: the gate defers to isProjectExcluded, which fails closed when something is excluded', async () => {
+    isProjectExcluded.mockResolvedValue(true);
+    isProjectTracked.mockResolvedValue(true);
+    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
+    expect(await evaluateClaudeAnalyticsGate(undefined)).toEqual({ tracked: false, reason: 'project-excluded' });
+  });
+
+  it('cwd undefined with nothing excluded falls through to the allowlist check (unchanged)', async () => {
+    isProjectExcluded.mockResolvedValue(false);
     isProjectTracked.mockResolvedValue(true);
     const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
     expect(await evaluateClaudeAnalyticsGate(undefined)).toEqual({ tracked: true, reason: 'tracked' });

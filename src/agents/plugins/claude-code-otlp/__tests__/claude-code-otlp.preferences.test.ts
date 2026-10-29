@@ -139,9 +139,21 @@ describe('claude-code-otlp.preferences', () => {
       expect(await isProjectExcluded('/a/bc', ['/a/b'])).toBe(false);
     });
 
-    it('returns false when cwd is undefined', async () => {
+    // Fail closed: an opt-out must not be bypassed by an event that does not say where it came from.
+    it('returns true when cwd is undefined and something is excluded', async () => {
       const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
-      expect(await isProjectExcluded(undefined, ['/a'])).toBe(false);
+      expect(await isProjectExcluded(undefined, ['/a'])).toBe(true);
+    });
+
+    it('returns true when cwd is an empty string and something is excluded', async () => {
+      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
+      expect(await isProjectExcluded('', ['/a'])).toBe(true);
+    });
+
+    it('returns false when cwd is undefined or empty and nothing is excluded', async () => {
+      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
+      expect(await isProjectExcluded(undefined, [])).toBe(false);
+      expect(await isProjectExcluded('', [])).toBe(false);
     });
 
     it('returns false when excludedProjects is empty', async () => {

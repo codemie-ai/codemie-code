@@ -130,10 +130,13 @@ export async function updateClaudeAnalyticsPreferences(
   return next;
 }
 
-/** True if `cwd` is inside (or equal to) any entry in `excludedProjects`. */
+/**
+ * True if `cwd` is inside (or equal to) any entry in `excludedProjects`. With no usable `cwd` the
+ * project is unknown, so it counts as excluded whenever anything is excluded (fail closed).
+ */
 export async function isProjectExcluded(cwd: string | undefined, excludedProjects: string[]): Promise<boolean> {
   if (!cwd) {
-    return false;
+    return excludedProjects.length > 0;
   }
   const canonicalCwd = await canonicalizePath(cwd);
   for (const entry of excludedProjects) {

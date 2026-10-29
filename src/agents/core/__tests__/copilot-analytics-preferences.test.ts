@@ -180,9 +180,21 @@ describe('copilot-analytics-preferences', () => {
       expect(await isCopilotAnalyticsProjectExcluded('/a/bc', ['/a/b'])).toBe(false);
     });
 
-    it('returns false when cwd is undefined', async () => {
+    // Fail closed: an opt-out must not be bypassed by an event that does not say where it came from.
+    it('returns true when cwd is undefined and something is excluded', async () => {
       const { isCopilotAnalyticsProjectExcluded } = await import('../copilot-analytics-preferences.js');
-      expect(await isCopilotAnalyticsProjectExcluded(undefined, ['/a'])).toBe(false);
+      expect(await isCopilotAnalyticsProjectExcluded(undefined, ['/a'])).toBe(true);
+    });
+
+    it('returns true when cwd is an empty string and something is excluded', async () => {
+      const { isCopilotAnalyticsProjectExcluded } = await import('../copilot-analytics-preferences.js');
+      expect(await isCopilotAnalyticsProjectExcluded('', ['/a'])).toBe(true);
+    });
+
+    it('returns false when cwd is undefined or empty and nothing is excluded', async () => {
+      const { isCopilotAnalyticsProjectExcluded } = await import('../copilot-analytics-preferences.js');
+      expect(await isCopilotAnalyticsProjectExcluded(undefined, [])).toBe(false);
+      expect(await isCopilotAnalyticsProjectExcluded('', [])).toBe(false);
     });
 
     it('returns false when excludedProjects is empty', async () => {

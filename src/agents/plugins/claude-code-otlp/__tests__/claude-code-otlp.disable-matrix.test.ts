@@ -144,6 +144,27 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     });
   });
 
+  describe.each([
+    ['Global (absent filter)', undefined],
+    ['Global (empty [] filter)', []],
+  ] as const)('%s scope: events without a usable cwd', (_label, allowlist) => {
+    it('with an exclusion configured, an empty cwd is NOT forwarded (opt-out fails closed)', async () => {
+      await writeSettings(allowlist);
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
+
+      await fire('');
+      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    });
+
+    it('with nothing excluded, an empty cwd is forwarded exactly as before', async () => {
+      await writeSettings(allowlist);
+
+      await fire('');
+      expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+    });
+  });
+
   it('include restores forwarding for a previously excluded project', async () => {
     await writeSettings(undefined);
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
