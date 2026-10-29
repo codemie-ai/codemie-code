@@ -4,7 +4,11 @@ import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
-import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import {
+  evaluateCopilotAnalyticsGate,
+  type CopilotAnalyticsGateReason,
+} from '@/agents/core/copilot-analytics-gate.js';
+import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from './copilot-chat-otlp.constants.js';
 import { type ChatBlockOutput, type ChatForwardDecision, type CopilotChatHookInput, isCopilotChatHookInput } from './copilot-chat-otlp.types.js';
@@ -39,16 +43,22 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   }
 
   protected async isTracked(hookInput: CopilotChatHookInput): Promise<boolean> {
-    const scope = await readCopilotConnectorScope(this.name);
-    if (scope.kind === 'corrupt' || !scope.value.enabled || !this.hasRequiredIdentity(hookInput)) {
-      return false;
-    }
-    return isCopilotProjectTracked(hookInput.cwd, scope);
+    const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
+    return decision.tracked && this.hasRequiredIdentity(hookInput);
   }
 
   protected async onUntrackedHook(hookInput: CopilotChatHookInput): Promise<void> {
     if (!ENFORCED_EVENTS.has(hookInput.hook_event_name)) {
       return;
+    }
+
+    const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
+    if (!decision.tracked) {
+      const analyticsReason = this.analyticsBlockReason(decision.reason);
+      if (analyticsReason) {
+        this.emitBlock(this.buildBlock(hookInput.hook_event_name, analyticsReason, false));
+        return;
+      }
     }
 
     const scope = await readCopilotConnectorScope(this.name);
@@ -132,6 +142,24 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     }
 
     return this.buildBlock(hookInput.hook_event_name, authResult.reason, true, authResult.loginOutcome);
+  }
+
+  private cwdOrUndefined(input: CopilotChatHookInput): string | undefined {
+    return typeof input.cwd === 'string' ? input.cwd : undefined;
+  }
+
+  /** Block message for the analytics-preferences reasons only; scope-* reasons keep their existing handling. */
+  private analyticsBlockReason(reason: CopilotAnalyticsGateReason): string | undefined {
+    switch (reason) {
+      case 'preferences-corrupt':
+        return 'analytics preferences are corrupt; repair or delete copilot-analytics.json';
+      case 'analytics-disabled':
+        return `analytics collection is disabled; run \`codemie proxy analytics enable --${this.name}\``;
+      case 'project-excluded':
+        return `this project is excluded from analytics collection; run \`codemie proxy analytics include --${this.name}\``;
+      default:
+        return undefined;
+    }
   }
 
   private hasRequiredIdentity(input: CopilotChatHookInput): input is CopilotChatHookInput & {
