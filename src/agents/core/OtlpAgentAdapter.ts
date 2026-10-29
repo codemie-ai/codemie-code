@@ -132,7 +132,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         if (evidenceInputs) {
           const stamp = await stampEvidence(context, evidenceInputs);
           if (!stamp.ok) {
-            logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}); event not enqueued`);
+            logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}${stamp.detail ? `: ${stamp.detail}` : ''}); event not enqueued`);
             // Events with a cursor to protect (finalize) are re-derived by the next hook; the others are gone: make that visible.
             if (!decision.finalize && context.sessionId) {
               await forwardOtlpEventsToSpool([], this.name, {

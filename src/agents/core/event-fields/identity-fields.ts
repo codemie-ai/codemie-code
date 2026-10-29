@@ -6,6 +6,7 @@ import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveHookCredentials } from '../hook-credentials.js';
 import { pinProjectName, readPinnedProjectName } from '../session-project-pin.js';
 import type { EvidenceRecord } from '../evidence/record-store.js';
+import { launchMode } from '../evidence/routing.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 import {
   resolveCodemieCliEmail,
@@ -122,7 +123,10 @@ export async function loadHookConfig(
   try {
     const configDir = projectDir ? await findNearestConfigDir(projectDir) : cwd;
     const profileName = await ConfigLoader.getActiveProfileName(configDir);
-    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
+    // Native hooks have no launcher-exported CODEMIE_PROJECT: a linked folder's project beats the global profile's.
+    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined, {
+      preferLinkedProject: launchMode(process.env) === 'native',
+    });
     return { config, configDir };
   } catch {
     return undefined;

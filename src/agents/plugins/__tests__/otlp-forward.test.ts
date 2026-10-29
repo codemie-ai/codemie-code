@@ -58,6 +58,20 @@ describe('forwardOtlpEventsToSpool', () => {
     expect(JSON.parse(init.body as string)).toEqual({ agentName: 'claude-code-otlp', hookEvents: events });
   });
 
+  it('CR008: the serialized body carries evidence_v: 1 exactly when the caller stamped, and no such key otherwise', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 202 }));
+    const events = [{ type: 'agent.session.start' }];
+    const bodyOf = () => JSON.parse(fetchMock.mock.calls.at(-1)![1].body as string) as Record<string, unknown>;
+
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp', { evidenceV: 1 });
+    expect(bodyOf()).toEqual({ agentName: 'claude-code-otlp', hookEvents: events, evidence_v: 1 });
+
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp', {});
+    expect(Object.keys(bodyOf())).not.toContain('evidence_v');
+    await forwardOtlpEventsToSpool(events, 'claude-code-otlp');
+    expect(Object.keys(bodyOf())).not.toContain('evidence_v');
+  });
+
   it('returns false for a non-2xx response', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 500 }));
     const result = await forwardOtlpEventsToSpool([{ type: 'x' }], 'claude-code-otlp');
