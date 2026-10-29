@@ -98,12 +98,11 @@ export function getChangelogPath(): string | null {
 /**
  * Read release notes from the changelog.
  *
- * @param version - When given, the entry for this exact version; if there is
- *   no matching heading, falls back to the newest versioned entry (or
- *   Unreleased when that is all there is) so the once-per-upgrade notice
- *   always has something to show
+ * @param version - When given, only the entry whose heading matches this
+ *   exact version. There is no fallback to another version: notes for one
+ *   release must never be shown under another release's banner
  * @returns Parsed entries (newest first, as written), or an empty array when
- *   the changelog is missing or unparseable
+ *   the changelog is missing, unparseable, or has no section for `version`
  */
 export function getReleaseNotes(version?: string): ReleaseEntry[] {
   const changelogPath = getChangelogPath();
@@ -122,19 +121,10 @@ export function getReleaseNotes(version?: string): ReleaseEntry[] {
     }
 
     const exact = entries.filter(entry => entry.version === version);
-    if (exact.length > 0) {
-      return exact;
+    if (exact.length === 0) {
+      logger.debug(`[whatsnew] No changelog entry for ${version}`);
     }
-
-    // No heading for this exact version (changelog not updated for the
-    // release) — fall back to the newest versioned entry so the once-per-
-    // upgrade notice still shows something before the version is marked seen.
-    const fallback = entries.find(entry => entry.version !== 'Unreleased') ?? entries[0];
-    if (fallback) {
-      logger.debug(`[whatsnew] No changelog entry for ${version} — falling back to ${fallback.version}`);
-      return [fallback];
-    }
-    return [];
+    return exact;
   } catch (error) {
     logger.debug('[whatsnew] Failed to read changelog:', error);
     return [];
