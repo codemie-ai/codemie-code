@@ -22,6 +22,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { resolveForkSkills } from './fork-skill.js';
 import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
@@ -137,9 +138,9 @@ export function subagentFilePath(mainTranscriptPath: string, agentId: string): s
  * {@link readSubagentMeta} and its `.forked-skill.marker.json` via {@link readForkedSkillMarker}.
  *
  * Never throws: a missing subagents directory, an unreadable directory, or any other failure all
- * resolve to `[]`.
+ * resolve to `[]`. Names a skill only from the marker; see {@link findSubagentFiles}.
  */
-export async function findSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
+export async function discoverSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
   try {
     const subagentsDir = subagentsDirFor(mainTranscriptPath);
 
@@ -159,6 +160,34 @@ export async function findSubagentFiles(mainTranscriptPath: string): Promise<Sub
   } catch {
     return [];
   }
+}
+
+/**
+ * {@link discoverSubagentFiles} plus the skill of each marker-less fork, resolved from the main
+ * transcript by exact ids (see `fork-skill.ts`). Never throws.
+ */
+export async function findSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
+  const files = await discoverSubagentFiles(mainTranscriptPath);
+  // Clients that write no marker (desktop app): name the skill from the main transcript's exact
+  // ids. An unresolved fork stays a plain agent.
+  const { skillByAgentId } = await resolveForkSkills(mainTranscriptPath, files);
+  for (const file of files) {
+    const skillName = skillByAgentId.get(file.agentId);
+    if (skillName) {
+      file.skillName = skillName;
+      file.description ||= `/${skillName}`;
+    }
+  }
+  return files;
+}
+
+/**
+ * The skill a subagent is the fork of — from its marker or, without one, the main transcript
+ * ({@link findSubagentFiles}) — or `''` for an ordinary agent or an agent not found.
+ */
+export async function resolveSubagentSkillName(mainTranscriptPath: string, agentId: string): Promise<string> {
+  const files = await findSubagentFiles(mainTranscriptPath);
+  return files.find((f) => f.agentId === agentId)?.skillName ?? '';
 }
 
 /** One row of the contract's `usage[]`: `agent.usage.request`'s own fields, plus `api_calls`. */

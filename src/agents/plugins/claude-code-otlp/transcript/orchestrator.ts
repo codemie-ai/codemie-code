@@ -70,7 +70,13 @@ import {
   type Compaction,
   type SignalLine,
 } from './session-signals.js';
-import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from './subagent-usage.js';
+import {
+  type SubagentFile,
+  buildSubagentUsageEvent,
+  discoverSubagentFiles,
+  findSubagentFiles,
+} from './subagent-usage.js';
+import { resolveForkSkills } from './fork-skill.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
 // the pass openers from this one module.
@@ -418,7 +424,10 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
 
-  const named = extractOrderedNamedInvocations(parsedLines);
+  // A forked skill run as `/name` leaves no command wrapper; count its plain line when a fork
+  // proves the prompt started one.
+  const { slashPromptIds } = await resolveForkSkills(transcriptPath, await discoverSubagentFiles(transcriptPath), raw);
+  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
   acc.commandsInOrder = named.commandsInOrder;
 
   const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
@@ -844,6 +853,50 @@ export async function openSessionEnvCheckPass(
 }
 
 /**
+ * True when `file` is now known to be a skill fork but its usage was recorded as an agent's: a
+ * foreground `Skill` call's result (which names the fork) is written after the fork has stopped,
+ * so the fork's own `SubagentStop` could not name its skill yet.
+ */
+function needsRescope(state: TranscriptParseState, file: SubagentFile): boolean {
+  return (
+    !!file.skillName &&
+    Object.values(state.openRequests).some((r) => r.agentId === file.agentId && r.scopeKind !== 'skill')
+  );
+}
+
+/**
+ * Re-scope the already-recorded usage of forks that only now resolve to a skill (see
+ * {@link needsRescope}): re-derive those subagents from byte 0, which re-keys their requests to
+ * `scope_kind: 'skill'` and re-emits them plus a fresh `agent.subagent.usage`. Cheap no-op when no
+ * agent-scoped subagent usage has been recorded. A failing subagent is skipped, state intact.
+ */
+async function rescopeForkedSubagents(
+  state: TranscriptParseState,
+  sessionId: string,
+  transcriptPath: string,
+  cwd?: string
+): Promise<Record<string, unknown>[]> {
+  if (!Object.values(state.openRequests).some((r) => r.agentId && r.scopeKind === 'agent')) {
+    return [];
+  }
+  const events: Record<string, unknown>[] = [];
+  for (const rawFile of await findSubagentFiles(transcriptPath)) {
+    const file: SubagentFile = { ...rawFile, cwd };
+    if (!needsRescope(state, file)) continue;
+    const snapshot = structuredClone(state);
+    try {
+      delete state.subagentOffsets[file.agentId];
+      events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+    } catch (err) {
+      Object.assign(state, snapshot);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[claude-code-otlp] fork re-scope failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
+    }
+  }
+  return events;
+}
+
+/**
  * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
  * events plus a `finalize` that commits only on an accepted send (see the module doc).
@@ -868,6 +921,9 @@ export async function openMainTranscriptPass(
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    if (trigger === 'Stop') {
+      events.push(...(await rescopeForkedSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1242,11 +1298,13 @@ export async function openSessionEndPass(
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
-      if (await subagentAlreadyCovered(state, file)) {
+      const rescope = needsRescope(state, file);
+      if (!rescope && (await subagentAlreadyCovered(state, file))) {
         continue;
       }
       const snapshot = structuredClone(state);
       try {
+        if (rescope) delete state.subagentOffsets[file.agentId];
         events.push(...(await deriveSubagentEvents(state, sessionId, file)));
       } catch (err) {
         Object.assign(state, snapshot);
