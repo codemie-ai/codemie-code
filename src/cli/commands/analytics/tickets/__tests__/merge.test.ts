@@ -59,7 +59,18 @@ describe('buildSessionTickets', () => {
 
   it('drops prompt ids whose number runs on into a version or a letter, like branch ids', () => {
     const result = buildSessionTickets(new Map([['s1', evidence({ tool: new Map([['ABC-1', 1]]), prompts: new Set(['ABC-7.1 and ABC-6x but ABC-8, ABC-9.']) })]]), new Set<TicketSource>(['prompt']));
-    expect(result.get('s1')!.map((t) => t.id)).toEqual(['ABC-8']);
+    // ABC-9 ends the sentence: a full stop alone is not a version.
+    expect(result.get('s1')!.map((t) => t.id)).toEqual(['ABC-8', 'ABC-9']);
+  });
+
+  it('keeps an id that ends a sentence, but not one running into a version', () => {
+    const result = buildSessionTickets(new Map([['s1', evidence({
+      tool: new Map([['ABC-1', 1]]),
+      prompts: new Set(['Fix ABC-22.', 'Then ABC-23. Next', 'ABC-24, ABC-25! (ABC-26)', 'not ABC-7.1, ABC-8.x or ABC-9.0']),
+      branches: new Set(['chore/abc-30.hotfix', 'fix/ABC-31']),
+    })]]), ALL);
+
+    expect(result.get('s1')!.map((t) => t.id)).toEqual(['ABC-1', 'ABC-22', 'ABC-23', 'ABC-24', 'ABC-25', 'ABC-26', 'ABC-31']);
   });
 
   it('keeps no branch or prompt ids when the report has no tool-call ids at all', () => {

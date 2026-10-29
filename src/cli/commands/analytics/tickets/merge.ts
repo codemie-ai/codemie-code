@@ -39,13 +39,16 @@ function compareIds(a: string, b: string): number {
 }
 
 /**
- * Ids in free text whose number does not run on into a `.` or a letter: `lodash-4.17`, `node-20.x`,
- * `ABC-7.1` (a version) and `bug-011CUabc`, `ABC-6x` (a suffix) are not tickets.
+ * Ids in free text whose number does not run on into a letter or into `.` plus a letter or digit:
+ * `lodash-4.17`, `node-20.x`, `ABC-7.1` (a version) and `bug-011CUabc`, `ABC-6x` (a suffix) are not
+ * tickets. A full stop ending a sentence is fine: `Fix ABC-22.` and `ABC-22. Next` keep `ABC-22`.
  */
+const RUNS_ON = /^(?:[A-Za-z]|\.[A-Za-z0-9])/;
+
 function standaloneIds(text: string, flags: string): string[] {
   const ids = new Set<string>();
   for (const match of text.matchAll(new RegExp(TICKET_RE.source, flags))) {
-    if (/[.A-Za-z]/.test(text[match.index + match[0].length] ?? '')) continue;
+    if (RUNS_ON.test(text.slice(match.index + match[0].length, match.index + match[0].length + 2))) continue;
     ids.add(match[0].toUpperCase());
     if (ids.size >= MAX_IDS_PER_TEXT) break;
   }

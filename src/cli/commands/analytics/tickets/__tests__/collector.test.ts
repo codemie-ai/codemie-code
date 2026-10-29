@@ -87,6 +87,17 @@ describe('TicketCollector', () => {
     ]);
   });
 
+  it('attributes a replayed tool call without an id once, by name, time and input', () => {
+    const collector = new TicketCollector({ sources: ALL, toolGlobs: JIRA });
+    const noId = { timestamp: at(0), message: { content: [{ type: 'tool_use', name: 'mcp__jira__get', input: { issueKey: 'CAKE-1' } }] } };
+    collector.observe(view('s1', [noId]));
+    collector.observe(view('s2', [noId, { timestamp: at(5000), message: { content: [{ type: 'tool_use', name: 'mcp__jira__get', input: { issueKey: 'CAKE-1' } }] } }]));
+
+    expect(collector.build().get('s1')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+    // s2 keeps its own later call to the same issue, not the replayed one.
+    expect(collector.build().get('s2')).toEqual([{ id: 'CAKE-1', sources: { tool: 1 } }]);
+  });
+
   it('ignores tools outside the configured patterns', () => {
     const collector = new TicketCollector({ sources: ALL, toolGlobs: ['mcp__*rally*'] });
     collector.observe(view('s1', [jiraCall('toolu_1', 'CAKE-1', 0)]));

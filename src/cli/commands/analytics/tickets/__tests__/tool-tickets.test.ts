@@ -87,6 +87,16 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ jql: 'labels in (GPT-4, UTF-8) AND sprint = OPS-3 AND issuekey = NUTLA-5' })).toEqual(['NUTLA-5']);
   });
 
+  it('reads the key aliases id, "Epic Link" and parentEpic', () => {
+    expect(ticketsFromToolInput({ jql: '"Epic Link" = ABC-5 AND id = abc-9' })).toEqual(['ABC-5', 'ABC-9']);
+    expect(ticketsFromToolInput({ jql: "'epic link' in (cake-1, CAKE-2) OR parentEpic = NUTLA-3 AND sprintId = 4" })).toEqual(['CAKE-1', 'CAKE-2', 'NUTLA-3']);
+  });
+
+  it('caps ids per call across all fields', () => {
+    const input = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`issue${i}Key`, `TK-${i + 1}`]));
+    expect(ticketsFromToolInput(input)).toHaveLength(20);
+  });
+
   it('reads keys inside JQL issue functions in any case', () => {
     expect(ticketsFromToolInput({ jql: 'issue in linkedIssues(abc-7)' })).toEqual(['ABC-7']);
     expect(ticketsFromToolInput({ jql: 'issue in linkedIssues("CAKE-9", "is blocked by") OR parent in childIssuesOf(nutla-1)' })).toEqual(['CAKE-9', 'NUTLA-1']);

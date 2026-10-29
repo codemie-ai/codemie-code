@@ -32,7 +32,7 @@ export function isTicketKeyField(name: string): boolean {
 /** Longest field value scanned, so a pasted log inside a JQL string cannot stall the report. */
 const MAX_VALUE_CHARS = 64 * 1024;
 
-/** Ids collected from one call, before the per-session cap is applied. */
+/** Ids taken from one tool call (all fields together), before the per-session cap is applied. */
 const MAX_IDS_PER_CALL = 20;
 
 /** Deepest nesting walked; real tool inputs are a level or two deep. */
@@ -63,7 +63,8 @@ const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 const JQL_STRING = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
 
 /** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
-const JQL_KEY_CLAUSE = new RegExp(String.raw`\b(?:key|issue|issuekey|parent)\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
+const JQL_KEY_FIELD_NAMES = String.raw`\b(?:key|id|issue|issuekey|parent|parentEpic)\b|"epic link"|'epic link'`;
+const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
 
 /** Text-search values (`summary ~ "…"`, `text !~ '…'`, unquoted `summary ~ UTF-8`): free text, never read. */
 const JQL_TEXT_SEARCH = new RegExp(String.raw`!?~\s*(?:${JQL_STRING}|[^\s()]+)`, 'g');
@@ -80,7 +81,8 @@ const JQL_CONDITION = new RegExp(
   String.raw`(?:\b[A-Za-z_][\w.]*|"[^"]+")\s*(?:!?=|!?~|>=|<=|>|<|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b|changed\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+)`,
   'gi'
 );
-const JQL_KEY_FIELD = /^(?:key|issue|issuekey|parent)\s/i;
+/** Conditions on fields holding issue keys: `key` and its alias `id`, `issue`, `parent`, `"Epic Link"`. */
+const JQL_KEY_FIELD = /^(?:(?:key|id|issue|issuekey|parent|parentEpic)|"epic link"|'epic link')\s/i;
 
 function jqlIds(text: string): string[] {
   const ids = new Set<string>();
@@ -148,5 +150,5 @@ export function ticketsFromToolInput(input: unknown, isKeyField: (name: string) 
     for (const [key, item] of Object.entries(value)) walk(item, depth + 1, key);
   };
   walk(input, 0, null);
-  return [...found];
+  return [...found].slice(0, MAX_IDS_PER_CALL);
 }

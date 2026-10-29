@@ -85,9 +85,11 @@ export class TicketCollector {
     if (this.collectTool) {
       for (const call of readToolCalls(view.agentName, view.parsed)) {
         if (!call.matchNames.some(this.matchesTool) || !inWindow(call.ts, view.windowEnd)) continue;
-        if (call.id !== null) {
-          if (this.seenCalls.has(call.id)) continue;
-          this.seenCalls.add(call.id);
+        // A call without an id is recognised by what a replay copies verbatim: name, time and input.
+        const callKey = call.id ?? (call.ts !== null ? `${call.name}|${call.ts}|${JSON.stringify(call.input) ?? ''}` : null);
+        if (callKey !== null) {
+          if (this.seenCalls.has(callKey)) continue;
+          this.seenCalls.add(callKey);
         }
         for (const id of ticketsFromToolInput(call.input)) e.tool.set(id, (e.tool.get(id) ?? 0) + 1);
       }
