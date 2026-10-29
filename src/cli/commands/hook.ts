@@ -7,7 +7,7 @@ import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSu
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
-import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
 /**
@@ -576,6 +576,10 @@ async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, c
  * disappear from metrics. The marker is cleared by `codemie profile login`
  * and by any successful metrics send.
  */
+// Agents whose prompt hook can hold the prompt while a sign-in completes. Kimi's 5s hook budget
+// and OpenCode's ignored block cannot wait; programmatic (VSCode) mode never waits.
+const AUTH_WAIT_AGENTS = new Set(['claude', 'gemini']);
+
 async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<void> {
   try {
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
@@ -600,15 +604,17 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
       env: config?.env,
     };
 
-    const authResult = await ensureCodeMieSsoAuth(authInput);
+    const canWait = !config && AUTH_WAIT_AGENTS.has(getConfigValue('CODEMIE_AGENT', config) ?? '');
+    const authResult = canWait
+      ? await ensureCodeMieSsoAuthOrWait(authInput, { onWaitStart: (m) => console.error(m) })
+      : await ensureCodeMieSsoAuth(authInput);
     if (authResult.ok) {
       return;
     }
 
     const message = [
-      'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
       `Reason: ${authResult.reason}.`,
-      describeLogin(authResult.loginOutcome),
+      describeLogin(authResult.loginOutcome, { wait: authResult.waitResult }),
     ].join('\n');
 
     logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
