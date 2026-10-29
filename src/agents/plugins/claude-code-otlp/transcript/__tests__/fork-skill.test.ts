@@ -266,6 +266,51 @@ describe('closed calls and result shapes', () => {
   });
 });
 
+/**
+ * Desktop app (embedded Claude Code 2.1.309, recorded session, sanitized): the slash user line of the
+ * latest prompt reaches the main transcript only AFTER SubagentStop and the immediate Stop. The fork's
+ * own first line (isMeta skill body, shared promptId) and a meta without toolUseId are already there.
+ */
+describe('main transcript not yet flushed (desktop ordering)', () => {
+  const earlier = [user('p0', '/forkme'), toolUse('tu1', 'Skill', { skill: 'forkme' }), toolResult('tu1', { agentId: 'old' })];
+  const queued = j({ type: 'queue-operation', operation: 'enqueue', content: '/forkme' });
+  const fork = { id: 'a', promptId: 'p1', meta: { agentType: 'general-purpose', requestShape: 'foreground', requestNonInteractive: true } };
+  const kinds = async (main: string, final = false) =>
+    Object.fromEntries((await findSubagentFiles(main, { final })).map((f) => [f.agentId, f.pending ? 'pending' : f.skillName || 'agent']));
+
+  it('holds the fork pending while its prompt is unknown to the main transcript, then names it once flushed', async () => {
+    const { main } = session([...earlier, queued], [{ id: 'old', promptId: 'p0' }, fork]);
+    expect(await kinds(main)).toEqual({ old: 'forkme', a: 'pending' });
+    const flushed = [...earlier, queued, user('p1', '/forkme')];
+    expect(await kinds(session(flushed, [{ id: 'old', promptId: 'p0' }, fork]).main)).toEqual({ old: 'forkme', a: 'forkme' });
+  });
+
+  it('never counts the prompt before the fork is confirmed, and ends the session as an agent if it never flushes', async () => {
+    const { main } = session([...earlier, queued], [fork]);
+    expect((await resolveForkSkills(main, await findSubagentFiles(main))).slashPromptIds.size).toBe(0);
+    expect(await kinds(main, true)).toEqual({ a: 'agent' });
+  });
+
+  it('does not delay a child that an exact id already proves to be an agent or a Skill fork', async () => {
+    const { main } = session(
+      [toolUse('tu9', 'Agent', {}), toolResult('tu9', { agentId: 'b' }), toolUse('tu8', 'Skill', { skill: 'other' }), toolResult('tu8', { agentId: 'c' })],
+      [{ id: 'b', promptId: 'p1' }, { id: 'c', promptId: 'p1' }, { id: 'd', promptId: 'p1', meta: { toolUseId: 'tuX' } }]
+    );
+    expect(await kinds(main)).toEqual({ b: 'agent', c: 'other', d: 'agent' });
+  });
+
+  it('keeps a metadata-less child pending while its own file has no complete line yet', async () => {
+    const { main } = session([user('p1', 'hello')], [{ id: 'a' }]);
+    writeFileSync(join(dir, 's1', 'subagents', 'agent-a.jsonl'), '');
+    expect(await kinds(main)).toEqual({ a: 'pending' });
+  });
+
+  it('a started Agent call whose result is not flushed yet still holds a flushed-prompt child pending', async () => {
+    const { main } = session([user('p1', '/inlineme'), toolUse('t', 'Agent', {})], [{ id: 'a', promptId: 'p1' }]);
+    expect(await kinds(main)).toEqual({ a: 'pending' });
+  });
+});
+
 describe('plain slash commands in the summary', () => {
   const msgs = [
     { promptId: 'p1', message: { role: 'user', content: '/forkme' } },

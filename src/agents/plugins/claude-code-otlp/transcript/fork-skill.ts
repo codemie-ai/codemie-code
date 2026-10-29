@@ -80,10 +80,13 @@ interface Scan {
   /** tool_use_id -> promptId of the user turn it was made in ('' when unknown). */
   promptByToolUseId: Map<string, string>;
   slashByPrompt: Map<string, string[]>;
+  /** Every promptId that has a line in the scanned transcript (main only: a flush-lag probe). */
+  promptsSeen: Set<string>;
 }
 
 function newScan(): Scan {
   return {
+    promptsSeen: new Set(),
     toolNameById: new Map(),
     skillByToolUseId: new Map(),
     resultAgentIdByToolUseId: new Map(),
@@ -132,7 +135,10 @@ function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt
       continue;
     }
     const content = line.message?.content;
-    if (typeof line.promptId === 'string' && line.promptId) prompt = line.promptId;
+    if (typeof line.promptId === 'string' && line.promptId) {
+      prompt = line.promptId;
+      if (withSlash) into.promptsSeen.add(prompt);
+    }
     if (withSlash && line.type === 'user' && !line.isMeta && !line.isSidechain) {
       const name = plainSlashCommandName(content);
       if (name && typeof line.promptId === 'string' && line.promptId) {
@@ -182,6 +188,11 @@ async function firstPromptId(filePath: string): Promise<string> {
     await handle?.close();
   }
   return '';
+}
+
+/** False while the subagent file is missing or has no complete line yet. */
+async function hasContent(filePath: string): Promise<boolean> {
+  return (await readText(filePath)).includes('\n');
 }
 
 export async function resolveForkSkills(
@@ -251,6 +262,17 @@ export async function resolveForkSkills(
     if (!file.skillName && (file.toolUseId || startedByOtherTool.has(file.agentId))) continue;
     const promptId = await firstPromptId(file.filePath);
     const slashLine = !!promptId && scan.slashByPrompt.has(promptId);
+    // The desktop app can flush a prompt's lines to the main transcript after the fork has stopped:
+    // until the main transcript knows the subagent's prompt, neither a `/name` line nor a starting
+    // call can be seen, so the absence of both proves nothing.
+    if (!file.skillName && !promptId && !(await hasContent(file.filePath))) {
+      leavePending(file);
+      continue;
+    }
+    if (!file.skillName && promptId && !scan.promptsSeen.has(promptId)) {
+      leavePending(file);
+      continue;
+    }
     if (file.skillName) {
       if (slashLine) candidatesByPrompt.set(promptId, [...(candidatesByPrompt.get(promptId) ?? []), file]);
       continue;

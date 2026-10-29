@@ -2929,6 +2929,24 @@ describe('subagent that may be a skill fork is deferred until provable (EPMCDME-
     expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
   });
 
+  it('desktop ordering: a slash fork stopped before its /name line reaches the main transcript is sent once, skill-scoped, after the flush', async () => {
+    const sessionId = 'session-desktop-slash';
+    const queued = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '/forkme' });
+    const slash = JSON.stringify({ type: 'user', promptId: 'p1', message: { role: 'user', content: '/forkme' } });
+    const forkFirst = JSON.stringify({ type: 'user', promptId: 'p1', isMeta: true, isSidechain: true, message: { role: 'user', content: 'Base directory for this skill: x' } });
+    const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), queued]);
+    const fork = writeSubagentFixture(sessionId, 'fork1', [forkFirst, ...forkUsage()]);
+
+    expect(await subagentEvents(sessionId, { ...fork, agentType: 'general-purpose', pending: true })).toEqual([]);
+    expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]); // the immediate Stop: still not flushed
+
+    writeFileSync(mainPath, lines(noUsageLine('uuid-m'), queued, slash));
+    const later = await mainEvents(sessionId, mainPath, 'Stop');
+    expect(scopes(later)).toEqual(['skill:forkme']);
+    expect(later.find((e) => e.type === 'agent.usage.request')).toMatchObject({ agent_id: 'fork1' });
+    expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]); // replay: nothing again
+  });
+
   it('ends an unproven deferred subagent as an agent at SessionEnd, once', async () => {
     const sessionId = 'session-agent-final';
     const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall]);
