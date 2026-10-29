@@ -4,7 +4,7 @@
  * description, a comment body — is never read.
  */
 
-import { TICKET_RE, extractTicketMentions } from '@/agents/core/ticket-parser.js';
+import { ANY_CASE, UPPER_CASE, standaloneIds } from './ids.js';
 
 /**
  * Default tool-name globs: Jira-flavoured MCP tools (`mcp__claude_ai_Atlassian__getJiraIssue`,
@@ -20,9 +20,10 @@ export const TICKET_KEY_FIELDS: ReadonlySet<string> = new Set(['key', 'parent', 
  * Key fields by naming convention, so MCP servers with different spellings are covered without a
  * list per server: `issueIdOrKey`, `issueKey`, `issueKeys` (jira_add_issues_to_sprint), `epicKey` /
  * `parentKey` (jira_create_issue), `issue_key`, `issue_keys`, `epic_key`, `inward_issue_key`,
- * `issue_ids_or_keys`. `projectKey` is not one: a project key carries no issue number.
+ * `issue_ids_or_keys`, and `issueId` / `issue_id` (some servers accept a key there; a numeric issue
+ * id never matches the ticket pattern). `projectKey` is not one: a project key carries no issue number.
  */
-const TICKET_KEY_FIELD_PATTERN = /^(issue|epic|parent|inward|outward)\w*keys?$/i;
+const TICKET_KEY_FIELD_PATTERN = /^(issue|epic|parent|inward|outward)\w*(?:keys?|ids?)$/i;
 
 /** Whether a tool-input field carries issue keys. */
 export function isTicketKeyField(name: string): boolean {
@@ -55,7 +56,7 @@ export function compileToolMatcher(globs: readonly string[]): (name: string) => 
 /**
  * Fields holding query text rather than a bare key. Free-text clauses (`text ~ "utf-8"`) would
  * otherwise produce ids, so a query is matched case-sensitively — except the value of an issue-key
- * clause (`key = epmcdme-7`, `issue in (a-1, B-2)`, `parent != x-3`), where Jira accepts any case.
+ * clause (`key = epmcdme-7`, `issue in (ab-1, B-2)`), where Jira accepts any case.
  */
 const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 
@@ -64,7 +65,13 @@ const JQL_STRING = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
 
 /** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
 const JQL_KEY_FIELD_NAMES = String.raw`\b(?:key|id|issue|issuekey|parent|parentEpic)\b|"epic link"|'epic link'`;
-const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:!?=|(?:not\s+)?in\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
+/**
+ * Only positive conditions: `key != ABC-1` and `key not in (ABC-9)` name issues the query excludes,
+ * which is no evidence the session worked on them.
+ */
+const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:(?<!!)=|(?<!not\s+)\bin\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
+/** A negative condition (`!=`, `not in`) — on any field. */
+const JQL_NEGATIVE_CONDITION = /^(?:"[^"]+"|'[^']+'|[\w.]+)\s*(?:!=|not\s+in\b)/i;
 
 /** Text-search values (`summary ~ "…"`, `text !~ '…'`, unquoted `summary ~ UTF-8`): free text, never read. */
 const JQL_TEXT_SEARCH = new RegExp(String.raw`!?~\s*(?:${JQL_STRING}|[^\s()]+)`, 'g');
@@ -91,12 +98,16 @@ function jqlIds(text: string): string[] {
   const query = text.replace(JQL_TEXT_SEARCH, ' ');
   for (const pattern of [JQL_KEY_CLAUSE, JQL_ISSUE_FUNCTION]) {
     for (const clause of query.matchAll(pattern)) {
-      for (const id of extractTicketMentions(clause[1], MAX_IDS_PER_CALL)) ids.add(id);
+      for (const id of standaloneIds(clause[1], ANY_CASE, MAX_IDS_PER_CALL)) ids.add(id);
     }
   }
   // Last, upper-case ids anywhere else in the query — but not in conditions on other fields.
-  const rest = query.replace(JQL_CONDITION, (condition) => (JQL_KEY_FIELD.test(`${condition} `) ? condition : ' '));
-  for (const id of rest.match(new RegExp(TICKET_RE.source, TICKET_RE.flags.replace('i', ''))) ?? []) ids.add(id);
+  // Conditions on key fields stay (an upper-case key inside an issue function is read from them),
+  // unless they are negative.
+  const rest = query.replace(JQL_CONDITION, (condition) =>
+    JQL_KEY_FIELD.test(`${condition} `) && !JQL_NEGATIVE_CONDITION.test(condition) ? condition : ' '
+  );
+  for (const id of standaloneIds(rest, UPPER_CASE, MAX_IDS_PER_CALL)) ids.add(id);
   return [...ids].slice(0, MAX_IDS_PER_CALL);
 }
 
@@ -128,7 +139,7 @@ export function ticketsFromToolInput(input: unknown, isKeyField: (name: string) 
   const found = new Set<string>();
   const scan = (text: string, field: string): void => {
     const value = text.slice(0, MAX_VALUE_CHARS);
-    const ids = QUERY_FIELDS.has(field) ? jqlIds(value) : extractTicketMentions(value, MAX_IDS_PER_CALL);
+    const ids = QUERY_FIELDS.has(field) ? jqlIds(value) : standaloneIds(value, ANY_CASE, MAX_IDS_PER_CALL);
     for (const id of ids) found.add(id);
   };
   /** `field` is the name of the field holding `value` (null at the top level). */

@@ -56,7 +56,8 @@ describe('ticketsFromToolInput', () => {
 
   it('accepts any case in the value of a JQL issue-key clause', () => {
     expect(ticketsFromToolInput({ jql: 'key = epmcdme-7 OR key = EPMCDME-8' })).toEqual(['EPMCDME-7', 'EPMCDME-8']);
-    expect(ticketsFromToolInput({ jql: 'issue in (ab-1, "cd-2") AND parent != \'ef-3\' AND issueKey NOT IN (gh-4)' })).toEqual(['AB-1', 'CD-2', 'EF-3', 'GH-4']);
+    // Negative conditions name excluded issues, so they are not evidence.
+    expect(ticketsFromToolInput({ jql: 'issue in (ab-1, "cd-2") AND parent != \'ef-3\' AND issueKey NOT IN (gh-4)' })).toEqual(['AB-1', 'CD-2']);
     expect(ticketsFromToolInput({ jql: 'labels = utf-8 AND text ~ "key = sha-1"' })).toEqual([]);
   });
 
@@ -85,6 +86,22 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ jql: 'fixVersion = "APP-2"' })).toEqual([]);
     expect(ticketsFromToolInput({ jql: 'fixVersion = APP-2 AND key = CAKE-1' })).toEqual(['CAKE-1']);
     expect(ticketsFromToolInput({ jql: 'labels in (GPT-4, UTF-8) AND sprint = OPS-3 AND issuekey = NUTLA-5' })).toEqual(['NUTLA-5']);
+  });
+
+  it('never takes ids from negative key conditions, in any case', () => {
+    expect(ticketsFromToolInput({ jql: 'key != ABC-1' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'key not in (ABC-9, ABC-10) AND key = ABC-2' })).toEqual(['ABC-2']);
+    expect(ticketsFromToolInput({ jql: '"Epic Link" != CAKE-5 OR id NOT IN (cake-6)' })).toEqual([]);
+  });
+
+  it('applies the version and suffix rule to key fields too', () => {
+    expect(ticketsFromToolInput({ key: 'lodash-4.17' })).toEqual([]);
+    expect(ticketsFromToolInput({ issueKey: 'ABC-6x', parent: 'ABC-7' })).toEqual(['ABC-7']);
+  });
+
+  it('reads issueId and issue_id when they hold a key, and ignores numeric ids', () => {
+    expect(ticketsFromToolInput({ issueId: 'ABC-30', issue_id: 'ABC-31', issueIds: ['ABC-32'] })).toEqual(['ABC-30', 'ABC-31', 'ABC-32']);
+    expect(ticketsFromToolInput({ issueId: '10234', parentId: 98765 })).toEqual([]);
   });
 
   it('reads the key aliases id, "Epic Link" and parentEpic', () => {

@@ -12,7 +12,7 @@
  * Prompts are also matched case-sensitively (an upper-case project key is required).
  */
 
-import { TICKET_RE } from '@/agents/core/ticket-parser.js';
+import { ANY_CASE, UPPER_CASE, standaloneIds } from './ids.js';
 import type { SessionTicket } from '../report/types.js';
 
 export type TicketSource = 'tool' | 'branch' | 'prompt';
@@ -38,26 +38,9 @@ function compareIds(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true });
 }
 
-/**
- * Ids in free text whose number does not run on into a letter or into `.` plus a letter or digit:
- * `lodash-4.17`, `node-20.x`, `ABC-7.1` (a version) and `bug-011CUabc`, `ABC-6x` (a suffix) are not
- * tickets. A full stop ending a sentence is fine: `Fix ABC-22.` and `ABC-22. Next` keep `ABC-22`.
- */
-const RUNS_ON = /^(?:[A-Za-z]|\.[A-Za-z0-9])/;
-
-function standaloneIds(text: string, flags: string): string[] {
-  const ids = new Set<string>();
-  for (const match of text.matchAll(new RegExp(TICKET_RE.source, flags))) {
-    if (RUNS_ON.test(text.slice(match.index + match[0].length, match.index + match[0].length + 2))) continue;
-    ids.add(match[0].toUpperCase());
-    if (ids.size >= MAX_IDS_PER_TEXT) break;
-  }
-  return [...ids];
-}
-
-/** Prompt ids: case-sensitive (the project key must be upper case), standalone like branch ids. */
+/** Prompt ids: case-sensitive (the project key must be upper case), standalone (ids.ts). */
 function promptTicketIds(text: string): string[] {
-  return standaloneIds(text, TICKET_RE.flags.replace('i', ''));
+  return standaloneIds(text, UPPER_CASE, MAX_IDS_PER_TEXT);
 }
 
 /** Branches bots create for dependency bumps: `dependabot/npm_and_yarn/lodash-4.17.21`, `renovate/node-20.x`. */
@@ -70,7 +53,7 @@ const BOT_BRANCH = /^(dependabot|renovate)\//i;
  * `hotfix/abc-12x`). A real id in a branch ends at `-`, `_`, `/` or the end of the name.
  */
 function branchTicketIds(branch: string): string[] {
-  return BOT_BRANCH.test(branch) ? [] : standaloneIds(branch, TICKET_RE.flags);
+  return BOT_BRANCH.test(branch) ? [] : standaloneIds(branch, ANY_CASE, MAX_IDS_PER_TEXT);
 }
 
 function prefixOf(id: string): string {
