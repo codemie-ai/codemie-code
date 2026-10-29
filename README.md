@@ -731,6 +731,7 @@ Quit and reopen Claude Desktop after the proxy configuration is written.
 ```bash
 codemie proxy status
 codemie proxy inspect desktop --limit 5
+codemie proxy restart [--profile <name>]   # restart, keeping port, client and key
 codemie proxy stop
 ```
 

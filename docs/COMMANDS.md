@@ -85,6 +85,7 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
+codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy

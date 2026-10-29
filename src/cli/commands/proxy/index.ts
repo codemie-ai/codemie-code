@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
-import { ConfigurationError } from '../../../utils/errors.js';
+import { ConfigurationError, ToolExecutionError } from '../../../utils/errors.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
@@ -10,6 +10,8 @@ import {
   spawnDaemon,
   stopDaemon,
   writeState,
+  type DaemonState,
+  type SpawnOptions,
 } from './daemon-manager.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { checkProxyHealth } from './health-check.js';
@@ -98,6 +100,42 @@ function parsePortOption(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
+
+/**
+ * Launch the daemon for a loaded profile config: verify credentials, sync
+ * skills, then spawn. Shared by `proxy start` and `proxy restart`; `overrides`
+ * carries the spawn options that differ between them (port, identity).
+ */
+async function launchDaemon(
+  config: LoadedConfig,
+  profile: string,
+  overrides: Partial<SpawnOptions>
+): Promise<DaemonState> {
+  if (!config.baseUrl) {
+    throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
+  }
+
+  await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
+
+  const cwd = process.cwd();
+  await Promise.allSettled([
+    syncRegisteredSkills(profile, cwd),
+    syncPluginSkills(),
+  ]);
+
+  console.log('Starting proxy daemon...');
+  return spawnDaemon({
+    targetUrl: config.baseUrl,
+    provider: config.provider ?? 'ai-run-sso',
+    profile,
+    project: config.codeMieProject,
+    syncApiUrl: config.ssoConfig?.apiUrl,
+    syncCodeMieUrl: config.codeMieUrl,
+    ...overrides,
+  });
+}
+
 function formatDaemonConflict(
   state: NonNullable<Awaited<ReturnType<typeof readState>>>
 ): string {
@@ -158,28 +196,7 @@ export function createProxyCommand(): Command {
           throw new ConfigurationError(formatDaemonConflict(state));
         }
 
-        if (!config.baseUrl) {
-          throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
-        }
-
-        await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
-
-        const cwd = process.cwd();
-        await Promise.allSettled([
-          syncRegisteredSkills(profile, cwd),
-          syncPluginSkills(),
-        ]);
-
-        console.log('Starting proxy daemon...');
-        const daemonState = await spawnDaemon({
-          targetUrl: config.baseUrl,
-          provider: config.provider ?? 'ai-run-sso',
-          profile,
-          port: requestedPort,
-          project: config.codeMieProject,
-          syncApiUrl: config.ssoConfig?.apiUrl,
-          syncCodeMieUrl: config.codeMieUrl,
-        });
+        const daemonState = await launchDaemon(config, profile, { port: requestedPort });
 
         console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
       } catch (error) {
@@ -199,6 +216,64 @@ export function createProxyCommand(): Command {
       }
       await stopDaemon();
       console.log(chalk.green('✓ Proxy stopped'));
+    });
+
+  // ── proxy restart ───────────────────────────────────────────────────────────
+  proxy
+    .command('restart')
+    .description('Restart the background proxy daemon, preserving its identity')
+    .option('--profile <name>', 'Profile whose credentials to use (default: the running daemon\'s)')
+    .action(async (opts: { profile?: string }) => {
+      try {
+        const { running, state } = await checkStatus();
+
+        if (!running || !state) {
+          // Nothing (alive) to preserve — a stale state file is ignored and
+          // this behaves like `proxy start` with the default identity.
+          const config = await ConfigLoader.load(
+            process.cwd(),
+            opts.profile ? { name: opts.profile } : undefined
+          );
+          const profile = config.name ?? 'default';
+          const daemonState = await launchDaemon(config, profile, {
+            port: DEFAULT_DAEMON_PORT,
+            clientType: 'codemie-daemon',
+          });
+          console.log(chalk.green(`✓ Proxy restarted at ${daemonState.url}  (profile: ${daemonState.profile})`));
+          return;
+        }
+
+        const config = await ConfigLoader.load(process.cwd(), { name: opts.profile ?? state.profile });
+        const profile = config.name ?? opts.profile ?? state.profile;
+
+        // Restarting replaces the daemon on purpose, so the start-time
+        // conflict check (formatDaemonConflict) does not apply here.
+        await stopDaemon();
+
+        const daemonState = await launchDaemon(config, profile, {
+          port: state.port,
+          clientType: state.clientType,
+          telemetryMode: state.telemetryMode,
+          gatewayKey: state.gatewayKey,
+          model: state.model,
+          project: opts.profile ? config.codeMieProject : (state.project ?? config.codeMieProject),
+        });
+
+        if (daemonState.port !== state.port) {
+          // Clients are configured for the recorded port; a daemon on another
+          // port would silently break them, so do not leave it running.
+          await stopDaemon();
+          throw new ToolExecutionError(
+            'proxy-daemon',
+            `Proxy could not rebind port ${state.port}; it came up on ${daemonState.port} and was stopped. ` +
+            `Free port ${state.port} and run: codemie proxy restart`
+          );
+        }
+
+        console.log(chalk.green(`✓ Proxy restarted at ${daemonState.url}  (profile: ${daemonState.profile})`));
+      } catch (error) {
+        printProxyError(error, 'Failed to restart proxy');
+      }
     });
 
   // ── proxy status ─────────────────────────────────────────────────────────────
