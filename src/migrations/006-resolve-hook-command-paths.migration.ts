@@ -13,44 +13,45 @@ class RewriteHookCommandPathsMigration implements Migration {
   id = '006-resolve-hook-command-paths';
   description = 'Rewrite installed Claude/Gemini hook commands to the absolute codemie path';
 
-  private hookFiles(): string[] {
+  private hookFiles(): Array<{ file: string; claude: boolean }> {
     return [
-      getCodemiePath('claude-plugin', 'hooks', 'hooks.json'),
-      path.join(homedir(), '.gemini', 'extensions', 'codemie', 'hooks', 'hooks.json'),
+      { file: getCodemiePath('claude-plugin', 'hooks', 'hooks.json'), claude: true },
+      { file: path.join(homedir(), '.gemini', 'extensions', 'codemie', 'hooks', 'hooks.json'), claude: false },
     ];
   }
 
   async up(): Promise<MigrationResult> {
-    logger.info('[006-resolve-hook-command-paths] Starting installed-hook path rewrite');
+    logger.info(`[${this.id}] Starting installed-hook path rewrite`);
 
     let migrated = false;
     let anyWriteFailed = false;
     let binary: string | undefined;
 
-    for (const file of this.hookFiles()) {
+    for (const { file, claude } of this.hookFiles()) {
       let parsed: { hooks?: unknown };
       try {
         parsed = JSON.parse(await fs.readFile(file, 'utf-8')) as { hooks?: unknown };
       } catch (error) {
         const code = (error as NodeJS.ErrnoException)?.code;
         if (code !== 'ENOENT') {
-          logger.warn(`[006-resolve-hook-command-paths] Skipped ${file}: ${(error as Error)?.message ?? error}`);
+          logger.warn(`[${this.id}] Skipped ${file}: ${(error as Error)?.message ?? error}`);
         }
         continue;
       }
 
       binary ??= await resolveCodemieBinary();
-      if (rewriteHooksCommandTree(parsed.hooks, binary)) {
+      const powershell = claude && process.platform === 'win32';
+      if (rewriteHooksCommandTree(parsed.hooks, binary, powershell)) {
         try {
           await fs.writeFile(file, JSON.stringify(parsed, null, 2), 'utf-8');
-          logger.info(`[006-resolve-hook-command-paths] Rewrote ${file}`);
+          logger.info(`[${this.id}] Rewrote ${file}`);
           migrated = true;
         } catch (error) {
           // success:false keeps the migration pending so a transient write error
           // (EACCES/EPERM/disk full) is retried, not recorded as applied forever.
           anyWriteFailed = true;
           logger.warn(
-            `[006-resolve-hook-command-paths] Failed to write ${file}: ${(error as Error)?.message ?? error}`,
+            `[${this.id}] Failed to write ${file}: ${(error as Error)?.message ?? error}`,
           );
         }
       }
