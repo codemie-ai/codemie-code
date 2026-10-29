@@ -5,6 +5,7 @@ import type {
   HookInput,
   PostCompactHookInput,
   PostModelSwitchHookInput,
+  PostToolUseFailureHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
@@ -51,10 +52,10 @@ import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import {
-  isSensitiveFilePath,
   resolveSkillForkFields,
   resolveToolContextFields,
   resolveToolDiffFields,
+  withoutSensitiveFileContent,
 } from './event-fields/tool-fields.js';
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
@@ -138,6 +139,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
     if (hookInput.hook_event_name === 'PostToolUse') {
       return await this.onPostToolUse(hookInput);
+    }
+    if (hookInput.hook_event_name === 'PostToolUseFailure') {
+      return await this.onPostToolUseFailure(hookInput);
     }
     if (hookInput.hook_event_name === 'Stop') {
       return await this.onStopEvent(hookInput);
@@ -462,23 +466,26 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
   }
 
+  // Tool events go through withoutSensitiveFileContent: a call on a credentials file would otherwise
+  // forward the file's content in tool_input (Edit/Write) or tool_response (Read/Edit/Write).
   private async onPreToolUse(hookInput: PreToolUseHookInput): Promise<ClaudeForwardDecision> {
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
-    return { decision: 'forward', payload: [{ ...hookInput, ...contextFields }] };
+    return { decision: 'forward', payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields }] };
   }
 
   private async onPostToolUse(hookInput: PostToolUseHookInput): Promise<ClaudeForwardDecision> {
-    // A Read of a credentials file would forward the file's content: keep the call, drop its result.
-    const readFilePath = hookInput.tool_name === 'Read' ? readOptionalString(hookInput.tool_input ?? {}, 'file_path') : undefined;
-    const forwardedInput: Record<string, unknown> = { ...hookInput };
-    if (readFilePath !== undefined && isSensitiveFilePath(readFilePath)) {
-      delete forwardedInput['tool_response'];
-    }
-    const toolResponse = forwardedInput['tool_response'];
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
-    const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, toolResponse);
-    const forkFields = resolveSkillForkFields(hookInput.tool_name, toolResponse);
-    return { decision: 'forward', payload: [{ ...forwardedInput, ...contextFields, ...diffFields, ...forkFields }] };
+    // Line counts and the fork id are derived from the uncut input, before its content is dropped.
+    const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
+    const forkFields = resolveSkillForkFields(hookInput.tool_name, hookInput.tool_response);
+    return {
+      decision: 'forward',
+      payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields, ...diffFields, ...forkFields }],
+    };
+  }
+
+  private async onPostToolUseFailure(hookInput: PostToolUseFailureHookInput): Promise<ClaudeForwardDecision> {
+    return { decision: 'forward', payload: [withoutSensitiveFileContent(hookInput)] };
   }
 
   /**

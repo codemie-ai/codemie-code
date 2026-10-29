@@ -270,3 +270,44 @@ describe('CopilotCliOtlpPlugin error field mapping', () => {
     expect(event).not.toHaveProperty('error_type');
   });
 });
+
+describe('CopilotCliOtlpPlugin free-text field masking', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+  const forwardOtlpEventsToSpool = vi.fn(async (_events: Array<Record<string, unknown>>, _agent: string) => true);
+  const originalSessionId = process.env.CODEMIE_SESSION_ID;
+  const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    if (originalSessionId === undefined) {
+      delete process.env.CODEMIE_SESSION_ID;
+    } else {
+      process.env.CODEMIE_SESSION_ID = originalSessionId;
+    }
+  });
+
+  // [native field, forwarded field, hook event it arrives on]
+  it.each([
+    ['source', 'source', 'sessionStart'],
+    ['reason', 'reason', 'agentStop'],
+    ['errorContext', 'error_context', 'errorOccurred'],
+    ['trigger', 'trigger', 'preCompact'],
+    ['title', 'title', 'notification'],
+    ['message', 'message', 'notification'],
+  ])('masks a secret in %s, forwarded as %s on %s', async (nativeField, forwardedField, eventName) => {
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: eventName, [nativeField]: `ask ${secret} now` }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const event = forwardOtlpEventsToSpool.mock.calls[0][0][0];
+    expect(event[forwardedField]).toBe('ask [REDACTED] now');
+    expect(JSON.stringify(event)).not.toContain(secret);
+  });
+});

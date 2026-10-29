@@ -140,10 +140,38 @@ const MAX_MASK_INPUT_CHARS = 64 * 1024;
 /** Deepest nesting `maskSecretsDeep` walks; anything deeper is redacted whole. */
 const MAX_MASK_DEPTH = 32;
 
+const NAME_VALUE_SEPARATOR = String.raw`\\?["']?[ \t]*[:=][ \t]*`;
+const QUOTED_OR_MASKED_VALUE = String.raw`\[REDACTED\]|\\?"[^"\r\n]*"|\\?'[^'\r\n]*'`;
+const VALUE_END = String.raw`(?=[\s"',;.)\]}]|$)`;
+
+/** Plain words that follow a secret-sounding name in prose or status output ("token: expired"). */
+const STATUS_WORD_VALUE = String.raw`(?!(?:expired|invalid|required|missing|none|null|nil|undefined|true|false|empty|unset|valid|revoked|hidden)${VALUE_END})`;
+
+/** A number or a path after the bare names pass/pwd ("pass: 12 tests", "PWD=/home/x"). */
+const NUMBER_OR_PATH_VALUE = String.raw`(?!\d+${VALUE_END})(?![/~\\]|\.{1,2}[/\\]|[A-Za-z]:[/\\])`;
+
+const STRONG_SECRET_NAME =
+  '[A-Za-z0-9_-]{0,60}(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|auth[_-]?key|credentials?)';
+
+// pass and pwd double as ordinary words and as the shell's working directory, so a number or path value is left alone
+const BARE_PASS_NAME = '[A-Za-z0-9_-]{0,60}pwd|(?:[A-Za-z0-9_-]{0,60}[_-])?pass';
+
+/** `NAME=value` / `name: value` / `"name": "value"`; an unquoted value is kept when `exempt` matches it. */
+function nameValueRule(name: string, exempt: string): [RegExp, string] {
+  return [
+    new RegExp(
+      String.raw`\b((?:${name})${NAME_VALUE_SEPARATOR})(?:${QUOTED_OR_MASKED_VALUE}|${STATUS_WORD_VALUE}${exempt}[^\s"']+)`,
+      'gi',
+    ),
+    `$1${REDACTED}`,
+  ];
+}
+
 /**
  * Secret formats found embedded in free text (not anchored, unlike SENSITIVE_VALUE_PATTERNS).
  * Every quantifier is bounded or runs over a character class that cannot overlap the next
  * token, so matching stays linear on adversarial input. Each entry replaces the whole match.
+ * Pattern matching is best effort: a secret in a format listed here is masked, any other passes through.
  */
 const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   // PEM block, including one cut off before its END line
@@ -154,10 +182,18 @@ const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/(\bauthorization\\?["']?[ \t]*[:=][ \t]*\\?["']?)[^\s"'\\;][^\r\n"'\\;]*/gi, `$1${REDACTED}`],
   // JWT
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, REDACTED],
-  // Bearer token (needs a digit so prose such as "Bearer authentication" is left alone)
-  [/\b(Bearer[ \t]+)(?=[A-Za-z0-9._~+/-]{0,200}\d)[A-Za-z0-9._~+/-]{8,}=*/gi, `$1${REDACTED}`],
+  // Bearer token (needs a digit or 20+ characters so prose such as "Bearer authentication" is left alone)
+  [/\b(Bearer[ \t]+)(?=[A-Za-z0-9._~+/-]{0,200}\d|[A-Za-z0-9._~+/-]{20})[A-Za-z0-9._~+/-]{8,}=*/gi, `$1${REDACTED}`],
   // OpenAI / Anthropic keys
   [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/g, REDACTED],
+  // Stripe secret and restricted keys
+  [/\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g, REDACTED],
+  // Google API keys and OAuth access tokens
+  [/\bAIza[A-Za-z0-9_-]{30,}/g, REDACTED],
+  [/\bya29\.[A-Za-z0-9_-]{20,}/g, REDACTED],
+  // npm and Hugging Face tokens
+  [/\bnpm_[A-Za-z0-9]{30,}/g, REDACTED],
+  [/\bhf_[A-Za-z0-9]{30,}/g, REDACTED],
   // AWS access key ids
   [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, REDACTED],
   // GitHub tokens
@@ -167,11 +203,21 @@ const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/\bglpat-[A-Za-z0-9_-]{20,}/g, REDACTED],
   // Slack tokens
   [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, REDACTED],
-  // NAME=value / name: value / "name": "value" where the name ends in a secret word
+  // Space-separated secret flags: --password hunter2, --api-key abc (not --token-file, nor an option or $VAR value)
   [
-    /\b((?:[A-Za-z0-9_-]{0,60}(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|auth[_-]?key|credentials?)|(?:[A-Za-z0-9_-]{0,60}[_-])?pass)\\?["']?[ \t]*[:=][ \t]*)(?:\[REDACTED\]|\\?"[^"\r\n]*"|\\?'[^'\r\n]*'|[^\s"']+)/gi,
+    /(--[a-z0-9-]{0,40}(?:password|passwd|secret|token|api-?key|access-?key|private-?key|credentials?)[ \t]+)(?![-$])(?:\\?"[^"\r\n]*"|\\?'[^'\r\n]*'|[^\s"']+)/gi,
     `$1${REDACTED}`,
   ],
+  // curl -u user:password / --user user:password (a numeric uid:gid pair such as docker's -u 1000:1000 is not a login)
+  [
+    /(\bcurl\b[^\n|;&]{0,300}?[ \t](?:-u[ \t]*|--(?:proxy-)?user[ \t=]+))(?:\\?["'])?(?!\$)[^\s"':]+:(?!\d+(?:[\s"']|$))[^\s"']+(?:\\?["'])?/g,
+    `$1${REDACTED}`,
+  ],
+  // mysql -pSECRET (attached; "-p SECRET" with a space makes mysql prompt, and SECRET is the database name)
+  [/(\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]{0,300}?[ \t]-p)(?!-)\S+/g, `$1${REDACTED}`],
+  // NAME=value / name: value / "name": "value" where the name ends in a secret word
+  nameValueRule(STRONG_SECRET_NAME, ''),
+  nameValueRule(BARE_PASS_NAME, NUMBER_OR_PATH_VALUE),
 ];
 
 /**

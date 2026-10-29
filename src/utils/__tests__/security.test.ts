@@ -404,7 +404,47 @@ describe('maskSecretsInText', () => {
     ['DB_PASS assignment', 'set DB_PASS=s3cretvalue ok', ['s3cretvalue'], ['set ', ' ok']], // gitleaks:allow
     ['long-named secret', 'MY_SERVICE_INTERNAL_ADMIN_CLIENT_SECRET=abc123xyzq end', ['abc123xyzq'], [' end']], // gitleaks:allow
     ['unquoted value with a separator', 'url?password=ab&cd7efg done', ['cd7efg'], ['url?', ' done']], // gitleaks:allow
+    ['space-separated --password flag', 'mysql --password hunter2xyz -h db', ['hunter2xyz'], ['mysql --password ', ' -h db']], // gitleaks:allow
+    ['space-separated --api-key flag', 'cli --api-key abcd1234 --verbose', ['abcd1234'], ['cli --api-key ', ' --verbose']], // gitleaks:allow
+    ['quoted --token flag', 'cli --token "ab cd 12" --verbose', ['ab cd 12'], ['cli --token ', ' --verbose']], // gitleaks:allow
+    ['curl -u login', 'curl -u admin:pass1234 https://x.example', ['admin', 'pass1234'], ['curl -u ', ' https://x.example']], // gitleaks:allow
+    ['curl --user login in quotes', 'curl -L --user "admin:pass1234" https://x.example', ['admin', 'pass1234'], ['curl -L --user ', ' https://x.example']], // gitleaks:allow
+    ['mysql attached -p password', 'mysql -h db -pSecretPw1 app', ['SecretPw1'], ['mysql -h db -p', ' app']], // gitleaks:allow
+    ['Stripe live key', `key ${['sk', 'live', '51H8abcDEFghiJKLmnopQRST'].join('_')} now`, ['51H8abcDEFghiJKLmnopQRST'], ['key ', ' now']], // gitleaks:allow
+    ['Stripe restricted key', `key ${['rk', 'test', '51H8abcDEFghiJKLmnopQRST'].join('_')} now`, ['51H8abcDEFghiJKLmnopQRST'], ['key ', ' now']], // gitleaks:allow
+    ['Google API key', 'key AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q now', ['A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q'], ['key ', ' now']], // gitleaks:allow
+    ['Google OAuth token', 'tok ya29.a0AfH6SMBabcdefghijklmnop now', ['a0AfH6SMBabcdefghijklmnop'], ['tok ', ' now']], // gitleaks:allow
+    ['npm token', 'npm_abcdefghijklmnopqrstuvwxyz0123456789 end', ['abcdefghijklmnopqrstuvwxyz0123456789'], [' end']], // gitleaks:allow
+    ['Hugging Face token', `use ${['hf', 'abcdefghijklmnopqrstuvwxyzABCDEFGH'].join('_')} now`,['abcdefghijklmnopqrstuvwxyzABCDEFGH'], ['use ', ' now']], // gitleaks:allow
+    ['letters-only Bearer token', 'send Bearer abcdefghijklmnopqrstuv now', ['abcdefghijklmnopqrstuv'], ['send Bearer ', ' now']], // gitleaks:allow
+    ['numeric password', 'password=123456', ['123456'], ['password=']], // gitleaks:allow
+    ['pass= value that only starts with digits', 'pass=12ab34 ok', ['12ab34'], ['pass=', ' ok']], // gitleaks:allow
+    ['pwd= word value', 'pwd=hunter2 ok', ['hunter2'], [' ok']], // gitleaks:allow
   ];
+
+  // Text that names a secret-like word but holds none: it must come through untouched (AC4).
+  const benign = [
+    'pass: 12 tests',
+    'PWD=/home/x',
+    'OLDPWD=C:\\Users\\x',
+    'pwd=./build',
+    'token: expired',
+    'password: required',
+    'secret: none',
+    'api_key: missing',
+    'tokens: 5',
+    'Bearer authentication is used',
+    'mkdir -p /tmp/x && cp -p a b',
+    'mysql -p dbname',
+    'mysql -P3306 -h db',
+    'docker run -u 1000:1000 img',
+    'git push -u origin main',
+    'login --token $GH_TOKEN --token-file token.txt',
+  ];
+
+  it.each(benign)('leaves benign text unchanged: %s', (text) => {
+    expect(maskSecretsInText(text)).toBe(text);
+  });
 
   it.each(cases)('masks %s embedded in prose', (_label, input, gone, kept) => {
     const result = maskSecretsInText(input);
@@ -449,6 +489,9 @@ describe('maskSecretsInText', () => {
       '-----BEGIN PRIVATE KEY-----'.repeat(5_000),
       'Bearer '.repeat(30_000),
       'password='.repeat(30_000),
+      '--token '.repeat(10_000),
+      'curl -u '.repeat(10_000),
+      'mysql -h '.repeat(10_000),
     ];
     const start = Date.now();
     for (const input of inputs) {

@@ -110,6 +110,30 @@ const FILE_PATH_KEY_BY_TOOL: Record<string, string> = {
   NotebookEdit: 'notebook_path',
 };
 
+/** Every tool that reads or writes file content -> the `tool_input` key holding its path. */
+const FILE_CONTENT_TOOL_PATH_KEYS: ReadonlyMap<string, string> = new Map([
+  ['Read', 'file_path'],
+  ...Object.entries(FILE_PATH_KEY_BY_TOOL),
+]);
+
+/**
+ * The tool hook payload as it may be forwarded. A call that reads or writes a credentials file
+ * (Read, Edit, MultiEdit, Write, NotebookEdit) keeps `tool_name` and the path, and loses everything
+ * that can hold the file's content: `tool_input` shrinks to the path, `tool_response` is dropped,
+ * and so is a failure's `error`, which can echo the text being edited. Any other call is unchanged.
+ */
+export function withoutSensitiveFileContent(hookInput: { tool_name: string; tool_input?: unknown }): Record<string, unknown> {
+  const forwarded: Record<string, unknown> = { ...hookInput };
+  const pathKey = FILE_CONTENT_TOOL_PATH_KEYS.get(hookInput.tool_name);
+  const path = pathKey ? readString(hookInput.tool_input, pathKey) : '';
+  if (pathKey && path && isSensitiveFilePath(path)) {
+    forwarded['tool_input'] = { [pathKey]: path };
+    delete forwarded['tool_response'];
+    delete forwarded['error'];
+  }
+  return forwarded;
+}
+
 /** This CLI's own name for the subagent-dispatch tool is `Agent`; standard Claude Code uses `Task`. */
 const AGENT_DISPATCH_TOOLS = new Set(['Agent', 'Task']);
 
