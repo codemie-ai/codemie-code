@@ -384,7 +384,7 @@ describe('project gate — ingest vs forwarding', () => {
       await cursorsAtEof(total);
     });
 
-    it('B fails and then succeeds on the next tick: A is sent again byte for byte, endedAt waits for the whole batch', async () => {
+    it('B fails and then succeeds on the next tick: A is not sent again, endedAt waits for the whole batch', async () => {
       const { forwardSession } = await import('../forwarder.js');
       const { readStatus } = await import('../session-status.js');
       const end = event('B', 'end', 'agent.session.end');
@@ -402,11 +402,10 @@ describe('project gate — ingest vs forwarding', () => {
       await forwardSession(SESSION, true, credentials as never);
 
       const requests = hooksRequests();
-      expect(requests).toHaveLength(4);
+      expect(requests).toHaveLength(3);
       expect(requests[0]).toEqual({ project: 'A', body: bodyOf(a1) });
       expect(requests[1]).toEqual({ project: 'B', body: bodyOf(b1, end) });
-      expect(requests[2]).toEqual(requests[0]);
-      expect(requests[3]).toEqual(requests[1]);
+      expect(requests[2]).toEqual(requests[1]);
       status = await readStatus(SESSION);
       expect(status?.cursors.hooks).toBe(total);
       expect(status?.endedAt).toEqual(expect.any(Number));

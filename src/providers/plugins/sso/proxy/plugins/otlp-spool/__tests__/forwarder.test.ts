@@ -336,7 +336,7 @@ describe('forwardSession (hooks split by project)', () => {
     );
   });
 
-  it('stops at a failed group: cursor unchanged and the session not marked ended', async () => {
+  it('keeps sending the other groups after a failed one: cursor unchanged, session not marked ended', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue(
       batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'B' }, { codemie_project_name: 'C' }])
     );
@@ -345,12 +345,25 @@ describe('forwardSession (hooks split by project)', () => {
 
     await forwardSession('s1', true, credentials);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hookCalls().map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'B', 'C']);
     expect(advanceCursorMock).not.toHaveBeenCalled();
     expect(markSessionEndedMock).not.toHaveBeenCalled();
   });
 
-  it('re-sends the accepted group with identical bytes on retry and advances only when all succeed', async () => {
+  it('delivers a healthy group behind a failing one in the same tick', async () => {
+    fetchMock.mockImplementation(async (_url: string, init: { headers: Record<string, string> }) => ({
+      ok: init.headers['X-CodeMie-Project'] !== 'A',
+      status: init.headers['X-CodeMie-Project'] === 'A' ? 500 : 200,
+    }));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(hookCalls().map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'B']);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('sends only the open group on the next tick and advances when it succeeds', async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValueOnce({ ok: false, status: 500 });
     const { forwardSession } = await import('../forwarder.js');
 
@@ -360,25 +373,147 @@ describe('forwardSession (hooks split by project)', () => {
     await forwardSession('s1', true, credentials);
 
     const calls = hookCalls();
-    expect(calls).toHaveLength(4);
-    expect(calls[2][1].headers['X-CodeMie-Project']).toBe('A');
-    expect(calls[2][1].body).toBe(calls[0][1].body);
-    expect(calls[3][1].headers['X-CodeMie-Project']).toBe('B');
-    expect(calls[3][1].body).toBe(calls[1][1].body);
+    expect(calls).toHaveLength(3);
+    expect(calls[2][1].headers['X-CodeMie-Project']).toBe('B');
+    expect(calls[2][1].body).toBe(calls[1][1].body);
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
   });
 
-  it('marks credentials stale and leaves the cursor when a later group is auth-expired', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValue({ ok: false, status: 401 });
+  it('sends an accepted group again when its events changed', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValueOnce({ ok: false, status: 500 });
     const { forwardSession } = await import('../forwarder.js');
-    const { areCredentialsStale } = await import('../auth-state.js');
 
     await forwardSession('s1', true, credentials);
+    snapshotPendingHookRecordsMock.mockResolvedValue(batch([eventA1, eventB, eventA2], { byteLength: 400 }));
+    await forwardSession('s1', true, credentials);
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(advanceCursorMock).not.toHaveBeenCalled();
-    expect(areCredentialsStale()).toBe(true);
+    expect(hookCalls().map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'B', 'A', 'B']);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 420);
+  });
+
+  it('forgets the accepted groups once the cursor has advanced', async () => {
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+    await forwardSession('s1', true, credentials);
+
+    expect(hookCalls()).toHaveLength(4);
+    expect(advanceCursorMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a group that keeps failing', () => {
+    const failB = (): void => {
+      fetchMock.mockImplementation(async (_url: string, init: { headers: Record<string, string> }) =>
+        init.headers['X-CodeMie-Project'] === 'B' ? { ok: false, status: 500 } : { ok: true, status: 200 }
+      );
+    };
+    const withSessionEnd = () =>
+      batch([eventA1, { type: 'agent.session.end', session_id: 's1', codemie_project_name: 'B' }]);
+
+    it('holds the range back for the first four failures, then consumes the group and advances', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(withSessionEnd());
+      failB();
+      const { forwardSession } = await import('../forwarder.js');
+      const { logger } = await import('@/utils/logger.js');
+
+      for (let tick = 0; tick < 4; tick++) {
+        await forwardSession('s1', true, credentials);
+      }
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      await forwardSession('s1', true, credentials);
+
+      expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+      expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', 320);
+      expect(logger.warn).toHaveBeenCalledWith(
+        '[otlp-forwarder] hook record group dropped after repeated failures',
+        expect.anything()
+      );
+    });
+
+    it('does not send the accepted group again while it waits', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(withSessionEnd());
+      failB();
+      const { forwardSession } = await import('../forwarder.js');
+
+      for (let tick = 0; tick < 5; tick++) {
+        await forwardSession('s1', true, credentials);
+      }
+
+      const sent = hookCalls().map(([, init]) => init.headers['X-CodeMie-Project']);
+      expect(sent.filter((project) => project === 'A')).toHaveLength(1);
+      expect(sent.filter((project) => project === 'B')).toHaveLength(5);
+    });
+
+    it('does not mark the session ended for a session end held by the consumed group', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(withSessionEnd());
+      failB();
+      const { forwardSession } = await import('../forwarder.js');
+
+      for (let tick = 0; tick < 5; tick++) {
+        await forwardSession('s1', true, credentials);
+      }
+
+      expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+      expect(markSessionEndedMock).not.toHaveBeenCalled();
+    });
+
+    it('restarts the count after a success', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(withSessionEnd());
+      const { forwardSession } = await import('../forwarder.js');
+
+      failB();
+      for (let tick = 0; tick < 4; tick++) {
+        await forwardSession('s1', true, credentials);
+      }
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue({ ok: true, status: 200 });
+      await forwardSession('s1', true, credentials);
+
+      expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+      expect(markSessionEndedMock).toHaveBeenCalledWith('s1');
+    });
+
+    it('never puts the project name in the warning', async () => {
+      snapshotPendingHookRecordsMock.mockResolvedValue(withSessionEnd());
+      failB();
+      const { forwardSession } = await import('../forwarder.js');
+      const { logger } = await import('@/utils/logger.js');
+
+      for (let tick = 0; tick < 5; tick++) {
+        await forwardSession('s1', true, credentials);
+      }
+
+      expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('"B"');
+    });
+  });
+
+  describe('401/403 on a hooks group', () => {
+    it('marks credentials stale and stops when the first group is auth-expired', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 401 });
+      const { forwardSession } = await import('../forwarder.js');
+      const { areCredentialsStale } = await import('../auth-state.js');
+
+      await forwardSession('s1', true, credentials);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+      expect(areCredentialsStale()).toBe(true);
+    });
+
+    it('treats it as that group failing, not as expired credentials, after an accepted group', async () => {
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockResolvedValue({ ok: false, status: 403 });
+      const { forwardSession } = await import('../forwarder.js');
+      const { areCredentialsStale } = await import('../auth-state.js');
+
+      await forwardSession('s1', true, credentials);
+
+      expect(areCredentialsStale()).toBe(false);
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+      expect(hookCalls().map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'B', 'B']);
+    });
   });
 
   it('marks the session ended for a session end in a non-bound group, after the cursor advance', async () => {

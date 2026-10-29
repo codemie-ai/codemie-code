@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -16,7 +17,7 @@ import {
   snapshotPendingHookRecords,
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-import { groupHookRecords } from './hook-records.js';
+import { groupHookRecords, type HookGroup } from './hook-records.js';
 
 const OTEL_ENDPOINTS: Record<OtelStream, string> = {
   logs: CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS,
@@ -270,12 +271,55 @@ async function resolveBaseUrl(): Promise<string> {
   return state?.targetUrl ?? state?.url ?? '';
 }
 
+/** Consecutive failed attempts after which a hook group is consumed without being delivered. */
+const MAX_GROUP_FAILURES = 5;
+
+/** Sessions whose stuck hooks range is tracked; bounded so a long-lived daemon cannot grow it without limit. */
+const MAX_TRACKED_RANGES = 1000;
+
+/**
+ * What the forwarder remembers about a hooks range whose cursor has not advanced yet: the groups
+ * already settled (accepted, or consumed after repeated failure) and consecutive failures per
+ * project. In memory only; it ends when the cursor advances and starts over after a daemon restart.
+ */
+interface HookRangeProgress {
+  cursor: number;
+  settled: Set<string>;
+  /** Settled groups that were consumed without being delivered. */
+  dropped: Set<string>;
+  failures: Map<string, number>;
+}
+
+const hookRanges = new Map<string, HookRangeProgress>();
+
+function hookRangeProgress(sessionId: string, cursor: number): HookRangeProgress {
+  const known = hookRanges.get(sessionId);
+  if (known && known.cursor === cursor) {
+    return known;
+  }
+  if (!known && hookRanges.size >= MAX_TRACKED_RANGES) {
+    const oldest = hookRanges.keys().next().value;
+    if (oldest !== undefined) hookRanges.delete(oldest);
+  }
+  const fresh: HookRangeProgress = { cursor, settled: new Set(), dropped: new Set(), failures: new Map() };
+  hookRanges.set(sessionId, fresh);
+  return fresh;
+}
+
+/** Identifies a group by its project and exact bytes, so a group that gained events is a new group. */
+function hookGroupKey(group: HookGroup): string {
+  return `${group.project}\0${createHash('sha256').update(group.ndjson).digest('hex')}`;
+}
+
 /**
  * Forward the complete hook records after the hooks cursor, one request per project group, in
- * order. The groups share one byte range: the cursor advances only after every group returned
- * `ok`; the first other result stops the batch and is returned with the cursor untouched, so the
- * next tick re-sends the whole range, accepted groups included (the backend skips records it
- * already ingested). One persistently failing group therefore holds back the whole range.
+ * order. The groups share one byte range and one cursor, which advances once every group is
+ * settled. A group that fails does not stop the others: they are still sent, and a group
+ * accepted earlier in this range is not sent again. The first failure is returned with the cursor
+ * untouched, and the next tick sends only what is still open. A group that fails
+ * `MAX_GROUP_FAILURES` times in a row is consumed with a warning so it cannot hold the range back
+ * forever. A 401/403 only counts as expired credentials while nothing in this tick was accepted;
+ * after an accepted group it is that group's failure.
  */
 async function forwardHooks(
   sessionId: string,
@@ -323,18 +367,51 @@ async function forwardHooks(
 
   const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
   const range = { cursor: batch.cursor, end, filtered };
+  const progress = hookRangeProgress(sessionId, batch.cursor);
+  let accepted = false;
+  let failure: SendResult | undefined;
   for (const group of payload.groups) {
-    const result = await send(
+    const key = hookGroupKey(group);
+    if (progress.settled.has(key)) {
+      continue;
+    }
+    let result = await send(
       sessionId, 'hooks', url, group.ndjson, 'application/x-ndjson', credentials, group.project, range
     );
-    if (result !== 'ok') {
-      return result;
+    if (result === 'ok') {
+      accepted = true;
+      progress.settled.add(key);
+      progress.failures.delete(group.project);
+      continue;
     }
+    if (result === 'auth-expired') {
+      if (!accepted) {
+        return result;
+      }
+      result = 'failed';
+    }
+    const failures = (progress.failures.get(group.project) ?? 0) + 1;
+    if (failures >= MAX_GROUP_FAILURES) {
+      progress.failures.delete(group.project);
+      progress.settled.add(key);
+      progress.dropped.add(key);
+      logger.warn(
+        '[otlp-forwarder] hook record group dropped after repeated failures',
+        ...sanitizeLogArgs({ sessionId, attempts: failures })
+      );
+      continue;
+    }
+    progress.failures.set(group.project, failures);
+    failure ??= result;
+  }
+  if (failure) {
+    return failure;
   }
 
   await advanceCursor(sessionId, 'hooks', end);
+  hookRanges.delete(sessionId);
 
-  if (payload.groups.some((group) => group.containsSessionEnd)) {
+  if (payload.groups.some((group) => group.containsSessionEnd && !progress.dropped.has(hookGroupKey(group)))) {
     await markSessionEnded(sessionId);
   }
 
