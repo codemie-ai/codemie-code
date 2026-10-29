@@ -42,6 +42,9 @@ Harness: `replay-desktop-hookpath.mjs` feeds the captured native hook payloads, 
 - `rollups.py` ~1219: summary `commands`/`primary_command` are stored as sent.
 - Inspected, not executed. The backend checkout has uncommitted changes from a parallel task and no DB was used.
 
+## Actual complexity (after user approval)
+`actual-complexity.json` (sdlc-factory `complexity-assessor`, mode actual): **M, 19/36**, band 15-20, no split. Scored range: `origin/main` (`8b8bedb6`, unchanged at assessment time) ... code HEAD `c8d3d126`, 11 files, +1029/-15, from the file list, diffstat and commit history only (the assessor did not read the sources, so technical risk and component scope are estimates). Intended label `sdlc-factory-act-M` on EPMCDME-16352 and EPMCDME-16391 (additive). **Not recorded:** the direct Jira REST `PUT` (labels `update.add` only) returned HTTP 403 for both tickets with the local token (read access works; existing labels `Horizon1`, `codemie-analytics` unchanged). The label needs to be added by someone with edit rights.
+
 ## Remaining limitations
 1. **Live backend not exercised**: live CodeMie ingest, SQL execution, pricing/cost and the rendered Timeline row / Slash-commands chart were not run. This is a validation boundary, not a known source defect; no end-to-end UI or cost claim is made. Deployment/API smoke remains to be done.
 2. A deferred fork's `agent.subagent.stop` is forwarded at hook time without `skill_name`/`started_at`/`duration_ms`/derived description (never replayed, to avoid a duplicate stop row); `SubagentStart` has no `skill_name` when the fork is pending or its file is missing. The server joins by `prompt_id`/`agent_id`; rendering of that row is part of limitation 1.
