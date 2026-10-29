@@ -95,12 +95,41 @@ const JQL_NOT_CONDITION = new RegExp(
   'gi'
 );
 
-/** Blanks every `NOT ( … )` group, matching nested parentheses and skipping quoted strings. */
+/**
+ * Quoted strings are opaque. Every pattern below is applied together with `JQL_STRING` as a second
+ * alternative, so a string is consumed whole wherever a pattern does not start a match: words
+ * inside `status = "To Do"` or `summary = "key = ABC-9"` never look like JQL to it.
+ */
+function outsideStrings(pattern: RegExp): RegExp {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  return new RegExp(String.raw`(?:${pattern.source})|(?<quoted>${JQL_STRING})`, flags);
+}
+
+/** `text` with every match of `pattern` outside quoted strings replaced (default: blanked). */
+function replaceOutsideStrings(text: string, pattern: RegExp, replace: (match: string) => string = () => ' '): string {
+  let out = '';
+  let last = 0;
+  for (const match of text.matchAll(outsideStrings(pattern))) {
+    out += text.slice(last, match.index) + (match.groups?.quoted !== undefined ? match[0] : replace(match[0]));
+    last = match.index + match[0].length;
+  }
+  return out + text.slice(last);
+}
+
+/** Capture group 1 of every match of `pattern` outside quoted strings. */
+function* capturesOutsideStrings(text: string, pattern: RegExp): Generator<string> {
+  for (const match of text.matchAll(outsideStrings(pattern))) {
+    if (match.groups?.quoted === undefined && match[1] !== undefined) yield match[1];
+  }
+}
+
+/** Blanks every `NOT ( … )` group outside quoted strings, matching nested parentheses. */
 function blankNotGroups(query: string): string {
   const out = query.split('');
-  const not = /\bnot\s*\(/gi;
+  const not = new RegExp(String.raw`(\bnot\s*\()|(?:${JQL_STRING})`, 'gi');
   let match: RegExpExecArray | null;
   while ((match = not.exec(query)) !== null) {
+    if (match[1] === undefined) continue;
     let depth = 0;
     let i = match.index + match[0].length - 1;
     for (; i < query.length; i++) {
@@ -138,17 +167,17 @@ const JQL_KEY_FIELD = /^(?:(?:key|id|issue|issuekey|parent|parentEpic)|"epic lin
 
 function jqlIds(text: string): string[] {
   const ids = new Set<string>();
-  const positive = blankNotGroups(text.replace(JQL_TEXT_SEARCH, ' '))
-    .replace(JQL_HISTORY_PREDICATE, ' ')
-    .replace(JQL_NOT_CONDITION, ' ')
-    .replace(JQL_NON_POSITIVE_CONDITION, ' ');
+  let positive = blankNotGroups(replaceOutsideStrings(text, JQL_TEXT_SEARCH));
+  for (const pattern of [JQL_HISTORY_PREDICATE, JQL_NOT_CONDITION, JQL_NON_POSITIVE_CONDITION]) {
+    positive = replaceOutsideStrings(positive, pattern);
+  }
   for (const pattern of [JQL_KEY_CLAUSE, JQL_ISSUE_FUNCTION]) {
-    for (const clause of positive.matchAll(pattern)) {
-      for (const id of standaloneIds(clause[1], ANY_CASE, MAX_IDS_PER_CALL)) ids.add(id);
+    for (const value of capturesOutsideStrings(positive, pattern)) {
+      for (const id of standaloneIds(value, ANY_CASE, MAX_IDS_PER_CALL)) ids.add(id);
     }
   }
   // Last, upper-case ids anywhere else, except in conditions on fields that hold no issue keys.
-  const rest = positive.replace(JQL_CONDITION, (condition) => (JQL_KEY_FIELD.test(`${condition} `) ? condition : ' '));
+  const rest = replaceOutsideStrings(positive, JQL_CONDITION, (condition) => (JQL_KEY_FIELD.test(`${condition} `) ? condition : ' '));
   for (const id of standaloneIds(rest, UPPER_CASE, MAX_IDS_PER_CALL)) ids.add(id);
   return [...ids].slice(0, MAX_IDS_PER_CALL);
 }

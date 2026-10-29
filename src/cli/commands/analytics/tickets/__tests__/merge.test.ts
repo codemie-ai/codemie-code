@@ -75,6 +75,11 @@ describe('buildSessionTickets', () => {
     expect(result.get('s1')!.map((t) => t.id)).toEqual(['ABC-1', 'ABC-22', 'ABC-23', 'ABC-24', 'ABC-25', 'ABC-26', 'ABC-31']);
   });
 
+  it('keeps both ids when a full stop joins them', () => {
+    const result = buildSessionTickets(new Map([['s1', evidence({ tool: new Map([['ABC-9', 1]]), prompts: new Set(['see ABC-1.ABC-2 but not ABC-3.1']) })]]), new Set<TicketSource>(['prompt']));
+    expect(result.get('s1')!.map((t) => t.id)).toEqual(['ABC-1', 'ABC-2']);
+  });
+
   it('keeps no branch or prompt ids when the report has no tool-call ids at all', () => {
     const result = buildSessionTickets(new Map([['s1', evidence({ branches: new Set(['feature/CAKE-807']), prompts: new Set(['CAKE-808']) })]]), ALL);
     expect(result.has('s1')).toBe(false);

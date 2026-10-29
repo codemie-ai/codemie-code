@@ -88,6 +88,17 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ jql: 'labels in (GPT-4, UTF-8) AND sprint = OPS-3 AND issuekey = NUTLA-5' })).toEqual(['NUTLA-5']);
   });
 
+  it('treats quoted strings as opaque, so their words never look like JQL', () => {
+    expect(ticketsFromToolInput({ jql: 'status = "To Do" AND fixVersion = "REL-2"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'status = "Waiting on Customer" AND sprint = "SPR-9"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'status = "To Do" AND summary = "fix GPT-4 handling"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'summary = "key = ABC-9" OR summary = "issue in linkedIssues(ABC-8)"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'labels = "do not (touch)" AND status = "To Do" AND key = abc-4' })).toEqual(['ABC-4']);
+    // Real history predicates are still dropped, quoted field names still work.
+    expect(ticketsFromToolInput({ jql: 'status changed from "To Do" to "IN-2" AND status was "Done" by "BOB-1"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: '"Epic Link" != CAKE-5 AND "Epic Link" = "cake-6"' })).toEqual(['CAKE-6']);
+  });
+
   it('blanks NOT groups with nested parentheses, and negated issue functions', () => {
     expect(ticketsFromToolInput({ jql: 'NOT (key in (ABC-9))' })).toEqual([]);
     expect(ticketsFromToolInput({ jql: 'NOT (key in (ABC-9, ABC-8)) AND project = ABC' })).toEqual([]);
