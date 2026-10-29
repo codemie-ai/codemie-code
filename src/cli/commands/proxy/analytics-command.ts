@@ -1,8 +1,9 @@
 /**
- * `codemie proxy analytics` — turns Claude Code analytics collection off/on or excludes a single
- * project, without uninstalling the hooks `connect --claude-code-otlp` already wrote. Deliberately
- * nested under `proxy`, not a new top-level command, so it is never confused with the unrelated
- * reporting command at `codemie analytics` (`src/cli/commands/analytics/`).
+ * `codemie proxy analytics` — turns analytics collection off/on or excludes a single project for
+ * one OTLP connector (Claude Code by default; Copilot CLI / Copilot Chat via a connector flag),
+ * without uninstalling the hooks `connect` already wrote. Deliberately nested under `proxy`, not
+ * a new top-level command, so it is never confused with the unrelated reporting command at
+ * `codemie analytics` (`src/cli/commands/analytics/`).
  */
 
 import { Command } from 'commander';
@@ -19,9 +20,76 @@ import {
 import {
   getClaudeAnalyticsPreferencesPath,
   updateClaudeAnalyticsPreferences,
-  type ClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
-import { collectClaudeAnalyticsStatus, formatClaudeAnalyticsStatus } from './analytics-status.js';
+import {
+  getCopilotAnalyticsPreferencesPath,
+  updateCopilotAnalyticsPreferences,
+} from '@/agents/core/copilot-analytics-preferences.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
+import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
+import {
+  collectClaudeAnalyticsStatus,
+  collectCopilotAnalyticsStatus,
+  formatClaudeAnalyticsStatus,
+  formatCopilotAnalyticsStatus,
+} from './analytics-status.js';
+
+type AnalyticsConnectorId =
+  | typeof CLAUDE_CODE_OTLP_AGENT_NAME
+  | typeof COPILOT_CLI_OTLP_AGENT_NAME
+  | typeof COPILOT_CHAT_OTLP_AGENT_NAME;
+
+interface ConnectorOptions {
+  claudeCodeOtlp?: boolean;
+  copilotCliOtlp?: boolean;
+  copilotChatOtlp?: boolean;
+}
+
+interface AnalyticsPrefs {
+  enabled: boolean;
+  excludedProjects: string[];
+}
+
+interface AnalyticsStore {
+  /** Human label used in the success message, e.g. "Claude Code". */
+  label: string;
+  path(): string;
+  update(mutate: (current: AnalyticsPrefs) => AnalyticsPrefs | Promise<AnalyticsPrefs>): Promise<void>;
+}
+
+/** Picks the connector from the flags; none means Claude Code (the pre-existing behavior). */
+export function resolveAnalyticsConnector(opts: ConnectorOptions): AnalyticsConnectorId {
+  const selected: AnalyticsConnectorId[] = [];
+  if (opts.claudeCodeOtlp) selected.push(CLAUDE_CODE_OTLP_AGENT_NAME);
+  if (opts.copilotCliOtlp) selected.push(COPILOT_CLI_OTLP_AGENT_NAME);
+  if (opts.copilotChatOtlp) selected.push(COPILOT_CHAT_OTLP_AGENT_NAME);
+  if (selected.length > 1) {
+    throw new ConfigurationError(
+      `Choose one connector at a time; got: ${selected.map((s) => `--${s}`).join(', ')}.`
+    );
+  }
+  return selected[0] ?? CLAUDE_CODE_OTLP_AGENT_NAME;
+}
+
+function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsStore {
+  if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
+    return {
+      label: 'Claude Code',
+      path: getClaudeAnalyticsPreferencesPath,
+      async update(mutate) {
+        await updateClaudeAnalyticsPreferences(async (current) => ({ ...current, ...(await mutate(current)) }));
+      },
+    };
+  }
+  return {
+    label: connectorId === COPILOT_CLI_OTLP_AGENT_NAME ? 'Copilot CLI' : 'Copilot Chat',
+    path: getCopilotAnalyticsPreferencesPath,
+    async update(mutate) {
+      await updateCopilotAnalyticsPreferences(connectorId, mutate);
+    },
+  };
+}
 
 async function withErrorHandling(action: () => Promise<void>): Promise<void> {
   try {
@@ -33,14 +101,15 @@ async function withErrorHandling(action: () => Promise<void>): Promise<void> {
   }
 }
 
-function printSaved(suffix = ''): void {
-  console.log(chalk.green(`✓ Saved to ${getClaudeAnalyticsPreferencesPath()}. Applies to the next Claude Code hook event.${suffix}`));
+function printSaved(store: AnalyticsStore, suffix = ''): void {
+  console.log(chalk.green(`✓ Saved to ${store.path()}. Applies to the next ${store.label} hook event.${suffix}`));
 }
 
-async function setEnabled(enabled: boolean): Promise<void> {
+async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
+    const store = storeForConnector(resolveAnalyticsConnector(opts));
     let changed = true;
-    await updateClaudeAnalyticsPreferences((current) => {
+    await store.update((current) => {
       changed = current.enabled !== enabled;
       return { ...current, enabled };
     });
@@ -48,17 +117,18 @@ async function setEnabled(enabled: boolean): Promise<void> {
       console.log(chalk.dim('Nothing to change.'));
       return;
     }
-    printSaved();
+    printSaved(store);
   });
 }
 
-async function excludeProject(path: string | undefined): Promise<void> {
+async function excludeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
+    const store = storeForConnector(resolveAnalyticsConnector(opts));
     const target = path ?? resolveProjectRoot();
     const canonical = await canonicalizePath(target);
     let changed = true;
     let coveredBy: string | undefined;
-    await updateClaudeAnalyticsPreferences(async (current: ClaudeAnalyticsPreferences) => {
+    await store.update(async (current) => {
       for (const entry of current.excludedProjects) {
         const canonicalEntry = await canonicalizePath(entry);
         if (comparable(canonicalEntry) !== comparable(canonical) && isPathInside(canonical, canonicalEntry)) {
@@ -92,17 +162,18 @@ async function excludeProject(path: string | undefined): Promise<void> {
       );
       return;
     }
-    printSaved(` (project: ${canonical})`);
+    printSaved(store, ` (project: ${canonical})`);
   });
 }
 
-async function includeProject(path: string | undefined): Promise<void> {
+async function includeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
+    const store = storeForConnector(resolveAnalyticsConnector(opts));
     const target = path ?? resolveProjectRoot();
     const canonical = await canonicalizePath(target);
     let removed = true;
     let coveringParent: string | undefined;
-    await updateClaudeAnalyticsPreferences(async (current: ClaudeAnalyticsPreferences) => {
+    await store.update(async (current) => {
       const excludedProjects = await removeProjectPath(current.excludedProjects, target);
       removed = excludedProjects.length !== current.excludedProjects.length;
       // Checked against the list AFTER removal: a redundant entry nested under a
@@ -123,42 +194,61 @@ async function includeProject(path: string | undefined): Promise<void> {
       console.log(chalk.dim('Nothing to change.'));
       return;
     }
-    printSaved(` (project: ${canonical})`);
+    printSaved(store, ` (project: ${canonical})`);
   });
+}
+
+async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<void> {
+  await withErrorHandling(async () => {
+    const connectorId = resolveAnalyticsConnector(opts);
+    if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
+      const status = await collectClaudeAnalyticsStatus(process.cwd());
+      console.log(opts.json ? JSON.stringify(status, null, 2) : formatClaudeAnalyticsStatus(status));
+      return;
+    }
+    const status = await collectCopilotAnalyticsStatus(connectorId, process.cwd());
+    console.log(opts.json ? JSON.stringify(status, null, 2) : formatCopilotAnalyticsStatus(status));
+  });
+}
+
+function withConnectorOptions(command: Command): Command {
+  return command
+    .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Target Claude Code (default)')
+    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Target Copilot CLI')
+    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Target Copilot Chat (VS Code)');
 }
 
 export function createProxyAnalyticsCommand(): Command {
   const analytics = new Command('analytics');
-  analytics.description('Turn Claude Code analytics collection off/on, or exclude a single project');
+  analytics.description(
+    'Turn analytics collection off/on, or exclude a single project (Claude Code by default; pass a connector flag for Copilot)'
+  );
 
-  analytics
-    .command('disable')
-    .description('Stop all Claude Code analytics collection (hooks stay installed)')
-    .action(() => setEnabled(false));
+  withConnectorOptions(
+    analytics.command('disable').description('Stop all analytics collection for the connector (hooks stay installed)')
+  ).action((opts: ConnectorOptions) => setEnabled(false, opts));
 
-  analytics
-    .command('enable')
-    .description('Resume Claude Code analytics collection')
-    .action(() => setEnabled(true));
+  withConnectorOptions(analytics.command('enable').description('Resume analytics collection for the connector')).action(
+    (opts: ConnectorOptions) => setEnabled(true, opts)
+  );
 
-  analytics
-    .command('exclude [path]')
-    .description('Exclude one project from analytics collection (default: the current project root)')
-    .action((path?: string) => excludeProject(path));
+  withConnectorOptions(
+    analytics
+      .command('exclude [path]')
+      .description('Exclude one project from analytics collection (default: the current project root)')
+  ).action((path: string | undefined, opts: ConnectorOptions) => excludeProject(path, opts));
 
-  analytics
-    .command('include [path]')
-    .description('Remove a project from the exclusion list (default: the current project root)')
-    .action((path?: string) => includeProject(path));
+  withConnectorOptions(
+    analytics
+      .command('include [path]')
+      .description('Remove a project from the exclusion list (default: the current project root)')
+  ).action((path: string | undefined, opts: ConnectorOptions) => includeProject(path, opts));
 
-  analytics
-    .command('status')
-    .description('Show the effective Claude Code analytics configuration')
+  withConnectorOptions(
+    analytics.command('status').description('Show the effective analytics configuration for the connector')
+  )
     .option('--json', 'Emit status as JSON instead of formatted output')
-    .action(async (opts: { json?: boolean }) => {
-      const status = await collectClaudeAnalyticsStatus(process.cwd());
-      console.log(opts.json ? JSON.stringify(status, null, 2) : formatClaudeAnalyticsStatus(status));
-    });
+    .action((opts: ConnectorOptions & { json?: boolean }) => showStatus(opts));
 
   return analytics;
 }
