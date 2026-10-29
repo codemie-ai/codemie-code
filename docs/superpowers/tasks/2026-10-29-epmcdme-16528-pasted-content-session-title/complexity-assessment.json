@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Strip Claude pasted_content wrapper tags (keeping enclosed text) from the claude-code-otlp UserPromptSubmit hook prompt before the 200-char truncation, with regression tests and an architecture-doc update.",
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 13,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Core behaviour is defined (strip tags, keep text, before 200-char cut), but the fix location (Claude handler only vs OtlpAgentAdapter base class) and handling of unverified format variants (mid-prompt, multiple, unterminated blocks) are open; scored M, below L because the primary path is single and well-identified." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the spread-override of derived fields in onUserPromptSubmit (asserted by the prompt_length spoof test) plus the pure helpers in ticket-parser.ts and event-fields/command-fields.ts. It does not cover the repeated-id closing tag (a standard paired-tag regex fails), and the AC enumerates edge cases (mid-prompt, multiple, unterminated) with no existing edge-case table template, so Technical Risk is bumped to M. Derived fields (prompt_length, tickets, command_name) must stay on raw text; masking order is unchanged. No security-sensitive injection surface, so no L floor."
+    },
+    { "dimension": "file_change_estimate", "reason": "About 4-5 modified files (claude-code-otlp plugin, optionally claude.metrics-processor, ARCHITECTURE-OTLP-PLUGIN.md, extended plugin test and metrics-processor test) plus 1-2 new files (pure helper in src/agents/core/ and its unit test) across src/agents and docs." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S to M: acceptance criteria enumerate edge cases (multiple, mid-prompt, unterminated blocks, --name sessions) and no existing parameterized edge-case test template covers this pattern; the closest precedent (paired-tag stripping) does not handle the repeated-id closing tag."
+  ],
+  "split_recommendation": null
+}
