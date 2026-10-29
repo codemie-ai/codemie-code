@@ -27,6 +27,17 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
 /** Enforcement points: block the session/prompt, deny tools as defense in depth. */
 const ENFORCED_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse']);
 
+/**
+ * The user turned analytics off (or excluded this project, or the opt-out file is unreadable).
+ * Nothing is collected, but a block here would stop their Copilot Chat session/prompts/tools — so
+ * these stay silent; `codemie proxy analytics status` explains why nothing is collected.
+ */
+const ANALYTICS_OPT_OUT_REASONS: ReadonlySet<CopilotAnalyticsGateReason> = new Set<CopilotAnalyticsGateReason>([
+  'preferences-corrupt',
+  'analytics-disabled',
+  'project-excluded',
+]);
+
 export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput, ChatBlockOutput> {
   public readonly name = COPILOT_CHAT_OTLP_AGENT_NAME;
 
@@ -53,12 +64,8 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     }
 
     const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
-    if (!decision.tracked) {
-      const analyticsReason = this.analyticsBlockReason(decision.reason);
-      if (analyticsReason) {
-        this.emitBlock(this.buildBlock(hookInput.hook_event_name, analyticsReason, false));
-        return;
-      }
+    if (!decision.tracked && ANALYTICS_OPT_OUT_REASONS.has(decision.reason)) {
+      return;
     }
 
     const scope = await readCopilotConnectorScope(this.name);
@@ -146,20 +153,6 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
 
   private cwdOrUndefined(input: CopilotChatHookInput): string | undefined {
     return typeof input.cwd === 'string' ? input.cwd : undefined;
-  }
-
-  /** Block message for the analytics-preferences reasons only; scope-* reasons keep their existing handling. */
-  private analyticsBlockReason(reason: CopilotAnalyticsGateReason): string | undefined {
-    switch (reason) {
-      case 'preferences-corrupt':
-        return 'analytics preferences are corrupt; repair or delete copilot-analytics.json';
-      case 'analytics-disabled':
-        return `analytics collection is disabled; run \`codemie proxy analytics enable --${this.name}\``;
-      case 'project-excluded':
-        return `this project is excluded from analytics collection; run \`codemie proxy analytics include --${this.name}\``;
-      default:
-        return undefined;
-    }
   }
 
   private hasRequiredIdentity(input: CopilotChatHookInput): input is CopilotChatHookInput & {

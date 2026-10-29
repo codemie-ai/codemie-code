@@ -230,89 +230,73 @@ describe('CopilotChatOtlpPlugin', () => {
   });
 
   describe('analytics preferences gate', () => {
-    it('analytics disabled: emits a block naming the enable command for an enforced event, forwards nothing', async () => {
-      vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
-        kind: 'ok',
-        value: { enabled: false, excludedProjects: [] },
-      });
-      const { captured } = log();
+    // CR-002: opting out of analytics must never stop the user's Copilot Chat. A block here means
+    // `continue:false` (SessionStart/UserPromptSubmit) or `permissionDecision:deny` (PreToolUse).
+    type OptOut = 'disabled' | 'excluded' | 'corrupt-preferences';
+    const OPT_OUTS: OptOut[] = ['disabled', 'excluded', 'corrupt-preferences'];
+
+    function applyOptOut(kind: OptOut): void {
+      if (kind === 'disabled') {
+        vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
+          kind: 'ok',
+          value: { enabled: false, excludedProjects: [] },
+        });
+      } else if (kind === 'excluded') {
+        vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(true);
+      } else {
+        vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'corrupt' });
+      }
+    }
+
+    describe.each(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'] as const)(
+      '%s while analytics is opted out',
+      (eventName) => {
+        it.each(OPT_OUTS)('%s: emits nothing, never blocks, forwards nothing, never touches the daemon', async (kind) => {
+          applyOptOut(kind);
+          const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+          await plugin.processOtlpEvent(hookInput({ hook_event_name: eventName, prompt: 'hi' }), {
+            ensureOtlpProxy,
+            forwardOtlpEventsToSpool,
+          });
+
+          expect(logSpy).not.toHaveBeenCalled();
+          expect(ensureOtlpProxy).not.toHaveBeenCalled();
+          expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+        });
+      }
+    );
+
+    it.each(OPT_OUTS)('%s stays silent even when the connector scope is corrupt (no scope block for an opted-out user)', async (kind) => {
+      applyOptOut(kind);
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-      expect(captured()).toEqual({
-        continue: false,
-        stopReason: expect.stringContaining('analytics enable --copilot-chat-otlp'),
-      });
-      expect(ensureOtlpProxy).not.toHaveBeenCalled();
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
     });
 
-    it('project excluded: emits a block naming the include command for an enforced event, forwards nothing', async () => {
-      vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(true);
-      const { captured } = log();
+    it.each(OPT_OUTS)('%s stays silent even when the session identity is missing (no identity block for an opted-out user)', async (kind) => {
+      applyOptOut(kind);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
-
-      expect(captured()).toEqual({
-        permissionDecision: 'deny',
-        permissionDecisionReason: expect.stringContaining('analytics include --copilot-chat-otlp'),
-      });
-      expect(ensureOtlpProxy).not.toHaveBeenCalled();
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
-    });
-
-    it('corrupt analytics preferences: emits a block for an enforced event (fail closed), forwards nothing', async () => {
-      vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'corrupt' });
-      const { captured } = log();
-
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
         ensureOtlpProxy,
         forwardOtlpEventsToSpool,
       });
 
-      expect(captured()).toEqual({
-        continue: false,
-        stopReason: expect.stringContaining('analytics preferences'),
-      });
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
     });
 
-    it.each(['disabled', 'excluded', 'corrupt'] as const)(
-      'analytics %s: does nothing for a non-enforced event',
-      async (kind) => {
-        if (kind === 'disabled') {
-          vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
-            kind: 'ok',
-            value: { enabled: false, excludedProjects: [] },
-          });
-        } else if (kind === 'excluded') {
-          vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(true);
-        } else {
-          vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'corrupt' });
-        }
-        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    it('stays silent for an opted-out user when the connector is not connected (scope disabled)', async () => {
+      applyOptOut('disabled');
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: false } } as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-        await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-        expect(logSpy).not.toHaveBeenCalled();
-        expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
-      }
-    );
-
-    it('analytics disabled wins over a corrupt connector scope: reports the analytics reason, not the scope one', async () => {
-      vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({
-        kind: 'ok',
-        value: { enabled: false, excludedProjects: [] },
-      });
-      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
-      const { captured } = log();
-
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
-
-      expect(captured()).toEqual({
-        continue: false,
-        stopReason: expect.stringContaining('analytics enable --copilot-chat-otlp'),
-      });
+      expect(logSpy).not.toHaveBeenCalled();
     });
 
     it('analytics enabled and project not excluded: forwards normally, no block (default / absent preferences)', async () => {
