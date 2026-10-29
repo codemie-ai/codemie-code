@@ -19,7 +19,7 @@ import type {
   UserPromptSubmitHookInput,
   UserPromptSubmitHookSpecificOutput,
 } from '@anthropic-ai/claude-agent-sdk';
-import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
@@ -434,11 +434,15 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const workingDir = process.cwd();
     const config = await ConfigLoader.load(workingDir);
 
-    return await ensureCodeMieSsoAuth({
-      provider: config.provider,
-      ssoUrl: config.codeMieUrl || config.baseUrl,
-      baseUrl: config.baseUrl,
-    });
+    // stdout carries the hook's JSON decision, so the wait notice goes to stderr.
+    return await ensureCodeMieSsoAuthOrWait(
+      {
+        provider: config.provider,
+        ssoUrl: config.codeMieUrl || config.baseUrl,
+        baseUrl: config.baseUrl,
+      },
+      { onWaitStart: (message) => process.stderr.write(message + '\n') }
+    );
   }
 
   private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ClaudeForwardDecision> {
@@ -455,10 +459,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
     return {
       decision: 'block',
-      reason: [
-        `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
-        describeLogin(authResult.loginOutcome),
-      ].join("\n"),
+      reason: `${describeLogin(authResult.loginOutcome, { wait: authResult.waitResult })}\n(${authResult.reason})`,
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         suppressOriginalPrompt: true,
