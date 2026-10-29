@@ -150,6 +150,9 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       try {
         const sources = resolveTicketSources(options.ticketSources, Boolean(options.redact));
         const flagTools = options.ticketTools === undefined ? undefined : resolveTicketTools(options.ticketTools, undefined);
+        if (flagTools && sources.size === 0) {
+          console.log(chalk.yellow('\n! --ticket-tools has no effect with --ticket-sources none.'));
+        }
         if (exportFormat && sources.size > 0) {
           let configuredTools: unknown;
           try {

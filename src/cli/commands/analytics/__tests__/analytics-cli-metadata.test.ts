@@ -447,6 +447,17 @@ describe('analytics ticket options', () => {
     }
   });
 
+  it('warns that --ticket-tools has no effect with --ticket-sources none', async () => {
+    const { runAnalytics } = await import('../index.js');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runAnalytics({ export: 'json', ticketSources: 'none', ticketTools: 'mcp__*rally*' } as never, mockSource() as never);
+      expect(log.mock.calls.flat().join('\n')).toMatch(/--ticket-tools has no effect with --ticket-sources none/);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('rejects an invalid ticket flag even without --export', async () => {
     const { runAnalytics } = await import('../index.js');
     const originalExitCode = process.exitCode;

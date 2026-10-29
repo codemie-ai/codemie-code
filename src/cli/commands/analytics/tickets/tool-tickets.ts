@@ -14,7 +14,7 @@ import { ANY_CASE, UPPER_CASE, standaloneIds } from './ids.js';
 export const DEFAULT_TICKET_TOOLS: readonly string[] = ['mcp__*jira*', 'mcp__*atlassian*__*issue*'];
 
 /** Input fields that carry an issue key rather than free text, by exact name. */
-export const TICKET_KEY_FIELDS: ReadonlySet<string> = new Set(['key', 'parent', 'jql', 'inwardIssue', 'outwardIssue']);
+export const TICKET_KEY_FIELDS: ReadonlySet<string> = new Set(['key', 'issue', 'parent', 'jql', 'inwardIssue', 'outwardIssue']);
 
 /**
  * Key fields by naming convention, so MCP servers with different spellings are covered without a
@@ -64,12 +64,13 @@ const QUERY_FIELDS: ReadonlySet<string> = new Set(['jql']);
 const JQL_STRING = String.raw`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`;
 
 /** The value of a JQL clause on an issue-key field: one key, quoted or not, or an `in (…)` list. */
-const JQL_KEY_FIELD_NAMES = String.raw`\b(?:key|id|issue|issuekey|parent|parentEpic)\b|"epic link"|'epic link'`;
+/** Key field names as a field of their own: `id`, not `project.id`. */
+const JQL_KEY_FIELD_NAMES = String.raw`(?<![\w.])(?:key|id|issue|issuekey|parent|parentEpic)\b|"epic link"|'epic link'`;
 /**
  * Only positive conditions: `key != ABC-1` and `key not in (ABC-9)` name issues the query excludes,
  * which is no evidence the session worked on them.
  */
-const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:(?<!!)=|(?<!not\s+)\bin\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_-]+)`, 'gi');
+const JQL_KEY_CLAUSE = new RegExp(String.raw`(?:${JQL_KEY_FIELD_NAMES})\s*(?:(?<!!)=|(?<!not\s+)\bin\b)\s*(\([^)]*\)|${JQL_STRING}|[A-Za-z0-9_.-]+)`, 'gi');
 /** A negative condition (`!=`, `not in`) — on any field. */
 const JQL_NEGATIVE_CONDITION = /^(?:"[^"]+"|'[^']+'|[\w.]+)\s*(?:!=|not\s+in\b)/i;
 
@@ -88,14 +89,26 @@ const JQL_CONDITION = new RegExp(
   String.raw`(?:\b[A-Za-z_][\w.]*|"[^"]+")\s*(?:!?=|!?~|>=|<=|>|<|(?:not\s+)?in\b|is(?:\s+not)?\b|was(?:\s+not)?(?:\s+in)?\b|changed\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+)`,
   'gi'
 );
+/**
+ * History-predicate values (`status changed to "IN-1"`, `was "AB-1" by x before "2026-01-01"`):
+ * statuses, users and dates, never issue keys.
+ */
+const JQL_HISTORY_PREDICATE = new RegExp(String.raw`\b(?:from|to|by|after|before|during|on)\s+(?:${JQL_STRING}|\([^)]*\)|[^\s()]+)`, 'gi');
+
+/** A condition or a bracketed group negated with `NOT` (`NOT key = ABC-9`, `NOT (key = ABC-9)`). */
+const JQL_NOT = new RegExp(
+  String.raw`\bnot\s*(?:\([^()]*\)|(?:\b[A-Za-z_][\w.]*|"[^"]+"|'[^']+')\s*(?:!?=|(?:not\s+)?in\b)\s*(?:\([^)]*\)|${JQL_STRING}|[^\s()]+))`,
+  'gi'
+);
+
 /** Conditions on fields holding issue keys: `key` and its alias `id`, `issue`, `parent`, `"Epic Link"`. */
 const JQL_KEY_FIELD = /^(?:(?:key|id|issue|issuekey|parent|parentEpic)|"epic link"|'epic link')\s/i;
 
 function jqlIds(text: string): string[] {
   const ids = new Set<string>();
-  // Every pass reads the query with its text-search values removed: words searched for
-  // (`summary ~ "UTF-8 crash"`) are free text, whichever case they are in.
-  const query = text.replace(JQL_TEXT_SEARCH, ' ');
+  // Every pass reads the query without text-search values (`summary ~ "UTF-8 crash"`: free text,
+  // whichever case), history-predicate values (`changed to "IN-1"`) and NOT-negated conditions.
+  const query = text.replace(JQL_TEXT_SEARCH, ' ').replace(JQL_HISTORY_PREDICATE, ' ').replace(JQL_NOT, ' ');
   for (const pattern of [JQL_KEY_CLAUSE, JQL_ISSUE_FUNCTION]) {
     for (const clause of query.matchAll(pattern)) {
       for (const id of standaloneIds(clause[1], ANY_CASE, MAX_IDS_PER_CALL)) ids.add(id);

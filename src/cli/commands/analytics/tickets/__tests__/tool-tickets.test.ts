@@ -88,6 +88,27 @@ describe('ticketsFromToolInput', () => {
     expect(ticketsFromToolInput({ jql: 'labels in (GPT-4, UTF-8) AND sprint = OPS-3 AND issuekey = NUTLA-5' })).toEqual(['NUTLA-5']);
   });
 
+  it('treats NOT before a condition or a bracketed group as negative', () => {
+    expect(ticketsFromToolInput({ jql: 'NOT key = ABC-9' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'NOT (key = ABC-9 OR key = ABC-10) AND key = ABC-2' })).toEqual(['ABC-2']);
+    expect(ticketsFromToolInput({ jql: 'key not in (ABC-3) AND not issue = abc-4' })).toEqual([]);
+  });
+
+  it('reads an unquoted key value as a whole token, so versions stay rejected', () => {
+    expect(ticketsFromToolInput({ jql: 'key = ABC-7.1' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'key = abc-7 AND id = ABC-8' })).toEqual(['ABC-7', 'ABC-8']);
+  });
+
+  it('never reads history-predicate values or dotted fields ending in id', () => {
+    expect(ticketsFromToolInput({ jql: 'status changed to "IN-1"' })).toEqual([]);
+    expect(ticketsFromToolInput({ jql: 'status changed from "AB-1" to "CD-2" by currentUser() AND key = CAKE-1' })).toEqual(['CAKE-1']);
+    expect(ticketsFromToolInput({ jql: 'project.id = ABC-1 OR sprint.id = 7' })).toEqual([]);
+  });
+
+  it('reads a plain issue field, but not a generic id field', () => {
+    expect(ticketsFromToolInput({ issue: 'abc-3', id: 'ABC-4' })).toEqual(['ABC-3']);
+  });
+
   it('never takes ids from negative key conditions, in any case', () => {
     expect(ticketsFromToolInput({ jql: 'key != ABC-1' })).toEqual([]);
     expect(ticketsFromToolInput({ jql: 'key not in (ABC-9, ABC-10) AND key = ABC-2' })).toEqual(['ABC-2']);
