@@ -58,6 +58,7 @@ interface Block {
   name?: string;
   input?: { skill?: unknown };
   tool_use_id?: string;
+  is_error?: boolean;
   content?: unknown;
 }
 
@@ -76,6 +77,8 @@ interface Scan {
   skillByToolUseId: Map<string, string>;
   /** tool_use_id -> the agentId its result names ('' when it names none). */
   resultAgentIdByToolUseId: Map<string, string>;
+  /** tool_use_id -> promptId of the user turn it was made in ('' when unknown). */
+  promptByToolUseId: Map<string, string>;
   slashByPrompt: Map<string, string[]>;
 }
 
@@ -84,18 +87,40 @@ function newScan(): Scan {
     toolNameById: new Map(),
     skillByToolUseId: new Map(),
     resultAgentIdByToolUseId: new Map(),
+    promptByToolUseId: new Map(),
     slashByPrompt: new Map(),
   };
 }
 
+/** The text of a tool_result `content`: a string, or the text blocks of an array. */
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return (content as { type?: string; text?: unknown }[])
+    .map((b) => (b?.type === 'text' && typeof b.text === 'string' ? b.text : ''))
+    .join('\n');
+}
+
+/**
+ * The agent a tool result names: the typed `toolUseResult.agentId`, else the `agentId` of a result
+ * whose text is itself a JSON object (a cut-off object falls back to the pattern). Prose is never
+ * searched, so text that merely mentions an id cannot name an agent.
+ */
 function resultAgentId(line: Line, block: Block): string {
   const typed = line.toolUseResult?.agentId;
   if (typeof typed === 'string' && typed) return typed;
-  const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
-  return AGENT_ID_IN_TEXT.exec(text)?.[1] ?? '';
+  const text = resultText(block.content).trim();
+  if (!text.startsWith('{')) return '';
+  try {
+    const id = (JSON.parse(text) as { agentId?: unknown } | null)?.agentId;
+    return typeof id === 'string' ? id : '';
+  } catch {
+    return AGENT_ID_IN_TEXT.exec(text)?.[1] ?? '';
+  }
 }
 
-function scanTranscript(raw: string, into: Scan, withSlash: boolean): void {
+function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt = ''): void {
+  let prompt = startPrompt; // promptId of the latest user turn seen
   for (const text of raw.split('\n')) {
     if (!text.includes('"tool_use"') && !text.includes('"tool_result"') && !(withSlash && text.includes('"user"'))) {
       continue;
@@ -107,6 +132,7 @@ function scanTranscript(raw: string, into: Scan, withSlash: boolean): void {
       continue;
     }
     const content = line.message?.content;
+    if (typeof line.promptId === 'string' && line.promptId) prompt = line.promptId;
     if (withSlash && line.type === 'user' && !line.isMeta && !line.isSidechain) {
       const name = plainSlashCommandName(content);
       if (name && typeof line.promptId === 'string' && line.promptId) {
@@ -117,6 +143,7 @@ function scanTranscript(raw: string, into: Scan, withSlash: boolean): void {
     for (const block of content as Block[]) {
       if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
         into.toolNameById.set(block.id, block.name);
+        into.promptByToolUseId.set(block.id, prompt);
         const skill = block.name === 'Skill' && typeof block.input?.skill === 'string' ? block.input.skill.trim() : '';
         if (skill) into.skillByToolUseId.set(block.id, skill);
       } else if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
@@ -179,24 +206,33 @@ export async function resolveForkSkills(
   // checks below; only read the subagent transcripts when some subagent still needs them.
   const needsCalls = files.some((f) => !f.skillName && !f.toolUseId);
   if (needsCalls) {
-    for (const file of files) scanTranscript(await readText(file.filePath), scan, false);
+    for (const file of files) {
+      scanTranscript(await readText(file.filePath), scan, false, await firstPromptId(file.filePath));
+    }
   }
 
   const skillForks = new Map<string, string>(); // agentId -> skill, from a Skill result
   const startedByOtherTool = new Set<string>(); // agentIds an Agent/Task call started
-  let openSkillCalls = 0; // Skill calls without a result: each may be about to name a fork
-  let openAgentCalls = 0; // Agent/Task calls without a result naming their agent
+  // Calls that may still be about to start a fork: those with no result yet. A result of any kind
+  // (an error, a denial, a completion that names no agent) closes the call. Counted per user turn.
+  const openSkillCalls = new Map<string, number>();
+  const openAgentCalls = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
   for (const [toolUseId, name] of scan.toolNameById) {
     const answered = scan.resultAgentIdByToolUseId.has(toolUseId);
     const agentId = scan.resultAgentIdByToolUseId.get(toolUseId) ?? '';
+    const callPrompt = scan.promptByToolUseId.get(toolUseId) ?? '';
     if (name === 'Skill') {
-      if (!answered) openSkillCalls++;
+      if (!answered) bump(openSkillCalls, callPrompt);
       else if (agentId) skillForks.set(agentId, scan.skillByToolUseId.get(toolUseId) ?? '');
     } else if (AGENT_TOOLS.has(name)) {
       if (agentId) startedByOtherTool.add(agentId);
-      else openAgentCalls++;
+      else if (!answered) bump(openAgentCalls, callPrompt);
     }
   }
+  /** Open calls that can concern a subagent of `promptId` (all of them when its prompt is unknown). */
+  const openFor = (m: Map<string, number>, promptId: string): number =>
+    promptId ? (m.get(promptId) ?? 0) + (m.get('') ?? 0) : [...m.values()].reduce((x, y) => x + y, 0);
   for (const [agentId, skill] of [...skillForks]) {
     if (!skill) skillForks.delete(agentId);
   }
@@ -219,7 +255,7 @@ export async function resolveForkSkills(
       if (slashLine) candidatesByPrompt.set(promptId, [...(candidatesByPrompt.get(promptId) ?? []), file]);
       continue;
     }
-    if (openSkillCalls > 0 || (slashLine && openAgentCalls > 0)) {
+    if (openFor(openSkillCalls, promptId) > 0 || (slashLine && openFor(openAgentCalls, promptId) > 0)) {
       leavePending(file);
       continue;
     }

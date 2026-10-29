@@ -196,6 +196,76 @@ describe('pending evidence - a scope cannot be corrected once sent', () => {
   });
 });
 
+describe('closed calls and result shapes', () => {
+  const failed = (id: string) =>
+    j({ type: 'user', promptId: 'p1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: 'launch failed' }] } });
+  const kinds = async (main: string, final = true) =>
+    Object.fromEntries((await findSubagentFiles(main, { final })).map((f) => [f.agentId, f.pending ? 'pending' : f.skillName || 'agent']));
+
+  it('a failed, a completed-without-agent and an earlier-prompt Agent call do not block a later slash fork', async () => {
+    const { main } = session(
+      [
+        user('p1', 'earlier'),
+        toolUse('old1', 'Agent', {}),
+        failed('old1'),
+        toolUse('old2', 'Agent', {}),
+        toolResult('old2', { status: 'completed' }, 'done'),
+        user('p2', '/forkme'),
+      ],
+      [{ id: 'a', promptId: 'p2' }]
+    );
+    expect(await kinds(main)).toEqual({ a: 'forkme' });
+    expect((await resolveForkSkills(main, await findSubagentFiles(main))).slashPromptIds).toEqual(new Set(['p2']));
+  });
+
+  it('a failed Skill call is closed too, and an open call of an unrelated prompt does not hold a fork pending', async () => {
+    const { main } = session(
+      [user('p1', 'x'), toolUse('s1', 'Skill', { skill: 'nope' }), failed('s1'), user('p2', '/forkme'), toolUse('other', 'Agent', {})],
+      [{ id: 'a', promptId: 'p2' }]
+    );
+    // `other` was made in p2 (open): pending. Move it to an unrelated earlier prompt: not pending.
+    expect(await kinds(main, false)).toEqual({ a: 'pending' });
+    const { main: main2 } = session(
+      [user('p0', 'y'), toolUse('other', 'Agent', {}), user('p1', 'x'), toolUse('s1', 'Skill', { skill: 'nope' }), failed('s1'), user('p2', '/forkme')],
+      [{ id: 'a', promptId: 'p2' }]
+    );
+    expect(await kinds(main2, false)).toEqual({ a: 'forkme' });
+  });
+
+  it('still treats an unanswered Agent call of the same prompt as pending (original false-positive stays closed)', async () => {
+    const { main } = session([user('p1', '/inlineme'), toolUse('t', 'Agent', {})], [{ id: 'a', promptId: 'p1' }]);
+    expect(await kinds(main, false)).toEqual({ a: 'pending' });
+    expect(await kinds(main, true)).toEqual({ a: 'agent' });
+  });
+
+  it('reads agentId from tool_result content given as an array of text blocks (Skill and Agent)', async () => {
+    const textResult = (id: string, text: string) =>
+      j({ type: 'user', promptId: 'p1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }] }] } });
+    const { main } = session(
+      [
+        toolUse('s', 'Skill', { skill: 'forkme' }),
+        textResult('s', '{"status":"forked","agentId":"a"}'),
+        user('p1', '/other'),
+        toolUse('g', 'Agent', {}),
+        textResult('g', '{"status":"async_launched","agentId":"b"}'),
+      ],
+      [{ id: 'a' }, { id: 'b', promptId: 'p1' }]
+    );
+    expect(await kinds(main, false)).toEqual({ a: 'forkme', b: 'agent' });
+  });
+
+  it('does not take an id from prose, from a non-Skill/Agent result, or over the typed field', async () => {
+    const prose = j({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 's', content: 'it said {"agentId":"a"} earlier' }] } });
+    const { main } = session([toolUse('s', 'Skill', { skill: 'forkme' }), prose], [{ id: 'a' }]);
+    expect(await kinds(main, true)).toEqual({ a: 'agent' });
+    const { main: m2 } = session(
+      [toolUse('s', 'Skill', { skill: 'forkme' }), toolResult('s', { agentId: 'typed' }, '{"agentId":"a"}')],
+      [{ id: 'a' }, { id: 'typed' }]
+    );
+    expect(await kinds(m2, true)).toEqual({ a: 'agent', typed: 'forkme' });
+  });
+});
+
 describe('plain slash commands in the summary', () => {
   const msgs = [
     { promptId: 'p1', message: { role: 'user', content: '/forkme' } },
