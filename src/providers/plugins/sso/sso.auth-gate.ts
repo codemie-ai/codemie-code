@@ -111,6 +111,10 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
 
     if (!input.apiKey && loginUrl) {
       loginOutcome = await startDetachedSsoLogin(loginUrl);
+    } else if (input.provider === 'ai-run-sso' || !input.apiKey) {
+      // SSO credential problem with no sign-in started (no login URL, or SSO provider with a key):
+      // 'failed' makes describeLogin point at `codemie profile login`, not the API-key text.
+      loginOutcome = 'failed';
     }
 
     return { ok: false, reason, loginOutcome };

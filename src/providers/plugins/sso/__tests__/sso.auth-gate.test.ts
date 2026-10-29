@@ -119,9 +119,27 @@ describe('ensureCodeMieSsoAuth', () => {
   it('blocks without starting a sign-in when the provider is SSO but no url is configured', async () => {
     const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso' });
 
-    expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO credentials found', loginOutcome: undefined });
+    // 'failed' (not undefined) so describeLogin tells the user to sign in, not to check an API key.
+    expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO credentials found', loginOutcome: 'failed' });
     expect(getStoredCredentials).not.toHaveBeenCalled();
     expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('reports a sign-in outcome for an SSO provider with an api key and a rejected-credentials marker', async () => {
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401' } as never);
+
+    const result = await ensureCodeMieSsoAuth({ ...configured, apiKey: 'key' });
+
+    expect(result).toMatchObject({ ok: false, loginOutcome: 'failed' });
+    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('leaves the outcome undefined for a genuine (non-SSO) api-key failure', async () => {
+    vi.mocked(getAnalyticsAuthStatus).mockResolvedValue({ reason: 'HTTP 401' } as never);
+
+    const result = await ensureCodeMieSsoAuth({ ssoUrl: configured.ssoUrl, syncApiUrl: configured.syncApiUrl, apiKey: 'key' });
+
+    expect(result).toMatchObject({ ok: false, loginOutcome: undefined });
   });
 
   it('fails closed on an unexpected error', async () => {
