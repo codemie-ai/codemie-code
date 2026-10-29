@@ -659,6 +659,17 @@ codemie proxy analytics status
 
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
 
+The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+
+```bash
+# Copilot CLI or VS Code Copilot Chat
+codemie proxy analytics disable --copilot-cli-otlp
+codemie proxy analytics exclude --copilot-chat-otlp
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
+
 ## Codebase Memory MCP
 
 CodeMie can install and orchestrate `codebase-memory-mcp` with its graph visualization UI:

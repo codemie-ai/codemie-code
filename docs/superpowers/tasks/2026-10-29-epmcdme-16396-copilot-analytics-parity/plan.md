@@ -28,7 +28,7 @@
 
 ## Review Focus
 
-- A `cwd` that is `undefined`/empty on an enforced hook event must resolve to "not excluded" (never throw), matching `isProjectExcluded`'s existing `if (!cwd) return false` contract — a crash here would break every hook call, not just excluded ones.
+- A `cwd` that is `undefined`/empty must never throw, and must fail closed: with at least one project excluded it counts as excluded (`if (!cwd) return excludedProjects.length > 0`), with nothing excluded behavior is unchanged. (Amended after code review — this plan originally said "not excluded", matching the Claude contract at the time.)
 - Two sibling projects that share a path prefix (`/work/a` vs `/work/ab`) must not cross-exclude each other — `isPathInside` (real `path.relative` containment), never a string-prefix check.
 - Excluding a child path after its parent is already excluded, or vice-versa, must never leave two overlapping entries or report false success — this is the exact `0309ed65` bug class; the fixed logic in `analytics-command.ts` must be reused verbatim, not reimplemented.
 - A corrupt `copilot-analytics.json` must fail closed on the hook-read path (not tracked) and must refuse to be overwritten on the CLI-write path (exit code 1, bytes on disk unchanged) — silently "fixing" a corrupt file would hide a user's prior intent.
@@ -112,7 +112,7 @@ it('leaves no .tmp file after a successful update', async () => {
   expect((await readdir(dir)).some((f) => f.endsWith('.tmp'))).toBe(false);
 });
 
-// isCopilotAnalyticsProjectExcluded: nested subdir, trailing slash, sibling-prefix false, undefined cwd
+// isCopilotAnalyticsProjectExcluded: nested subdir, trailing slash, sibling-prefix false, undefined/empty cwd (fail closed when exclusions exist)
 it('excludes a nested subdirectory of an excluded parent', async () => {
   expect(await isCopilotAnalyticsProjectExcluded('/work/a/nested', ['/work/a'])).toBe(true);
 });
@@ -122,7 +122,7 @@ it('does not exclude a sibling that merely shares a path prefix', async () => {
 it('normalizes a trailing slash on the excluded entry', async () => {
   expect(await isCopilotAnalyticsProjectExcluded('/work/a', ['/work/a/'])).toBe(true);
 });
-it('returns false for an undefined cwd', async () => {
+it('returns true for an undefined/empty cwd when something is excluded, false when nothing is', async () => {
   expect(await isCopilotAnalyticsProjectExcluded(undefined, ['/work/a'])).toBe(false);
 });
 ```
@@ -621,5 +621,7 @@ No commit for this task — it is a verification gate, not a code change.
 ## Amendments after code review (code-review.final, 2026-10-29)
 
 - **Task 4 (superseded behavior):** the plan's `onUntrackedHook` block messages for `analytics-disabled` / `project-excluded` / `preferences-corrupt` were wrong. In Copilot Chat a block is `continue:false` / `permissionDecision:deny`, which stops the user's session, prompts and tools, so opting out of analytics would disable Copilot Chat. Shipped behavior (CR-002): those three reasons return silently before the unchanged scope/identity tail; `codemie proxy analytics status` is the explanation channel.
+- **Missing cwd (superseded plan text):** `isProjectExcluded` and `isCopilotAnalyticsProjectExcluded` now fail closed — `if (!cwd) return excludedProjects.length > 0`. Reachability: Copilot CLI rejects a missing/empty cwd at its input guard, Copilot Chat is stopped by its identity check, so the practical case is a Claude event with `cwd: ""`; the hardening is defense in depth for a privacy opt-out. Tests cover undefined and '', with and without exclusions, for the predicates, both gates and the Claude/Copilot matrices.
+- **Evaluation is per hook event:** the gate runs on every event, so enable/disable/exclude/include apply immediately, including to sessions that are already running (no per-session pinning; AC4). Documented in `docs/COMMANDS.md`.
 - **Task 1 (tightened):** `updateCopilotAnalyticsPreferences` and `readCopilotAnalyticsPreferences` share one file-shape validator (numeric `version`, non-array object `connectors`) so the writer never accepts what the reader fails closed on (CR-001).
 - **Deferred, shared with the Claude/connector-scope stores (not introduced here):** lost update on concurrent CLI writes, transient EBUSY/EPERM read classed as corrupt, Windows rename over an open file, shared mutable default record, no schema-version upgrade handling.
