@@ -35,7 +35,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const { OtlpAgentAdapter, MAX_ORIGINAL_PROMPT_CHARS } = await import('../OtlpAgentAdapter.js');
+const { OtlpAgentAdapter } = await import('../OtlpAgentAdapter.js');
 type Decision = import('../OtlpAgentAdapter.js').ForwardDecision;
 type Context = import('../OtlpAgentAdapter.js').OtlpHookContext;
 
@@ -499,32 +499,6 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(String(record['error'])).toContain('[REDACTED]');
       expect(JSON.stringify(record)).not.toContain('ghp_');
       expect(JSON.stringify(record)).not.toContain('AKIA');
-    });
-
-    it('cuts prompt_original to MAX_ORIGINAL_PROMPT_CHARS while prompt stays at 200', async () => {
-      await run({ payload: [{ prompt: 'p'.repeat(500), prompt_original: 'o'.repeat(5000) }] });
-      const record = forwarded()[0];
-      expect(record['prompt']).toHaveLength(200);
-      expect(record['prompt_original']).toHaveLength(MAX_ORIGINAL_PROMPT_CHARS);
-    });
-
-    it('keeps a prompt_original shorter than the bound whole', async () => {
-      await run({ payload: [{ prompt: 'p', prompt_original: 'short original' }] });
-      expect(forwarded()[0]['prompt_original']).toBe('short original');
-    });
-
-    it('masks a secret straddling the prompt_original cut before cutting', async () => {
-      const original = `${'o'.repeat(MAX_ORIGINAL_PROMPT_CHARS - 20)} ${GH} ${'o'.repeat(300)}`;
-      await run({ payload: [{ prompt: 'p', prompt_original: original }] });
-      const record = forwarded()[0];
-      expect(String(record['prompt_original'])).toContain('[REDACTED]');
-      expect(String(record['prompt_original'])).toHaveLength(MAX_ORIGINAL_PROMPT_CHARS);
-      expect(JSON.stringify(record)).not.toContain('ghp_');
-    });
-
-    it('does not add prompt_original to events that lack it', async () => {
-      await run({ payload: [{ prompt: 'p' }] });
-      expect(forwarded()[0]).not.toHaveProperty('prompt_original');
     });
 
     it('normalizes effort objects to their level and omits malformed values', async () => {

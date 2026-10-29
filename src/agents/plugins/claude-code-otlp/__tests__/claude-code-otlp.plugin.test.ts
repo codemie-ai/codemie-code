@@ -1565,12 +1565,6 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
   });
 
   describe('pasted-content markup', () => {
-    beforeEach(() => {
-      process.env.CODEMIE_SEND_PROMPT_ORIGINAL = 'true';
-    });
-    afterEach(() => {
-      delete process.env.CODEMIE_SEND_PROMPT_ORIGINAL;
-    });
     const send = async (raw: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
       await plugin.processOtlpEvent(promptEvent(raw, overrides), { ensureOtlpProxy, forwardOtlpEventsToSpool });
       return forwardedEvents()[0];
@@ -1578,13 +1572,11 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     const GH_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
     const paste = (text: string, id = 'b23a'): string => `<pasted_content id="${id}">\n${text}\n</pasted_content id="${id}">\n`;
 
-    it('forwards the cleaned text as prompt and prompt_body and the markup as prompt_original for a whole-prompt paste', async () => {
-      const raw = paste('Step 1\nStep 2');
-      const forwarded = await send(raw);
+    it('forwards the cleaned text as prompt and prompt_body for a whole-prompt paste', async () => {
+      const forwarded = await send(paste('Step 1\nStep 2'));
 
       expect(forwarded['prompt']).toBe('Step 1\nStep 2');
       expect(forwarded['prompt_body']).toBe('Step 1\nStep 2');
-      expect(forwarded['prompt_original']).toBe(raw);
       expect(JSON.stringify([forwarded['prompt'], forwarded['prompt_body']])).not.toContain('pasted_content');
     });
 
@@ -1605,35 +1597,6 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
       const forwarded = await send('<pasted_content id="x">\ntext');
 
       expect(forwarded['prompt']).toBe('text');
-      expect(forwarded['prompt_original']).toBe('<pasted_content id="x">\ntext');
-    });
-
-    it('keeps prompt_original off by default, even when a hook supplies one', async () => {
-      delete process.env.CODEMIE_SEND_PROMPT_ORIGINAL;
-      const forwarded = await send(paste('real'), { prompt_original: 'spoofed' });
-
-      expect(forwarded['prompt']).toBe('real');
-      expect(forwarded).not.toHaveProperty('prompt_original');
-    });
-
-    it('does not set prompt_original for a typed prompt', async () => {
-      const forwarded = await send('plain typed prompt');
-
-      expect(forwarded['prompt']).toBe('plain typed prompt');
-      expect(forwarded).not.toHaveProperty('prompt_original');
-    });
-
-    it('drops a prompt_original supplied in the hook input of a typed prompt', async () => {
-      const forwarded = await send('plain typed prompt', { prompt_original: 'spoofed' });
-
-      expect(forwarded).not.toHaveProperty('prompt_original');
-    });
-
-    it('overwrites a prompt_original supplied in the hook input of a pasted prompt', async () => {
-      const raw = paste('real');
-      const forwarded = await send(raw, { prompt_original: 'spoofed' });
-
-      expect(forwarded['prompt_original']).toBe(raw);
     });
 
     it('derives command, story marker, tickets and length from the raw prompt', async () => {
@@ -1653,27 +1616,18 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
       expect(forwarded['prompt_body']).toBe('x'.repeat(200));
     });
 
-    it('masks a secret inside the paste in prompt and prompt_original', async () => {
+    it('masks a secret inside the paste', async () => {
       const forwarded = await send(paste(`token ${GH_TOKEN} end`));
 
       expect(String(forwarded['prompt'])).toContain('[REDACTED]');
-      expect(String(forwarded['prompt_original'])).toContain('[REDACTED]');
       expect(JSON.stringify(forwarded)).not.toContain('ghp_');
     });
 
-    it('cuts a 5000-char original to 4000 chars', async () => {
-      const forwarded = await send(`${'y'.repeat(5000)}<pasted_content id="z">`);
-
-      expect(String(forwarded['prompt_original'])).toHaveLength(4000);
-    });
-
-    it('turns an empty block into an empty prompt with prompt_original set', async () => {
-      const raw = '<pasted_content id="x"></pasted_content id="x">';
-      const forwarded = await send(raw);
+    it('turns an empty block into an empty prompt', async () => {
+      const forwarded = await send('<pasted_content id="x"></pasted_content id="x">');
 
       expect(forwarded['prompt']).toBe('');
       expect(forwarded['prompt_body']).toBe('');
-      expect(forwarded['prompt_original']).toBe(raw);
     });
   });
 

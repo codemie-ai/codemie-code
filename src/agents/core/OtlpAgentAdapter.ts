@@ -43,13 +43,11 @@ interface InvocationContext {
 
 const SCHEMA_VERSION = 2;
 const MAX_PROMPT_CHARS = 200;
-export const MAX_ORIGINAL_PROMPT_CHARS = 4000;
 export const MAX_TOOL_FIELD_CHARS = 300;
 
 /** Free-text fields cut after masking, each to its own limit. */
 const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
   prompt: MAX_PROMPT_CHARS,
-  prompt_original: MAX_ORIGINAL_PROMPT_CHARS,
   tool_input: MAX_TOOL_FIELD_CHARS,
   tool_response: MAX_TOOL_FIELD_CHARS,
   error: MAX_TOOL_FIELD_CHARS,
@@ -224,9 +222,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   }
 
   /**
-   * Masks secrets in every field, then truncates the free-text fields: `prompt`, the longer
-   * `prompt_original` and the tool fields (mask first, so a secret straddling a cut is never
-   * half-shown). An incoming `raw` is dropped so it cannot bypass the limits.
+   * Masks secrets in every field, then truncates the free-text fields: `prompt` and the
+   * tool fields (mask first, so a secret straddling a cut is never half-shown). An incoming `raw` is dropped so it cannot bypass the limits.
    */
   private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
     const dropped = new Set(this.droppedFields(hookEvent));

@@ -458,22 +458,16 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
     if (authResult.ok) {
       // Derived fields read the raw prompt (the base class truncates `prompt` to 200 chars later).
-      // `prompt` itself is cleaned of pasted-content tags. The raw text is forwarded as `prompt_original`
-      // only when cleaning changed it and the user opted in (pasted text is where secrets tend to sit),
-      // so a hook-supplied one never survives.
+      // `prompt` itself is cleaned of pasted-content tags.
       const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';
       const cleaned = stripPastedContentTags(prompt);
-      const changed = cleaned !== prompt;
-      const hookFields: Record<string, unknown> = { ...hookInput };
-      delete hookFields['prompt_original'];
       return {
         decision: 'forward',
         payload: [{
-          ...hookFields,
+          ...hookInput,
           ...parsePromptFields(prompt),
           ...resolveCommandFields(prompt),
-          ...(changed && { prompt: cleaned }),
-          ...(changed && process.env.CODEMIE_SEND_PROMPT_ORIGINAL === 'true' && { prompt_original: prompt }),
+          ...(cleaned !== prompt && { prompt: cleaned }),
         }],
       }
     }
