@@ -1,7 +1,7 @@
 import { apiIdentity } from '@/agents/core/evidence/api-identity.js';
 import { logger } from '@/utils/logger.js';
 import { forwarderIdentity } from './spool-io.js';
-import { organizationSendable } from '@/agents/core/evidence/org-encoding.js';
+import { ORG_ENCODING_V1, organizationSendable } from '@/agents/core/evidence/org-encoding.js';
 import { classify, decide, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
@@ -52,7 +52,7 @@ export async function sessionPolicyState(
   // the encoding at most hourly (refreshPolicy's own backoff applies), so a backend upgrade is noticed
   // without waiting for the 24 h policy expiry.
   const staleForReprobe =
-    reprobe && !!state?.policy && !state.policy.organization_encodings?.length && !state.backoffUntil &&
+    reprobe && !!state?.policy && !state.policy.organization_encodings?.includes(ORG_ENCODING_V1) && !state.backoffUntil &&
     state.fetchedAt !== undefined && Date.now() - state.fetchedAt >= LEGACY_REPROBE_MS;
   if (state && !staleForReprobe && (state.policy || !state.refreshDue || !baseUrl)) return state;
   return refreshPolicy(ns, { baseUrl, headers: authHeadersFor(credentials), force });

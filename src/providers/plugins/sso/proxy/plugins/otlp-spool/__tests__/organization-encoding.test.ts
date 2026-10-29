@@ -4,7 +4,10 @@
  * advertises it. Shared vectors (the backend decoder tests use the same strings).
  * @group unit
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   ORG_ENCODED_HEADER,
   encodeOrganization,
@@ -161,5 +164,66 @@ describe('evidence header serialization', () => {
   it('routing-unproven sends neither representation', async () => {
     const h = await headers(rec({ routing_proof: 'unproven' }), { class: 'unknown', status: 'indeterminate', basis: 'routing_unproven' });
     expect(h).not.toHaveProperty(ORG_ENCODED_HEADER);
+  });
+});
+
+describe('hourly re-probe while held on organization_encoding_unsupported', () => {
+  const ns = { api_identity: 'https://a.example.com/api', owner_hash: 'b'.repeat(64) };
+  const creds = { cookies: { codemie_access_token: 'x' }, apiUrl: 'https://a.example.com/api' } as never;
+  const T0 = 1_800_000_000_000;
+  let home: string;
+  let saved: string | undefined;
+  const body = (encodings: string[]) => JSON.stringify({ organizations: ['Other'], version: 'v1', organization_encodings: encodings });
+
+  beforeEach(() => {
+    saved = process.env.CODEMIE_HOME;
+    home = mkdtempSync(join(tmpdir(), 'org-reprobe-'));
+    process.env.CODEMIE_HOME = home;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    if (saved === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = saved;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('a policy advertising only an unrecognized token is unsupported and re-read after an hour, not after 24 h', async () => {
+    const { refreshPolicy } = await import('../policy-cache.js');
+    const { sessionPolicyState } = await import('../classification.js');
+    const fetchMock = vi.fn(async () => new Response(body(['utf8-b64u.v9']), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await refreshPolicy(ns, { baseUrl: 'https://a.example.com/api', headers: { Cookie: 'x=1' }, now: T0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(T0 + 30 * 60_000); // inside the hour: cached state is returned
+    expect((await sessionPolicyState(ns, 'https://a.example.com/api', creds, undefined, true)).policy?.organization_encodings).toEqual(['utf8-b64u.v9']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(T0 + 61 * 60_000); // not held (reprobe off): still the cache
+    await sessionPolicyState(ns, 'https://a.example.com/api', creds);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockImplementation(async () => new Response(body(['utf8-b64u.v9', 'utf8-b64u.v1']), { status: 200 }));
+    const state = await sessionPolicyState(ns, 'https://a.example.com/api', creds, undefined, true); // held: re-read
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(organizationSendable('Яндекс', state.policy?.organization_encodings)).toBe(true);
+  });
+
+  it('a failed re-read keeps the old policy and honors the refresh backoff (no hammering)', async () => {
+    const { refreshPolicy } = await import('../policy-cache.js');
+    const { sessionPolicyState } = await import('../classification.js');
+    const fetchMock = vi.fn(async () => new Response(body([]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await refreshPolicy(ns, { baseUrl: 'https://a.example.com/api', headers: { Cookie: 'x=1' }, now: T0 });
+    fetchMock.mockImplementation(async () => new Response('boom', { status: 500 }));
+    vi.setSystemTime(T0 + 61 * 60_000);
+    const first = await sessionPolicyState(ns, 'https://a.example.com/api', creds, undefined, true);
+    expect(first.policy?.version).toBe('v1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await sessionPolicyState(ns, 'https://a.example.com/api', creds, undefined, true); // inside backoff
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
