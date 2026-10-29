@@ -12,6 +12,7 @@ import {
   writeState,
 } from './daemon-manager.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
+import { createProxyAnalyticsCommand } from './analytics-command.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -442,6 +443,7 @@ export function createProxyCommand(): Command {
 
   proxy.addCommand(connect);
   proxy.addCommand(inspect);
+  proxy.addCommand(createProxyAnalyticsCommand());
 
   return proxy;
 }

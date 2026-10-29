@@ -668,7 +668,7 @@ export async function removeClaudeCodeOtlpConfig(
       } else if (allowlist.kind === 'absent') {
         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
       } else {
-        reason = 'all projects are tracked (no per-project entries)';
+        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
       }
       return { removed: false, path: settingsPath, mode: 'noop', reason };
     }
@@ -750,4 +750,17 @@ export async function removeClaudeCodeOtlpConfig(
     ...sanitizeLogArgs({ settingsPath, deleted: isEmpty })
   );
   return { removed: true, path: settingsPath, mode: 'full' };
+}
+
+/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
+export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
+  let existing: ClaudeSettings;
+  try {
+    existing = await readSettingsFile(getClaudeSettingsPath());
+  } catch {
+    return false;
+  }
+  return Object.values(existing.hooks ?? {}).some(
+    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
+  );
 }

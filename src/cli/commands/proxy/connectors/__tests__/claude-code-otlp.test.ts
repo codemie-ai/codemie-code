@@ -20,7 +20,7 @@ import {
 import { readState } from '../../daemon-manager.js';
 import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
-import { resolveHomeDir } from '@/utils/paths.js';
+import { resolveHomeDir, getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { ConfigurationError } from '@/utils/errors.js';
@@ -44,6 +44,7 @@ vi.mock('@/utils/project-root.js', () => ({
 
 vi.mock('@/utils/paths.js', () => ({
   resolveHomeDir: vi.fn(),
+  getCodemiePath: vi.fn(),
 }));
 
 vi.mock('@/utils/logger.js', () => ({
@@ -110,6 +111,7 @@ describe('claude-code-otlp connector', () => {
 
     vi.mocked(resolveProjectRoot).mockReturnValue(projectDir);
     vi.mocked(resolveHomeDir).mockReturnValue(homeDir);
+    vi.mocked(getCodemiePath).mockImplementation((...paths: string[]) => join(homeDir, '.codemie', ...paths));
     vi.mocked(readState).mockResolvedValue(mockState as any);
   });
 
@@ -1498,6 +1500,37 @@ describe('claude-code-otlp connector', () => {
 
       const final = await readJson(settingsPath);
       expect(final.env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('not-a-json-array-at-all');
+    });
+  });
+
+  describe('regression: EPMCDME-16396 — claude-analytics.json survives connect/disconnect', () => {
+    async function readPreferencesBytes(): Promise<string> {
+      return readFile(join(homeDir, '.codemie', 'claude-analytics.json'), 'utf-8');
+    }
+
+    it('writeClaudeCodeOtlpConfig({ scope: "user" }) leaves claude-analytics.json byte-identical', async () => {
+      const { updateClaudeAnalyticsPreferences } = await import(
+        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
+      );
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
+      const before = await readPreferencesBytes();
+
+      await writeClaudeCodeOtlpConfig({ scope: 'user' });
+
+      expect(await readPreferencesBytes()).toBe(before);
+    });
+
+    it('removeClaudeCodeOtlpConfig() leaves claude-analytics.json byte-identical', async () => {
+      const { updateClaudeAnalyticsPreferences } = await import(
+        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
+      );
+      await writeClaudeCodeOtlpConfig();
+      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
+      const before = await readPreferencesBytes();
+
+      await removeClaudeCodeOtlpConfig();
+
+      expect(await readPreferencesBytes()).toBe(before);
     });
   });
 });

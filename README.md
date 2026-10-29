@@ -642,7 +642,33 @@ codemie proxy disconnect --claude-code-otlp --scope project
 codemie proxy disconnect --claude-code-otlp
 ```
 
+Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
+
+```bash
+# Stop all analytics collection; hooks stay installed
+codemie proxy analytics disable
+
+# Exclude the current project, even when Global scope is enabled
+codemie proxy analytics exclude
+
+# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
+codemie proxy analytics status
+```
+
+`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
+
 For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
+
+The same controls work for the Copilot analytics connectors; add the connector flag (one at a time):
+
+```bash
+# Copilot CLI or VS Code Copilot Chat
+codemie proxy analytics disable --copilot-cli-otlp
+codemie proxy analytics exclude --copilot-chat-otlp
+codemie proxy analytics status --copilot-chat-otlp
+```
+
+Copilot preferences are stored separately (`~/.codemie/copilot-analytics.json`), so `connect`/`disconnect` never reset them. See [Commands Documentation](docs/COMMANDS.md#copilot-cli-and-copilot-chat-analytics--disable).
 
 ## Codebase Memory MCP
 

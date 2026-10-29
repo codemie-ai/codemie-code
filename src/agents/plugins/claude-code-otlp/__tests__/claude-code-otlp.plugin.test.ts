@@ -4,6 +4,23 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
   readAllowlistState: vi.fn(async () => ({ kind: 'valid', paths: ['/proj'] })),
   isProjectTracked: vi.fn(),
 }));
+const readClaudeAnalyticsPreferencesMock = vi.fn(async () => ({
+  kind: 'ok' as const,
+  value: { version: 1 as const, enabled: true, excludedProjects: [] },
+}));
+vi.mock('../claude-code-otlp.preferences.js', () => ({
+  readClaudeAnalyticsPreferences: readClaudeAnalyticsPreferencesMock,
+  isProjectExcluded: vi.fn(async () => false),
+}));
+// File-level, not per-describe: `vi.clearAllMocks()` in each describe's own beforeEach clears call
+// history but not a mock's last-set resolved value, so a test overriding this must not leak its
+// override into every later test in the file.
+beforeEach(() => {
+  readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+    kind: 'ok',
+    value: { version: 1, enabled: true, excludedProjects: [] },
+  });
+});
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
@@ -163,6 +180,18 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     expect(vi.mocked(ensureOtlpProxy).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(forwardOtlpEventsToSpool).mock.invocationCallOrder[0]
     );
+  });
+
+  it('does nothing when analytics are disabled via preferences, even if the allowlist tracks the project', async () => {
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+      kind: 'ok',
+      value: { version: 1, enabled: false, excludedProjects: [] },
+    });
+    await plugin.processOtlpEvent(event('UserPromptSubmit'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
+    expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });
 

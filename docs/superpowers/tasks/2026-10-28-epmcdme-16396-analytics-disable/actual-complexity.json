@@ -1,0 +1,95 @@
+{
+  "task": "Add a CodeMie-owned analytics opt-out gate (preferences file + proxy analytics disable/enable/exclude/include/status CLI) in front of the claude-code-otlp hook pipeline's isTracked() check.",
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "claude-code-otlp.preferences (new preferences-file module), claude-code-otlp.gate (new gate combining preferences + existing allowlist), claude-code-otlp.plugin (isTracked wiring), proxy analytics-command (new CLI: disable/enable/exclude/include), proxy analytics-status (new CLI: status --json + hasClaudeCodeOtlpHooks), proxy connectors/claude-code-otlp (hook-presence helper), proxy index (command registration)",
+      "layers": "Agent-Tool, Workflow (CLI)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "One review-time decision point: AC4 native-launch coverage gap, resolved by the user as 'document as manual/out-of-scope' rather than adding code; no rework required"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "New preferences-file abstraction introduced as a privacy/compliance-adjacent opt-out gate ahead of the existing OTLP tracking decision; fail-closed behavior required for corrupt/unreadable preferences; path-exclusion matching for nested project directories",
+      "mitigation": "Reused the established atomic-write pattern (temp file + rename) already used elsewhere in the codebase; fail-closed (not tracked) on any corrupt/unreadable preferences file rather than failing open; dedicated AC4 regression matrix test added; no changes to OtlpAgentAdapter, the daemon, or the spool, keeping blast radius limited to the single isTracked() choke point"
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts",
+        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts",
+        "src/cli/commands/proxy/index.ts",
+        "src/cli/commands/proxy/__tests__/index.test.ts",
+        "src/cli/commands/proxy/connectors/claude-code-otlp.ts",
+        "src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts",
+        "docs (usage/architecture notes updated for the analytics gate; exact path not independently re-verified against the diff)"
+      ],
+      "new_files": 9,
+      "new_file_list": [
+        "src/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.ts",
+        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.preferences.test.ts",
+        "src/agents/plugins/claude-code-otlp/claude-code-otlp.gate.ts",
+        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.gate.test.ts",
+        "src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.disable-matrix.test.ts",
+        "src/cli/commands/proxy/analytics-command.ts",
+        "src/cli/commands/proxy/__tests__/analytics-command.test.ts",
+        "src/cli/commands/proxy/analytics-status.ts",
+        "src/cli/commands/proxy/__tests__/analytics-status.test.ts"
+      ],
+      "affected_dirs": [
+        "src/agents/plugins/claude-code-otlp",
+        "src/agents/plugins/claude-code-otlp/__tests__",
+        "src/cli/commands/proxy",
+        "src/cli/commands/proxy/__tests__",
+        "src/cli/commands/proxy/connectors",
+        "src/cli/commands/proxy/connectors/__tests__",
+        "docs"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Agent-Tool", "Workflow"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 16,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "16 files changed per diffstat (9 new, 7 modified) spanning two directory trees (claude-code-otlp plugin + proxy CLI commands plus their __tests__ subdirs and docs) — maps to the 16+ files XXL band per the actual-mode file-count mapping."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Seven distinct components touched across two layers: two brand-new abstractions (preferences file module, gate module) plus wiring into the existing plugin's isTracked(), two new CLI subcommand files, a new hook-presence helper, and CLI command registration — cross-cutting within the claude-code-otlp subsystem and the proxy CLI tree."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "New preferences-file abstraction with no exact prior precedent in this plugin (closest precedent is the existing allowlist file and the atomic-write pattern used in config/migrations elsewhere), fail-closed design required on corruption. Red flag applied: analytics disable is a privacy/compliance-adjacent opt-out feature (user control over data collection) — bumped from M (3) to L (4)."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): analytics disable/opt-out is a privacy/compliance-adjacent requirement (user control over data collection), matching the Security/Compliance red flag."
+  ],
+  "split_recommendation": null
+}

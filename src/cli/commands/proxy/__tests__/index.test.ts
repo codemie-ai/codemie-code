@@ -365,6 +365,17 @@ describe('proxy connect desktop', () => {
   });
 });
 
+describe('proxy command registration', () => {
+  it('registers the analytics subcommand group (CR-004)', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const proxy = createProxyCommand();
+    const analytics = proxy.commands.find((c) => c.name() === 'analytics');
+    expect(analytics).toBeDefined();
+    const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
+    expect(subcommandNames).toEqual(['disable', 'enable', 'exclude', 'include', 'status']);
+  });
+});
+
 describe('proxy start', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;

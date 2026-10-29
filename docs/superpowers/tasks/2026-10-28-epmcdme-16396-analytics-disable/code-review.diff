@@ -1,0 +1,1374 @@
+diff --git a/README.md b/README.md
+index 434725e1..fcd8b918 100644
+--- a/README.md
++++ b/README.md
+@@ -642,6 +642,21 @@ codemie proxy disconnect --claude-code-otlp --scope project
+ codemie proxy disconnect --claude-code-otlp
+ ```
+ 
++Turn collection off without uninstalling the hooks, or exclude one project (including under Global scope):
++
++```bash
++# Stop all analytics collection; hooks stay installed
++codemie proxy analytics disable
++
++# Exclude the current project, even when Global scope is enabled
++codemie proxy analytics exclude
++
++# Show the effective scope, tracked/excluded projects, and whether the current directory is tracked
++codemie proxy analytics status
++```
++
++`disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
++
+ For details, see [Commands Documentation](docs/COMMANDS.md#claude-code-otlp-analytics).
+ 
+ ## Codebase Memory MCP
+diff --git a/docs/COMMANDS.md b/docs/COMMANDS.md
+index 2c90fee0..a34ab9e8 100644
+--- a/docs/COMMANDS.md
++++ b/docs/COMMANDS.md
+@@ -1658,3 +1658,17 @@ A `cwd` inside any listed path is tracked (nested directories included). An inva
+ Allowlist changes apply immediately; the first-time setup needs a Claude Code restart.
+ 
+ **Backup lifecycle.** `connect` snapshots `~/.claude/settings.json` to `settings.json.codemie-backup` before writing its own hooks/env, and refreshes that backup on every subsequent `connect` that still finds the file already under CodeMie's management (not just the first time) — so it always reflects the state right before the most recent `connect`, not whichever one ran first. Only values that are genuinely foreign (or that a `--force` connect displaced and the live file still carries CodeMie's own replacement for) are ever kept in it; a value you change after `connect` is never recorded as "pre-connect" and is never resurrected by a later `disconnect`. `disconnect` deletes the backup once it finishes: a value you changed or removed since `connect` is left exactly as you set it, never restored from the backup; a value a `--force` connect displaced is put back, but only if nothing has touched it since. If nothing is left in the file after removal, the file itself is deleted. No "restored from backup" message is printed — the backup is bookkeeping, not something you interact with directly.
++
++### Claude Code OTLP analytics — disable
++
++`codemie proxy analytics` turns collection off/on or excludes one project without touching the hooks, OTel environment, or allowlist that `connect`/`disconnect` manage. It stores its own state in a CodeMie-owned file (`~/.codemie/claude-analytics.json`), so it survives `connect`, `disconnect`, and scope switches: `disconnect` uninstalls the wiring, while `analytics disable`/`exclude` turn collection off and keep the hooks installed (re-enabling is instant, no reinstall).
++
++| Command | Effect |
++|---|---|
++| `codemie proxy analytics disable` | Stop all analytics collection. No session sends data to the backend and no SSO check is triggered solely for analytics, even though the hooks stay installed. |
++| `codemie proxy analytics enable` | Resume collection. |
++| `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
++| `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). Does not touch the `settings.json` allowlist. |
++| `codemie proxy analytics status [--json]` | Show whether hooks are installed, the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. |
++
++A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
+diff --git a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.disable-matrix.test.ts b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.disable-matrix.test.ts
+new file mode 100644
+index 00000000..ba6d7f01
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.disable-matrix.test.ts
+@@ -0,0 +1,167 @@
++/**
++ * AC4 regression matrix: disable-all and exclude-one-project, crossed with Global/Project scope,
++ * exercised end-to-end through the real allowlist/preferences/gate modules (only the filesystem
++ * paths are redirected to a temp dir — nothing about the gate logic itself is mocked).
++ * @group unit
++ */
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join, dirname } from 'node:path';
++
++// Initialized synchronously (not undefined) because some modules (e.g. security.ts) call
++// getCodemiePath() at module-eval time, before the async beforeEach below has run.
++let tempDir: string = tmpdir();
++
++vi.mock('@/utils/paths.js', async () => {
++  const actual = await vi.importActual<typeof import('@/utils/paths.js')>('@/utils/paths.js');
++  return {
++    ...actual,
++    resolveHomeDir: (relativePath = '') => join(tempDir, relativePath),
++    getCodemiePath: (...paths: string[]) => join(tempDir, '.codemie', ...paths),
++  };
++});
++
++vi.mock('@/utils/processes.js', () => ({
++  detectGitBranch: vi.fn(async () => 'main'),
++  detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
++  detectGitHeadSha: vi.fn(async () => 'abc123def456'),
++  detectGitCommitsByAuthor: vi.fn(async () => []),
++}));
++vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn(async () => ({ ok: true })) }));
++vi.mock('@/utils/config.js', () => ({
++  ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
++}));
++vi.mock('@/agents/core/hook-credentials.js', () => ({ resolveHookCredentials: vi.fn(async () => null) }));
++vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: vi.fn(async () => '9.9.9') }));
++vi.mock('@/agents/core/identity-resolver.js', () => ({
++  resolveGitEmail: vi.fn(async () => 'git@example.com'),
++  resolveCodemieCliEmail: vi.fn(async () => 'cli@example.com'),
++  resolveOsUser: vi.fn(() => 'osuser'),
++  resolveIdentity: vi.fn(async () => ({ developerName: 'dev@example.com', identitySource: 'jwt' })),
++  resolveEmailFromCredentials: vi.fn(() => 'dev@example.com'),
++}));
++vi.mock('@/utils/logger.js', () => ({
++  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
++}));
++vi.mock('../client-version-cache.js', () => ({ resolveClientVersion: vi.fn(async () => '2.1.23') }));
++vi.mock('../transcript/orchestrator.js', () => ({
++  openMainTranscriptPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
++  openPostCompactPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
++  openSessionStartPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
++  openSessionEnvCheckPass: vi.fn(async () => ({ sessionEnvFields: null, finalize: vi.fn(async () => {}) })),
++  openSubagentPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}) })),
++  openSessionEndPass: vi.fn(async () => ({ events: [], finalize: vi.fn(async () => {}), gitHeadStart: '', sessionStartedAt: '' })),
++  buildSessionEnvEvent: (sessionId: string, fields: Record<string, unknown>) => ({
++    type: 'agent.session.env',
++    session_id: sessionId,
++    ...fields,
++  }),
++}));
++vi.mock('../transcript/subagent-usage.js', () => ({
++  readSubagentMeta: vi.fn(async () => ({})),
++  readForkedSkillMarker: vi.fn(async () => ({})),
++  subagentFilePath: vi.fn((transcriptPath: string, agentId: string) => `${transcriptPath}:${agentId}`),
++}));
++vi.mock('../event-fields/session-env-fields.js', () => ({
++  resolveSessionEnvFields: vi.fn(async () => ({
++    provider: 'anthropic',
++    api_host: 'api.anthropic.com',
++    effort: '',
++    output_style: '',
++    plugins: {},
++    mcp_servers: [],
++    os: 'linux',
++    arch: 'x64',
++    node_version: 'v20.0.0',
++    timezone: 'UTC',
++    hostname_hash: 'deadbeef',
++  })),
++}));
++
++const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
++const { updateClaudeAnalyticsPreferences } = await import('../claude-code-otlp.preferences.js');
++
++async function writeSettings(allowlist: string[] | undefined): Promise<void> {
++  const path = join(tempDir, '.claude', 'settings.json');
++  await mkdir(dirname(path), { recursive: true });
++  const env: Record<string, string> = {};
++  if (allowlist !== undefined) {
++    env.CODEMIE_ANALYTICS_PROJECT_FILTER = JSON.stringify(allowlist);
++  }
++  await writeFile(path, JSON.stringify({ env }), 'utf-8');
++}
++
++function event(name: string, cwd: string): string {
++  return JSON.stringify({ session_id: 's', transcript_path: '/tmp/t.jsonl', cwd, hook_event_name: name });
++}
++
++describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
++  let ensureOtlpProxy: ReturnType<typeof vi.fn>;
++  let forwardOtlpEventsToSpool: ReturnType<typeof vi.fn>;
++  let plugin: InstanceType<typeof ClaudeCodeOtlpPlugin>;
++
++  beforeEach(async () => {
++    tempDir = await mkdtemp(join(tmpdir(), 'codemie-disable-matrix-'));
++    ensureOtlpProxy = vi.fn(async () => {});
++    forwardOtlpEventsToSpool = vi.fn(async () => true);
++    plugin = new ClaudeCodeOtlpPlugin();
++  });
++
++  afterEach(async () => {
++    await rm(tempDir, { recursive: true, force: true });
++  });
++
++  async function fire(cwd: string): Promise<void> {
++    await plugin.processOtlpEvent(event('SessionStart', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++    await plugin.processOtlpEvent(event('UserPromptSubmit', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++  }
++
++  describe.each([
++    ['Global', undefined],
++    ['Project', ['/work/a', '/work/b']],
++  ] as const)('%s scope', (_label, allowlist) => {
++    it('exclude /work/a leaves /work/b forwarded', async () => {
++      await writeSettings(allowlist);
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
++
++      await fire('/work/a');
++      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++
++      await fire('/work/b');
++      expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
++    });
++
++    it('disable all stops every project regardless of scope', async () => {
++      await writeSettings(allowlist);
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
++
++      await fire('/work/a');
++      await fire('/work/b');
++      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++      expect(ensureOtlpProxy).not.toHaveBeenCalled();
++    });
++  });
++
++  it('include restores forwarding for a previously excluded project', async () => {
++    await writeSettings(undefined);
++    await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
++    await fire('/work/a');
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++
++    await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: [] }));
++    await fire('/work/a');
++    expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
++  });
++
++  it('enable restores forwarding after disable all', async () => {
++    await writeSettings(undefined);
++    await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
++    await fire('/work/a');
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++
++    await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: true }));
++    await fire('/work/a');
++    expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.gate.test.ts b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.gate.test.ts
+new file mode 100644
+index 00000000..614c5a35
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.gate.test.ts
+@@ -0,0 +1,106 @@
++/**
++ * Tests for the single analytics gate combining preferences and the allowlist.
++ * @group unit
++ */
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++
++const readClaudeAnalyticsPreferences = vi.fn();
++const isProjectExcluded = vi.fn();
++vi.mock('../claude-code-otlp.preferences.js', () => ({
++  readClaudeAnalyticsPreferences,
++  isProjectExcluded,
++}));
++
++const readAllowlistState = vi.fn();
++const isProjectTracked = vi.fn();
++vi.mock('../claude-code-otlp.allowlist.js', () => ({
++  readAllowlistState,
++  isProjectTracked,
++}));
++
++describe('evaluateClaudeAnalyticsGate', () => {
++  beforeEach(() => {
++    vi.resetModules();
++    readClaudeAnalyticsPreferences.mockReset();
++    isProjectExcluded.mockReset();
++    readAllowlistState.mockReset();
++    isProjectTracked.mockReset();
++
++    readClaudeAnalyticsPreferences.mockResolvedValue({
++      kind: 'ok',
++      value: { version: 1, enabled: true, excludedProjects: [] },
++    });
++    isProjectExcluded.mockResolvedValue(false);
++    readAllowlistState.mockResolvedValue({ kind: 'absent' });
++    isProjectTracked.mockResolvedValue(true);
++  });
++
++  afterEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('returns preferences-corrupt when the preferences file is corrupt', async () => {
++    readClaudeAnalyticsPreferences.mockResolvedValue({ kind: 'corrupt' });
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({
++      tracked: false,
++      reason: 'preferences-corrupt',
++    });
++  });
++
++  it('returns disabled when enabled is false', async () => {
++    readClaudeAnalyticsPreferences.mockResolvedValue({
++      kind: 'ok',
++      value: { version: 1, enabled: false, excludedProjects: [] },
++    });
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'disabled' });
++  });
++
++  it('returns project-excluded when the project is excluded', async () => {
++    isProjectExcluded.mockResolvedValue(true);
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'project-excluded' });
++  });
++
++  it('returns not-in-allowlist when isProjectTracked is false', async () => {
++    isProjectTracked.mockResolvedValue(false);
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'not-in-allowlist' });
++  });
++
++  it('returns tracked when nothing blocks it', async () => {
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: true, reason: 'tracked' });
++  });
++
++  it('exclusion wins over an allowlist entry covering the same path', async () => {
++    isProjectExcluded.mockResolvedValue(true);
++    isProjectTracked.mockResolvedValue(true);
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'project-excluded' });
++  });
++
++  it('exclusion applies when the allowlist is absent (Global scope)', async () => {
++    readAllowlistState.mockResolvedValue({ kind: 'absent' });
++    isProjectTracked.mockResolvedValue(true);
++    isProjectExcluded.mockResolvedValue(true);
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'project-excluded' });
++  });
++
++  it('is a strict superset of isProjectTracked when preferences are absent/default', async () => {
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    isProjectTracked.mockResolvedValue(true);
++    expect((await evaluateClaudeAnalyticsGate('/proj')).tracked).toBe(true);
++    isProjectTracked.mockResolvedValue(false);
++    expect((await evaluateClaudeAnalyticsGate('/proj')).tracked).toBe(false);
++  });
++
++  it('cwd undefined with an exclusion configured falls through to the allowlist check', async () => {
++    isProjectExcluded.mockResolvedValue(false); // isProjectExcluded(undefined, …) === false per Task 1
++    isProjectTracked.mockResolvedValue(true);
++    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
++    expect(await evaluateClaudeAnalyticsGate(undefined)).toEqual({ tracked: true, reason: 'tracked' });
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
+index 3b473dff..2720433d 100644
+--- a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
++++ b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.plugin.test.ts
+@@ -4,6 +4,23 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
+   readAllowlistState: vi.fn(async () => ({ kind: 'valid', paths: ['/proj'] })),
+   isProjectTracked: vi.fn(),
+ }));
++const readClaudeAnalyticsPreferencesMock = vi.fn(async () => ({
++  kind: 'ok' as const,
++  value: { version: 1 as const, enabled: true, excludedProjects: [] },
++}));
++vi.mock('../claude-code-otlp.preferences.js', () => ({
++  readClaudeAnalyticsPreferences: readClaudeAnalyticsPreferencesMock,
++  isProjectExcluded: vi.fn(async () => false),
++}));
++// File-level, not per-describe: `vi.clearAllMocks()` in each describe's own beforeEach clears call
++// history but not a mock's last-set resolved value, so a test overriding this must not leak its
++// override into every later test in the file.
++beforeEach(() => {
++  readClaudeAnalyticsPreferencesMock.mockResolvedValue({
++    kind: 'ok',
++    value: { version: 1, enabled: true, excludedProjects: [] },
++  });
++});
+ vi.mock('@/utils/processes.js', () => ({
+   detectGitBranch: vi.fn(async () => 'main'),
+   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
+@@ -163,6 +180,18 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
+       vi.mocked(forwardOtlpEventsToSpool).mock.invocationCallOrder[0]
+     );
+   });
++
++  it('does nothing when analytics are disabled via preferences, even if the allowlist tracks the project', async () => {
++    vi.mocked(isProjectTracked).mockResolvedValue(true);
++    readClaudeAnalyticsPreferencesMock.mockResolvedValue({
++      kind: 'ok',
++      value: { version: 1, enabled: false, excludedProjects: [] },
++    });
++    await plugin.processOtlpEvent(event('UserPromptSubmit'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
++    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
++    expect(ensureOtlpProxy).not.toHaveBeenCalled();
++    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
++  });
+ });
+ 
+ describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {
+diff --git a/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.preferences.test.ts b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.preferences.test.ts
+new file mode 100644
+index 00000000..b39acd5b
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.preferences.test.ts
+@@ -0,0 +1,152 @@
++/**
++ * Tests for the Claude Code analytics preferences file (claude-analytics.json).
++ * @group unit
++ */
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++
++let tempDir: string;
++
++vi.mock('@/utils/paths.js', async () => {
++  const actual = await vi.importActual<typeof import('@/utils/paths.js')>('@/utils/paths.js');
++  return {
++    ...actual,
++    getCodemiePath: (...paths: string[]) => join(tempDir, ...paths),
++  };
++});
++
++describe('claude-code-otlp.preferences', () => {
++  beforeEach(async () => {
++    tempDir = await mkdtemp(join(tmpdir(), 'codemie-claude-analytics-'));
++  });
++
++  afterEach(async () => {
++    await rm(tempDir, { recursive: true, force: true });
++  });
++
++  describe('readClaudeAnalyticsPreferences', () => {
++    it('returns defaults when the file is absent', async () => {
++      const { readClaudeAnalyticsPreferences, DEFAULT_CLAUDE_ANALYTICS_PREFERENCES } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      const result = await readClaudeAnalyticsPreferences();
++      expect(result).toEqual({ kind: 'ok', value: DEFAULT_CLAUDE_ANALYTICS_PREFERENCES });
++    });
++
++    it('returns defaults when the file is empty', async () => {
++      const { readClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath, DEFAULT_CLAUDE_ANALYTICS_PREFERENCES } =
++        await import('../claude-code-otlp.preferences.js');
++      const { writeFile, mkdir } = await import('node:fs/promises');
++      const { dirname } = await import('node:path');
++      const path = getClaudeAnalyticsPreferencesPath();
++      await mkdir(dirname(path), { recursive: true });
++      await writeFile(path, '', 'utf-8');
++
++      const result = await readClaudeAnalyticsPreferences();
++      expect(result).toEqual({ kind: 'ok', value: DEFAULT_CLAUDE_ANALYTICS_PREFERENCES });
++    });
++
++    it('fills missing fields from defaults for a partial file', async () => {
++      const { readClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      const { writeFile, mkdir } = await import('node:fs/promises');
++      const { dirname } = await import('node:path');
++      const path = getClaudeAnalyticsPreferencesPath();
++      await mkdir(dirname(path), { recursive: true });
++      await writeFile(path, JSON.stringify({ version: 1, enabled: false }), 'utf-8');
++
++      const result = await readClaudeAnalyticsPreferences();
++      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [] } });
++    });
++
++    it.each([
++      ['invalid JSON', '{not json'],
++      ['array root', '[]'],
++      ['enabled not boolean', JSON.stringify({ version: 1, enabled: 'no' })],
++      ['excludedProjects not an array', JSON.stringify({ version: 1, excludedProjects: 'x' })],
++      ['excludedProjects with a non-absolute path', JSON.stringify({ version: 1, excludedProjects: ['rel/path'] })],
++    ])('treats %s as corrupt', async (_label, raw) => {
++      const { readClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      const { writeFile, mkdir } = await import('node:fs/promises');
++      const { dirname } = await import('node:path');
++      const path = getClaudeAnalyticsPreferencesPath();
++      await mkdir(dirname(path), { recursive: true });
++      await writeFile(path, raw, 'utf-8');
++
++      const result = await readClaudeAnalyticsPreferences();
++      expect(result).toEqual({ kind: 'corrupt' });
++    });
++  });
++
++  describe('updateClaudeAnalyticsPreferences', () => {
++    it('creates the file and round-trips through read', async () => {
++      const { updateClaudeAnalyticsPreferences, readClaudeAnalyticsPreferences } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
++
++      const result = await readClaudeAnalyticsPreferences();
++      expect(result).toEqual({ kind: 'ok', value: { version: 1, enabled: false, excludedProjects: [] } });
++    });
++
++    it('throws ConfigurationError on a corrupt existing file and leaves bytes unchanged', async () => {
++      const { updateClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      const { writeFile, mkdir } = await import('node:fs/promises');
++      const { dirname } = await import('node:path');
++      const path = getClaudeAnalyticsPreferencesPath();
++      await mkdir(dirname(path), { recursive: true });
++      await writeFile(path, '{not json', 'utf-8');
++      const before = await readFile(path, 'utf-8');
++
++      await expect(updateClaudeAnalyticsPreferences((current) => current)).rejects.toThrow();
++
++      const after = await readFile(path, 'utf-8');
++      expect(after).toBe(before);
++    });
++
++    it('leaves no temp file behind after a successful write', async () => {
++      const { updateClaudeAnalyticsPreferences, getClaudeAnalyticsPreferencesPath } = await import(
++        '../claude-code-otlp.preferences.js'
++      );
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
++
++      const dir = join(getClaudeAnalyticsPreferencesPath(), '..');
++      const files = await readdir(dir);
++      expect(files.some((f) => f.endsWith('.tmp'))).toBe(false);
++    });
++  });
++
++  describe('isProjectExcluded', () => {
++    it('returns true for a nested subdirectory of an excluded path', async () => {
++      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
++      expect(await isProjectExcluded('/a/b/c', ['/a/b'])).toBe(true);
++    });
++
++    it('returns true when the excluded entry has a trailing slash', async () => {
++      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
++      expect(await isProjectExcluded('/a/b', ['/a/b/'])).toBe(true);
++    });
++
++    it('returns false for a sibling with a shared string prefix', async () => {
++      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
++      expect(await isProjectExcluded('/a/bc', ['/a/b'])).toBe(false);
++    });
++
++    it('returns false when cwd is undefined', async () => {
++      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
++      expect(await isProjectExcluded(undefined, ['/a'])).toBe(false);
++    });
++
++    it('returns false when excludedProjects is empty', async () => {
++      const { isProjectExcluded } = await import('../claude-code-otlp.preferences.js');
++      expect(await isProjectExcluded('/x', [])).toBe(false);
++    });
++  });
++});
+diff --git a/src/agents/plugins/claude-code-otlp/claude-code-otlp.gate.ts b/src/agents/plugins/claude-code-otlp/claude-code-otlp.gate.ts
+new file mode 100644
+index 00000000..1640e762
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/claude-code-otlp.gate.ts
+@@ -0,0 +1,39 @@
++/**
++ * Single analytics gate for Claude Code OTLP: combines the new CodeMie-owned preferences
++ * (disabled flag, project exclusions) with the existing `~/.claude/settings.json` allowlist.
++ * `ClaudeCodeOtlpPlugin.isTracked()` delegates to this — the sole choke point
++ * `OtlpAgentAdapter.processOtlpEvent` already guarantees runs before the daemon, SSO, and any
++ * spool write, so every rule here inherits that invariant for free.
++ */
++
++import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
++import { isProjectExcluded, readClaudeAnalyticsPreferences } from './claude-code-otlp.preferences.js';
++
++export type ClaudeAnalyticsGateReason =
++  | 'tracked'
++  | 'preferences-corrupt'
++  | 'disabled'
++  | 'project-excluded'
++  | 'not-in-allowlist';
++
++export interface ClaudeAnalyticsGateDecision {
++  tracked: boolean;
++  reason: ClaudeAnalyticsGateReason;
++}
++
++export async function evaluateClaudeAnalyticsGate(cwd: string | undefined): Promise<ClaudeAnalyticsGateDecision> {
++  const preferences = await readClaudeAnalyticsPreferences();
++  if (preferences.kind === 'corrupt') {
++    return { tracked: false, reason: 'preferences-corrupt' };
++  }
++  if (!preferences.value.enabled) {
++    return { tracked: false, reason: 'disabled' };
++  }
++  if (await isProjectExcluded(cwd, preferences.value.excludedProjects)) {
++    return { tracked: false, reason: 'project-excluded' };
++  }
++  if (!(await isProjectTracked(cwd, await readAllowlistState()))) {
++    return { tracked: false, reason: 'not-in-allowlist' };
++  }
++  return { tracked: true, reason: 'tracked' };
++}
+diff --git a/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts b/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
+index 92780595..d7696219 100644
+--- a/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
++++ b/src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts
+@@ -21,6 +21,8 @@ import type {
+ import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+ import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
+ import { ConfigLoader } from '@/utils/config.js';
++import { logger } from '@/utils/logger.js';
++import { sanitizeLogArgs } from '@/utils/security.js';
+ import { parsePromptFields } from '@/agents/core/ticket-parser.js';
+ import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
+ import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
+@@ -33,7 +35,7 @@ import {
+ import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
+ import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
+ import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
+-import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
++import { evaluateClaudeAnalyticsGate } from './claude-code-otlp.gate.js';
+ import {
+   buildSessionEnvEvent,
+   openMainTranscriptPass,
+@@ -89,7 +91,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
+   }
+ 
+   protected async isTracked(hookInput: HookInput): Promise<boolean> {
+-    return isProjectTracked(hookInput.cwd, await readAllowlistState());
++    const decision = await evaluateClaudeAnalyticsGate(hookInput.cwd);
++    logger.debug(`[${this.name}] analytics gate decision`, ...sanitizeLogArgs({ reason: decision.reason }));
++    return decision.tracked;
+   }
+ 
+   /** Resolved once per call so every record in the batch shares one client-version lookup. */
+diff --git a/src/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.ts b/src/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.ts
+new file mode 100644
+index 00000000..44999c69
+--- /dev/null
++++ b/src/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.ts
+@@ -0,0 +1,145 @@
++/**
++ * CodeMie-owned preferences for Claude Code analytics collection (AC1/AC2/AC3).
++ *
++ * Unlike the allowlist in `claude-code-otlp.allowlist.ts`, which is stored inside Claude Code's
++ * own `~/.claude/settings.json`, these preferences live in a dedicated CodeMie file
++ * (`getCodemiePath('claude-analytics.json')`) so that `connect`/`disconnect`/`--scope user` never
++ * touch them. Absent or empty is identical to today's behavior (`enabled: true`, nothing
++ * excluded) — this file adds new rules, it never narrows existing tracking on its own.
++ */
++
++import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
++import { dirname, isAbsolute } from 'node:path';
++import { ConfigurationError } from '@/utils/errors.js';
++import { logger } from '@/utils/logger.js';
++import { getCodemiePath } from '@/utils/paths.js';
++import { canonicalizePath, isPathInside } from '@/agents/core/project-allowlist.js';
++
++const CONFIG_VERSION = 1;
++
++export interface ClaudeAnalyticsPreferences {
++  version: 1;
++  enabled: boolean;
++  excludedProjects: string[];
++}
++
++export const DEFAULT_CLAUDE_ANALYTICS_PREFERENCES: ClaudeAnalyticsPreferences = {
++  version: 1,
++  enabled: true,
++  excludedProjects: [],
++};
++
++export type ClaudeAnalyticsPreferencesState =
++  | { kind: 'ok'; value: ClaudeAnalyticsPreferences }
++  | { kind: 'corrupt' };
++
++export function getClaudeAnalyticsPreferencesPath(): string {
++  return getCodemiePath('claude-analytics.json');
++}
++
++function isValidPreferences(value: unknown): value is Partial<ClaudeAnalyticsPreferences> {
++  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
++    return false;
++  }
++  const v = value as Record<string, unknown>;
++  if (v.enabled !== undefined && typeof v.enabled !== 'boolean') {
++    return false;
++  }
++  if (v.excludedProjects !== undefined) {
++    if (!Array.isArray(v.excludedProjects)) {
++      return false;
++    }
++    if (!v.excludedProjects.every((p) => typeof p === 'string' && p.length > 0 && isAbsolute(p))) {
++      return false;
++    }
++  }
++  return true;
++}
++
++/**
++ * Reads the preferences file. Never throws.
++ *
++ * - Absent or empty file -> defaults (identical to today's behavior).
++ * - Present but unparsable, wrong shape, or a present key with the wrong type -> `'corrupt'`.
++ *   The hook-side caller must fail closed (not tracked); a CLI write must refuse to overwrite it.
++ */
++export async function readClaudeAnalyticsPreferences(): Promise<ClaudeAnalyticsPreferencesState> {
++  let raw: string;
++  try {
++    raw = await readFile(getClaudeAnalyticsPreferencesPath(), 'utf-8');
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
++      return { kind: 'ok', value: DEFAULT_CLAUDE_ANALYTICS_PREFERENCES };
++    }
++    logger.debug('[claude-code-otlp preferences] Failed to read preferences, treating as corrupt');
++    return { kind: 'corrupt' };
++  }
++
++  if (raw.trim().length === 0) {
++    return { kind: 'ok', value: DEFAULT_CLAUDE_ANALYTICS_PREFERENCES };
++  }
++
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(raw);
++  } catch {
++    return { kind: 'corrupt' };
++  }
++
++  if (!isValidPreferences(parsed)) {
++    return { kind: 'corrupt' };
++  }
++
++  return {
++    kind: 'ok',
++    value: {
++      version: CONFIG_VERSION,
++      enabled: parsed.enabled ?? DEFAULT_CLAUDE_ANALYTICS_PREFERENCES.enabled,
++      excludedProjects: parsed.excludedProjects ?? DEFAULT_CLAUDE_ANALYTICS_PREFERENCES.excludedProjects,
++    },
++  };
++}
++
++/**
++ * Reads the current preferences (defaults if absent), applies `mutate`, and writes the result
++ * atomically (temp file + rename). Throws `ConfigurationError` if the existing file is corrupt —
++ * the bytes on disk are never touched in that case.
++ */
++export async function updateClaudeAnalyticsPreferences(
++  mutate: (current: ClaudeAnalyticsPreferences) => ClaudeAnalyticsPreferences | Promise<ClaudeAnalyticsPreferences>
++): Promise<ClaudeAnalyticsPreferences> {
++  const path = getClaudeAnalyticsPreferencesPath();
++  const current = await readClaudeAnalyticsPreferences();
++  if (current.kind === 'corrupt') {
++    throw new ConfigurationError(
++      `Claude analytics preferences are corrupt and were not changed: ${path}. Fix or delete it, then retry.`
++    );
++  }
++
++  const next = await mutate(current.value);
++  await mkdir(dirname(path), { recursive: true });
++  const tempPath = `${path}.${process.pid}.tmp`;
++  try {
++    await writeFile(tempPath, JSON.stringify(next, null, 2), 'utf-8');
++    await rename(tempPath, path);
++  } catch (error) {
++    await unlink(tempPath).catch(() => undefined);
++    throw error;
++  }
++
++  return next;
++}
++
++/** True if `cwd` is inside (or equal to) any entry in `excludedProjects`. */
++export async function isProjectExcluded(cwd: string | undefined, excludedProjects: string[]): Promise<boolean> {
++  if (!cwd) {
++    return false;
++  }
++  const canonicalCwd = await canonicalizePath(cwd);
++  for (const entry of excludedProjects) {
++    if (isPathInside(canonicalCwd, await canonicalizePath(entry))) {
++      return true;
++    }
++  }
++  return false;
++}
+diff --git a/src/cli/commands/proxy/__tests__/analytics-command.test.ts b/src/cli/commands/proxy/__tests__/analytics-command.test.ts
+new file mode 100644
+index 00000000..4ac0c15b
+--- /dev/null
++++ b/src/cli/commands/proxy/__tests__/analytics-command.test.ts
+@@ -0,0 +1,122 @@
++/**
++ * Tests for `codemie proxy analytics` write commands (disable/enable/exclude/include).
++ * @group unit
++ */
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { mkdtemp, readFile, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++
++let tempDir: string;
++let projectRoot: string;
++
++vi.mock('@/utils/paths.js', async () => {
++  const actual = await vi.importActual<typeof import('@/utils/paths.js')>('@/utils/paths.js');
++  return {
++    ...actual,
++    getCodemiePath: (...paths: string[]) => join(tempDir, ...paths),
++  };
++});
++
++vi.mock('@/utils/project-root.js', () => ({
++  resolveProjectRoot: () => projectRoot,
++}));
++
++describe('createProxyAnalyticsCommand', () => {
++  let logSpy: ReturnType<typeof vi.spyOn>;
++
++  beforeEach(async () => {
++    tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-'));
++    projectRoot = await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-'));
++    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++  });
++
++  afterEach(async () => {
++    vi.restoreAllMocks();
++    vi.resetModules();
++    await rm(tempDir, { recursive: true, force: true });
++    await rm(projectRoot, { recursive: true, force: true });
++  });
++
++  async function runCommand(args: string[]): Promise<void> {
++    const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
++    await createProxyAnalyticsCommand().parseAsync(args, { from: 'user' });
++  }
++
++  async function readPreferences(): Promise<unknown> {
++    const { getClaudeAnalyticsPreferencesPath } = await import(
++      '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
++    );
++    return JSON.parse(await readFile(getClaudeAnalyticsPreferencesPath(), 'utf-8'));
++  }
++
++  it('disable sets enabled to false', async () => {
++    await runCommand(['disable']);
++    expect(await readPreferences()).toMatchObject({ enabled: false });
++  });
++
++  it('enable sets enabled back to true after disable', async () => {
++    await runCommand(['disable']);
++    await runCommand(['enable']);
++    expect(await readPreferences()).toMatchObject({ enabled: true });
++  });
++
++  it('exclude with an explicit path adds its canonical form', async () => {
++    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
++    await runCommand(['exclude', '/work/a']);
++    const canonical = await canonicalizePath('/work/a');
++    expect(await readPreferences()).toMatchObject({ excludedProjects: [canonical] });
++  });
++
++  it('exclude with no path argument excludes the resolved project root', async () => {
++    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
++    await runCommand(['exclude']);
++    const canonical = await canonicalizePath(projectRoot);
++    expect(await readPreferences()).toMatchObject({ excludedProjects: [canonical] });
++  });
++
++  it('exclude twice keeps a single entry and prints Nothing to change', async () => {
++    await runCommand(['exclude', '/work/a']);
++    logSpy.mockClear();
++    await runCommand(['exclude', '/work/a']);
++    expect(await readPreferences()).toMatchObject({ excludedProjects: [expect.any(String)] });
++    const prefs = (await readPreferences()) as { excludedProjects: string[] };
++    expect(prefs.excludedProjects).toHaveLength(1);
++    expect(logSpy.mock.calls.flat().join(' ')).toContain('Nothing to change.');
++  });
++
++  it('include removes a previously excluded path', async () => {
++    await runCommand(['exclude', '/work/a']);
++    await runCommand(['include', '/work/a']);
++    expect(await readPreferences()).toMatchObject({ excludedProjects: [] });
++  });
++
++  it('include on a path that was never excluded prints Nothing to change and leaves the file unchanged', async () => {
++    await runCommand(['disable']);
++    const before = await readPreferences();
++    logSpy.mockClear();
++    await runCommand(['include', '/work/z']);
++    expect(await readPreferences()).toEqual(before);
++    expect(logSpy.mock.calls.flat().join(' ')).toContain('Nothing to change.');
++  });
++
++  it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {
++    const { getClaudeAnalyticsPreferencesPath } = await import(
++      '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
++    );
++    const { writeFile, mkdir } = await import('node:fs/promises');
++    const { dirname } = await import('node:path');
++    const path = getClaudeAnalyticsPreferencesPath();
++    await mkdir(dirname(path), { recursive: true });
++    await writeFile(path, '{not json', 'utf-8');
++    const before = await readFile(path, 'utf-8');
++
++    process.exitCode = undefined;
++    await runCommand(['disable']);
++
++    expect(process.exitCode).toBe(1);
++    expect(await readFile(path, 'utf-8')).toBe(before);
++    process.exitCode = undefined;
++  });
++});
+diff --git a/src/cli/commands/proxy/__tests__/analytics-status.test.ts b/src/cli/commands/proxy/__tests__/analytics-status.test.ts
+new file mode 100644
+index 00000000..267484c8
+--- /dev/null
++++ b/src/cli/commands/proxy/__tests__/analytics-status.test.ts
+@@ -0,0 +1,146 @@
++/**
++ * Tests for `codemie proxy analytics status`.
++ * @group unit
++ */
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join, dirname } from 'node:path';
++
++let tempDir: string;
++
++vi.mock('@/utils/paths.js', async () => {
++  const actual = await vi.importActual<typeof import('@/utils/paths.js')>('@/utils/paths.js');
++  return {
++    ...actual,
++    resolveHomeDir: (relativePath = '') => join(tempDir, relativePath),
++    getCodemiePath: (...paths: string[]) => join(tempDir, '.codemie', ...paths),
++  };
++});
++
++async function writeSettings(content: Record<string, unknown>): Promise<void> {
++  const path = join(tempDir, '.claude', 'settings.json');
++  await mkdir(dirname(path), { recursive: true });
++  await writeFile(path, JSON.stringify(content), 'utf-8');
++}
++
++async function writePreferences(raw: string): Promise<void> {
++  const { getClaudeAnalyticsPreferencesPath } = await import(
++    '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
++  );
++  const path = getClaudeAnalyticsPreferencesPath();
++  await mkdir(dirname(path), { recursive: true });
++  await writeFile(path, raw, 'utf-8');
++}
++
++const HOOK_ENTRY = { matcher: '', hooks: [{ type: 'command', command: 'codemie hook --agent claude-code-otlp' }] };
++
++describe('analytics-status', () => {
++  beforeEach(async () => {
++    tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-status-'));
++  });
++
++  afterEach(async () => {
++    vi.resetModules();
++    await rm(tempDir, { recursive: true, force: true });
++  });
++
++  describe('hasClaudeCodeOtlpHooks', () => {
++    it('is false with no settings file', async () => {
++      const { hasClaudeCodeOtlpHooks } = await import('../connectors/claude-code-otlp.js');
++      expect(await hasClaudeCodeOtlpHooks()).toBe(false);
++    });
++
++    it('is true once the settings file has the codemie hook command', async () => {
++      await writeSettings({ hooks: { SessionStart: [HOOK_ENTRY] } });
++      const { hasClaudeCodeOtlpHooks } = await import('../connectors/claude-code-otlp.js');
++      expect(await hasClaudeCodeOtlpHooks()).toBe(true);
++    });
++  });
++
++  describe('collectClaudeAnalyticsStatus', () => {
++    it('reports not-configured with no settings and no preferences', async () => {
++      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const status = await collectClaudeAnalyticsStatus('/work/a');
++      expect(status.hooksInstalled).toBe(false);
++      expect(status.scope).toBe('not-configured');
++      expect(status.enabled).toBe(true);
++      expect(status.excludedProjects).toEqual([]);
++    });
++
++    it('reports project scope with tracked projects', async () => {
++      await writeSettings({
++        hooks: { SessionStart: [HOOK_ENTRY] },
++        env: { CODEMIE_ANALYTICS_PROJECT_FILTER: JSON.stringify(['/work/a', '/work/b']) },
++      });
++      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const status = await collectClaudeAnalyticsStatus('/work/a');
++      expect(status.hooksInstalled).toBe(true);
++      expect(status.scope).toBe('project');
++      expect(status.trackedProjects).toEqual(['/work/a', '/work/b']);
++    });
++
++    it('reports an excluded project under Global scope as not tracked', async () => {
++      await writeSettings({
++        hooks: { SessionStart: [HOOK_ENTRY] },
++        env: { CODEMIE_ANALYTICS_PROJECT_FILTER: '[]' },
++      });
++      await writePreferences(JSON.stringify({ version: 1, enabled: true, excludedProjects: ['/work/a'] }));
++      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const status = await collectClaudeAnalyticsStatus('/work/a');
++      expect(status.current.tracked).toBe(false);
++      expect(status.current.reason).toBe('project-excluded');
++    });
++
++    it('reports disabled when preferences disable collection', async () => {
++      await writePreferences(JSON.stringify({ version: 1, enabled: false, excludedProjects: [] }));
++      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const status = await collectClaudeAnalyticsStatus('/work/a');
++      expect(status.enabled).toBe(false);
++      expect(status.current.tracked).toBe(false);
++      expect(status.current.reason).toBe('disabled');
++    });
++
++    it('reports a corrupt preferences file', async () => {
++      await writePreferences('{not json');
++      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const status = await collectClaudeAnalyticsStatus('/work/a');
++      expect(status.preferencesCorrupt).toBe(true);
++      expect(status.current.reason).toBe('preferences-corrupt');
++    });
++  });
++
++  describe('formatClaudeAnalyticsStatus', () => {
++    it('includes the corrupt-config hint only when corrupt', async () => {
++      const { formatClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const base = {
++        hooksInstalled: true,
++        scope: 'not-configured' as const,
++        trackedProjects: [],
++        enabled: true,
++        excludedProjects: [],
++        preferencesCorrupt: false,
++        preferencesPath: '/x/claude-analytics.json',
++        current: { path: '/work/a', tracked: true, reason: 'tracked' as const },
++      };
++      expect(formatClaudeAnalyticsStatus(base)).not.toContain('corrupt');
++      expect(formatClaudeAnalyticsStatus({ ...base, preferencesCorrupt: true })).toContain('corrupt');
++    });
++
++    it('includes the connect hint only when hooks are not installed', async () => {
++      const { formatClaudeAnalyticsStatus } = await import('../analytics-status.js');
++      const base = {
++        hooksInstalled: false,
++        scope: 'not-configured' as const,
++        trackedProjects: [],
++        enabled: true,
++        excludedProjects: [],
++        preferencesCorrupt: false,
++        preferencesPath: '/x/claude-analytics.json',
++        current: { path: '/work/a', tracked: true, reason: 'tracked' as const },
++      };
++      expect(formatClaudeAnalyticsStatus(base)).toContain('codemie proxy connect');
++      expect(formatClaudeAnalyticsStatus({ ...base, hooksInstalled: true })).not.toContain('codemie proxy connect');
++    });
++  });
++});
+diff --git a/src/cli/commands/proxy/analytics-command.ts b/src/cli/commands/proxy/analytics-command.ts
+new file mode 100644
+index 00000000..b2534a9f
+--- /dev/null
++++ b/src/cli/commands/proxy/analytics-command.ts
+@@ -0,0 +1,117 @@
++/**
++ * `codemie proxy analytics` — turns Claude Code analytics collection off/on or excludes a single
++ * project, without uninstalling the hooks `connect --claude-code-otlp` already wrote. Deliberately
++ * nested under `proxy`, not a new top-level command, so it is never confused with the unrelated
++ * reporting command at `codemie analytics` (`src/cli/commands/analytics/`).
++ */
++
++import { Command } from 'commander';
++import chalk from 'chalk';
++import { ConfigurationError } from '@/utils/errors.js';
++import { resolveProjectRoot } from '@/utils/project-root.js';
++import { canonicalizePath } from '@/agents/core/project-allowlist.js';
++import {
++  getClaudeAnalyticsPreferencesPath,
++  updateClaudeAnalyticsPreferences,
++  type ClaudeAnalyticsPreferences,
++} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
++import { collectClaudeAnalyticsStatus, formatClaudeAnalyticsStatus } from './analytics-status.js';
++
++async function withErrorHandling(action: () => Promise<void>): Promise<void> {
++  try {
++    await action();
++  } catch (error) {
++    const message = error instanceof ConfigurationError ? error.message : String(error);
++    console.error(chalk.red(`✗ ${message}`));
++    process.exitCode = 1;
++  }
++}
++
++function printSaved(suffix = ''): void {
++  console.log(chalk.green(`✓ Saved to ${getClaudeAnalyticsPreferencesPath()}. Applies to the next Claude Code hook event.${suffix}`));
++}
++
++async function setEnabled(enabled: boolean): Promise<void> {
++  await withErrorHandling(async () => {
++    let changed = true;
++    await updateClaudeAnalyticsPreferences((current) => {
++      changed = current.enabled !== enabled;
++      return { ...current, enabled };
++    });
++    if (!changed) {
++      console.log(chalk.dim('Nothing to change.'));
++      return;
++    }
++    printSaved();
++  });
++}
++
++async function excludeProject(path: string | undefined): Promise<void> {
++  await withErrorHandling(async () => {
++    const canonical = await canonicalizePath(path ?? resolveProjectRoot());
++    let changed = true;
++    await updateClaudeAnalyticsPreferences((current: ClaudeAnalyticsPreferences) => {
++      changed = !current.excludedProjects.includes(canonical);
++      return changed ? { ...current, excludedProjects: [...current.excludedProjects, canonical] } : current;
++    });
++    if (!changed) {
++      console.log(chalk.dim('Nothing to change.'));
++      return;
++    }
++    printSaved(` (project: ${canonical})`);
++  });
++}
++
++async function includeProject(path: string | undefined): Promise<void> {
++  await withErrorHandling(async () => {
++    const canonical = await canonicalizePath(path ?? resolveProjectRoot());
++    let changed = true;
++    await updateClaudeAnalyticsPreferences((current: ClaudeAnalyticsPreferences) => {
++      changed = current.excludedProjects.includes(canonical);
++      return changed
++        ? { ...current, excludedProjects: current.excludedProjects.filter((p) => p !== canonical) }
++        : current;
++    });
++    if (!changed) {
++      console.log(chalk.dim('Nothing to change.'));
++      return;
++    }
++    printSaved(` (project: ${canonical})`);
++  });
++}
++
++export function createProxyAnalyticsCommand(): Command {
++  const analytics = new Command('analytics');
++  analytics.description('Turn Claude Code analytics collection off/on, or exclude a single project');
++
++  analytics
++    .command('disable')
++    .description('Stop all Claude Code analytics collection (hooks stay installed)')
++    .action(() => setEnabled(false));
++
++  analytics
++    .command('enable')
++    .description('Resume Claude Code analytics collection')
++    .action(() => setEnabled(true));
++
++  analytics
++    .command('exclude [path]')
++    .description('Exclude one project from analytics collection (default: the current project root)')
++    .action((path?: string) => excludeProject(path));
++
++  analytics
++    .command('include [path]')
++    .description('Remove a project from the exclusion list (default: the current project root)')
++    .action((path?: string) => includeProject(path));
++
++  analytics
++    .command('status')
++    .description('Show the effective Claude Code analytics configuration')
++    .option('--json', 'Emit status as JSON instead of formatted output')
++    .action(async (opts: { json?: boolean }) => {
++      const status = await collectClaudeAnalyticsStatus(process.cwd());
++      console.log(opts.json ? JSON.stringify(status, null, 2) : formatClaudeAnalyticsStatus(status));
++    });
++
++  return analytics;
++}
+diff --git a/src/cli/commands/proxy/analytics-status.ts b/src/cli/commands/proxy/analytics-status.ts
+new file mode 100644
+index 00000000..cc23e46f
+--- /dev/null
++++ b/src/cli/commands/proxy/analytics-status.ts
+@@ -0,0 +1,83 @@
++/**
++ * `codemie proxy analytics status` — the view half of AC3: effective scope, tracked/excluded
++ * projects, the enabled flag, and whether the current directory is tracked right now and why.
++ */
++
++import {
++  inferAllowlistScope,
++  readAllowlistState,
++} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
++import {
++  evaluateClaudeAnalyticsGate,
++  type ClaudeAnalyticsGateReason,
++} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js';
++import {
++  getClaudeAnalyticsPreferencesPath,
++  readClaudeAnalyticsPreferences,
++} from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
++import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
++
++export interface ClaudeAnalyticsStatus {
++  hooksInstalled: boolean;
++  scope: 'user' | 'project' | 'invalid' | 'not-configured';
++  trackedProjects: string[];
++  enabled: boolean;
++  excludedProjects: string[];
++  preferencesCorrupt: boolean;
++  preferencesPath: string;
++  current: { path: string; tracked: boolean; reason: ClaudeAnalyticsGateReason };
++}
++
++export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeAnalyticsStatus> {
++  const [hooksInstalled, allowlistState, preferences, gateDecision] = await Promise.all([
++    hasClaudeCodeOtlpHooks(),
++    readAllowlistState(),
++    readClaudeAnalyticsPreferences(),
++    evaluateClaudeAnalyticsGate(cwd),
++  ]);
++
++  const scope = hooksInstalled
++    ? allowlistState.kind === 'invalid'
++      ? 'invalid'
++      : inferAllowlistScope(allowlistState)
++    : 'not-configured';
++
++  return {
++    hooksInstalled,
++    scope,
++    trackedProjects: allowlistState.kind === 'valid' ? allowlistState.paths : [],
++    enabled: preferences.kind === 'ok' ? preferences.value.enabled : false,
++    excludedProjects: preferences.kind === 'ok' ? preferences.value.excludedProjects : [],
++    preferencesCorrupt: preferences.kind === 'corrupt',
++    preferencesPath: getClaudeAnalyticsPreferencesPath(),
++    current: { path: cwd, tracked: gateDecision.tracked, reason: gateDecision.reason },
++  };
++}
++
++export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): string {
++  const lines: string[] = [];
++  lines.push(`Hooks: ${status.hooksInstalled ? 'installed' : 'not installed'}`);
++  lines.push(`Scope: ${status.scope}`);
++  if (status.scope === 'project') {
++    lines.push('Tracked projects:');
++    for (const path of status.trackedProjects) {
++      lines.push(`  - ${path}`);
++    }
++  }
++  lines.push(`Collection: ${status.enabled ? 'enabled' : 'disabled'}`);
++  lines.push(
++    status.excludedProjects.length > 0
++      ? `Excluded projects:\n${status.excludedProjects.map((p) => `  - ${p}`).join('\n')}`
++      : 'Excluded projects: (none)'
++  );
++  lines.push(
++    `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
++  );
++  if (!status.hooksInstalled) {
++    lines.push('Run: codemie proxy connect --claude-code-otlp');
++  }
++  if (status.preferencesCorrupt) {
++    lines.push(`Preferences file is corrupt — collection is stopped. Fix or delete ${status.preferencesPath}.`);
++  }
++  return lines.join('\n');
++}
+diff --git a/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts b/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
+index 2cef2c91..6a8091f3 100644
+--- a/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
++++ b/src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts
+@@ -20,7 +20,7 @@ import {
+ import { readState } from '../../daemon-manager.js';
+ import { CODEMIE_ANALYTICS_PROJECT_FILTER_ENV } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+ import { resolveProjectRoot } from '@/utils/project-root.js';
+-import { resolveHomeDir } from '@/utils/paths.js';
++import { resolveHomeDir, getCodemiePath } from '@/utils/paths.js';
+ import { logger } from '@/utils/logger.js';
+ import { sanitizeLogArgs } from '@/utils/security.js';
+ import { ConfigurationError } from '@/utils/errors.js';
+@@ -44,6 +44,7 @@ vi.mock('@/utils/project-root.js', () => ({
+ 
+ vi.mock('@/utils/paths.js', () => ({
+   resolveHomeDir: vi.fn(),
++  getCodemiePath: vi.fn(),
+ }));
+ 
+ vi.mock('@/utils/logger.js', () => ({
+@@ -110,6 +111,7 @@ describe('claude-code-otlp connector', () => {
+ 
+     vi.mocked(resolveProjectRoot).mockReturnValue(projectDir);
+     vi.mocked(resolveHomeDir).mockReturnValue(homeDir);
++    vi.mocked(getCodemiePath).mockImplementation((...paths: string[]) => join(homeDir, '.codemie', ...paths));
+     vi.mocked(readState).mockResolvedValue(mockState as any);
+   });
+ 
+@@ -1500,4 +1502,35 @@ describe('claude-code-otlp connector', () => {
+       expect(final.env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('not-a-json-array-at-all');
+     });
+   });
++
++  describe('regression: EPMCDME-16396 — claude-analytics.json survives connect/disconnect', () => {
++    async function readPreferencesBytes(): Promise<string> {
++      return readFile(join(homeDir, '.codemie', 'claude-analytics.json'), 'utf-8');
++    }
++
++    it('writeClaudeCodeOtlpConfig({ scope: "user" }) leaves claude-analytics.json byte-identical', async () => {
++      const { updateClaudeAnalyticsPreferences } = await import(
++        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
++      );
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
++      const before = await readPreferencesBytes();
++
++      await writeClaudeCodeOtlpConfig({ scope: 'user' });
++
++      expect(await readPreferencesBytes()).toBe(before);
++    });
++
++    it('removeClaudeCodeOtlpConfig() leaves claude-analytics.json byte-identical', async () => {
++      const { updateClaudeAnalyticsPreferences } = await import(
++        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
++      );
++      await writeClaudeCodeOtlpConfig();
++      await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
++      const before = await readPreferencesBytes();
++
++      await removeClaudeCodeOtlpConfig();
++
++      expect(await readPreferencesBytes()).toBe(before);
++    });
++  });
+ });
+diff --git a/src/cli/commands/proxy/connectors/claude-code-otlp.ts b/src/cli/commands/proxy/connectors/claude-code-otlp.ts
+index 7302f49b..62334f94 100644
+--- a/src/cli/commands/proxy/connectors/claude-code-otlp.ts
++++ b/src/cli/commands/proxy/connectors/claude-code-otlp.ts
+@@ -668,7 +668,7 @@ export async function removeClaudeCodeOtlpConfig(
+       } else if (allowlist.kind === 'absent') {
+         reason = `${CODEMIE_ANALYTICS_PROJECT_FILTER_ENV} is not set`;
+       } else {
+-        reason = 'all projects are tracked (no per-project entries)';
++        reason = 'all projects are tracked (no per-project entries); to stop one project use: codemie proxy analytics exclude';
+       }
+       return { removed: false, path: settingsPath, mode: 'noop', reason };
+     }
+@@ -751,3 +751,16 @@ export async function removeClaudeCodeOtlpConfig(
+   );
+   return { removed: true, path: settingsPath, mode: 'full' };
+ }
++
++/** True iff any hooks entry in `~/.claude/settings.json` carries codemie's own command. Never throws. */
++export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
++  let existing: ClaudeSettings;
++  try {
++    existing = await readSettingsFile(getClaudeSettingsPath());
++  } catch {
++    return false;
++  }
++  return Object.values(existing.hooks ?? {}).some(
++    (entries) => Array.isArray(entries) && entries.some(groupContainsCodemieCommand)
++  );
++}
+diff --git a/src/cli/commands/proxy/index.ts b/src/cli/commands/proxy/index.ts
+index 85594234..723409e4 100644
+--- a/src/cli/commands/proxy/index.ts
++++ b/src/cli/commands/proxy/index.ts
+@@ -12,6 +12,7 @@ import {
+   writeState,
+ } from './daemon-manager.js';
+ import { disconnectTargets } from './disconnect-orchestrator.js';
++import { createProxyAnalyticsCommand } from './analytics-command.js';
+ import { checkProxyHealth } from './health-check.js';
+ import { printDesktopInspection } from './inspect-desktop.js';
+ import {
+@@ -442,6 +443,7 @@ export function createProxyCommand(): Command {
+ 
+   proxy.addCommand(connect);
+   proxy.addCommand(inspect);
++  proxy.addCommand(createProxyAnalyticsCommand());
+ 
+   return proxy;
+ }

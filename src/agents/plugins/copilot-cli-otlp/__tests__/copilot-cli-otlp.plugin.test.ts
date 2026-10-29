@@ -4,9 +4,8 @@ vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAut
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null), hasLocalConfig: vi.fn(async () => false) },
 }));
-vi.mock('@/agents/core/copilot-connector-scope.js', () => ({
-  isCopilotProjectTracked: vi.fn(),
-  readCopilotConnectorScope: vi.fn(async () => ({ kind: 'ok', value: { enabled: true, scope: 'user' } })),
+vi.mock('@/agents/core/copilot-analytics-gate.js', () => ({
+  evaluateCopilotAnalyticsGate: vi.fn(),
 }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -15,7 +14,7 @@ vi.mock('@/utils/logger.js', () => ({
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
-import { isCopilotProjectTracked } from '@/agents/core/copilot-connector-scope.js';
+import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
 
 function hookInput(overrides: Record<string, unknown> = {}): string {
@@ -40,33 +39,33 @@ describe('CopilotCliOtlpPlugin.isTracked', () => {
     }
   });
 
-  it('is never tracked when CODEMIE_SESSION_ID is set, even if the connector scope would track it', async () => {
+  it('is never tracked when CODEMIE_SESSION_ID is set, even if the gate would track it', async () => {
     process.env.CODEMIE_SESSION_ID = 'managed-session-1';
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
 
     const tracked = await (plugin as unknown as { isTracked(input: unknown): Promise<boolean> }).isTracked({
       cwd: '/repo',
     });
 
     expect(tracked).toBe(false);
-    expect(isCopilotProjectTracked).not.toHaveBeenCalled();
+    expect(evaluateCopilotAnalyticsGate).not.toHaveBeenCalled();
   });
 
-  it('delegates to isCopilotProjectTracked when CODEMIE_SESSION_ID is unset', async () => {
+  it('delegates to evaluateCopilotAnalyticsGate when CODEMIE_SESSION_ID is unset', async () => {
     delete process.env.CODEMIE_SESSION_ID;
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
 
     const tracked = await (plugin as unknown as { isTracked(input: unknown): Promise<boolean> }).isTracked({
       cwd: '/repo',
     });
 
     expect(tracked).toBe(true);
-    expect(isCopilotProjectTracked).toHaveBeenCalledWith('/repo', expect.objectContaining({ kind: 'ok' }));
+    expect(evaluateCopilotAnalyticsGate).toHaveBeenCalledWith('copilot-cli-otlp', '/repo');
   });
 
-  it('is not tracked when the connector scope delegate returns false', async () => {
+  it('is not tracked when the gate returns tracked:false', async () => {
     delete process.env.CODEMIE_SESSION_ID;
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(false);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: false, reason: 'analytics-disabled' });
 
     const tracked = await (plugin as unknown as { isTracked(input: unknown): Promise<boolean> }).isTracked({
       cwd: '/repo',
@@ -95,7 +94,7 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env.CODEMIE_SESSION_ID;
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
   });
 
   afterEach(() => {
@@ -226,7 +225,7 @@ describe('CopilotCliOtlpPlugin error field mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env.CODEMIE_SESSION_ID;
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
   });
 
   afterEach(() => {
@@ -281,7 +280,7 @@ describe('CopilotCliOtlpPlugin free-text field masking', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env.CODEMIE_SESSION_ID;
-    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
   });
 
   afterEach(() => {

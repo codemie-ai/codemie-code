@@ -3,7 +3,11 @@ import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentA
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
-import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import {
+  evaluateCopilotAnalyticsGate,
+  type CopilotAnalyticsGateReason,
+} from '@/agents/core/copilot-analytics-gate.js';
+import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from './copilot-chat-otlp.constants.js';
 import { type ChatBlockOutput, type ChatForwardDecision, type CopilotChatHookInput, isCopilotChatHookInput } from './copilot-chat-otlp.types.js';
@@ -22,6 +26,17 @@ const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
 /** Enforcement points: block the session/prompt, deny tools as defense in depth. */
 const ENFORCED_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse']);
 
+/**
+ * The user turned analytics off (or excluded this project, or the opt-out file is unreadable).
+ * Nothing is collected, but a block here would stop their Copilot Chat session/prompts/tools — so
+ * these stay silent; `codemie proxy analytics status` explains why nothing is collected.
+ */
+const ANALYTICS_OPT_OUT_REASONS: ReadonlySet<CopilotAnalyticsGateReason> = new Set<CopilotAnalyticsGateReason>([
+  'preferences-corrupt',
+  'analytics-disabled',
+  'project-excluded',
+]);
+
 export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput, ChatBlockOutput> {
   public readonly name = COPILOT_CHAT_OTLP_AGENT_NAME;
 
@@ -38,15 +53,17 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   }
 
   protected async isTracked(hookInput: CopilotChatHookInput): Promise<boolean> {
-    const scope = await readCopilotConnectorScope(this.name);
-    if (scope.kind === 'corrupt' || !scope.value.enabled || !this.hasRequiredIdentity(hookInput)) {
-      return false;
-    }
-    return isCopilotProjectTracked(hookInput.cwd, scope);
+    const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
+    return decision.tracked && this.hasRequiredIdentity(hookInput);
   }
 
   protected async onUntrackedHook(hookInput: CopilotChatHookInput): Promise<void> {
     if (!ENFORCED_EVENTS.has(hookInput.hook_event_name)) {
+      return;
+    }
+
+    const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
+    if (!decision.tracked && ANALYTICS_OPT_OUT_REASONS.has(decision.reason)) {
       return;
     }
 
@@ -131,6 +148,10 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     }
 
     return this.buildBlock(hookInput.hook_event_name, authResult.reason);
+  }
+
+  private cwdOrUndefined(input: CopilotChatHookInput): string | undefined {
+    return typeof input.cwd === 'string' ? input.cwd : undefined;
   }
 
   private hasRequiredIdentity(input: CopilotChatHookInput): input is CopilotChatHookInput & {
