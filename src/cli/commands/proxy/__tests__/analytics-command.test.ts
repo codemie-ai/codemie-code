@@ -423,6 +423,27 @@ describe('createProxyAnalyticsCommand', () => {
       expect(parsed.current).toMatchObject({ tracked: false, reason: 'analytics-disabled' });
     });
 
+    it.each([
+      ['exclude', ['exclude', '/work/a']],
+      ['include', ['include', '/work/a']],
+      ['enable', ['enable']],
+    ])('%s refuses to rewrite a version-less (reader-corrupt) preferences file: exit 1, bytes unchanged', async (_name, args) => {
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      const { writeFile, mkdir } = await import('node:fs/promises');
+      const { dirname } = await import('node:path');
+      const path = getCopilotAnalyticsPreferencesPath();
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify({ connectors: {} }), 'utf-8');
+      const before = await readFile(path, 'utf-8');
+
+      process.exitCode = undefined;
+      await runCommand([...args, flag]);
+
+      expect(process.exitCode).toBe(1);
+      expect(await readFile(path, 'utf-8')).toBe(before);
+      process.exitCode = undefined;
+    });
+
     it('a corrupt copilot preferences file exits with code 1 and is left unchanged', async () => {
       const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
       const { writeFile, mkdir } = await import('node:fs/promises');

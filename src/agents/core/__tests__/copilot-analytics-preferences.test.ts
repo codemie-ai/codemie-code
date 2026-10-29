@@ -52,6 +52,10 @@ describe('copilot-analytics-preferences', () => {
       ['invalid JSON', '{not json'],
       ['array root', '[]'],
       ['connectors not an object', JSON.stringify({ version: 1, connectors: 'x' })],
+      ['connectors an array', JSON.stringify({ version: 1, connectors: [] })],
+      ['connectors null', JSON.stringify({ version: 1, connectors: null })],
+      ['missing version', JSON.stringify({ connectors: {} })],
+      ['non-numeric version', JSON.stringify({ version: '1', connectors: {} })],
       ['enabled not boolean', JSON.stringify({ version: 1, connectors: { 'copilot-cli-otlp': { enabled: 'no' } } })],
       [
         'excludedProjects not an array',
@@ -106,18 +110,46 @@ describe('copilot-analytics-preferences', () => {
       });
     });
 
-    it('throws ConfigurationError on a corrupt existing file and leaves bytes unchanged', async () => {
+    // Every shape the reader calls corrupt must also be refused by the writer, bytes untouched.
+    it.each([
+      ['invalid JSON', '{not json'],
+      ['array root', '[]'],
+      ['connectors not an object', JSON.stringify({ version: 1, connectors: 'x' })],
+      ['connectors an array', JSON.stringify({ version: 1, connectors: [] })],
+      ['connectors null', JSON.stringify({ version: 1, connectors: null })],
+      ['missing version', JSON.stringify({ connectors: {} })],
+      ['non-numeric version', JSON.stringify({ version: '1', connectors: {} })],
+      [
+        'this connector record malformed',
+        JSON.stringify({ version: 1, connectors: { 'copilot-cli-otlp': { enabled: 'no' } } }),
+      ],
+    ])('throws ConfigurationError on a corrupt existing file (%s) and leaves bytes unchanged', async (_label, raw) => {
       const { updateCopilotAnalyticsPreferences, getCopilotAnalyticsPreferencesPath } = await import(
         '../copilot-analytics-preferences.js'
       );
+      const { ConfigurationError } = await import('@/utils/errors.js');
       const path = getCopilotAnalyticsPreferencesPath();
       await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, '{not json', 'utf-8');
+      await writeFile(path, raw, 'utf-8');
       const before = await readFile(path, 'utf-8');
 
-      await expect(updateCopilotAnalyticsPreferences('copilot-cli-otlp', (c) => c)).rejects.toThrow();
+      await expect(updateCopilotAnalyticsPreferences('copilot-cli-otlp', (c) => c)).rejects.toThrow(
+        ConfigurationError
+      );
 
       expect(await readFile(path, 'utf-8')).toBe(before);
+    });
+
+    it('update and read agree: a file the reader calls corrupt is never rewritten by update', async () => {
+      const { updateCopilotAnalyticsPreferences, readCopilotAnalyticsPreferences, getCopilotAnalyticsPreferencesPath } =
+        await import('../copilot-analytics-preferences.js');
+      const path = getCopilotAnalyticsPreferencesPath();
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify({ connectors: {} }), 'utf-8');
+
+      expect(await readCopilotAnalyticsPreferences('copilot-cli-otlp')).toEqual({ kind: 'corrupt' });
+      await expect(updateCopilotAnalyticsPreferences('copilot-cli-otlp', (c) => c)).rejects.toThrow();
+      expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual({ connectors: {} });
     });
 
     it('leaves no temp file behind after a successful write', async () => {

@@ -39,6 +39,20 @@ export function getCopilotAnalyticsPreferencesPath(): string {
   return getCodemiePath('copilot-analytics.json');
 }
 
+/** The one file-shape rule shared by read and update, so the writer never accepts what the reader fails closed on. */
+function isValidFile(value: unknown): value is { version: number; connectors: Record<string, unknown> } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.version === 'number' &&
+    typeof v.connectors === 'object' &&
+    v.connectors !== null &&
+    !Array.isArray(v.connectors)
+  );
+}
+
 function isValidRecord(value: unknown): value is Partial<CopilotAnalyticsRecord> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -89,15 +103,11 @@ export async function readCopilotAnalyticsPreferences(connectorId: string): Prom
     return { kind: 'corrupt' };
   }
 
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { kind: 'corrupt' };
-  }
-  const file = parsed as Partial<CopilotAnalyticsFile>;
-  if (typeof file.version !== 'number' || typeof file.connectors !== 'object' || file.connectors === null) {
+  if (!isValidFile(parsed)) {
     return { kind: 'corrupt' };
   }
 
-  const record = (file.connectors as Record<string, unknown>)[connectorId];
+  const record = parsed.connectors[connectorId];
   if (record === undefined) {
     return { kind: 'ok', value: DEFAULT_COPILOT_ANALYTICS_RECORD };
   }
@@ -143,25 +153,18 @@ export async function updateCopilotAnalyticsPreferences(
     } catch {
       parsed = undefined;
     }
-    const candidate = parsed as Partial<CopilotAnalyticsFile> | undefined;
-    if (
-      typeof candidate !== 'object' ||
-      candidate === null ||
-      Array.isArray(candidate) ||
-      typeof candidate.connectors !== 'object' ||
-      candidate.connectors === null
-    ) {
+    if (!isValidFile(parsed)) {
       throw new ConfigurationError(
         `Copilot analytics preferences are corrupt and were not changed: ${path}. Fix or delete it, then retry.`
       );
     }
-    const existingRecord = (candidate.connectors as Record<string, unknown>)[connectorId];
+    const existingRecord = parsed.connectors[connectorId];
     if (existingRecord !== undefined && !isValidRecord(existingRecord)) {
       throw new ConfigurationError(
         `Copilot analytics preferences are corrupt and were not changed: ${path}. Fix or delete it, then retry.`
       );
     }
-    file = { version: CONFIG_VERSION, connectors: { ...(candidate.connectors as Record<string, CopilotAnalyticsRecord>) } };
+    file = { version: CONFIG_VERSION, connectors: { ...(parsed.connectors as Record<string, CopilotAnalyticsRecord>) } };
     if (existingRecord !== undefined) {
       const r = existingRecord as Partial<CopilotAnalyticsRecord>;
       current = {
