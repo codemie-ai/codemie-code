@@ -2889,7 +2889,7 @@ describe('api-request-blob lines', () => {
   });
 });
 
-describe('foreground Skill-tool fork named after its SubagentStop (EPMCDME-16352)', () => {
+describe('subagent that may be a skill fork is deferred until provable (EPMCDME-16352)', () => {
   const skillCall = JSON.stringify({
     type: 'assistant',
     message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tu-skill', name: 'Skill', input: { skill: 'forkme' } }] },
@@ -2902,17 +2902,20 @@ describe('foreground Skill-tool fork named after its SubagentStop (EPMCDME-16352
   const forkUsage = (): string[] => [usageLine({ uuid: 'uuid-f1', messageId: 'msg-f1', outputTokens: 10 })];
   const scopes = (events: Record<string, unknown>[]): string[] =>
     events.filter((e) => e.type === 'agent.usage.request').map((e) => `${e.scope_kind}:${e.scope_name}`);
+  const lines = (...l: string[]): string => l.map((x) => `${x}\n`).join('');
 
-  it('re-scopes the fork to the skill on the next Stop, once, with the fork\'s own agent_id', async () => {
+  it('sends nothing for the fork until the Skill result names it, then only skill-scoped events, once', async () => {
     const sessionId = 'session-late-skill';
     const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall]);
     const fork = writeSubagentFixture(sessionId, 'fork1', forkUsage());
 
-    // SubagentStop before the Skill result exists: indistinguishable from an agent.
-    const stop = await subagentEvents(sessionId, { ...fork, agentType: 'general-purpose' });
-    expect(scopes(stop)).toEqual(['agent:general-purpose']);
+    // SubagentStop while the Skill call has no result: undecidable, so deferred - no event at all.
+    const stop = await subagentEvents(sessionId, { ...fork, agentType: 'general-purpose', pending: true });
+    expect(stop).toEqual([]);
+    // A Stop with the evidence still missing keeps it deferred.
+    expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
 
-    writeFileSync(mainPath, [noUsageLine('uuid-m'), skillCall, skillResult].map((l) => l + '\n').join(''));
+    writeFileSync(mainPath, lines(noUsageLine('uuid-m'), skillCall, skillResult));
     const first = await mainEvents(sessionId, mainPath, 'Stop');
     expect(scopes(first)).toEqual(['skill:forkme']);
     expect(first.find((e) => e.type === 'agent.usage.request')).toMatchObject({ agent_id: 'fork1' });
@@ -2922,18 +2925,19 @@ describe('foreground Skill-tool fork named after its SubagentStop (EPMCDME-16352
       usage: [expect.objectContaining({ scope_kind: 'skill', scope_name: 'forkme' })],
     });
 
-    // Replay: nothing left to re-scope.
-    const again = await mainEvents(sessionId, mainPath, 'Stop');
-    expect(scopes(again)).toEqual([]);
+    // Replay: nothing deferred any more.
+    expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
   });
 
-  it('leaves an unresolved agent untouched at SessionEnd', async () => {
-    const sessionId = 'session-agent-stays';
-    const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m')]);
-    const agent = writeSubagentFixture(sessionId, 'ag1', forkUsage());
-    await subagentEvents(sessionId, { ...agent, agentType: 'general-purpose' });
+  it('ends an unproven deferred subagent as an agent at SessionEnd, once', async () => {
+    const sessionId = 'session-agent-final';
+    const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall]);
+    const agent = writeSubagentFixture(sessionId, 'ag1', forkUsage(), { agentType: 'general-purpose' });
+    await subagentEvents(sessionId, { ...agent, agentType: 'general-purpose', pending: true });
     const pass = await openSessionEndPass(sessionId, mainPath, '/repo');
-    expect(scopes(pass.events)).toEqual([]);
+    await pass.finalize(true);
+    expect(scopes(pass.events)).toEqual(['agent:general-purpose']);
+    expect(scopes((await openSessionEndPass(sessionId, mainPath, '/repo')).events)).toEqual([]);
   });
 });
 

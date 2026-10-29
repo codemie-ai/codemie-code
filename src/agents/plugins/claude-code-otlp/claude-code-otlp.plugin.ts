@@ -50,7 +50,7 @@ import {
   type SessionEnvCheckInput,
   type SubagentFile,
 } from './transcript/orchestrator.js';
-import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkillName, subagentFilePath } from './transcript/subagent-usage.js';
+import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -195,7 +195,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const agentTranscriptPath = subagentFilePath(hookInput.transcript_path, hookInput.agent_id);
     const marker = await readForkedSkillMarker(agentTranscriptPath);
     const skillName =
-      marker.skillName || (await resolveSubagentSkillName(hookInput.transcript_path, hookInput.agent_id));
+      marker.skillName || (await resolveSubagentSkill(hookInput.transcript_path, hookInput.agent_id)).skillName;
     const payload = skillName ? { ...hookInput, skill_name: skillName } : hookInput;
     return { decision: 'forward', payload: [payload] };
   }
@@ -416,7 +416,10 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // non-empty above, so it is always a safe final fallback.
     const derivedAgentId = basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, '');
     const agentId = hookInput.agent_id || derivedAgentId || agentTranscriptPath;
-    const skillName = marker.skillName || (await resolveSubagentSkillName(hookInput.transcript_path, agentId));
+    const resolved = marker.skillName
+      ? { skillName: marker.skillName, pending: false }
+      : await resolveSubagentSkill(hookInput.transcript_path, agentId);
+    const skillName = resolved.skillName;
     const subagentFile: SubagentFile = {
       agentId,
       filePath: agentTranscriptPath,
@@ -428,6 +431,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       description: meta.description || (skillName ? `/${skillName}` : undefined),
       cwd: hookInput.cwd,
       skillName: skillName || undefined,
+      pending: resolved.pending || undefined,
     };
 
     const pass = await openSubagentPass(hookInput.session_id, subagentFile, envCheckInput(hookInput));

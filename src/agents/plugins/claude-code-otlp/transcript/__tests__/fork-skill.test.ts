@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveForkSkills } from '../fork-skill.js';
@@ -140,6 +140,59 @@ describe('slash-command forks', () => {
 
     const bad = session([user('p1', '/other')], [{ id: 'aaa', promptId: 'p1', marker: 'forkme' }]);
     expect((await resolveForkSkills(bad.main, await findSubagentFiles(bad.main))).slashPromptIds.size).toBe(0);
+  });
+});
+
+describe('pending evidence - a scope cannot be corrected once sent', () => {
+  const pendingOf = async (main: string, final = false) => {
+    const files = await findSubagentFiles(main, { final });
+    return Object.fromEntries(files.map((f) => [f.agentId, f.pending ? 'pending' : f.skillName || 'agent']));
+  };
+
+  it('leaves an Agent child of an /inline prompt pending while its Agent call has no result, then an agent', async () => {
+    const lines = [user('p1', '/inlineme'), toolUse('tu1', 'Agent', { subagent_type: 'general-purpose' })];
+    const { main } = session(lines, [{ id: 'a', promptId: 'p1' }]);
+    expect(await pendingOf(main)).toEqual({ a: 'pending' });
+    const files = await findSubagentFiles(main);
+    expect((await resolveForkSkills(main, files, undefined)).slashPromptIds.size).toBe(0);
+    // Its result arrives and names it: definitively an agent.
+    session([...lines, toolResult('tu1', { agentId: 'a' })], [{ id: 'a', promptId: 'p1' }]);
+    expect(await pendingOf(main)).toEqual({ a: 'agent' });
+  });
+
+  it('holds a metadata-less subagent pending while any Skill call has no result, whatever the prompt', async () => {
+    const { main } = session([toolUse('tu1', 'Skill', { skill: 'forkme' })], [{ id: 'a', meta: {} }]);
+    expect(await pendingOf(main)).toEqual({ a: 'pending' });
+    session([toolUse('tu1', 'Skill', { skill: 'forkme' }), toolResult('tu1', { agentId: 'a' })], [{ id: 'a', meta: {} }]);
+    expect(await pendingOf(main)).toEqual({ a: 'forkme' });
+  });
+
+  it('resolves a fork next to a concurrent Agent child once the Agent result names the child', async () => {
+    const agents = [{ id: 'fork', promptId: 'p1' }, { id: 'child', promptId: 'p1' }];
+    const open = [user('p1', '/forkme'), toolUse('tu1', 'Agent', {})];
+    expect(await pendingOf(session(open, agents).main)).toEqual({ fork: 'pending', child: 'pending' });
+    const { main } = session([...open, toolResult('tu1', { agentId: 'child' })], agents);
+    expect(await pendingOf(main)).toEqual({ fork: 'forkme', child: 'agent' });
+  });
+
+  it('ends the session with an unproven subagent as an agent (final)', async () => {
+    const { main } = session([user('p1', '/inlineme'), toolUse('tu1', 'Agent', {})], [{ id: 'a', promptId: 'p1' }]);
+    expect(await pendingOf(main, true)).toEqual({ a: 'agent' });
+  });
+
+  it('does not treat a nested Agent child (call only in a subagent transcript) as a slash fork', async () => {
+    const { main } = session([user('p1', '/forkme')], [{ id: 'fork', promptId: 'p1' }, { id: 'nested', promptId: 'p1' }]);
+    const sub = join(dir, 's1', 'subagents');
+    appendFileSync(join(sub, 'agent-fork.jsonl'), [toolUse('n1', 'Agent', {}), toolResult('n1', { agentId: 'nested' })].map((l) => `${l}\n`).join(''));
+    expect(await pendingOf(main)).toEqual({ fork: 'forkme', nested: 'agent' });
+  });
+
+  it('keeps a real foreground Agent child (shape from a recorded session: meta.toolUseId, result agentId, shared promptId) an agent', async () => {
+    const { main } = session(
+      [user('p1', '/greet'), toolUse('toolu_0115', 'Agent', { subagent_type: 'Explore' }), toolResult('toolu_0115', { status: 'completed', agentId: 'ab02' })],
+      [{ id: 'ab02', promptId: 'p1', meta: { agentType: 'Explore', toolUseId: 'toolu_0115', spawnDepth: 1, requestShape: 'foreground' } }]
+    );
+    expect(await pendingOf(main)).toEqual({ ab02: 'agent' });
   });
 });
 

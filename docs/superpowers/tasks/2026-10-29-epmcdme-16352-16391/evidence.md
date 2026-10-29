@@ -1,47 +1,42 @@
 # Evidence: EPMCDME-16352 + EPMCDME-16391
 
 - Baseline: `8b8bedb69389228c51e77a809e762963d925726d` (origin/main). Branch `EPMCDME-16352_16391_skill-invocation-analytics`.
-- Code HEAD: `c7f6273eed4431e67937bc0704f402f5b9fcbf5f` (this note is committed after it). Local only, not pushed.
-- Mode: ordinary chat, no SDLC cycle. Status: **implementation done, targeted checks pass; not independently reviewed, not MR-ready.**
+- Revision 1 code `c7f6273e` (rejected by review); revision 2 code commit: see `git log` (the commit after `8b1378d1` whose subject starts `fix(analytics): defer`). Local only, not pushed.
+- Status: **implementation done, targeted checks pass; awaiting independent review and user approval; not MR-ready.**
 
-## Changes
-| Path | Change |
-|---|---|
-| `claude-code-otlp/transcript/fork-skill.ts` (new) | `resolveForkSkills`: names marker-less forks by exact ids from the main transcript |
-| `claude-code-otlp/transcript/subagent-usage.ts` | `discoverSubagentFiles` (marker only), `findSubagentFiles` applies the fallback (`skillName`, description `/name` if empty), `resolveSubagentSkillName` |
-| `claude-code-otlp/claude-code-otlp.plugin.ts` | SubagentStart/Stop use marker, else fallback, for `skill_name`/description/scope |
-| `claude-code-otlp/transcript/orchestrator.ts` | summary passes fork-confirmed prompts to command extraction; `rescopeForkedSubagents` (on `Stop`) + SessionEnd backstop re-derive a fork first recorded as an agent |
-| `claude/session/claude-named-invocations.ts` | exported `plainSlashCommandName`; optional `forkedSlashPromptIds` param (default behaviour unchanged) |
-| `docs/ARCHITECTURE-OTLP-PLUGIN.md` | row for `fork-skill.ts` |
-| tests | `fork-skill.test.ts` (new), additions to `orchestrator.test.ts`, `claude-code-otlp.plugin.test.ts` |
+## Review findings and resolution
+**P1 scope correction vs backend.** Backend `origin/main` `7578a3e36`, `postgres/rollups.py` `tr` CTE (lines ~435-458): requests are grouped by session / request-or-message id / raw model and `max(scope_kind)`, `max(scope_name)` are taken independently. Initial `(agent, general-purpose)` + corrected `(skill, forkme)` would give kind `skill` but name `general-purpose` (`'general-purpose' > 'forkme'`). Latest-merge is **not** supported, so revision 1's "emit, then re-scope" was wrong. Fix inside the CLI: **never send a scope that could still be wrong.** A subagent that may yet prove to be a skill fork is `pending`; its `SubagentStop` sends no `agent.usage.request`/`agent.subagent.usage` and records its id in `deferredAgentIds` (parse state). The next `Stop` sends it once, with the final scope; `SessionEnd` ends an unproven one as an agent. Consumer-sequence check by SQL reading: each request now arrives with a single scope, so `max()` per group is that scope (a streaming re-parse repeats the same scope). The backend was read, not executed (no DB).
 
-## Correlation rules (exact ids only; no name/time proximity)
-- Skill tool fork: `Skill` tool_use id -> tool_result `toolUseResult.agentId` (or `"agentId"` in result text), or fork `.meta.json` `toolUseId`.
-- Slash fork: plain user line `/name` (not `<command-message>` wrapper, not meta, lone text) whose `promptId` equals the `promptId` of exactly one subagent with no `toolUseId` and no `agentId` in any tool result; exactly one `/name` line for that prompt. Zero/several candidates -> stays an agent.
-- Marker (CLI) keeps precedence; a marker fork is only confirmed for the summary when the line name equals the marker name.
-- Summary: a plain line counts only if its `promptId` is fork-confirmed; wrapper lines unchanged, so no double count; hooks (Submit/Expansion) are not read, so they cannot double count.
+**P1 pending Agent child misclassified.** Reproduced probe adapted into `fork-skill.test.ts`. Rules now (`transcript/fork-skill.ts`):
+- Skill fork: `Skill` `tool_use` -> result `agentId`, or fork `meta.toolUseId`. A `Skill` call with no result yet holds every metadata-less, tool-less subagent `pending`.
+- Slash fork: plain `/name` line + exactly one tool-less subagent with that `promptId` + exactly one `/name` line, **and** no `Agent`/`Task`/`Skill` call without a result (main and subagent transcripts, so nested and concurrent calls count). Otherwise `pending`, or an agent when evidence cannot lift the ambiguity.
+- Agent/Task result `agentId` or `meta.toolUseId` -> definitively an agent.
+- `final` (SessionEnd summary and backstop): pending -> agent.
 
-## Checks (all run once, on the final code except where noted)
+## Changes (vs baseline)
+`transcript/fork-skill.ts` (new), `subagent-usage.ts` (`discoverSubagentFiles`, `findSubagentFiles(…, {final})`, `pending`, `resolveSubagentSkill`), `claude-code-otlp.plugin.ts` (Start/Stop use marker, else resolution; pending -> deferral), `transcript/orchestrator.ts` (`openSubagentPass` defers, `settleDeferredSubagents` on `Stop`, SessionEnd `final`, summary passes fork-confirmed prompts), `parse-state.ts` (`deferredAgentIds?`), `claude/session/claude-named-invocations.ts` (`plainSlashCommandName`, optional `forkedSlashPromptIds`), `docs/ARCHITECTURE-OTLP-PLUGIN.md`, tests (`fork-skill.test.ts`, `orchestrator.test.ts`, `claude-code-otlp.plugin.test.ts`).
+
+## Checks (revision 2)
 | Check | Exit |
 |---|---|
-| `npm ci --ignore-scripts` (worktree had no node_modules; scripts skipped so husky config is untouched) | 0 |
-| `npx tsc --noEmit` (final) | 0 |
-| `npx eslint --max-warnings=0` on 6 changed source/test files | 0 |
-| vitest: `fork-skill`, `orchestrator`, `claude-code-otlp.plugin` (248 tests) | 0 |
-| vitest first run incl. `subagent-usage`, `claude-named-invocations`, `session-summary` (295 pass; the 12 failures were my test mock lacking the new export and one fixture-reuse bug in my own new test, both fixed; those three untouched files passed) | 1 -> fixed, rerun above is 0 |
-| vitest `orchestrator -t "forked slash command"` (summary commands `['forkme','inlineme']`, `primary_command` forkme) | 0 |
-| commit hooks (husky) | passed, commit exit 0 |
-Logs: `C:/codemie-dev/_local/epmcdme-16352-16391/*.log`. Full suite, build and license/secret gates not run.
+| `npx tsc --noEmit` | 0 |
+| `npx eslint --max-warnings=0` on `src/agents/plugins/claude-code-otlp` + `claude-named-invocations.ts` | 0 |
+| `npx vitest run src/agents/plugins/claude-code-otlp` + `claude-named-invocations.test.ts` (18 files, 526 tests; this includes the reviewer's probe, now a permanent regression) | 0 |
+Intermediate failures while editing: two test-file syntax slips from my generator script and one fixture missing `agentType`; fixed, not product failures. Full suite, build, license and secret gates not run. Logs in `C:/codemie-dev/_local/epmcdme-16352-16391/`.
 
-## Per-run invariants (covered by tests)
-- One fork -> one `agent_id`; its `agent.usage.request`, `agent.subagent.usage` (`usage[].scope_kind=skill`, `scope_name`), `agent.subagent.stop`/`start` `skill_name` agree.
-- Repeated skill name = separate forks, each its own agent_id. Nested Agent-tool subagents are never skills. Ambiguity (2 candidates, 2 slash lines, missing/other promptId) -> not a skill.
-- Replay: second `Stop` after a rescope emits nothing; offsets/keys unchanged; SessionEnd skips covered forks.
-- `api_calls` is unaffected (forks keep their own `agent_id`).
+## Per-run invariants (tests)
+- A fork's requests, `agent.subagent.usage` and the Start/Stop `skill_name` agree; before resolution **no** event of a pending subagent is sent, so no wrong scope exists to correct.
+- Repeated skill name = separate agent_ids; concurrent fork + Agent child resolve only after the Agent result names the child; nested Agent child (call only in the fork's transcript) stays an agent.
+- Replay: a second `Stop` / `SessionEnd` re-sends nothing; deferral is cleared when derived.
+- Summary: plain `/name` counted once, in order, only for a prompt whose fork is confirmed; wrapper lines untouched; pending at the final summary -> not counted.
 
-## Limitations / remaining gates
-1. **Unverified on real desktop data**: no desktop transcript was available. Shapes were taken from the ticket, existing fixtures (`toolUseResult.agentId`) and a local CLI session (subagent lines carry `promptId` matching the spawning main prompt). Assumption to confirm: the slash fork's lines carry the `/name` line's `promptId` (the backend's own join on `prompt_id` relies on the same).
-2. A foreground Skill fork's `SubagentStop` precedes the Skill result, so its first `agent.usage.request` / `subagent.stop` / `subagent.usage` go out as `agent`; corrected `skill` versions follow on the next `Stop`/`SessionEnd` (needs a surviving session). The `agent.subagent.stop` itself is not re-sent. Backend must latest-merge by request/agent id (content-hashed event ids -> new rows); not verified against the server.
-3. `SubagentStart` may fire before the fork's file exists; it then has no `skill_name` (Stop does). Backend pairs a Skill fork by `fork_agent_id` (already emitted) and a slash fork by `prompt_id`; read-only look at `C:/codemie-dev/codemie/.work/EPMCDME-16074` (`fork_attribution.py`, `cli-analytics-events.md`) suggests the server handles both, but it is a work branch, so **end-to-end Timeline/chart behaviour is not demonstrated**.
-4. Cost: each SubagentStop/Stop on a session with subagents re-reads the main transcript once.
-5. Needs: independent review, user approval, complexity assessment of the final diff, then `mr-creator`. No push/PR done.
+## Evidence sources
+- Real recorded session (local, `repro-16074`): a foreground `Agent` child has `meta.toolUseId`, `toolUseResult.agentId`, and its first line `promptId` equals the spawning main prompt's; inline slash uses the `<command-message>` wrapper. Used as a fixture shape.
+- Not available: any desktop-app forked-skill transcript.
+
+## Remaining gates / limitations
+1. **Validation gate (desktop data)**: that a slash fork's transcript lines carry the `/name` line's `promptId`, and that its meta has no `toolUseId`, is still an assumption (backend's `prompt_id` join suggests it). If wrong, the fork stays an agent (safe failure), 16391 for desktop would not appear. Needs one real desktop session.
+2. Deferred forks' `agent.subagent.stop` is forwarded at hook time without `skill_name`/`started_at`/`duration_ms`/derived description (never replayed, to avoid a duplicate stop row). `SubagentStart` has no `skill_name` when its file is missing or the fork is pending. The server pairs a Skill fork by `fork_agent_id` (already sent) and a slash fork by `prompt_id`; end-to-end Timeline behaviour for these, and for a fork whose usage arrives after its stop, depends on the server and is **not demonstrated**.
+3. Deferred usage is sent only on a later `Stop`/`SessionEnd`; a session killed before either loses it (same exposure as other backstop data).
+4. Cost: pending checks read the main and subagent transcripts on SubagentStop/Stop for sessions with unresolved subagents.
+5. Needs independent review, user change approval, complexity assessment of the final diff, then `mr-creator`. No push/PR.

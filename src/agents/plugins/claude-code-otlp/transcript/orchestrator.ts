@@ -350,7 +350,7 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
  *   fires before the boundary line exists.
  */
-async function buildFullAccumulator(transcriptPath: string): Promise<{
+async function buildFullAccumulator(transcriptPath: string, final = false): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
@@ -426,7 +426,7 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
 
   // A forked skill run as `/name` leaves no command wrapper; count its plain line when a fork
   // proves the prompt started one.
-  const { slashPromptIds } = await resolveForkSkills(transcriptPath, await discoverSubagentFiles(transcriptPath), raw);
+  const { slashPromptIds } = await resolveForkSkills(transcriptPath, await discoverSubagentFiles(transcriptPath), raw, { final });
   const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
   acc.commandsInOrder = named.commandsInOrder;
 
@@ -592,7 +592,7 @@ async function deriveMainEvents(
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
+    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath, trigger === 'SessionEnd');
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -852,45 +852,41 @@ export async function openSessionEnvCheckPass(
   }
 }
 
-/**
- * True when `file` is now known to be a skill fork but its usage was recorded as an agent's: a
- * foreground `Skill` call's result (which names the fork) is written after the fork has stopped,
- * so the fork's own `SubagentStop` could not name its skill yet.
- */
-function needsRescope(state: TranscriptParseState, file: SubagentFile): boolean {
-  return (
-    !!file.skillName &&
-    Object.values(state.openRequests).some((r) => r.agentId === file.agentId && r.scopeKind !== 'skill')
-  );
+/** Forget `agentId` as deferred (its usage is being derived now). */
+function clearDeferred(state: TranscriptParseState, agentId: string): void {
+  if (state.deferredAgentIds) {
+    state.deferredAgentIds = state.deferredAgentIds.filter((id) => id !== agentId);
+  }
 }
 
 /**
- * Re-scope the already-recorded usage of forks that only now resolve to a skill (see
- * {@link needsRescope}): re-derive those subagents from byte 0, which re-keys their requests to
- * `scope_kind: 'skill'` and re-emits them plus a fresh `agent.subagent.usage`. Cheap no-op when no
- * agent-scoped subagent usage has been recorded. A failing subagent is skipped, state intact.
+ * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
+ * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
+ * `Stop`, when the evidence (a `Skill` result, an `Agent` result) may have arrived: a subagent
+ * that is still pending stays deferred. No-op when nothing is deferred. A failing subagent is
+ * skipped, state intact.
  */
-async function rescopeForkedSubagents(
+async function settleDeferredSubagents(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
   cwd?: string
 ): Promise<Record<string, unknown>[]> {
-  if (!Object.values(state.openRequests).some((r) => r.agentId && r.scopeKind === 'agent')) {
+  if (!state.deferredAgentIds?.length) {
     return [];
   }
   const events: Record<string, unknown>[] = [];
   for (const rawFile of await findSubagentFiles(transcriptPath)) {
+    if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
     const file: SubagentFile = { ...rawFile, cwd };
-    if (!needsRescope(state, file)) continue;
     const snapshot = structuredClone(state);
     try {
-      delete state.subagentOffsets[file.agentId];
+      clearDeferred(state, file.agentId);
       events.push(...(await deriveSubagentEvents(state, sessionId, file)));
     } catch (err) {
       Object.assign(state, snapshot);
       const msg = err instanceof Error ? err.message : String(err);
-      logger.debug('[claude-code-otlp] fork re-scope failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
+      logger.debug('[claude-code-otlp] deferred subagent failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
     }
   }
   return events;
@@ -922,7 +918,7 @@ export async function openMainTranscriptPass(
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
     if (trigger === 'Stop') {
-      events.push(...(await rescopeForkedSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
+      events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
     }
 
     if (envCheck) {
@@ -1238,7 +1234,14 @@ export async function openSubagentPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    // A subagent that may still prove to be a skill fork sends nothing yet: the backend keeps the
+    // max() of scope_kind/scope_name per request, so a wrong first scope could not be fixed later.
+    let events: Record<string, unknown>[] = [];
+    if (subagentFile.pending) {
+      state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), subagentFile.agentId])];
+    } else {
+      events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1293,18 +1296,18 @@ export async function openSessionEndPass(
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
 
-    const subagentFiles = await findSubagentFiles(transcriptPath);
+    // End of the session: nothing more will arrive, so a subagent still unproven is an agent.
+    const subagentFiles = await findSubagentFiles(transcriptPath, { final: true });
     for (const rawFile of subagentFiles) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
-      const rescope = needsRescope(state, file);
-      if (!rescope && (await subagentAlreadyCovered(state, file))) {
+      if (await subagentAlreadyCovered(state, file)) {
         continue;
       }
       const snapshot = structuredClone(state);
       try {
-        if (rescope) delete state.subagentOffsets[file.agentId];
+        clearDeferred(state, file.agentId);
         events.push(...(await deriveSubagentEvents(state, sessionId, file)));
       } catch (err) {
         Object.assign(state, snapshot);
