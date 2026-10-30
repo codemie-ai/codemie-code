@@ -13,7 +13,12 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
 import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
 
-const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '' }));
+const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '' }));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => mocks.home || actual.homedir() };
+});
 
 vi.mock('../vscode.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vscode.js')>()),
@@ -102,6 +107,28 @@ describe('copilot-chat-otlp connector', () => {
       expect(settings['editor.fontSize']).toBe(14);
       expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ [result.hookFilePath]: true });
       expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('keys the hook file home-relative (VS Code rejects absolute paths) and drops the legacy absolute key', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        const legacyKey = getCopilotChatHookFilePath();
+        await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { [legacyKey]: true, '/other/hooks.json': true } }));
+
+        await writeCopilotChatOtlpConfig();
+
+        const relativeKey = '/.codemie/hooks/copilot-chat-hooks.json';
+        const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [relativeKey]: true });
+
+        const result = await removeCopilotChatOtlpConfig();
+        expect(result.mode).toBe('full');
+        const after = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(after[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
+      } finally {
+        mocks.home = '';
+      }
     });
 
     it('creates settings.json when none exists', async () => {
