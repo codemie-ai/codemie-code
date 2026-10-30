@@ -4,6 +4,12 @@ import { CLI_HOOK_EVENT_NAMES } from './copilot-cli-otlp.constants.js';
 
 export type CliEventName = (typeof CLI_HOOK_EVENT_NAMES)[number];
 
+export interface CopilotCliToolCall {
+  id: string;
+  name: string;
+  args: unknown;
+}
+
 /**
  * GitHub Copilot CLI's native hook payload (camelCase, numeric epoch-ms `timestamp`, no
  * event-name field). Event-specific field names below mirror the documented hook payloads.
@@ -11,7 +17,8 @@ export type CliEventName = (typeof CLI_HOOK_EVENT_NAMES)[number];
 export interface CopilotCliHookInput {
   sessionId: string;
   cwd: string;
-  timestamp: number;
+  /** Absent only on `preToolUse` (batched `toolCalls[]` payload). */
+  timestamp?: number;
   /** Injected by `codemie hook --event <name>` (see `hook.ts`); never present on the wire. */
   codemieEventName: CliEventName;
 
@@ -26,7 +33,13 @@ export interface CopilotCliHookInput {
   toolName?: string;
   toolArgs?: unknown;
   toolCallId?: string;
-  toolResult?: { textResultForLlm?: string };
+  toolResult?: { textResultForLlm?: string; resultType?: string };
+  /** preToolUse: one entry per tool call of the assistant message. */
+  toolCalls?: CopilotCliToolCall[];
+  // agentStop
+  transcriptPath?: string;
+  stopReason?: string;
+  transformedPrompt?: string;
   // postToolUseFailure / errorOccurred
   error?: unknown;
   errorContext?: unknown;
@@ -77,11 +90,14 @@ export function isCopilotCliHookInput(value: unknown): value is CopilotCliHookIn
   if (typeof candidate.cwd !== 'string' || candidate.cwd.length === 0) {
     return false;
   }
-  if (typeof candidate.timestamp !== 'number') {
-    return false;
-  }
   if (typeof candidate.codemieEventName !== 'string' || !EVENT_NAME_SET.has(candidate.codemieEventName)) {
     return false;
   }
-  return true;
+  if (typeof candidate.timestamp === 'number') {
+    return true;
+  }
+  // Real preToolUse payloads carry `toolCalls[]` and no timestamp.
+  return candidate.timestamp === undefined
+    && candidate.codemieEventName === 'preToolUse'
+    && Array.isArray(candidate.toolCalls);
 }

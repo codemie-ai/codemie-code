@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/utils/config.js', () => ({
@@ -17,6 +20,10 @@ import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { isCopilotProjectTracked } from '@/agents/core/copilot-connector-scope.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
+
+// Hook-side state files must never land in the developer's real ~/.codemie.
+process.env.CODEMIE_HOME = mkdtempSync(join(tmpdir(), 'cop-otlp-plugin-'));
+process.env.COPILOT_HOME = join(process.env.CODEMIE_HOME, 'copilot');
 
 function hookInput(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -40,7 +47,7 @@ describe('CopilotCliOtlpPlugin.isTracked', () => {
     }
   });
 
-  it('is never tracked when CODEMIE_SESSION_ID is set, even if the connector scope would track it', async () => {
+  it('is tracked when CODEMIE_SESSION_ID is set (managed sessions share the connector scope)', async () => {
     process.env.CODEMIE_SESSION_ID = 'managed-session-1';
     vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
 
@@ -48,8 +55,8 @@ describe('CopilotCliOtlpPlugin.isTracked', () => {
       cwd: '/repo',
     });
 
-    expect(tracked).toBe(false);
-    expect(isCopilotProjectTracked).not.toHaveBeenCalled();
+    expect(tracked).toBe(true);
+    expect(isCopilotProjectTracked).toHaveBeenCalledWith('/repo', expect.objectContaining({ kind: 'ok' }));
   });
 
   it('delegates to isCopilotProjectTracked when CODEMIE_SESSION_ID is unset', async () => {
@@ -151,7 +158,10 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(
+      hookInput({ codemieEventName: 'preToolUse', toolCalls: [{ id: 'call-1', name: 'view', args: { path: '/repo/a.ts' } }] }),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);

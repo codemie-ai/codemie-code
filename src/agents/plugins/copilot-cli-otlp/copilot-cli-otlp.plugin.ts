@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
@@ -6,12 +7,41 @@ import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/ss
 import { ConfigLoader } from '@/utils/config.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
+import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
-import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
-import { readCopilotEventsTolerant } from '@/agents/plugins/copilot-cli/copilot-cli.storage-utils.js';
-import { extractCopilotUsage } from '@/agents/plugins/copilot-cli/copilot-cli.usage.js';
+import { getCopilotSessionStateRoot, getDefaultCopilotSessionStateRoot, sameDirectory } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
+import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
+import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
+import { readSessionState, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
+import { recordOpenStarts, resolveEndToolUseId } from './copilot-cli-otlp.tool-correlation.js';
+import { buildToolEvent, extractEndCall, extractStartCalls } from './copilot-cli-otlp.tool-payload.js';
 import { type CliBlockOutput, type CliForwardDecision, type CopilotCliHookInput, isCopilotCliHookInput } from './copilot-cli-otlp.types.js';
+
+const HEAD_READ_BYTES = 64 * 1024;
+
+/** `session.start` data from a bounded head-read of a session's `events.jsonl`. */
+function readSessionStart(eventsPath: string): CopilotSessionStartData | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(eventsPath, 'r');
+    const buffer = Buffer.alloc(HEAD_READ_BYTES);
+    const read = readSync(fd, buffer, 0, HEAD_READ_BYTES, 0);
+    for (const line of buffer.subarray(0, read).toString('utf-8').split('\n')) {
+      try {
+        const event = JSON.parse(line) as { type?: string; data?: CopilotSessionStartData };
+        if (event.type === 'session.start') return event.data;
+      } catch {
+        // Partial or non-JSON line.
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
 
 const HOOK_EVENT_TYPE_MAP: Record<string, string> = {
   sessionStart: 'agent.session.start',
@@ -49,21 +79,43 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   protected async isTracked(input: CopilotCliHookInput): Promise<boolean> {
-    // A managed `copilot-cli` launch sets CODEMIE_SESSION_ID for its own child
-    // process; a native invocation of this hook file never carries it. Without this guard a
-    // global COPILOT_HOME would make managed sessions double-counted by both pipelines.
-    if (process.env.CODEMIE_SESSION_ID) {
-      return false;
-    }
+    // The connector scope applies to managed and native sessions alike; both are labelled
+    // through `entrypoint` and counted once, by Copilot's own session id.
     return isCopilotProjectTracked(input.cwd, await readCopilotConnectorScope(this.name));
   }
 
-  protected async resolveAgentFields(): Promise<Record<string, unknown>> {
-    return {
+  protected async resolveAgentFields(input: CopilotCliHookInput): Promise<Record<string, unknown>> {
+    const fields: Record<string, unknown> = {
       platform: 'copilot-cli',
-      // The host version is not detected: left empty rather than guessed.
+      // A native `copilot` started inside a managed shell inherits CODEMIE_SESSION_ID but has its own session id.
+      entrypoint: process.env.CODEMIE_SESSION_ID && process.env.CODEMIE_SESSION_ID === input.sessionId ? 'managed' : 'native',
       client_version: '',
     };
+    const session = await this.resolveSessionHeader(input);
+    fields.client_version = session.clientVersion;
+    Object.assign(fields, session.gitFallback);
+    return fields;
+  }
+
+  /** Version and git fallback from the head of `events.jsonl`, cached per session. */
+  private async resolveSessionHeader(
+    input: CopilotCliHookInput
+  ): Promise<{ clientVersion: string; gitFallback: Record<string, string> }> {
+    const cached = readSessionState(input.sessionId);
+    if (cached.clientVersion) {
+      return { clientVersion: cached.clientVersion, gitFallback: cached.gitFallback ?? {} };
+    }
+    const start = readSessionStart(join(getCopilotSessionStateRoot(), input.sessionId, 'events.jsonl'));
+    if (!start?.copilotVersion) {
+      return { clientVersion: '', gitFallback: {} };
+    }
+    const gitFallback: Record<string, string> = {};
+    if (!(await detectGitBranch(input.cwd))) {
+      if (start.context?.branch) gitFallback.git_branch = start.context.branch;
+      if (start.context?.repository) gitFallback.repo_remote = start.context.repository;
+    }
+    await updateSessionState(input.sessionId, { clientVersion: start.copilotVersion, gitFallback });
+    return { clientVersion: start.copilotVersion, gitFallback };
   }
 
   protected resolveEventType(event: Record<string, unknown>): string {
@@ -75,6 +127,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     payload: Record<string, unknown>,
     timestamp: string
   ): string {
+    // Usage and summary rows carry a stable id shared with the daemon's final pass.
+    if (typeof payload['event_id'] === 'string' && payload['event_id'].length > 0) {
+      return payload['event_id'];
+    }
     const content = JSON.stringify({ ...payload, timestamp }) ?? 'null';
     const digest = createHash('sha256').update(content).digest('hex');
     return `${String(event['type'] ?? '')}:${String(event['session_id'] ?? '')}:${digest}`;
@@ -85,87 +141,104 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   protected async evaluate(input: CopilotCliHookInput): Promise<CliForwardDecision> {
-    if (input.codemieEventName === 'userPromptTransformed') {
-      return this.onEnforcedEvent(input, 'userPromptTransformed');
-    }
-    if (input.codemieEventName === 'preToolUse') {
-      return this.onEnforcedEvent(input, 'preToolUse');
-    }
-    if (input.codemieEventName === 'sessionEnd') {
-      return this.onSessionEnd(input);
+    const handler = this.handlers[input.codemieEventName];
+    if (handler) {
+      return handler(input);
     }
     return { decision: 'forward', payload: [this.normalizeEvent(input)] };
   }
 
-  private async onEnforcedEvent(
-    input: CopilotCliHookInput,
-    eventName: 'userPromptTransformed' | 'preToolUse'
-  ): Promise<CliForwardDecision> {
+  private readonly handlers: Partial<Record<string, (input: CopilotCliHookInput) => Promise<CliForwardDecision>>> = {
+    userPromptTransformed: (input) => this.onPrompt(input),
+    preToolUse: (input) => this.onToolStart(input),
+    postToolUse: (input) => this.onToolEnd(input),
+    postToolUseFailure: (input) => this.onToolEnd(input),
+    agentStop: (input) => this.onAgentStop(input),
+    sessionStart: (input) => this.onSessionStart(input),
+    sessionEnd: (input) => this.onSessionEnd(input),
+  };
+
+  private async onPrompt(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     const authResult = await this.ensureProxyAuth();
     if (authResult.ok) {
       return { decision: 'forward', payload: [this.normalizeEvent(input)] };
     }
-    return this.buildBlock(eventName, authResult.reason, true, authResult.loginOutcome);
+    return this.buildBlock('userPromptTransformed', authResult.reason, true, authResult.loginOutcome);
+  }
+
+  /** Auth once for the whole batch; a denial denies every call and records nothing. */
+  private async onToolStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
+    const authResult = await this.ensureProxyAuth();
+    if (!authResult.ok) {
+      return this.buildBlock('preToolUse', authResult.reason, true, authResult.loginOutcome);
+    }
+    const calls = extractStartCalls(input);
+    const base = this.normalizeEvent(input);
+    return {
+      decision: 'forward',
+      payload: calls.map((call) => buildToolEvent(base, call.toolName, call.toolArgs, { toolUseId: call.toolUseId })),
+      finalize: async (accepted: boolean) => {
+        if (accepted) await recordOpenStarts(input.sessionId, calls);
+      },
+    };
+  }
+
+  private async onToolEnd(input: CopilotCliHookInput): Promise<CliForwardDecision> {
+    const end = extractEndCall(input);
+    const toolUseId = await resolveEndToolUseId(input.sessionId, end.toolName, end.toolArgs);
+    const event = buildToolEvent(this.normalizeEvent(input), end.toolName, end.toolArgs, { toolUseId, end });
+    return { decision: 'forward', payload: [event] };
+  }
+
+  private async onSessionStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
+    sweepStaleStateFiles();
+    return { decision: 'forward', payload: [this.normalizeEvent(input)] };
+  }
+
+  /** Claude's `Stop`: usage and an incremental summary, so a killed session keeps what it produced. */
+  private async onAgentStop(input: CopilotCliHookInput): Promise<CliForwardDecision> {
+    const base = this.normalizeEvent(input);
+    let pass: StopPass | null = null;
+    try {
+      pass = buildStopPass(input.sessionId, input.transcriptPath);
+    } catch (error) {
+      logger.debug(`[${this.name}] agentStop usage pass failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!pass) {
+      return { decision: 'forward', payload: [base] };
+    }
+    const committed = pass;
+    return {
+      decision: 'forward',
+      payload: [base, ...committed.events],
+      finalize: async (accepted: boolean) => {
+        if (accepted) await committed.commit();
+      },
+    };
   }
 
   private async onSessionEnd(input: CopilotCliHookInput): Promise<CliForwardDecision> {
-    const event = this.normalizeEvent(input);
-    this.attachUsage(event, input.sessionId);
-    // No later hook retries a failed SessionEnd batch, so it gets one in-process resend
-    // (mirrors Claude's SessionEnd handling).
-    return { decision: 'forward', payload: [event], retryOnce: true };
-  }
-
-  /**
-   * Reuses the managed plugin's `extractCopilotUsage` on the session's own `events.jsonl`.
-   * This is a cumulative per-model session rollup, never per-request deltas — the field
-   * names below are NOT a confirmed backend wire contract; they exist so the data is
-   * captured and available once that contract is confirmed, not to claim it is already
-   * consumed by any dashboard.
-   */
-  private attachUsage(event: Record<string, unknown>, sessionId: string): void {
-    try {
-      const eventsPath = join(getCopilotSessionStateRoot(), sessionId, 'events.jsonl');
-      const events = readCopilotEventsTolerant(eventsPath);
-      if (events.length === 0) {
-        event.usage_unavailable_reason = 'session-state events.jsonl not found or empty';
-        return;
-      }
-      const extract = extractCopilotUsage(events);
-      if (extract.messages.length === 0) {
-        event.usage_unavailable_reason = extract.unavailableReason ?? 'no usage data in transcript';
-        return;
-      }
-      event.usage_models = extract.messages;
-      event.usage_partial = extract.partial;
-      if (extract.premiumRequests !== undefined) {
-        event.usage_premium_requests = extract.premiumRequests;
-      }
-    } catch (error) {
-      logger.debug(`[${this.name}] usage extraction failed: ${error instanceof Error ? error.message : String(error)}`);
-      event.usage_unavailable_reason = 'usage extraction failed';
+    const stateRoot = getCopilotSessionStateRoot();
+    if (!sameDirectory(stateRoot, getDefaultCopilotSessionStateRoot())) {
+      await updateSessionState(input.sessionId, { sessionStateRoot: stateRoot }, 1_000);
     }
+    // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
+    // Usage is added by the daemon after `session.shutdown`, which Copilot writes after this hook exits.
+    return { decision: 'forward', payload: [this.normalizeEvent(input)], retryOnce: true };
   }
 
   /** Normalizes camelCase native fields to the base class's expected keys, before truncation. */
   private normalizeEvent(input: CopilotCliHookInput): Record<string, unknown> {
     const normalized: Record<string, unknown> = {
       session_id: input.sessionId,
-      timestamp: new Date(input.timestamp).toISOString(),
+      timestamp: new Date(input.timestamp ?? Date.now()).toISOString(),
       type: HOOK_EVENT_TYPE_MAP[input.codemieEventName] ?? 'agent.event',
     };
 
     if (input.source !== undefined) normalized.source = this.boundedFreeText(input.source);
     if (input.reason !== undefined) normalized.reason = this.boundedFreeText(input.reason);
     if (input.prompt !== undefined) normalized.prompt = input.prompt;
-    if (input.toolName !== undefined) normalized.tool_name = this.boundedFreeText(input.toolName);
-    if (input.toolCallId !== undefined) normalized.tool_use_id = this.boundedFreeText(input.toolCallId);
-    if (input.toolArgs !== undefined) {
-      normalized.tool_input = input.toolArgs;
-    }
-    if (input.toolResult?.textResultForLlm !== undefined) {
-      normalized.tool_response = input.toolResult.textResultForLlm;
-    }
+    if (input.stopReason !== undefined) normalized.stop_reason = this.boundedFreeText(input.stopReason);
     if (input.error !== undefined) {
       const err = input.error;
       if (typeof err === 'object' && err !== null) {

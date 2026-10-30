@@ -34,11 +34,10 @@ import { readWorkspaceManifest } from './copilot-cli.workspace.js';
 import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
 import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
 import { extractCopilotUsage } from './copilot-cli.usage.js';
+import { extractCopilotToolActivity } from './copilot-cli.tool-activity.js';
 import type {
   CopilotSessionStartData,
   CopilotShutdownData,
-  CopilotToolStartData,
-  CopilotToolCompleteData,
   CopilotSkillInvokedData,
   CopilotAssistantMessageData,
 } from './copilot-cli-event-types.js';
@@ -48,12 +47,6 @@ import { logger } from '../../../utils/logger.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/**
- * Copilot tools that write to disk. `view` also carries a `path` but is a read, and the
- * aggregator excludes reads from the changed-files metrics.
- */
-const FILE_WRITE_TOOLS = new Set(['create', 'edit']);
 
 /** Trailing-slash-insensitive directory comparison. */
 function sameDir(a: string | undefined, b: string): boolean {
@@ -176,11 +169,10 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
 
     const usage = extractCopilotUsage(events);
 
-    const tools: Record<string, number> = {};
-    const toolStatus: Record<string, { success: number; failure: number }> = {};
+    const toolActivity = extractCopilotToolActivity(events);
+    const { tools, toolStatus, fileOperations } = toolActivity;
     const skillInvocations: Record<string, number> = {};
     const userPrompts: Array<{ count: number; text: string }> = [];
-    const fileOperations: NonNullable<ParsedSession['metrics']>['fileOperations'] = [];
 
     const context = start?.context;
     const cwd = context?.cwd ?? context?.gitRoot;
@@ -192,10 +184,6 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     // afterwards carry no `type`, so turn counting skips those. Orthogonal filters.
     const turnRecords: unknown[] = [];
 
-    // tool.execution_start is the ONLY event carrying the tool name and arguments;
-    // tool.execution_complete carries just toolCallId + a boolean success. Pair by id.
-    const toolCallById = new Map<string, { name: string; path?: string }>();
-
     // Only the newest CLI builds put `model` on each assistant.message; 1.0.17 and every
     // 0.0.x omit it. Track the model in effect from session.model_change so those turns
     // are still attributed, and remember which turns stayed unlabelled for the
@@ -205,37 +193,6 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
 
     for (const event of events) {
       switch (event.type) {
-        case 'tool.execution_start': {
-          const data = (event.data ?? {}) as CopilotToolStartData;
-          if (!data.toolCallId || !data.toolName) {
-            break;
-          }
-          // Remember the name and target path; whether the write actually happened is
-          // only known at tool.execution_complete.
-          toolCallById.set(data.toolCallId, { name: data.toolName, path: data.arguments?.path });
-          break;
-        }
-        case 'tool.execution_complete': {
-          const data = (event.data ?? {}) as CopilotToolCompleteData;
-          const call = data.toolCallId ? toolCallById.get(data.toolCallId) : undefined;
-          if (!call) {
-            break; // orphaned completion (truncated transcript) — nothing to attribute
-          }
-          tools[call.name] = (tools[call.name] ?? 0) + 1;
-          const bucket = toolStatus[call.name] ?? { success: 0, failure: 0 };
-          const failed = data.success === false || data.error !== undefined;
-          bucket[failed ? 'failure' : 'success'] += 1;
-          toolStatus[call.name] = bucket;
-
-          // Record the file operation only once the write is known to have SUCCEEDED.
-          // A failed edit/create (permission denied, bad old_str) must not count as a
-          // changed file, or the report inflates filesChanged and can attach the
-          // session's line totals to a file that was never written.
-          if (!failed && call.path && FILE_WRITE_TOOLS.has(call.name)) {
-            fileOperations.push({ type: call.name === 'create' ? 'write' : 'edit', path: call.path });
-          }
-          break;
-        }
         case 'skill.invoked': {
           const data = (event.data ?? {}) as CopilotSkillInvokedData;
           const name = data.skill ?? data.name;
