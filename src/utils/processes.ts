@@ -601,30 +601,27 @@ export async function resolveRepositoryName(workingDirectory: string): Promise<s
 /**
  * Detect current git branch from working directory
  *
+ * Uses `git symbolic-ref` rather than `git rev-parse --abbrev-ref HEAD`: it also resolves an
+ * unborn HEAD (repository without commits), where rev-parse fails, and it exits non-zero on a
+ * detached HEAD, which is reported as no branch.
+ *
  * @param cwd - Working directory path
- * @returns Git branch name or undefined if not in a git repo
+ * @returns Git branch name, or undefined when not in a git repo or HEAD is detached
  */
 export async function detectGitBranch(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', {
+    const { stdout } = await execAsync('git symbolic-ref --short -q HEAD', {
       cwd,
       timeout: 5000,
       windowsHide: true,
     });
 
     const branch = stdout.trim();
-
-    // Handle detached HEAD state
-    if (branch === 'HEAD') {
-      logger.debug('[GitUtils] Detached HEAD state detected');
-      return undefined;
-    }
-
     logger.debug(`[GitUtils] Detected git branch: ${branch}`);
-    return branch;
+    return branch || undefined;
   } catch (error) {
-    // Not a git repo or git command failed
-    logger.debug('[GitUtils] Failed to detect git branch:', error);
+    // Not a git repo, detached HEAD (exit 1), or git command failed
+    logger.debug('[GitUtils] No git branch detected:', error);
     return undefined;
   }
 }
