@@ -860,7 +860,11 @@ export class ConfigLoader {
   /**
    * Rename a profile
    */
-  static async renameProfile(oldName: string, newName: string): Promise<void> {
+  static async renameProfile(
+    oldName: string,
+    newName: string,
+    workingDir: string = process.cwd()
+  ): Promise<void> {
     const config = await this.loadMultiProviderConfig();
 
     if (!config.profiles[oldName]) {
@@ -869,6 +873,14 @@ export class ConfigLoader {
 
     if (config.profiles[newName]) {
       throw new Error(`Profile "${newName}" already exists`);
+    }
+
+    // Profile names are unique across scopes: do not create a global name that a
+    // local profile in this directory already uses.
+    if (await this.isLocalProfileName(newName, workingDir)) {
+      throw new ConfigurationError(
+        `Profile "${newName}" already exists in local config (${this.LOCAL_CONFIG})`
+      );
     }
 
     // Copy profile with new name
@@ -882,6 +894,27 @@ export class ConfigLoader {
     }
 
     await this.saveMultiProviderConfig(config);
+  }
+
+  /**
+   * Profile names defined in both the local config of `workingDir` and the global
+   * config. Profile names should be unique across scopes. For a conflicting name,
+   * the local profile hides the global one in this directory, and `load()` overlays
+   * the local profile on top of the global one.
+   */
+  static async findProfileNameConflicts(workingDir: string = process.cwd()): Promise<string[]> {
+    const localConfig = await this.loadJsonConfig(path.join(workingDir, this.LOCAL_CONFIG));
+    if (!isMultiProviderConfig(localConfig)) {
+      return [];
+    }
+
+    const globalConfig = await this.loadMultiProviderConfig();
+    return Object.keys(localConfig.profiles).filter(name => globalConfig.profiles[name] !== undefined);
+  }
+
+  private static async isLocalProfileName(profileName: string, workingDir: string): Promise<boolean> {
+    const localConfig = await this.loadJsonConfig(path.join(workingDir, this.LOCAL_CONFIG));
+    return isMultiProviderConfig(localConfig) && localConfig.profiles[profileName] !== undefined;
   }
 
   /**

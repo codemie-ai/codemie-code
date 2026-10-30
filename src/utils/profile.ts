@@ -179,3 +179,18 @@ export function displayWarningMessage(
   console.error(lines.join('\n'));
 }
 
+
+/**
+ * Warning text for profile names defined in both the local (.codemie/) and the
+ * global (~/.codemie/) config. See ConfigLoader.findProfileNameConflicts().
+ */
+export function formatProfileNameConflictWarning(profileNames: string[]): string {
+  const names = profileNames.map(name => `"${name}"`).join(', ');
+  const noun = profileNames.length === 1 ? 'Profile' : 'Profiles';
+  return [
+    chalk.yellow(`⚠ ${noun} ${names} defined in both local (.codemie/) and global (~/.codemie/) config.`),
+    chalk.yellow('  Profile names must be unique. In this directory the local profile hides the global one,'),
+    chalk.yellow('  and missing local settings are taken from the global profile.'),
+    chalk.yellow(`  Fix: rename the global profile — ${chalk.cyan('codemie profile rename <name> <new-name>')}`)
+  ].join('\n');
+}

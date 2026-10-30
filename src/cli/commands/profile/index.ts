@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { ConfigLoader } from '../../../utils/config.js';
 import { logger } from '../../../utils/logger.js';
+import { formatProfileNameConflictWarning } from '../../../utils/profile.js';
 import { ProfileDisplay } from './display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { handleAuthValidationFailure } from '../../../providers/core/auth-validation.js';
@@ -66,6 +67,11 @@ async function listProfiles(): Promise<void> {
       local: localWorkspace.codeMieUrl,
       global: globalWorkspace.codeMieUrl
     });
+
+    const nameConflicts = await ConfigLoader.findProfileNameConflicts(workingDir);
+    if (nameConflicts.length > 0) {
+      console.log(`${formatProfileNameConflictWarning(nameConflicts)}\n`);
+    }
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);
@@ -158,6 +164,10 @@ async function handleStatus(): Promise<void> {
   ProfileDisplay.formatStatus(activeProfileInfo, authStatus, config.codeMieUrl);
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
+
+  if (activeProfileName && (await ConfigLoader.findProfileNameConflicts(workingDir)).includes(activeProfileName)) {
+    console.log(`${formatProfileNameConflictWarning([activeProfileName])}\n`);
+  }
 }
 
 /**
