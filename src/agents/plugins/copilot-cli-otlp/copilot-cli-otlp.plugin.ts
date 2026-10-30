@@ -11,6 +11,8 @@ import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot, getDefaultCopilotSessionStateRoot, sameDirectory } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
+import { resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
 import { readSessionState, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
@@ -85,8 +87,9 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   }
 
   protected async resolveAgentFields(input: CopilotCliHookInput): Promise<Record<string, unknown>> {
+    const sessionDir = join(getCopilotSessionStateRoot(), input.sessionId);
     const fields: Record<string, unknown> = {
-      platform: 'copilot-cli',
+      platform: resolveCopilotAgentKey(readWorkspaceManifest(sessionDir)?.clientName),
       // A native `copilot` started inside a managed shell inherits CODEMIE_SESSION_ID but has its own session id.
       entrypoint: process.env.CODEMIE_SESSION_ID && process.env.CODEMIE_SESSION_ID === input.sessionId ? 'managed' : 'native',
       client_version: '',

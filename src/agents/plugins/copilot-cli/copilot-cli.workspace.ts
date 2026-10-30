@@ -56,6 +56,7 @@ export function readWorkspaceManifest(sessionDir: string): CopilotWorkspaceManif
     hostType: raw.host_type,
     branch: raw.branch,
     name: raw.name,
+    clientName: typeof raw.client_name === 'string' ? raw.client_name : undefined,
     createdAt: toEpochMs(raw.created_at),
     updatedAt: toEpochMs(raw.updated_at),
   };

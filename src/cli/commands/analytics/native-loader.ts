@@ -29,6 +29,7 @@ import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prompt.js';
 import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
+import { COPILOT_CLI_AGENT_NAME, COPILOT_DESKTOP_AGENT_NAME } from '../../../agents/plugins/copilot-cli/copilot-cli.constants.js';
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
@@ -181,7 +182,9 @@ export const realNativeDeps: NativeLoaderDeps = {
     return found;
   },
   async parse(agentName, filePath, sessionId) {
-    const adapter = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+    const adapter = AgentRegistry.getAgent(
+      agentName === COPILOT_DESKTOP_AGENT_NAME ? COPILOT_CLI_AGENT_NAME : agentName
+    )?.getSessionAdapter?.();
     if (!adapter) {
       return null;
     }

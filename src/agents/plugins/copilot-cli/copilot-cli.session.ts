@@ -31,7 +31,7 @@ import type {
 import type { AgentMetadata } from '../../core/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
-import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
+import { COPILOT_CLI_AGENT_NAME, resolveCopilotAgentKey } from './copilot-cli.constants.js';
 import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
 import { extractCopilotUsage } from './copilot-cli.usage.js';
 import { extractCopilotToolActivity } from './copilot-cli.tool-activity.js';
@@ -133,7 +133,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         projectPath,
         createdAt: createdAt ?? 0,
         updatedAt: manifest.updatedAt,
-        agentName: this.agentName,
+        agentName: resolveCopilotAgentKey(manifest.clientName),
       });
     }
 
