@@ -300,7 +300,9 @@ function buildModelsConfig(
       apiKey,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
+        // Pi validates models.json against a fixed set of formats; "openai" is the one that
+        // sends `reasoning_effort`. Any other value makes Pi drop the whole file.
+        thinkingFormat: 'openai',
       },
       models: proxyModels,
     };
@@ -314,7 +316,6 @@ function buildModelsConfig(
       authHeader: true,
       compat: {
         supportsReasoningEffort: true,
-        thinkingFormat: 'reasoning_effort',
       },
       models: anthropicModels,
     };
@@ -388,7 +389,7 @@ async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModels
         apiKey,
         compat: {
           supportsReasoningEffort: true,
-          thinkingFormat: 'reasoning_effort',
+          thinkingFormat: 'openai',
         },
         models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
       },
