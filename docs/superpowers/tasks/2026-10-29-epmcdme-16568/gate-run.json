@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16568",
+  "head": "b9e1f8c652c413ff5065b50cf76bdb4082fe0672",
+  "runner": "npm",
+  "started_at": "2026-10-29T15:57:20Z",
+  "completed_at": "2026-10-29T15:59:50Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1485,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2709,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2600,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4296,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 46173,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "3 failures in src/utils/__tests__/system-proxy-dispatcher.test.ts are environmental (macOS lo0 lacks 127.0.0.2 alias; branch does not touch src/utils or src/providers/core); all other 6306 tests pass. Status recorded as real exit code."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10810,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 560,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' - script scans only staged changes; run it with the branch changes staged (or rely on CI Security job) to actually scan."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 284,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5114,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 52748,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Fails only at the unit stage; 3 failures in src/utils/__tests__/system-proxy-dispatcher.test.ts are environmental (macOS lo0 lacks 127.0.0.2 alias; branch does not touch src/utils or src/providers/core); all other 6306 tests pass. Status recorded as real exit code."
+    },
+    {
+      "id": "affected",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 22583,
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude tests/integration/cli-commands/models.test.ts $(git diff --name-only 8b8bedb69389228c51e77a809e762963d925726d...HEAD -- '*.ts')",
+      "exit_code": 0,
+      "notes": "Hook-derived equivalent of lint-staged vitest step over the branch diff."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 401,
+      "command": "npx commitlint --from 8b8bedb69389228c51e77a809e762963d925726d --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "CI pr-title/commitlint over full merge-base range; guide's commitlint:last covers only HEAD~1..HEAD."
+    }
+  ],
+  "failures": {
+    "unit": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:62958, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 388 passed (389)\n      Tests  3 failed | 6306 passed (6309)\n   Start at  16:57:31\n   Duration  45.59s (transform 13.96s, setup 0ms, import 70.02s, tests 107.07s, environment 20ms)\n\n",
+    "full-ci": "If this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:103:3\n    101|   });\n    102|\n    103|   it('routes global fetch through the explicit proxy', async () => {\n       |   ^\n    104|     let proxyRoutes = 0;\n    105|     const target = await listen((_request, response) => response.end('\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes global fetch directly when NO_PROXY matches\nTypeError: fetch failed\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:140:24\n    138|       installSystemProxyDispatcher();\n    139|\n    140|       const response = await fetch(`http://127.0.0.2:${target.port}/di\u2026\n       |                        ^\n    141|       expect(await response.text()).toBe('direct');\n    142|       expect(proxyRoutes).toBe(0);\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: 127.0.0.2:63319, timeout: 10000ms)\n \u276f onConnectTimeout node_modules/undici/lib/core/connect.js:237:24\n \u276f Immediate._onImmediate node_modules/undici/lib/core/connect.js:206:11\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\nSerialized Error: { code: 'UND_ERR_CONNECT_TIMEOUT' }\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/utils/__tests__/system-proxy-dispatcher.test.ts > system proxy global fetch dispatcher > routes the Node HTTP client through proxy and bypass paths per request\nAssertionError: promise rejected \"Error: Request timeout after 5000ms\" instead of resolving\n \u276f src/utils/__tests__/system-proxy-dispatcher.test.ts:166:90\n    164|\n    165|       const client = new HTTPClient({ maxRetries: 1 });\n    166|       await expect(client.get<{ ok: boolean }>(`http://127.0.0.2:${tar\u2026\n       |                                                                                          ^\n    167|         .resolves.toMatchObject({ data: { ok: true } });\n    168|       expect(proxyRoutes).toBeGreaterThan(0);\n\nCaused by: Error: Request timeout after 5000ms\n \u276f ClientRequest.<anonymous> src/providers/core/base/http-client.ts:152:16\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 388 passed (389)\n      Tests  3 failed | 6306 passed (6309)\n   Start at  16:58:41\n   Duration  45.46s (transform 12.23s, setup 0ms, import 61.80s, tests 100.23s, environment 21ms)\n\n"
+  }
+}

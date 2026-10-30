@@ -19,8 +19,8 @@ import type {
   UserPromptSubmitHookInput,
   UserPromptSubmitHookSpecificOutput,
 } from '@anthropic-ai/claude-agent-sdk';
-import { AuthGateResult, ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
-import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
+import { type AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { describeLogin, SSO_LOGIN_WAIT_MS } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
@@ -34,7 +34,7 @@ import {
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
-import { isProjectTracked, readAllowlistState } from './claude-code-otlp.allowlist.js';
+import { isProjectTracked, readAllowlistState, readPromptHookTimeoutSeconds } from './claude-code-otlp.allowlist.js';
 import {
   buildSessionEnvEvent,
   openMainTranscriptPass,
@@ -81,6 +81,10 @@ const ALWAYS_DROPPED_FIELDS: readonly string[] = [
   'background_tasks',
   'custom_instructions',
 ];
+
+/** Timeout the connector wrote for every hook before UserPromptSubmit got its own. */
+const LEGACY_HOOK_TIMEOUT_SECONDS = 30;
+const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
@@ -433,12 +437,19 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   private async ensureProxyAuth(): Promise<AuthGateResult> {
     const workingDir = process.cwd();
     const config = await ConfigLoader.load(workingDir);
+    // Settings written before the 180s prompt timeout keep the 30s default: never outwait the installed timeout.
+    const timeoutMs = ((await readPromptHookTimeoutSeconds()) ?? LEGACY_HOOK_TIMEOUT_SECONDS) * 1000;
+    const waitMs = Math.max(0, Math.min(SSO_LOGIN_WAIT_MS, timeoutMs - HOOK_TIMEOUT_HEADROOM_MS));
 
-    return await ensureCodeMieSsoAuth({
-      provider: config.provider,
-      ssoUrl: config.codeMieUrl || config.baseUrl,
-      baseUrl: config.baseUrl,
-    });
+    // stdout carries the hook's JSON decision, so the wait notice goes to stderr.
+    return await ensureCodeMieSsoAuthOrWait(
+      {
+        provider: config.provider,
+        ssoUrl: config.codeMieUrl || config.baseUrl,
+        baseUrl: config.baseUrl,
+      },
+      { waitMs, onWaitStart: (message) => process.stderr.write(message + '\n') }
+    );
   }
 
   private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ClaudeForwardDecision> {
@@ -455,10 +466,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
     return {
       decision: 'block',
-      reason: [
-        `CodeMie SSO authentication is invalid - you are blocked until you re-authenticate (${authResult.reason}).`,
-        describeLogin(authResult.loginOutcome),
-      ].join("\n"),
+      reason: `${describeLogin(authResult.loginOutcome, { wait: authResult.waitResult })}\n(${authResult.reason})`,
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         suppressOriginalPrompt: true,

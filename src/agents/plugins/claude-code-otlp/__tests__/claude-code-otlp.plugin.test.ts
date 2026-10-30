@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../claude-code-otlp.allowlist.js', () => ({
   readAllowlistState: vi.fn(async () => ({ kind: 'valid', paths: ['/proj'] })),
   isProjectTracked: vi.fn(),
+  readPromptHookTimeoutSeconds: vi.fn(async () => undefined),
 }));
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
@@ -10,7 +11,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitHeadSha: vi.fn(async () => 'abc123def456'),
   detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
-vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
+vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: vi.fn() }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));
@@ -82,8 +83,8 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
   resolveSessionEnvFields: resolveSessionEnvFieldsMock,
 }));
 
-import { isProjectTracked } from '../claude-code-otlp.allowlist.js';
-import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
+import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
 
@@ -149,7 +150,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
       await plugin.processOtlpEvent(event(name), { ensureOtlpProxy, forwardOtlpEventsToSpool });
     }
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
-    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
+    expect(ensureCodeMieSsoAuthOrWait).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
     log.mockRestore();
@@ -1092,7 +1093,7 @@ describe('ClaudeCodeOtlpPlugin wire type', () => {
   });
 
   it('maps UserPromptSubmit to agent.prompt.submit', async () => {
-    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: true } as never);
     await plugin.processOtlpEvent(
       JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: 'UserPromptSubmit', prompt: 'hi' }),
       { ensureOtlpProxy, forwardOtlpEventsToSpool }
@@ -1476,7 +1477,7 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isProjectTracked).mockResolvedValue(true);
-    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: true } as never);
     resolveClientVersionMock.mockResolvedValue('2.1.23');
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
@@ -1551,12 +1552,61 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
   });
 
   it('emits no event when the SSO gate blocks the prompt', async () => {
-    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     await plugin.processOtlpEvent(promptEvent('/simplify ABC-1'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     stdout.mockRestore();
+  });
+
+  it('forwards the prompt exactly once and emits no block when the gate allows it after waiting', async () => {
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockImplementation(async (_input, opts) => {
+      opts?.onWaitStart?.('waiting for sign-in');
+      return { ok: true };
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
+    expect(forwardedEvents()).toHaveLength(1);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('"decision":"block"'));
+    expect(stderr).toHaveBeenCalledWith('waiting for sign-in\n');
+    log.mockRestore();
+    stderr.mockRestore();
+  });
+
+  it.each([
+    [undefined, 15_000],
+    [30, 15_000],
+    [180, 150_000],
+  ])('caps the sign-in wait below the installed UserPromptSubmit timeout (%s s)', async (timeout, waitMs) => {
+    vi.mocked(readPromptHookTimeoutSeconds).mockResolvedValueOnce(timeout);
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValueOnce({ ok: true });
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ waitMs }));
+  });
+
+  it('blocks with manual re-send text and forwards nothing when the wait times out', async () => {
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({
+      ok: false,
+      reason: 'no valid CodeMie SSO credentials found',
+      loginOutcome: 'started',
+      waitResult: { status: 'timeout' },
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    const output = log.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain('"decision":"block"');
+    expect(output).toContain('re-send your prompt');
+    log.mockRestore();
   });
 });

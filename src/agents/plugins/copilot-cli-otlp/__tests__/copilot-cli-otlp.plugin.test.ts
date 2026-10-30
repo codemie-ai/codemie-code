@@ -108,16 +108,28 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
   });
 
   it('emits a permissionDecision:deny shape for a blocked preToolUse (SSO auth failure)', async () => {
-    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired', loginOutcome: 'started' } as never);
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(captured()).toEqual({
       permissionDecision: 'deny',
-      permissionDecisionReason: expect.stringContaining('CodeMie sign-in required'),
+      permissionDecisionReason: expect.stringContaining('this is expected'),
     });
+    expect(String(captured()?.permissionDecisionReason)).toContain('re-send your prompt');
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a browser opened when the sign-in is on cooldown', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired', loginOutcome: 'cooldown' } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const reason = String(captured()?.permissionDecisionReason);
+    expect(reason).toContain('this is expected');
+    expect(reason).not.toContain('opened automatically');
   });
 
   it('emits a modifiedTransformedPrompt shape for a blocked userPromptTransformed (SSO auth failure)', async () => {

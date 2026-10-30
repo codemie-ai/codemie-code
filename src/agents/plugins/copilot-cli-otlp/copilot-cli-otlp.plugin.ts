@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
@@ -104,7 +105,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     if (authResult.ok) {
       return { decision: 'forward', payload: [this.normalizeEvent(input)] };
     }
-    return this.buildBlock(eventName, authResult.reason);
+    return this.buildBlock(eventName, authResult.reason, true, authResult.loginOutcome);
   }
 
   private async onSessionEnd(input: CopilotCliHookInput): Promise<CliForwardDecision> {
@@ -213,14 +214,15 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   private buildBlock(
     eventName: 'userPromptTransformed' | 'preToolUse',
     reason: string | undefined,
-    authenticationFailure = true
+    authenticationFailure = true,
+    loginOutcome?: DetachedLoginOutcome
   ): Extract<CliForwardDecision, { decision: 'block' }> {
     const logMessage = authenticationFailure
       ? `CodeMie SSO authentication is invalid (${reason ?? 'unknown reason'}).`
       : `CodeMie cannot safely process this event (${reason ?? 'unknown reason'}).`;
 
     const userMessage = authenticationFailure
-      ? 'CodeMie sign-in required — complete the browser sign-in and resend your prompt.'
+      ? describeLogin(loginOutcome).replace(/\n/g, ' ')
       : 'CodeMie hit an internal error and cannot process this event — check the CodeMie logs, then resend your prompt.';
 
     const hookSpecificOutput: CliBlockOutput =

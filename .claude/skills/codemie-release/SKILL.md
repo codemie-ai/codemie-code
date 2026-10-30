@@ -204,31 +204,45 @@ npm version <VERSION> --no-git-tag-version
 ```
 Skip if package.json already at target version.
 
-### 2. Commit Version Bump
+### 2. Update CHANGELOG.md
+
+`codemie whatsnew` and the once-per-upgrade notice show only the installed version's
+`## [<VERSION>]` section, and `scripts/release.sh` refuses to release without it.
+
+- If `## [Unreleased]` has entries, rename it to `## [<VERSION>] - <YYYY-MM-DD>` (UTC date) and
+  add a fresh empty `## [Unreleased]` above it.
+- Otherwise, insert `## [<VERSION>] - <YYYY-MM-DD>` below `## [Unreleased]`, written from the
+  categorized commits: `feat` → `### Added`, `fix` → `### Fixed`, `perf`/`refactor` and other
+  user-visible changes → `### Changed`. Use short, user-focused bullets (no scope prefixes,
+  no PR numbers) and leave out internal-only commits (`chore`, `ci`, `test`, `docs`).
+
+Skip if `CHANGELOG.md` already has a `## [<VERSION>]` section.
+
+### 3. Commit Version Bump
 
 ```bash
-git add package.json package-lock.json
+git add package.json package-lock.json CHANGELOG.md
 git commit -m "chore: bump version to <VERSION>
 
 🤖 Generated with release script"
 ```
 Skip if commit message `chore: bump version to <VERSION>` exists in HEAD.
 
-### 3. Create Tag
+### 4. Create Tag
 
 ```bash
 git tag -a "v<VERSION>" -m "Release version <VERSION>"
 ```
 Skip if tag `v<VERSION>` already exists.
 
-### 4. Push to Origin
+### 5. Push to Origin
 
 ```bash
 git push origin main
 git push origin "v<VERSION>"
 ```
 
-### 5. Create GitHub Release
+### 6. Create GitHub Release
 
 ```bash
 # Create release with generated notes

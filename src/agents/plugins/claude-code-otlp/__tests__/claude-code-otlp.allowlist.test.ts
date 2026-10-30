@@ -1,10 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   addProjectPath,
   inferAllowlistScope,
   isPathInside,
   isProjectTracked,
   parseAllowlist,
+  readPromptHookTimeoutSeconds,
   removeProjectPath,
 } from '../claude-code-otlp.allowlist.js';
 
@@ -73,5 +77,46 @@ describe('add/removeProjectPath', () => {
     expect(await addProjectPath(once, '/nonexistent/proj/')).toEqual(once);
     expect(await removeProjectPath(once, '/nonexistent/proj')).toEqual([]);
     expect(await removeProjectPath(['/gone/raw'], '/gone/raw')).toEqual([]);
+  });
+});
+
+describe('readPromptHookTimeoutSeconds', () => {
+  let home: string;
+  const writeSettings = (settings: unknown): void => {
+    home = mkdtempSync(join(tmpdir(), 'cc-otlp-timeout-'));
+    vi.stubEnv('HOME', home);
+    // os.homedir() reads USERPROFILE on Windows
+    vi.stubEnv('USERPROFILE', home);
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings));
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('returns the timeout of the installed codemie UserPromptSubmit hook', async () => {
+    writeSettings({
+      hooks: {
+        UserPromptSubmit: [
+          { hooks: [{ type: 'command', command: 'other-tool', timeout: 999 }] },
+          { matcher: '', hooks: [{ type: 'command', command: 'codemie hook --agent claude-code-otlp', timeout: 30 }] },
+        ],
+      },
+    });
+    expect(await readPromptHookTimeoutSeconds()).toBe(30);
+  });
+
+  it('returns undefined when no codemie UserPromptSubmit hook is installed', async () => {
+    writeSettings({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'other-tool', timeout: 5 }] }] } });
+    expect(await readPromptHookTimeoutSeconds()).toBeUndefined();
+  });
+
+  it('returns undefined when the settings file is missing or malformed', async () => {
+    writeSettings('not an object');
+    expect(await readPromptHookTimeoutSeconds()).toBeUndefined();
+    rmSync(join(home, '.claude', 'settings.json'));
+    expect(await readPromptHookTimeoutSeconds()).toBeUndefined();
   });
 });
