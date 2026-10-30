@@ -57,7 +57,8 @@ function errorText(error: unknown): string | undefined {
 }
 
 export function extractEndCall(input: CopilotCliHookInput): ToolEndCall {
-  const failed = input.codemieEventName === 'postToolUseFailure' || input.toolResult?.resultType === 'failure';
+  const resultType = input.toolResult?.resultType;
+  const failed = input.codemieEventName === 'postToolUseFailure' || (resultType !== undefined && resultType !== 'success');
   return {
     toolName: typeof input.toolName === 'string' ? input.toolName : '',
     toolArgs: parseArgs(input.toolArgs),
@@ -82,11 +83,23 @@ export function buildToolEvent(
   };
   const filePath = extractFilePath(toolName, toolArgs);
   if (filePath !== undefined) event.file_path = filePath;
+  const skillName = extractSkillName(toolName, toolArgs);
+  if (skillName !== undefined) event.skill_name = skillName;
   if (opts.end?.success && opts.end.resultText !== undefined) event.tool_response = opts.end.resultText;
   if (opts.end?.errorMessage !== undefined && event.error_message === undefined) {
     event.error_message = opts.end.errorMessage.slice(0, 300);
   }
   return event;
+}
+
+/** Skill invoked by Copilot's `skill` tool (`args.skill`), taken before the base class truncates `tool_input`. */
+export function extractSkillName(toolName: string, toolArgs: unknown): string | undefined {
+  if (toolName !== 'skill' || typeof toolArgs !== 'object' || toolArgs === null) {
+    return undefined;
+  }
+  const skill = (toolArgs as Record<string, unknown>)['skill'];
+  const name = typeof skill === 'string' ? skill.trim() : '';
+  return name.length > 0 ? name.slice(0, 300) : undefined;
 }
 
 /** Target file path of a file-writing tool call, taken before the base class truncates `tool_input`. */

@@ -13,7 +13,7 @@ import { recordOpenStarts, resolveEndToolUseId } from '../copilot-cli-otlp.tool-
 import { buildUsageRows, resolveCopilotBillableModel } from '../copilot-cli-otlp.request-usage.js';
 import { buildStopPass } from '../copilot-cli-otlp.stop-pass.js';
 import { buildDeferredUsageEvents } from '../copilot-cli-otlp.usage.js';
-import { readSessionState, updateSessionState } from '../copilot-cli-otlp.state.js';
+import { readSessionState, updateSessionState, withStateLock } from '../copilot-cli-otlp.state.js';
 
 const SID = '11111111-2222-3333-4444-555555555555';
 
@@ -72,11 +72,30 @@ describe('preToolUse payload', () => {
     expect(buildToolEvent({}, 'view', { path: '/repo/a.ts' }, { toolUseId: 'x' }).file_path).toBeUndefined();
   });
 
+  it('adds skill_name for the skill tool only', () => {
+    expect(buildToolEvent({}, 'skill', { skill: 'my-skill' }, { toolUseId: 'x' }).skill_name).toBe('my-skill');
+    expect(buildToolEvent({}, 'skill', { skill: '  padded ' }, { toolUseId: 'x' }).skill_name).toBe('padded');
+    expect(buildToolEvent({}, 'skill', {}, { toolUseId: 'x' }).skill_name).toBeUndefined();
+    expect(buildToolEvent({}, 'skill', { skill: '' }, { toolUseId: 'x' }).skill_name).toBeUndefined();
+    expect(buildToolEvent({}, 'bash', { skill: 'my-skill' }, { toolUseId: 'x' }).skill_name).toBeUndefined();
+  });
+
   it('classifies failures from the event name or resultType', () => {
     const base = { sessionId: SID, cwd: '/', toolName: 'bash', toolArgs: '{"a":1}' };
     expect(extractEndCall({ ...base, codemieEventName: 'postToolUseFailure' } as never).success).toBe(false);
     expect(extractEndCall({ ...base, codemieEventName: 'postToolUse', toolResult: { resultType: 'failure' } } as never).success).toBe(false);
     expect(extractEndCall({ ...base, codemieEventName: 'postToolUse', toolResult: { resultType: 'success' } } as never).toolArgs).toEqual({ a: 1 });
+    for (const resultType of ['denied', 'rejected']) {
+      expect(extractEndCall({ ...base, codemieEventName: 'postToolUse', toolResult: { resultType } } as never).success).toBe(false);
+    }
+  });
+});
+
+describe('state lock', () => {
+  it('returns undefined instead of throwing when the callback fails', async () => {
+    const path = join(root, 'codemie', 'lock-fail.json');
+    expect(await withStateLock(path, () => { throw new Error('ENOSPC'); })).toBeUndefined();
+    expect(await withStateLock(path, () => 1)).toBe(1);
   });
 });
 
