@@ -44,6 +44,29 @@ describe('preToolUse payload', () => {
     expect(calls[1].toolArgs).toEqual({ command: 'ls' });
   });
 
+  describe('single toolName/toolArgs form', () => {
+    const single = { sessionId: SID, cwd: '/repo', codemieEventName: 'preToolUse', toolName: 'bash', toolArgs: '{"command":"ls"}' };
+
+    it('is accepted without a timestamp only when toolName is present', () => {
+      expect(isCopilotCliHookInput(single)).toBe(true);
+      expect(isCopilotCliHookInput({ ...single, toolName: undefined })).toBe(false);
+      expect(isCopilotCliHookInput({ ...single, toolName: '' })).toBe(false);
+      expect(isCopilotCliHookInput({ ...single, codemieEventName: 'postToolUse' })).toBe(false);
+    });
+
+    it('extracts one call with a synthesized id and parsed args', () => {
+      const calls = extractStartCalls(single as never);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].toolName).toBe('bash');
+      expect(calls[0].toolArgs).toEqual({ command: 'ls' });
+      expect(calls[0].toolUseId).toContain(`${SID}:pre:`);
+    });
+
+    it('prefers the provided toolCallId', () => {
+      expect(extractStartCalls({ ...single, toolCallId: 'tc-1' } as never)[0].toolUseId).toBe('tc-1');
+    });
+  });
+
   it('adds file_path for file-writing tools only', () => {
     expect(buildToolEvent({}, 'edit', { path: '/repo/a.ts' }, { toolUseId: 'x' }).file_path).toBe('/repo/a.ts');
     expect(buildToolEvent({}, 'view', { path: '/repo/a.ts' }, { toolUseId: 'x' }).file_path).toBeUndefined();

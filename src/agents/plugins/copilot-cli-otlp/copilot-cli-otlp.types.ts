@@ -17,7 +17,7 @@ export interface CopilotCliToolCall {
 export interface CopilotCliHookInput {
   sessionId: string;
   cwd: string;
-  /** Absent only on `preToolUse` (batched `toolCalls[]` payload). */
+  /** Absent only on `preToolUse` (batched `toolCalls[]` or single `toolName` payload). */
   timestamp?: number;
   /** Injected by `codemie hook --event <name>` (see `hook.ts`); never present on the wire. */
   codemieEventName: CliEventName;
@@ -96,8 +96,9 @@ export function isCopilotCliHookInput(value: unknown): value is CopilotCliHookIn
   if (typeof candidate.timestamp === 'number') {
     return true;
   }
-  // Real preToolUse payloads carry `toolCalls[]` and no timestamp.
+  // preToolUse carries either a batched `toolCalls[]` or a single `toolName`/`toolArgs`, and may lack a timestamp.
   return candidate.timestamp === undefined
     && candidate.codemieEventName === 'preToolUse'
-    && Array.isArray(candidate.toolCalls);
+    && (Array.isArray(candidate.toolCalls)
+      || (typeof candidate.toolName === 'string' && candidate.toolName.length > 0));
 }

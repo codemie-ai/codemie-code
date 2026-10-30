@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
 import type { CopilotCliHookInput } from './copilot-cli-otlp.types.js';
 
@@ -32,6 +33,12 @@ export function parseArgs(args: unknown): unknown {
 
 export function extractStartCalls(input: CopilotCliHookInput): ToolStartCall[] {
   const calls: ToolStartCall[] = [];
+  if (!Array.isArray(input.toolCalls) && typeof input.toolName === 'string' && input.toolName.length > 0) {
+    const toolUseId = typeof input.toolCallId === 'string' && input.toolCallId.length > 0
+      ? input.toolCallId
+      : `${input.sessionId}:pre:${randomUUID()}`;
+    return [{ toolUseId, toolName: input.toolName, toolArgs: parseArgs(input.toolArgs) }];
+  }
   for (const call of input.toolCalls ?? []) {
     if (typeof call?.id !== 'string' || call.id.length === 0 || typeof call.name !== 'string' || call.name.length === 0) {
       logger.debug('[copilot-cli-otlp] dropped preToolUse tool call without id or name');
