@@ -6,6 +6,13 @@
 import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent, ModelTimelinePoint } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
+/** A work-item id attributed to a session, with how often each source saw it (see tickets/). */
+export interface SessionTicket {
+  id: string; // upper-cased, e.g. "CAKE-807"
+  /** Occurrences per source: tool calls, distinct branches, distinct prompts. Absent = not seen there. */
+  sources: { tool?: number; branch?: number; prompt?: number };
+}
+
 /** One flat record per session — the client aggregates everything from these. */
 export interface ReportSessionRecord {
   sessionId: string;
@@ -95,6 +102,10 @@ export interface ReportSessionRecord {
   usagePartial?: boolean;
   /** Why this session shows no tokens or cost; absent when priced. */
   usageUnavailableReason?: string;
+  /** Ticket ids found for this session (ids only, never text); absent when none or extraction is off. */
+  tickets?: SessionTicket[];
+  /** Present (true) only when `tickets` was cut at the per-session cap of 20; absent otherwise. */
+  ticketsTruncated?: true;
 }
 
 export interface ReportMeta {

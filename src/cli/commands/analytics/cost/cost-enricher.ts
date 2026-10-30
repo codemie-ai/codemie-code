@@ -40,6 +40,23 @@ import { isCodexFamilyAgent } from './codex-agent.js';
 import { isLocalModel } from './local-models.js';
 import { logger } from '@/utils/logger.js';
 
+/**
+ * Read-only view of one session's parsed native log, handed to {@link ParsedSessionObserver}s in
+ * the same start-time order and with the same `windowEnd` the cost pass uses for ownership, so an
+ * observer can apply the earliest-session-wins rule to anything it reads from the log.
+ */
+export interface ParsedSessionView {
+  sessionId: string;
+  agentName: string;
+  parsed: ParsedSession | null;
+  startTime: number;
+  /** This session's ownership bound (see `withinWindow` in usage-readers.ts); undefined = unbounded. */
+  windowEnd: number | undefined;
+}
+
+/** Extra per-session signal read from the already-parsed native log; never affects pricing. */
+export type ParsedSessionObserver = (view: ParsedSessionView) => void;
+
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
   /** Native agent log path for a session, or null if not resolvable. */
@@ -548,7 +565,8 @@ function enrichDispatchCosts(
 
 export async function enrichCosts(
   sessions: RawSessionData[],
-  deps: EnricherDeps = realDeps
+  deps: EnricherDeps = realDeps,
+  observers: readonly ParsedSessionObserver[] = []
 ): Promise<{ index: SessionCostIndex; summary: CostSummary }> {
   // Phase 1: parse every native log concurrently.
   const parsedEntries = await mapWithConcurrency(sessions, 16, (raw) => parseOne(raw, deps));
@@ -587,6 +605,14 @@ export async function enrichCosts(
     // sibling itself confirms its own end — see computeDedupWindowEnd.
     const windowEnd = floorObservedEnd(entry, nextSiblingStart.get(entry.sessionId)) ?? dedupWindowEnd.get(entry.sessionId);
     const allowRollup = !sharesFile.has(entry.sessionId);
+    for (const observe of observers) {
+      try {
+        observe({ sessionId: entry.sessionId, agentName: entry.agentName, parsed: entry.parsed, startTime: entry.startTime, windowEnd });
+      } catch (e) {
+        // An observer is an add-on signal: its failure must never change this session's cost.
+        logger.debug(`[cost] observer failed for ${entry.sessionId}:`, e);
+      }
+    }
     try {
       // Gather ordered, deduped records ONCE per session (consumes keys in `seen`). When there
       // are records (Claude per-message path) sum them for the map + build the series from the

@@ -1199,3 +1199,26 @@ describe('enrichCosts — routing classifier cost', () => {
     expect(c.costUSD).toBeCloseTo(3, 6);
   });
 });
+
+describe('enrichCosts observers', () => {
+  const start = 1_700_000_000_000;
+  const sessions = [
+    { sessionId: 'later', deltas: [], startEvent: { agentName: 'claude', data: { startTime: start + 1000 } } },
+    { sessionId: 'earlier', deltas: [], startEvent: { agentName: 'claude', data: { startTime: start } }, endEvent: { data: { endTime: start + 500 } } },
+  ] as never[];
+
+  it('sees every parsed session once, in start-time order, with its ownership window', async () => {
+    const seen: Array<{ sessionId: string; windowEnd: number | undefined; hasParsed: boolean }> = [];
+    await enrichCosts(sessions, baseDeps, [(v) => seen.push({ sessionId: v.sessionId, windowEnd: v.windowEnd, hasParsed: v.parsed !== null })]);
+    expect(seen.map((v) => v.sessionId)).toEqual(['earlier', 'later']);
+    expect(seen[0].windowEnd).toBe(start + 500);
+    expect(seen.every((v) => v.hasParsed)).toBe(true);
+  });
+
+  it('never lets a failing observer change the cost result', async () => {
+    const plain = await enrichCosts(sessions, baseDeps);
+    const observed = await enrichCosts(sessions, baseDeps, [() => { throw new Error('boom'); }]);
+    expect([...observed.index.values()].map((c) => c.costUSD)).toEqual([...plain.index.values()].map((c) => c.costUSD));
+    expect(observed.summary).toEqual(plain.summary);
+  });
+});

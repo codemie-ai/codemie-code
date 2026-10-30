@@ -180,7 +180,14 @@ export interface MultiProviderConfig {
   codemieAssistants?: CodemieAssistant[];
   userEmail?: string;
   workspace?: WorkspaceConfig;
+  /** `codemie analytics` settings that are configuration rather than per-run flags. */
+  analytics?: AnalyticsConfig;
   profiles: Record<string, ProviderProfile>;
+}
+
+export interface AnalyticsConfig {
+  /** Tool-name globs whose inputs carry ticket ids; `--ticket-tools` overrides it. */
+  ticketTools?: string[];
 }
 
 /**
