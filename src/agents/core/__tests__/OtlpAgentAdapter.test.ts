@@ -1,3 +1,4 @@
+import { evidenceDir } from '../evidence/record-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
@@ -887,14 +888,14 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
         organization: 'Acme',
         routing: { routed: true, routing_proof: 'proven' },
       };
-      protected override async resolveEvidenceInputs() {
-        return this.inputs;
+      protected override extractHookContext(input: FakeInput): Context {
+        return { ...super.extractHookContext(input), evidenceInputs: this.inputs };
       }
     }
     let home: string;
     let prevHome: string | undefined;
     const readRecords = () => {
-      const dir = join(home, 'evidence');
+      const dir = evidenceDir();
       const names = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
       return names.map((n) => JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown>);
     };
@@ -909,6 +910,33 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       if (prevHome === undefined) delete process.env['CODEMIE_HOME'];
       else process.env['CODEMIE_HOME'] = prevHome;
       rmSync(home, { recursive: true, force: true });
+    });
+
+    it('awaits context enrichment before stamping and building the batch', async () => {
+      vi.spyOn(adapter as any, 'extractHookContext').mockResolvedValue({
+        cwd: '/repo', sessionId: 'async-session',
+        evidenceInputs: { organization: 'AsyncOrg', routing: { routed: true, routing_proof: 'proven' } },
+      });
+      await run({ sessionId: 'async-session', payload: [{ session_id: 'async-session' }] });
+      expect(readRecords()[0]).toMatchObject({ session_id: 'async-session', organization: 'AsyncOrg' });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake', { evidenceV: 1 });
+    });
+
+    it.each([
+      [false, false], [false, true], [true, false], [true, true],
+    ])('loss reporting never acknowledges or retries source data (enforced=%s, transport throws=%s)', async (enforced, transportThrows) => {
+      adapter.enforced = enforced;
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({ decision: 'forward', payload: [{ a: 1 }], retryOnce: true });
+      if (transportThrows) forwardToSpool.mockRejectedValue(new Error('loss transport failed'));
+      else forwardToSpool.mockResolvedValue(true);
+      const result = run({ sessionId: 's1' });
+      if (enforced) await expect(result).rejects.toThrow(AnalyticsSourceError);
+      else await expect(result).resolves.toBeUndefined();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool).toHaveBeenCalledWith([], 'fake', {
+        evidenceLoss: { sessionId: 's1', reason: 'no_credentials', events: 1 },
+      });
     });
 
     it('stamps a record, marks the envelope with evidence_v 1 and adds no event field', async () => {
@@ -990,7 +1018,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
     it('enqueues nothing when the record at the key is corrupt, and never rewrites it', async () => {
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
-      const dir = join(home, 'evidence');
+      const dir = evidenceDir();
       const file = join(dir, readdirSync(dir).filter((n) => n.endsWith('.json'))[0]);
       writeFileSync(file, '{not json');
       forwardToSpool.mockClear();

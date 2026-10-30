@@ -98,32 +98,16 @@ const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
-
-  protected extractHookContext(hookInput: HookInput): OtlpHookContext {
-    return {
-      cwd: hookInput.cwd,
-      prompt: hookInput.hook_event_name === 'UserPromptSubmit' ? hookInput.prompt : undefined,
-      sessionId: hookInput.session_id,
-    };
-  }
-
-  protected parseHookInput(raw: string): HookInput | null {
-    const parsed: unknown = JSON.parse(raw);
-    return isClaudeCodeHookInput(parsed) ? parsed : null;
-  }
-
-  /** Claude-specific evidence: organization from .claude.json and routing from settings.json env + profile. */
-  protected override async resolveEvidenceInputs(context: OtlpHookContext): Promise<EvidenceInputs> {
-    // Settings layers follow Claude's own roots (CLAUDE_PROJECT_DIR, CLAUDE_CONFIG_DIR, platform managed file).
+  protected async extractHookContext(hookInput: HookInput): Promise<OtlpHookContext> {
     const [organization, settings, hookConfig] = await Promise.all([
       readClaudeOrganization(),
-      readClaudeSettingsEnv(context.cwd),
-      loadHookConfig(context.cwd),
+      readClaudeSettingsEnv(hookInput.cwd),
+      loadHookConfig(hookInput.cwd),
     ]);
     const config = hookConfig?.config;
     const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
     const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');
-    return {
+    const evidenceInputs: EvidenceInputs = {
       organization,
       routing: routedViaCodemie({
         env: process.env,
@@ -133,6 +117,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         profileBaseUrl: config?.baseUrl,
       }),
     };
+    return {
+      cwd: hookInput.cwd,
+      prompt: hookInput.hook_event_name === 'UserPromptSubmit' ? hookInput.prompt : undefined,
+      sessionId: hookInput.session_id,
+      evidenceInputs,
+    };
+  }
+
+  protected parseHookInput(raw: string): HookInput | null {
+    const parsed: unknown = JSON.parse(raw);
+    return isClaudeCodeHookInput(parsed) ? parsed : null;
   }
 
   protected async isTracked(hookInput: HookInput): Promise<boolean> {

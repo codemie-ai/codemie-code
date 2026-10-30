@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -220,5 +220,45 @@ describe('record-store', () => {
     const f = fields('m1');
     await createOrRead(keyOf(f), f);
     if (process.platform !== 'win32') expect(statSync(evidenceDir()).mode & 0o777).toBe(0o700);
+  });
+});
+
+describe('analytics state placement and existing-store compatibility', () => {
+  it('new evidence state shares the analytics/state parent without sharing parse-state cleanup', async () => {
+    expect(evidenceDir()).toBe(join(home, 'analytics', 'state', 'evidence'));
+    const f = fields('new-session');
+    expect((await createOrRead(keyOf(f), f)).kind).toBe('created');
+    const parseState = join(home, 'analytics', 'state', 'claude-session.json');
+    writeFileSync(parseState, '{"mainOffset":99}');
+    await sweepRecords({ pendingKeys: new Set() });
+    expect(readFileSync(parseState, 'utf8')).toBe('{"mainOffset":99}');
+  });
+
+  it('existing evidence, verdict and policy files remain in their authoritative legacy namespace', async () => {
+    const legacy = join(home, 'evidence');
+    mkdirSync(legacy, { recursive: true });
+    const f = fields('existing-session');
+    const key = keyOf(f);
+    writeFileSync(join(legacy, `${key}.json`), JSON.stringify({ schema: 1, ...f, created: Date.now(), last_used: Date.now() }));
+    const verdict = join(legacy, `${key}.verdict.json`);
+    writeFileSync(verdict, '{"schema":1,"class":"personal","created":1}');
+    const policy = join(legacy, 'existing.policy.json');
+    writeFileSync(policy, '{"version":"old"}');
+    expect(evidenceDir()).toBe(legacy);
+    const result = await createOrRead(key, { ...f, project: 'changed-project' });
+    expect(result.kind).toBe('existing');
+    if (result.kind === 'existing') expect(result.record.project).toBe('proj');
+    expect(readFileSync(verdict, 'utf8')).toContain('personal');
+    expect(readFileSync(policy, 'utf8')).toContain('old');
+    expect(existsSync(join(home, 'analytics', 'state', 'evidence'))).toBe(false);
+  });
+
+  it('a corrupt legacy record is not bypassed by creating a fresh analytics namespace', async () => {
+    const legacy = join(home, 'evidence');
+    mkdirSync(legacy, { recursive: true });
+    const f = fields('corrupt-session');
+    writeFileSync(join(legacy, `${keyOf(f)}.json`), '{invalid');
+    expect((await createOrRead(keyOf(f), f)).kind).toBe('stamp_invalid');
+    expect(existsSync(join(home, 'analytics', 'state', 'evidence'))).toBe(false);
   });
 });

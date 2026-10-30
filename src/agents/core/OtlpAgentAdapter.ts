@@ -26,10 +26,19 @@ export interface OtlpHookContext {
   prompt?: string;
   /** Pins the resolved project per session (see `resolveProjectName`); omitted adapters get the unpinned, per-hook-cwd behavior. */
   sessionId?: string;
+  /** Optional tool evidence, resolved with the context before the shared persistence step. */
+  evidenceInputs?: EvidenceInputs;
 }
 
 /** Agent-independent fields resolved by the base class at hook time. */
 type CommonFields = RepoFields & IdentityFields;
+
+interface PreparedForward {
+  events: Record<string, unknown>[];
+  options?: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']>[2];
+  /** A loss report never acknowledges source data, even if the transport accepts it. */
+  failure?: string;
+}
 
 /** Common fields an event may bring itself: its own non-empty value wins. All others are stamped. */
 const OVERRIDABLE_FIELD_KEYS = ['git_branch', 'repo_remote', 'story_id', 'story_source'] as const;
@@ -124,46 +133,22 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
           return;
         }
 
-        const context = this.extractHookContext(hookInput);
-
-        // Stamp before anything is spooled; a failed stamp enqueues nothing (reason code only is logged).
-        let record: EvidenceRecord | undefined;
-        const evidenceInputs = await this.resolveEvidenceInputs(context);
-        if (evidenceInputs) {
-          const stamp = await stampEvidence(context, evidenceInputs);
-          if (!stamp.ok) {
-            logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}${stamp.detail ? `: ${stamp.detail}` : ''}); event not enqueued`);
-            // Events with a cursor to protect (finalize) are re-derived by the next hook; the others are gone: make that visible.
-            if (!decision.finalize && context.sessionId) {
-              await forwardOtlpEventsToSpool([], this.name, {
-                evidenceLoss: { sessionId: context.sessionId, reason: stamp.reason, events: decision.payload.length },
-              }).catch(() => false);
-            }
-            if (this.requiresSpoolAcceptance(hookInput)) {
-              throw new AnalyticsSourceError('Evidence record unavailable; hook event not enqueued');
-            }
-            return;
-          }
-          record = stamp.record;
-        }
-
-        const [commonFields, agentFields] = await Promise.all([
-          this.resolveCommonFields(context, record),
-          this.resolveAgentFields(),
-        ]);
-        const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
-
-        // Built once: a retry below resends these exact bytes, event_ids included.
-        const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
-
-        const send = (): Promise<boolean> =>
-          record ? forwardOtlpEventsToSpool(events, this.name, { evidenceV: 1 }) : forwardOtlpEventsToSpool(events, this.name);
-        accepted = await send();
-        if (!accepted && decision.retryOnce) {
+        const context = await this.extractHookContext(hookInput);
+        const batch = await this.prepareForward(context, decision);
+        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
+          ? [batch.events, this.name, batch.options]
+          : [batch.events, this.name];
+        // One transport call site; retries reuse the same prepared bytes and event IDs.
+        const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
+        if (batch.failure) {
+          // Loss reporting is best-effort and never acknowledges source data.
+          if (batch.options?.evidenceLoss) await send().catch(() => false);
+        } else {
           accepted = await send();
+          if (!accepted && decision.retryOnce) accepted = await send();
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
-          throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
+          throw new AnalyticsSourceError(batch.failure ?? 'Local analytics spool did not accept the hook event batch');
         }
       } finally {
         try {
@@ -175,6 +160,37 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     } catch (err) {
       await this.onHookError(err, hookInput);
     }
+  }
+
+  /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
+  private async prepareForward(
+    context: OtlpHookContext,
+    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>
+  ): Promise<PreparedForward> {
+    let record: EvidenceRecord | undefined;
+    if (context.evidenceInputs) {
+      const stamp = await stampEvidence(context, context.evidenceInputs);
+      if (!stamp.ok) {
+        logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}${stamp.detail ? `: ${stamp.detail}` : ''}); event not enqueued`);
+        return {
+          events: [],
+          options: !decision.finalize && context.sessionId
+            ? { evidenceLoss: { sessionId: context.sessionId, reason: stamp.reason, events: decision.payload.length } }
+            : undefined,
+          failure: 'Evidence record unavailable; hook event not enqueued',
+        };
+      }
+      record = stamp.record;
+    }
+    const [commonFields, agentFields] = await Promise.all([
+      this.resolveCommonFields(context, record),
+      this.resolveAgentFields(),
+    ]);
+    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+    return {
+      events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
+      options: record ? { evidenceV: 1 } : undefined,
+    };
   }
 
   /**
@@ -200,17 +216,6 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     throw err;
   }
 
-  /**
-   * Opt-in to durable evidence stamping (EPMCDME-16440). Return the adapter-specific inputs
-   * (organization, routing proof) to stamp; the base builds and reads the record. The default
-   * (undefined) stamps nothing and keeps the legacy, unmarked spool path, which is what the
-   * Copilot adapters use. Claude-specific reads (organization, settings.json endpoint) live in
-   * the claude-code-otlp override, not here.
-   */
-  protected async resolveEvidenceInputs(_context: OtlpHookContext): Promise<EvidenceInputs | undefined> {
-    return undefined;
-  }
-
   /** Optional host-specific response when a recognized hook cannot be tracked. */
   protected async onUntrackedHook(_input: TInput): Promise<void> {}
 
@@ -221,7 +226,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Returns null to ignore a payload of an unknown shape. May throw on malformed JSON. */
   protected abstract parseHookInput(raw: string): TInput | null;
-  protected abstract extractHookContext(input: TInput): OtlpHookContext;
+  protected abstract extractHookContext(input: TInput): OtlpHookContext | Promise<OtlpHookContext>;
   /** Allowlist gate; evaluated before the daemon is started. */
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;

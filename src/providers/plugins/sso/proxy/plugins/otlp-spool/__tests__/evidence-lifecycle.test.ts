@@ -1,3 +1,4 @@
+import { evidenceDir } from '@/agents/core/evidence/record-store.js';
 /**
  * Evidence lifetime (AC18, AC16, AC1 headers): real stampEvidence, record-store, spool-io, tick and
  * forwarder over a temp CODEMIE_HOME; only the network (fetch), the daemon state, credentials and
@@ -83,8 +84,8 @@ const keyOf = (m: M, sid: string) => {
   const id = m.io.forwarderIdentity(credentials())!;
   return m.rec.recordKey(id.api_identity, id.owner_hash, sid);
 };
-const recFile = (m: M, sid: string) => join(home, 'evidence', `${keyOf(m, sid)}.json`);
-const recCount = () => readdirSync(join(home, 'evidence')).filter((n) => /^[0-9a-f]{64}\.json$/.test(n)).length;
+const recFile = (m: M, sid: string) => join(evidenceDir(), `${keyOf(m, sid)}.json`);
+const recCount = () => readdirSync(evidenceDir()).filter((n) => /^[0-9a-f]{64}\.json$/.test(n)).length;
 const setLastUsed = (file: string, ms: number) => {
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf-8')), last_used: ms }));
 };

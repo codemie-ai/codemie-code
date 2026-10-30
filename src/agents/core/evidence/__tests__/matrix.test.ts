@@ -1,3 +1,4 @@
+import { evidenceDir } from '../record-store.js';
 /**
  * AC1 matrix: routed/direct/unproven x managed/native x user / project-in-allowlist / project-outside,
  * through the real adapter gate, routing, stampEvidence, record-store and classify.
@@ -73,17 +74,17 @@ let current: { row: Row; tracked: boolean } | undefined;
 class Adapter extends OtlpAgentAdapter<{ cwd: string; sessionId: string }> {
   readonly name = 'fake';
   protected parseHookInput(raw: string) { return JSON.parse(raw); }
-  protected extractHookContext(i: { cwd: string; sessionId: string }) { return { cwd: i.cwd, sessionId: i.sessionId }; }
+
   protected async isTracked(): Promise<boolean> { return current!.tracked; }
   protected requiresSpoolAcceptance(): boolean { return false; }
   protected async evaluate() { return { decision: 'forward' as const, payload: [{ a: 1 }] }; }
   protected async resolveAgentFields() { return {}; }
   protected resolveEventType() { return 'fake.event'; }
   protected buildEventId(e: Record<string, unknown>) { return String(e['type']); }
-  protected async resolveEvidenceInputs() {
+  protected extractHookContext(i: { cwd: string; sessionId: string }) {
     const { row } = current!;
     const input: Routing = { env: row.env, codemieProvider: row.provider, profileBaseUrl: GATEWAY, ...(row.settings ? { settingsEnv: { ANTHROPIC_BASE_URL: row.settings } } : {}) };
-    return { organization: 'Gmail Personal', routing: routedViaCodemie(input) };
+    return { cwd: i.cwd, sessionId: i.sessionId, evidenceInputs: { organization: 'Gmail Personal', routing: routedViaCodemie(input) } };
   }
 }
 
@@ -114,7 +115,7 @@ describe('AC1 routing x launch mode x scope matrix', () => {
           forwardOtlpEventsToSpool: forward,
         });
 
-        const dir = join(home, 'evidence');
+        const dir = evidenceDir();
         const files = (() => { try { return readdirSync(dir); } catch { return []; } })();
         if (!sc.tracked) {
           // Untracked project: nothing stamped, nothing spooled, daemon not started.

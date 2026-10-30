@@ -315,3 +315,5 @@ Backend refusals (for example `session_project_conflict`) are acknowledged disca
 ### 7.7 Open PR seams
 
 These are unmerged and were not merged, cherry-picked or integration-tested here: CLI PRs #707, #710, #711, #667 and backend MR !4652. Expected textual conflicts: `forwarder.ts`, `session-project.ts`, `spool-io.ts`, `config.ts`, `OtlpAgentAdapter.ts`. #711 attaches at `setClassificationConsumer`; #710 (masking) is not touched. No combined-integration claim is made; the backend contract was read from a local backend branch only.
+
+Evidence state shares the `analytics/state` parent with Claude transcript parse-state but keeps its own `evidence` subdirectory, endpoint/owner/session namespace and retention. Existing `~/.codemie/evidence` stores remain authoritative when present (including unreadable/corrupt stores); they are not silently replaced or migrated. Tool evidence is resolved as part of the hook context; the shared adapter prepares a batch before one spool transport call site. Loss reporting never acknowledges source data or advances a finalize cursor.

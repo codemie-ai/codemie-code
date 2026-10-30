@@ -18,11 +18,14 @@ const PROVEN_ROUTED = { routed: true, routing_proof: 'proven' };
 const PROVEN_DIRECT = { routed: false, routing_proof: 'proven' };
 const UNPROVEN = { routed: false, routing_proof: 'unproven' };
 
-describe('ClaudeCodeOtlpPlugin.resolveEvidenceInputs', () => {
+describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
   const plugin = new ClaudeCodeOtlpPlugin();
-  const call = () =>
-    (plugin as unknown as { resolveEvidenceInputs: (c: { cwd: string }) => Promise<{ organization?: string; routing: unknown }> })
-      .resolveEvidenceInputs({ cwd: '/x' });
+  const call = async () => {
+    const context = await (plugin as unknown as {
+      extractHookContext: (input: { cwd: string; session_id: string }) => Promise<{ evidenceInputs: { organization?: string; routing: unknown } }>;
+    }).extractHookContext({ cwd: '/x', session_id: 's1' });
+    return context.evidenceInputs;
+  };
   const settings = (env: Record<string, unknown>, complete = true) => readSettingsMock.mockResolvedValue({ env, complete });
   const profile = (provider: string, authType: string, extra: Record<string, unknown> = {}) => {
     getProviderMock.mockReturnValue({ authType });

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { lstatSync } from 'node:fs';
 import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -53,7 +54,15 @@ export function recordKey(apiIdentity: string, ownerHash: string, sessionId: str
 
 /** Lazy so tests / CODEMIE_HOME overrides apply. Shared with the verdict store. */
 export function evidenceDir(): string {
-  return getCodemiePath('evidence');
+  const legacy = getCodemiePath('evidence');
+  try {
+    lstatSync(legacy);
+    return legacy; // Preserve existing records, verdicts and policy state without re-stamping sessions.
+  } catch (err) {
+    // An inaccessible or broken legacy store must fail closed, never select a fresh namespace.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return legacy;
+  }
+  return getCodemiePath('analytics', 'state', 'evidence');
 }
 
 /** Sticky-verdict file name for a record key (never matches RECORD_RE). */
