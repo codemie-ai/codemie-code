@@ -31,14 +31,31 @@ async function stopRacingDaemon(): Promise<void> {
   }
 }
 
-function portMismatchError(state: DaemonState, actualPort: number): ToolExecutionError {
+/** Both post-stop failures leave nothing running; a plain restart would then drop the identity. */
+function lostIdentityError(state: DaemonState, reason: string, fix: string): ToolExecutionError {
   return new ToolExecutionError(
     'proxy-daemon',
-    `Proxy could not rebind port ${state.port}; it came up on ${actualPort} and was stopped. ` +
-    `Nothing is running now, so a plain restart would start a default proxy and drop this daemon's ` +
-    `identity (client: ${state.clientType ?? 'codemie-daemon'}, gateway key and telemetry mode). ` +
-    `Free port ${state.port}, then run: codemie proxy start --port ${state.port} --profile ${state.profile} ` +
+    `${reason} Nothing is running now, so a plain restart would start a default proxy and drop this ` +
+    `daemon's identity (client: ${state.clientType ?? 'codemie-daemon'}, gateway key and telemetry mode). ` +
+    `${fix}, then run: codemie proxy start --port ${state.port} --profile ${state.profile} ` +
     `and reconnect the client (codemie proxy connect).`
+  );
+}
+
+function portMismatchError(state: DaemonState, actualPort: number): ToolExecutionError {
+  return lostIdentityError(
+    state,
+    `Proxy could not rebind port ${state.port}; it came up on ${actualPort} and was stopped.`,
+    `Free port ${state.port}`
+  );
+}
+
+function spawnFailedError(state: DaemonState, error: unknown): ToolExecutionError {
+  const message = error instanceof Error ? error.message : String(error);
+  return lostIdentityError(
+    state,
+    `Proxy was stopped but the replacement failed to start: ${message}.`,
+    'Fix that'
   );
 }
 
@@ -52,15 +69,20 @@ async function restartRunning(state: DaemonState, opts: ProxyRestartOptions): Pr
   await stopDaemon();
   await stopRacingDaemon();
 
-  const daemonState = await spawnForProfile(prepared, profile, {
-    port: state.port,
-    clientType: state.clientType,
-    telemetryMode: state.telemetryMode,
-    gatewayKey: state.gatewayKey,
-    // A switched profile's tenant may not serve the old profile's model.
-    model: opts.profile ? undefined : state.model,
-    project: opts.profile ? config.codeMieProject : (state.project ?? config.codeMieProject),
-  });
+  let daemonState: DaemonState;
+  try {
+    daemonState = await spawnForProfile(prepared, profile, {
+      port: state.port,
+      clientType: state.clientType,
+      telemetryMode: state.telemetryMode,
+      gatewayKey: state.gatewayKey,
+      // A switched profile's tenant may not serve the old profile's model.
+      model: opts.profile ? undefined : state.model,
+      project: opts.profile ? config.codeMieProject : (state.project ?? config.codeMieProject),
+    });
+  } catch (error) {
+    throw spawnFailedError(state, error);
+  }
 
   if (daemonState.port !== state.port) {
     // Clients are configured for the recorded port; do not leave a daemon elsewhere.

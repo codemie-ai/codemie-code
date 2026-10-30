@@ -1083,6 +1083,20 @@ describe('proxy restart', () => {
     expect(loggedOutput()).not.toContain('✓');
   });
 
+  it('names the lost identity and the restore command when the re-spawn fails', async () => {
+    const { daemon, command } = await setup({ running: true, state: runningState });
+    vi.mocked(daemon.spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
+
+    await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
+
+    // The message wraps; compare it as one line.
+    const output = errorOutput().replace(/\s+/g, ' ');
+    expect(output).toContain('Daemon failed to start within 5 seconds');
+    expect(output).toContain('codemie proxy start --port 4001 --profile work');
+    expect(output).toContain('claude-desktop');
+    expect(loggedOutput()).not.toContain('✓');
+  });
+
   it('keeps the client type of a hook-started daemon', async () => {
     const { daemon, command } = await setup({
       running: true,
