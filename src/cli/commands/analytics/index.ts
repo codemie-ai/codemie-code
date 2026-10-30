@@ -152,7 +152,10 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       costResult = cost;
     } else {
       const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
-      costResult = await enrichCosts(rawSessions, realDeps);
+      // Unfiltered sessions bound resumed-session windows on shared logs even when filters exclude them.
+      const { rawSessions: all } = await source.load({ filter: {}, includeExternal: options.includeExternal });
+      const ids = new Set(rawSessions.map((r) => r.sessionId));
+      costResult = await enrichCosts(rawSessions, realDeps, all.filter((r) => !ids.has(r.sessionId)));
     }
     const keepSessionIds = new Set(
       [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)

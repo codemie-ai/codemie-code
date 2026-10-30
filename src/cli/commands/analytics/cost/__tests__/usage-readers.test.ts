@@ -217,6 +217,15 @@ describe('gatherDedupedUsageRecords + sumUsageRecords', () => {
     expect(b.map((r) => r.usage.input)).toEqual([30]);
   });
 
+  it('skips out-of-window records without claiming their keys', () => {
+    const seen = new Set<string>();
+    const msgs = [m('a', '2026-06-08T10:00:50Z', 1), m('b', '2026-06-08T10:01:50Z', 2), m('c', '2026-06-08T10:02:50Z', 3), { requestId: 'r-d', message: { id: 'd', model: 'claude-sonnet-4-6', usage: { input_tokens: 4, output_tokens: 0 } } }];
+    const t = (iso: string) => Date.parse(iso);
+    const recs = gatherDedupedUsageRecords('claude', claude(msgs), seen, t('2026-06-08T10:02:00Z') - 1, true, t('2026-06-08T10:01:00Z'));
+    expect(recs.map((r) => r.usage.input)).toEqual([2]);
+    expect(seen.size).toBe(1);
+  });
+
   it('returns [] for a non-Claude agent', () => {
     expect(gatherDedupedUsageRecords('codex', claude([m('m1', '2026-06-08T10:00:00Z', 10)]), new Set())).toEqual([]);
   });
