@@ -36,6 +36,28 @@ export function stripDesktopPreamble(text: string): string {
   return text.replace(DESKTOP_PREAMBLE_RE, '').trim();
 }
 
+// For slash commands (/review, /security-review, /fleet, ...) Copilot swaps the typed command for an internal
+// instruction ("The user has requested ... via the /review command. Use the task tool ...").
+const SLASH_INSTRUCTION_RE = /^The user has (?:requested|invoked)\b[^\n]*?\bvia the (\/[\w-]+) command\b/i;
+
+/** The user's own prompt: desktop preamble removed and Copilot's internal slash-command instruction replaced by the command. */
+export function normalizeUserPrompt(text: string): string {
+  const stripped = stripDesktopPreamble(text);
+  const slash = SLASH_INSTRUCTION_RE.exec(stripped);
+  return slash ? slash[1] : stripped;
+}
+
+/** Slash command (without the leading `/`) behind a user message, from Copilot's instruction or the typed text. */
+export function extractSlashCommand(content?: string, transformedContent?: string): string | undefined {
+  for (const candidate of [transformedContent, content]) {
+    if (typeof candidate !== 'string') continue;
+    const text = stripDesktopPreamble(candidate);
+    const match = SLASH_INSTRUCTION_RE.exec(text) ?? /^(\/[\w-]+)(?=\s|$)/.exec(text);
+    if (match) return match[1].slice(1);
+  }
+  return undefined;
+}
+
 /** User-facing short name used by install/uninstall surfaces. */
 export const COPILOT_CLI_INSTALL_ALIAS = 'copilot';
 

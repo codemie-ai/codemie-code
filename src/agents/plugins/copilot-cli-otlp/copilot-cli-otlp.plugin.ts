@@ -12,7 +12,7 @@ import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { resolveCopilotAgentKey, stripDesktopPreamble } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { normalizeUserPrompt, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
@@ -69,7 +69,7 @@ const FREE_TEXT_MAX_CHARS = 300;
 /** The user's own prompt text: the desktop app's internal preamble removed; undefined when nothing remains. */
 function userPrompt(prompt: string | undefined): string | undefined {
   if (typeof prompt !== 'string') return undefined;
-  const text = stripDesktopPreamble(prompt);
+  const text = normalizeUserPrompt(prompt);
   return text.length > 0 ? text : undefined;
 }
 
