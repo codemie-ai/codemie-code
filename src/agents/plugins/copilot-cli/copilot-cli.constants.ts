@@ -14,8 +14,11 @@ export const COPILOT_CLI_DISPLAY_NAME = 'GitHub Copilot CLI';
 /** Agent key for sessions created by the GitHub Copilot desktop app (same `session-state` store as the CLI). */
 export const COPILOT_DESKTOP_AGENT_NAME = 'copilot-desktop';
 
-/** `workspace.yaml` `client_name` written by the Copilot desktop app. */
-const COPILOT_DESKTOP_CLIENT_NAME = 'vscode-agent-host';
+/**
+ * `workspace.yaml` `client_name` written by the GitHub Copilot desktop app. The CLI writes `github/cli`
+ * and VS Code Chat's Copilot CLI agent `vscode-agent-host`; both stay `copilot-cli`.
+ */
+const COPILOT_DESKTOP_CLIENT_NAME = 'github/autopilot';
 
 /** Agent key for a session, derived from the host application recorded in its `workspace.yaml`. */
 export function resolveCopilotAgentKey(clientName?: string): string {

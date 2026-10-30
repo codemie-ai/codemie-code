@@ -72,10 +72,10 @@ describe('CopilotCliSessionAdapter.discoverSessions', () => {
     expect(found[0].updatedAt).toBeGreaterThan(found[0].createdAt);
   });
 
-  it('labels sessions by host: vscode-agent-host is copilot-desktop, others copilot-cli', async () => {
+  it('labels sessions by host: github/autopilot is copilot-desktop, others copilot-cli', async () => {
     const now = Date.now();
-    makeSession('desktop', now - DAY, { clientName: 'vscode-agent-host' });
-    makeSession('vscode', now - DAY, { clientName: 'vscode' });
+    makeSession('desktop', now - DAY, { clientName: 'github/autopilot' });
+    makeSession('vscode', now - DAY, { clientName: 'vscode-agent-host' });
     makeSession('cli', now - DAY, { clientName: 'github/cli' });
 
     const byId = Object.fromEntries((await newAdapter().discoverSessions()).map((d) => [d.sessionId, d.agentName]));

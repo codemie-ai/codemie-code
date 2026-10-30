@@ -30,6 +30,7 @@ vi.mock('@/utils/project-root.js', () => ({
 }));
 
 import {
+  getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
   removeCopilotChatOtlpConfig,
@@ -109,18 +110,39 @@ describe('copilot-chat-otlp connector', () => {
       expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
     });
 
-    it('keys the hook file home-relative (VS Code rejects absolute paths) and drops the legacy absolute key', async () => {
+    it('keys the hook file ~/-relative (VS Code skips absolute and /-prefixed paths) and drops the legacy keys', async () => {
       mocks.home = join(testDir, 'home');
       process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
       try {
-        const legacyKey = getCopilotChatHookFilePath();
-        await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { [legacyKey]: true, '/other/hooks.json': true } }));
+        const absoluteKey = getCopilotChatHookFilePath();
+        const slashKey = '/.codemie/hooks/copilot-chat-hooks.json';
+        await writeSettingsRaw(JSON.stringify({
+          [HOOK_LOCATIONS_KEY]: { [absoluteKey]: true, [slashKey]: true, '/other/hooks.json': true },
+        }));
 
         await writeCopilotChatOtlpConfig();
 
-        const relativeKey = '/.codemie/hooks/copilot-chat-hooks.json';
+        const homeKey = '~/.codemie/hooks/copilot-chat-hooks.json';
+        expect(getCopilotChatHookFileLocationKey()).toBe(homeKey);
         const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
-        expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [relativeKey]: true });
+        expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [homeKey]: true });
+
+        const result = await removeCopilotChatOtlpConfig();
+        expect(result.mode).toBe('full');
+        const after = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(after[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
+      } finally {
+        mocks.home = '';
+      }
+    });
+
+    it('disconnect removes a legacy /-prefixed key left by an earlier version', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        await writeSettingsRaw(JSON.stringify({
+          [HOOK_LOCATIONS_KEY]: { '/.codemie/hooks/copilot-chat-hooks.json': true, '/other/hooks.json': true },
+        }));
 
         const result = await removeCopilotChatOtlpConfig();
         expect(result.mode).toBe('full');

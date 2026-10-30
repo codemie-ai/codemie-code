@@ -408,8 +408,8 @@ describe('CopilotCliOtlpPlugin platform resolution', () => {
   };
 
   it('labels desktop sessions copilot-desktop and everything else copilot-cli', async () => {
-    writeManifest('plat-desktop', 'vscode-agent-host');
-    writeManifest('plat-vscode', 'vscode');
+    writeManifest('plat-desktop', 'github/autopilot');
+    writeManifest('plat-vscode', 'vscode-agent-host');
     writeManifest('plat-nameless');
     expect((await resolve('plat-desktop')).platform).toBe('copilot-desktop');
     expect((await resolve('plat-vscode')).platform).toBe('copilot-cli');
