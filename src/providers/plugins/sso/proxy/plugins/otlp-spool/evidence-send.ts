@@ -1,6 +1,5 @@
-import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
-import { ORG_ENCODED_HEADER, encodeOrganization, needsOrganizationEncoding } from '@/agents/core/evidence/org-encoding.js';
+import { buildAttributionHeaders } from '../header-injection.plugin.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
@@ -28,40 +27,20 @@ export interface EvidenceContext {
  */
 export function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record<string, string> {
   const { record, result } = ctx;
-  const headers: Record<string, string> = {
-    'X-CodeMie-Session-Id': sessionId,
-    'X-CodeMie-Routed-Via-CodeMie': String(record.routed_via_codemie),
-    // Indeterminate is sent as `unknown`; the local basis (e.g. routing_unproven) is never sent.
-    'X-CodeMie-Subscription-Type': result.class,
-  };
-  const put = (name: string, value: string | undefined): void => {
-    const v = value ? rawProjectHeader(value) : undefined;
-    if (v) headers[name] = v;
-    // Reason code only, never the value. Organization is the one whose omission changes what the backend derives.
-    else if (value) logger.debug(`[otlp-evidence] ${name} omitted: not_latin1_header_value`);
-  };
-  // Backend D7 derives Personal from routed=false + a non-matching organization and ignores the advisory
-  // class. An unproven route must therefore not carry the organization: without it the backend derives
-  // the same Unknown this client claims. (Corporate-by-match is the only other unproven outcome and is
-  // never sent through this basis.)
-  // Organization the plain header cannot carry goes only in the versioned encoded header (classifySession
-  // already confirmed the backend advertises it). A CodeMie-routed class needs no organization at all.
-  const org = record.organization;
-  if (result.basis !== 'routing_unproven' && org) {
-    if (!needsOrganizationEncoding(org)) put('X-CodeMie-Organization', org);
-    else if (!record.routed_via_codemie) {
-      const encoded = encodeOrganization(org);
-      if (encoded) headers[ORG_ENCODED_HEADER] = encoded;
-    }
-  }
-  put('X-CodeMie-Policy-Version', result.policy_version);
-  put('X-CodeMie-Repo-Remote', record.repo_key);
-  const project = record.project ? rawProjectHeader(record.project) : undefined;
-  if (project) {
-    headers[PROJECT_HEADER] = project;
-    if (record.project_source !== 'none') headers['X-CodeMie-Project-Source'] = record.project_source;
-  }
-  return headers;
+  const built = buildAttributionHeaders({
+    destination: 'analytics',
+    sessionId,
+    routedViaCodemie: record.routed_via_codemie,
+    subscriptionType: result.class,
+    routingUnproven: result.basis === 'routing_unproven',
+    organization: record.organization,
+    policyVersion: result.policy_version,
+    repoKey: record.repo_key,
+    project: record.project,
+    projectSource: record.project_source,
+  });
+  for (const name of built.omitted) logger.debug(`[otlp-evidence] ${name} omitted: not_latin1_header_value`);
+  return built.headers;
 }
 
 /**
