@@ -31,6 +31,8 @@ vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = mockGetStoredCredentials;
   },
+  hasUsableSsoCredential: (cookies: Record<string, string> | undefined, authorization: string | undefined) =>
+    Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim()),
 }));
 
 /** Wait until predicate returns true, polling every 10ms; fails after timeoutMs. */

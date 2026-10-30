@@ -179,7 +179,7 @@ export async function fetchDynamicModelConfigs(
         logger.debug('[dynamic-models] No SSO credentials found, using static model configs');
         return OPENCODE_MODEL_CONFIGS;
       }
-      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+      rawModels = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
       logger.debug('[dynamic-models] Fetched model list via SSO auth');
     }
 

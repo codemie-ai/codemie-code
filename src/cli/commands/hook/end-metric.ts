@@ -26,7 +26,7 @@ export async function endMetricCookieAuth(
   config: HookProcessingConfig | undefined
 ): Promise<CookieAuth | undefined> {
   const auth = await loadAnalyticsCookies('[hook:SessionEnd]', ssoUrl, config);
-  if (!auth.cookies) {
+  if (!auth.cookies && !auth.authorization) {
     logger.info(
       auth.readTimedOut
         ? `[hook:SessionEnd] The credential store did not answer in time for ${ssoUrl}`
@@ -126,6 +126,7 @@ export async function sendSessionEndMetrics(
     const sender = new MetricsSender({
       baseUrl: apiUrl,
       cookies: cookieAuth.cookies,
+      authorization: cookieAuth.authorization,
       credentialsSuperseded: cookieAuth.credentialsSuperseded,
       timeout: 10000,
       retryAttempts: options.hookProcess ? 0 : 2,

@@ -176,6 +176,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       credentialsSuperseded: this.isLocalDev
         ? undefined
         : (sent: string) => sentCredentialsSuperseded(sent, this.credentials),
+      authorization: this.isLocalDev ? undefined : credentials.get().authorization,
       clientType,
       version,
       dryRun
@@ -256,7 +257,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       // completed between ticks is picked up here too, instead of this periodic sync forever
       // posting the stale startup-time cookie header (PR #655 review, blocking).
       if (!this.isLocalDev) {
-        this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
+        const refreshed = await this.credentials.refresh();
+        this.context.cookies = this.buildSyncCookieHeader(refreshed.cookies);
+        this.context.authorization = refreshed.authorization;
       }
 
       // Use SessionSyncer service

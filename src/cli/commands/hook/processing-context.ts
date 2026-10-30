@@ -44,18 +44,20 @@ export async function buildProcessingContext(
 
   // Build context with SSO credentials if available
   let cookies = config?.cookies || '';
+  let authorization = config?.authorization;
   let credentialsSuperseded: CredentialsSupersededCheck | undefined;
 
   // If CodeMie analytics auth is configured and credentials are not provided,
-  // try to load the stored SSO cookies. This also supports native providers
+  // try to load the stored SSO cookies/authorization. This also supports native providers
   // such as anthropic-subscription, where CodeMie auth is analytics-only.
-  if (ssoUrl && apiUrl && !cookies) {
-    ({ cookies, credentialsSuperseded } = await loadAnalyticsCookies('[hook]', ssoUrl, config));
+  if (ssoUrl && apiUrl && !cookies && !authorization) {
+    ({ cookies, authorization, credentialsSuperseded } = await loadAnalyticsCookies('[hook]', ssoUrl, config));
   }
 
   return {
     apiBaseUrl: apiUrl,
     cookies,
+    authorization,
     apiKey,
     ...(!apiKey && credentialsSuperseded && { credentialsSuperseded }),
     clientType,

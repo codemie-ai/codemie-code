@@ -103,6 +103,8 @@ export interface HookProcessingConfig {
   apiBaseUrl?: string;
   /** SSO cookies for authentication */
   cookies?: string;
+  /** SSO authorization fallback (see `SSOCredentials.authorization`) */
+  authorization?: string;
   /** API key for localhost development */
   apiKey?: string;
   /** Client type identifier (e.g., 'vscode-codemie', 'codemie-cli') */
@@ -1281,9 +1283,9 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     }
 
     // Load SSO credentials if not provided in config
-    const { cookies: cookieHeader, credentialsSuperseded } = await loadAnalyticsCookies('[hook:SessionStart]', ssoUrl, config);
+    const { cookies: cookieHeader, credentialsSuperseded, authorization } = await loadAnalyticsCookies('[hook:SessionStart]', ssoUrl, config);
 
-    if (!cookieHeader) {
+    if (!cookieHeader && !authorization) {
       if (syncApiUrl) {
         logger.info(
           `[hook:SessionStart] CodeMie analytics sync is configured for ${syncApiUrl}, but no stored credentials were found. Run: codemie profile login --url ${ssoUrl}`
@@ -1305,6 +1307,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       baseUrl: apiUrl,
       cookies: cookieHeader,
       credentialsSuperseded,
+      authorization,
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,

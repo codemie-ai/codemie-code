@@ -146,7 +146,7 @@ async function fetchCodeMieModelsForKimi(env: NodeJS.ProcessEnv): Promise<LlmMod
     }
 
     logger.debug('[kimi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   }
 
   return [];

@@ -77,6 +77,7 @@ export interface ConversationApiConfig {
   baseUrl: string;
   cookies?: string;
   apiKey?: string;
+  authorization?: string;
   timeout?: number;
   /** TOTAL attempts, the first request included (1 = no retry); 0 or unset → the default 3 */
   retryAttempts?: number;

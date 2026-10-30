@@ -34,7 +34,7 @@ export type SessionClassification =
   | { action: 'suppress' };
 
 export function authHeadersFor(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
-  if (isSSOCredentials(credentials)) return buildAuthHeaders(credentials.cookies);
+  if (isSSOCredentials(credentials)) return buildAuthHeaders(credentials.cookies, credentials.authorization);
   if (isJWTCredentials(credentials)) return buildAuthHeaders(credentials.token);
   return null;
 }
