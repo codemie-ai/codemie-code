@@ -49,6 +49,15 @@ header (currently ignored entirely):
   `api_key`, `auth_token`, `password`, ...): in OTLP the attribute name is data,
   not a property name, so `maskSecretsDeep` alone cannot see it and would pass a
   secret in an unrecognised format. It is not a skip-list — it only ever redacts.
+  Strings are scanned in full via `maskSecretsInLongText` (`src/utils/security.ts`),
+  not cut at the 64 KB bound `maskSecretsInText` keeps for the hook pipeline: the
+  text is split into 64 KB chunks at boundaries no secret pattern crosses (checked
+  over an 8 KB window each side), and a PEM block left open at a chunk edge is
+  redacted through its END line. It fails closed — if no safe boundary exists the
+  remainder is redacted, and text beyond 8 MB per string is replaced by a
+  `[TRUNCATED: N chars omitted]` marker — so unscanned text is never forwarded.
+  Residual limit: a multi-line match other than a PEM block that is longer than
+  the 8 KB window can slip past the boundary check.
   Append the masked JSON as one NDJSON line to a new per-stream JSON spool
   file. A parse, masking or spool-write failure **drops the record** (logged at
   `warn`, session id and error message only — never the payload) and still
@@ -105,6 +114,9 @@ tracked/forwarded stream and neither blocks on or orphans the other.
 - An OTLP attribute whose name is a secret name has its value replaced by
   `{"stringValue":"[REDACTED]"}` whatever the value looks like; attribute order
   and all other attributes are unchanged.
+- An OTLP string attribute longer than 64 KB is masked in full (a secret past
+  64 KB is redacted, the tail is kept); only text beyond 8 MB per string is
+  replaced by a truncation marker.
 - A JSON OTLP POST that fails to parse, mask or spool is dropped with a `warn`
   log and a 200 response; its original bytes are never written to any spool
   stream.

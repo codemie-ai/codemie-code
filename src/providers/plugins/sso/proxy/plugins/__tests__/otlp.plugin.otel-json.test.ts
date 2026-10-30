@@ -210,6 +210,22 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
       ]);
     });
 
+    it('does not cut a string over 64 KB: the tail is kept and a secret past the old cap is masked', async () => {
+      const filler = 'const answer = compute(42);\n'.repeat(5_000); // ~140 KB
+      const newString = `${filler}token = "${FAKE_SK_NEW}"\n${filler}// last line`;
+      const toolInput = JSON.stringify({ file_path: '/repo/big.ts', new_string: newString });
+
+      const res = await postOtlpJson('logs', logsExport([stringAttr('tool_input', toolInput)]));
+
+      expect(res.statusCode).toBe(200);
+      const line = spooledLine();
+      expect(line).not.toContain(FAKE_SK_NEW);
+      const input = JSON.parse(spooledAttributes(line)[1].value['stringValue'] as string) as Record<string, string>;
+      expect(input['file_path']).toBe('/repo/big.ts');
+      expect(input['new_string'].endsWith('// last line')).toBe(true);
+      expect(input['new_string'].length).toBeGreaterThan(newString.length - 100);
+    });
+
     it('leaves a secret-free record structurally identical, including typed values', async () => {
       const typed: OtlpAttribute[] = [
         stringAttr('tool_name', 'Read'),

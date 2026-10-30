@@ -154,6 +154,20 @@ describe('maskOtlpJson — string-level masking still applies', () => {
     expect(serialized).not.toContain(FAKE_SK);
   });
 
+  it('scans attribute strings over 64 KB in full: masks a secret past the old cap and keeps the tail', () => {
+    const filler = 'const answer = compute(42);\n'.repeat(5_000); // ~140 KB
+    const newString = `${filler}const client = new Client("${FAKE_SK}");\n${filler}// last line`;
+    const toolInput = JSON.stringify({ file_path: '/repo/big.ts', new_string: newString });
+
+    const masked = maskOtlpJson(logsExport([str('tool_input', toolInput)]));
+
+    const value = logAttributes(masked)[0].value['stringValue'] as string;
+    expect(value).not.toContain(FAKE_SK);
+    expect(value).toContain('const client = new Client(\\"[REDACTED]\\");');
+    expect(value.endsWith('// last line"}')).toBe(true);
+    expect(value.length).toBeGreaterThan(newString.length - 100);
+  });
+
   it('returns scalars and null unchanged', () => {
     expect(maskOtlpJson(null)).toBeNull();
     expect(maskOtlpJson(42)).toBe(42);

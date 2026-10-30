@@ -220,12 +220,8 @@ const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   nameValueRule(BARE_PASS_NAME, NUMBER_OR_PATH_VALUE),
 ];
 
-/**
- * Replace secrets embedded anywhere in free text with `[REDACTED]`, leaving the
- * surrounding text intact. Input beyond 64 KB is dropped before scanning.
- */
-export function maskSecretsInText(text: string): string {
-  let masked = text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text;
+function applySecretPatterns(text: string): string {
+  let masked = text;
   for (const [pattern, replacement] of EMBEDDED_SECRET_PATTERNS) {
     masked = masked.replace(pattern, replacement);
   }
@@ -233,17 +229,137 @@ export function maskSecretsInText(text: string): string {
 }
 
 /**
- * Walk strings, arrays and objects and mask every string with `maskSecretsInText`; a string
- * or container under a sensitive key (SENSITIVE_KEY_PATTERNS) is redacted whole. Other values are untouched
- * and the input is never mutated. `skipKeys` applies to top-level keys only.
+ * Replace secrets embedded anywhere in free text with `[REDACTED]`, leaving the
+ * surrounding text intact. Input beyond 64 KB is dropped before scanning.
  */
-export function maskSecretsDeep(value: unknown, skipKeys?: ReadonlySet<string>): unknown {
-  return maskDeep(value, skipKeys, 0);
+export function maskSecretsInText(text: string): string {
+  return applySecretPatterns(text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text);
 }
 
-function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, depth: number): unknown {
+/** Longest text `maskSecretsInLongText` scans; the rest is replaced by a truncation marker. */
+const MAX_LONG_MASK_INPUT_CHARS = 8 * 1024 * 1024;
+
+/** Characters compared on each side of a chunk boundary to prove the boundary does not cut a secret. */
+const SEAM_CHARS = 8 * 1024;
+
+/** How far back from a chunk's end a boundary is looked for after whitespace, and how many boundaries are tried. */
+const SPLIT_SEARCH_CHARS = 4 * 1024;
+const MAX_SPLIT_CHECKS = 16;
+
+/**
+ * A boundary is safe when masking the text around it as one piece gives the same result as masking
+ * each side alone, i.e. no secret pattern matches across it. Looks `SEAM_CHARS` to each side, so a
+ * multi-line match (a PEM block) longer than that can slip past the check.
+ */
+function splitKeepsSecretsIntact(text: string, at: number): boolean {
+  const left = text.slice(Math.max(0, at - SEAM_CHARS), at);
+  const right = text.slice(at, at + SEAM_CHARS);
+  return applySecretPatterns(left + right) === applySecretPatterns(left) + applySecretPatterns(right);
+}
+
+/** Whitespace boundaries tried are at least this far apart, so a rejected one (inside a multi-line match) is skipped past. */
+const SPLIT_STEP_CHARS = 256;
+
+/**
+ * A boundary inside an open PEM block is safe by construction: the block is redacted up to the
+ * boundary and `maskSecretsInLongText` drops the remainder through its END line. Any other boundary
+ * must pass the seam check.
+ */
+function isSafeSplit(text: string, start: number, at: number): boolean {
+  return endsInsideOpenPem(text.slice(start, at)) || splitKeepsSecretsIntact(text, at);
+}
+
+/** A safe boundary in `(start, end]`, preferring one right after whitespace; undefined when none is found. */
+function findSafeSplit(text: string, start: number, end: number): number | undefined {
+  const lowest = Math.max(start, end - SPLIT_SEARCH_CHARS);
+  let checks = 0;
+  let at = end;
+  while (at > lowest && checks < MAX_SPLIT_CHECKS) {
+    if (/\s/.test(text.charAt(at - 1))) {
+      checks++;
+      if (isSafeSplit(text, start, at)) return at;
+      at -= SPLIT_STEP_CHARS;
+    } else {
+      at--;
+    }
+  }
+  for (at = end; at > start && at > end - MAX_SPLIT_CHECKS; at--) {
+    if (isSafeSplit(text, start, at)) return at;
+  }
+  return undefined;
+}
+
+const PEM_BEGIN_AT_START = /^-----BEGIN [A-Z0-9 ]{1,40}-----/;
+const PEM_END = /-----END [A-Z0-9 ]{1,40}-----/;
+
+/** True when the text's last PEM block has a BEGIN line but no END line, so the block runs on into the next chunk. */
+function endsInsideOpenPem(text: string): boolean {
+  const begin = text.lastIndexOf('-----BEGIN ');
+  return begin >= 0 && PEM_BEGIN_AT_START.test(text.slice(begin, begin + 80)) && !PEM_END.test(text.slice(begin));
+}
+
+/**
+ * Like `maskSecretsInText`, but scans the whole text instead of dropping everything past 64 KB:
+ * it is cut into 64 KB chunks at boundaries that no secret pattern crosses, and each chunk is
+ * masked on its own. Fails closed: when no safe boundary exists the remainder is redacted, and
+ * text beyond 8 MB is replaced by a truncation marker, so unscanned text is never returned.
+ */
+export function maskSecretsInLongText(text: string): string {
+  if (text.length <= MAX_MASK_INPUT_CHARS) {
+    return applySecretPatterns(text);
+  }
+  const limit = Math.min(text.length, MAX_LONG_MASK_INPUT_CHARS);
+  const parts: string[] = [];
+  // A PEM block left open at a chunk edge was already redacted to that edge; its remainder is dropped up to the END line.
+  let insideOpenPem = false;
+  const maskChunk = (chunk: string): string => {
+    let body = chunk;
+    if (insideOpenPem) {
+      const end = PEM_END.exec(body);
+      if (!end) return '';
+      body = body.slice(end.index + end[0].length);
+    }
+    insideOpenPem = endsInsideOpenPem(body);
+    return applySecretPatterns(body);
+  };
+  let start = 0;
+  while (limit - start > MAX_MASK_INPUT_CHARS) {
+    const split = findSafeSplit(text, start, start + MAX_MASK_INPUT_CHARS);
+    if (split === undefined) {
+      parts.push(REDACTED);
+      return parts.join('');
+    }
+    parts.push(maskChunk(text.slice(start, split)));
+    start = split;
+  }
+  parts.push(maskChunk(text.slice(start, limit)));
+  if (text.length > limit) {
+    parts.push(`[TRUNCATED: ${text.length - limit} chars omitted]`);
+  }
+  return parts.join('');
+}
+
+/**
+ * Walk strings, arrays and objects and mask every string with `maskText` (`maskSecretsInText` by default);
+ * a string or container under a sensitive key (SENSITIVE_KEY_PATTERNS) is redacted whole. Other values are
+ * untouched and the input is never mutated. `skipKeys` applies to top-level keys only.
+ */
+export function maskSecretsDeep(
+  value: unknown,
+  skipKeys?: ReadonlySet<string>,
+  maskText: (text: string) => string = maskSecretsInText
+): unknown {
+  return maskDeep(value, skipKeys, 0, maskText);
+}
+
+function maskDeep(
+  value: unknown,
+  skipKeys: ReadonlySet<string> | undefined,
+  depth: number,
+  maskText: (text: string) => string
+): unknown {
   if (typeof value === 'string') {
-    return maskSecretsInText(value);
+    return maskText(value);
   }
   if (typeof value !== 'object' || value === null) {
     return value;
@@ -252,7 +368,7 @@ function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, dep
     return REDACTED;
   }
   if (Array.isArray(value)) {
-    return value.map(item => maskDeep(item, undefined, depth + 1));
+    return value.map(item => maskDeep(item, undefined, depth + 1, maskText));
   }
   const masked: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
@@ -261,7 +377,7 @@ function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, dep
     } else if ((typeof child === 'string' || (typeof child === 'object' && child !== null)) && isSensitiveKey(key)) {
       masked[key] = REDACTED;
     } else {
-      masked[key] = maskDeep(child, undefined, depth + 1);
+      masked[key] = maskDeep(child, undefined, depth + 1, maskText);
     }
   }
   return masked;

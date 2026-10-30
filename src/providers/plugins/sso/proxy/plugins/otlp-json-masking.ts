@@ -1,4 +1,4 @@
-import { isSensitiveKey, maskSecretsDeep, REDACTED } from '@/utils/security.js';
+import { isSensitiveKey, maskSecretsDeep, maskSecretsInLongText, REDACTED } from '@/utils/security.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
@@ -37,7 +37,8 @@ function redactSensitiveAttributes(node: unknown, depth: number): unknown {
 /**
  * Mask a parsed OTLP/JSON export: secret-named attributes are redacted by name, then every
  * remaining string is scanned for embedded secrets (JSON-encoded `tool_parameters`, `tool_input`, ...).
+ * Strings are scanned in full, not cut at 64 KB: telemetry is forwarded as sent, with no later length limit.
  */
 export function maskOtlpJson(parsed: unknown): unknown {
-  return maskSecretsDeep(redactSensitiveAttributes(parsed, 0));
+  return maskSecretsDeep(redactSensitiveAttributes(parsed, 0), undefined, maskSecretsInLongText);
 }
