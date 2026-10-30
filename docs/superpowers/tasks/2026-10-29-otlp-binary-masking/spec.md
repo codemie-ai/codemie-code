@@ -44,8 +44,15 @@ header (currently ignored entirely):
   `resourceLogs[].scopeLogs[].logRecords[].attributes[]` /
   `resourceSpans[]...attributes[]` shape without a schema-aware extractor.
   Append the masked JSON as one NDJSON line to a new per-stream JSON spool
-  file. A parse or masking failure falls back to the branch below unchanged —
-  raw bytes to the `.bin` spool — rather than erroring the request.
+  file. A parse, masking or spool-write failure **drops the record** (logged at
+  `warn`, session id and error message only — never the payload) and still
+  answers 200; it never falls through to the branch below. The `.bin` fallback
+  originally specified here was rejected: the bytes that failed masking would be
+  forwarded unmasked, defeating this fix, and `forwardOtelStream` posts every
+  `.bin` record as `application/x-protobuf`, so JSON bytes would also go out
+  under the wrong content type. The cost is that a dropped record is lost — the
+  client sees 200 and does not retry — which matches how the byte-blind branch
+  already treats a spool write error.
 - anything else (protobuf, or no header) → unchanged: extract the session id via
   today's latin1/UUID regex, append the raw bytes unmodified to today's existing
   `.bin` spool file. No parsing, no masking is attempted on this path.
@@ -89,6 +96,9 @@ tracked/forwarded stream and neither blocks on or orphans the other.
 - `claude-code-otlp.ts` writes `OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json'`.
 - `handleOtlp` parses, masks (`maskSecretsDeep`, no custom skip-list), and
   NDJSON-spools any `application/json` OTLP POST.
+- A JSON OTLP POST that fails to parse, mask or spool is dropped with a `warn`
+  log and a 200 response; its original bytes are never written to any spool
+  stream.
 - Any non-JSON OTLP POST is spooled via the existing byte-blind path, unchanged.
 - Both `.bin` and `.ndjson` spool extensions coexist per OTEL stream and are
   both discoverable by session listing/cleanup; neither is renamed or retired.

@@ -2,7 +2,7 @@
  * Tests for `OtlpPlugin`'s POST /v1/analytics/otlp/v1/{logs,metrics,traces} route for the
  * `application/json` content type: parses, masks (`maskSecretsDeep`) and spools the payload
  * as one masked NDJSON line on the signal's own JSON stream, and never falls through to the
- * byte-blind `.bin` path (see code-review-final.local.json CR-007/CR-008).
+ * byte-blind `.bin` path (spec: "Proxy ingestion" and the drop-on-failure acceptance criterion).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -83,7 +83,7 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
     expect(appendSpoolMock).not.toHaveBeenCalled();
   });
 
-  it('(CR-008) masks a secret-bearing JSON body and spools it to the signal\'s own JSON stream', async () => {
+  it('masks a secret-bearing JSON body and spools it to the signal\'s own JSON stream', async () => {
     const payload = {
       resourceLogs: [{ sessionId: SESSION_ID, attributes: { api_key: 'sk-super-secret-value' } }],
     };
@@ -215,7 +215,7 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
     expect(appendSpoolMock.mock.calls[0][1]).toBe('tracesJson');
   });
 
-  it('(CR-007) drops the record and logs a warning on malformed JSON, without falling through to the byte-blind path', async () => {
+  it('drops the record and logs a warning on malformed JSON, without falling through to the byte-blind path', async () => {
     // A session id is still found by regex on the raw bytes, even though the body itself is not valid JSON.
     const res = await postOtlpJson('logs', `not json but has a uuid ${SESSION_ID} in it`);
 
@@ -224,7 +224,7 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
     expect(loggerMock.warn).toHaveBeenCalled();
   });
 
-  it('(CR-007) drops the record and logs a warning, never spooling the original unmasked bytes, when the spool write itself fails', async () => {
+  it('drops the record and logs a warning, never spooling the original unmasked bytes, when the spool write itself fails', async () => {
     appendSpoolMock.mockRejectedValueOnce(new Error('disk full'));
     const res = await postOtlpJson('logs', JSON.stringify({ sessionId: SESSION_ID, api_key: 'sk-secret' }));
 
