@@ -39,7 +39,8 @@ const FORWARD_TIMEOUT_MS = 20_000;
 /** Project the session is bound to; the backend gates analytics on it. */
 const PROJECT_HEADER = 'X-CodeMie-Project';
 
-type SendResult = 'ok' | 'failed' | 'auth-expired';
+/** `rejected`: the backend refused this exact payload for good (see `isPermanentRejection`); retrying it cannot succeed. */
+type SendResult = 'ok' | 'failed' | 'rejected' | 'auth-expired';
 
 /* ------------------------------------------------------------------ auth --- */
 
@@ -88,6 +89,14 @@ async function postToBackend(
     clearTimeout(timer);
   }
 }
+
+/**
+ * Statuses that depend only on the payload: malformed (400), over the body limit (413) or
+ * unprocessable (422). Deliberately not every 4xx — a 404/405 can be a misrouted gateway or a deploy
+ * in progress, and treating those as permanent would discard a healthy backlog.
+ */
+const isPermanentRejection = (response: Response): boolean =>
+  response.status === 400 || response.status === 413 || response.status === 422;
 
 const isAuthFailure = (response: Response): boolean =>
   response.status === 401 ||
@@ -144,7 +153,7 @@ async function send(
       ...sanitizeLogArgs({ sessionId, stream, status: response.status })
     );
 
-    return 'failed';
+    return isPermanentRejection(response) ? 'rejected' : 'failed';
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug(
@@ -309,7 +318,13 @@ async function forwardOtelJsonStream(
     const recordByteLength = Buffer.byteLength(record, 'utf8') + 1; // +1 for the newline cut off when the batch was split
     const range = { cursor, end: cursor + recordByteLength, filtered: false };
     const result = await send(sessionId, stream, url, record, 'application/json', credentials, batch.project, range);
-    if (result !== 'ok') {
+    if (result === 'rejected') {
+      // One record per request, so skipping drops just this export; retrying it would stall every record behind it.
+      logger.warn(
+        '[otlp-forwarder] dropping a record the backend permanently rejected',
+        ...sanitizeLogArgs({ sessionId, stream, bytes: recordByteLength })
+      );
+    } else if (result !== 'ok') {
       return result;
     }
     cursor += recordByteLength;
