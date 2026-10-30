@@ -70,7 +70,13 @@ import {
   type Compaction,
   type SignalLine,
 } from './session-signals.js';
-import { type SubagentFile, buildSubagentUsageEvent, findSubagentFiles } from './subagent-usage.js';
+import {
+  type SubagentFile,
+  buildSubagentUsageEvent,
+  discoverSubagentFiles,
+  findSubagentFiles,
+} from './subagent-usage.js';
+import { resolveForkSkills } from './fork-skill.js';
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
 // the pass openers from this one module.
@@ -344,7 +350,7 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
  *   fires before the boundary line exists.
  */
-async function buildFullAccumulator(transcriptPath: string): Promise<{
+async function buildFullAccumulator(transcriptPath: string, final = false): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
@@ -418,7 +424,10 @@ async function buildFullAccumulator(transcriptPath: string): Promise<{
     }
   }
 
-  const named = extractOrderedNamedInvocations(parsedLines);
+  // A forked skill run as `/name` leaves no command wrapper; count its plain line when a fork
+  // proves the prompt started one.
+  const { slashPromptIds } = await resolveForkSkills(transcriptPath, await discoverSubagentFiles(transcriptPath), raw, { final });
+  const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
   acc.commandsInOrder = named.commandsInOrder;
 
   const { linesAdded, linesRemoved } = collectEditLineStats(parsedLines);
@@ -583,7 +592,7 @@ async function deriveMainEvents(
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath);
+    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath, trigger === 'SessionEnd');
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -843,6 +852,46 @@ export async function openSessionEnvCheckPass(
   }
 }
 
+/** Forget `agentId` as deferred (its usage is being derived now). */
+function clearDeferred(state: TranscriptParseState, agentId: string): void {
+  if (state.deferredAgentIds) {
+    state.deferredAgentIds = state.deferredAgentIds.filter((id) => id !== agentId);
+  }
+}
+
+/**
+ * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
+ * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
+ * `Stop`, when the evidence (a `Skill` result, an `Agent` result) may have arrived: a subagent
+ * that is still pending stays deferred. No-op when nothing is deferred. A failing subagent is
+ * skipped, state intact.
+ */
+async function settleDeferredSubagents(
+  state: TranscriptParseState,
+  sessionId: string,
+  transcriptPath: string,
+  cwd?: string
+): Promise<Record<string, unknown>[]> {
+  if (!state.deferredAgentIds?.length) {
+    return [];
+  }
+  const events: Record<string, unknown>[] = [];
+  for (const rawFile of await findSubagentFiles(transcriptPath)) {
+    if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
+    const file: SubagentFile = { ...rawFile, cwd };
+    const snapshot = structuredClone(state);
+    try {
+      clearDeferred(state, file.agentId);
+      events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+    } catch (err) {
+      Object.assign(state, snapshot);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug('[claude-code-otlp] deferred subagent failed', ...sanitizeLogArgs({ sessionId, agentId: file.agentId, err: msg }));
+    }
+  }
+  return events;
+}
+
 /**
  * Open a commit-after-send pass for one `Stop`/`PreCompact`/`StopFailure` hook fire: acquires the
  * per-session lock, loads state, derives in memory via {@link deriveMainEvents}, and returns the
@@ -868,6 +917,9 @@ export async function openMainTranscriptPass(
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    if (trigger === 'Stop') {
+      events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1182,7 +1234,14 @@ export async function openSubagentPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    // A subagent that may still prove to be a skill fork sends nothing yet: the backend keeps the
+    // max() of scope_kind/scope_name per request, so a wrong first scope could not be fixed later.
+    let events: Record<string, unknown>[] = [];
+    if (subagentFile.pending) {
+      state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), subagentFile.agentId])];
+    } else {
+      events = await deriveSubagentEvents(state, sessionId, subagentFile);
+    }
 
     if (envCheck) {
       const updated = await computeSessionEnvUpdate(state, envCheck);
@@ -1237,7 +1296,8 @@ export async function openSessionEndPass(
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
 
-    const subagentFiles = await findSubagentFiles(transcriptPath);
+    // End of the session: nothing more will arrive, so a subagent still unproven is an agent.
+    const subagentFiles = await findSubagentFiles(transcriptPath, { final: true });
     for (const rawFile of subagentFiles) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
@@ -1247,6 +1307,7 @@ export async function openSessionEndPass(
       }
       const snapshot = structuredClone(state);
       try {
+        clearDeferred(state, file.agentId);
         events.push(...(await deriveSubagentEvents(state, sessionId, file)));
       } catch (err) {
         Object.assign(state, snapshot);

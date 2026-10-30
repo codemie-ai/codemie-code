@@ -66,6 +66,9 @@ export interface TranscriptParseState {
    *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
    *  a state saved before it existed. */
   seenMessageUuids?: string[];
+  /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
+   *  absent in a state saved before it existed. */
+  deferredAgentIds?: string[];
 }
 
 /**
