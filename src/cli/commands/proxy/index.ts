@@ -43,6 +43,7 @@ interface UnifiedConnectOptions {
   force?: boolean;
   insiders?: boolean;
   model?: string;
+  omp?: boolean;
   profile?: string;
   scope?: AllowlistScope;
   silent?: boolean;
@@ -312,6 +313,7 @@ export function createProxyCommand(): Command {
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
+    .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
@@ -341,6 +343,7 @@ export function createProxyCommand(): Command {
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
           codexDesktop: Boolean(opts.codexDesktop),
+          omp: Boolean(opts.omp),
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
@@ -356,6 +359,7 @@ export function createProxyCommand(): Command {
     .command('disconnect')
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
+    .option('--omp', 'Remove the CodeMie model catalog extension from oh-my-pi')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
     .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Remove Copilot Chat analytics hook file, settings entry and project scope')
     .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Remove Copilot CLI analytics hook file and project scope')
@@ -372,6 +376,7 @@ export function createProxyCommand(): Command {
       copilotChatOtlp?: boolean;
       copilotCliOtlp?: boolean;
       codexDesktop?: boolean;
+      omp?: boolean;
       scope?: 'user' | 'project';
     }) => {
       await disconnectTargets({
@@ -380,6 +385,7 @@ export function createProxyCommand(): Command {
           copilotChatOtlp: Boolean(opts.copilotChatOtlp),
           copilotCliOtlp: Boolean(opts.copilotCliOtlp),
           codexDesktop: Boolean(opts.codexDesktop),
+          omp: Boolean(opts.omp),
         },
         scope: opts.scope,
       });

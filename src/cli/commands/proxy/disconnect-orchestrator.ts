@@ -13,6 +13,7 @@ import { removeCodexDesktopConfig } from './connectors/codex-desktop.js';
 import { removeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 import { removeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { removeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
+import { removeOmpExtension } from './connectors/omp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -22,6 +23,7 @@ export interface DisconnectTargets {
   copilotChatOtlp?: boolean;
   copilotCliOtlp?: boolean;
   codexDesktop?: boolean;
+  omp?: boolean;
 }
 
 export interface DisconnectOptions {
@@ -33,6 +35,7 @@ const DISCONNECT_TARGET_LIST = [
   'Select at least one target to disconnect:',
   '',
   '  --codex-desktop        Codex desktop app (removes the CodeMie block from ~/.codex/config.toml)',
+  '  --omp                  oh-my-pi (removes the CodeMie model catalog extension)',
   `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code OTLP (removes hook/env entries)`,
   `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   Copilot Chat OTLP (removes the CodeMie hook file + settings entry)`,
   `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Copilot CLI OTLP (removes the CodeMie hook file)`,
@@ -150,9 +153,28 @@ async function disconnectCopilotCliOtlp(scope?: 'user' | 'project'): Promise<voi
   }
 }
 
+async function disconnectOmp(): Promise<void> {
+  try {
+    const result = await removeOmpExtension();
+    if (!result.removed) {
+      console.log(chalk.dim('oh-my-pi: nothing to disconnect.'));
+      return;
+    }
+    console.log(chalk.green(`✓ oh-my-pi disconnected (${result.path})`));
+    console.log(chalk.yellow('⚠ Restart omp to drop the codemie and codemie-claude providers.'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(chalk.red(`✗ oh-my-pi — ${message}`));
+    process.exitCode = 1;
+  }
+}
+
 export async function disconnectTargets(opts: DisconnectOptions): Promise<void> {
   const { targets } = opts;
-  if (!targets.codexDesktop && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp) {
+  if (
+    !targets.codexDesktop && !targets.claudeCodeOtlp && !targets.copilotChatOtlp && !targets.copilotCliOtlp &&
+    !targets.omp
+  ) {
     console.log(DISCONNECT_TARGET_LIST);
     return;
   }
@@ -171,5 +193,9 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
 
   if (targets.copilotCliOtlp) {
     await disconnectCopilotCliOtlp(opts.scope);
+  }
+
+  if (targets.omp) {
+    await disconnectOmp();
   }
 }
