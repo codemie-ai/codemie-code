@@ -67,6 +67,9 @@ export async function withStateLock<T>(
   }
   try {
     return fn();
+  } catch (error) {
+    logger.debug('[copilot-cli-otlp] state operation failed', error);
+    return undefined;
   } finally {
     try {
       unlinkSync(lockPath);
@@ -109,6 +112,21 @@ export interface SessionState {
   gitFallback?: { git_branch?: string; repo_remote?: string };
   /** Session-state root when COPILOT_HOME overrides the default. */
   sessionStateRoot?: string;
+  /** Set on a sub-agent's own state: the root session its hooks and tool calls belong to. */
+  parentSessionId?: string;
+}
+
+const MAX_PARENT_DEPTH = 5;
+
+/** Follows sub-agent -> parent links to the root session; returns the id itself when it is not a sub-agent. */
+export function resolveRootSessionId(sessionId: string): string {
+  let current = sessionId;
+  for (let depth = 0; depth < MAX_PARENT_DEPTH; depth++) {
+    const parent = readSessionState(current).parentSessionId;
+    if (!parent || !isSafeSessionId(parent) || parent === current) break;
+    current = parent;
+  }
+  return current;
 }
 
 export function readSessionState(sessionId: string): SessionState {

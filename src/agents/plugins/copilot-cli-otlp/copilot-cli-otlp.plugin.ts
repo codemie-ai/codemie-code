@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
@@ -9,13 +10,13 @@ import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
-import { getCopilotSessionStateRoot, getDefaultCopilotSessionStateRoot, sameDirectory } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
+import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { resolveCopilotAgentKey, stripDesktopPreamble } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
-import { readSessionState, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
+import { TOOL_STATE_BUDGET_MS, readSessionState, resolveRootSessionId, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
 import { recordOpenStarts, resolveEndToolUseId } from './copilot-cli-otlp.tool-correlation.js';
 import { buildToolEvent, extractEndCall, extractStartCalls } from './copilot-cli-otlp.tool-payload.js';
 import { type CliBlockOutput, type CliForwardDecision, type CopilotCliHookInput, isCopilotCliHookInput } from './copilot-cli-otlp.types.js';
@@ -77,7 +78,14 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   protected parseHookInput(raw: string): CopilotCliHookInput | null {
     const parsed: unknown = JSON.parse(raw);
-    return isCopilotCliHookInput(parsed) ? parsed : null;
+    if (!isCopilotCliHookInput(parsed)) return null;
+    // A sub-agent's hooks carry its own id as sessionId; attribute them to the root session.
+    const rootId = resolveRootSessionId(parsed.sessionId);
+    if (rootId !== parsed.sessionId) {
+      parsed.agentId ??= parsed.sessionId;
+      parsed.sessionId = rootId;
+    }
+    return parsed;
   }
 
   protected extractHookContext(input: CopilotCliHookInput): OtlpHookContext {
@@ -164,6 +172,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     postToolUse: (input) => this.onToolEnd(input),
     postToolUseFailure: (input) => this.onToolEnd(input),
     agentStop: (input) => this.onAgentStop(input),
+    subagentStart: (input) => this.onSubagentStart(input),
     sessionStart: (input) => this.onSessionStart(input),
     sessionEnd: (input) => this.onSessionEnd(input),
   };
@@ -200,6 +209,16 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     return { decision: 'forward', payload: [event] };
   }
 
+  /** Records which session a sub-agent belongs to, before its own hooks start arriving under its id. */
+  private async onSubagentStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
+    const subagentId = input.agentId;
+    if (subagentId && isSafeSessionId(subagentId) && subagentId !== input.sessionId) {
+      const stored = await updateSessionState(subagentId, { parentSessionId: input.sessionId }, TOOL_STATE_BUDGET_MS);
+      if (!stored) logger.debug(`[${this.name}] failed to record sub-agent parent session`);
+    }
+    return { decision: 'forward', payload: [this.normalizeEvent(input)] };
+  }
+
   private async onSessionStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     sweepStaleStateFiles();
     return { decision: 'forward', payload: [this.normalizeEvent(input)] };
@@ -233,8 +252,8 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   private async onSessionEnd(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     const stateRoot = getCopilotSessionStateRoot();
-    if (!sameDirectory(stateRoot, getDefaultCopilotSessionStateRoot())) {
-      await updateSessionState(input.sessionId, { sessionStateRoot: stateRoot }, 1_000);
+    if (!(await updateSessionState(input.sessionId, { sessionStateRoot: stateRoot }, 1_000))) {
+      logger.debug('[copilot-cli-otlp] failed to record session-state root');
     }
     // No later hook retries a failed SessionEnd batch, so it gets one in-process resend.
     // Usage is added by the daemon after `session.shutdown`, which Copilot writes after this hook exits.
