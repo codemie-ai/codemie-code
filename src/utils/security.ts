@@ -54,7 +54,7 @@ const SENSITIVE_VALUE_PATTERNS = [
 /**
  * Check if a key name indicates sensitive data
  */
-function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERNS.some(pattern => pattern.test(key));
 }
 
@@ -132,10 +132,10 @@ export function sanitizeObject(obj: Record<string, unknown>): Record<string, unk
 }
 
 /** Marker that replaces a secret; no part of the secret is shown. */
-const REDACTED = '[REDACTED]';
+export const REDACTED = '[REDACTED]';
 
 /** Longest text scanned by `maskSecretsInText`; anything beyond is dropped so the scan stays bounded. */
-const MAX_MASK_INPUT_CHARS = 64 * 1024;
+export const MAX_MASK_INPUT_CHARS = 64 * 1024;
 
 /** Deepest nesting `maskSecretsDeep` walks; anything deeper is redacted whole. */
 const MAX_MASK_DEPTH = 32;
@@ -151,7 +151,7 @@ const STATUS_WORD_VALUE = String.raw`(?!(?:expired|invalid|required|missing|none
 const NUMBER_OR_PATH_VALUE = String.raw`(?!\d+${VALUE_END})(?![/~\\]|\.{1,2}[/\\]|[A-Za-z]:[/\\])`;
 
 const STRONG_SECRET_NAME =
-  '[A-Za-z0-9_-]{0,60}(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key|signing[_-]?key|encryption[_-]?key|master[_-]?key|auth[_-]?key|credentials?)';
+  '[A-Za-z0-9_-]{0,60}(?:password|passwd|secret|token|api[ _-]?key|access[ _-]?key|private[ _-]?key|secret[ _-]?key|signing[ _-]?key|encryption[ _-]?key|master[ _-]?key|auth[ _-]?key|credentials?)';
 
 // pass and pwd double as ordinary words and as the shell's working directory, so a number or path value is left alone
 const BARE_PASS_NAME = '[A-Za-z0-9_-]{0,60}pwd|(?:[A-Za-z0-9_-]{0,60}[_-])?pass';
@@ -220,12 +220,8 @@ const EMBEDDED_SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   nameValueRule(BARE_PASS_NAME, NUMBER_OR_PATH_VALUE),
 ];
 
-/**
- * Replace secrets embedded anywhere in free text with `[REDACTED]`, leaving the
- * surrounding text intact. Input beyond 64 KB is dropped before scanning.
- */
-export function maskSecretsInText(text: string): string {
-  let masked = text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text;
+export function applySecretPatterns(text: string): string {
+  let masked = text;
   for (const [pattern, replacement] of EMBEDDED_SECRET_PATTERNS) {
     masked = masked.replace(pattern, replacement);
   }
@@ -233,17 +229,34 @@ export function maskSecretsInText(text: string): string {
 }
 
 /**
- * Walk strings, arrays and objects and mask every string with `maskSecretsInText`; a string
- * or container under a sensitive key (SENSITIVE_KEY_PATTERNS) is redacted whole. Other values are untouched
- * and the input is never mutated. `skipKeys` applies to top-level keys only.
+ * Replace secrets embedded anywhere in free text with `[REDACTED]`, leaving the
+ * surrounding text intact. Input beyond 64 KB is dropped before scanning.
  */
-export function maskSecretsDeep(value: unknown, skipKeys?: ReadonlySet<string>): unknown {
-  return maskDeep(value, skipKeys, 0);
+export function maskSecretsInText(text: string): string {
+  return applySecretPatterns(text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text);
 }
 
-function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, depth: number): unknown {
+/**
+ * Walk strings, arrays and objects and mask every string with `maskText` (`maskSecretsInText` by default);
+ * a string or container under a sensitive key (SENSITIVE_KEY_PATTERNS) is redacted whole. Other values are
+ * untouched and the input is never mutated. `skipKeys` applies to top-level keys only.
+ */
+export function maskSecretsDeep(
+  value: unknown,
+  skipKeys?: ReadonlySet<string>,
+  maskText: (text: string) => string = maskSecretsInText
+): unknown {
+  return maskDeep(value, skipKeys, 0, maskText);
+}
+
+function maskDeep(
+  value: unknown,
+  skipKeys: ReadonlySet<string> | undefined,
+  depth: number,
+  maskText: (text: string) => string
+): unknown {
   if (typeof value === 'string') {
-    return maskSecretsInText(value);
+    return maskText(value);
   }
   if (typeof value !== 'object' || value === null) {
     return value;
@@ -252,7 +265,7 @@ function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, dep
     return REDACTED;
   }
   if (Array.isArray(value)) {
-    return value.map(item => maskDeep(item, undefined, depth + 1));
+    return value.map(item => maskDeep(item, undefined, depth + 1, maskText));
   }
   const masked: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
@@ -261,7 +274,7 @@ function maskDeep(value: unknown, skipKeys: ReadonlySet<string> | undefined, dep
     } else if ((typeof child === 'string' || (typeof child === 'object' && child !== null)) && isSensitiveKey(key)) {
       masked[key] = REDACTED;
     } else {
-      masked[key] = maskDeep(child, undefined, depth + 1);
+      masked[key] = maskDeep(child, undefined, depth + 1, maskText);
     }
   }
   return masked;

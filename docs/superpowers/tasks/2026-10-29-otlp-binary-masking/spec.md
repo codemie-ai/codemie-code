@@ -43,9 +43,33 @@ header (currently ignored entirely):
   scan, so this is safe to apply blanket across OTLP's
   `resourceLogs[].scopeLogs[].logRecords[].attributes[]` /
   `resourceSpans[]...attributes[]` shape without a schema-aware extractor.
+  Before that scan, a shape-based pass (`maskOtlpJson`,
+  `plugins/otlp-json-masking.ts`) redacts the `AnyValue` of every OTLP
+  `{key, value}` attribute whose `key` is a secret name (`isSensitiveKey`:
+  `api_key`, `auth_token`, `password`, ...): in OTLP the attribute name is data,
+  not a property name, so `maskSecretsDeep` alone cannot see it and would pass a
+  secret in an unrecognised format. It is not a skip-list — it only ever redacts.
+  Strings are scanned in full via `maskSecretsInLongText`
+  (`src/utils/long-text-masking.ts`), not cut at the 64 KB bound `maskSecretsInText`
+  keeps for the hook pipeline: the text is split into 64 KB chunks at boundaries no
+  secret pattern crosses (checked over an 8 KB window each side), and a PEM block
+  left open at a chunk edge is redacted through its END line. It fails closed — if
+  no safe interior boundary exists the remainder is redacted. Text beyond 8 MB per
+  string is replaced by a `[TRUNCATED: N chars omitted]` marker; that cut is placed
+  like any other boundary, and when none near it is safe the last chunk is omitted
+  — so unscanned text is never forwarded. Residual limit: a multi-line match other
+  than a PEM block that is longer than the 8 KB window can slip past the boundary
+  check.
   Append the masked JSON as one NDJSON line to a new per-stream JSON spool
-  file. A parse or masking failure falls back to the branch below unchanged —
-  raw bytes to the `.bin` spool — rather than erroring the request.
+  file. A parse, masking or spool-write failure **drops the record** (logged at
+  `warn`, session id and error message only — never the payload) and still
+  answers 200; it never falls through to the branch below. The `.bin` fallback
+  originally specified here was rejected: the bytes that failed masking would be
+  forwarded unmasked, defeating this fix, and `forwardOtelStream` posts every
+  `.bin` record as `application/x-protobuf`, so JSON bytes would also go out
+  under the wrong content type. The cost is that a dropped record is lost — the
+  client sees 200 and does not retry — which matches how the byte-blind branch
+  already treats a spool write error.
 - anything else (protobuf, or no header) → unchanged: extract the session id via
   today's latin1/UUID regex, append the raw bytes unmodified to today's existing
   `.bin` spool file. No parsing, no masking is attempted on this path.
@@ -72,7 +96,13 @@ one `application/x-protobuf` POST, byte-for-byte, exactly as today. A new
 forwarding path for the `.ndjson` OTEL streams follows `forwardHooks`'s existing
 pattern (`forwarder.ts:204-251`): read pending NDJSON lines, send each as its
 own complete `application/json` POST to the same per-signal endpoint
-(`OTEL_ENDPOINTS[stream]`, `sso.http-client.ts`) used today.
+(`OTEL_ENDPOINTS[stream]`, `sso.http-client.ts`) used today. A record the backend
+refuses for good — 400, 413 (the backend caps an OTLP body at
+`ANALYTICS_INGEST_MAX_BODY_BYTES`, 5 MiB) or 422 — is dropped with a `warn` log
+(session, stream and size only, never the payload) and the cursor advances past it,
+so one bad record cannot stall the stream behind it. Other statuses, including every
+other 4xx, keep the cursor and are retried. Hooks and `.bin` batches carry many
+records per request and keep retrying on every non-OK status.
 
 **Mid-session proxy upgrade** — `handleOtlp`'s branch is decided per inbound
 request from that request's own `Content-Type` header, never pinned once for
@@ -89,6 +119,20 @@ tracked/forwarded stream and neither blocks on or orphans the other.
 - `claude-code-otlp.ts` writes `OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json'`.
 - `handleOtlp` parses, masks (`maskSecretsDeep`, no custom skip-list), and
   NDJSON-spools any `application/json` OTLP POST.
+- An OTLP attribute whose name is a secret name has its value replaced by
+  `{"stringValue":"[REDACTED]"}` whatever the value looks like; attribute order
+  and all other attributes are unchanged.
+- An OTLP string attribute longer than 64 KB is masked in full (a secret past
+  64 KB is redacted, the tail is kept); only text beyond 8 MB per string is
+  replaced by a truncation marker.
+- A masked JSON record the backend answers with 400, 413 or 422 is dropped (logged
+  at `warn`) and the records behind it are still sent; any other non-OK response
+  is retried without advancing.
+- A secret named with a space (`api key: …`, `secret key = …`, `access key: …`) is
+  masked like its `api_key` / `API-KEY` forms.
+- A JSON OTLP POST that fails to parse, mask or spool is dropped with a `warn`
+  log and a 200 response; its original bytes are never written to any spool
+  stream.
 - Any non-JSON OTLP POST is spooled via the existing byte-blind path, unchanged.
 - Both `.bin` and `.ndjson` spool extensions coexist per OTEL stream and are
   both discoverable by session listing/cleanup; neither is renamed or retired.
@@ -124,3 +168,10 @@ plugin that chooses protobuf — still carries the original unmasked-secrets
 exposure this ticket exists to close. This fix closes the gap only for the JSON
 path, which becomes the CLI's own default going forward. Flagged here as a
 conscious, stakeholder-approved scope boundary for later reviewers.
+
+Pattern-based masking of the JSON path is also **best effort**, as it is for hook
+events: a secret is caught when it has a known token format or follows a secret
+name (`api_key=…`, `api key: …`, `password: …`). A secret written in running prose
+with no such name or format — "here you go: q1w2e3r4t5y6i8!4", "the password is
+hunter2" — is not detected and reaches the backend unmasked. This is accepted for
+this ticket; record it on the Jira ticket as well.

@@ -456,12 +456,18 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
+    const { logger } = await import('../../../../utils/logger.js');
+    const status = vi.spyOn(logger, 'status').mockImplementation(() => {});
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true } });
 
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith('Restarting proxy to match the requested client...');
+    expect(status).toHaveBeenCalledWith('Starting proxy...');
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
+    status.mockRestore();
   });
 
   it('restarts when the profile model changed against an otherwise-matching daemon', async () => {
@@ -493,6 +499,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
+    const { logger } = await import('../../../../utils/logger.js');
+    const status = vi.spyOn(logger, 'status').mockImplementation(() => {});
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true }, force: true });
@@ -500,6 +508,27 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
     expect(checkProxyHealth).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith('Forcing a fresh proxy restart...');
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
+    status.mockRestore();
+  });
+
+  it('verbose cold start reports the spawned proxy url through the logger', async () => {
+    await setupHappyMocks();
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ url: 'http://127.0.0.1:4777', telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    const { logger } = await import('../../../../utils/logger.js');
+    const success = vi.spyOn(logger, 'success').mockImplementation(() => {});
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true }, verbose: true });
+
+    expect(success).toHaveBeenCalledWith('Proxy started at http://127.0.0.1:4777');
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Proxy started'));
+    success.mockRestore();
   });
 
   it('restarts when a matching daemon is unhealthy', async () => {
@@ -511,12 +540,20 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
+    const { logger } = await import('../../../../utils/logger.js');
+    const status = vi.spyOn(logger, 'status').mockImplementation(() => {});
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true } });
 
     expect(stopDaemon).toHaveBeenCalled();
     expect(spawnDaemon).toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(
+      expect.stringContaining('Existing proxy is unhealthy (expired). Restarting...')
+    );
+    expect(status).toHaveBeenCalledWith('Starting proxy...');
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('proxy'));
+    status.mockRestore();
   });
 });
 
@@ -996,10 +1033,25 @@ describe('ensureOtlpProxy', () => {
       daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
     await setupHappyMocks();
+    const { logger } = await import('../../../../utils/logger.js');
+    const { ensureOtlpProxy: ensureOtlpProxyFresh } = await import('../connect-orchestrator.js');
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const status = vi.spyOn(logger, 'status').mockImplementation(() => {});
+    const success = vi.spyOn(logger, 'success').mockImplementation(() => {});
 
-    await ensureOtlpProxy('claude-code-otlp');
+    try {
+      await ensureOtlpProxyFresh('claude-code-otlp');
 
-    expect(spawnDaemon).toHaveBeenCalledTimes(1);
+      expect(spawnDaemon).toHaveBeenCalledTimes(1);
+      // A hook's stdout is the agent's protocol channel: status lines go through the logger.
+      expect(consoleLog).not.toHaveBeenCalled();
+      expect(status).toHaveBeenCalledWith('Starting proxy...');
+      expect(success).toHaveBeenCalledWith('Proxy started');
+    } finally {
+      consoleLog.mockRestore();
+      status.mockRestore();
+      success.mockRestore();
+    }
   });
 });
 

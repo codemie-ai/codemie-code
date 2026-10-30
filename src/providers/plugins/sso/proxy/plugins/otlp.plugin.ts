@@ -5,7 +5,8 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
-import { sanitizeLogArgs, maskSecretsDeep } from '../../../../../utils/security.js';
+import { sanitizeLogArgs } from '../../../../../utils/security.js';
+import { maskOtlpJson } from './otlp-json-masking.js';
 import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
@@ -80,10 +81,18 @@ class OtlpInterceptor implements ProxyInterceptor {
     this.sweepHandle = undefined;
 
     // Bounded final flush: better delivery latency, but shutdown must never hang.
-    await Promise.race([
-      this.tick().catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
-    ]);
+    // The cap timer is cleared once the flush settles so it never holds the exit.
+    let flushTimeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.tick().catch(() => undefined),
+        new Promise((resolve) => {
+          flushTimeout = setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(flushTimeout);
+    }
   }
 
   /** Serialize ticks: a slow backlog drain must not stack up concurrent passes. */
@@ -329,7 +338,7 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     try {
       const parsed = JSON.parse(text);
-      const masked = maskSecretsDeep(parsed);
+      const masked = maskOtlpJson(parsed);
       const line = JSON.stringify(masked);
       await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
     } catch (err) {

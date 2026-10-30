@@ -1235,6 +1235,28 @@ describe('ClaudeCodeOtlpPlugin agent.session.env (SessionStart)', () => {
     });
   });
 
+  it('forwards session_title unchanged on agent.session.start and omits it when absent', async () => {
+    const sessionStart = (extra: Record<string, unknown> = {}): string =>
+      JSON.stringify({
+        session_id: 's',
+        transcript_path: '',
+        cwd: '/x',
+        hook_event_name: 'SessionStart',
+        source: 'startup',
+        ...extra,
+      });
+
+    await plugin.processOtlpEvent(sessionStart({ session_title: 'my-name' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    const withTitle = forwardedEvents().find((e) => e.type === 'agent.session.start');
+    expect(withTitle?.['session_title']).toBe('my-name');
+
+    forwardOtlpEventsToSpool.mockClear();
+    await plugin.processOtlpEvent(sessionStart(), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    const withoutTitle = forwardedEvents().find((e) => e.type === 'agent.session.start');
+    expect(withoutTitle).toBeDefined();
+    expect(withoutTitle).not.toHaveProperty('session_title');
+  });
+
   it('gives a changed SessionStart snapshot a new agent.session.env event_id', async () => {
     const raw = JSON.stringify({
       session_id: 's',
@@ -1540,6 +1562,85 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     const [forwarded] = forwardedEvents();
     expect(forwarded['prompt_length']).toBe(5);
     expect(forwarded['command_name']).toBe('');
+  });
+
+  describe('pasted-content markup', () => {
+    const send = async (raw: string, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+      await plugin.processOtlpEvent(promptEvent(raw, overrides), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      return forwardedEvents()[0];
+    };
+    const GH_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+    const paste = (text: string, id = 'b23a'): string => `<pasted_content id="${id}">\n${text}\n</pasted_content id="${id}">\n`;
+
+    it('forwards the cleaned text as prompt and prompt_body for a whole-prompt paste', async () => {
+      const forwarded = await send(paste('Step 1\nStep 2'));
+
+      expect(forwarded['prompt']).toBe('Step 1\nStep 2');
+      expect(forwarded['prompt_body']).toBe('Step 1\nStep 2');
+      expect(JSON.stringify([forwarded['prompt'], forwarded['prompt_body']])).not.toContain('pasted_content');
+    });
+
+    it('keeps typed text next to a mid-prompt block', async () => {
+      const forwarded = await send(`Run smoke\n\n${paste('A\nB', 'b')}`);
+
+      expect(forwarded['prompt']).toBe('Run smoke\n\n\nA\nB');
+      expect(String(forwarded['prompt'])).not.toContain('pasted_content');
+    });
+
+    it('cleans every block of a prompt with several', async () => {
+      const forwarded = await send(`${paste('One', 'a')}and\n${paste('Two', 'b')}`);
+
+      expect(forwarded['prompt']).toBe('One\n\nand\n\nTwo');
+    });
+
+    it('leaves no dangling tag for an unterminated block', async () => {
+      const forwarded = await send('<pasted_content id="x">\ntext');
+
+      expect(forwarded['prompt']).toBe('text');
+    });
+
+    it('derives command, story marker, tickets and length from the raw prompt', async () => {
+      const raw = paste('/sdlc-factory:sdlc-standard story: abc-12');
+      const forwarded = await send(raw);
+
+      expect(forwarded['command_name']).toBe('');
+      expect(forwarded['story_marker']).toBe('ABC-12');
+      expect(forwarded['ticket_mentions']).toEqual(expect.arrayContaining(['ABC-12']));
+      expect(forwarded['prompt_length']).toBe(raw.length);
+    });
+
+    it('cuts the cleaned prompt to 200 chars, not the markup', async () => {
+      const forwarded = await send(paste('x'.repeat(500)));
+
+      expect(forwarded['prompt']).toBe('x'.repeat(200));
+      expect(forwarded['prompt_body']).toBe('x'.repeat(200));
+    });
+
+    it('masks a secret inside the paste', async () => {
+      const forwarded = await send(paste(`token ${GH_TOKEN} end`));
+
+      expect(String(forwarded['prompt'])).toContain('[REDACTED]');
+      expect(JSON.stringify(forwarded)).not.toContain('ghp_');
+    });
+
+    it('turns an empty block into an empty prompt', async () => {
+      const forwarded = await send('<pasted_content id="x"></pasted_content id="x">');
+
+      expect(forwarded['prompt']).toBe('');
+      expect(forwarded['prompt_body']).toBe('');
+    });
+  });
+
+  it('forwards session_title unchanged on UserPromptSubmit and omits it when absent', async () => {
+    await plugin.processOtlpEvent(promptEvent('hello', { session_title: 'my-name' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+    expect(forwardedEvents()[0]['session_title']).toBe('my-name');
+
+    forwardOtlpEventsToSpool.mockClear();
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(forwardedEvents()[0]).not.toHaveProperty('session_title');
   });
 
   it('does not stamp the prompt fields on other events', async () => {

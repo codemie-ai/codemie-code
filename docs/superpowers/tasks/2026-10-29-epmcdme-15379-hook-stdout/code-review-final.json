@@ -1,0 +1,33 @@
+{
+  "decision": "approve",
+  "rationale": "All four lenses and the standards audit ran; every story AC and spec row passes (npm run ci is pending-stage-7), and no candidate survived verification against the source. 0 deferred; 16 dismissed: installed hooks always run `codemie hook|sound` as argv[2], no direct stdout write remains on the hook path, exit-2 debug lines on stderr are the task's stated debug-to-stderr behaviour, and the rest are by-spec choices (isTTY===true, no update check in hooks, marker on missing entry), test-hygiene points covered by the integration suite, or cosmetic/doc formatting.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-15379 AC1: with CODEMIE_DEBUG=true the claude-code-otlp hook stdout holds only the JSON response (or nothing)", "status": "pass", "notes": "debug via consoleSink.error (logger.ts:319); hook/sound set console stream to stderr (bin/codemie.js); unit + integration tests assert empty/one-JSON stdout" },
+    { "kind": "story-ac", "item": "EPMCDME-15379 AC2: debug output is written to stderr and/or the log file", "status": "pass", "notes": "debug console sink is stderr in every process; file sink unchanged; logger-notice.test.ts covers it" },
+    { "kind": "story-ac", "item": "EPMCDME-15379 AC3: with CODEMIE_DEBUG=true and invalid SSO session the prompt is blocked with the re-auth message", "status": "pass", "notes": "block JSON is the sole stdout write; OtlpAgentAdapter.test.ts parses the single stdout line as the block decision" },
+    { "kind": "story-ac", "item": "EPMCDME-15379 AC4: no [DEBUG] lines appear in the Claude Code UI as hook success output", "status": "pass", "notes": "same mechanism as AC1; hook-stdout.test.ts CODEMIE_DEBUG=1 case" },
+    { "kind": "story-ac", "item": "EPMCDME-16540 AC1: with non-TTY stdout (isTTY undefined or false) the banner is not printed", "status": "pass", "notes": "isInteractiveTerminal = isTTY === true; piped-command integration case" },
+    { "kind": "story-ac", "item": "EPMCDME-16540 AC2: hook stdout after an upgrade contains no banner text", "status": "pass", "notes": "!isHookProcess in notice gate; hook/sound cases assert empty stdout and unchanged marker" },
+    { "kind": "story-ac", "item": "EPMCDME-16540 AC3: banner shows release notes for the installed version", "status": "pass", "notes": "getReleaseNotes filtered to entry.version === currentVersion" },
+    { "kind": "spec", "item": "Banner shows only the installed version's CHANGELOG entry, never the newest-entry fallback", "status": "pass", "notes": "bin/codemie.js filter; terminal integration case" },
+    { "kind": "spec", "item": "No entry for installed version: no banner, marker still written", "status": "pass", "notes": "prints only when entries.length > 0; covered by integration case" },
+    { "kind": "spec", "item": "codemie whatsnew keeps its fallback and its heading names the version it shows", "status": "pass", "notes": "whatsnew.ts fallback retained; heading uses entry.version" },
+    { "kind": "spec", "item": "A skipped banner keeps its marker so it shows on the next terminal run", "status": "pass", "notes": "markVersionSeen only inside gated block; piped/hook tests assert marker unchanged" },
+    { "kind": "spec", "item": "hook/sound processes run pending migrations silently, log file only", "status": "pass", "notes": "silent: isHookProcess; runner console output gated on !silent" },
+    { "kind": "spec", "item": "hook/sound processes skip the update check entirely", "status": "pass", "notes": "!isHookProcess gate; registryHits 0 and no .last-update-check asserted" },
+    { "kind": "spec", "item": "hook/sound set logger console stream to stderr; other commands behave as before", "status": "pass", "notes": "bin/codemie.js; control tests for piped version" },
+    { "kind": "spec", "item": "Logger console sinks and setConsoleStream redirection; file log and CODEMIE_DEBUG gates unchanged", "status": "pass", "notes": "logger.ts setConsoleStream/status; logger-notice.test.ts" },
+    { "kind": "spec", "item": "ensureDaemon status lines go through the logger instead of console.log", "status": "pass", "notes": "connect-orchestrator.ts logger.status/success; cli test asserts 'Starting proxy...' on stderr" },
+    { "kind": "spec", "item": "OTLP hooks' JSON decision stays the only stdout write of a hook; a guard test pins it", "status": "pass", "notes": "guard tests in OtlpAgentAdapter.test.ts for emitBlock" },
+    { "kind": "spec", "item": "Docs updated: COMMANDS, CONFIGURATION, ARCHITECTURE-PROXY, development-practices", "status": "pass", "notes": "all four doc hunks present" },
+    { "kind": "spec", "item": "npm run ci green (unit + cli projects)", "status": "pending-stage-7", "notes": "full-suite execution evidence belongs to Stage 7" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "1 subject in range, type fix and scope cli are both in the allowed lists, imperative mood, under the 100-char subject limit per git-workflow.md" },
+    { "kind": "code-quality", "status": "pass", "notes": "new public Logger methods setConsoleStream() and status() have explicit void return types and JSDoc; imports are ES modules with .js extensions (node: builtins first); console.log calls in connect-orchestrator.ts and config.ts replaced with logger methods; no new console.log debug output; changed files are kebab-case and under 500 lines (largest new file tests/integration/hook-stdout.test.ts at 421 lines)" },
+    { "kind": "security", "status": "pass", "notes": "no hardcoded secrets, no new path handling from user input, no X-CodeMie attribution header or Responses user field touched; logger.warn still runs sanitizeLogArgs before the console sink; config.ts debug line prints filtered env var names only, not values; stdout to stderr routing for hook/sound processes introduces no new log sink" }
+  ],
+  "findings": []
+}

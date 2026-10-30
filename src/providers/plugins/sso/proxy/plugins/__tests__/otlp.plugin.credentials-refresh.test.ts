@@ -4,7 +4,7 @@
  * freshly re-authenticated credential set without a restart, both opportunistically
  * on inbound OTLP traffic and on its own forwarding tick.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
@@ -146,5 +146,49 @@ describe('OtlpInterceptor — credential refresh', () => {
     expect(resolveFreshCredentialsMock).toHaveBeenCalledWith(config);
     expect(clearCredentialsStaleMock).toHaveBeenCalledTimes(1);
     expect(processSessionTickMock).toHaveBeenCalledWith('s1', freshCreds);
+  });
+});
+
+describe('OtlpInterceptor — bounded shutdown flush', () => {
+  const credentials = { cookies: {}, apiUrl: 'https://api' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    areCredentialsStaleMock.mockReturnValue(false);
+    processSessionTickMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('leaves no timer pending once a fast flush settles', async () => {
+    listSessionIdsMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(['s1']), 10))
+    );
+    const interceptor = new OtlpPlugin().createInterceptor({ credentials } as unknown as PluginContext);
+
+    const stopped = interceptor.onProxyStop!();
+    await vi.advanceTimersByTimeAsync(10);
+    await stopped;
+
+    expect(processSessionTickMock).toHaveBeenCalledWith('s1', credentials);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('gives up on a flush that never settles at 5000 ms', async () => {
+    listSessionIdsMock.mockImplementation(() => new Promise(() => {}));
+    const interceptor = new OtlpPlugin().createInterceptor({ credentials } as unknown as PluginContext);
+
+    let resolved = false;
+    void interceptor.onProxyStop!().then(() => {
+      resolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(resolved).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(resolved).toBe(true);
   });
 });

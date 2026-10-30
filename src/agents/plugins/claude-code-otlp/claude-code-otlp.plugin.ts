@@ -23,6 +23,7 @@ import { type AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plu
 import { describeLogin, SSO_LOGIN_WAIT_MS } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
+import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
 import { resolveIdentityCandidateFields } from '@/agents/core/event-fields/identity-fields.js';
@@ -456,11 +457,18 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
-      // Derived from the full prompt: the base class truncates `prompt` to 200 chars later.
+      // Derived fields read the raw prompt (the base class truncates `prompt` to 200 chars later).
+      // `prompt` itself is cleaned of pasted-content tags.
       const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';
+      const cleaned = stripPastedContentTags(prompt);
       return {
         decision: 'forward',
-        payload: [{ ...hookInput, ...parsePromptFields(prompt), ...resolveCommandFields(prompt) }],
+        payload: [{
+          ...hookInput,
+          ...parsePromptFields(prompt),
+          ...resolveCommandFields(prompt),
+          ...(cleaned !== prompt && { prompt: cleaned }),
+        }],
       }
     }
 
