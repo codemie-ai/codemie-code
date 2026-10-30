@@ -18,9 +18,9 @@ const DAY = 24 * 60 * 60 * 1000;
 function makeSession(
   id: string,
   createdAt: number,
-  opts: { withEvents?: boolean; cwd?: string } = {}
+  opts: { withEvents?: boolean; cwd?: string; clientName?: string } = {}
 ): void {
-  const { withEvents = true, cwd = '/repo/app' } = opts;
+  const { withEvents = true, cwd = '/repo/app', clientName } = opts;
   const dir = join(home, 'session-state', id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -30,6 +30,7 @@ function makeSession(
       `cwd: ${cwd}`,
       `git_root: ${cwd}`,
       'branch: main',
+      ...(clientName ? [`client_name: ${clientName}`] : []),
       `created_at: ${new Date(createdAt).toISOString()}`,
       `updated_at: ${new Date(createdAt + 1000).toISOString()}`,
     ].join('\n')
@@ -69,6 +70,17 @@ describe('CopilotCliSessionAdapter.discoverSessions', () => {
     expect(found[0].projectPath).toBe('/repo/app');
     expect(found[0].agentName).toBe('copilot-cli');
     expect(found[0].updatedAt).toBeGreaterThan(found[0].createdAt);
+  });
+
+  it('labels sessions by host: vscode-agent-host is copilot-desktop, others copilot-cli', async () => {
+    const now = Date.now();
+    makeSession('desktop', now - DAY, { clientName: 'vscode-agent-host' });
+    makeSession('vscode', now - DAY, { clientName: 'vscode' });
+    makeSession('cli', now - DAY, { clientName: 'github/cli' });
+
+    const byId = Object.fromEntries((await newAdapter().discoverSessions()).map((d) => [d.sessionId, d.agentName]));
+
+    expect(byId).toEqual({ desktop: 'copilot-desktop', vscode: 'copilot-cli', cli: 'copilot-cli' });
   });
 
   it('skips session dirs with no events.jsonl', async () => {

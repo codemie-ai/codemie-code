@@ -20,6 +20,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { isCopilotProjectTracked } from '@/agents/core/copilot-connector-scope.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
+import { toolsStatePath } from '../copilot-cli-otlp.state.js';
 
 // Hook-side state files must never land in the developer's real ~/.codemie.
 process.env.CODEMIE_HOME = mkdtempSync(join(tmpdir(), 'cop-otlp-plugin-'));
@@ -409,9 +410,44 @@ describe('CopilotCliOtlpPlugin platform resolution', () => {
   it('labels desktop sessions copilot-desktop and everything else copilot-cli', async () => {
     writeManifest('plat-desktop', 'vscode-agent-host');
     writeManifest('plat-vscode', 'vscode');
+    writeManifest('plat-nameless');
     expect((await resolve('plat-desktop')).platform).toBe('copilot-desktop');
     expect((await resolve('plat-vscode')).platform).toBe('copilot-cli');
-    expect((await resolve('plat-missing')).platform).toBe('copilot-cli');
+    expect((await resolve('plat-nameless')).platform).toBe('copilot-cli');
+  });
+
+  it('does not emit platform while the manifest is not written yet', async () => {
+    expect(await resolve('plat-missing')).not.toHaveProperty('platform');
+  });
+});
+
+describe('CopilotCliOtlpPlugin state failures', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('still allows and forwards preToolUse when the state file cannot be written', async () => {
+    const sessionId = 'state-fail-1';
+    // A directory in place of the state file makes the atomic rename throw inside the lock.
+    mkdirSync(toolsStatePath(sessionId), { recursive: true });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const forwardOtlpEventsToSpool = vi.fn(async () => true);
+
+    await plugin.processOtlpEvent(
+      hookInput({ sessionId, codemieEventName: 'preToolUse', toolName: 'view', toolArgs: { path: '/repo/a.ts' } }),
+      { ensureOtlpProxy: vi.fn(async () => {}), forwardOtlpEventsToSpool }
+    );
+
+    expect(log).not.toHaveBeenCalled();
+    expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
   });
 });
 

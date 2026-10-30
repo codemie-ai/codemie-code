@@ -51,6 +51,7 @@ describe('resolveAgentFields', () => {
   it('reads client_version and the git fallback from the head of events.jsonl, then caches them', async () => {
     const dir = join(root, 'copilot', 'session-state', SID);
     mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'workspace.yaml'), `id: ${SID}\nclient_name: github/cli\n`);
     const file = join(dir, 'events.jsonl');
     expect((await plugin.resolveAgentFields({ sessionId: SID, cwd: '/r' })).client_version).toBe('');
 

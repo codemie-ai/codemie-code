@@ -12,7 +12,7 @@ import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { normalizeUserPrompt, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { extractSlashCommand, normalizeUserPrompt, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
@@ -103,8 +103,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   protected async resolveAgentFields(input: CopilotCliHookInput): Promise<Record<string, unknown>> {
     const sessionDir = join(getCopilotSessionStateRoot(), input.sessionId);
+    const manifest = readWorkspaceManifest(sessionDir);
     const fields: Record<string, unknown> = {
-      platform: resolveCopilotAgentKey(readWorkspaceManifest(sessionDir)?.clientName),
+      // Not emitted until the manifest exists, so one session is never split across harness values.
+      ...(manifest && { platform: resolveCopilotAgentKey(manifest.clientName) }),
       // A native `copilot` started inside a managed shell inherits CODEMIE_SESSION_ID but has its own session id.
       entrypoint: process.env.CODEMIE_SESSION_ID && process.env.CODEMIE_SESSION_ID === input.sessionId ? 'managed' : 'native',
       client_version: '',
@@ -272,6 +274,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     if (input.reason !== undefined) normalized.reason = this.boundedFreeText(input.reason);
     const prompt = userPrompt(input.prompt);
     if (prompt !== undefined) normalized.prompt = prompt;
+    if (input.codemieEventName === 'userPromptTransformed') {
+      const command = extractSlashCommand(input.prompt, input.transformedPrompt);
+      if (command !== undefined) normalized.command_name = command;
+    }
     if (input.stopReason !== undefined) normalized.stop_reason = this.boundedFreeText(input.stopReason);
     if (input.error !== undefined) {
       const err = input.error;
