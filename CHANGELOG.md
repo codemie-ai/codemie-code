@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 - Codemie hooks run under PowerShell on Windows, and stale hook paths are healed automatically
 - Secrets are masked in forwarded OTLP hook events
+- Secrets are masked in forwarded native Claude Code telemetry (logs, metrics, traces), including secret-named attributes and JSON-encoded tool parameters
+
+### Changed
+
+- Claude Code analytics now sends native telemetry as OTLP/JSON so it can be masked. Existing users: run `codemie proxy connect --claude-code-otlp` and restart Claude Code; until then telemetry still goes out as unmasked protobuf
 
 ## [0.16.2] - 2026-10-28
 
