@@ -4,7 +4,7 @@
  *
  * Purpose: Unified orchestrator that syncs session data via multiple processors
  * - Runs only in SSO mode (ai-run-sso provider)
- * - Background timer (every 5 minutes)
+ * - Background timer (every 2 minutes by default, CODEMIE_SESSION_SYNC_INTERVAL)
  * - Discovers session files once via adapter
  * - Passes parsed sessions to all processors (metrics, conversations)
  * - Tracks processed sessions in unified store
@@ -218,9 +218,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Called when proxy stops - cleanup and final sync
+   * Called when proxy stops - cleanup and final sync (stopped at `bounds.deadlineMs` when given)
    */
-  async onProxyStop(): Promise<void> {
+  async onProxyStop(bounds?: { deadlineMs?: number }): Promise<void> {
     logger.debug(`[${this.name}] Stopping session sync`);
 
     // Stop timer
@@ -233,7 +233,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // This syncs BOTH metrics and conversations
     try {
       logger.info(`[${this.name}] sync: phase=final session_id=${this.sessionId}`);
-      await this.syncSessions();
+      await this.syncSessions(bounds?.deadlineMs);
       logger.info(`[${this.name}] sync: phase=final status=success session_id=${this.sessionId}`);
     } catch (error) {
       logger.error(`[${this.name}] sync: phase=final status=error session_id=${this.sessionId}`, error);
@@ -243,7 +243,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   /**
    * Sync sessions to API using SessionSyncer
    */
-  private async syncSessions(): Promise<void> {
+  private async syncSessions(deadlineMs?: number): Promise<void> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
       logger.debug(`[${this.name}] Sync already in progress, skipping`);
@@ -263,7 +263,10 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       }
 
       // Use SessionSyncer service
-      const result = await this.syncer.sync(this.sessionId, this.context);
+      const result = await this.syncer.sync(
+        this.sessionId,
+        deadlineMs === undefined ? this.context : { ...this.context, syncDeadlineMs: deadlineMs }
+      );
 
       if (result.success) {
         logger.info(`[${this.name}] ${result.message}`);

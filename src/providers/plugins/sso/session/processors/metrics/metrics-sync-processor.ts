@@ -13,7 +13,7 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../BaseProcessor.js';
-import { shouldStopSync } from '../../../../../../agents/core/session/BaseProcessor.js';
+import { shouldStopSync, SyncStoppedError } from '../../../../../../agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
@@ -25,6 +25,12 @@ import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
+
+/** Whether a metric delta may still be sent: pending, or failed with retries left. */
+export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
+  return delta.syncStatus === 'pending' ||
+    (delta.syncStatus === 'failed' && (delta.syncAttempts ?? 0) < MAX_SYNC_ATTEMPTS);
+}
 
 export class MetricsSyncProcessor implements SessionProcessor {
   readonly name = 'metrics-sync';
@@ -54,10 +60,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
       const allDeltas = await readJSONL<MetricDelta>(metricsFile);
 
       // 2. Retry pending deltas and previously failed deltas until the attempt cap.
-      const pendingDeltas = allDeltas.filter(d =>
-        d.syncStatus === 'pending' ||
-        (d.syncStatus === 'failed' && d.syncAttempts < MAX_SYNC_ATTEMPTS)
-      );
+      const pendingDeltas = allDeltas.filter(isDeltaSendCandidate);
 
       if (pendingDeltas.length === 0) {
         logger.debug(`[${this.name}] No pending deltas to sync for session ${session.sessionId}`);
@@ -176,7 +179,9 @@ export class MetricsSyncProcessor implements SessionProcessor {
         retryAttempts: 3,
         version: context.version,
         clientType,
-        dryRun: context.dryRun
+        dryRun: context.dryRun,
+        deadlineMs: context.syncDeadlineMs,
+        abortSignal: context.abortSignal
       });
 
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
@@ -215,6 +220,12 @@ export class MetricsSyncProcessor implements SessionProcessor {
           }
           logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.branch}"`);
         } catch (error) {
+          if (error instanceof SyncStoppedError) {
+            // Stopped by the caller's abort / deadline: this branch's deltas stay pending
+            deferred = true;
+            processedBranches--;
+            break;
+          }
           const message = error instanceof Error ? error.message : String(error);
           logger.error(`[${this.name}] Sync threw for branch "${metric.attributes.branch}": ${message}`);
           for (const delta of branchDeltas) {

@@ -378,6 +378,15 @@ describe('SSOSessionSyncPlugin', () => {
       expect(syncMock).toHaveBeenCalledTimes(1);
     });
 
+    it('bounds the final sync by the deadline it is given', async () => {
+      vi.useFakeTimers();
+      const interceptor = await plugin.createInterceptor(buildContext());
+
+      await interceptor.onProxyStop?.({ deadlineMs: 1_790_000_010_000 });
+
+      expect(syncMock).toHaveBeenCalledWith('session-123', expect.objectContaining({ syncDeadlineMs: 1_790_000_010_000 }));
+    });
+
     it('swallows errors from the final sync (does not reject)', async () => {
       vi.useFakeTimers();
       syncMock.mockRejectedValueOnce(new Error('boom'));

@@ -9,7 +9,7 @@ import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
-import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
@@ -299,6 +299,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         metadata,
         messages,  // Keep-last view for metrics, extractMetrics and the codemie analytics / cost readers
         conversationMessages,  // Read by the conversation sync
+        recordTimes: messages.map((message) => message.timestamp),
         subagents: subagents.length > 0 ? subagents : undefined, // Include sub-agents if any
         metrics    // Extracted metrics for metrics processor
       };
@@ -676,7 +677,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         success: failedProcessors.length === 0,
         processors: processorResults,
         totalRecords,
-        failedProcessors
+        failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs)
       };
 
       logger.debug(

@@ -2036,7 +2036,7 @@ describe('openSessionEnvCheckPass', () => {
 /**
  * Regression coverage: these hooks used to run their own pass and a separate
  * `openSessionEnvCheckPass` concurrently, both acquiring the same per-session lock from the same
- * process — the second acquisition always stalled for the full `LOCK_WAIT_BUDGET_MS`. The fix
+ * process — the second acquisition always stalled for the full `PID_LOCK_WAIT_BUDGET_MS`. The fix
  * folds the env-check into the sibling pass's own already-held lock via `envCheck`.
  */
 describe('envCheck fold-in — single lock acquisition (regression for the Stop/env-check deadlock)', () => {
@@ -2069,7 +2069,7 @@ describe('envCheck fold-in — single lock acquisition (regression for the Stop/
     });
     const elapsedMs = Date.now() - started;
 
-    // The old double-lock-acquisition bug stalled for the full 10s LOCK_WAIT_BUDGET_MS on every
+    // The old double-lock-acquisition bug stalled for the full 10s PID_LOCK_WAIT_BUDGET_MS on every
     // Stop; a single acquisition resolves immediately regardless of machine speed.
     expect(elapsedMs).toBeLessThan(2_000);
 

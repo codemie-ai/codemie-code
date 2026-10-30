@@ -19,6 +19,8 @@ import {
   NON_RETRYABLE_HTTP_CODES,
   RETRY_DELAY_MS
 } from './constants.js';
+import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
+import { backoffWithin, boundedRequest, throwIfStopped } from '../../bounded-request.js';
 
 /**
  * Conversation API Client interface
@@ -40,7 +42,8 @@ export interface ConversationApiClient {
  */
 export function createApiClient(config: ConversationApiConfig): ConversationApiClient {
   // Private state (closure)
-  const apiConfig: Required<ConversationApiConfig> = {
+  const bounds: SyncBounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
+  const apiConfig: Required<Omit<ConversationApiConfig, 'deadlineMs' | 'abortSignal'>> = {
     baseUrl: config.baseUrl,
     cookies: config.cookies || '',
     apiKey: config.apiKey || '',
@@ -58,13 +61,6 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
    */
   function getRetryDelay(attempt: number): number {
     return RETRY_DELAY_MS[attempt] || RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1];
-  }
-
-  /**
-   * Sleep utility
-   */
-  function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
@@ -87,6 +83,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       folder: string = DEFAULT_CONVERSATION_FOLDER,
       llmModel?: string
     ): Promise<ConversationSyncResponse> {
+      // Throws SyncStoppedError when the caller's abort or deadline stops it (the payload stays pending)
       const url = `${apiConfig.baseUrl}/v1/conversations/${conversationId}/history`;
 
       const payload = {
@@ -120,9 +117,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       let lastError: Error | null = null;
 
       for (let attempt = 0; attempt < apiConfig.retryAttempts; attempt++) {
+        throwIfStopped(bounds);
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
+          const request = boundedRequest(apiConfig.timeout, bounds);
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -146,11 +143,14 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               method: 'PUT',
               headers,
               body: JSON.stringify(payload),
-              signal: controller.signal
+              signal: request.signal
             });
             body = response.ok ? await response.json() : await response.text();
+          } catch (error) {
+            const stopReason = request.stopReason();
+            throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
-            clearTimeout(timeoutId);
+            request.dispose();
           }
 
           if (!response.ok) {
@@ -220,13 +220,17 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           };
 
         } catch (error: any) {
+          if (error instanceof SyncStoppedError) {
+            logger.info(`[ConversationApiClient] Stopped (${error.reason}) at attempt ${attempt + 1}; the payload stays pending`);
+            throw error;
+          }
           lastError = error;
 
           // Log retry attempt
           if (attempt < apiConfig.retryAttempts - 1) {
             const delay = getRetryDelay(attempt);
             logger.warn(`[ConversationApiClient] Sync failed (attempt ${attempt + 1}/${apiConfig.retryAttempts}), retrying in ${delay}ms:`, error.message);
-            await sleep(delay);
+            await backoffWithin(delay, bounds);
           }
         }
       }
@@ -271,9 +275,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       headers['Cookie'] = apiConfig.cookies;
     }
 
+    throwIfStopped(bounds);
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
+      const request = boundedRequest(apiConfig.timeout, bounds);
       let response: Response;
       let errorText = '';
       try {
@@ -281,13 +285,16 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           method: 'PUT',
           headers,
           body: JSON.stringify(metadata),
-          signal: controller.signal
+          signal: request.signal
         });
         if (!response.ok) {
           errorText = await response.text();
         }
+      } catch (error) {
+        const stopReason = request.stopReason();
+        throw stopReason ? new SyncStoppedError(stopReason) : error;
       } finally {
-        clearTimeout(timeoutId);
+        request.dispose();
       }
 
       if (!response.ok) {
@@ -321,6 +328,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
         conversation_id: conversationId
       };
     } catch (error: any) {
+      if (error instanceof SyncStoppedError) throw error;
       logger.error(`[ConversationApiClient] Metadata update failed for ${conversationId}:`, error.message);
       return {
         success: false,

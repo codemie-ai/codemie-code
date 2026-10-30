@@ -7,7 +7,7 @@
  * returns and cannot tolerate a thrown exception interrupting that loop.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,13 @@ import {
   type OpenUsageRequest,
   type TranscriptParseState,
 } from '../parse-state.js';
+import { exec } from '@/utils/exec.js';
+
+// Process spawns are a boundary: the lock runs inside an agent hook and must never spawn `ps`
+vi.mock('@/utils/exec.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/exec.js')>();
+  return { ...actual, exec: vi.fn(actual.exec) };
+});
 
 let codemieHome: string;
 
@@ -190,6 +197,26 @@ describe('withParseStateLock', () => {
     expect(readFileSync(lockPath, 'utf-8')).toBe(String(process.pid));
 
     rmSync(lockPath, { force: true }); // simulate that holder releasing it
+    await expect(pending).resolves.toBe('acquired');
+  });
+
+  it('judges a holder by its pid alone: a live pid with a mismatched start keeps the lock, no ps spawned', async () => {
+    const sessionId = 'session-pid-only-holder';
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    // This process's live pid with a start time `ps` would call a different process
+    const holder = JSON.stringify({ pid: process.pid, startedAt: 1 });
+    writeFileSync(lockPath, holder);
+    vi.mocked(exec).mockClear();
+
+    const pending = withParseStateLock(sessionId, async () => 'acquired');
+    // Time-based: the waiter must poll the held lock a few times before the holder releases it
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(vi.mocked(exec).mock.calls.filter(([command]) => command === 'ps')).toEqual([]);
+    expect(readFileSync(lockPath, 'utf-8')).toBe(holder);
+
+    rmSync(lockPath, { force: true });
     await expect(pending).resolves.toBe('acquired');
   });
 

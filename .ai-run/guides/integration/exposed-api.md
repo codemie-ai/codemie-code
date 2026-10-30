@@ -135,11 +135,11 @@ export async function processEvent(event: BaseHookEvent, config?: HookProcessing
 | Event | Steps |
 |-------|-------|
 | `SessionStart` | Create session record → send start metrics → init activity tracking |
-| `SessionEnd` | Accumulate activity → transform messages → sync to API → send end metrics → rename files with `completed_` prefix |
+| `SessionEnd` | Under `{id}.reconcile.lock` (a hook process tries once and skips when held): accumulate activity → final flush of the transcript → mark `completed` (with `endTimeFromActivity`: end = last recorded activity, active time capped at it) → in a `codemie hook` process with reason `prompt_input_exit` / `logout`, a send path and a live wrapper (`CODEMIE_WRAPPER_PID`, pid check only) stop here: the wrapper's exit step sends the end metric, syncs and renames → otherwise send end metrics once (`endMetricSentAt` / `endMetricSkipped`) → sync to API → rename files with `completed_` prefix only when delivered (else `{id}.json` stays queued) |
 | `Stop` / `SubagentStop` | Accumulate duration → incremental sync |
 | `UserPromptSubmit` | Start activity tracking |
 
-**`BaseHookEvent` required fields**: `session_id`, `transcript_path`, `permission_mode`, `hook_event_name`. Optional per-event: `cwd`, `source` (SessionStart), `reason` (SessionEnd), `agent_id` / `agent_transcript_path` / `stop_hook_active` (SubagentStop).
+**`BaseHookEvent` required fields**: `session_id`, `transcript_path`, `permission_mode`, `hook_event_name`. Optional per-event: `cwd`, `source` (SessionStart), `reason`, `endTimeFromActivity`, `endTime` (SessionEnd), `agent_id` / `agent_transcript_path` / `stop_hook_active` (SubagentStop).
 
 **Behavior difference**:
 

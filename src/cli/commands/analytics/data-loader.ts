@@ -135,6 +135,13 @@ export interface RawSessionData {
   [INTERNAL_PARSED_FAMILY]?: InternalParsedFamilyCapture;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `--session <id>` matches the whole id, and a full UUID also matches its generations `<uuid>-<gen>`. */
+export function matchesSessionIdFilter(sessionId: string, filterId: string): boolean {
+  return sessionId === filterId || (UUID_PATTERN.test(filterId) && sessionId.startsWith(`${filterId}-`));
+}
+
 /** Suffix of the ownership sidecars written by `appendTranscriptMarker` (session-origin-audit.ts). */
 const MARKER_FILE_SUFFIX = '-codemie-marker.json';
 
@@ -171,8 +178,8 @@ export class MetricsDataLoader {
         // fallback pattern in src/cli/commands/log/reader.ts).
         const sessionId = sessionFile.replace('.json', '').replace(/^completed_/, '');
 
-        // Skip if filtering by session ID
-        if (filter?.sessionId && sessionId !== filter.sessionId) {
+        // Skip if filtering by session ID (a UUID also selects its `/clear` generations `<uuid>-<gen>`)
+        if (filter?.sessionId && !matchesSessionIdFilter(sessionId, filter.sessionId)) {
           continue;
         }
 
@@ -313,7 +320,7 @@ export class MetricsDataLoader {
     }
 
     // Filter by session ID
-    if (filter.sessionId && sessionData.sessionId !== filter.sessionId) {
+    if (filter.sessionId && !matchesSessionIdFilter(sessionData.sessionId, filter.sessionId)) {
       return false;
     }
 

@@ -155,3 +155,95 @@ describe('CopilotCliSessionAdapter.discoverSessions', () => {
     expect(included.map((d) => d.sessionId)).toEqual(['no-time']);
   });
 });
+
+describe('CopilotCliSessionAdapter.locateTranscript', () => {
+  const startTime = Date.parse('2026-10-01T10:00:00Z');
+  const previousCodemieHome = process.env.CODEMIE_HOME;
+
+  beforeEach(() => {
+    process.env.CODEMIE_HOME = join(home, 'codemie');
+    mkdirSync(join(home, 'codemie', 'sessions'), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousCodemieHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = previousCodemieHome;
+  });
+
+  function record(overrides: Record<string, unknown> = {}) {
+    return {
+      sessionId: 'aaaaaaaa-0000-4000-8000-000000000001',
+      agentName: 'copilot-cli',
+      provider: 'ai-run-sso',
+      startTime,
+      workingDirectory: home,
+      status: 'active' as const,
+      activeDurationMs: 0,
+      correlation: { status: 'matched' as const, retryCount: 0, agentSessionId: 'aaaaaaaa-0000-4000-8000-000000000001' },
+      ...overrides,
+    };
+  }
+
+  function writeEvents(id: string, events: unknown[]): string {
+    const dir = join(home, 'session-state', id);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'events.jsonl');
+    writeFileSync(path, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    return path;
+  }
+
+  it('finds a pinned run by its CodeMie id', async () => {
+    const path = writeEvents('aaaaaaaa-0000-4000-8000-000000000001', [{ type: 'session.start', timestamp: '2026-10-01T10:00:01Z' }]);
+
+    expect(await newAdapter().locateTranscript(record())).toEqual([path]);
+  });
+
+  it('finds a --resume run by the native id it stored', async () => {
+    const path = writeEvents('resumed-native-id', [{ type: 'session.start', timestamp: '2026-09-30T08:00:00Z' }]);
+
+    expect(await newAdapter().locateTranscript(record({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'resumed-native-id' },
+    }))).toEqual([path]);
+  });
+
+  it('otherwise picks the latest session started or resumed after the run start in its directory', async () => {
+    const before = writeEvents('started-before', [
+      { type: 'session.start', timestamp: '2026-10-01T09:59:00Z', data: { context: { cwd: home } } },
+    ]);
+    const elsewhere = writeEvents('other-dir', [
+      { type: 'session.start', timestamp: '2026-10-01T10:05:00Z', data: { context: { cwd: '/somewhere/else' } } },
+    ]);
+    const first = writeEvents('first-after', [
+      { type: 'session.start', timestamp: '2026-10-01T10:00:02Z', data: { context: { cwd: home } } },
+    ]);
+    const latest = writeEvents('resumed-after', [
+      { type: 'session.start', timestamp: '2026-09-01T10:00:00Z', data: { context: { cwd: home } } },
+      { type: 'session.resume', timestamp: '2026-10-01T10:00:09Z', data: { context: { cwd: home } } },
+    ]);
+
+    const located = await newAdapter().locateTranscript(record({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'unknown' },
+    }));
+
+    expect(located).toEqual([latest]);
+    expect([before, elsewhere, first]).not.toContain(located[0]);
+  });
+
+  it('never picks a session started at or after the start of a later copilot record in the same directory', async () => {
+    const killed = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'unknown' } });
+    const later = record({
+      sessionId: 'aaaaaaaa-0000-4000-8000-000000000002',
+      startTime: Date.parse('2026-10-01T10:30:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'unknown' },
+    });
+    writeFileSync(join(home, 'codemie', 'sessions', `${later.sessionId}.json`), JSON.stringify(later));
+    const own = writeEvents('killed-run', [
+      { type: 'session.start', timestamp: '2026-10-01T10:00:02Z', data: { context: { cwd: home } } },
+    ]);
+    writeEvents('later-run', [
+      { type: 'session.start', timestamp: '2026-10-01T10:30:01Z', data: { context: { cwd: home } } },
+    ]);
+
+    expect(await newAdapter().locateTranscript(killed)).toEqual([own]);
+  });
+});

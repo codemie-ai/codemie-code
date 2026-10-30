@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { MetricsSender } from '../metrics-api-client.js';
 import type { SessionMetric } from '../metrics-types.js';
+import { SyncStoppedError } from '../../../../../../../agents/core/session/BaseProcessor.js';
 import { logger } from '../../../../../../../utils/logger.js';
 
 interface CapturedRequest {
@@ -63,6 +64,8 @@ class MockServer {
   }
 
   async stop(): Promise<void> {
+    // A delayed responder may still hold a socket the client already aborted.
+    this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 }
@@ -246,6 +249,7 @@ describe('MetricsSender upload contract', () => {
     const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'expired=1', retryAttempts: 0 });
 
     await expect(sender.sendSessionStart(makeSession(home), home, { status: 'started' })).rejects.toThrow(/401/);
+    expect(server.captured).toHaveLength(1);
 
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8')) as {
@@ -269,6 +273,7 @@ describe('MetricsSender upload contract', () => {
     const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'expired=1', retryAttempts: 0 });
 
     await expect(sender.sendSessionStart(makeSession(home), home, { status: 'started' })).rejects.toThrow(/non-JSON/);
+    expect(server.captured).toHaveLength(1);
 
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8')) as { status: string };
@@ -342,5 +347,84 @@ describe('MetricsSender upload contract', () => {
     const payload = JSON.parse(server.last.body) as SessionMetric;
     expect(payload.name).toBe('codemie_cli_tool_usage_total');
     expect((payload.attributes as { tool_names: string[] }).tool_names).toEqual(['Read', 'Edit']);
+  });
+
+  describe('retries and caller bounds', () => {
+    const unavailable: Responder = (_req, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ message: 'unavailable' }));
+    };
+    const usageMetric: SessionMetric = {
+      name: MetricsSender.METRIC_TOOL_USAGE_TOTAL,
+      attributes: {
+        agent: 'claude',
+        agent_version: '1.0.0',
+        codemie_client: 'codemie-cli',
+        repository: 'owner/repo',
+        session_id: 'sess-123',
+        branch: 'main',
+        count: 1,
+      },
+    } as SessionMetric;
+
+    it('retryAttempts: 0 sends exactly one request on a 503', async () => {
+      server = new MockServer();
+      await server.start(unavailable);
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0 });
+
+      await expect(sender.sendSessionMetric(usageMetric)).rejects.toThrow(/Failed after 0 retries/);
+      expect(server.captured).toHaveLength(1);
+    });
+
+    it('retryAttempts: 1 sends two requests on a 503 (one retry)', async () => {
+      server = new MockServer();
+      await server.start(unavailable);
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 1 });
+
+      await expect(sender.sendSessionMetric(usageMetric)).rejects.toThrow(/Failed after 1 retries/);
+      expect(server.captured).toHaveLength(2);
+    }, 15000);
+
+    it('aborts a request still in flight at the deadline and starts no second attempt', async () => {
+      server = new MockServer();
+      // The server answers only after 3 s.
+      await server.start((req, res, index) => {
+        setTimeout(() => jsonOk(req, res, index), 3_000);
+      });
+
+      const started = Date.now();
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', deadlineMs: started + 1_000 });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      const elapsed = Date.now() - started;
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('deadline');
+      expect(elapsed).toBeGreaterThanOrEqual(900);
+      expect(elapsed).toBeLessThan(2_500);
+      expect(server.captured).toHaveLength(1);
+    }, 10000);
+
+    it('wakes from the backoff sleep at once when the caller aborts', async () => {
+      server = new MockServer();
+      const controller = new AbortController();
+      await server.start((req, res, index) => {
+        unavailable(req, res, index);
+        // Time-based on purpose: 200 ms after the 503 the client sits in its 1 s backoff.
+        res.on('finish', () => setTimeout(() => controller.abort(), 200));
+      });
+
+      const started = Date.now();
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', abortSignal: controller.signal });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('aborted');
+      expect(Date.now() - started).toBeLessThan(900);
+      expect(server.captured).toHaveLength(1);
+    });
   });
 });

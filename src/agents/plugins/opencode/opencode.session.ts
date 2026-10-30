@@ -2,20 +2,23 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, dirname, sep } from 'path';
 import { existsSync } from 'fs';
-import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult, type SessionDiscoveryOptions, type SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type {
   OpenCodeSession,
   OpenCodeMessage,
 } from './opencode-message-types.js';
-import { getOpenCodeSessionsPath, getOpenCodeDbPath } from './opencode.paths.js';
+import { getOpenCodeSessionsPath, getOpenCodeDbPath, getAgentOpenCodeStoragePath } from './opencode.paths.js';
+import type { Session } from '../../core/session/types.js';
 import {
   isSqliteAvailable,
   readSessionsFromDb,
   readMessagesFromDb,
   readAllPartsForSessionFromDb,
+  readRowTimesFromDb,
 } from './opencode.sqlite-reader.js';
+import { loadPartsForMessage } from './opencode.storage-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { OpenCodeMetricsProcessor } from './session/processors/opencode.metrics-processor.js';
 import { OpenCodeConversationsProcessor } from './session/processors/opencode.conversations-processor.js';
@@ -174,6 +177,10 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         agentName: this.metadata.displayName || 'opencode',
         metadata,
         messages,  // Raw messages for processors
+        recordTimes: [
+          ...openCodeRecordTimes(session, messages),
+          ...(await filePartTimes(storagePath, session.id, messages)),
+        ],
         metrics
       };
     } catch (error) {
@@ -248,6 +255,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         agentName: this.metadata.displayName || 'opencode',
         metadata,
         messages,
+        recordTimes: [...openCodeRecordTimes(session, messages), ...(await readRowTimesFromDb(dbPath, session.id))],
         metrics,
       };
     } catch (error) {
@@ -460,7 +468,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         success: failedProcessors.length === 0,
         processors: processorResults,
         totalRecords,
-        failedProcessors
+        failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs)
       };
     } catch (error) {
       logger.error(`[opencode-adapter] Session processing failed:`, error);
@@ -469,14 +478,29 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
   }
 
   /**
+   * The transcript of a record that names none, by its agent's own SessionEnd lookup — in the
+   * storage of the RECORD's agent (codemie-code's private one, or the user's), not this process's.
+   */
+  async locateTranscript(record: Session): Promise<string[]> {
+    const storagePath = getAgentOpenCodeStoragePath(record.agentName);
+    const sessions = await this.discoverSessions(
+      record.agentName === 'codemie-code'
+        ? { maxAgeDays: 1 }
+        : { maxAgeDays: 1, limit: 1, cwd: record.workingDirectory },
+      storagePath
+    );
+    return sessions[0] ? [sessions[0].filePath] : [];
+  }
+
+  /**
    * Discover OpenCode sessions with filtering
    *
    * Scans XDG_DATA_HOME/opencode/storage/session/{projectID}/{sessionID}.json
    * Applies 30-day default filter and optional cwd filter.
    */
-  async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
+  async discoverSessions(options?: SessionDiscoveryOptions, storagePath?: string): Promise<SessionDescriptor[]> {
     // SQLite-first detection: check if opencode.db exists and sqlite3 CLI is available
-    const dbPath = getOpenCodeDbPath();
+    const dbPath = getOpenCodeDbPath(storagePath);
     if (dbPath && await isSqliteAvailable()) {
       logger.debug(`[opencode-discovery] Using SQLite storage: ${dbPath}`);
       try {
@@ -511,7 +535,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     }
 
     // File-based discovery (legacy fallback)
-    const sessionsPath = getOpenCodeSessionsPath();
+    const sessionsPath = getOpenCodeSessionsPath(storagePath);
 
     if (!sessionsPath) {
       logger.debug('[opencode-discovery] Sessions path not found (OpenCode not installed?)');
@@ -630,4 +654,28 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       return [];
     }
   }
+}
+
+/**
+ * The times of the session's file parts: a part's own `time` and a tool part's `state.time`
+ * (a running tool has its start alone).
+ */
+async function filePartTimes(storagePath: string, sessionId: string, messages: OpenCodeMessage[]): Promise<Array<number | undefined>> {
+  type TimedPart = { id: string; messageID: string; sessionID: string; time?: { start?: number; end?: number }; state?: { time?: { start?: number; end?: number } } };
+  const times: Array<number | undefined> = [];
+  for (const message of messages) {
+    for (const part of await loadPartsForMessage<TimedPart>(storagePath, message.id, sessionId)) {
+      times.push(part.time?.start, part.time?.end, part.state?.time?.start, part.state?.time?.end);
+    }
+  }
+  return times;
+}
+
+/** The times of the session's rows: the session's own created / updated and each message's created / completed. */
+function openCodeRecordTimes(session: OpenCodeSession, messages: OpenCodeMessage[]): Array<number | undefined> {
+  return [
+    session.time?.created,
+    session.time?.updated,
+    ...messages.flatMap((message) => [message.time?.created, (message.time as { completed?: number } | undefined)?.completed]),
+  ];
 }

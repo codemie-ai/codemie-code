@@ -107,6 +107,48 @@ describe('codex.incremental-sync', () => {
     ]);
   });
 
+  it('names the rollout on the session record at the first tick that finds the record', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const home = mkdtempSync(join(tmpdir(), 'codex-link-'));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      mkdirSync(join(home, 'sessions'), { recursive: true });
+      const recordPath = join(home, 'sessions', `${currentSessionId}.json`);
+      process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '30';
+      discoverSessions.mockResolvedValue([
+        { sessionId: 'codex-uuid', filePath: '/tmp/rollout-linked.jsonl', createdAt: Date.now(), agentName: 'codex' },
+      ]);
+      parseSessionFile.mockResolvedValue({ metadata: { projectPath: process.cwd() } });
+      processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
+
+      const { startCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+      startCodexIncrementalSync(commonOptions());
+      // The first tick runs before the session record exists
+      await waitFor(() => processSession.mock.calls.length >= 1);
+      writeFileSync(recordPath, JSON.stringify({
+        sessionId: currentSessionId,
+        agentName: 'codex',
+        status: 'active',
+        correlation: { status: 'pending', retryCount: 0 },
+      }));
+      // Two more ticks: at least one of them started after the record was written
+      const ticksBefore = processSession.mock.calls.length;
+      await waitFor(() => processSession.mock.calls.length >= ticksBefore + 2);
+
+      const linked = JSON.parse(readFileSync(recordPath, 'utf-8')) as { correlation: { agentSessionFile?: string } };
+      expect(linked.correlation.agentSessionFile).toBe('/tmp/rollout-linked.jsonl');
+    } finally {
+      const { stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
+      stopCodexIncrementalSync(currentSessionId);
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('skips rollouts whose projectPath does not realpath-match cwd', async () => {
     process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS = '30';
     discoverSessions.mockResolvedValue([

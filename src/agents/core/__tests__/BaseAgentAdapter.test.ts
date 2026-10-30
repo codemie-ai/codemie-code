@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { getCommandPath } from '../../../utils/processes.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
+import { reconcileOtherSessions } from '../session/stale-session-reconciliation.js';
 
 // Provide a minimal ProviderRegistry stub so shouldUseProxy can look up authType
 // without needing real provider templates to be registered.
@@ -55,6 +59,9 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal:      vi.fn(),
   uninstallGlobal:    vi.fn(),
   getCommandPath:     vi.fn(() => Promise.resolve(null)),
+  processStartedAt:   vi.fn(() => 0),
+  WRAPPER_PID_ENV: 'CODEMIE_WRAPPER_PID',
+  WRAPPER_STARTED_AT_ENV: 'CODEMIE_WRAPPER_STARTED_AT',
 }));
 
 vi.mock('../../../utils/profile.js', () => ({
@@ -77,6 +84,29 @@ vi.mock('../lifecycle-helpers.js', () => ({
   executeOnSessionEnd:   vi.fn(() => Promise.resolve()),
   executeAfterRun:       vi.fn(() => Promise.resolve()),
 }));
+
+vi.mock('../session/stale-session-reconciliation.js', () => ({
+  EXIT_DEADLINE_ENV: 'CODEMIE_EXIT_DEADLINE_MS',
+  reconcileOtherSessions: vi.fn(() => ({ done: Promise.resolve(), abandon: async () => {} })),
+  finalizeOwnRecord: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../session/exit-notice.js', () => ({
+  noticeDeliveryAtExit: vi.fn(() => Promise.resolve()),
+}));
+
+// Whatever run() still reads or writes under CODEMIE_HOME stays in a temp dir, never the real ~/.codemie.
+const previousCodemieHome = process.env.CODEMIE_HOME;
+let codemieHome: string;
+beforeAll(() => {
+  codemieHome = mkdtempSync(join(tmpdir(), 'base-agent-adapter-'));
+  process.env.CODEMIE_HOME = codemieHome;
+});
+afterAll(() => {
+  if (previousCodemieHome === undefined) delete process.env.CODEMIE_HOME;
+  else process.env.CODEMIE_HOME = previousCodemieHome;
+  rmSync(codemieHome, { recursive: true, force: true });
+});
 
 vi.mock('../flag-transform.js', () => ({
   transformFlags: vi.fn((_args: any, _mappings: any) => _args),
@@ -444,6 +474,27 @@ describe('BaseAgentAdapter', () => {
       expect(mockApplyReasoningEffort).toHaveBeenCalledWith(expect.any(Array));
     });
 
+    it('hands the agent its owner: the wrapper pid and start time in the spawn env', async () => {
+      const { processStartedAt } = await import('../../../utils/processes.js');
+      vi.mocked(processStartedAt).mockReturnValue(1_790_000_000_000);
+      try {
+        await new RunPipelineAdapter(effortMetadata).run([], {});
+      } finally {
+        vi.mocked(processStartedAt).mockReturnValue(0);
+      }
+
+      expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+        'effort-agent-bin',
+        expect.any(Array),
+        expect.objectContaining({
+          env: expect.objectContaining({
+            CODEMIE_WRAPPER_PID: String(process.pid),
+            CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+          }),
+        }),
+      );
+    });
+
     it('does not call applyReasoningEffort when CODEMIE_REASONING_EFFORT is absent', async () => {
       const adapter = new RunPipelineAdapter(effortMetadata);
 
@@ -653,6 +704,7 @@ describe('BaseAgentAdapter', () => {
       await adapter.run([], {}, { dryRun: true });
 
       expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+      expect(vi.mocked(reconcileOtherSessions)).not.toHaveBeenCalled();
       expect(consoleLogSpy).toHaveBeenCalledTimes(1);
       const printed = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
       expect(printed).toEqual({
@@ -700,6 +752,7 @@ describe('BaseAgentAdapter', () => {
       await adapter.run([], {});
 
       expect(vi.mocked(spawn)).toHaveBeenCalledOnce();
+      expect(vi.mocked(reconcileOtherSessions)).toHaveBeenCalledWith(expect.objectContaining({ ownSessionId: expect.any(String) }));
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 

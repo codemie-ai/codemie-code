@@ -12,7 +12,7 @@
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/providers/plugins/sso/session/BaseProcessor.js';
-import { shouldStopSync } from '@/agents/core/session/BaseProcessor.js';
+import { shouldStopSync, SyncStoppedError } from '@/agents/core/session/BaseProcessor.js';
 import type { ParsedSession } from '@/providers/plugins/sso/session/BaseSessionAdapter.js';
 import type { ConversationPayloadRecord } from './types.js';
 import { CONVERSATION_SYNC_STATUS } from './types.js';
@@ -80,7 +80,9 @@ export function createSyncProcessor(): SessionProcessor {
         retryAttempts: DEFAULT_RETRY_ATTEMPTS,
         version: context.version,
         clientType: context.clientType,
-        dryRun: context.dryRun
+        dryRun: context.dryRun,
+        deadlineMs: context.syncDeadlineMs,
+        abortSignal: context.abortSignal
       });
 
       // Send each pending payload to API
@@ -142,6 +144,12 @@ export function createSyncProcessor(): SessionProcessor {
           }
 
         } catch (error: any) {
+          if (error instanceof SyncStoppedError) {
+            // Stopped by the caller's abort / deadline: this payload stays pending
+            deferred = true;
+            consumedCount--;
+            break;
+          }
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Error syncing conversation ${conversationId}:`, error.message);
           syncError = error.message || 'Unknown error';
         }
@@ -271,8 +279,9 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
  * anything is sent, so even a run that defers immediately keeps them.
  *
  * The per-run cap applies only to unbounded runs (proxy timer, onProxyStop). A
- * deadline-bounded run (SessionEnd) has no next run — its queue is renamed to
- * `completed_` right after — so it defers only on the deadline.
+ * deadline-bounded run (SessionEnd, the wrapper's exit) defers only on the deadline;
+ * whatever it leaves stays pending and keeps the session undelivered — its record
+ * is not renamed `completed_` — until a later run delivers it.
  *
  * @returns the payloads to send this run, in queue order
  */

@@ -109,4 +109,20 @@ describe('SessionSyncer', () => {
     expect(mockMetricsProcess).toHaveBeenCalledTimes(1);
     expect(mockConvProcess).toHaveBeenCalledTimes(1);
   });
+
+  it('reports an early stop and the processors it skipped instead of "No pending data to sync"', async () => {
+    mockLoadSession.mockResolvedValue(makeSession());
+    const controller = new AbortController();
+    // The abort arrives while the first processor runs, before the second one starts.
+    mockMetricsProcess.mockImplementationOnce(async () => {
+      controller.abort();
+      return { success: true, message: 'metrics ok' };
+    });
+
+    const { SessionSyncer } = await import('../SessionSyncer.js');
+    const result = await new SessionSyncer().sync('session-1', { ...context, abortSignal: controller.signal });
+
+    expect(result.message).toBe('sync stopped early (aborted), 1 processors skipped');
+    expect(mockConvProcess).not.toHaveBeenCalled();
+  });
 });

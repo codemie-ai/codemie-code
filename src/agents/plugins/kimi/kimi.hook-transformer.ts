@@ -33,7 +33,9 @@ export class KimiHookTransformer implements HookTransformer {
     const transformed: BaseHookEvent = {
       hook_event_name: hookEventName,
       session_id: sessionId,
-      transcript_path: sessionId ? getKimiMainWirePath(cwd, sessionId) : '',
+      transcript_path: typeof payload.transcript_path === 'string' && payload.transcript_path
+        ? payload.transcript_path
+        : sessionId ? getKimiMainWirePath(cwd, sessionId) : '',
       permission_mode: 'default',
       cwd,
     };
@@ -48,6 +50,14 @@ export class KimiHookTransformer implements HookTransformer {
 
     if (typeof payload.stop_hook_active === 'boolean') {
       transformed.stop_hook_active = payload.stop_hook_active;
+    }
+
+    if (payload.endTimeFromActivity === true) {
+      transformed.endTimeFromActivity = true;
+    }
+
+    if (typeof payload.endTime === 'number') {
+      transformed.endTime = payload.endTime;
     }
 
     return transformed;

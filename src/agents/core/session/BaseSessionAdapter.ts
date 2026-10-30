@@ -7,6 +7,7 @@
  */
 
 import type { SessionDiscoveryOptions, SessionDescriptor } from './discovery-types.js';
+import type { Session } from './types.js';
 
 // Re-export for convenience
 export type { SessionDiscoveryOptions, SessionDescriptor };
@@ -33,6 +34,9 @@ export interface ParsedSession {
 
   // Raw messages (agent-specific format preserved for conversations processor)
   messages: unknown[];
+
+  /** Times (epoch ms, ISO string or unset) of the transcript's top-level records, as parsed */
+  recordTimes?: Array<number | string | undefined>;
 
   /** The main transcript for the conversation sync — the counted lines with each duplicated `uuid` kept once: its first copy when a compaction lies between the copies, else its last copy (as `messages`). */
   conversationMessages?: unknown[];
@@ -111,6 +115,29 @@ export interface AggregatedResult {
   totalRecords: number;
   /** Names of failed processors */
   failedProcessors: string[];
+  /**
+   * Time (epoch ms) of the last timed transcript record the parse read, before the context's
+   * `recordsBeforeMs` when set; undefined when no record carries a time.
+   */
+  lastRecordAt?: number;
+}
+
+/**
+ * The latest of `times` (epoch ms or ISO strings) earlier than `beforeMs`; undefined when none.
+ * An unset or unparsable time does not count.
+ */
+export function latestRecordTime(
+  times: Iterable<number | string | undefined> | undefined,
+  beforeMs?: number
+): number | undefined {
+  let latest: number | undefined;
+  for (const time of times ?? []) {
+    const ms = typeof time === 'number' ? time : typeof time === 'string' ? Date.parse(time) : Number.NaN;
+    if (!Number.isFinite(ms) || ms <= 0) continue;
+    if (beforeMs !== undefined && ms >= beforeMs) continue;
+    if (latest === undefined || ms > latest) latest = ms;
+  }
+  return latest;
 }
 
 /**
@@ -182,4 +209,10 @@ export interface SessionAdapter {
     sessionId: string,
     context: import('./BaseProcessor.js').ProcessingContext
   ): Promise<AggregatedResult>;
+
+  /**
+   * Find the transcript(s) of a CodeMie session record that names none (`correlation.agentSessionFile`
+   * empty), read-only. Empty when the transcript cannot be found.
+   */
+  locateTranscript?(record: Session): Promise<string[]>;
 }

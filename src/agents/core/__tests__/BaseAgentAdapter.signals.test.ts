@@ -6,15 +6,31 @@ import { resetOutputStreamGuardForTests } from '../signal-handlers.js';
 import type { AgentMetadata } from '../types.js';
 import type { CodeMieProxy } from '../../../providers/plugins/sso/index.js';
 import { logger } from '../../../utils/logger.js';
-import { executeAfterRun } from '../lifecycle-helpers.js';
+import { executeAfterRun, executeBeforeRun } from '../lifecycle-helpers.js';
+import { finalizeOwnRecord } from '../session/stale-session-reconciliation.js';
+import { noticeDeliveryAtExit } from '../session/exit-notice.js';
 
 const FAKE_CHILD_PID = 4242;
 
 // What happened, in order: the forwarded kills, the session-end hook, the proxy stop.
-const { events, exitSignals } = vi.hoisted(() => ({
+const { events, exitSignals, exitDeadlines, startPass } = vi.hoisted(() => ({
   events: [] as string[],
   // CODEMIE_EXIT_SIGNAL as each onSessionEnd call saw it.
   exitSignals: [] as (string | undefined)[],
+  // CODEMIE_EXIT_DEADLINE_MS as each onSessionEnd call saw it.
+  exitDeadlines: [] as (string | undefined)[],
+  // The start pass the next run() gets; settled at once unless a test replaces `done`.
+  startPass: { done: Promise.resolve(), abandon: async () => {} } as { done: Promise<void>; abandon: () => Promise<void> },
+}));
+
+vi.mock('../session/stale-session-reconciliation.js', () => ({
+  EXIT_DEADLINE_ENV: 'CODEMIE_EXIT_DEADLINE_MS',
+  reconcileOtherSessions: vi.fn(() => startPass),
+  finalizeOwnRecord: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../session/exit-notice.js', () => ({
+  noticeDeliveryAtExit: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../../../providers/core/registry.js', () => ({
@@ -48,6 +64,9 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
   getCommandPath: vi.fn(() => Promise.resolve(null)),
+  processStartedAt: vi.fn(() => 1_700_000_123_456),
+  WRAPPER_PID_ENV: 'CODEMIE_WRAPPER_PID',
+  WRAPPER_STARTED_AT_ENV: 'CODEMIE_WRAPPER_STARTED_AT',
   signalTree: vi.fn((pid: number, signal: NodeJS.Signals) => {
     events.push(`kill:${signal}`);
     expect(pid).toBe(FAKE_CHILD_PID);
@@ -66,6 +85,7 @@ vi.mock('../lifecycle-helpers.js', () => ({
     (_adapter: unknown, _lifecycle: unknown, _name: unknown, _code: unknown, env: NodeJS.ProcessEnv) => {
       events.push('onSessionEnd');
       exitSignals.push(env.CODEMIE_EXIT_SIGNAL);
+      exitDeadlines.push(env.CODEMIE_EXIT_DEADLINE_MS);
       return Promise.resolve();
     }
   ),
@@ -87,11 +107,14 @@ class FakeChild extends EventEmitter {
 }
 
 /** An adapter whose proxy is a stub that records its stop. */
+const proxyStopBounds: Array<{ deadlineMs?: number } | undefined> = [];
+
 class ProxiedAdapter extends BaseAgentAdapter {
   protected async setupProxy(): Promise<void> {
     this.proxy = {
-      stop: async () => {
+      stop: async (bounds?: { deadlineMs?: number }) => {
         events.push('proxyStop');
+        proxyStopBounds.push(bounds);
       },
     } as unknown as CodeMieProxy;
   }
@@ -145,6 +168,10 @@ describe('BaseAgentAdapter.run signals and output streams', () => {
   beforeEach(() => {
     events.length = 0;
     exitSignals.length = 0;
+    exitDeadlines.length = 0;
+    proxyStopBounds.length = 0;
+    startPass.done = Promise.resolve();
+    startPass.abandon = async () => {};
     vi.clearAllMocks();
     child = new FakeChild();
     vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
@@ -507,6 +534,47 @@ describe('BaseAgentAdapter.run signals and output streams', () => {
     });
   });
 
+  describe('exit notice', () => {
+    it.each([
+      { silentMode: true, print: false },
+      { silentMode: false, print: true },
+    ])('silentMode $silentMode → printed: $print, after the own record, with the process start time', async ({ silentMode, print }) => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.mocked(finalizeOwnRecord).mockImplementationOnce(async () => {
+        events.push('ownRecord');
+      });
+      vi.mocked(noticeDeliveryAtExit).mockImplementationOnce(async () => {
+        events.push('notice');
+      });
+      const { running } = await startRun(new ProxiedAdapter({ ...metadata, silentMode }));
+
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await running;
+
+      const [sessionId] = vi.mocked(finalizeOwnRecord).mock.calls[0];
+      expect(vi.mocked(noticeDeliveryAtExit)).toHaveBeenCalledWith(sessionId, 1_700_000_123_456, print);
+      expect(events).toEqual(['onSessionEnd', 'ownRecord', 'notice', 'proxyStop']);
+    });
+
+    it('an own-record step that rejects does not stop the exit: the notice and the proxy stop still run', async () => {
+      vi.mocked(finalizeOwnRecord).mockImplementationOnce(async () => {
+        events.push('ownRecord');
+        throw new Error('lock dir unwritable');
+      });
+      vi.mocked(noticeDeliveryAtExit).mockImplementationOnce(async () => {
+        events.push('notice');
+      });
+      const { running } = await startRun();
+
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(running).resolves.toBeUndefined();
+      expect(events).toEqual(['onSessionEnd', 'ownRecord', 'notice', 'proxyStop']);
+    });
+  });
+
   describe('output streams', () => {
     let entryPointListener: ReturnType<typeof vi.fn>;
 
@@ -590,4 +658,79 @@ describe('BaseAgentAdapter.run signals and output streams', () => {
       expect(entryPointListener).not.toHaveBeenCalled();
     });
   });
+
+  describe('exit budget', () => {
+    it('abandons the start pass when a setup step throws before the spawn and rejects with that error', async () => {
+      startPass.done = new Promise<void>(() => {});
+      const abandon = vi.fn(async () => {});
+      startPass.abandon = abandon;
+      vi.mocked(executeBeforeRun).mockRejectedValueOnce(new Error('bad agent config'));
+
+      await expect(new ProxiedAdapter(metadata).run([], {})).rejects.toThrow('bad agent config');
+
+      expect(abandon).toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('awaits a start pass still running at exit before the session end and the proxy stop', async () => {
+      let finishPass: () => void = () => {};
+      startPass.done = new Promise<void>((resolve) => {
+        finishPass = resolve;
+      });
+      const { running } = await startRun();
+
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(events).toEqual([]);
+
+      finishPass();
+      await expect(running).resolves.toBeUndefined();
+      expect(events).toEqual(['onSessionEnd', 'proxyStop']);
+    });
+
+    it('abandons a start pass that never settles at 5 s, leaving the own record the rest of the 10 s deadline', async () => {
+      const { finalizeOwnRecord } = await import('../session/stale-session-reconciliation.js');
+      startPass.done = new Promise<void>(() => {});
+      const abandon = vi.fn(async () => {
+        events.push('abandon');
+      });
+      startPass.abandon = abandon;
+      let ownRecordAt = 0;
+      vi.mocked(finalizeOwnRecord).mockImplementationOnce(async () => {
+        events.push('ownRecord');
+        ownRecordAt = Date.now();
+      });
+      const { running } = await startRun();
+
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const exitStart = Date.now();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(events).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events).toEqual(['abandon', 'onSessionEnd', 'ownRecord', 'proxyStop']);
+      await expect(running).resolves.toBeUndefined();
+      expect(abandon).toHaveBeenCalledTimes(1);
+      expect(ownRecordAt).toBe(exitStart + 5_000);
+      expect(vi.mocked(finalizeOwnRecord)).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ deadlineMs: exitStart + 10_000 }));
+    });
+
+    it('gives the session end, the own-record step and the proxy stop one deadline, 10 s after the grace period', async () => {
+      const { finalizeOwnRecord } = await import('../session/stale-session-reconciliation.js');
+      const { running } = await startRun();
+
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      const exitStart = Date.now();
+      await expect(running).resolves.toBeUndefined();
+
+      const deadlineMs = Number(exitDeadlines[0]);
+      expect(deadlineMs).toBe(exitStart + 10_000);
+      expect(vi.mocked(finalizeOwnRecord)).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ deadlineMs }));
+      expect(proxyStopBounds).toEqual([{ deadlineMs }]);
+    });
+  });
+
 });

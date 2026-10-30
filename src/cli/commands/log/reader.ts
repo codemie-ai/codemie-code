@@ -290,7 +290,8 @@ export class SessionReader {
 
       // UUID pattern: 8-4-4-4-12 hexadecimal characters
       const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$/;
-      const completedPattern = /^completed_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$/;
+      // completed_UUID, or a `/clear` generation completed_UUID-<generation>
+      const completedPattern = /^completed_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(-[A-Za-z0-9._-]+)?\.json$/;
 
       // Filter to only include actual session files (UUID or completed_UUID)
       // Exclude _metrics.jsonl and _conversation.jsonl files
@@ -301,12 +302,12 @@ export class SessionReader {
         // Skip metric and conversation files
         if (f.includes('_metrics') || f.includes('_conversation')) return false;
 
-        // Only include UUID pattern or completed_UUID pattern
+        // Only include UUID pattern or completed_UUID (generation) pattern
         return uuidPattern.test(f) || completedPattern.test(f);
       });
 
       for (const file of sessionFiles) {
-        const sessionId = file.replace('.json', '').replace('completed_', '');
+        const sessionId = file.replace(/\.json$/, '').replace(/^completed_/, '');
         const session = this.readSession(sessionId);
 
         if (!session) continue;

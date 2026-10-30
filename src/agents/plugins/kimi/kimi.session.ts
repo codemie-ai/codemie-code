@@ -8,12 +8,13 @@
  *   ${KIMI_CODE_HOME}/sessions/{workDirKey}/{sessionId}/agents/main/wire.jsonl
  */
 
-import type {
-  SessionAdapter,
-  ParsedSession,
-  AggregatedResult,
-  SessionDiscoveryOptions,
-  SessionDescriptor,
+import {
+  latestRecordTime,
+  type SessionAdapter,
+  type ParsedSession,
+  type AggregatedResult,
+  type SessionDiscoveryOptions,
+  type SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
@@ -86,6 +87,7 @@ export class KimiSessionAdapter implements SessionAdapter {
         agentName: this.metadata.displayName || 'Kimi Code',
         metadata,
         messages: events,
+        recordTimes: events.map((event) => event.time),
       };
     } catch (error) {
       logger.warn(`[kimi-adapter] Failed to parse session file ${filePath}:`, error);
@@ -173,6 +175,7 @@ export class KimiSessionAdapter implements SessionAdapter {
         processors: processorResults,
         totalRecords,
         failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs),
       };
 
       logger.debug(

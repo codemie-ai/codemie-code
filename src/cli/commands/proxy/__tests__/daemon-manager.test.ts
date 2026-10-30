@@ -37,6 +37,7 @@ import {
   clearState,
   checkStatus,
   spawnDaemon,
+  stopDaemon,
   type DaemonState,
 } from '../daemon-manager.js';
 
@@ -131,6 +132,37 @@ describe('checkStatus', () => {
     const { running } = await checkStatus(TEST_STATE_FILE);
     expect(running).toBe(false);
     expect(existsSync(TEST_STATE_FILE)).toBe(false);
+  });
+
+  it('returns running=false and cleans the state when its pid now belongs to another user', async () => {
+    await writeState({ ...SAMPLE_STATE, pid: 4242 }, TEST_STATE_FILE);
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    });
+    try {
+      expect(await checkStatus(TEST_STATE_FILE)).toEqual({ running: false, state: null });
+    } finally {
+      kill.mockRestore();
+    }
+    expect(existsSync(TEST_STATE_FILE)).toBe(false);
+  });
+});
+
+describe('stopDaemon', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    try { await unlink(DEFAULT_TEST_STATE_FILE); } catch { /* ignore */ }
+  });
+
+  it('clears the state without throwing when its pid now belongs to another user', async () => {
+    await writeState({ ...SAMPLE_STATE, pid: 4242 }, DEFAULT_TEST_STATE_FILE);
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    });
+
+    await expect(stopDaemon()).resolves.toBeUndefined();
+
+    expect(existsSync(DEFAULT_TEST_STATE_FILE)).toBe(false);
   });
 });
 

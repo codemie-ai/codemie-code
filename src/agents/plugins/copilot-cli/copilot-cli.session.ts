@@ -14,14 +14,15 @@
  * manifest's own timestamps make both unnecessary.
  */
 
-import { readdirSync, existsSync } from 'fs';
+import { readdirSync, existsSync, realpathSync, statSync } from 'fs';
 import { join } from 'path';
-import type {
-  SessionAdapter,
-  ParsedSession,
-  AggregatedResult,
-  SessionDiscoveryOptions,
-  SessionDescriptor,
+import {
+  latestRecordTime,
+  type SessionAdapter,
+  type ParsedSession,
+  type AggregatedResult,
+  type SessionDiscoveryOptions,
+  type SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
 import type {
   SessionProcessor,
@@ -29,6 +30,7 @@ import type {
   ProcessingResult,
 } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
+import type { Session } from '../../core/session/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
 import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
@@ -344,6 +346,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         gitBranch: branch,
       },
       messages: [...turnRecords, ...usage.messages],
+      recordTimes: events.map((event) => event.timestamp),
       usageMeta: {
         premiumRequests: usage.premiumRequests,
         usagePartial: usage.partial,
@@ -357,6 +360,62 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         userPrompts,
       },
     };
+  }
+
+  /**
+   * The `events.jsonl` of a record that names none: a pinned run's (native id = the CodeMie id),
+   * a `--resume <id>` run's (its stored native id), else the session started or resumed in the
+   * run's window (its start → the start of the next copilot record in the same directory) in the
+   * run's directory — the latest such event wins.
+   *
+   * ponytail: two runs selecting a session in one directory at once are indistinguishable
+   */
+  async locateTranscript(record: Session): Promise<string[]> {
+    const root = getCopilotSessionStateRoot();
+    const eventsOf = (id: string) => join(root, id, 'events.jsonl');
+
+    if (existsSync(eventsOf(record.sessionId))) {
+      return [eventsOf(record.sessionId)];
+    }
+    const resumedId = record.correlation?.agentSessionId;
+    if (resumedId && resumedId !== 'unknown' && !/[\\/]/.test(resumedId) && existsSync(eventsOf(resumedId))) {
+      return [eventsOf(resumedId)];
+    }
+
+    let dirNames: string[];
+    try {
+      dirNames = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    } catch {
+      return [];
+    }
+    const realpath = (path: string) => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return path;
+      }
+    };
+    const runCwd = realpath(record.workingDirectory);
+    const { nextRecordStartInDirectory } = await import('../../core/session/next-record-start.js');
+    const until = await nextRecordStartInDirectory(record);
+    let best: { path: string; at: number } | undefined;
+    for (const name of dirNames) {
+      const path = eventsOf(name);
+      try {
+        if (statSync(path).mtimeMs < record.startTime) continue;
+      } catch {
+        continue;
+      }
+      for (const event of readCopilotEventsTolerant(path)) {
+        if (event.type !== 'session.start' && event.type !== 'session.resume') continue;
+        const at = Date.parse(event.timestamp ?? '');
+        const cwd = (event.data as CopilotSessionStartData | undefined)?.context?.cwd;
+        if (!Number.isFinite(at) || at < record.startTime || (until !== undefined && at >= until)) continue;
+        if (!cwd || realpath(cwd) !== runCwd) continue;
+        if (!best || at > best.at) best = { path, at };
+      }
+    }
+    return best ? [best.path] : [];
   }
 
   /** Parse once, then run every registered processor in priority order. */
@@ -402,6 +461,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
       processors,
       totalRecords,
       failedProcessors,
+      lastRecordAt: latestRecordTime(parsed.recordTimes, context.recordsBeforeMs),
     };
   }
 }

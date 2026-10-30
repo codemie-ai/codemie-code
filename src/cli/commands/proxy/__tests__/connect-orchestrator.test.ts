@@ -29,8 +29,8 @@ vi.mock('../daemon-manager.js', () => ({
   spawnDaemon: vi.fn(),
   stopDaemon: vi.fn(),
 }));
-vi.mock('@/utils/processes.js', () => ({
-  isProcessAlive: vi.fn().mockReturnValue(false),
+vi.mock('@/utils/processes.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/processes.js')>()),
   spawnDetached: vi.fn(),
 }));
 vi.mock('../health-check.js', () => ({
@@ -1052,6 +1052,29 @@ describe('ensureOtlpProxy', () => {
       status.mockRestore();
       success.mockRestore();
     }
+  });
+
+  it('starts the proxy when the state names a pid that now belongs to another user', async () => {
+    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+    vi.mocked(readState).mockResolvedValue(daemonState({ pid: 4242 }) as Awaited<ReturnType<typeof readState>>);
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    await setupHappyMocks();
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    });
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await ensureOtlpProxy('claude-code-otlp');
+    } finally {
+      kill.mockRestore();
+      consoleLog.mockRestore();
+    }
+
+    expect(spawnDaemon).toHaveBeenCalled();
   });
 });
 

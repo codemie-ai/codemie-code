@@ -36,7 +36,7 @@ export interface StartOpenCodeIncrementalSyncOptions {
   ssoUrl?: string;
   /** Agent env (CODEMIE_PROFILE_CONFIG) for the profile-first credential lookup. */
   env?: NodeJS.ProcessEnv;
-  /** Sync API base URL for the upload context (env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL). */
+  /** Sync API base URL for the upload context: the launch's send path; none skips the upload. */
   syncApiUrl?: string;
   /** CLI version string forwarded to the upload context. */
   cliVersion?: string;

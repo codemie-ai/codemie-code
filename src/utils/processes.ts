@@ -112,13 +112,95 @@ export interface DetachedSpawnOptions {
   windowsHide?: boolean;
 }
 
+/** Only ESRCH means the pid is gone; EPERM (another user's process) and any other error mean it exists. */
 export function isProcessAlive(pid: number): boolean {
+  // A pid read from a corrupt file; 0 and negatives signal a process group, not a process
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+/** For daemon state, whose pid must be our own process: `EPERM` (another user's process) reads as dead. */
+export function isProcessAliveStrict(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
+}
+
+/** Env vars a CLI wrapper exports to its agent so a session record can name the process that owns it. */
+export const WRAPPER_PID_ENV = 'CODEMIE_WRAPPER_PID';
+export const WRAPPER_STARTED_AT_ENV = 'CODEMIE_WRAPPER_STARTED_AT';
+
+/** The identity of a process: its pid and its start time (epoch ms). */
+export interface ProcessIdentity {
+  pid: number;
+  startedAt?: number;
+}
+
+// Taken once: `process.uptime()` stops during a system sleep, so a later evaluation would drift past the start.
+const STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
+
+/** This process's start time (epoch ms). */
+export function processStartedAt(): number {
+  return STARTED_AT;
+}
+
+/** The wrapper identity from `env`: both vars as numbers, or none. */
+export function wrapperOwnerFromEnv(env: NodeJS.ProcessEnv): { ownerPid: number; ownerStartedAt: number } | undefined {
+  const rawPid = env[WRAPPER_PID_ENV];
+  const rawStartedAt = env[WRAPPER_STARTED_AT_ENV];
+  if (!rawPid || !rawStartedAt) return undefined;
+  const ownerPid = Number(rawPid);
+  const ownerStartedAt = Number(rawStartedAt);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !Number.isFinite(ownerStartedAt)) return undefined;
+  return { ownerPid, ownerStartedAt };
+}
+
+/**
+ * How far a pid's start time (now − `ps etime`) may sit from the stored start and still be the same process.
+ * `ps etime` has 1 s resolution; on Linux it is boot-clock elapsed, so a wall-clock step moves `now − etime`
+ * while the stored start stays — 60 s absorbs such steps and the start-up gap. A false "alive" then needs an
+ * owner that lived under a minute and a pid reused within it — it only delays the finalization.
+ */
+export const OWNER_START_TOLERANCE_MS = 60_000;
+
+/** A hung `ps` must not stall the caller; past this, the answer is the pid-only check. */
+const PS_TIMEOUT_MS = 1000;
+
+/** `ps -o etime=` output (`[[dd-]hh:]mm:ss`) → milliseconds; undefined when unparsable. */
+export function parseEtime(etime: string): number | undefined {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (!match) return undefined;
+  const [, days, hours, minutes, seconds] = match;
+  return ((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60_000 + Number(seconds) * 1000;
+}
+
+/**
+ * Whether the process that owns a record is still the one running under its pid: the pid is alive AND its
+ * start time matches `startedAt` within {@link OWNER_START_TOLERANCE_MS}. Without `startedAt`, on Windows,
+ * or when `ps` fails or prints nothing parsable, the answer is the pid-only check.
+ *
+ * ponytail: Linux procps `etime` assumed to print the same format as macOS; Windows is pid-only.
+ */
+export async function isOwnerAlive(owner: ProcessIdentity): Promise<boolean> {
+  if (!isProcessAlive(owner.pid)) return false;
+  if (owner.startedAt === undefined || process.platform === 'win32') return true;
+
+  const elapsed = await exec('ps', ['-o', 'etime=', '-p', String(owner.pid)], { timeout: PS_TIMEOUT_MS })
+    .then((result) => parseEtime(result.stdout), () => undefined);
+  if (elapsed === undefined) {
+    // The pid may have gone between the two checks (ps prints nothing for it).
+    return isProcessAlive(owner.pid);
+  }
+  return Math.abs(owner.startedAt - (Date.now() - elapsed)) <= OWNER_START_TOLERANCE_MS;
 }
 
 /**

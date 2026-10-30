@@ -4,7 +4,7 @@ import { getCodemieHome, getDirname } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
-import { isProcessAlive, spawnDetached } from '../../../utils/processes.js';
+import { isProcessAlive, isProcessAliveStrict, spawnDetached } from '../../../utils/processes.js';
 
 export interface DaemonState {
   pid: number;
@@ -64,7 +64,7 @@ export async function checkStatus(
   const state = await readState(stateFile);
   if (!state) return { running: false, state: null };
 
-  if (!isProcessAlive(state.pid)) {
+  if (!isProcessAliveStrict(state.pid)) {
     await clearState(stateFile);
     return { running: false, state: null };
   }
@@ -134,7 +134,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
   for (let i = 0; i < 50; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
     const state = await readState(stateFile);
-    if (state && isProcessAlive(state.pid)) return state;
+    if (state && isProcessAliveStrict(state.pid)) return state;
   }
 
   throw new ToolExecutionError(
@@ -154,7 +154,15 @@ export async function stopDaemon(): Promise<void> {
   }
 
   // 1. Graceful: SIGTERM, wait up to 5s.
-  process.kill(state.pid, 'SIGTERM');
+  try {
+    process.kill(state.pid, 'SIGTERM');
+  } catch (error) {
+    // ESRCH: gone since the check; EPERM: the pid now belongs to another user — not our daemon either way
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ESRCH' && code !== 'EPERM') throw error;
+    await clearState(stateFile);
+    return;
+  }
   for (let i = 0; i < 50; i++) {
     await new Promise<void>(r => setTimeout(r, 100));
     if (!isProcessAlive(state.pid)) {

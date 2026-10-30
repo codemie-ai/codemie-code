@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -88,19 +88,37 @@ describe('ensureSessionFile (Risk 1 — session record clobbering)', () => {
     expect(after?.startTime).toBe(before?.startTime);
   });
 
-  it('documents the residual risk: with no prior record it writes an unknown-correlation placeholder', async () => {
-    // This is the failure mode the design flags as still live — onSessionStart
-    // swallows a processEvent throw, and nothing has written the real record by
-    // the time beforeRun runs. Pinning it means a future change that makes
-    // onSessionStart rethrow (or that fixes the placeholder) fails loudly here
-    // rather than silently shipping session_id "unknown" to analytics.
+  it('with no prior record writes a live record owned by this process, and a second call changes nothing', async () => {
+    // onSessionStart swallows a processEvent throw, so nothing may have written the real
+    // record by the time beforeRun runs: the placeholder must then be a normal live record.
+    const env = {
+      CODEMIE_AGENT: 'opencode',
+      CODEMIE_URL: 'https://codemie.example.com',
+      CODEMIE_CLIENT_TYPE: 'codemie-opencode',
+      CODEMIE_MODEL: 'gpt-5.1',
+    } as NodeJS.ProcessEnv;
     const { ensureSessionFile } = await import('../../../core/session/ensure-session.js');
-    await ensureSessionFile(SESSION_ID, { CODEMIE_AGENT: 'opencode' } as NodeJS.ProcessEnv, 'opencode');
+    const before = Date.now();
+    await ensureSessionFile(SESSION_ID, env, 'opencode');
+    const after = Date.now();
 
-    const { SessionStore } = await import('../../../core/session/SessionStore.js');
-    const session = await new SessionStore().loadSession(SESSION_ID);
+    const { getSessionPath } = await import('../../../core/session/session-config.js');
+    const written = readFileSync(getSessionPath(SESSION_ID), 'utf-8');
+    const session = JSON.parse(written);
 
-    expect(session).not.toBeNull();
-    expect(session?.correlation?.agentSessionId).toBe('unknown');
+    expect(session.status).toBe('active');
+    expect(session.endTime).toBeUndefined();
+    expect(session.correlation.agentSessionId).toBe(SESSION_ID);
+    expect(session.ownerPid).toBe(process.pid);
+    expect(typeof session.ownerStartedAt).toBe('number');
+    expect(session.startTime).toBeGreaterThanOrEqual(before);
+    expect(session.startTime).toBeLessThanOrEqual(after);
+    // The start pass delivers a stranded record to its own host, under its client and model
+    expect(session.codemieUrl).toBe('https://codemie.example.com');
+    expect(session.clientType).toBe('codemie-opencode');
+    expect(session.model).toBe('gpt-5.1');
+
+    await ensureSessionFile(SESSION_ID, env, 'opencode');
+    expect(readFileSync(getSessionPath(SESSION_ID), 'utf-8')).toBe(written);
   });
 });

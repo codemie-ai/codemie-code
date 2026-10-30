@@ -42,6 +42,22 @@ The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex,
 
 Discovered sessions that CodeMie did not launch are **excluded by default**; see [Session provenance](#session-provenance).
 
+**Which CodeMie sessions the report and the export include.** Every tracked session record under `~/.codemie/sessions/` is read: a live `<id>.json`, a delivered `completed_<id>.json`, and each `/clear` [generation](#terms) `completed_<id>-<gen>.json` as its own session. A session is counted once it has recorded at least one metric delta (a turn, a tool call or a file change) — still running, completed, or completed but not yet delivered to CodeMie alike; a session with no delta yet is left out unless its transcript carries token cost. `--export json` writes the same sessions as the HTML report. A [stranded session](#terms) shows as running until the next CodeMie start finalizes it.
+
+---
+
+## Terms
+
+- **stranded session** — a session record still `active` whose owner process (the CodeMie wrapper that launched it, recorded as `ownerPid` + its start time) is gone — killed, crashed or closed with its terminal. The next CodeMie start of any agent finalizes it: a synthetic session end (`reason: interrupted`) at its last recorded activity, after a final flush of its transcript; no inactivity threshold applies.
+- **undelivered session** — a `completed` session whose end metric or pending data has not reached CodeMie yet; it keeps its live name `<id>.json` (the file name is the queue) and is renamed `completed_<id>.json` only once delivered. A later CodeMie start against the same CodeMie host delivers it through its own send path (at most 3 attempts).
+- **dropped session** — a session that left the delivery queue (renamed `completed_*`) with its end metric unsent or some of its data undelivered: after its last delivery attempt, a finalize that keeps failing, a line past its sync-attempt cap, or a `/clear` that moved the generation aside before its delivery finished. Its record carries `droppedAt` (epoch ms). A record closed locally by design — another CodeMie host, no CodeMie host, Claude Desktop, a legacy record — is never marked.
+- **exit notice** — when the CodeMie wrapper exits, after its own session record is handled, it prints at most two lines to stderr (and writes them to the log); a clean exit prints nothing, and a hook never prints:
+  - its own record is still `<id>.json`: `CodeMie: this session's analytics are not delivered yet; they will be sent at the next codemie start. Nothing is lost.`
+  - records marked `droppedAt` since this wrapper started (its start pass, its exit, its hooks' `/clear`): ``CodeMie: analytics of <N> session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.``
+- **generation** — the part of a Claude Code session before a `/clear`: `/clear` keeps the session id, so each earlier part is kept as `completed_<id>-<gen>.json` (with its `_metrics.jsonl` / `_conversation.jsonl`), `<gen>` being that part's Claude session id; `--session <uuid>` selects the session and its generations.
+- **legacy record** — an `active` record written before owners were recorded (no `ownerPid`): finalized locally once idle for more than 72 hours, nothing sent.
+- **`reason: desktop-daemon-restart`** — a Claude Desktop session the CodeMie daemon finalized at its own restart; **`reason: desktop-daemon-gone`** — a Claude Desktop session a CodeMie CLI start closed locally because its daemon was gone (left `<id>.json` for the daemon to deliver).
+
 ---
 
 ## Views
@@ -278,7 +294,7 @@ When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `
 
 CodeMie merges two sources to give the most complete picture:
 
-1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
+1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched, including sessions still running and stranded / undelivered ones (see [Terms](#terms))
 2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
 
 Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).

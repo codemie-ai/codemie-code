@@ -41,6 +41,43 @@ export interface ProcessingContext {
   syncDeadlineMs?: number;
   /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
   abortSignal?: AbortSignal;
+  /** True only inside a `codemie hook` process (the agent's own hook, killed within its short budget) */
+  hookProcess?: boolean;
+  /**
+   * Epoch ms of the next record's start over the same transcript: transcript records at or after it
+   * belong to that later session, not to this one. Unset when no later record exists (or inside a hook process).
+   */
+  recordsBeforeMs?: number;
+}
+
+/** Why a bounded sync or request stopped before its work was done. */
+export type SyncStopReason = 'aborted' | 'deadline';
+
+/** The caller's abort or deadline, as given to the API clients and sync loops. */
+export interface SyncBounds {
+  /** Epoch ms after which no new attempt, backoff or request may run */
+  deadlineMs?: number;
+  /** Aborts the current request and backoff at once */
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * Thrown by an API client stopped by its caller's abort or deadline. Not a failure:
+ * the item it was sending stays pending for the next run.
+ */
+export class SyncStoppedError extends Error {
+  constructor(readonly reason: SyncStopReason) {
+    super(`Sync stopped (${reason})`);
+    this.name = 'SyncStoppedError';
+  }
+}
+
+/** The reason to stop now (abort first, then a passed deadline), or undefined. */
+export function getSyncStopReason(bounds: SyncBounds): SyncStopReason | undefined {
+  if (bounds.abortSignal?.aborted) {
+    return 'aborted';
+  }
+  return bounds.deadlineMs !== undefined && Date.now() >= bounds.deadlineMs ? 'deadline' : undefined;
 }
 
 /**
@@ -49,10 +86,7 @@ export interface ProcessingContext {
  * Deferred items stay pending and are picked up by the next sync run.
  */
 export function shouldStopSync(context: ProcessingContext): boolean {
-  if (context.abortSignal?.aborted) {
-    return true;
-  }
-  return context.syncDeadlineMs !== undefined && Date.now() >= context.syncDeadlineMs;
+  return getSyncStopReason({ deadlineMs: context.syncDeadlineMs, abortSignal: context.abortSignal }) !== undefined;
 }
 
 /**

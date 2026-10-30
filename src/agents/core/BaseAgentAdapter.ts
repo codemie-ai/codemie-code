@@ -1,7 +1,14 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
+import {
+  exec,
+  detectGitBranch,
+  detectGitRemoteRepo,
+  processStartedAt,
+  WRAPPER_PID_ENV,
+  WRAPPER_STARTED_AT_ENV,
+} from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn, type ChildProcess } from 'child_process';
@@ -42,6 +49,14 @@ import {
   installWin32SignalHandlers,
   type SignalHandlers,
 } from './signal-handlers.js';
+import {
+  EXIT_DEADLINE_ENV,
+  finalizeOwnRecord,
+  reconcileOtherSessions,
+  type ReconcilePass,
+} from './session/stale-session-reconciliation.js';
+import { noticeDeliveryAtExit } from './session/exit-notice.js';
+import { EXIT_NETWORK_BUDGET_MS, START_PASS_EXIT_BUDGET_MS, settleStartPass } from './session/start-pass.js';
 
 /**
  * Base class for all agent adapters
@@ -49,6 +64,8 @@ import {
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  /** The start pass over other sessions' records; awaited at exit within the budget */
+  private startPass: ReconcilePass | null = null;
   public readonly metadata: AgentMetadata;
   public readonly type = AgentAdapterType.BASE;
 
@@ -530,6 +547,20 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
+    try {
+      await this.runSession(args, envOverrides, runOptions);
+    } catch (error) {
+      // A setup step that throws before the exit step leaves the start pass unsettled
+      await this.settleStartPass(Date.now());
+      throw error;
+    }
+  }
+
+  private async runSession(
+    args: string[],
+    envOverrides?: Record<string, string>,
+    runOptions?: { dryRun?: boolean },
+  ): Promise<void> {
     ignoreClosedOutputStreams();
 
     // Version handling (EPMCDME-13734): known-broken versions are refused,
@@ -565,7 +596,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       CODEMIE_AGENT: this.metadata.name,
       CODEMIE_CLIENT_TYPE: this.metadata.ssoConfig?.clientType || 'codemie-cli',
       CODEMIE_REPOSITORY: sessionRepository,
-      ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch })
+      ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch }),
+      // The session's owner: a later start finalizes the record once this process is gone
+      [WRAPPER_PID_ENV]: String(process.pid),
+      [WRAPPER_STARTED_AT_ENV]: String(processStartedAt())
     };
 
     // Initialize logger with session ID
@@ -581,6 +615,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Lifecycle hook: session start (provider-aware)
     await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
+
+    // Finalize and deliver other sessions' stranded / undelivered records through this launch
+    if (!runOptions?.dryRun) {
+      this.startPass = reconcileOtherSessions({ env, ownSessionId: sessionId });
+    }
 
     // Show welcome message with session info (skip in silent mode)
     if (!this.metadata.silentMode) {
@@ -728,11 +767,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     logger.debug('=== End Configuration ===');
 
-    // Shared cleanup: stop proxy and flush analytics
-    const cleanup = async () => {
+    // Shared cleanup: stop proxy and flush analytics (the final sync stops at the deadline)
+    const cleanup = async (deadlineMs?: number) => {
       if (this.proxy) {
         logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
-        await this.proxy.stop();
+        await this.proxy.stop({ deadlineMs });
         this.proxy = null;
         logger.debug(`[${this.displayName}] Proxy cleanup complete`);
       }
@@ -743,14 +782,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // throw here would skip cleanup(), stranding the proxy and its final metrics
     // sync, and would leave the exit handler's promise unsettled. Since this now
     // runs on signal exits too, that would happen on every Ctrl+C.
+    //
+    // Every network step from here shares one EXIT_NETWORK_BUDGET_MS deadline: the start pass
+    // still running (its first half at most), the plugin's session end, the own-record step and the proxy's final sync.
     const endSessionAndCleanup = async (exitCode: number) => {
+      const deadlineMs = Date.now() + EXIT_NETWORK_BUDGET_MS;
+      env[EXIT_DEADLINE_ENV] = String(deadlineMs);
       try {
-        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[${this.displayName}] onSessionEnd hook failed (non-blocking): ${msg}`);
+        await this.settleStartPass(Date.now() + START_PASS_EXIT_BUDGET_MS);
+        try {
+          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${this.displayName}] onSessionEnd hook failed (non-blocking): ${msg}`);
+        }
+        try {
+          await finalizeOwnRecord(sessionId, { env, deadlineMs });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${this.displayName}] Own session record step failed (non-blocking): ${msg}`);
+        }
+        await noticeDeliveryAtExit(sessionId, processStartedAt(), !this.metadata.silentMode);
       } finally {
-        await cleanup();
+        await cleanup(deadlineMs);
       }
     };
 
@@ -957,6 +1011,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       throw error;
     }
+  }
+
+  private async settleStartPass(deadlineMs: number): Promise<void> {
+    const pass = this.startPass;
+    this.startPass = null;
+    if (pass) await settleStartPass(pass, deadlineMs, this.displayName);
   }
 
   /**

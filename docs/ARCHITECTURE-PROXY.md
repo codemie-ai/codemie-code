@@ -680,7 +680,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 - ✅ **Unified Orchestration**: Sessions are discovered and read once, then handed to multiple pluggable processors (metrics, conversations) — zero duplicated I/O
 - ✅ **Agent-Agnostic**: Adapters support Claude, Gemini, and others behind a common interface
-- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session)
+- ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session); other sessions' stranded / undelivered records are delivered by the wrapper's start pass through this launch's own send path, same CodeMie host only
 - ✅ **SSO-Only Operation**: Only runs when credentials are SSO cookies (guards against JWT-only sessions)
 - ✅ **Opt-Out via createInterceptor()**: Throws `ConfigurationError` (not a separate flag) when session ID, SSO credentials, client type, or sync-enabled config is missing — the plugin simply isn't registered for that session
 
@@ -840,8 +840,8 @@ This path is intentionally separate from the hook-based `codemie-claude` flow. C
 
 **Scalability**:
 
-- Session-scoped: Only syncs current session
-- No cross-session interference
+- Session-scoped: the timer syncs only the current session
+- Other sessions' stranded / undelivered records go through the same send path from the wrapper's start pass (≤ 5 per start, same host only), never through the timer
 - Timer-based: Predictable resource usage
 
 #### 6.12.9 Monitoring

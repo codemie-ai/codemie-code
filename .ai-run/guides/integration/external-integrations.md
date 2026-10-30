@@ -203,14 +203,14 @@ Codex uses two pipelines (same model as Claude). Cost computed server-side; CLI 
 **Pipeline A — CLI tool/lifecycle → `POST /v1/metrics`**
 - Tool deltas: `file:src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`)
 - Lifecycle: `file:src/agents/plugins/codex/codex.plugin.ts` (`onSessionStart`/`onSessionEnd`) → `processEvent` in `file:src/cli/commands/hook.ts:170-228`
-- `status` hardcoded `'completed'`; end signal travels in `reason` field. Stale sessions → `reason: 'interrupted'`.
+- `status` hardcoded `'completed'`; end signal travels in `reason` field. Stranded sessions (a dead owner) → `reason: 'interrupted'`, sent with the native `session_id`.
 
 **Pipeline B — LLM proxy traffic → `codemie_litellm_proxy_usage`**
 - Traffic routed through `CODEMIE_BASE_URL` via `model_providers.codemie` block: `file:src/agents/plugins/codex/codex.plugin.ts:222-281`
 - Headers injected per request: `file:src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts:30-83`
 - Backend computes cost from `cost_config`; analytics joins pipelines by `session_id`.
 
-**Stale-session reconciliation**: On every `onSessionStart`, `reconcileStaleCodexSessions` scans `~/.codemie/sessions/` for `status: "active"` sessions idle > 30 min and synthesises `SessionEnd` with `reason: 'interrupted'`. `file:src/agents/plugins/codex/codex.reconciliation.ts`
+**Session reconciliation** (every agent, every wrapper start): `reconcileOtherSessions` scans `~/.codemie/sessions/<uuid>.json` — a `stranded` record (`status: "active"` whose owner process `ownerPid` + `ownerStartedAt` is gone; no inactivity threshold) gets a synthetic `SessionEnd` (`reason: 'interrupted'`, `endTimeFromActivity`, the native `session_id`) with the final flush of its transcript, ending at its last recorded activity; an `undelivered` record (`completed` but still `{id}.json`) is delivered through the launch's own send path, same CodeMie host only; a `legacy` record (no `ownerPid`) idle > 72 h is finalized locally, nothing sent. A record is renamed `completed_*` only once delivered — the file name is the queue. ≤ 5 records per start, ≤ 3 attempts each, each attempt stopped 10 s after it starts, under `{id}.reconcile.lock`. The wrapper awaits the pass and finalizes its own record at exit within a 10 s budget; on a normal exit (`prompt_input_exit` / `logout`) of an agent whose `SessionEnd` runs as a `codemie hook` process, the hook only finalizes locally and this exit step sends the end metric, syncs and renames. `file:src/agents/core/session/stale-session-reconciliation.ts`
 
 ---
 
@@ -316,7 +316,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 | LiteLLM connection error | Proxy not running | `litellm --port 4000` |
 | OpenCode not found | Not installed | `codemie install opencode` |
 | OpenCode sessions not syncing | Metrics processing failed | `codemie opencode-metrics --discover --verbose` |
-| Codex sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Auto-reconciled on next codex run via `codex.reconciliation.ts` |
+| Sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Finalized by the next wrapper start of any agent once the owner process is gone (`stale-session-reconciliation.ts`); a legacy record without `ownerPid` after 72 h idle |
 | Codex `money_spent` is 0 | Backend `cost_config` missing model entry | Add model pricing in backend `cost_config` |
 
 ---

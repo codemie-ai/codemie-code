@@ -158,4 +158,26 @@ export interface Session {
 
   // Runtime state for local telemetry clients that are discovered via polling
   runtimeCheckpoint?: RuntimeCheckpoint;
+
+  // Owner and delivery state
+  /** Pid of the process that lives as long as the session (the CLI wrapper); absent on legacy records */
+  ownerPid?: number;
+  /** Start time (Unix ms) of the `ownerPid` process; a live pid with another start time is another process */
+  ownerStartedAt?: number;
+  /** CodeMie URL of the launch (`CODEMIE_URL`); only a launch against the same host delivers this record */
+  codemieUrl?: string;
+  /** Unix ms when the server accepted this session's end metric; set → the end metric is never sent again */
+  endMetricSentAt?: number;
+  /** Why no end metric applies to this session (e.g. no analytics auth configured) */
+  endMetricSkipped?: string;
+  /** Delivery attempts of a completed but undelivered record */
+  deliveryAttempts?: number;
+  /** Finalization attempts of a stranded or legacy record */
+  finalizeAttempts?: number;
+  /** Unix ms when this record left the delivery queue with data it was to send still unsent */
+  droppedAt?: number;
+  /** Client type the session's metrics are sent with (e.g. 'codemie-cli', 'codemie-codex') */
+  clientType?: string;
+  /** Model the session was launched with */
+  model?: string;
 }

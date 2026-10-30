@@ -750,3 +750,126 @@ describe('detectGitHeadSha', () => {
     expect(await detectGitHeadSha('/repo')).toBeUndefined();
   });
 });
+
+function psResult(stdout: string): exec.ExecResult {
+  return { code: stdout ? 0 : 1, stdout, stderr: '' };
+}
+
+function errnoError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
+}
+
+describe('isProcessAlive', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reads EPERM as alive, ESRCH as dead and a successful signal 0 as alive', async () => {
+    const { isProcessAlive } = await import('../processes.js');
+    const kill = vi.spyOn(process, 'kill');
+
+    kill.mockImplementation(() => { throw errnoError('EPERM'); });
+    expect(isProcessAlive(4242)).toBe(true);
+
+    kill.mockImplementation(() => { throw errnoError('ESRCH'); });
+    expect(isProcessAlive(4242)).toBe(false);
+
+    kill.mockImplementation(() => true);
+    expect(isProcessAlive(4242)).toBe(true);
+  });
+
+  it('reads a missing, non-integer or non-positive pid as dead even when signal 0 would succeed', async () => {
+    const { isProcessAlive } = await import('../processes.js');
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    for (const pid of [undefined, NaN, 0, -1, 1.5]) {
+      expect(isProcessAlive(pid as unknown as number)).toBe(false);
+    }
+  });
+});
+
+describe('processStartedAt', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps its value when the wall clock moves on while the uptime does not (a system sleep)', async () => {
+    const { processStartedAt } = await import('../processes.js');
+    const now = Date.now();
+    vi.spyOn(process, 'uptime').mockReturnValue(process.uptime());
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const before = processStartedAt();
+
+    clock.mockReturnValue(now + 3_600_000);
+
+    expect(processStartedAt()).toBe(before);
+  });
+});
+
+describe('parseEtime', () => {
+  it('parses mm:ss, hh:mm:ss and dd-hh:mm:ss into milliseconds', async () => {
+    const { parseEtime } = await import('../processes.js');
+
+    expect(parseEtime('05:03')).toBe(303_000);
+    expect(parseEtime('01:02:03')).toBe(3_723_000);
+    expect(parseEtime('  02-01:02:03\n')).toBe(176_523_000);
+    expect(parseEtime('')).toBeUndefined();
+  });
+});
+
+describe('isOwnerAlive', () => {
+  const NOW = 1_790_000_000_000;
+  const originalPlatform = process.platform;
+  let kill: ReturnType<typeof vi.spyOn>;
+  let execSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    execSpy = vi.spyOn(exec, 'exec');
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    vi.restoreAllMocks();
+  });
+
+  it('is alive when the pid started within 60 s of the stored start, dead past it', async () => {
+    const { isOwnerAlive } = await import('../processes.js');
+    // ps reports 5 minutes elapsed: the pid started at NOW - 300 s.
+    execSpy.mockResolvedValue(psResult('05:00'));
+
+    expect(await isOwnerAlive({ pid: 4242, startedAt: NOW - 300_000 + 59_000 })).toBe(true);
+    expect(await isOwnerAlive({ pid: 4242, startedAt: NOW - 300_000 - 61_000 })).toBe(false);
+    expect(execSpy).toHaveBeenCalledWith('ps', ['-o', 'etime=', '-p', '4242'], { timeout: 1000 });
+  });
+
+  it('falls back to the pid-only answer when ps fails, without a start time, or on win32', async () => {
+    const { isOwnerAlive } = await import('../processes.js');
+    execSpy.mockRejectedValue(new Error('Command timed out after 1000ms'));
+
+    expect(await isOwnerAlive({ pid: 4242, startedAt: 1 })).toBe(true);
+    expect(await isOwnerAlive({ pid: 4242 })).toBe(true);
+
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    execSpy.mockResolvedValue(psResult('05:00'));
+    expect(await isOwnerAlive({ pid: 4242, startedAt: 1 })).toBe(true);
+  });
+
+  it('is dead when ps prints nothing because the pid exited between the two checks', async () => {
+    const { isOwnerAlive } = await import('../processes.js');
+    execSpy.mockResolvedValue(psResult(''));
+    kill.mockImplementationOnce(() => true).mockImplementationOnce(() => { throw errnoError('ESRCH'); });
+
+    expect(await isOwnerAlive({ pid: 4242, startedAt: NOW })).toBe(false);
+  });
+
+  it('is dead when the pid itself is gone, without running ps', async () => {
+    const { isOwnerAlive } = await import('../processes.js');
+    kill.mockImplementation(() => { throw errnoError('ESRCH'); });
+
+    expect(await isOwnerAlive({ pid: 4242, startedAt: NOW })).toBe(false);
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+});

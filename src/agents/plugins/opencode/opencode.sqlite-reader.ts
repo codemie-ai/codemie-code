@@ -309,6 +309,21 @@ export async function readMessagesFromDb(
 }
 
 /**
+ * The `time_created` / `time_updated` of every message and part row of a session: a part
+ * (a running tool) is written later than its message's own times.
+ */
+export async function readRowTimesFromDb(dbPath: string, sessionId: string): Promise<number[]> {
+  const rows = await queryDb<{ time_created: number | null; time_updated: number | null }>(
+    dbPath,
+    `SELECT time_created, time_updated FROM message WHERE session_id = ? ` +
+    `UNION ALL SELECT time_created, time_updated FROM part WHERE session_id = ?`,
+    [sessionId, sessionId]
+  );
+  return rows.flatMap((row) => [row.time_created, row.time_updated])
+    .filter((time): time is number => typeof time === 'number');
+}
+
+/**
  * Read all parts for a session from the SQLite database, grouped by message ID.
  *
  * Does a single bulk query for all parts in the session, then groups by message_id.

@@ -76,15 +76,18 @@ export const realDeps: EnricherDeps = {
     if (raw.agentSessionFile) {
       return raw.agentSessionFile;
     }
-    try {
-      const metaPath = getCodemiePath('sessions', `${raw.sessionId}.json`);
-      const meta = JSON.parse(await readFile(metaPath, 'utf-8')) as {
-        correlation?: { agentSessionFile?: string };
-      };
-      return meta.correlation?.agentSessionFile ?? null;
-    } catch {
-      return null;
+    // A live record, else its completed one (a `/clear` generation `<uuid>-<gen>` is only ever completed)
+    for (const name of [`${raw.sessionId}.json`, `completed_${raw.sessionId}.json`]) {
+      try {
+        const meta = JSON.parse(await readFile(getCodemiePath('sessions', name), 'utf-8')) as {
+          correlation?: { agentSessionFile?: string };
+        };
+        return meta.correlation?.agentSessionFile ?? null;
+      } catch {
+        // not under this name
+      }
     }
+    return null;
   },
   async parseNative(agentName, filePath, sessionId) {
     const adapter = resolveSessionAdapter(agentName);

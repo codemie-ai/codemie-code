@@ -5,6 +5,7 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 import { createApiClient } from '../apiClient.js';
+import { SyncStoppedError } from '@/agents/core/session/BaseProcessor.js';
 
 const fetchMock = vi.fn();
 
@@ -121,6 +122,97 @@ describe('ConversationApiClient request timers', () => {
       expect(result.success).toBe(true);
       expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:1/v1/conversations/conv-1');
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe('retries and caller bounds', () => {
+    function unavailable() {
+      return { ok: false, status: 503, statusText: 'Service Unavailable', text: () => Promise.resolve('{"message":"down"}') };
+    }
+
+    /** A fetch that answers after 3 s unless its signal aborts first, as the real fetch does. */
+    function slowFetch(_url: string, init: { signal: AbortSignal }) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(okResponse({ conversation_id: 'conv-1' })), 3_000);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }));
+        });
+      });
+    }
+
+    it('retryAttempts: 1 sends one request in total (the option counts total attempts)', async () => {
+      fetchMock.mockResolvedValue(unavailable());
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', retryAttempts: 1 });
+
+      const result = await client.upsertConversation('conv-1', []);
+
+      expect(result.success).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts a request still in flight at the deadline and starts no second attempt', async () => {
+      fetchMock.mockImplementation(slowFetch);
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', deadlineMs: Date.now() + 1_000 });
+
+      const result = client.upsertConversation('conv-1', []).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const error = await result;
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('deadline');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('wakes from the backoff sleep at once when the caller aborts', async () => {
+      fetchMock.mockResolvedValue(unavailable());
+      const controller = new AbortController();
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: controller.signal });
+
+      const result = client.upsertConversation('conv-1', []).catch((e: unknown) => e);
+      // Inside the 1 s backoff after the first 503.
+      await vi.advanceTimersByTimeAsync(100);
+      controller.abort();
+      const error = await result;
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('aborted');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('throws SyncStoppedError(aborted) when the caller aborts during the metadata update', async () => {
+      const synced = { conversation_id: 'conv-1', new_messages: 1, total_messages: 1, created: true };
+      fetchMock.mockResolvedValueOnce(okResponse(synced)).mockImplementationOnce(slowFetch);
+      const controller = new AbortController();
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: controller.signal });
+
+      const result = client.upsertConversation('conv-1', [], undefined, undefined, 'gpt-x').catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(100);
+      controller.abort();
+      const error = await result;
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('aborted');
+      expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:1/v1/conversations/conv-1');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('sends no metadata request when the caller aborted before it', async () => {
+      const synced = { conversation_id: 'conv-1', new_messages: 1, total_messages: 1, created: true };
+      const controller = new AbortController();
+      fetchMock.mockImplementationOnce(async () => {
+        controller.abort();
+        return okResponse(synced);
+      });
+      const client = createApiClient({ baseUrl: 'http://127.0.0.1:1', abortSignal: controller.signal });
+
+      const error = await client.upsertConversation('conv-1', [], undefined, undefined, 'gpt-x').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SyncStoppedError);
+      expect((error as SyncStoppedError).reason).toBe('aborted');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 });

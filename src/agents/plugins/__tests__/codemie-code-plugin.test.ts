@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'path';
 
 // Mock BaseAgentAdapter to avoid dependency tree
 vi.mock('../../core/BaseAgentAdapter.js', () => ({
@@ -37,9 +38,10 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 // Mock installGlobal / uninstallGlobal
-vi.mock('../../../utils/processes.js', () => ({
+vi.mock('../../../utils/processes.js', async (importOriginal) => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+  wrapperOwnerFromEnv: (await importOriginal<typeof import('../../../utils/processes.js')>()).wrapperOwnerFromEnv,
 }));
 
 // Mock processEvent from hook.js
@@ -277,6 +279,31 @@ describe('CodeMieCodePlugin', () => {
   });
 });
 
+describe('CodeMieCodePlugin onSessionStart', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hands processEvent the wrapper owner and the sync URL from the env, so the record stores it and the hook can send', async () => {
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionStart!('sid-owner', {
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com/code-assistant-api',
+    } as NodeJS.ProcessEnv);
+
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'SessionStart' }),
+      expect.objectContaining({
+        ownerPid: 4242,
+        ownerStartedAt: 1_790_000_000_000,
+        syncApiUrl: 'https://sync.example.com/code-assistant-api',
+      }),
+    );
+  });
+});
+
 describe('CodeMieCodePlugin onSessionEnd', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -302,6 +329,18 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
         transcript_path: '/path/to/session',
       }),
       expect.objectContaining({ clientType: 'codemie-code' })
+    );
+  });
+
+  it('discovers the session in codemie-code private OpenCode storage, not the user own', async () => {
+    mockDiscoverSessionsCC.mockResolvedValue([]);
+    mockProcessEvent.mockResolvedValue(undefined);
+
+    await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, { CODEMIE_SESSION_ID: 'test-456' } as NodeJS.ProcessEnv);
+
+    expect(mockDiscoverSessionsCC).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAgeDays: 1 }),
+      join('/mock/.codemie', 'opencode-storage', 'opencode', 'storage')
     );
   });
 

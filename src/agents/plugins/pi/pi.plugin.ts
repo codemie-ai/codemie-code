@@ -13,13 +13,13 @@ import {
   type PiRunLedger,
 } from './pi.extension.js';
 import { resolve } from 'path';
-import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
+import { detectGitBranch, detectGitRemoteRepo, wrapperOwnerFromEnv } from '@/utils/processes.js';
 import { appendTranscriptMarker } from '../../core/session/session-origin-audit.js';
-import { reconcileStaleSessions } from '../../core/session/stale-session-reconciliation.js';
 import { startPiIncrementalSync, stopPiIncrementalSync } from './pi.incremental-sync.js';
 import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { sendPathApiUrl } from '../../core/session/send-path.js';
 
 /**
  * Pi flags that select an existing session. Pi rejects `--session-id` when any of
@@ -99,6 +99,7 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: 'codemie-pi',
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -387,14 +388,6 @@ export const PiPluginMetadata: AgentMetadata = {
         logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
       }
 
-      // A run killed with SIGKILL, or whose terminal was closed, never reaches onSessionEnd and
-      // leaves its record `active` forever with no terminal metric. Recover those on the next
-      // start. Fire-and-forget: a stranded earlier session must not delay this one.
-      void reconcileStaleSessions('pi', env, buildPiHookConfig).catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[pi] Stale-session reconciliation failed (non-blocking): ${msg}`);
-      });
-
       // Flush metrics during the run, so a hard kill loses at most one interval instead of the
       // whole session. Ledger-driven: it processes exactly the transcripts the extension
       // recorded, never a directory scan.
@@ -403,7 +396,7 @@ export const PiPluginMetadata: AgentMetadata = {
         metadata: PiPluginMetadata,
         buildContext: () => ({
           sessionId,
-          apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
+          apiBaseUrl: sendPathApiUrl(env) || '',
           cookies: '',
           clientType: 'codemie-pi',
           version: env.CODEMIE_CLI_VERSION ?? '',
@@ -411,7 +404,7 @@ export const PiPluginMetadata: AgentMetadata = {
         }),
         ssoUrl: env.CODEMIE_URL,
         env,
-        syncApiUrl: env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL,
+        syncApiUrl: sendPathApiUrl(env),
         cliVersion: env.CODEMIE_CLI_VERSION,
       });
     },

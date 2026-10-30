@@ -7,11 +7,13 @@
 import { open, readFile, readdir, stat } from 'fs/promises';
 import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
-import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult, type SessionDiscoveryOptions, type SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
 import { getUserPiAgentDir, resolvePiSessionDir, type PiSessionDirResolution } from './pi.paths.js';
+import { readPiRunLedger } from './pi.extension.js';
+import type { Session } from '../../core/session/types.js';
 
 export interface PiDiscoveryOptions extends SessionDiscoveryOptions {
   /** Environment variables used to resolve Pi session-directory overrides. */
@@ -150,6 +152,7 @@ export class PiSessionAdapter implements SessionAdapter {
           ...(header?.parentSession && { parentSession: header.parentSession }),
         },
         messages: entries as unknown[],
+        recordTimes: entries.map((entry) => entry.timestamp),
         ...(subagents.length > 0 && { subagents }),
       };
     } catch (error) {
@@ -268,6 +271,11 @@ export class PiSessionAdapter implements SessionAdapter {
     return entries;
   }
 
+  /** Every transcript the run's ledger recorded (exact, read-only); the flush processes all of them. */
+  async locateTranscript(record: Session): Promise<string[]> {
+    return (await readPiRunLedger(record.sessionId)).transcripts;
+  }
+
   async processSession(filePath: string, sessionId: string, context: ProcessingContext): Promise<AggregatedResult> {
     const parsedSession = await this.parseSessionFile(filePath, sessionId);
     if (context.gitBranch && parsedSession.metadata) {
@@ -309,6 +317,7 @@ export class PiSessionAdapter implements SessionAdapter {
       processors: processorResults,
       totalRecords,
       failedProcessors,
+      lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs),
     };
   }
 

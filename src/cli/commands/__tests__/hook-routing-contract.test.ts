@@ -353,4 +353,111 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(existsSync(completedPath(sessionId))).toBe(false);
     });
   });
+
+  describe('SessionStart record owner and launch fields', () => {
+    const OWNER_ENV = ['CODEMIE_AGENT', 'CODEMIE_SESSION_ID', 'CODEMIE_PROVIDER', 'CODEMIE_WRAPPER_PID', 'CODEMIE_WRAPPER_STARTED_AT'];
+    let savedEnv: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      savedEnv = Object.fromEntries(OWNER_ENV.map((key) => [key, process.env[key]]));
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    function startEvent(claudeId: string): BaseHookEvent {
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'SessionStart',
+        transcript_path: transcriptFile(claudeId),
+        permission_mode: 'default',
+        cwd: TMP,
+      } as unknown as BaseHookEvent;
+      (event as unknown as { source: string }).source = 'startup';
+      return event;
+    }
+
+    /** A `codemie hook` process: no config, everything from the env the wrapper exported. */
+    async function startInHookProcess(sessionId: string, claudeId: string, wrapperEnv: Record<string, string>) {
+      createdSessions.add([sessionId, claudeId]);
+      cleanupSession(sessionId, claudeId);
+      Object.assign(process.env, { CODEMIE_AGENT: 'claude', CODEMIE_SESSION_ID: sessionId, CODEMIE_PROVIDER: 'jwt' });
+      delete process.env.CODEMIE_WRAPPER_PID;
+      delete process.env.CODEMIE_WRAPPER_STARTED_AT;
+      Object.assign(process.env, wrapperEnv);
+      await processEvent(startEvent(claudeId));
+      return JSON.parse(readFileSync(getSessionPath(sessionId), 'utf-8'));
+    }
+
+    it('a hook process stores ownerPid / ownerStartedAt from the wrapper env', async () => {
+      const saved = await startInHookProcess(`owner-env-${process.pid}`, 'claude-owner-env', {
+        CODEMIE_WRAPPER_PID: '4242',
+        CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      });
+
+      expect(saved.ownerPid).toBe(4242);
+      expect(saved.ownerStartedAt).toBe(1790000000000);
+    });
+
+    it('a hook process with neither wrapper var stores no owner', async () => {
+      const saved = await startInHookProcess(`owner-none-${process.pid}`, 'claude-owner-none', {});
+
+      expect(saved).not.toHaveProperty('ownerPid');
+      expect(saved).not.toHaveProperty('ownerStartedAt');
+    });
+
+    it('a hook process with CODEMIE_WRAPPER_PID but no start time stores no owner (both or none)', async () => {
+      const saved = await startInHookProcess(`owner-half-${process.pid}`, 'claude-owner-half', {
+        CODEMIE_WRAPPER_PID: '4242',
+      });
+
+      expect(saved).not.toHaveProperty('ownerPid');
+      expect(saved).not.toHaveProperty('ownerStartedAt');
+    });
+
+    it('an in-process call stores the owner and launch fields passed in its config, not the process env', async () => {
+      const sessionId = `owner-config-${process.pid}`;
+      const claudeId = 'claude-owner-config';
+      createdSessions.add([sessionId, claudeId]);
+      cleanupSession(sessionId, claudeId);
+      process.env.CODEMIE_WRAPPER_PID = '9999';
+      process.env.CODEMIE_WRAPPER_STARTED_AT = '1';
+
+      await processEvent(startEvent(claudeId), {
+        ...baseConfig,
+        sessionId,
+        ownerPid: 4343,
+        ownerStartedAt: 1790000000001,
+        ssoUrl: 'https://codemie.example.invalid',
+        clientType: 'codemie-codex',
+        model: 'gpt-test',
+      });
+
+      const saved = JSON.parse(readFileSync(getSessionPath(sessionId), 'utf-8'));
+      expect(saved.ownerPid).toBe(4343);
+      expect(saved.ownerStartedAt).toBe(1790000000001);
+      expect(saved.codemieUrl).toBe('https://codemie.example.invalid');
+      expect(saved.clientType).toBe('codemie-codex');
+      expect(saved.model).toBe('gpt-test');
+    });
+
+    it('an in-process call without owner or CodeMie URL stores neither', async () => {
+      const sessionId = `owner-config-none-${process.pid}`;
+      const claudeId = 'claude-owner-config-none';
+      createdSessions.add([sessionId, claudeId]);
+      cleanupSession(sessionId, claudeId);
+      process.env.CODEMIE_WRAPPER_PID = '9999';
+      process.env.CODEMIE_WRAPPER_STARTED_AT = '1';
+
+      await processEvent(startEvent(claudeId), { ...baseConfig, sessionId });
+
+      const saved = JSON.parse(readFileSync(getSessionPath(sessionId), 'utf-8'));
+      expect(saved).not.toHaveProperty('ownerPid');
+      expect(saved).not.toHaveProperty('codemieUrl');
+    });
+  });
 });

@@ -19,6 +19,7 @@ vi.mock('@/utils/logger.js', () => ({
     setAgentName: vi.fn(),
     setSessionId: vi.fn(),
     setProfileName: vi.fn(),
+    runWithContext: vi.fn((_context: unknown, fn: () => Promise<unknown>) => fn()),
   },
 }));
 vi.mock('@/agents/core/session/SessionStore.js', () => ({
