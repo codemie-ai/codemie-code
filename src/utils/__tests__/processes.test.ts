@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import os from 'node:os';
 import { NpmError, NpmErrorCode } from '../errors.js';
 import * as exec from '../exec.js';
 
@@ -500,6 +501,26 @@ describe('npm utility', () => {
 
       expect(result).toBe('C:\\path\\to\\cmd.exe');
     });
+
+    it('prefixes the command with $PATH: on Windows, so where.exe skips the cwd (EPMCDME-15907)', async () => {
+      vi.spyOn(os, 'platform').mockReturnValue('win32');
+      execSpy.mockResolvedValue({ code: 0, stdout: 'C:\\npm\\codemie.cmd\r\n', stderr: '' });
+
+      const { getCommandPath } = await import('../processes.js');
+      await getCommandPath('codemie');
+
+      expect(execSpy).toHaveBeenCalledWith('C:\\Windows\\System32\\where.exe', ['$PATH:codemie']);
+    });
+
+    it('passes the bare command on non-Windows (which has no $PATH: prefix syntax)', async () => {
+      vi.spyOn(os, 'platform').mockReturnValue('linux');
+      execSpy.mockResolvedValue({ code: 0, stdout: '/usr/bin/codemie\n', stderr: '' });
+
+      const { getCommandPath } = await import('../processes.js');
+      await getCommandPath('codemie');
+
+      expect(execSpy).toHaveBeenCalledWith('which', ['codemie']);
+    });
   });
 
   describe('commandExists', () => {
@@ -536,6 +557,16 @@ describe('npm utility', () => {
       const result = await commandExists('test');
 
       expect(result).toBe(false);
+    });
+
+    it('prefixes the command with $PATH: on Windows, so where.exe skips the cwd (EPMCDME-15907)', async () => {
+      vi.spyOn(os, 'platform').mockReturnValue('win32');
+      execSpy.mockResolvedValue({ code: 0, stdout: 'C:\\npm\\git.cmd\r\n', stderr: '' });
+
+      const { commandExists } = await import('../processes.js');
+      await commandExists('git');
+
+      expect(execSpy).toHaveBeenCalledWith('C:\\Windows\\System32\\where.exe', ['$PATH:git']);
     });
   });
 

@@ -28,8 +28,9 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BIN = join(REPO_ROOT, 'bin', 'codemie.js');
 
+/** Lead of every describeLogin() sign-in variant (sso.detached-login.ts). */
 const BLOCK_HEADER =
-  'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.';
+  'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
 /** Hard cap per hook invocation; must stay well under vitest's 30s testTimeout. */
 const HOOK_TIMEOUT_MS = 20_000;
 
@@ -147,6 +148,11 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     const res = runHook({ CODEMIE_PROVIDER: 'ai-run-sso' });
     expect(res.code).toBe(2);
     expect(res.stderr).toContain(BLOCK_HEADER);
+    expect(res.stderr).toContain('Reason: no valid CodeMie SSO credentials found');
+    // No login URL here, so no browser sign-in can open: the user is told to sign in and re-send.
+    expect(res.stderr).toContain('codemie profile login');
+    expect(res.stderr).toContain('re-send your prompt');
+    expect(res.stderr).not.toContain('API key');
   });
 
   it('blocks the prompt when a valid api key is present but an invalid-auth marker exists (exit 2)', () => {
@@ -160,6 +166,8 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     expect(res.code).toBe(2);
     expect(res.stderr).toContain(BLOCK_HEADER);
     expect(res.stderr).toContain('rejected the stored credentials');
+    expect(res.stderr).toContain('codemie profile login');
+    expect(res.stderr).not.toContain('Check your CodeMie API key');
     // The marker's reason is surfaced back to the user.
     expect(res.stderr).toContain('HTTP 401');
   });

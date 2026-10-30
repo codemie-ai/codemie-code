@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-10-23T11:15:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 11,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 12,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Changes localized to desktop connector, vscode-models registry, claude-request-normalizer plugin, pricing table, and pi models. Follows established conventions."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "12 files changed (315 insertions, 16 deletions), including 6 test suites and 1 plan doc."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

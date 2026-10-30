@@ -12,6 +12,8 @@ import {
   CODEMIE_ENV_KEYS,
   CODEMIE_HOOK_TIMEOUT_SECONDS,
   CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS,
+  CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE,
+  CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
@@ -85,8 +87,13 @@ function codemieHookGroup(eventName: string = '') {
       {
         type: 'command',
         command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-        timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+        timeout: isPostCompact
+          ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+          : eventName === 'UserPromptSubmit'
+            ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+            : CODEMIE_HOOK_TIMEOUT_SECONDS,
         ...(isPostCompact ? { async: true } : {}),
+        ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
       },
     ],
   };
@@ -223,8 +230,18 @@ describe('claude-code-otlp connector', () => {
         for (const event of HOOK_EVENTS) {
           if (event === 'PostCompact') continue;
           expect(settings.hooks[event][0].hooks[0].async).toBeUndefined();
-          expect(settings.hooks[event][0].hooks[0].timeout).toBe(CODEMIE_HOOK_TIMEOUT_SECONDS);
+          expect(settings.hooks[event][0].hooks[0].timeout).toBe(
+            event === 'UserPromptSubmit' ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS
+          );
         }
+      });
+
+      it('gives UserPromptSubmit a 180s timeout so the SSO sign-in wait finishes first', async () => {
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(180);
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].statusMessage).toContain('continue automatically');
       });
 
       it('writes PostCompact as async with the longer timeout, so it never blocks Claude Code or the user\'s turn', async () => {

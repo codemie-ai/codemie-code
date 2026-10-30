@@ -147,52 +147,14 @@ Keep global config with provider/model. Each repo's local config sets only `code
 
 ### Team project context with a selected provider profile
 
-`codeMieUrl`, `codeMieProject`, and `codeMieIntegration` resolve differently depending on the
-scope of the profile in use. A local profile (defined in `.codemie/codemie-cli.config.json`)
-uses the local workspace's own identity when it has one. A local profile with no local
-workspace identity falls back to the global *workspace* object's identity — migration 008
-clones that identity onto every eligible global profile but deliberately never deletes it from
-the shared workspace object afterward, so this fallback keeps working for local profiles with
-no identity of their own, exactly as it did before global profiles got their own per-profile
-copy. A global profile of the same name is picked up through profile-name matching first (a
-separate, higher-priority path), so the shared-workspace fallback only matters when no such
-profile exists. A **global** profile resolves its own identity directly from the profile
-itself — each global profile stores its own `codeMieUrl`/`codeMieProject`/`codeMieIntegration`,
-so switching between global profiles never leaks one profile's identity onto another. The
-identity trio is treated as a unit everywhere it is gap-filled from the shared workspace
-(migration 008 and this read-time fallback alike): a profile that already owns *any* one of
-the three fields gets none of the others filled in from the shared value, since the shared
-object may be a leftover from a different profile's environment — filling only the gaps could
-pair this profile's own field with another environment's. Only non-identity workspace fields
-(`hooks`, `plugins`, `assistants`, `skillsSearchUrl`, `claudeAutocompactPct`, `metrics`) remain
-scope-level shared across global profiles.
-
-**Policy note — the shared fallback is a permanent, frozen snapshot, by design.** Once migration
-008 has run, `saveProfile()` no longer writes to the shared workspace's identity fields at all —
-whatever value was there at migration time (or whatever a pre-migration config last wrote to it)
-stays there forever, unchanged by later profile edits. This is intentional: it is the only way a
-local profile with no identity of its own, or a vendor-subscription/split-host global profile
-created at any point afterward, can still receive an ambient identity the way they always could
-before this fix. The trade-off is accepted, not accidental: `canUseSharedIdentity()`'s
-origin/sibling check (applied consistently to both the global-profile and the local-profile
-fallback paths) is the only guard against it leaking into the wrong environment, and that check's
-answer can change if a sibling profile is later added or removed — a profile can gain or lose the
-fallback as the sibling set changes. There is no provenance record of which profile originally
-donated the shared value, and no expiry. If a team needs a guaranteed-fresh identity, they should
-assign it directly to the profile (`saveProfile()` with the identity trio set explicitly) rather
-than relying on the shared fallback.
-
-**Policy note — a profile's saved identity is never cleared, only replaced as a whole trio.**
-`saveProfile()` treats `codeMieUrl`/`codeMieProject`/`codeMieIntegration` as a unit: if an update
-supplies *any* one of the three, none of the others carry forward from the profile's previous
-value (to avoid pairing a new field with a stale one) — but if an update supplies *none* of the
-three, the existing trio carries forward unchanged, including across a provider switch. There is
-currently no way to explicitly clear a profile's identity (e.g. back to "unset") short of deleting
-and recreating the profile; retention across edits is the intended behavior, not an oversight.
+`codeMieUrl`, `codeMieProject`, and `codeMieIntegration` come from the workspace of the scope
+the profile in use belongs to. A local profile (defined in `.codemie/codemie-cli.config.json`)
+uses the local workspace, falling back to the global one when the local config has none. A
+global profile always uses the global workspace, even inside a repository with a local config.
 
 ```bash
 codemie-claude                      # repo's local profile: repo's CodeMie URL and project
-codemie-claude --profile anthropic  # global profile: that profile's own CodeMie URL and project
+codemie-claude --profile anthropic  # global profile: global CodeMie URL and project
 ```
 
 ### Which CodeMie URL is used

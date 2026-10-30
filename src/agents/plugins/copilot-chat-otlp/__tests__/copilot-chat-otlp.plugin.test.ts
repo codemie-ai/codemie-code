@@ -65,6 +65,21 @@ describe('CopilotChatOtlpPlugin', () => {
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 
+  it('states the expiry is expected and does not claim a browser opened on cooldown', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired', loginOutcome: 'cooldown' } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const stopReason = String(captured()?.stopReason);
+    expect(stopReason).toContain('this is expected');
+    expect(stopReason).toContain('re-send your prompt');
+    expect(stopReason).not.toContain('opened automatically');
+  });
+
   it('emits a continue:false shape for a blocked SessionStart (SSO auth failure)', async () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const { captured } = log();

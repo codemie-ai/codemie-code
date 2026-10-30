@@ -29,4 +29,5 @@ import './004-skills-assistants-top-level.migration.js';
 import './005-skill-slug-format.migration.js';
 import './006-resolve-hook-command-paths.migration.js';
 import './007-decouple-provider-workspace-config.migration.js';
-import './008-isolate-global-profile-identity.migration.js';
+import './008-repair-hook-shell-and-stale-paths.migration.js';
+import './009-raise-otlp-prompt-hook-timeout.migration.js';

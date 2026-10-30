@@ -20,62 +20,11 @@ import {
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
-import { isCodeMiePlatformProvider } from '../providers/core/codemie-auth-helpers.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
 
 export { StorageScope };
-
-function originOf(url: string): string | undefined {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Whether a profile with no identity of its own may still inherit the shared
- * `codeMieUrl`/`codeMieProject`/`codeMieIntegration` left in the global
- * workspace by migration 008 (never stripped — see that migration's own
- * comment) — covers a global profile that predates/was refused by the
- * migration, and a local profile with no identity of its own (see
- * resolveProfileWorkspace()). Refuses only on positive evidence the shared
- * value belongs to a *different* profile's environment — never merely
- * because origins differ, which is also
- * true by design for a vendor-subscription profile (baseUrl is never the
- * CodeMie backend) and for `ai-run-sso` with a split API host (baseUrl's
- * origin need not match codeMieUrl's — see sso.auth.ts's VITE_API_URL
- * resolution). All three must hold to refuse:
- * - the profile talks to the CodeMie platform directly (`ai-run-sso` /
- *   `bearer-auth`), so its `baseUrl` origin is expected to track `codeMieUrl`;
- * - that origin differs from the shared `codeMieUrl`'s;
- * - another CodeMie-platform profile's own `baseUrl` is on exactly that
- *   shared origin, proving the shared value is provably someone else's.
- * Reused by migration 008 (the permanent clone) and the statusline (its own
- * inline copy, since it cannot import this module — see statusline.ts).
- */
-export function canUseSharedIdentity(
-  profile: { provider?: string; baseUrl?: string },
-  siblingProfiles: Record<string, { provider?: string; baseUrl?: string }>,
-  ownName: string | undefined,
-  sharedCodeMieUrl?: string
-): boolean {
-  if (!isCodeMiePlatformProvider(profile.provider)) return true;
-  if (!sharedCodeMieUrl || !profile.baseUrl) return true;
-
-  const sharedOrigin = originOf(sharedCodeMieUrl);
-  const ownOrigin = originOf(profile.baseUrl);
-  if (!sharedOrigin || !ownOrigin || sharedOrigin === ownOrigin) return true;
-
-  const claimedBySibling = Object.entries(siblingProfiles).some(([name, sibling]) => {
-    if (name === ownName) return false;
-    if (!isCodeMiePlatformProvider(sibling.provider) || !sibling.baseUrl) return false;
-    return originOf(sibling.baseUrl) === sharedOrigin;
-  });
-  return !claimedBySibling;
-}
 
 /**
  * Unified configuration loader with priority system:
@@ -183,12 +132,7 @@ export class ConfigLoader {
     // whole-object override (local scope, else global), CodeMie identity from the
     // scope of the profile in use.
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
-    const globalProfileIdentity: Partial<WorkspaceConfig> = {
-      codeMieUrl: (globalConfig as any).codeMieUrl,
-      codeMieProject: (globalConfig as any).codeMieProject,
-      codeMieIntegration: (globalConfig as any).codeMieIntegration
-    };
-    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile, globalProfileIdentity, selectedProfileName);
+    const workspace = await this.resolveProfileWorkspace(workingDir, isLocalProfile);
     Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
@@ -278,111 +222,26 @@ export class ConfigLoader {
 
   /**
    * Resolve the workspace for the profile in use. Tooling-context fields follow
-   * resolveWorkspace(). Identity fields (codeMieUrl, codeMieProject,
-   * codeMieIntegration) normally come from the profile itself (merged in
-   * earlier by load()/loadWithSources()), not from here — but a profile that
-   * predates migration 008 (e.g. a `bin/codemie-*` launcher ran before
-   * `bin/codemie.js` ever had a chance to migrate it), or a local profile with
-   * no identity of its own and no local workspace override, has none of its
-   * own yet, so this falls back to the shared workspace value. The fallback is
-   * all-or-nothing per profile, not per key: if the profile already owns ANY of
-   * the three fields (via its own stored data or the caller-supplied
-   * profileIdentity below), none of its missing fields are filled from the
-   * shared workspace — the shared object may be a leftover from a different
-   * profile's environment, and gap-filling only the missing ones could pair
-   * this profile's own field with another environment's. The same
-   * canUseSharedIdentity() origin/sibling check gates the fallback for both a
-   * global profile and a same-named local one — the shared value may belong to
-   * a different environment either way.
-   *
-   * A genuine repo-specific workspace override (the local scope actually
-   * defines its own `workspace`, per resolveWorkspace()) always wins outright
-   * for a local profile, including any identity it defines — that is real
-   * local-scope data, not a leftover to gate.
+   * resolveWorkspace(). CodeMie identity fields (codeMieUrl, codeMieProject,
+   * codeMieIntegration) come from the scope the profile lives in: a local profile
+   * takes them from resolveWorkspace(), a global profile only from the global
+   * scope's workspace, so a repo's workspace never retargets global profiles.
    *
    * @param workingDir - Directory whose local config is considered
    * @param isLocalProfile - Whether the profile in use is defined in the local config
-   * @param profileIdentity - Identity already resolved from the profile itself
-   *   (global or same-named local), if any; any key present here disables the
-   *   shared fallback entirely
-   * @param profileName - Name of the profile in use, used to look up its own
-   *   `baseUrl`/`provider` and its siblings for canUseSharedIdentity(). The
-   *   fallback source is always the GLOBAL shared workspace (never a repo-local
-   *   one from resolveWorkspace() above — a repo's own workspace is an unrelated
-   *   project-context overlay with its own separate compatibility rules).
    */
-  static async resolveProfileWorkspace(
-    workingDir: string,
-    isLocalProfile: boolean,
-    profileIdentity: Partial<WorkspaceConfig> = {},
-    profileName?: string
-  ): Promise<WorkspaceConfig> {
+  static async resolveProfileWorkspace(workingDir: string, isLocalProfile: boolean): Promise<WorkspaceConfig> {
     const workspace = await this.resolveWorkspace(workingDir);
-
-    const { profiles: allProfiles, workspace: globalWorkspace } = await this.loadMultiProviderConfig();
-    const globalOwnProfile = (profileName && allProfiles?.[profileName]) || {};
-
-    // All-or-nothing, not per-key: if the profile already owns ANY identity field —
-    // via the caller-supplied profileIdentity (e.g. listProfiles() looks it up by
-    // name) or via its own stored data — none of its missing fields are filled from
-    // the shared workspace. Gap-filling only the missing ones could pair this
-    // profile's own (correct) field with a shared field left over from whichever
-    // profile saved last, attributing usage to the wrong project/integration.
-    const ownHasAnyIdentity = this.IDENTITY_KEYS.some(
-      (key) => (profileIdentity as any)[key] !== undefined || (globalOwnProfile as any)[key] !== undefined
-    );
-
     if (isLocalProfile) {
-      const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
-      if (localMultiConfig.workspace != null) {
-        // A genuine repo-specific workspace override — including any identity it
-        // defines — always wins outright; this *is* the local scope's own data.
-        return workspace;
-      }
-      // No local workspace of its own: `workspace` above fell through to the global
-      // one (see resolveWorkspace()), which may carry the permanent shared-identity
-      // fallback (migration 008 never strips it). That leftover must never overwrite
-      // a same-named global profile's own, already-known identity — load() already
-      // merged the correct value in before this runs — and is gated by the same
-      // canUseSharedIdentity() origin/sibling check as the global-profile branch
-      // below, for the same reason: it may belong to a different environment. The
-      // check must use the LOCAL profile's own `provider`/`baseUrl` (not a same-named
-      // global profile's, which may not exist at all for a purely local-only
-      // profile) — using the global lookup here would pass an empty stand-in for a
-      // local-only profile, making canUseSharedIdentity() a no-op for that whole
-      // class of profiles.
-      const localOwnProfile = (profileName && localMultiConfig.profiles?.[profileName]) || {};
-      const canUseSharedForLocal = canUseSharedIdentity(
-        localOwnProfile,
-        allProfiles ?? {},
-        profileName,
-        (globalWorkspace as any)?.codeMieUrl
-      );
-      if (ownHasAnyIdentity || !canUseSharedForLocal) {
-        const result: Record<string, unknown> = { ...workspace };
-        for (const key of this.IDENTITY_KEYS) {
-          delete result[key];
-        }
-        return result as WorkspaceConfig;
-      }
       return workspace;
     }
 
-    const canUseShared = canUseSharedIdentity(
-      globalOwnProfile,
-      allProfiles ?? {},
-      profileName,
-      (globalWorkspace as any)?.codeMieUrl
-    );
+    const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
     const result: Record<string, unknown> = { ...workspace };
     for (const key of this.IDENTITY_KEYS) {
       delete result[key];
-      if (ownHasAnyIdentity || !canUseShared) {
-        continue;
-      }
-      const sharedValue = (globalWorkspace as any)?.[key];
-      if (sharedValue !== undefined) {
-        (result as any)[key] = sharedValue;
+      if (globalWorkspace[key] !== undefined) {
+        result[key] = globalWorkspace[key];
       }
     }
     return result as WorkspaceConfig;
@@ -765,29 +624,17 @@ export class ConfigLoader {
   ];
 
   /**
-   * WORKSPACE_KEYS minus IDENTITY_KEYS — saveProfile() routes only these into
-   * the shared global workspace; identity stays on the profile itself.
-   */
-  private static readonly NON_IDENTITY_WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = ConfigLoader.WORKSPACE_KEYS.filter(
-    key => !ConfigLoader.IDENTITY_KEYS.includes(key)
-  );
-
-  /**
    * Partition a profile-shaped input into its provider-identity half and its
    * workspace half, so callers that persist a profile can route each half to
    * where it belongs (profiles[name] vs. the scope's workspace).
-   *
-   * @param keys - WorkspaceConfig keys to split out; defaults to WORKSPACE_KEYS.
-   *   saveProfile() passes NON_IDENTITY_WORKSPACE_KEYS instead.
    */
   private static splitProfileAndWorkspace(
-    input: Partial<CodeMieConfigOptions>,
-    keys: (keyof WorkspaceConfig)[] = this.WORKSPACE_KEYS
+    input: Partial<CodeMieConfigOptions>
   ): { profile: Partial<ProviderProfile>; workspace: Partial<WorkspaceConfig> } {
     const profile: Partial<ProviderProfile> = { ...(input as any) };
     const workspace: Partial<WorkspaceConfig> = {};
 
-    for (const key of keys) {
+    for (const key of this.WORKSPACE_KEYS) {
       if ((input as any)[key] !== undefined) {
         (workspace as any)[key] = (input as any)[key];
         delete (profile as any)[key];
@@ -806,48 +653,10 @@ export class ConfigLoader {
     // Strip top-level-only fields that must not live inside a profile
     const { codemieSkills: _skills, codemieAssistants: _assistants, ...cleanProfile } = profile as any;
 
-    // Identity stays in profileFields; only non-identity fields go to the
-    // shared global workspace.
-    const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(
-      cleanProfile,
-      this.NON_IDENTITY_WORKSPACE_KEYS
-    );
+    const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(cleanProfile);
 
     (profileFields as any).name = profileName;
-    // Provider-specific fields stay full-replace (switching provider drops
-    // stale fields like authMethod/jwtConfig), but identity carries forward
-    // from the existing profile when the update omits it. All-or-nothing, not
-    // per key: if the update supplies ANY identity field, it is establishing a
-    // new identity (even if only partially) — carrying forward the OTHER,
-    // unsupplied old fields next to it would pair this update's new value with
-    // an old field left over from a different environment. Only when the
-    // update supplies NONE of the three does the old trio carry forward whole —
-    // intentionally, including across a provider switch; there is no way to
-    // explicitly clear a profile's identity short of deleting/recreating it
-    // (see .ai-run/guides/usage/project-config.md's "never cleared" note).
-    const existingProfile = config.profiles[profileName];
-    const suppliesAnyIdentity = this.IDENTITY_KEYS.some((key) => (profileFields as any)[key] !== undefined);
-    const preservedIdentity: Partial<ProviderProfile> = {};
-    if (existingProfile && !suppliesAnyIdentity) {
-      for (const key of this.IDENTITY_KEYS) {
-        if ((existingProfile as any)[key] !== undefined) {
-          (preservedIdentity as any)[key] = (existingProfile as any)[key];
-        }
-      }
-    }
-    // An explicit `key: undefined` (e.g. a provider's buildConfig() that always
-    // sets the key, `as string | undefined`) is still an own property and would
-    // override preservedIdentity in the spread below — drop it either way, so
-    // "omitted" and "explicitly undefined" behave the same way.
-    for (const key of this.IDENTITY_KEYS) {
-      if ((profileFields as any)[key] === undefined) {
-        delete (profileFields as any)[key];
-      }
-    }
-    config.profiles[profileName] = {
-      ...preservedIdentity,
-      ...profileFields
-    } as ProviderProfile;
+    config.profiles[profileName] = profileFields as ProviderProfile;
 
     if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
       config.workspace = { ...config.workspace, ...workspaceFields };
@@ -1480,13 +1289,8 @@ export class ConfigLoader {
     const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
     const isLocalProfile = Object.keys(effectiveLocalConfig).length > 0;
     const identitySource = await this.resolveIdentitySource(workingDir, isLocalProfile);
-    const globalProfileIdentity: Partial<WorkspaceConfig> = {
-      codeMieUrl: (globalConfig as any).codeMieUrl,
-      codeMieProject: (globalConfig as any).codeMieProject,
-      codeMieIntegration: (globalConfig as any).codeMieIntegration
-    };
     const profileWorkspace: Record<string, unknown> = {
-      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile, globalProfileIdentity, selectedProfileName))
+      ...(await this.resolveProfileWorkspace(workingDir, isLocalProfile))
     };
     const identityWorkspace: Record<string, unknown> = {};
     for (const key of this.IDENTITY_KEYS) {
