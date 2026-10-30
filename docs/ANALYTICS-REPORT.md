@@ -378,3 +378,158 @@ codemie analytics otel --file <path> [options]
 ```
 
 All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.
+
+---
+
+## Scheduled delivery (`analytics sync`)
+
+`codemie analytics sync install|status|run|uninstall` registers and runs a daily per-user
+OS job that POSTs the same priced JSON report `codemie analytics --export json` builds to
+the team's webhook — one way, nothing comes back. It takes over the developer side of the
+standalone collector, so a developer no longer clones, updates or runs a separate tool.
+It never reads any `ANALYTICS_*` environment variable; the settings file and CLI flags are
+the only source of configuration.
+
+### Commands
+
+```bash
+# Developer: register the daily delivery job on this machine
+codemie analytics sync install --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
+codemie analytics sync install --webhook <url> --at 02:30 --lookback-days 14 --include-external always
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+### `install` options
+
+```
+codemie analytics sync install [options]
+
+  --webhook <url>             The team's https webhook URL that receives the daily report (required)
+  --at <HH:MM>                Daily run time, 24-hour local time (default: 03:00)
+  --lookback-days <n>         Session window looked back on each run, 1-30 (default: 7)
+  --include-external <policy> Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)
+```
+
+Validation runs before anything is written or registered: a missing/non-`https:`/invalid
+`--webhook`, a malformed `--at`, an out-of-range `--lookback-days`, or an unrecognized
+`--include-external` value fails with a message naming the bad option. `--lookback-days`
+is written to settings only when given, so the default (7 days) keeps following CLI
+updates for an install that never set it.
+
+Install resolves the reporting email (saved CLI config, then `git config --global user.email`; in a
+terminal with neither it prompts and saves the answer; without a terminal it fails with
+instructions and registers nothing), runs the per-platform preflight, removes any existing
+job with the same identity (the collector's or a previous CLI install's), writes the
+settings file, and registers the new job. If registration fails after the settings were
+written, the settings file is deleted and install exits non-zero — nothing half-installed
+is left behind.
+
+On success it prints the run time, the lookback (marked "default" when `--lookback-days`
+was omitted), the include-external policy, the webhook host only (the signature is always
+masked), the resolved email, and a hint to try `sync run` and `sync status`. Running
+`install` again replaces the existing job and settings rather than duplicating them, and
+never touches the last-sent marker.
+
+### Per-platform job
+
+| Platform | Job | Catch-up |
+|---|---|---|
+| macOS | `~/Library/LaunchAgents/com.epam.codemie.analytics-sync.plist` — a launchd `LaunchAgent` (`StartCalendarInterval` from `--at`, `RunAtLoad=false`) | launchd re-runs a missed `StartCalendarInterval` fire once the Mac wakes |
+| Linux | `~/.config/systemd/user/codemie-analytics-sync.{service,timer}` — a systemd user timer (`Type=oneshot`, `OnCalendar=*-*-* HH:MM:00`, `Persistent=true`, `RandomizedDelaySec=300`) | `Persistent=true` fires the missed run once the user session is next active; install also runs `loginctl enable-linger $USER` so the timer fires even while the user is logged out |
+| Windows | Task Scheduler task `CodeMie Analytics Sync` (UTF-16LE+BOM XML, `StartWhenAvailable`, `IgnoreNew`, runs as the logged-in user at `InteractiveToken`/`LeastPrivilege`, runs on battery, `ExecutionTimeLimit PT30M`) | `StartWhenAvailable` fires the missed run once the machine is next on |
+
+Installing replaces an existing job with the same identity: macOS `launchctl bootout` then
+`bootstrap gui/<uid>`; Linux `systemctl --user daemon-reload` then `enable --now`; Windows
+`schtasks /Delete /F` then `/Create /XML`. A Linux machine without a reachable
+`systemctl --user` (e.g. a non-interactive SSH session with no user D-Bus), or any other
+unsupported platform, fails install before anything is written. If `loginctl enable-linger`
+fails, the job is still registered and the failure is only a warning in the install summary.
+
+The job always invokes `<node> <realpath of the CLI entry script> analytics sync run
+--scheduled` — the absolute `process.execPath` and the realpath of the running entry
+script, so an npm bin shim resolves to the real script (no `.cmd` shim on Windows).
+`--scheduled` is hidden from `--help`; a manual `codemie analytics sync run` never passes
+it. When the CLI starts with it, `bin/codemie.js` skips the update check/prompt and the
+"what's new" notice and runs pending migrations silently, since the job has no terminal and
+no user to notify.
+
+### `run`
+
+Exports the window since the last successful send (never narrower than the lookback) as
+the priced JSON report and POSTs it to the webhook in the collector's message shape, with
+the attachment name `codemie-analytics-<lowercased email slug>-<UTC date>.report.json`
+(the email slug is lowercased for sync only — the interactive `--export` naming is
+unchanged). Existing downstream Power Automate flows and harvesting keep working
+unchanged. The marker moves to the run's start time only after the webhook returns a 2xx.
+No sessions in the window sends nothing and leaves the marker untouched. The export has the
+same 70 MB ceiling as `--export json`; an export larger than that, a failed/unreachable
+webhook, or missing settings/identity are all logged and failed without moving the marker,
+so the next run covers the same sessions. There is no retry — the rolling window self-heals
+on the next scheduled run. `run` with nothing installed fails with the install command and
+sends nothing.
+
+Each run appends exactly one line to the run log, with the webhook signature always
+redacted:
+
+```
+<ISO> ok sent <name> <bytes>
+<ISO> skip <reason>
+<ISO> fail <setup|export|send> <redacted detail>
+```
+
+`setup` covers missing/invalid settings and identity errors; `export` covers a report-build
+failure or the 70 MB ceiling (the detail carries the size); `send` covers any other webhook
+delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
+
+### `status`
+
+Shows whether the OS job is actually registered and enabled (not just whether settings
+exist), the run time, lookback, include-external policy, the webhook host (signature
+masked), the last run's time and outcome parsed from the log (`sent`/`skipped`/`failed`
+with its reason, or "never"), and the time of the last successful send (the marker, or
+"never"). Nothing installed reports "not installed" with the install command and exits 0.
+Settings present but the job missing or disabled outside the CLI reports "disabled" and
+tells the developer to run install again.
+
+### `uninstall`
+
+Removes the OS job and the settings file holding the webhook. The last-sent marker and the
+run log are kept, so a later re-install does not re-send or duplicate what was already
+delivered. Running `uninstall` again (or on a machine where nothing is installed) reports
+"nothing to remove" and exits 0.
+
+### Taking over the standalone collector
+
+Developers who already ran the standalone collector's install command have the same job
+identities and `~/.codemie` state files; running `codemie analytics sync install` takes
+over cleanly: the collector's job is unregistered before the CLI's job is registered, and
+the existing last-sent marker is kept exactly as-is, so the next run neither re-sends
+already-delivered sessions nor leaves a gap. Exactly one delivery is made at the next
+scheduled time. The install summary says the collector's clone folder,
+`~/.codemie/codemie-onboarding`, can now be deleted — nothing in the CLI touches or
+requires that folder.
+
+### State
+
+All paths resolve via `getCodemiePath()` under `~/.codemie`:
+
+| What | Path |
+|---|---|
+| Settings (webhook, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
+| Last-sent marker | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
+| Run log | `logs/analytics-sync.log` (log directory mode `700`, log file mode `600`) |
+| macOS launchd stdout/stderr | `logs/analytics-sync.launchd.log` (kept apart from the run log so each run writes its outcome line once) |
+
+There are no `ANALYTICS_*` environment-variable overrides for any of this. The webhook URL
+lives only in the `600` settings file, never in `CredentialStore` — the unattended job must
+read it without an OS keychain prompt (see the exception in
+`.ai-run/guides/security/security-practices.md`). Every printed or logged string that may
+contain the URL is redacted to the host only before it is ever shown.

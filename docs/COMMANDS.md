@@ -744,6 +744,56 @@ codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
 
+### Scheduled delivery (`analytics sync`)
+
+```bash
+# Developer: register the daily delivery job on this machine
+codemie analytics sync install --webhook https://prod-00.westeurope.logic.azure.com/...?...&sig=<signature>
+codemie analytics sync install --webhook <url> --at 02:30 --lookback-days 14 --include-external always
+
+# Developer: show whether the job is installed and its last outcome
+codemie analytics sync status
+
+# Send the pending analytics report to the webhook now (also what the scheduled job runs)
+codemie analytics sync run
+
+# Developer: remove the delivery job and its settings from this machine
+codemie analytics sync uninstall
+```
+
+`sync` is a one-way daily job: it sends this machine's analytics reports to the team's
+webhook on a schedule, nothing comes back. `install` registers a per-user OS job (launchd
+on macOS, a systemd user timer on Linux, Task Scheduler on Windows) that runs
+`analytics sync run --scheduled` once a day at `--at` (default `03:00` local) and catches
+up a run missed while the machine was asleep or off — on Linux it also runs while the user
+is logged out, via `loginctl enable-linger`.
+
+**`install` options:** `--webhook <url>` (required, https), `--at <HH:MM>` (default
+`03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
+`--include-external <windows|always|never>` (default `windows`). Install prints the run
+time, lookback, policy, the webhook host (signature masked), the email the reports will
+carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
+replaces the existing job and settings rather than duplicating them, and keeps the
+last-sent marker.
+
+**Taking over the standalone collector.** If the standalone collector's daily job is
+already registered, `install` removes it before registering the CLI's job and keeps the
+collector's last-sent marker, so the next run neither re-sends nor leaves a gap. The
+output says the collector's clone folder, `~/.codemie/codemie-onboarding`, can be deleted.
+
+**State** (under `~/.codemie`, via `getCodemiePath()`): settings at `analytics-sync.json`
+(mode `600`), the last-sent marker at `analytics-last-sent`, and the run log at
+`logs/analytics-sync.log`.
+
+**`status`** reports enabled/disabled (whether the OS job is actually registered), the run
+time, lookback, policy, the webhook host, the last run's time and outcome (parsed from the
+log), and the last successful send (the marker) — or "not installed"/"never" where nothing
+has run yet. **`uninstall`** removes the OS job and the settings file; the last-sent marker
+and the run log are kept.
+
+See [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync) for the
+full per-platform scheduler detail, the run log line format, and the delivery contract.
+
 ## Log Management Commands
 
 View, filter, and manage debug logs and agent sessions.

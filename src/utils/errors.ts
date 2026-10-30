@@ -47,6 +47,68 @@ export class AnalyticsSourceError extends CodeMieError {
   }
 }
 
+export class SyncConfigError extends ConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SyncConfigError';
+  }
+}
+
+export class SyncTargetMissingError extends CodeMieError {
+  constructor() {
+    super('No sync target configured. Run: codemie analytics sync install --webhook <url>');
+    this.name = 'SyncTargetMissingError';
+  }
+}
+
+export class SyncIdentityMissingError extends CodeMieError {
+  constructor() {
+    super(
+      'No sync identity configured. Run: codemie analytics sync install, or set git config --global user.email'
+    );
+    this.name = 'SyncIdentityMissingError';
+  }
+}
+
+export class SyncSchedulerUnsupportedError extends CodeMieError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SyncSchedulerUnsupportedError';
+  }
+}
+
+/** An OS scheduler command (`launchctl bootstrap`, `systemctl --user ...`, `schtasks /Create`)
+ * failed while registering the analytics sync job; `output` is the command's stderr/stdout. */
+export class SyncSchedulerRegisterError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly output?: string
+  ) {
+    super(message);
+    this.name = 'SyncSchedulerRegisterError';
+  }
+}
+
+export class SyncDeliveryError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly status?: number
+  ) {
+    super(message);
+    this.name = 'SyncDeliveryError';
+  }
+}
+
+export class ExportTooLargeError extends CodeMieError {
+  constructor(
+    public readonly bytes: number,
+    public readonly limit: number
+  ) {
+    super(`Export size ${bytes} bytes exceeds limit of ${limit} bytes`);
+    this.name = 'ExportTooLargeError';
+  }
+}
+
 export class RegistrationItemNotFoundError extends CodeMieError {
   constructor(kind: 'assistant' | 'skill', identifier: string) {
     super(`No ${kind} found matching "${identifier}"`);

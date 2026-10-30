@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Add `codemie analytics sync install|run|status|uninstall` to codemie-code: per-OS daily scheduler (launchd/systemd user timer/Task Scheduler), marker+lookback webhook delivery identical to the standalone collector, status view, uninstall, take-over of standalone installs, and a safe non-interactive scheduled CLI start.",
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 24,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base L: a new `analytics sync` sub-tree under the analytics command (install with per-OS scheduler registration, run orchestration with marker and lookback, status, uninstall with take-over of standalone jobs) plus a narrow change to the CLI bootstrap (bin/codemie.js update check) and attachment naming. That is 4+ components across the CLI command, analytics domain and bootstrap areas. Bumped to XL because webhook delivery is a new external integration for codemie-code. The shared-utility flag was not applied separately: the bootstrap and slug changes are small, env-gated touches already covered by the L criterion 'shared utilities involved'." },
+    { "dimension": "technical_risk", "reason": "Base L: codemie-code has no scheduler, webhook or marker precedent. The closest pattern is the tested standalone collector in codemie-onboarding, which is ported rather than reused. Platform-specific registration (launchd bootstrap, systemd user timer with linger, UTF-16 schtasks XML) can only be partly tested off-platform. A scheduled CLI start must suppress update checks and prompts, and the Windows .cmd shim needs CVE-2024-27980-safe quoting. Bumped to XL for security: the webhook sig is the endpoint's whole authorization and must be masked in status, logs and errors, and the settings file must be mode 600. The edge-case test bump was not applied because the collector's node:test suites (scheduler, collect, marker, lookback, webhook, install-args) give ready-made case lists for the enumerated error paths. Take-over keeps the existing ~/.codemie state files in their current format and only replaces the OS job, so it is not scored as a data migration." },
+    { "dimension": "file_change_estimate", "reason": "About 8-12 new source modules under src/cli/commands/analytics/collector/ (scheduler generators and registration, marker, lookback, webhook, run, install args, identity, status, uninstall/take-over) with matching Vitest files. About 6-8 modified files: analytics/index.ts, the runAnalytics export path or report naming, bin/codemie.js, possibly cli-updater/paths, and docs/COMMANDS.md plus ANALYTICS-REPORT.md. These span src, bin and docs. The new-file count reaches the XXL threshold, but the modified count and the confinement to one command sub-tree fit XL." },
+    { "dimension": "affected_layers", "reason": "Base L: CLI command surface, service logic (run orchestration, window computation), persistence (mode-600 settings, last-sent marker and run log under CODEMIE_HOME), and infrastructure (OS schedulers and the CLI bootstrap path). Bumped to XL for the External layer added by the outbound webhook POST through the system proxy dispatcher." },
+    { "dimension": "requirements_clarity", "reason": "The story is approved with detailed acceptance criteria for every subcommand, recorded decisions D1-D10 (take-over, no updates in scheduled runs, email required, lowercase slug, delivery contract) and no open questions. Minor implementation details remain: a stable node/codemie job target when version managers are used, and how the bootstrap detects a scheduled run." },
+    { "dimension": "calibration", "reason": "Agrees with the project L anchor profile-provider-decoupling (total 23: XL scope, L risk, XXL files). This task has higher risk and layer spread from the OS scheduler and webhook surfaces, lower clarity cost, and a similar total." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): integration with a new external service (webhook delivery to Power Automate) for codemie-code",
+    "Affected Layers bumped from L (4) to XL (5): integration with a new external service adds the External layer",
+    "Technical Risk bumped from L (4) to XL (5): security requirement, because the webhook signature is a bearer secret that must be redacted from all output, plus a mode-600 settings file"
+  ],
+  "split_recommendation": null
+}

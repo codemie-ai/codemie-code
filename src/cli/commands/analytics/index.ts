@@ -2,20 +2,23 @@
  * Analytics command - display aggregated metrics from sessions
  */
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { AnalyticsAggregator } from './aggregator.js';
 import { AnalyticsFormatter } from './formatter.js';
+import { loadAnalytics } from './analytics-core.js';
 import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions } from './types.js';
+import type { InstallOptions } from './sync/types.js';
 import type { ExportFormat } from './report/output-target.js';
 import { logger } from '../../../utils/logger.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
+import { parseDate, parseDuration } from './date-args.js';
+import { EMAIL_REGEX } from './sync/identity.js';
 
 /**
  * Date on which the deprecated analytics report flags (`--report`, `--report-format`,
@@ -25,7 +28,12 @@ const LEGACY_FLAGS_REMOVAL_DATE = 'November 1, 2026';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
-    .description('Display aggregated metrics and analytics from sessions');
+    .description('Display aggregated metrics and analytics from sessions')
+    // Required so a descendant subcommand can redeclare an option name an ancestor also
+    // defines with different semantics without the ancestor swallowing it: each level only
+    // consumes its own options up to the first non-option argument, then hands the rest
+    // down untouched.
+    .enablePositionalOptions();
 
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
@@ -47,7 +55,83 @@ export function createAnalyticsCommand(): Command {
     });
   command.addCommand(otel);
 
+  // `codemie analytics sync` — a daily per-user OS job that sends this machine's analytics
+  // reports one way to the team's webhook. A pure group (no action of its own, no
+  // `--from/--to/--last`): everything lives in its four subcommands below.
+  command.addCommand(createSyncCommand());
+
   return command;
+}
+
+/**
+ * `codemie analytics sync` — the group description names the one-way delivery; each
+ * subcommand's own description says who runs it and what it changes (story AC, "Command
+ * surface"). `.enablePositionalOptions()` mirrors the parent command so a subcommand's own
+ * option (e.g. `install --include-external`) is never swallowed by an identically-named
+ * option on `analytics` or on `sync` itself (D14).
+ */
+function createSyncCommand(): Command {
+  const sync = new Command('sync')
+    .description("Send this machine's analytics reports one way to the team's webhook on a daily schedule")
+    .enablePositionalOptions();
+
+  sync.addCommand(createSyncInstallCommand());
+  sync.addCommand(createSyncStatusCommand());
+  sync.addCommand(createSyncRunCommand());
+  sync.addCommand(createSyncUninstallCommand());
+
+  return sync;
+}
+
+/** `codemie analytics sync install` — registers the daily OS job. Dynamic-imports the
+ * install runner so loading `codemie analytics` never pulls in the scheduler module. */
+function createSyncInstallCommand(): Command {
+  return new Command('install')
+    .description('Developer: register the daily delivery job on this machine')
+    .option('--webhook <url>', "The team's https webhook URL that receives the daily report")
+    .option('--at <HH:MM>', 'Daily run time, 24-hour local time (default: 03:00)')
+    .option('--lookback-days <n>', 'Session window looked back on each run, 1-30 (default: 7)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: windows)')
+    .action(async (options: InstallOptions) => {
+      const { runInstall, createRealInstallDeps } = await import('./sync/install.js');
+      process.exitCode = await runInstall(options, createRealInstallDeps());
+    });
+}
+
+/** `codemie analytics sync status` — reports whether the job is installed and enabled, the
+ * current settings, and the outcome of the last run. */
+function createSyncStatusCommand(): Command {
+  return new Command('status')
+    .description('Developer: show whether the delivery job is installed and its last outcome')
+    .action(async () => {
+      const { runStatus, createRealStatusDeps } = await import('./sync/status.js');
+      process.exitCode = await runStatus(createRealStatusDeps());
+    });
+}
+
+/** `codemie analytics sync run` — sends the pending analytics window to the webhook now.
+ * `--scheduled` is passed by the OS job itself (see `bin/codemie.js`/`scheduled-run.ts`) to
+ * skip the interactive startup checks; it is hidden from `--help` since developers invoke
+ * `run` without it. */
+function createSyncRunCommand(): Command {
+  return new Command('run')
+    .description('Developer or the daily scheduled job: send the pending analytics report to the webhook now')
+    .addOption(new Option('--scheduled').hideHelp())
+    .action(async () => {
+      const { runSync, realSyncDeps } = await import('./sync/run-sync.js');
+      process.exitCode = await runSync(realSyncDeps());
+    });
+}
+
+/** `codemie analytics sync uninstall` — removes the OS job and the settings holding the
+ * webhook. The last-sent marker and the run log are kept. */
+function createSyncUninstallCommand(): Command {
+  return new Command('uninstall')
+    .description('Developer: remove the delivery job and its settings from this machine')
+    .action(async () => {
+      const { runUninstall, createRealUninstallDeps } = await import('./sync/uninstall.js');
+      process.exitCode = await runUninstall(createRealUninstallDeps());
+    });
 }
 
 /** Filter, report, export, and verbosity options shared by every analytics source. */
@@ -132,40 +216,21 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     }
 
     const filter = parseFilterOptions(options);
-    const { rawSessions, cost } = await source.load({
-      filter,
-      includeExternal: options.includeExternal
-    });
+    const loaded = await loadAnalytics(source, filter, options.includeExternal, !options.verbose);
 
-    if (rawSessions.length === 0) {
+    if (loaded.kind === 'empty-raw') {
       console.log(chalk.yellow('\nNo sessions found matching the specified criteria.'));
       console.log(chalk.dim('Run with different filters or check that metrics are being collected.\n'));
       return;
     }
 
-    // Cost computed BEFORE aggregation so zero-delta sessions that still carry real usage are
-    // retained instead of dropped as "empty". Authoritative from the source (OTEL) when present;
-    // otherwise always enriched from correlated native logs. Both branches populate the same
-    // shape, so `costResult` narrows without a throw or a non-null assertion.
-    let costResult: NonNullable<typeof cost>;
-    if (cost) {
-      costResult = cost;
-    } else {
-      const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
-      costResult = await enrichCosts(rawSessions, realDeps);
-    }
-    const keepSessionIds = new Set(
-      [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-    );
-
-    // Aggregate data (normalize models unless --verbose flag is set)
-    const analytics = AnalyticsAggregator.aggregate(rawSessions, !options.verbose, keepSessionIds);
-
-    if (analytics.totalSessions === 0) {
+    if (loaded.kind === 'empty-aggregate') {
       console.log(chalk.yellow('\nNo analytics data available.'));
       console.log(chalk.dim('Metrics collection may not have been enabled for these sessions.\n'));
       return;
     }
+
+    const { analytics, costResult } = loaded;
 
     // Display results
     const formatter = new AnalyticsFormatter(options.verbose);
@@ -196,7 +261,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
             type: 'input',
             name: 'email',
             message: 'Enter your email address:',
-            validate: (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'Please enter a valid email address',
+            validate: (v: string) => EMAIL_REGEX.test(v.trim()) || 'Please enter a valid email address',
           }]);
           userEmail = email.trim();
           await ConfigLoader.saveUserEmail(userEmail).catch(() => { /* non-fatal */ });
@@ -337,40 +402,3 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
   return filter;
 }
 
-/**
- * Parse date string (YYYY-MM-DD) to Date object
- */
-function parseDate(dateStr: string): Date | null {
-  // Enforce the documented YYYY-MM-DD shape. Without this, `new Date()` accepts ambiguous
-  // inputs (MM/DD/YYYY, prose dates) with format-dependent timezone handling, silently
-  // producing a wrong filter window instead of triggering the caller's "invalid date" warning.
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return null;
-  }
-  const date = new Date(dateStr);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-/**
- * Parse duration string (e.g., "7d", "24h") to milliseconds
- */
-function parseDuration(durationStr: string): number | null {
-  const match = durationStr.match(/^(\d+)([dhm])$/);
-  if (!match) {
-    return null;
-  }
-
-  const value = parseInt(match[1], 10);
-  const unit = match[2];
-
-  switch (unit) {
-    case 'd':
-      return value * 24 * 60 * 60 * 1000;
-    case 'h':
-      return value * 60 * 60 * 1000;
-    case 'm':
-      return value * 60 * 1000;
-    default:
-      return null;
-  }
-}

@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../dist/utils/logger.js';
+import { isScheduledSyncRun } from '../dist/utils/scheduled-run.js';
 
 // Tolerate EPIPE when stdout/stderr is piped into a consumer that closes early
 // (e.g. `codemie | head -1`). Without a handler, Node throws on the next write
@@ -27,6 +28,13 @@ if (isHookProcess) {
   logger.setConsoleStream(null);
 }
 
+// The daily OS scheduler job for `analytics sync run` invokes this script
+// unattended (no TTY, no user to prompt or notify). Detect that invocation
+// so migrations run silently and the update check / what's-new notice are
+// skipped. A manual `codemie analytics sync run` (no --scheduled) keeps
+// today's normal interactive startup.
+const isScheduledRun = isScheduledSyncRun(process.argv);
+
 // Imported after the console switch: their module graph logs at import time.
 const { MigrationRunner } = await import('../dist/migrations/index.js');
 const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js');
@@ -36,7 +44,7 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 try {
   if (await MigrationRunner.hasPending()) {
     await MigrationRunner.runPending({
-      silent: isHookProcess  // Show migration messages to user, except in a hook
+      silent: isHookProcess || isScheduledRun  // Show migration messages to user, except in a hook or unattended run
     });
   }
 } catch (error) {
@@ -50,9 +58,10 @@ try {
 
 // Check for CLI updates (silent by default, configurable via CODEMIE_AUTO_UPDATE)
 // Skip in test environments to avoid timeouts and network calls during testing
+// Skip for the unattended scheduled analytics sync job (no user to notify)
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment && !isHookProcess) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -66,7 +75,8 @@ if (!isTestEnvironment && !isHookProcess) {
 // invocations with their own output contract (--version/-V/--task/--help);
 // a hook process (`hook`, `sound`) never reaches it. A skipped notice writes
 // no marker, so it shows on the next run in a terminal.
-if (!isTestEnvironment && !isHookProcess) {
+// Also skipped for the unattended scheduled analytics sync job.
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun) {
   try {
     const { readFileSync } = await import('node:fs');
     const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');

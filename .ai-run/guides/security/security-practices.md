@@ -103,6 +103,13 @@ await store.deleteSSOCredentials(url);
 
 Reference: `src/utils/security.ts:200` — `CredentialStore`
 
+**Exception — analytics sync webhook.** `codemie analytics sync install` stores the webhook
+URL in `~/.codemie/analytics-sync.json` (mode `0o600`), not `CredentialStore`: the daily
+unattended job must read it without an OS keychain/credential prompt. The signed `sig=`
+query parameter is still secret — every printed or logged string that may contain the URL
+goes through `redactSecrets()` (`src/cli/commands/analytics/sync/redact.ts`) first, and
+`status`/the install summary show only the webhook's host.
+
 ---
 
 ## Data Sanitization for Logging
