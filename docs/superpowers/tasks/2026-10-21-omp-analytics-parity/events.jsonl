@@ -1,0 +1,1 @@
+{"schema":1,"ts":"2026-10-21T15:36:51Z","event":"decision.recorded","phase":0,"actor":"sdlc-gate","summary":"Decision recorded for plan.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}

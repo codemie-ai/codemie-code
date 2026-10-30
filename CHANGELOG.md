@@ -11,10 +11,14 @@ All notable changes to this project are documented in this file, following [Keep
 - `codemie whatsnew` command showing release notes from this changelog
 - Once-per-upgrade "What's new" notice on CLI start after an update
 - Tips also surface after `codemie doctor` and on the first-run, quick-start, and post-setup screens
+- `codemie analytics` now includes oh-my-pi sub-agent spend and auxiliary model usage in omp token and cost totals, reports omp file changes, net lines and languages, shows omp skill/agent dispatches on the Timeline with per-agent cost and a root/unlinked allocation, recognizes more framework bundles (SecOps, Matt Pocock Skills, Caveman, Ponytail, CodeMie Skills, Herdr and the full CodeMie AI Factory set), and shows omp Commands as "not recorded"
 
 ### Fixed
 
 - CLI no longer crashes with EPIPE when its output pipe closes early (e.g. `codemie | head -1`)
+- `codemie analytics --include-external` now finds oh-my-pi sessions in `~/.omp/agent/sessions`, including transcripts that begin with oh-my-pi's title record, and reports them as their own `omp` agent ("Oh My Pi") instead of folding them into Pi; filter with `--agent omp`. Plugin skills are named after their plugin (`sdlc-factory/mr-creator`), so the Frameworks view attributes those sessions to CodeMie AI Factory or Superpowers instead of "Pure chat"
+- The analytics report and terminal output label every agent by its product name (Claude Code, CodeMie Code, CodeMie Codex, …) instead of mixing raw keys such as `claude` with names such as "GitHub Copilot CLI"; chart legends use the same labels
+- Native (untracked) Pi and oh-my-pi sessions now report tool calls, skills and sub-agents; oh-my-pi `/skill:` prompts, `skill://` loads and `task` dispatches are recognized, and `sdlc-factory/…`, `sdlc-standard`, `sdlc-doctor` and `sdlc-status` mark a session as CodeMie AI Factory
 
 ## [0.15.1] - 2026-09-08
 

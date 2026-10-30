@@ -31,7 +31,7 @@ codemie analytics --open --include-external
 
 > **If your question is "what did AI actually cost us?", you probably want `--include-external`.**
 > By default the report counts only sessions CodeMie launched. Any time you ran `claude`,
-> `codex`, `gemini`, `pi`, or `copilot` directly, that spend is discovered but withheld.
+> `codex`, `gemini`, `pi`, `omp` (oh-my-pi), or `copilot` directly, that spend is discovered but withheld.
 > See [Session provenance](#session-provenance) for why, and for the trade-off.
 
 ---
@@ -279,7 +279,7 @@ When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `
 CodeMie merges two sources to give the most complete picture:
 
 1. **Tracked sessions** — metrics written by the CodeMie hooks during sessions CodeMie launched
-2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, and `copilot`, discovered automatically and deduped against tracked sessions
+2. **Native agent logs** — transcripts left on disk by `claude`, `codex`, `gemini`, `pi`, `omp` (oh-my-pi), and `copilot`, discovered automatically and deduped against tracked sessions
 
 Native-log discovery always runs; which discovered sessions are counted is decided by their provenance (below).
 
@@ -296,7 +296,7 @@ Finding a native log is not the same as counting it. Every discovered session is
 | Provenance | Meaning | In the report by default? |
 |---|---|---|
 | `native` | CodeMie launched this session (`codemie-claude`, `codemie-codex`, …). Its transcript carries a `codemie_session_start` ownership marker. | ✅ Yes |
-| `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
+| `native-external` | The same agent, run **directly** — `claude`, `codex`, `gemini`, `pi`, `omp`, `copilot` — with no CodeMie involvement, so no ownership marker. | ❌ **No** — opt in with `--include-external` |
 | `native-unmanaged` | Reserved for agents CodeMie can only ever read analytics for and never launches. No agent currently carries this tag. | ✅ Yes |
 
 The default exists so that a report titled "CodeMie usage" measures CodeMie usage: without the ownership gate, every unmanaged run of an agent CodeMie *can* manage would be silently folded into CodeMie's numbers.

@@ -37,6 +37,10 @@ import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent, sessionAdapterKey } from './pi-agent.js';
+import { allocatePiUsage, isPiLayoutRunId } from './pi-dispatch-allocation.js';
+import { PI_SUBAGENT_RUN } from '@/agents/plugins/pi/pi.session.js';
+import { extractPiToolCalls, isPiAssistantMessage, isPiMessageEntry, type PiEntry } from '@/agents/plugins/pi/pi.types.js';
 import { isLocalModel } from './local-models.js';
 import { logger } from '@/utils/logger.js';
 
@@ -59,7 +63,7 @@ function resolveSessionAdapter(agentName: string): SessionAdapter | null {
   if (isCodexFamilyAgent(agentName)) {
     return AgentRegistry.getAgent('codex')?.getSessionAdapter?.() ?? null;
   }
-  const fromRegistry = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
+  const fromRegistry = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
   if (fromRegistry) {
     return fromRegistry;
   }
@@ -203,7 +207,7 @@ function maxOwnRecordTs(agentName: string, parsed: ParsedSession, upperBoundExcl
     records = extractClaudeUsageRecords(parsed);
   } else if (isCodexFamilyAgent(a)) {
     records = extractCodexUsageRecords(parsed);
-  } else if (a === 'pi') {
+  } else if (isPiFamilyAgent(a)) {
     records = extractPiUsageRecords(parsed);
   } else {
     return undefined;
@@ -480,24 +484,47 @@ function enrichDispatchCosts(
   agentName: string,
   sessionRecords: UsageRecord[]
 ): void {
-  const byToolUseId = new Map<string, { messages: unknown[] }>();
+  // Pi links a dispatch to its child transcript by agent id (runs only); the rest by tool-use id.
+  const pi = isPiFamilyAgent(agentName);
+  const byKey = new Map<string, { messages: unknown[] }>();
+  // Plain-Pi runs carry no task id; paired with untasked agent dispatches in order below.
+  const piLayoutRuns: Array<{ messages: unknown[] }> = [];
   for (const sub of parsed.subagents ?? []) {
-    if (sub.toolUseId && Array.isArray(sub.messages)) {
-      byToolUseId.set(sub.toolUseId, sub);
+    if (!Array.isArray(sub.messages)) continue;
+    if (!pi) {
+      if (sub.toolUseId) byKey.set(sub.toolUseId, sub);
+      continue;
     }
+    if (sub.agentType !== PI_SUBAGENT_RUN || !sub.agentId) continue;
+    if (isPiLayoutRunId(sub.agentId)) {
+      piLayoutRuns.push(sub);
+      continue;
+    }
+    // omp: a nested child `A/A.B` folds into the top-level dispatch `A` that spawned it.
+    const top = sub.agentId.split('/')[0];
+    const merged = byKey.get(top);
+    byKey.set(top, { messages: merged ? [...merged.messages, ...sub.messages] : sub.messages });
   }
+  const untasked = pi ? dispatches.filter((d) => d.kind === 'agent' && !d._taskId) : [];
+  // ponytail: order pairing only when counts match 1:1; needs a dispatch→run id to do better.
+  const pairPiRuns = untasked.length > 0 && untasked.length === piLayoutRuns.length;
 
   for (const dispatch of dispatches) {
     if (dispatch.kind === 'skill') {
       enrichSkillDispatchCost(dispatch, sessionRecords);
       continue;
     }
-    if (dispatch.kind !== 'agent' || !dispatch._toolUseId) continue;
-    const sub = byToolUseId.get(dispatch._toolUseId);
+    if (dispatch.kind !== 'agent') continue;
+    const key = pi ? dispatch._taskId : dispatch._toolUseId;
+    const sub = key
+      ? byKey.get(key)
+      : pairPiRuns
+        ? piLayoutRuns[untasked.indexOf(dispatch)]
+        : undefined;
     if (!sub) continue;
 
     const subSeen = new Set<string>();
-    const usageAgent = isCodexFamilyAgent(agentName) ? 'codex' : 'claude';
+    const usageAgent = isCodexFamilyAgent(agentName) ? 'codex' : pi ? 'pi' : 'claude';
     const records = gatherDedupedUsageRecords(
       usageAgent,
       { sessionId: '', agentName: usageAgent, metadata: {}, messages: sub.messages } as unknown as ParsedSession,
@@ -525,6 +552,13 @@ function enrichDispatchCosts(
         if (raw.type === 'response_item' && raw.payload?.type === 'function_call' && raw.payload.name) {
           const name = raw.payload.name.toLowerCase();
           toolCounts[name] = (toolCounts[name] || 0) + 1;
+        }
+      }
+    } else if (isPiFamilyAgent(agentKey)) {
+      for (const entry of sub.messages as PiEntry[]) {
+        if (!isPiMessageEntry(entry) || !isPiAssistantMessage(entry.message)) continue;
+        for (const call of extractPiToolCalls(entry.message)) {
+          toolCounts[call.name] = (toolCounts[call.name] || 0) + 1;
         }
       }
     } else {
@@ -688,6 +722,7 @@ export async function enrichCosts(
           cost.dispatchesComplete = complete;
         } else {
           enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
+          if (isPiFamilyAgent(entry.agentName)) allocatePiUsage(dispatches, entry.parsed, records, cost);
         }
         if (dispatches.length) {
           // Strip internal _toolUseId before storing in the public cost index
