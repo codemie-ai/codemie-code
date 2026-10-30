@@ -9,6 +9,7 @@ import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
+  PINNED_NATIVE_SESSION_ENV,
 } from './copilot-cli.constants.js';
 import { recordRolloutCorrelation } from '../codex/codex.correlation.js';
 import { getCopilotSessionStateRoot, sameDirectory } from './copilot-cli.paths.js';
@@ -69,7 +70,6 @@ export async function syncConnectorHookFile(copilotHome: string): Promise<void> 
 
 // Flags that make Copilot pick (or resume) a session itself; CodeMie must not add --session-id.
 const COPILOT_SESSION_SELECTION_FLAGS = ['--session-id', '--resume', '-r', '--continue', '--connect'];
-const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
   return {

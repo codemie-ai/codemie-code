@@ -72,6 +72,15 @@ describe('preToolUse payload', () => {
     expect(buildToolEvent({}, 'view', { path: '/repo/a.ts' }, { toolUseId: 'x' }).file_path).toBeUndefined();
   });
 
+  it('takes apply_patch file_path from the patch and hides a patch touching a credential file', () => {
+    const plain = { input: '*** Begin Patch\n*** Update File: /repo/a.ts\n-a\n+b\n*** End Patch' };
+    expect(buildToolEvent({}, 'apply_patch', plain, { toolUseId: 'x' })).toMatchObject({ file_path: '/repo/a.ts', tool_input: plain });
+    const secret = { input: '*** Begin Patch\n*** Update File: /repo/a.ts\n+b\n*** Add File: /repo/.env\n+SECRET=1\n*** End Patch' };
+    const event = buildToolEvent({}, 'apply_patch', secret, { toolUseId: 'x' });
+    expect(event.tool_input).toEqual({ path: '/repo/.env' });
+    expect(event.file_path).toBe('/repo/a.ts');
+  });
+
   it('drops content of credential files but keeps the path', () => {
     const end = { toolName: 'view', toolArgs: {}, success: true, resultText: 'SECRET=1' };
     const event = buildToolEvent({}, 'view', { path: '/repo/.env', extra: 'x' }, { toolUseId: 'x', end });

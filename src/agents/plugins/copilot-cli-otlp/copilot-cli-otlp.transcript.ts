@@ -9,6 +9,8 @@ export interface TranscriptRead {
   nextOffset: number;
   /** True when the file was larger than the cap and only its tail was read. */
   truncated: boolean;
+  /** True when the stored offset was past the end of the file, so the transcript was re-read from the start. */
+  reset: boolean;
 }
 
 /**
@@ -24,7 +26,8 @@ export function readTranscriptFrom(
   try {
     fd = openSync(filePath, 'r');
     const size = fstatSync(fd).size;
-    let start = fromOffset > size ? 0 : fromOffset;
+    const reset = fromOffset > size;
+    let start = reset ? 0 : fromOffset;
     let truncated = false;
     if (size - start > maxBytes) {
       start = size - maxBytes;
@@ -36,7 +39,7 @@ export function readTranscriptFrom(
 
     const lastNewline = buffer.lastIndexOf(0x0a);
     if (lastNewline < 0) {
-      return { events: [], nextOffset: start, truncated };
+      return { events: [], nextOffset: start, truncated, reset };
     }
     let text = buffer.subarray(0, lastNewline + 1).toString('utf-8');
     if (truncated) {
@@ -52,7 +55,7 @@ export function readTranscriptFrom(
         // Unparseable line: dropped, as the managed reader does.
       }
     }
-    return { events, nextOffset: start + lastNewline + 1, truncated };
+    return { events, nextOffset: start + lastNewline + 1, truncated, reset };
   } catch {
     return null;
   } finally {

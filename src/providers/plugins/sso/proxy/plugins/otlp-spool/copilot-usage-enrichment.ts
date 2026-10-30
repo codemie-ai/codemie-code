@@ -45,9 +45,15 @@ function isInside(root: string, candidate: string): boolean {
   return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+/** Under the user's home, or (for an explicit COPILOT_HOME elsewhere) a directory the current user owns. */
+function isTrustedRoot(root: string): boolean {
+  if (isInside(realpathSync(homedir()), root)) return true;
+  return typeof process.getuid === 'function' && statSync(root).uid === process.getuid();
+}
+
 /**
  * Session-state root: the hook's recorded override when it passes validation, else the default.
- * Valid means a `session-state` directory under the user's home whose `<id>/events.jsonl`
+ * Valid means a `session-state` directory under the user's home (or owned by the user, POSIX) whose `<id>/events.jsonl`
  * resolves inside it and is a regular file.
  */
 function resolveStateRoot(sessionId: string): string {
@@ -56,7 +62,8 @@ function resolveStateRoot(sessionId: string): string {
   if (!recorded) return fallback;
   try {
     const root = realpathSync(recorded);
-    if (root.split(/[\\/]/).pop() !== 'session-state' || !isInside(realpathSync(homedir()), root)) {
+    if (root.split(/[\\/]/).pop() !== 'session-state' || !isTrustedRoot(root)) {
+      logger.warn('[copilot-usage] recorded session-state root rejected (must be a session-state directory under the home directory or owned by the current user); using the default root', recorded);
       return fallback;
     }
     const file = realpathSync(join(root, sessionId, 'events.jsonl'));

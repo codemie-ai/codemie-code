@@ -42,6 +42,12 @@ export function stripDesktopPreamble(text: string): string {
 const SLASH_INSTRUCTION_RE = /^The user has (?:requested|invoked)\b[^\n]*?\bvia the (\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*) command\b/i;
 const TYPED_SLASH_RE = /^(\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*)(?=\s|$)/;
 
+const KNOWN_SLASH_COMMANDS: ReadonlySet<string> = new Set([
+  'agent', 'allow-all', 'clear', 'compact', 'context', 'cwd', 'delegate', 'diff', 'exit', 'feedback', 'fleet', 'help', 'init',
+  'login', 'logout', 'mcp', 'model', 'new', 'plan', 'quit', 'rename', 'research', 'resume', 'review', 'security-review', 'session', 'share',
+  'skills', 'terminal-setup', 'theme', 'usage', 'user',
+]);
+
 // /fleet is injected as "You are now in fleet mode. Dispatch sub-agents ..." with no "via the /x command" wording.
 const FLEET_INSTRUCTION_RE = /^You are now in fleet mode\b/i;
 
@@ -77,8 +83,14 @@ export function extractSlashCommand(content?: string, transformedContent?: strin
     if (typeof candidate !== 'string') continue;
     const text = stripDesktopPreamble(candidate);
     if (FLEET_INSTRUCTION_RE.test(text) || FLEET_LABEL_RE.test(text)) return 'fleet';
-    const match = SLASH_INSTRUCTION_RE.exec(text) ?? TYPED_SLASH_RE.exec(text);
-    if (match) return match[1].slice(1);
+    const instruction = SLASH_INSTRUCTION_RE.exec(text);
+    if (instruction) return instruction[1].slice(1);
+    // A typed token is a command only when Copilot rewrote the message (transformed differs from typed),
+    // it is namespaced, or it is a known built-in; otherwise it is a path such as /tmp is full.
+    const typed = TYPED_SLASH_RE.exec(text)?.[1];
+    if (!typed) continue;
+    const rewritten = typeof transformedContent === 'string' && transformedContent !== content;
+    if (rewritten || typed.includes(':') || KNOWN_SLASH_COMMANDS.has(typed.slice(1).toLowerCase())) return typed.slice(1);
   }
   return undefined;
 }
@@ -88,3 +100,6 @@ export const COPILOT_CLI_INSTALL_ALIAS = 'copilot';
 
 /** Runtime client type used for managed Copilot sessions. */
 export const COPILOT_CLI_CLIENT_TYPE = 'codemie-copilot';
+
+/** Set by the managed launcher when it pins Copilot's own session id via `--session-id`. */
+export const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';

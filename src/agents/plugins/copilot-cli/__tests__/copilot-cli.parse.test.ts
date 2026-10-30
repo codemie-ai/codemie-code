@@ -196,6 +196,41 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'hello there' }]);
   });
 
+  it('counts a slash command from the transformed instruction and shows it as the prompt', async () => {
+    const f = join(dir, 'slash.jsonl');
+    const transformedContent = 'The user has requested a review via the /review command. Use the task tool.';
+    writeFileSync(
+      f,
+      [
+        { type: 'user.message', data: { content: transformedContent, transformedContent } },
+        { type: 'user.message', data: { content: '/tmp is full' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-slash');
+    expect(parsed.metrics!.commandInvocations).toEqual({ review: 1 });
+    expect(parsed.metrics!.userPrompts![0].text).toBe('/review');
+    expect(parsed.metrics!.userPrompts![1].text).toBe('/tmp is full');
+  });
+
+  it('records every file of a successful apply_patch call', async () => {
+    const f = join(dir, 'patch.jsonl');
+    const patch = '*** Begin Patch\n*** Add File: /repo/app/new.ts\n+x\n*** Update File: /repo/app/a.ts\n-a\n+b\n*** End Patch';
+    writeFileSync(
+      f,
+      [
+        { type: 'tool.execution_start', data: { toolCallId: 'p1', toolName: 'apply_patch', arguments: { input: patch } } },
+        { type: 'tool.execution_complete', data: { toolCallId: 'p1', success: true } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-patch');
+    expect(parsed.metrics!.fileOperations!.map((o) => `${o.type}:${o.path}`)).toEqual([
+      'write:/repo/app/new.ts',
+      'edit:/repo/app/a.ts',
+    ]);
+  });
+
   it('reads the real content-based Copilot transcript fields', async () => {
     const contentFile = join(dir, 'content-shaped.jsonl');
     writeFileSync(

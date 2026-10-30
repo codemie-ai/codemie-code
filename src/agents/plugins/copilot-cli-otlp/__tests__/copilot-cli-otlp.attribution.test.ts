@@ -40,10 +40,13 @@ describe('resolveAgentFields', () => {
     rmSync(join(root, 'copilot'), { recursive: true, force: true });
   });
 
-  it('labels a session managed only when its id equals CODEMIE_SESSION_ID', async () => {
+  it('labels a session managed when its id is the pinned one, or when the launch was not pinned', async () => {
     process.env.CODEMIE_SESSION_ID = SID;
+    process.env.CODEMIE_COPILOT_NATIVE_SESSION_ID = SID;
     expect((await plugin.resolveAgentFields({ sessionId: SID, cwd: '/r' })).entrypoint).toBe('managed');
     expect((await plugin.resolveAgentFields({ sessionId: 'other-session', cwd: '/r' })).entrypoint).toBe('native');
+    delete process.env.CODEMIE_COPILOT_NATIVE_SESSION_ID;
+    expect((await plugin.resolveAgentFields({ sessionId: 'resumed-session', cwd: '/r' })).entrypoint).toBe('managed');
     delete process.env.CODEMIE_SESSION_ID;
     expect((await plugin.resolveAgentFields({ sessionId: SID, cwd: '/r' })).entrypoint).toBe('native');
   });

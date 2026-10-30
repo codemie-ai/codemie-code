@@ -416,8 +416,8 @@ describe('CopilotCliOtlpPlugin platform resolution', () => {
     expect((await resolve('plat-nameless')).platform).toBe('copilot-cli');
   });
 
-  it('does not emit platform while the manifest is not written yet', async () => {
-    expect(await resolve('plat-missing')).not.toHaveProperty('platform');
+  it('defaults platform to copilot-cli while the manifest is not written yet', async () => {
+    expect((await resolve('plat-missing')).platform).toBe('copilot-cli');
   });
 });
 

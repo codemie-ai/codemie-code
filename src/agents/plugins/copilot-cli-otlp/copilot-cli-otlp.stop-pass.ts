@@ -38,12 +38,14 @@ export function resolveTranscriptPath(sessionId: string, transcriptPath?: string
  * daemon's final pass catches up.
  */
 export function buildStopPass(sessionId: string, transcriptPath?: string): StopPass | null {
-  const cursor = readSessionState(sessionId).usageCursor;
-  const read = readTranscriptFrom(resolveTranscriptPath(sessionId, transcriptPath), cursor?.offset ?? 0);
+  const storedCursor = readSessionState(sessionId).usageCursor;
+  const read = readTranscriptFrom(resolveTranscriptPath(sessionId, transcriptPath), storedCursor?.offset ?? 0);
   if (!read) return null;
+  // A replaced or truncated transcript is re-read from the start, so earlier totals no longer apply.
+  const cursor = read.reset ? undefined : storedCursor;
   if (read.events.length === 0 && !cursor) return null;
 
-  const slice = summarizeSlice(sessionId, read.events, cursor ? 'incremental' : 'full', cursor?.model);
+  const slice = summarizeSlice(sessionId, read.events, cursor ? 'incremental' : 'full', cursor?.model, cursor?.openToolCalls);
   const counters = addCounters(cursor?.counters ?? EMPTY_COUNTERS, slice.counters);
   const details = mergeDetails(cursor?.details ?? EMPTY_DETAILS, slice.details);
 
@@ -70,6 +72,7 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
     counters,
     details,
     model: slice.lastModel ?? cursor?.model,
+    openToolCalls: slice.openCalls,
   };
   return {
     events: [...slice.rows, summary],

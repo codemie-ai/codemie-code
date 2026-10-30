@@ -23,6 +23,8 @@ describe('slash command detection', () => {
     expect(extractSlashCommand('/sdlc-factory:sdlc-standard x')).toBe('sdlc-factory:sdlc-standard');
     expect(extractSlashCommand('/v1.2 notes')).toBeUndefined();
     expect(extractSlashCommand('/1 item')).toBeUndefined();
+    expect(extractSlashCommand('/tmp is full')).toBeUndefined();
+    expect(extractSlashCommand('/tmp is full', '/tmp is full')).toBeUndefined();
   });
 
   it('falls back to the fleet label when the transformed text is missing', () => {

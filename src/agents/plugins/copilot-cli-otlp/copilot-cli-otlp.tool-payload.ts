@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
 import { isSensitiveFilePath } from '@/agents/plugins/claude-code-otlp/event-fields/tool-fields.js';
+import { extractPatchFiles, FILE_WRITE_TOOLS } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import type { CopilotCliHookInput } from './copilot-cli-otlp.types.js';
-
-/** Tools whose `args.path` is the file they write; independent of the managed adapter's set. */
-const FILE_PATH_TOOLS: ReadonlySet<string> = new Set(['create', 'edit', 'str_replace_editor', 'apply_patch']);
 
 export interface ToolStartCall {
   toolUseId: string;
@@ -76,7 +74,10 @@ export function buildToolEvent(
   toolArgs: unknown,
   opts: { toolUseId: string; end?: ToolEndCall }
 ): Record<string, unknown> {
-  const targetPath = argsPath(toolArgs);
+  // A patch carries file content too, so any credential file among its targets hides the payload.
+  const targetPath = toolName === 'apply_patch'
+    ? extractPatchFiles(toolArgs).find((f) => isSensitiveFilePath(f.path))?.path
+    : argsPath(toolArgs);
   const sensitive = targetPath !== undefined && isSensitiveFilePath(targetPath);
   const event: Record<string, unknown> = {
     ...base,
@@ -112,9 +113,13 @@ export function extractSkillName(toolName: string, toolArgs: unknown): string | 
   return name.length > 0 ? name.slice(0, 300) : undefined;
 }
 
-/** Target file path of a file-writing tool call, taken before the base class truncates `tool_input`. */
+/**
+ * Target file path of a file-writing tool call, taken before the base class truncates `tool_input`.
+ * For `apply_patch` it is the first file of the patch.
+ */
 export function extractFilePath(toolName: string, toolArgs: unknown): string | undefined {
-  if (!FILE_PATH_TOOLS.has(toolName) || typeof toolArgs !== 'object' || toolArgs === null) {
+  if (toolName === 'apply_patch') return extractPatchFiles(toolArgs)[0]?.path;
+  if (!FILE_WRITE_TOOLS.has(toolName) || typeof toolArgs !== 'object' || toolArgs === null) {
     return undefined;
   }
   const path = (toolArgs as Record<string, unknown>)['path'];

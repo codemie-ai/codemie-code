@@ -1,5 +1,5 @@
 import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { extractCopilotToolActivity } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
+import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import { extractSlashCommand } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE } from './copilot-cli-otlp.request-usage.js';
 
@@ -32,10 +32,18 @@ export function summarizeSlice(
   sessionId: string,
   events: CopilotEvent[],
   mode: 'full' | 'incremental',
-  initialModel?: string
-): { counters: SummaryCounters; details: SummaryDetails; rows: Record<string, unknown>[]; partial: boolean; lastModel?: string } {
+  initialModel?: string,
+  seedOpenCalls?: Record<string, OpenToolCall>
+): {
+  counters: SummaryCounters;
+  details: SummaryDetails;
+  rows: Record<string, unknown>[];
+  partial: boolean;
+  lastModel?: string;
+  openCalls: Record<string, OpenToolCall>;
+} {
   const { rows, partial, lastModel } = buildUsageRows(sessionId, events, mode, initialModel);
-  const activity = extractCopilotToolActivity(events);
+  const activity = extractCopilotToolActivity(events, seedOpenCalls);
   const mainRequests = new Set<string>();
   const models: Record<string, number> = {};
   for (const row of rows) {
@@ -90,6 +98,7 @@ export function summarizeSlice(
     rows,
     partial,
     lastModel,
+    openCalls: activity.openCalls,
   };
 }
 

@@ -1,8 +1,9 @@
-import { mkdirSync, openSync, closeSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, readdirSync } from 'node:fs';
+import { linkSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
+import type { OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import type { SummaryCounters, SummaryDetails } from './copilot-cli-otlp.usage.js';
 
 /** Per-session hook-side state lives in two small files so the hot tool path never touches usage state. */
@@ -36,7 +37,24 @@ function tryAcquire(lockPath: string): boolean {
   } catch {
     try {
       if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-        unlinkSync(lockPath);
+        // Rename to a unique tombstone so only one waiter wins, then verify it was the stale lock
+        // and not a fresh one created in between.
+        const tombstone = `${lockPath}.${process.pid}.${Date.now()}.stale`;
+        renameSync(lockPath, tombstone);
+        try {
+          if (Date.now() - statSync(tombstone).mtimeMs <= LOCK_STALE_MS) {
+            // Grabbed a live lock: put it back unless someone else holds the path now.
+            linkSync(tombstone, lockPath);
+          }
+        } catch {
+          // Lock path already re-taken or tombstone unreadable.
+        } finally {
+          try {
+            unlinkSync(tombstone);
+          } catch {
+            // Already gone.
+          }
+        }
       }
     } catch {
       // Lock vanished or cannot be inspected: retry.
@@ -103,6 +121,8 @@ export interface UsageCursor {
   details: SummaryDetails;
   /** Last model seen, so an incremental slice without `session.model_change` can still label messages. */
   model?: string;
+  /** Tool calls started but not yet completed at the cursor, so a call spanning an agentStop is still counted. */
+  openToolCalls?: Record<string, OpenToolCall>;
 }
 
 export interface SessionState {

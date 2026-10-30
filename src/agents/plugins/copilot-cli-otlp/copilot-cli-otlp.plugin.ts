@@ -12,7 +12,7 @@ import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { extractSlashCommand, normalizeUserPrompt, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { extractSlashCommand, normalizeUserPrompt, PINNED_NATIVE_SESSION_ENV, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
@@ -20,6 +20,17 @@ import { TOOL_STATE_BUDGET_MS, readSessionState, resolveRootSessionId, sweepStal
 import { recordOpenStarts, resolveEndToolUseId } from './copilot-cli-otlp.tool-correlation.js';
 import { buildToolEvent, extractEndCall, extractStartCalls } from './copilot-cli-otlp.tool-payload.js';
 import { type CliBlockOutput, type CliForwardDecision, type CopilotCliHookInput, isCopilotCliHookInput } from './copilot-cli-otlp.types.js';
+
+/**
+ * A session is managed when CodeMie launched it: its id is the pinned one, or the launch could not pin
+ * (`--resume`/`--continue`) while CODEMIE_SESSION_ID is set. A native `copilot` started inside a
+ * managed shell has its own id that differs from the pinned one.
+ */
+function isManagedSession(sessionId: string): boolean {
+  if (!process.env.CODEMIE_SESSION_ID) return false;
+  const pinned = process.env[PINNED_NATIVE_SESSION_ENV];
+  return pinned ? pinned === sessionId : true;
+}
 
 const HEAD_READ_BYTES = 64 * 1024;
 
@@ -105,10 +116,9 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     const sessionDir = join(getCopilotSessionStateRoot(), input.sessionId);
     const manifest = readWorkspaceManifest(sessionDir);
     const fields: Record<string, unknown> = {
-      // Not emitted until the manifest exists, so one session is never split across harness values.
-      ...(manifest && { platform: resolveCopilotAgentKey(manifest.clientName) }),
-      // A native `copilot` started inside a managed shell inherits CODEMIE_SESSION_ID but has its own session id.
-      entrypoint: process.env.CODEMIE_SESSION_ID && process.env.CODEMIE_SESSION_ID === input.sessionId ? 'managed' : 'native',
+      // Defaults to the CLI harness until the manifest exists, so early hooks never show as Unknown.
+      platform: manifest ? resolveCopilotAgentKey(manifest.clientName) : 'copilot-cli',
+      entrypoint: isManagedSession(input.sessionId) ? 'managed' : 'native',
       client_version: '',
     };
     const session = await this.resolveSessionHeader(input);
