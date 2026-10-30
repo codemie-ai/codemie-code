@@ -73,6 +73,35 @@ export function resolveSkillForkFields(toolName: string, toolResponse: unknown):
   return agentId ? { fork_agent_id: agentId.slice(0, MAX_TOOL_FIELD_CHARS) } : {};
 }
 
+/** Directories whose whole contents are credential material. */
+const SENSITIVE_DIRECTORIES = new Set(['.aws', '.ssh', '.gnupg', '.kube', '.docker']);
+
+/** Exact (lower-cased) file names that hold credentials. */
+const SENSITIVE_FILE_NAMES = new Set(['.npmrc', '.netrc', '.pypirc', '.git-credentials', '.pgpass', '.htpasswd']);
+
+/** Lower-cased file-name prefixes that mark credential files (`.env.local`, `id_rsa.pub`, `credentials.json`). */
+const SENSITIVE_FILE_PREFIXES = [
+  '.env', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', 'credentials', 'secrets.',
+];
+
+/** Lower-cased file extensions that mark key material. */
+const SENSITIVE_FILE_EXTENSIONS = ['.pem', '.key', '.p12', '.pfx', '.ppk', '.jks', '.keystore', '.tfvars'];
+
+/**
+ * True for a path that very likely holds credentials, so a Read of it must not forward its
+ * content. Case-insensitive; accepts `\` and `/` separators.
+ */
+export function isSensitiveFilePath(path: string): boolean {
+  const segments = path.toLowerCase().split(/[\\/]+/).filter((segment) => segment.length > 0);
+  const name = segments.pop() ?? '';
+  return (
+    segments.some((directory) => SENSITIVE_DIRECTORIES.has(directory)) ||
+    SENSITIVE_FILE_NAMES.has(name) ||
+    SENSITIVE_FILE_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
+    SENSITIVE_FILE_EXTENSIONS.some((extension) => name.endsWith(extension))
+  );
+}
+
 /** `tool_name` -> which `tool_input` key holds the file path. */
 const FILE_PATH_KEY_BY_TOOL: Record<string, string> = {
   Edit: 'file_path',
@@ -80,6 +109,30 @@ const FILE_PATH_KEY_BY_TOOL: Record<string, string> = {
   MultiEdit: 'file_path',
   NotebookEdit: 'notebook_path',
 };
+
+/** Every tool that reads or writes file content -> the `tool_input` key holding its path. */
+const FILE_CONTENT_TOOL_PATH_KEYS: ReadonlyMap<string, string> = new Map([
+  ['Read', 'file_path'],
+  ...Object.entries(FILE_PATH_KEY_BY_TOOL),
+]);
+
+/**
+ * The tool hook payload as it may be forwarded. A call that reads or writes a credentials file
+ * (Read, Edit, MultiEdit, Write, NotebookEdit) keeps `tool_name` and the path, and loses everything
+ * that can hold the file's content: `tool_input` shrinks to the path, `tool_response` is dropped,
+ * and so is a failure's `error`, which can echo the text being edited. Any other call is unchanged.
+ */
+export function withoutSensitiveFileContent(hookInput: { tool_name: string; tool_input?: unknown }): Record<string, unknown> {
+  const forwarded: Record<string, unknown> = { ...hookInput };
+  const pathKey = FILE_CONTENT_TOOL_PATH_KEYS.get(hookInput.tool_name);
+  const path = pathKey ? readString(hookInput.tool_input, pathKey) : '';
+  if (pathKey && path && isSensitiveFilePath(path)) {
+    forwarded['tool_input'] = { [pathKey]: path };
+    delete forwarded['tool_response'];
+    delete forwarded['error'];
+  }
+  return forwarded;
+}
 
 /** This CLI's own name for the subagent-dispatch tool is `Agent`; standard Claude Code uses `Task`. */
 const AGENT_DISPATCH_TOOLS = new Set(['Agent', 'Task']);

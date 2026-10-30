@@ -4,9 +4,19 @@ import {
   getStoredAnalyticsCredentials,
 } from '@/providers/core/codemie-auth-helpers.js';
 import { getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
-import { startDetachedSsoLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
+import {
+  describeLogin,
+  SSO_LOGIN_WAIT_MS,
+  startDetachedSsoLogin,
+  waitForDetachedSsoLogin,
+  type DetachedLoginOutcome,
+  type LoginWaitResult,
+} from '@/providers/plugins/sso/sso.detached-login.js';
 import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
+
+/** Shortest wait worth holding a prompt for; below it the gate blocks with re-send guidance at once. */
+export const MIN_LOGIN_WAIT_MS = 30_000;
 
 export interface AuthGateInput {
   provider?: string;
@@ -22,7 +32,7 @@ export interface AuthGateInput {
 
 export type AuthGateResult =
   | { ok: true }
-  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined };
+  | { ok: false; reason: string; loginOutcome: DetachedLoginOutcome | undefined; waitResult?: LoginWaitResult };
 
 /**
  * The analytics-auth-status marker is a single global file, written by multiple profiles'
@@ -104,6 +114,10 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
 
     if (!input.apiKey && loginUrl) {
       loginOutcome = await startDetachedSsoLogin(loginUrl);
+    } else if (input.provider === 'ai-run-sso' || !input.apiKey) {
+      // SSO credential problem with no sign-in started (no login URL, or SSO provider with a key):
+      // 'failed' makes describeLogin point at `codemie profile login`, not the API-key text.
+      loginOutcome = 'failed';
     }
 
     return { ok: false, reason, loginOutcome };
@@ -111,4 +125,30 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     logger.debug('[sso-auth-gate] Auth gate check failed:', error);
     return { ok: false, reason: 'CodeMie SSO auth gate check failed unexpectedly', loginOutcome };
   }
+}
+
+/**
+ * Like ensureCodeMieSsoAuth, but when the gate started (or found) a browser sign-in, waits for it
+ * and re-checks once, so a hook that can hold the prompt lets it through without a resubmit.
+ * Never waits for other failures (api key, cooldown, failed start, unexpected gate error).
+ */
+export async function ensureCodeMieSsoAuthOrWait(
+  input: AuthGateInput,
+  opts: { waitMs?: number; onWaitStart?: (message: string) => void } = {}
+): Promise<AuthGateResult> {
+  const first = await ensureCodeMieSsoAuth(input);
+  const waitMs = opts.waitMs ?? SSO_LOGIN_WAIT_MS;
+  // Too short a wait rarely outlasts a sign-in, so keep the manual re-send text instead of promising auto-continue.
+  if (first.ok || waitMs < MIN_LOGIN_WAIT_MS || (first.loginOutcome !== 'started' && first.loginOutcome !== 'in-progress')) {
+    return first;
+  }
+
+  opts.onWaitStart?.(describeLogin(first.loginOutcome, { resume: 'auto' }));
+  const waitResult = await waitForDetachedSsoLogin({ timeoutMs: waitMs });
+  if (waitResult.status !== 'succeeded') {
+    return { ...first, waitResult };
+  }
+  // The lock may have been released by another profile's login, so success still needs a re-check.
+  const recheck = await ensureCodeMieSsoAuth(input);
+  return recheck.ok ? recheck : { ...recheck, waitResult };
 }

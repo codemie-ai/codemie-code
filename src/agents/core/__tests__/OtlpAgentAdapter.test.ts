@@ -52,6 +52,7 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   tracked = true;
   enforced = false;
   untrackedCalls: FakeInput[] = [];
+  dropped: readonly string[] = [];
 
   protected parseHookInput(raw: string): FakeInput | null {
     const parsed = JSON.parse(raw) as Partial<FakeInput>;
@@ -62,6 +63,9 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   }
   protected async isTracked(): Promise<boolean> {
     return this.tracked;
+  }
+  protected droppedFields(): readonly string[] {
+    return this.dropped;
   }
   protected requiresSpoolAcceptance(): boolean {
     return this.enforced;
@@ -91,6 +95,9 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
     return `${String(event['type'])}:${String(event['session_id'])}:${hash}`;
   }
 }
+
+const GH = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+const AWS = 'AKIAIOSFODNN7EXAMPLE'; // gitleaks:allow
 
 /** A jwt-shaped access token carrying the given claims. */
 const tokenWith = (claims: Record<string, unknown>): string =>
@@ -432,11 +439,11 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
           'Cowork',
         ],
         ['/', 'unknown'],
-      ])('stamps %s as %s on the event and raw', async (cwd, expected) => {
+      ])('stamps %s as %s on the event', async (cwd, expected) => {
         await run({ cwd });
         const event = forwarded()[0];
         expect(event['cwd']).toBe(expected);
-        expect((event['raw'] as Record<string, unknown>)['cwd']).toBe(expected);
+        expect(event).not.toHaveProperty('raw');
         expect(String(event['cwd'])).not.toMatch(/^([/\\]|[A-Za-z]:)/);
       });
 
@@ -472,13 +479,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwarded().map((r) => r['type'])).toEqual(['fake.start', 'explicit.type', 'fake.event']);
     });
 
-    it('truncates prompt and tool fields and derives prompt_body', async () => {
+    it('truncates prompt and tool fields and derives prompt_body, masking a secret that straddles the cut first', async () => {
       await run({
         payload: [{
           prompt: 'p'.repeat(500),
           tool_input: { text: 'x'.repeat(500) },
-          tool_response: 'r'.repeat(500),
-          error: 'e'.repeat(500),
+          tool_response: `${'r'.repeat(280)} ${GH} ${'r'.repeat(300)}`,
+          error: `${'e'.repeat(285)} ${AWS} ${'e'.repeat(300)}`,
         }],
       });
       const record = forwarded()[0];
@@ -488,6 +495,10 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(String(record['tool_input']).startsWith('{"text":"x')).toBe(true);
       expect(record['tool_response']).toHaveLength(300);
       expect(record['error']).toHaveLength(300);
+      expect(String(record['tool_response'])).toContain('[REDACTED]');
+      expect(String(record['error'])).toContain('[REDACTED]');
+      expect(JSON.stringify(record)).not.toContain('ghp_');
+      expect(JSON.stringify(record)).not.toContain('AKIA');
     });
 
     it('normalizes effort objects to their level and omits malformed values', async () => {
@@ -500,9 +511,9 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
       const [valid, malformed] = forwarded();
       expect(valid['effort']).toBe('high');
-      expect((valid['raw'] as Record<string, unknown>)['effort']).toBe('high');
+      expect(valid).not.toHaveProperty('raw');
       expect(malformed).not.toHaveProperty('effort');
-      expect(malformed).not.toHaveProperty('raw.effort');
+      expect(malformed).not.toHaveProperty('raw');
     });
 
     it('does not add truncated fields to events that lack them, and prompt_body is empty', async () => {
@@ -513,24 +524,82 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(record['prompt_body']).toBe('');
     });
 
-    it('drops a nested raw from the event so it cannot bypass the limits', async () => {
-      await run({ payload: [{ raw: { huge: 'x'.repeat(1000) }, a: 1 }] });
-      const raw = forwarded()[0]['raw'] as Record<string, unknown>;
-      expect(raw).not.toHaveProperty('raw');
+    it('drops an incoming raw field so it cannot bypass the limits, and any field a subclass lists', async () => {
+      await run({ payload: [{ raw: { huge: 'x'.repeat(1000) }, message: 'm', a: 1 }] });
+      expect(forwarded()[0]).not.toHaveProperty('raw');
       expect(JSON.stringify(forwarded()[0])).not.toContain('huge');
+      // nothing else is dropped by default
+      expect(forwarded()[0]['message']).toBe('m');
+
+      forwardToSpool.mockClear();
+      adapter.dropped = ['last_assistant_message', 'message'];
+      await run({ payload: [{ last_assistant_message: 'long', message: 'm', kept: 'k' }] });
+      const record = forwarded()[0];
+      expect(record).not.toHaveProperty('last_assistant_message');
+      expect(record).not.toHaveProperty('message');
+      expect(record['kept']).toBe('k');
     });
 
-    it('mirrors the full enriched event, context and event_id included, in raw', async () => {
-      await run({ payload: [{ session_id: 's1', prompt: 'hi' }] });
-      const record = forwarded()[0];
-      const { raw, ...outer } = record;
-      expect(raw).toEqual(outer);
-      expect(raw).toMatchObject({
+    it('emits the enriched fields at the top level and never a raw mirror, with every free-text field masked', async () => {
+      await run({
+        payload: [
+          {
+            session_id: 's1',
+            prompt: `hi ${GH}`,
+            tool_input: { command: `export GITHUB_TOKEN=${GH}`, password: 'plainvalue', user: 'bob' },
+            tool_response: `found ${AWS} in output`,
+            error: 'failed: PASSWORD=hunter2xyz', // gitleaks:allow
+            description: `uses ${GH}`,
+            future_field: `value ${AWS}`,
+          },
+          { tool_response: { agentId: 'a1b2c3d4', status: 'completed' } },
+        ],
+      });
+      const [record, agentRecord] = forwarded();
+      expect(record).not.toHaveProperty('raw');
+      expect(record).toMatchObject({
         event_id: record['event_id'],
         user_email: 'dev@example.com',
         codemie_project_name: 'proj-1',
         platform: 'fake-platform',
         schema_version: 2,
+        prompt: 'hi [REDACTED]',
+        prompt_body: 'hi [REDACTED]',
+      });
+      const serialised = JSON.stringify(record);
+      for (const secret of [GH, AWS, 'hunter2xyz', 'plainvalue']) {
+        expect(serialised).not.toContain(secret);
+      }
+      for (const field of ['tool_input', 'tool_response', 'error', 'description', 'future_field']) {
+        expect(String(record[field])).toContain('[REDACTED]');
+      }
+      expect(String(record['tool_input'])).toContain('bob');
+      // an "agentId" inside a tool_response is not a secret
+      expect(String(agentRecord['tool_response'])).toContain('"agentId":"a1b2c3d4"');
+    });
+
+    it('leaves a secret-free event and the skip-list identifier fields exactly as they were, apart from raw', async () => {
+      const toolInput = { command: 'ls -la', n: 3 };
+      const identifiers = {
+        file_path: `/work/${GH}.txt`, skill_name: 'my-skill', subagent_type: 'Explore',
+        fork_agent_id: 'fork-1', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_01',
+        agent_id: 'a1b2c3', agent_type: 'general', agent_name: 'worker', notification_type: 'idle', error_type: 'rate_limit',
+      };
+      await run({
+        payload: [{
+          session_id: 's1', prompt: 'list files', tool_input: toolInput, tool_response: 'ok',
+          error: 'none', description: 'd', extra: 'plain', ...identifiers,
+        }],
+      });
+      expect(forwarded()[0]).toMatchObject({
+        ...identifiers,
+        prompt: 'list files',
+        prompt_body: 'list files',
+        tool_input: JSON.stringify(toolInput),
+        tool_response: 'ok',
+        error: 'none',
+        description: 'd',
+        extra: 'plain',
       });
     });
 

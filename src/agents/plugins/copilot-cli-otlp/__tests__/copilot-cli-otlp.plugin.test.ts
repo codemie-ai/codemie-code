@@ -108,16 +108,28 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
   });
 
   it('emits a permissionDecision:deny shape for a blocked preToolUse (SSO auth failure)', async () => {
-    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired', loginOutcome: 'started' } as never);
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(captured()).toEqual({
       permissionDecision: 'deny',
-      permissionDecisionReason: expect.stringContaining('CodeMie sign-in required'),
+      permissionDecisionReason: expect.stringContaining('this is expected'),
     });
+    expect(String(captured()?.permissionDecisionReason)).toContain('re-send your prompt');
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a browser opened when the sign-in is on cooldown', async () => {
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired', loginOutcome: 'cooldown' } as never);
+    const { captured } = log();
+
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const reason = String(captured()?.permissionDecisionReason);
+    expect(reason).toContain('this is expected');
+    expect(reason).not.toContain('opened automatically');
   });
 
   it('emits a modifiedTransformedPrompt shape for a blocked userPromptTransformed (SSO auth failure)', async () => {
@@ -253,11 +265,14 @@ describe('CopilotCliOtlpPlugin error field mapping', () => {
     expect(event).not.toHaveProperty('error_type');
   });
 
-  it('keeps the 300-character limit on error_message and error_type', async () => {
-    const event = await forwardedEvent({ message: 'm'.repeat(1000), name: 'n'.repeat(1000) });
+  it('keeps the 300-character limit on error_message and error_type, masking a secret that straddles the cut', async () => {
+    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+    const event = await forwardedEvent({ message: `${'m'.repeat(280)} ${secret} ${'m'.repeat(700)}`, name: 'n'.repeat(1000) });
 
     expect(String(event.error_message)).toHaveLength(300);
     expect(String(event.error_type)).toHaveLength(300);
+    expect(String(event.error_message)).toContain('[REDACTED]');
+    expect(JSON.stringify(event)).not.toContain('ghp_');
   });
 
   it('omits error_type when the error object has no string name', async () => {
@@ -265,5 +280,46 @@ describe('CopilotCliOtlpPlugin error field mapping', () => {
 
     expect(event.error_message).toBe('boom');
     expect(event).not.toHaveProperty('error_type');
+  });
+});
+
+describe('CopilotCliOtlpPlugin free-text field masking', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const ensureOtlpProxy = vi.fn(async () => {});
+  const forwardOtlpEventsToSpool = vi.fn(async (_events: Array<Record<string, unknown>>, _agent: string) => true);
+  const originalSessionId = process.env.CODEMIE_SESSION_ID;
+  const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    if (originalSessionId === undefined) {
+      delete process.env.CODEMIE_SESSION_ID;
+    } else {
+      process.env.CODEMIE_SESSION_ID = originalSessionId;
+    }
+  });
+
+  // [native field, forwarded field, hook event it arrives on]
+  it.each([
+    ['source', 'source', 'sessionStart'],
+    ['reason', 'reason', 'agentStop'],
+    ['errorContext', 'error_context', 'errorOccurred'],
+    ['trigger', 'trigger', 'preCompact'],
+    ['title', 'title', 'notification'],
+    ['message', 'message', 'notification'],
+  ])('masks a secret in %s, forwarded as %s on %s', async (nativeField, forwardedField, eventName) => {
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: eventName, [nativeField]: `ask ${secret} now` }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const event = forwardOtlpEventsToSpool.mock.calls[0][0][0];
+    expect(event[forwardedField]).toBe('ask [REDACTED] now');
+    expect(JSON.stringify(event)).not.toContain(secret);
   });
 });

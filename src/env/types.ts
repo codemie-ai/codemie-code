@@ -54,12 +54,6 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
-
-  // Per-global-profile CodeMie identity; local profiles still resolve
-  // identity via WorkspaceConfig (see resolveProfileWorkspace()).
-  codeMieUrl?: string;
-  codeMieProject?: string;
-  codeMieIntegration?: CodeMieIntegrationInfo;
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
   reasoningEffort?: CanonicalReasoningEffort;
 
