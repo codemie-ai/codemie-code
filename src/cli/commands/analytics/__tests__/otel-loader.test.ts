@@ -54,7 +54,7 @@ describe('filterApiRequests', () => {
 describe('buildCostIndex', () => {
   const { index, summary } = buildCostIndex(filterApiRequests(parseOtelJsonl(TEXT)));
   it('preserves authoritative source amounts with explicit source-reported provenance', () => {
-    expect(index.get(MAIN)).toMatchObject({ costSource: 'authoritative', costBasis: 'source-reported' });
+    expect(index.get(MAIN)).toMatchObject({ costSource: 'authoritative', costBasis: 'source-reported', changeRequestCreation: { status: 'unsupported', events: [] } });
     expect(index.get(MAIN)!.costUSD).toBeCloseTo(0.0545, 12);
     expect(index.get(MAIN)!.capturedAt).toBeUndefined();
   });

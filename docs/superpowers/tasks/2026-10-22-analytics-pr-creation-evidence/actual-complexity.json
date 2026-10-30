@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "generated": "2026-10-22T16:53:31.363316Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL"
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS"
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S"
+    }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 13,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "New creation extractor, existing cost enrichment, OTEL coverage and shared report projection coordinate an additive contract across Service and exported API layers; no persistence or external network changes."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest existing patterns are buildClaudeTraceIndex ownership and pickDefined public projection. Neither supplies literal-shell parsing or provider-specific MCP identity validation. New conservative parser, URL checks, envelope consistency, bounded fields and ownership/window deduplication require defensive parameterized tests; sanitization gap sets risk floor L."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Actual diff changes 13 files (11 modified, 2 new), including six test files, across docs and analytics cost/report directories; 687 insertions and 4 deletions. Actual-mode file-count rubric maps 11\u201315 files to XL."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Implemented contracts and tests explicitly define supported creation commands, provider identities, failure/partial states, privacy projection and session boundaries; no unresolved behavior in changed files."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "No dependency manifests, packages, configuration or version changes."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Local analytics Service and established report API contract only; external provider response formats are parsed locally, with no external calls or schema migration."
+    },
+    {
+      "dimension": "calibration",
+      "reason": "Consistent with bundled M REST-endpoint example (15): broader file count and novel defensive parsing are offset by explicit requirements and fewer layers. S validation example (11) is narrower and reuses an established validation pattern, unlike this extractor."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk floor L (4): new literal-command and identity sanitization lacks an existing reusable utility covering this input surface."
+  ],
+  "split_recommendation": null
+}

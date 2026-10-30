@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "task": "Export bounded confirmed GitHub PR creation evidence from Claude native session calls and results through analytics reports.",
+  "generated": "2026-10-22T15:17:10.552354Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M"
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS"
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S"
+    }
+  },
+  "total": 15,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest pattern is dispatch-extractor with Claude ownership/trace indexing and payload allowlists. It covers replay and ownership but not executable gh command semantics, MCP success, or canonical PR URL validation. Conservative bounded extraction of untrusted tool outputs adds validation and privacy risk; no raw commands or responses may be exported."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Focused extractor, enrichment integration and report projection span native analytics service and serialized report contract. No remote integration, database, Collector or Control Plane changes."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Estimated five existing files (native structural types, cost types, cost enricher, report types, payload builder), one new extractor and analytics documentation across cost/report/docs."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Scope and negative cases are clear; exact supported gh grammar and recognized MCP shapes require small explicit design decisions."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "No new packages, versions, credentials or configuration are required."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Service enrichment and established report output interface only; no persistence schema or infrastructure coordination."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Calibrated against bundled M REST endpoint example (15) and adjacent S form validation example (11): this has fewer architectural layers than the M example but more novel evidence-validation risk. Existing defensive native fixtures avoid an additional missing-test-template bump."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: closest extraction pattern does not cover the new shell/MCP input validation and secret-safe output surface."
+  ],
+  "split_recommendation": null
+}

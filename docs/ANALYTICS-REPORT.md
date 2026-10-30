@@ -378,3 +378,81 @@ codemie analytics otel --file <path> [options]
 ```
 
 All filter, report, and export flags from the base command also apply to `analytics otel`. The source flag does not: an OTEL events file is not gated on CodeMie ownership, so `--include-external` has no meaning here. Cost is read from each event's native `cost_usd`.
+
+### Observed pull/merge request creation
+
+New native-session reports include optional `changeRequestCreation` metadata in the
+shared JSON, HTML payload and per-session JSON. It records successful **creation**
+observed in a Claude native log, independently of whether token usage can be priced:
+
+```json
+{
+  "changeRequestCreation": {
+    "status": "available",
+    "events": [{
+      "type": "mr_created",
+      "provider": "gitlab",
+      "host": "gitbud.epam.com",
+      "repository": "group/subgroup/project",
+      "number": 36,
+      "url": "https://gitbud.epam.com/group/subgroup/project/-/merge_requests/36",
+      "timestamp": "2026-10-22T10:00:01.000Z",
+      "source": "glab_cli",
+      "toolUseId": "toolu_example",
+      "owner": "root"
+    }]
+  }
+}
+```
+
+The enclosing `sessionId` identifies the session. `timestamp` is the native result
+observation time, not report generation time. Linked child-agent events use
+`owner: "subagent"` and `ownerId`; replayed or ambiguously owned calls cannot establish
+creation. Child creation must follow its linked launch and every ancestor launch.
+GitHub events use `pr_created`, `github`, and `gh_cli` or `github_mcp`;
+GitLab events use `mr_created`, `gitlab`, and `glab_cli` or `gitlab_mcp`.
+GitLab `number` is the **project-local `iid`**, never the global merge request `id`.
+`host` includes a non-default port, and `repository` retains all GitLab subgroups.
+
+Coverage status:
+
+- `available`: supported native history was inspected; empty events mean no supported creation observed.
+- `partial`: a recognized candidate was incomplete, rejected, malformed, ambiguously owned,
+  a discovered child transcript could not be read, extraction failed, or more than 100
+  distinct owned events remained after replay deduplication. Independently verified events remain.
+- `unavailable`: the required native log was not located or no longer exists.
+- `unsupported`: a non-Claude or OTEL-only source has no supported creation extraction.
+- An absent field in older reports means **unknown coverage**.
+
+Supported invocations are a single direct `gh pr create` or `glab mr create` Bash
+command with literal arguments, paired with a successful standalone PR/MR URL in
+its result. Quoted titles/bodies may contain literal shell operators and newlines;
+literal executable/subcommand tokens may also be quoted. Scripts,
+wrappers, substitutions, redirects, pipes, compound commands, help/browser modes,
+existing-request responses and failed commands are excluded. Explicit target
+repository/host selectors must agree with the result; `--head` refers to the source
+fork. Numeric CLI project selectors are unsupported.
+
+Supported MCP names are exactly `mcp__github__create_pull_request` (consistent
+`html_url` and `number`) and `mcp__gitlab__create_merge_request` (consistent `web_url`,
+`iid`, and numeric `project_id`). The latter implements the
+[archived reference GitLab MCP server contract](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gitlab),
+**not every GitLab MCP integration**. Numeric project requests must match response
+`project_id`; path and URL-encoded path requests must match the returned project
+path. Structured responses and text-wrapped JSON are supported. Unknown aliases,
+read/search tools and links without a recognized successful create are outside coverage.
+
+Only canonical HTTPS GitHub.com and GitLab.com/self-managed DNS targets are
+supported (including GitLab subgroups and non-default ports). No remote API checks
+are made. Credentials, encoded URL path separators, ambiguous identities, error
+responses and conflicting envelopes are rejected; URL query/fragment components
+are removed. Public output allowlists identity fields, caps events at 100 and
+identity strings at 256 characters, and never includes command bodies, arguments,
+transcripts or raw responses. Oversized identities are omitted, not truncated.
+
+Creation establishes a session-to-request link, **not ownership of all preceding
+work or cost**. Multiple creations retain separate timestamps. A downstream system
+may propose intervals between creations, but this report performs no interval or
+monetary allocation and does not infer Jira tickets. Missing logs, unsupported
+formats and truncated histories can miss real creations; empty events do not mean
+that no AI was used.

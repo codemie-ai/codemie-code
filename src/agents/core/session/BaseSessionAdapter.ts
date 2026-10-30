@@ -37,6 +37,14 @@ export interface ParsedSession {
   /** The main transcript for the conversation sync — the counted lines with each duplicated `uuid` kept once: its first copy when a compaction lies between the copies, else its last copy (as `messages`). */
   conversationMessages?: unknown[];
 
+  /** Native transcript read coverage, retained internally alongside captured messages. */
+  transcriptMeta?: {
+    /** The root log could not be found; an empty existing log is still available. */
+    rootUnavailable?: boolean;
+    /** At least one discovered child transcript could not be read or parsed. */
+    partial?: boolean;
+  };
+
   // Sub-agent sessions (for Task tool invocations)
   // CRITICAL: These must be discovered and parsed during parseSessionFile()
   subagents?: Array<{
