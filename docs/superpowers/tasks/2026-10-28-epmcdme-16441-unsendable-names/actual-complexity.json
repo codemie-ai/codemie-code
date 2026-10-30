@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 11,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 11 files, which maps to XL by the file-count rule. Only 2 are source (session-project.ts, forwarder.ts), 5 are tests and 4 are docs (architecture doc plus task artifacts), so the real implementation footprint is far smaller. The score is mechanical; it does not reflect implementation effort, and the total stays in the S band either way (an M score would give 12)." },
+    { "dimension": "technical_risk", "reason": "M, not higher. The change sits in the project-name binding policy (decideProject, isSendableProjectName) and header-value safety: a non-ASCII name would be corrupted as Latin-1 by fetch/undici. The pattern already exists in the same module and is extended rather than invented. Binding now depends on name order ([Be] alone conflicts, [Be, A] binds A), and the forwarder adds a bounded per-session WARN set (MAX_WARNED_SESSIONS) that never logs the name. Edge-case coverage was added in the existing forwarder, tick-processor, session-project, spool-io and project-interleave test files, so no uncovered defensive pattern remains." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -10,15 +11,13 @@ import {
   advanceCursor,
   markSessionEnded,
 } from './session-status.js';
-import { OtlpHookSpoolData } from '../otlp.plugin.js';
 import {
   isSendAllowed,
   snapshotPendingBytes,
   snapshotPendingHookRecords,
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
-
-const SESSION_END_EVENT_TYPE = 'agent.session.end';
+import { groupHookRecords, type HookGroup } from './hook-records.js';
 
 const OTEL_ENDPOINTS: Record<OtelStream, string> = {
   logs: CODEMIE_ENDPOINTS.CLI_ANALYTICS_LOGS,
@@ -28,10 +27,24 @@ const OTEL_ENDPOINTS: Record<OtelStream, string> = {
 
 const FORWARD_TIMEOUT_MS = 20_000;
 
-/** Project the session is bound to; the backend gates analytics on it. */
+/**
+ * Project of the request: one per hook group (each event's own project, unnamed events under the
+ * session's bound project), the bound project for OTLP streams. The backend gates analytics on it.
+ */
 const PROJECT_HEADER = 'X-CodeMie-Project';
 
 type SendResult = 'ok' | 'failed' | 'auth-expired';
+
+/**
+ * Reasons the backend reports when it discards a request it answered with 200: the `REASON_*`
+ * constants of the backend's `cli_analytics_project_gate.py`, as surfaced by `postgres/ingestor.py`
+ * (`_otlp_result` for the OTLP routes, the discard body of the hooks route).
+ */
+export const BACKEND_DROP_REASONS: ReadonlySet<string> = new Set([
+  'cli_analytics_disabled',
+  'project_context_required',
+  'project_context_conflict',
+]);
 
 /* ------------------------------------------------------------------ auth --- */
 
@@ -78,6 +91,106 @@ async function postToBackend(
     });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+const DROP_BODY_TIMEOUT_MS = 2_000;
+const DROP_BODY_MAX_CHARS = 4_096;
+
+const DROP_WARN_INTERVAL_MS = 60_000;
+const lastDropWarn = new Map<string, number>();
+
+/** Sessions already told about a dropped group; bounded so a long-lived daemon cannot grow it without limit. */
+const MAX_WARNED_SESSIONS = 1000;
+const warnedUnsendable = new Set<string>();
+
+/** One WARN per session for hook groups whose project name cannot travel as a header; never the name. */
+function warnUnsendableOnce(sessionId: string, count: number): void {
+  if (warnedUnsendable.has(sessionId)) return;
+  if (warnedUnsendable.size >= MAX_WARNED_SESSIONS) {
+    const oldest = warnedUnsendable.values().next().value;
+    if (oldest !== undefined) warnedUnsendable.delete(oldest);
+  }
+  warnedUnsendable.add(sessionId);
+  logger.warn(
+    '[otlp-forwarder] hook record groups with a project name that cannot be sent were not sent',
+    ...sanitizeLogArgs({ sessionId, count })
+  );
+}
+
+/** The drop reason and count from a response body. The body is read whole; `DROP_BODY_MAX_CHARS` bounds only how much of it is parsed. */
+function parseDropBody(body: string): { reason?: unknown; dropped?: unknown } {
+  if (body.length <= DROP_BODY_MAX_CHARS) {
+    const parsed: unknown = JSON.parse(body);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  }
+  const head = body.slice(0, DROP_BODY_MAX_CHARS);
+  const reason = /"reason"\s*:\s*"([^"\\]{1,64})"/.exec(head)?.[1];
+  const dropped = /"dropped"\s*:\s*(\d{1,9})\b/.exec(head)?.[1];
+  return { reason, dropped: dropped === undefined ? undefined : Number(dropped) };
+}
+
+/**
+ * The OTLP routes answer a discarded request with a protobuf `partial_success` whose
+ * `error_message` is the reason string; the reason is plain ASCII inside the binary body.
+ */
+function parseOtlpDropBody(body: string): { reason?: unknown; dropped?: unknown } {
+  const head = body.slice(0, DROP_BODY_MAX_CHARS);
+  return { reason: [...BACKEND_DROP_REASONS].find((reason) => head.includes(reason)) };
+}
+
+/**
+ * The backend answers 200 even when its project gate discards a request. The hooks route says so
+ * in its JSON body and the OTLP routes in `partial_success`; surface it, without ever affecting the send result. The warning is throttled
+ * per session, project and reason so a persistent drop cannot flood the log, while a drop for
+ * another project of the same session still shows.
+ */
+async function warnOnBackendDrop(
+  response: Response,
+  sessionId: string,
+  stream: SpoolStream,
+  project: string
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const body = await Promise.race([
+      response.text(),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('body read timeout')), DROP_BODY_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
+    const { reason, dropped } = stream === 'hooks' ? parseDropBody(body) : parseOtlpDropBody(body);
+    if (typeof reason !== 'string' || !BACKEND_DROP_REASONS.has(reason)) {
+      return;
+    }
+    const key = `${sessionId}:${project.toLowerCase()}:${reason}`;
+    const now = Date.now();
+    const last = lastDropWarn.get(key);
+    if (last !== undefined && now - last < DROP_WARN_INTERVAL_MS) {
+      return;
+    }
+    if (lastDropWarn.size > 256) lastDropWarn.clear();
+    lastDropWarn.set(key, now);
+    logger.warn(
+      '[otlp-forwarder] backend dropped analytics events',
+      ...sanitizeLogArgs({
+        sessionId,
+        stream,
+        project,
+        reason,
+        dropped: typeof dropped === 'number' ? dropped : undefined,
+      })
+    );
+  } catch {
+    // Unreadable or non-JSON body: nothing to report.
+  } finally {
+    if (timer) clearTimeout(timer);
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Body already consumed or closed.
+    }
   }
 }
 
@@ -128,6 +241,7 @@ async function send(
       }
     }
     if (response.ok) {
+      void warnOnBackendDrop(response, sessionId, stream, project);
       return 'ok';
     }
 
@@ -147,49 +261,6 @@ async function send(
   }
 }
 
-/* ------------------------------------------------------------- unwrapping --- */
-
-interface HookPayload {
-  ndjson: string;
-  containsSessionEnd: boolean;
-  malformed: number;
-}
-
-/**
- * Unwraps the spool envelopes. `hookEvent` is already the final wire event, built at hook time
- * by the adapter, so it is forwarded byte for byte: same bytes on every retry.
- */
-export function unwrapHookRecords(records: string[]): HookPayload {
-  const unwrapped: string[] = [];
-  let containsSessionEnd = false;
-  let malformed = 0;
-
-  for (const record of records) {
-    let serialized: string;
-    let wireEvent: Record<string, unknown>;
-    try {
-      serialized = (JSON.parse(record) as OtlpHookSpoolData).hookEvent;
-      wireEvent = JSON.parse(serialized) as Record<string, unknown>;
-    } catch {
-      // Complete but unusable record: dropped deliberately. Its bytes are still
-      // acknowledged with the batch so the cursor can never get stuck on it.
-      malformed += 1;
-      continue;
-    }
-
-    if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
-      containsSessionEnd = true;
-    }
-    unwrapped.push(serialized);
-  }
-
-  return {
-    ndjson: unwrapped.length > 0 ? `${unwrapped.join('\n')}\n` : '',
-    containsSessionEnd,
-    malformed,
-  };
-}
-
 /* ------------------------------------------------------------ forwarding --- */
 
 async function resolveBaseUrl(): Promise<string> {
@@ -200,7 +271,56 @@ async function resolveBaseUrl(): Promise<string> {
   return state?.targetUrl ?? state?.url ?? '';
 }
 
-/** Forward the complete hook records after the hooks cursor. */
+/** Consecutive failed attempts after which a hook group is consumed without being delivered. */
+const MAX_GROUP_FAILURES = 5;
+
+/** Sessions whose stuck hooks range is tracked; bounded so a long-lived daemon cannot grow it without limit. */
+const MAX_TRACKED_RANGES = 1000;
+
+/**
+ * What the forwarder remembers about a hooks range whose cursor has not advanced yet: the groups
+ * already settled (accepted, or consumed after repeated failure) and consecutive failures per
+ * project. In memory only; it ends when the cursor advances and starts over after a daemon restart.
+ */
+interface HookRangeProgress {
+  cursor: number;
+  settled: Set<string>;
+  /** Settled groups that were consumed without being delivered. */
+  dropped: Set<string>;
+  failures: Map<string, number>;
+}
+
+const hookRanges = new Map<string, HookRangeProgress>();
+
+function hookRangeProgress(sessionId: string, cursor: number): HookRangeProgress {
+  const known = hookRanges.get(sessionId);
+  if (known && known.cursor === cursor) {
+    return known;
+  }
+  if (!known && hookRanges.size >= MAX_TRACKED_RANGES) {
+    const oldest = hookRanges.keys().next().value;
+    if (oldest !== undefined) hookRanges.delete(oldest);
+  }
+  const fresh: HookRangeProgress = { cursor, settled: new Set(), dropped: new Set(), failures: new Map() };
+  hookRanges.set(sessionId, fresh);
+  return fresh;
+}
+
+/** Identifies a group by its project and exact bytes, so a group that gained events is a new group. */
+function hookGroupKey(group: HookGroup): string {
+  return `${group.project}\0${createHash('sha256').update(group.ndjson).digest('hex')}`;
+}
+
+/**
+ * Forward the complete hook records after the hooks cursor, one request per project group, in
+ * order. The groups share one byte range and one cursor, which advances once every group is
+ * settled. A group that fails does not stop the others: they are still sent, and a group
+ * accepted earlier in this range is not sent again. The first failure is returned with the cursor
+ * untouched, and the next tick sends only what is still open. A group that fails
+ * `MAX_GROUP_FAILURES` times in a row is consumed with a warning so it cannot hold the range back
+ * forever. A 401/403 only counts as expired credentials while nothing in this tick was accepted;
+ * after an accepted group it is that group's failure.
+ */
 async function forwardHooks(
   sessionId: string,
   baseUrl: string,
@@ -211,20 +331,21 @@ async function forwardHooks(
     return 'idle';
   }
 
-  const payload = unwrapHookRecords(batch.records);
+  const filtered = batch.filtered === true;
+  const payload = groupHookRecords(batch.records, batch.project, filtered);
   if (payload.malformed > 0) {
     logger.debug(
       '[otlp-forwarder] skipped malformed hook records',
       ...sanitizeLogArgs({ sessionId, count: payload.malformed })
     );
   }
-
-  if (payload.ndjson.length === 0) {
-    // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
-    await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
-    return 'idle';
+  if (payload.unsendable > 0) {
+    logger.debug(
+      '[otlp-forwarder] hook record groups with a project name that cannot be sent were not sent',
+      ...sanitizeLogArgs({ sessionId, count: payload.unsendable })
+    );
+    warnUnsendableOnce(sessionId, payload.unsendable);
   }
-
   if (batch.dropped > 0) {
     logger.debug(
       '[otlp-forwarder] hook records not provably the sealed project were not sent',
@@ -232,18 +353,65 @@ async function forwardHooks(
     );
   }
 
-  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
-  const result = await send(
-    sessionId, 'hooks', url, payload.ndjson, 'application/x-ndjson', credentials, batch.project,
-    { cursor: batch.cursor, end: batch.cursor + batch.byteLength, filtered: batch.filtered === true }
-  );
-  if (result !== 'ok') {
-    return result;
+  const end = batch.cursor + batch.byteLength;
+  if (payload.groups.length === 0) {
+    // Nothing sendable, but the bytes were consumed — keep the cursor aligned. No request will
+    // carry a session end held by an unsent group, so it is recorded here rather than left to
+    // the abandoned-session grace.
+    await advanceCursor(sessionId, 'hooks', end);
+    if (payload.unsendableSessionEnd) {
+      await markSessionEnded(sessionId);
+    }
+    return 'idle';
   }
 
-  await advanceCursor(sessionId, 'hooks', batch.cursor + batch.byteLength);
+  const url = `${baseUrl}${CODEMIE_ENDPOINTS.CLI_ANALYTICS_EVENT_HOOKS}`;
+  const range = { cursor: batch.cursor, end, filtered };
+  const progress = hookRangeProgress(sessionId, batch.cursor);
+  let accepted = false;
+  let failure: SendResult | undefined;
+  for (const group of payload.groups) {
+    const key = hookGroupKey(group);
+    if (progress.settled.has(key)) {
+      continue;
+    }
+    let result = await send(
+      sessionId, 'hooks', url, group.ndjson, 'application/x-ndjson', credentials, group.project, range
+    );
+    if (result === 'ok') {
+      accepted = true;
+      progress.settled.add(key);
+      progress.failures.delete(group.project);
+      continue;
+    }
+    if (result === 'auth-expired') {
+      if (!accepted) {
+        return result;
+      }
+      result = 'failed';
+    }
+    const failures = (progress.failures.get(group.project) ?? 0) + 1;
+    if (failures >= MAX_GROUP_FAILURES) {
+      progress.failures.delete(group.project);
+      progress.settled.add(key);
+      progress.dropped.add(key);
+      logger.warn(
+        '[otlp-forwarder] hook record group dropped after repeated failures',
+        ...sanitizeLogArgs({ sessionId, attempts: failures })
+      );
+      continue;
+    }
+    progress.failures.set(group.project, failures);
+    failure ??= result;
+  }
+  if (failure) {
+    return failure;
+  }
 
-  if (payload.containsSessionEnd) {
+  await advanceCursor(sessionId, 'hooks', end);
+  hookRanges.delete(sessionId);
+
+  if (payload.groups.some((group) => group.containsSessionEnd && !progress.dropped.has(hookGroupKey(group)))) {
     await markSessionEnded(sessionId);
   }
 
@@ -282,6 +450,9 @@ async function forwardOtelStream(
  * failure on one stream never blocks or rewinds another. Cursors only advance
  * after a successful response, which yields at-least-once delivery: a crash
  * between backend success and cursor persistence re-sends that batch.
+ *
+ * Hook events go out in one request per project, each with its own `X-CodeMie-Project` header
+ * (unnamed events under the session's bound project); the OTLP streams carry the bound project.
  *
  * A forwarded `SessionEnd` only records `endedAt`; it never stops later ticks
  * from delivering bytes that failed or were appended afterwards.

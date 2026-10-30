@@ -14,17 +14,11 @@ export function isSendableProjectName(name: string): boolean {
   return !blank(name) && name === name.trim() && /^[\x20-\x7e]+$/.test(name);
 }
 
-/** String values of `codemie_project_name` at the top level and inside `raw` of a hook event. */
+/** The string `codemie_project_name` at the top level of a hook event; `raw` is not consulted. */
 export function hookEventProjectNames(event: unknown): string[] {
-  const names: string[] = [];
-  const collect = (holder: unknown): void => {
-    if (typeof holder !== 'object' || holder === null) return;
-    const value = (holder as Record<string, unknown>)['codemie_project_name'];
-    if (typeof value === 'string') names.push(value);
-  };
-  collect(event);
-  collect((event as Record<string, unknown> | null)?.['raw']);
-  return names;
+  if (typeof event !== 'object' || event === null) return [];
+  const value = (event as Record<string, unknown>)['codemie_project_name'];
+  return typeof value === 'string' ? [value] : [];
 }
 
 export type ProjectDecision =
@@ -33,26 +27,28 @@ export type ProjectDecision =
   | { action: 'conflict'; names: string[] };
 
 /**
- * Pure decision over the incoming names plus the stored binding, so a mixed
- * batch is judged as a whole and a later batch against what is already stored.
+ * Pure decision over the incoming names plus the stored binding. A stored conflict is final. A session
+ * bound to a sendable project is never changed by incoming names: an unsendable one is dropped when its
+ * hooks are forwarded, a different sendable one is its own request. An unbound session binds the first
+ * sendable name (names are compared case-insensitively, the first spelling is kept) and conflicts only
+ * when every incoming name is unsendable, listing them. The outcome therefore depends on order:
+ * `[Bé]` alone conflicts for good, while `[Bé, A]` binds `A`.
  */
 export function decideProject(names: string[], status: SessionStatus): ProjectDecision {
   if (status.projectConflict) return { action: 'noop' };
+  if (status.project && isSendableProjectName(status.project)) return { action: 'noop' };
 
   const distinct = new Map<string, string>();
-  for (const name of [...(status.project ? [status.project] : []), ...names]) {
+  for (const name of names) {
     if (blank(name)) continue;
     const key = name.toLowerCase();
     if (!distinct.has(key)) distinct.set(key, name);
   }
   const candidates = [...distinct.values()];
 
-  if (candidates.length > 1 || candidates.some((name) => !isSendableProjectName(name))) {
-    return { action: 'conflict', names: candidates };
-  }
-  if (candidates.length === 1 && !status.project) {
-    return { action: 'bind', project: candidates[0] };
-  }
+  const sendable = candidates.find(isSendableProjectName);
+  if (sendable !== undefined) return { action: 'bind', project: sendable };
+  if (candidates.length > 0) return { action: 'conflict', names: candidates };
   return { action: 'noop' };
 }
 
@@ -91,7 +87,7 @@ export function parseProjectSeal(raw: unknown, conflict: string[] | undefined): 
   return { v: 1, project, hooksEnd };
 }
 
-/** A hook record is provably `project`'s only if every name it carries is non-blank and equals it. */
+/** A hook record is provably `project`'s only if its top-level name is non-blank and equals it. */
 export function hookRecordIsProject(record: string, project: string): boolean {
   try {
     const { hookEvent } = JSON.parse(record) as { hookEvent: string };

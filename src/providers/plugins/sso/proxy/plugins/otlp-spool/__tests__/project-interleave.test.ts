@@ -5,7 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,32 @@ describe('project gate — ingest vs forwarding', () => {
     await appendSpool(SESSION, 'traces', Buffer.from('TTT'));
   }
 
+  /**
+   * What a bound session's switch to an unsendable name leaves behind: the conflict and a seal ending at
+   * the current size of the hooks file, then the conflicting hook line. The returned function takes the
+   * session lock before its first await, so a caller inside a hook queues it at that exact point.
+   */
+  async function conflictSeeder(): Promise<(line: string) => Promise<void>> {
+    const { appendSpool } = await import('../spool-io.js');
+    const { readStatus, writeStatus, createStatus } = await import('../session-status.js');
+    const { withSessionLock } = await import('../session-lock.js');
+    const { streamFile } = await import('../spool-paths.js');
+    return async (line: string): Promise<void> => {
+      await withSessionLock(SESSION, async () => {
+        const status = (await readStatus(SESSION)) ?? createStatus();
+        const hooksEnd = await stat(streamFile(SESSION, 'hooks')).then(
+          (info) => info.size,
+          () => 0
+        );
+        status.projectScanned = true;
+        status.projectConflict = ['B\u00e9', 'A'];
+        if (status.project) status.projectSeal = { v: 1, project: status.project, hooksEnd };
+        await writeStatus(SESSION, status);
+      });
+      await appendSpool(SESSION, 'hooks', line, ['B\u00e9']);
+    };
+  }
+
   async function cursorsAtEof(hooksSize: number): Promise<void> {
     const { readStatus } = await import('../session-status.js');
     expect((await readStatus(SESSION))?.cursors).toEqual({
@@ -98,23 +124,23 @@ describe('project gate — ingest vs forwarding', () => {
     });
   }
 
-  it('A. the queue order is the lock order', async () => {
+  it('A. an unsendable name queued before the snapshot does not stop it', async () => {
     const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
     const { withSessionLock } = await import('../session-lock.js');
     await seedBoundA();
 
-    // append(B) queued before the snapshot: the snapshot sees the conflict.
+    // append(Bé) queued before the snapshot: the session is bound, so the snapshot still returns A's bytes.
     const release = deferred();
     const held = withSessionLock(SESSION, () => release.promise);
-    const append = appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    const append = appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     const snapshot = snapshotPendingBytes(SESSION, 'logs');
     release.resolve();
     await held;
     await append;
-    expect(await snapshot).toBeNull();
+    expect(await snapshot).toMatchObject({ project: 'A' });
   });
 
-  it('A. a snapshot queued before the append sees project A, the append then persists the conflict', async () => {
+  it('A. a snapshot queued before the append sees project A, and the append leaves the binding alone', async () => {
     const { appendSpool, snapshotPendingBytes } = await import('../spool-io.js');
     const { withSessionLock } = await import('../session-lock.js');
     const { readStatus } = await import('../session-status.js');
@@ -123,16 +149,18 @@ describe('project gate — ingest vs forwarding', () => {
     const release = deferred();
     const held = withSessionLock(SESSION, () => release.promise);
     const snapshot = snapshotPendingBytes(SESSION, 'logs');
-    const append = appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    const append = appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
     release.resolve();
     await held;
     await append;
 
     expect(await snapshot).toMatchObject({ project: 'A' });
-    expect((await readStatus(SESSION))?.projectConflict).toEqual(['A', 'B']);
+    const status = await readStatus(SESSION);
+    expect(status?.project).toBe('A');
+    expect(status?.projectConflict).toBeUndefined();
   });
 
-  it('B. a request already in flight is the stated limit; nothing else is sent after the conflict', async () => {
+  it('B. an unsendable name arriving during a request in flight changes nothing: OTLP follows under A', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { forwardSession } = await import('../forwarder.js');
     await seedBoundA();
@@ -147,41 +175,44 @@ describe('project gate — ingest vs forwarding', () => {
 
     const pass = forwardSession(SESSION, false, credentials as never);
     await started.promise;
-    await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
-    events.push('conflict-persisted');
+    await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
+    events.push('unsendable-appended');
     response.resolve({ ok: true, status: 200 });
     await pass;
-    await forwardSession(SESSION, false, credentials as never); // next pass drains B's hook
+    await forwardSession(SESSION, false, credentials as never); // next pass drains the unsendable hook unsent
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(events).toEqual(['fetch:A', 'conflict-persisted']);
-    const hooksSize = Buffer.byteLength(hookLine('A') + hookLine('B'));
+    expect(fetchMock).toHaveBeenCalledTimes(4); // hooks, then logs, metrics and traces
+    expect(events).toEqual(['fetch:A', 'unsendable-appended', 'fetch:A', 'fetch:A', 'fetch:A']);
+    const hooksSize = Buffer.byteLength(hookLine('A') + hookLine('B\u00e9'));
     await cursorsAtEof(hooksSize);
   });
 
-  it('C. a conflict persisted between the hooks snapshot and the OTLP snapshots stops all OTLP requests', async () => {
+  it('C. an unsendable name persisted between the hooks snapshot and the OTLP snapshots does not stop the OTLP requests', async () => {
     const { appendSpool } = await import('../spool-io.js');
     const { forwardSession } = await import('../forwarder.js');
     await seedBoundA();
-    fetchMock.mockImplementation(async () => {
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+    fetchMock.mockImplementationOnce(async () => {
+      await appendSpool(SESSION, 'hooks', hookLine('B\u00e9'), ['B\u00e9']);
       return { ok: true, status: 200 };
     });
 
     await forwardSession(SESSION, false, credentials as never);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(String(fetchMock.mock.calls[0][0])).toContain('event-hooks');
+    const otlp = fetchMock.mock.calls.slice(1);
+    expect(otlp.map(([url]) => String(url)).some((url) => url.includes('event-hooks'))).toBe(false);
+    expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
   });
 
   describe('D. hooks seal, end to end through the real spool and forwarder', () => {
     const aEvent = { type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' };
 
     it('sends the A hooks under header A and nothing else after a switch to B', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       const { forwardSession } = await import('../forwarder.js');
       await seedBoundA(); // A hook + OTLP chunks that arrived before the switch
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await seedConflict(hookLine('B\u00e9'));
 
       await forwardSession(SESSION, true, credentials as never); // what the tick does for a sealed session
       await forwardSession(SESSION, true, credentials as never);
@@ -191,15 +222,15 @@ describe('project gate — ingest vs forwarding', () => {
       expect(String(url)).toBe('https://api.example.com/v1/analytics/cli-analytics/event-hooks');
       expect(init.headers['X-CodeMie-Project']).toBe('A');
       expect(init.body).toBe(`${JSON.stringify(aEvent)}\n`);
-      await cursorsAtEof(Buffer.byteLength(hookLine('A') + hookLine('B')));
+      await cursorsAtEof(Buffer.byteLength(hookLine('A') + hookLine('B\u00e9')));
     });
 
     it('a failed send leaves the cursor, and the retry sends the same bytes', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       const { forwardSession } = await import('../forwarder.js');
       const { readStatus } = await import('../session-status.js');
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await seedConflict(hookLine('B\u00e9'));
       fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
 
       await forwardSession(SESSION, true, credentials as never);
@@ -214,7 +245,7 @@ describe('project gate — ingest vs forwarding', () => {
     describe('E. a conflict persisted after an unfiltered bound snapshot was built', () => {
       const aLine = hookLine('A');
       const blankLine = hookLine(''); // not provably A's: must never leave once the session is sealed
-      const bLine = hookLine('B');
+      const bLine = hookLine('B\u00e9');
 
       async function seedBoundWithBlank(): Promise<void> {
         const { appendSpool } = await import('../spool-io.js');
@@ -232,14 +263,14 @@ describe('project gate — ingest vs forwarding', () => {
       }
 
       it('between the snapshot and the pre-send check: nothing is posted, the cursor stays, the next pass sends only A', async () => {
-        const { appendSpool } = await import('../spool-io.js');
+        const seedConflict = await conflictSeeder();
         const { forwardSession } = await import('../forwarder.js');
         const { readStatus } = await import('../session-status.js');
         await seedBoundWithBlank();
         let conflictAppend: Promise<void> | undefined;
         authHook.onStaleCheck = (): void => {
           authHook.onStaleCheck = undefined;
-          conflictAppend = appendSpool(SESSION, 'hooks', bLine, ['B']); // queued on the lock before the check
+          conflictAppend = seedConflict(bLine); // queued on the lock before the check
         };
 
         await forwardSession(SESSION, true, credentials as never);
@@ -256,12 +287,12 @@ describe('project gate — ingest vs forwarding', () => {
       });
 
       it('on the 401 retry: the retry built from the same bound snapshot is refused, then only A is sent', async () => {
-        const { appendSpool } = await import('../spool-io.js');
+        const seedConflict = await conflictSeeder();
         const { forwardSession } = await import('../forwarder.js');
         await seedBoundWithBlank();
         fetchMock.mockReset();
         fetchMock.mockImplementationOnce(async () => {
-          await appendSpool(SESSION, 'hooks', bLine, ['B']); // conflict lands while the first attempt is on the wire
+          await seedConflict(bLine); // conflict lands while the first attempt is on the wire
           return { ok: false, status: 401 };
         });
         fetchMock.mockResolvedValue({ ok: true, status: 200 });
@@ -279,9 +310,9 @@ describe('project gate — ingest vs forwarding', () => {
     });
 
     it('a restart between the switch and the flush loses nothing: the seal is read back from disk', async () => {
-      const { appendSpool } = await import('../spool-io.js');
+      const seedConflict = await conflictSeeder();
       await seedBoundA();
-      await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+      await seedConflict(hookLine('B\u00e9'));
 
       vi.resetModules();
       const { forwardSession } = await import('../forwarder.js');
@@ -289,6 +320,176 @@ describe('project gate — ingest vs forwarding', () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0][1].headers['X-CodeMie-Project']).toBe('A');
+    });
+  });
+
+  describe('F. several sendable projects in one session, end to end through the real spool and forwarder', () => {
+    interface HookEvent {
+      type: string;
+      session_id: string;
+      codemie_project_name?: string;
+      tag: string;
+    }
+
+    const event = (project: string | undefined, tag: string, type = 'agent.tool.end'): HookEvent => ({
+      type,
+      session_id: SESSION,
+      ...(project === undefined ? {} : { codemie_project_name: project }),
+      tag,
+    });
+    const lineOf = (e: HookEvent): string =>
+      JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(e) }) + '\n';
+    const bodyOf = (...events: HookEvent[]): string => events.map((e) => `${JSON.stringify(e)}\n`).join('');
+
+    async function appendEvents(...events: HookEvent[]): Promise<void> {
+      const { appendSpool } = await import('../spool-io.js');
+      for (const e of events) {
+        await appendSpool(SESSION, 'hooks', lineOf(e), e.codemie_project_name === undefined ? [] : [e.codemie_project_name]);
+      }
+    }
+
+    function hooksRequests(): Array<{ project: string; body: string }> {
+      return fetchMock.mock.calls
+        .filter(([url]) => String(url).includes('event-hooks'))
+        .map(([, init]) => ({ project: init.headers['X-CodeMie-Project'], body: String(init.body) }));
+    }
+
+    async function hooksCursor(): Promise<number | undefined> {
+      const { readStatus } = await import('../session-status.js');
+      return (await readStatus(SESSION))?.cursors.hooks;
+    }
+
+    const a1 = event('A', 'a1');
+    const b1 = event('B', 'b1');
+    const a2 = event('A', 'a2');
+
+    it('sends one request per project and moves the cursor to the end only after both are accepted', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await seedBoundA(); // a1 is hookLine('A'); the OTLP streams are pending too
+      await appendEvents(b1, a2);
+      const total = Buffer.byteLength(hookLine('A') + lineOf(b1) + lineOf(a2));
+      const cursorAtEachHooksRequest: Array<number | undefined> = [];
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).includes('event-hooks')) cursorAtEachHooksRequest.push(await hooksCursor());
+        return { ok: true, status: 200 };
+      });
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      expect(hooksRequests()).toEqual([
+        { project: 'A', body: `${JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' })}\n${bodyOf(a2)}` },
+        { project: 'B', body: bodyOf(b1) },
+      ]);
+      expect(cursorAtEachHooksRequest).toEqual([0, 0]);
+      await cursorsAtEof(total);
+    });
+
+    it('B fails and then succeeds on the next tick: A is not sent again, endedAt waits for the whole batch', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      const end = event('B', 'end', 'agent.session.end');
+      await appendEvents(a1, b1, end);
+      const total = Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(end));
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }); // A
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 }); // B
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      let status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(0);
+      expect(status?.endedAt).toBeUndefined();
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      const requests = hooksRequests();
+      expect(requests).toHaveLength(3);
+      expect(requests[0]).toEqual({ project: 'A', body: bodyOf(a1) });
+      expect(requests[1]).toEqual({ project: 'B', body: bodyOf(b1, end) });
+      expect(requests[2]).toEqual(requests[1]);
+      status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(total);
+      expect(status?.endedAt).toEqual(expect.any(Number));
+    });
+
+    it('a rejected credential in the second group leaves the cursor and does not end the session', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      await appendEvents(a1, event('B', 'end', 'agent.session.end'));
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+      fetchMock.mockResolvedValue({ ok: false, status: 401 });
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      const status = await readStatus(SESSION);
+      expect(status?.cursors.hooks).toBe(0);
+      expect(status?.endedAt).toBeUndefined();
+    });
+
+    it('events without a project name travel in the bound project request, in file order', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const unnamed = event(undefined, 'u1');
+      const lower = event('a', 'a-lower');
+      await appendEvents(a1, b1, unnamed, lower);
+
+      await forwardSession(SESSION, true, credentials as never);
+
+      expect(hooksRequests()).toEqual([
+        { project: 'A', body: bodyOf(a1, unnamed, lower) }, // 'a' shares A's group and is not rewritten
+        { project: 'B', body: bodyOf(b1) },
+      ]);
+      expect(await hooksCursor()).toBe(Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(unnamed) + lineOf(lower)));
+    });
+
+    it('a sealed prefix is still one filtered request, even with another sendable project inside it', async () => {
+      const seedConflict = await conflictSeeder();
+      const { forwardSession } = await import('../forwarder.js');
+      await appendEvents(a1, b1);
+      const conflict = event('Bé', 'conflict');
+      await seedConflict(lineOf(conflict)); // a stored conflict seals the prefix before the line
+
+      await forwardSession(SESSION, true, credentials as never);
+      await forwardSession(SESSION, true, credentials as never);
+
+      expect(hooksRequests()).toEqual([{ project: 'A', body: bodyOf(a1) }]);
+      // The second pass drains the conflicting record that follows the sealed prefix.
+      expect(await hooksCursor()).toBe(Buffer.byteLength(lineOf(a1) + lineOf(b1) + lineOf(conflict)));
+    });
+
+    it('a bound session keeps flowing when unsendable names appear: only their groups are dropped', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      const { readStatus } = await import('../session-status.js');
+      await seedBoundA(); // hooks A + OTLP streams pending
+      const unsendable = event('Bé', 'u1');
+      const a2 = event('A', 'a2');
+      const padded = event(' A', 'p1'); // its own dropped group, not trimmed into A's
+      await appendEvents(unsendable, a2, padded);
+      const total = Buffer.byteLength(hookLine('A') + lineOf(unsendable) + lineOf(a2) + lineOf(padded));
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      const aHook = `${JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A' })}\n`;
+      expect(hooksRequests()).toEqual([{ project: 'A', body: `${aHook}${bodyOf(a2)}` }]);
+      const otlp = fetchMock.mock.calls.filter(([url]) => !String(url).includes('event-hooks'));
+      expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
+      expect(otlp.map(([, init]) => Buffer.from(init.body).toString())).toEqual(['L', 'MM', 'TTT']);
+      expect(fetchMock.mock.calls.some(([, init]) => /B\u00e9|"\sA"/.test(String(init.body)))).toBe(false);
+      const status = await readStatus(SESSION);
+      expect(status?.project).toBe('A');
+      expect(status?.projectConflict).toBeUndefined();
+      await cursorsAtEof(total);
+    });
+
+    it('OTLP streams keep the bound project header and their exact bytes for a multi-project session', async () => {
+      const { forwardSession } = await import('../forwarder.js');
+      await seedBoundA();
+      await appendEvents(b1);
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      const otlp = fetchMock.mock.calls.filter(([url]) => !String(url).includes('event-hooks'));
+      expect(otlp.map(([, init]) => init.headers['X-CodeMie-Project'])).toEqual(['A', 'A', 'A']);
+      expect(otlp.map(([, init]) => Buffer.from(init.body).toString())).toEqual(['L', 'MM', 'TTT']);
+      expect(hooksRequests().map((r) => r.project)).toEqual(['A', 'B']);
     });
   });
 });

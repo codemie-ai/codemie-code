@@ -47,17 +47,32 @@ describe('decideProject', () => {
     expect(decideProject(['A', 'a'], createStatus())).toEqual({ action: 'bind', project: 'A' });
   });
 
-  it('flags a conflict for two projects in one call, even though A is first', () => {
-    expect(decideProject(['A', 'B'], createStatus())).toEqual({
-      action: 'conflict',
-      names: ['A', 'B'],
-    });
+  it('binds the first of two projects in one call', () => {
+    expect(decideProject(['A', 'B'], createStatus())).toEqual({ action: 'bind', project: 'A' });
   });
 
-  it('flags a conflict for a stored binding plus a different name', () => {
-    expect(decideProject(['B'], withProject('A'))).toEqual({
+  it('keeps a stored binding when a different name arrives', () => {
+    expect(decideProject(['B'], withProject('A'))).toEqual({ action: 'noop' });
+  });
+
+  it('leaves a bound session alone when an unsendable name arrives', () => {
+    expect(decideProject(['Проект'], withProject('A'))).toEqual({ action: 'noop' });
+  });
+
+  it.each([[' A'], ['A\n'], ['A\u0007']])('does not read %j as the bound name or as a conflict', (name) => {
+    expect(decideProject([name], withProject('A'))).toEqual({ action: 'noop' });
+  });
+
+  it('binds the first sendable name of an unbound batch, whatever else it holds', () => {
+    expect(decideProject(['A', 'B', 'Проект'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+    expect(decideProject(['Bé', 'A'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+    expect(decideProject([' A', 'A'], createStatus())).toEqual({ action: 'bind', project: 'A' });
+  });
+
+  it('conflicts only when an unbound batch holds nothing but unsendable names', () => {
+    expect(decideProject(['Bé', 'Проект', ' A'], createStatus())).toEqual({
       action: 'conflict',
-      names: ['A', 'B'],
+      names: ['Bé', 'Проект', ' A'],
     });
   });
 
@@ -72,6 +87,11 @@ describe('decideProject', () => {
   it('is a noop once a conflict is stored', () => {
     const status = { ...createStatus(), projectConflict: ['A', 'B'] };
     expect(decideProject(['C'], status)).toEqual({ action: 'noop' });
+  });
+
+  it('keeps a stored conflict sticky when a sendable name arrives later', () => {
+    const status = { ...createStatus(), projectConflict: ['Bé'] };
+    expect(decideProject(['A'], status)).toEqual({ action: 'noop' });
   });
 
   it.each([[' A'], ['A\n'], ['Проект']])('treats %j as a conflict on its own', (name) => {
@@ -96,6 +116,15 @@ describe('applyProjectDecision / projectGate', () => {
     expect(status.project).toBe('A');
   });
 
+  it('cuts the conflict list to the first eight unsendable names', () => {
+    const unsendable = Array.from({ length: 12 }, (_, i) => `Проект${i}`);
+    const status = createStatus();
+    const decision = decideProject(unsendable, status);
+    expect(decision).toEqual({ action: 'conflict', names: unsendable });
+    applyProjectDecision(status, decision);
+    expect(status.projectConflict).toEqual(unsendable.slice(0, 8));
+  });
+
   it('keeps a conflict set-once', () => {
     const status = createStatus();
     applyProjectDecision(status, { action: 'conflict', names: ['A', 'B'] });
@@ -117,10 +146,11 @@ describe('isSendableProjectName / hookEventProjectNames', () => {
     expect(isSendableProjectName('Café')).toBe(false);
   });
 
-  it('collects top-level and raw names', () => {
+  it('collects the top-level name only and ignores raw', () => {
     expect(
       hookEventProjectNames({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } })
-    ).toEqual(['A', 'B']);
+    ).toEqual(['A']);
+    expect(hookEventProjectNames({ raw: { codemie_project_name: 'B' } })).toEqual([]);
     expect(hookEventProjectNames({ codemie_project_name: 5, raw: 'x' })).toEqual([]);
     expect(hookEventProjectNames(null)).toEqual([]);
   });
@@ -139,7 +169,7 @@ describe('status persistence', () => {
     await writeStatus('s1', {
       ...createStatus(),
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectScanned: true,
     });
 
@@ -148,10 +178,28 @@ describe('status persistence', () => {
     const status = await readStatus('s1');
     expect(status).toMatchObject({
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectScanned: true,
     });
     expect(status?.cursors.hooks).toBe(7);
+  });
+
+  it('keeps a stored all-sendable conflict and a valid seal as stored, sets no project', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(
+      join(state.root, 'legacy1.status'),
+      JSON.stringify({ cursors: {}, projectConflict: ['A', 'B'], projectSeal: { v: 1, project: 'A', hooksEnd: 4 } })
+    );
+    const status = await readStatus('legacy1');
+    expect(status?.project).toBeUndefined();
+    expect(status?.projectConflict).toEqual(['A', 'B']);
+    expect(status?.projectSeal).toEqual({ v: 1, project: 'A', hooksEnd: 4 });
+  });
+
+  it('keeps a legacy conflict that contains an unsendable name', async () => {
+    const { readStatus } = await import('../session-status.js');
+    await writeFile(join(state.root, 'legacy3.status'), JSON.stringify({ cursors: {}, projectConflict: ['A', 'B\u00e9'] }));
+    expect((await readStatus('legacy3'))?.projectConflict).toEqual(['A', 'B\u00e9']);
   });
 
   it('drops malformed project fields', async () => {
@@ -179,14 +227,14 @@ describe('status persistence', () => {
     const { readStatus, writeStatus, advanceCursor } = await import('../session-status.js');
     await writeFile(
       join(state.root, 's3.status'),
-      JSON.stringify({ cursors: { hooks: 3 }, project: 'A', projectConflict: ['A', 'B'], projectScanned: true })
+      JSON.stringify({ cursors: { hooks: 3 }, project: 'A', projectConflict: ['A', 'B\u00e9'], projectScanned: true })
     );
     expect((await readStatus('s3'))?.projectSeal).toBeUndefined(); // old status: today's discard
 
     await writeStatus('s4', {
       ...createStatus(),
       project: 'A',
-      projectConflict: ['A', 'B'],
+      projectConflict: ['A', 'B\u00e9'],
       projectSeal: { v: 1, project: 'A', hooksEnd: 40 },
     });
     await advanceCursor('s4', 'hooks', 7);
@@ -195,7 +243,7 @@ describe('status persistence', () => {
 
   it('ignores a malformed seal on disk instead of trusting it', async () => {
     const { readStatus } = await import('../session-status.js');
-    const base = { cursors: {}, project: 'A', projectConflict: ['A', 'B'] };
+    const base = { cursors: {}, project: 'A', projectConflict: ['A', 'B\u00e9'] };
     const bad: unknown[] = [
       { v: 2, project: 'A', hooksEnd: 1 },
       { project: 'A', hooksEnd: 1 },
@@ -248,13 +296,13 @@ describe('hooks seal: decision, validation and record proof', () => {
   const record = (event: Record<string, unknown>): string =>
     JSON.stringify({ agentName: 'x', hookEvent: JSON.stringify(event) });
 
-  it('hookRecordIsProject proves A only when every name in the record is A', () => {
+  it('hookRecordIsProject proves A only by its top-level name', () => {
     expect(hookRecordIsProject(record({ codemie_project_name: 'A' }), 'a')).toBe(true);
-    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'A' } }), 'A')).toBe(true);
+    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } }), 'A')).toBe(true);
+    expect(hookRecordIsProject(record({ raw: { codemie_project_name: 'A' } }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ codemie_project_name: 'B' }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ codemie_project_name: '' }), 'A')).toBe(false);
     expect(hookRecordIsProject(record({ type: 'x' }), 'A')).toBe(false);
-    expect(hookRecordIsProject(record({ codemie_project_name: 'A', raw: { codemie_project_name: 'B' } }), 'A')).toBe(false);
     expect(hookRecordIsProject('not json', 'A')).toBe(false);
   });
 });

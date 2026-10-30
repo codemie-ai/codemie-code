@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "task": "Replace first-seen project pinning and event rewriting in the otlp-spool forwarder with split-by-project forwarding (one request per project with a matching X-CodeMie-Project header, aggregated cursor/session-end semantics), add a backend drop-reason contract test, scrub committed task docs and update the architecture doc.",
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four components in the daemon-side otlp-spool pipeline change together: forwarder (grouping, per-project POST, aggregated cursor and session-end), spool-io (isSendAllowed and PendingHookBatch must admit non-bound projects of a bound session), session-project (raw-name reading, hookEventProjectNames also used by otlp.plugin) and session-status (normalizeStatus legacy migration). A new grouping abstraction is introduced, but it stays inside one subsystem, so L rather than XL."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest existing pattern is the single-project, single-cursor batch send (PendingHookBatch / send / isSendAllowed). It does not cover several X-CodeMie-Project header values per session, which the security guide treats as a security-reviewed attribution change, and it has no notion of partial failure across requests of one contiguous byte range. Cursor correctness (advance only when every group is acknowledged, retry relies on backend ingest_dedup) is the central design risk, with the local policy re-check refusing non-bound projects and the legacy-status migration guess as secondary risks. The acceptance criteria enumerate error and variant cases (partial failure, retries with identical bytes, unsendable names, sealed prefix, session-end in a non-bound group) and no existing multi-project test template covers them. Bumped from L to XL."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "About 4-6 source files (forwarder.ts, spool-io.ts, session-project.ts, session-status.ts, possibly otlp.plugin.ts), 4-5 edited test files (forwarder, spool-io, session-project, tick-processor, project-interleave), 1 new contract test file, docs/ARCHITECTURE-OTLP-PLUGIN.md (about 8 places) and a scrub of 6 committed task docs. That is roughly 16+ touched files across src, docs and task dirs, but the doc scrub edits are mechanical and only 1-2 files are new, so scored XL instead of XXL. The nearest L calibration example (profile-provider-decoupling, 12 modified + 2 new) scored XXL here only after a data-migration bump."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L to XL: closest pattern (single-project header and single cursor per batch) does not cover the security-reviewed multi-header attribution path, and the acceptance criteria enumerate partial-failure, retry and unsendable-name cases with no existing test template",
+    "Calibration note: project example profile-provider-decoupling (L, 23) is the nearest anchor; this task scores lower on layers (no schema migration) and dependencies, higher on technical risk. Total 21 sits at the lower L boundary, so scores were not lowered."
+  ],
+  "split_recommendation": null
+}

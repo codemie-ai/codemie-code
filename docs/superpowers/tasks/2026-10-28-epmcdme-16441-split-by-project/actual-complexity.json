@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 19,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Five source modules of the shared otlp-spool pipeline changed together (forwarder, hook-records, session-project, session-status, spool-io); the per-project binding, conflict and seal logic is shared by every OTLP adapter, but it stays inside one subsystem." },
+    { "dimension": "technical_risk", "reason": "The forwarder gains backend-drop detection, a per-project request header and a seal of the pre-conflict prefix, so records can be sent under one project or discarded. Project names are limited to printable ASCII because fetch encodes headers as Latin-1. The existing forwarder pattern does not cover that validation or the drop-body parsing. The edge cases (unsendable names, conflicts, interleaving, backend drop contract) are covered by new parameterized test files." },
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 19 files (969 insertions, 324 deletions), which maps to XXL (16+). Seven are tests, seven are markdown (one architecture doc, six findings or handoff notes) and five are source. Raw count is high but the real code surface is five files in one directory." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk raised: closest pattern (existing forwarder header and body handling) does not cover the security-sensitive header-value validation, and the enumerated edge cases are covered by new dedicated test files."
+  ],
+  "split_recommendation": null
+}

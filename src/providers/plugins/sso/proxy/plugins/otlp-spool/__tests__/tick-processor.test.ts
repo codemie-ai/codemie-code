@@ -181,12 +181,12 @@ describe('processSessionTick (project gate)', () => {
   });
 
   it('records a conflict from a legacy status and discards the backlog', async () => {
-    const hooks = hookLine('A') + hookLine('B');
+    const hooks = hookLine('B\u00e9');
     await tickWith({ [`${SESSION}.hooks.ndjson`]: hooks, [`${SESSION}.otel_logs.bin`]: 'abc' });
 
     const { readStatus } = await import('../session-status.js');
     const status = await readStatus(SESSION);
-    expect(status?.projectConflict).toEqual(['A', 'B']);
+    expect(status?.projectConflict).toEqual(['B\u00e9']);
     expect(status?.cursors).toEqual({ hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0 });
     expect(status?.waitTicks).toBe(0);
     await expectNothingSent();
@@ -230,7 +230,7 @@ describe('processSessionTick (project gate)', () => {
   });
 
   it('does not rewrite the status of an already discarded conflicted session', async () => {
-    const hooks = hookLine('A') + hookLine('B');
+    const hooks = hookLine('B\u00e9');
     await tickWith({ [`${SESSION}.hooks.ndjson`]: hooks });
     const before = await stat(join(state.root, `${SESSION}.status`));
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -244,13 +244,13 @@ describe('processSessionTick (project gate)', () => {
 
   describe('hooks seal', () => {
     const aLine = hookLine('A');
-    const hooks = aLine + hookLine('B');
+    const hooks = aLine + hookLine('B\u00e9');
     const sealedStatus = async (hooksEnd: number): Promise<void> => {
       const { writeStatus, createStatus } = await import('../session-status.js');
       await writeStatus(SESSION, {
         ...createStatus(),
         project: 'A',
-        projectConflict: ['A', 'B'],
+        projectConflict: ['A', 'B\u00e9'],
         projectSeal: { v: 1, project: 'A', hooksEnd },
         projectScanned: true,
       });
@@ -298,9 +298,9 @@ describe('processSessionTick (project gate)', () => {
 
     it.each([
       { name: 'bound', status: { project: 'A', projectScanned: true }, flag: 'true', hooks: aLine, otel: 'abc' },
-      { name: 'conflict without a seal', status: { project: 'A', projectConflict: ['A', 'B'], projectScanned: true }, flag: 'true', hooks, otel: 'abc' },
-      { name: 'sealed, flag on', status: { project: 'A', projectConflict: ['A', 'B'], projectSeal: { v: 1 as const, project: 'A', hooksEnd: Buffer.byteLength(aLine) }, projectScanned: true }, flag: 'true', hooks, otel: 'abc' },
-      { name: 'sealed, flag off', status: { project: 'A', projectConflict: ['A', 'B'], projectSeal: { v: 1 as const, project: 'A', hooksEnd: Buffer.byteLength(aLine) }, projectScanned: true }, flag: 'false', hooks, otel: 'abc' },
+      { name: 'conflict without a seal', status: { project: 'A', projectConflict: ['A', 'B\u00e9'], projectScanned: true }, flag: 'true', hooks, otel: 'abc' },
+      { name: 'sealed, flag on', status: { project: 'A', projectConflict: ['A', 'B\u00e9'], projectSeal: { v: 1 as const, project: 'A', hooksEnd: Buffer.byteLength(aLine) }, projectScanned: true }, flag: 'true', hooks, otel: 'abc' },
+      { name: 'sealed, flag off', status: { project: 'A', projectConflict: ['A', 'B\u00e9'], projectSeal: { v: 1 as const, project: 'A', hooksEnd: Buffer.byteLength(aLine) }, projectScanned: true }, flag: 'false', hooks, otel: 'abc' },
       { name: 'unbound with hooks', status: { projectScanned: true }, flag: 'true', hooks: hookLine(''), otel: 'abc' },
     ])('tick and snapshots leave the same cursors: $name', async ({ status, flag, hooks: hooksText, otel }) => {
       process.env.OTLP_ALLOW_HOOKS_ONLY_FORWARD = flag;
