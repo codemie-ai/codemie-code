@@ -250,6 +250,34 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     });
   });
 
+  it('strips the desktop <copilot_tauri_workspace> preamble from user prompts', async () => {
+    const tauriFile = join(dir, 'tauri.jsonl');
+    writeFileSync(
+      tauriFile,
+      [
+        { type: 'session.start', timestamp: '2026-08-11T11:29:20.000Z', data: { sessionId: 'cp-tauri' } },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.000Z',
+          data: { text: '<copilot_tauri_workspace>\ninternal\n</copilot_tauri_workspace>\n<current_datetime>2026-08-11</current_datetime>\nFix the bug' },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:22.000Z',
+          data: { text: '<copilot_tauri_workspace>only preamble</copilot_tauri_workspace>' },
+        },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(tauriFile, 'cp-tauri');
+    const users = (parsed.messages as Array<{ type?: string; message?: { content?: string } }>).filter(
+      (m) => m.type === 'user'
+    );
+
+    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'Fix the bug' }]);
+    expect(users[0].message?.content).toBe('Fix the bug');
+  });
+
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {
     const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
     const ops = parsed.metrics!.fileOperations!;

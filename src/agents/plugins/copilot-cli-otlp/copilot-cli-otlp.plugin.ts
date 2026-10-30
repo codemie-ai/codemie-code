@@ -11,7 +11,7 @@ import { detectGitBranch } from '@/utils/processes.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { getCopilotSessionStateRoot, getDefaultCopilotSessionStateRoot, sameDirectory } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { resolveCopilotAgentKey, stripDesktopPreamble } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.workspace.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
@@ -65,6 +65,13 @@ const ENFORCED_EVENTS = new Set(['userPromptTransformed', 'preToolUse']);
 
 const FREE_TEXT_MAX_CHARS = 300;
 
+/** The user's own prompt text: the desktop app's internal preamble removed; undefined when nothing remains. */
+function userPrompt(prompt: string | undefined): string | undefined {
+  if (typeof prompt !== 'string') return undefined;
+  const text = stripDesktopPreamble(prompt);
+  return text.length > 0 ? text : undefined;
+}
+
 export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, CliBlockOutput> {
   public readonly name = COPILOT_CLI_OTLP_AGENT_NAME;
 
@@ -76,7 +83,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   protected extractHookContext(input: CopilotCliHookInput): OtlpHookContext {
     return {
       cwd: input.cwd,
-      prompt: input.codemieEventName === 'userPromptTransformed' ? input.prompt : undefined,
+      prompt: input.codemieEventName === 'userPromptTransformed' ? userPrompt(input.prompt) : undefined,
     };
   }
 
@@ -244,7 +251,8 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
     if (input.source !== undefined) normalized.source = this.boundedFreeText(input.source);
     if (input.reason !== undefined) normalized.reason = this.boundedFreeText(input.reason);
-    if (input.prompt !== undefined) normalized.prompt = input.prompt;
+    const prompt = userPrompt(input.prompt);
+    if (prompt !== undefined) normalized.prompt = prompt;
     if (input.stopReason !== undefined) normalized.stop_reason = this.boundedFreeText(input.stopReason);
     if (input.error !== undefined) {
       const err = input.error;

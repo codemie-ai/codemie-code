@@ -31,7 +31,7 @@ import type {
 import type { AgentMetadata } from '../../core/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
-import { COPILOT_CLI_AGENT_NAME, resolveCopilotAgentKey } from './copilot-cli.constants.js';
+import { COPILOT_CLI_AGENT_NAME, resolveCopilotAgentKey, stripDesktopPreamble } from './copilot-cli.constants.js';
 import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
 import { extractCopilotUsage } from './copilot-cli.usage.js';
 import { extractCopilotToolActivity } from './copilot-cli.tool-activity.js';
@@ -203,11 +203,12 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         }
         case 'user.message': {
           const data = (event.data as { text?: string; content?: string } | undefined) ?? {};
-          const text = typeof data.text === 'string' && data.text.trim()
+          const rawText = typeof data.text === 'string' && data.text.trim()
             ? data.text
             : typeof data.content === 'string'
               ? data.content
               : undefined;
+          const text = typeof rawText === 'string' ? stripDesktopPreamble(rawText) : undefined;
           if (typeof text === 'string' && text.trim()) {
             userPrompts.push({ count: 1, text });
           }
