@@ -37,7 +37,7 @@ const TENANT     = 'common';
 const AUTH_URL   = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`;
 const TOKEN_URL  = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
 const SCOPES     = [
-  'User.Read', 'Mail.Read', 'Mail.Send',
+  'User.Read', 'Mail.Read', 'Mail.ReadWrite', 'Mail.Send',
   'Calendars.Read', 'Calendars.ReadWrite',
   'Files.Read', 'Files.ReadWrite',
   'Sites.Read.All', 'Sites.ReadWrite.All', 'Chat.Read', 'Chat.ReadWrite',
@@ -51,6 +51,20 @@ const CACHE_FILE  = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
 const GRAPH_BETA  = 'https://graph.microsoft.com/beta';
 const TIMEOUT_MS  = 5 * 60 * 1000;
+
+// Graph accepts file attachments below 3 MB in a single POST; larger ones (up to 150 MB)
+// need an upload session whose chunks are a multiple of 320 KiB.
+const ATTACH_INLINE_MAX = 3 * 1024 * 1024;
+const ATTACH_MAX        = 150 * 1024 * 1024;
+const ATTACH_CHUNK      = 320 * 1024 * 10;
+const MIME_TYPES = {
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
+  '.html': 'text/html', '.htm': 'text/html', '.zip': 'application/zip',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 // ── HTTP Helpers ──────────────────────────────────────────────────────────────
 function httpsRequest(urlStr, options = {}, body = null) {
@@ -470,6 +484,99 @@ async function cmdMe(args) {
   console.log(`User ID    : ${me.id              || 'N/A'}`);
 }
 
+function splitList(v) {
+  return typeof v === 'string' ? v.split(',').map(x => x.trim()).filter(Boolean) : [];
+}
+
+function toRecipients(v) {
+  return splitList(v).map(address => ({ emailAddress: { address } }));
+}
+
+// Validate every attachment up front so a bad path never leaves a half-built draft behind.
+function resolveAttachments(v) {
+  return splitList(v).map(p => {
+    const file = path.resolve(p);
+    let st;
+    try { st = fs.statSync(file); } catch { throw new Error(`Attachment not found: ${p}`); }
+    if (!st.isFile()) throw new Error(`Attachment is not a file: ${p}`);
+    if (st.size > ATTACH_MAX) throw new Error(`Attachment too large (${fmtSize(st.size)}, max ${fmtSize(ATTACH_MAX)}): ${p}`);
+    const name = path.basename(file);
+    return { file, name, size: st.size, contentType: MIME_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' };
+  });
+}
+
+async function addAttachment(token, messageId, att) {
+  const base = `/me/messages/${encodeURIComponent(messageId)}/attachments`;
+  if (att.size < ATTACH_INLINE_MAX) {
+    await graphPost(base, token, {
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name:          att.name,
+      contentType:   att.contentType,
+      contentBytes:  fs.readFileSync(att.file).toString('base64'),
+    });
+    return;
+  }
+  const session = await graphPost(`${base}/createUploadSession`, token, {
+    AttachmentItem: { attachmentType: 'file', name: att.name, size: att.size, contentType: att.contentType },
+  });
+  const fd = fs.openSync(att.file, 'r');
+  try {
+    for (let start = 0; start < att.size; start += ATTACH_CHUNK) {
+      const len = Math.min(ATTACH_CHUNK, att.size - start);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      // The upload URL is pre-authorised: sending the Graph bearer token to it is rejected.
+      await httpsRequest(session.uploadUrl, {
+        method:  'PUT',
+        headers: {
+          'Content-Length': len,
+          'Content-Range':  `bytes ${start}-${start + len - 1}/${att.size}`,
+          'Content-Type':   'application/octet-stream',
+        },
+      }, buf);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Create a draft in the Drafts folder. Never sends: the user reviews and sends it from Outlook.
+async function cmdEmailDraft(args, token) {
+  for (const k of ['to', 'cc', 'bcc', 'subject', 'body', 'bodyFile', 'attach']) {
+    if (args[k] === true) throw new Error(`--${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())} needs a value`);
+  }
+  if (args.body !== undefined && args.bodyFile !== undefined) throw new Error('Use either --body or --body-file, not both');
+
+  let content = args.body || '';
+  if (args.bodyFile !== undefined) {
+    try { content = fs.readFileSync(args.bodyFile, 'utf8'); } catch { throw new Error(`Cannot read --body-file: ${args.bodyFile}`); }
+  }
+  const html        = !!args.html || /\.html?$/i.test(args.bodyFile || '');
+  const attachments = resolveAttachments(args.attach);
+
+  const draft = await graphPost('/me/messages', token, {
+    subject:       args.subject || '(no subject)',
+    body:          { contentType: html ? 'HTML' : 'Text', content },
+    toRecipients:  toRecipients(args.to),
+    ccRecipients:  toRecipients(args.cc),
+    bccRecipients: toRecipients(args.bcc),
+  });
+
+  for (const att of attachments) {
+    try {
+      await addAttachment(token, draft.id, att);
+    } catch (e) {
+      throw new Error(`Draft ${draft.id} was created but attaching "${att.name}" failed: ${(e.responseBody || e.message).slice(0, 200)}`);
+    }
+  }
+
+  if (args.json) { console.log(JSON.stringify({ id: draft.id, webLink: draft.webLink, attachments: attachments.map(a => a.name) }, null, 2)); return; }
+  console.log(`Draft created (not sent): ${draft.subject}`);
+  console.log(`ID       : ${draft.id}`);
+  for (const a of attachments) console.log(`Attached : ${a.name} (${fmtSize(a.size)})`);
+  if (draft.webLink) console.log(`Open     : ${draft.webLink}`);
+}
+
 async function cmdEmails(args) {
   const token = await getValidToken();
 
@@ -482,6 +589,11 @@ async function cmdEmails(args) {
       },
     });
     console.log(`Email sent to ${args.send}`);
+    return;
+  }
+
+  if (args.draft) {
+    await cmdEmailDraft(args, token);
     return;
   }
 
@@ -1620,7 +1732,8 @@ async function cmdTodo(args) {
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
     'manager','reports','availability','notebooks','list','vtt','help','force',
-    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members']);
+    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members',
+    'draft','html']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1656,6 +1769,8 @@ Data:
   me [--json]                          Your profile
   emails [--limit N] [--unread] [--search Q] [--folder NAME]
          [--read ID] [--conversation CONV_ID] [--send TO --subject S --body B] [--json]
+         [--draft [--to A,B] [--cc A,B] [--bcc A,B] --subject S (--body B | --body-file F) [--html]
+                  [--attach FILE1,FILE2]]   (saves to Drafts, never sends)
   calendar [--limit N] [--json]
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
