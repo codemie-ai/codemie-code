@@ -101,12 +101,111 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "apiKey": "sk-***",
       "model": "gpt-4.1",
       "timeout": 300
+    },
+    "enterprise-sso": {
+      "name": "enterprise-sso",
+      "provider": "ai-run-sso",
+      "model": "claude-sonnet-5",
+      "agentModels": {
+        "claude": { "models": ["claude-sonnet-5", "claude-haiku-4-5"], "model": "claude-sonnet-5" },
+        "codex": { "models": ["gpt-5.6-terra"], "model": "gpt-5.6-terra" },
+        "opencode": { "models": ["claude-sonnet-5", "gemini-3-pro"], "model": "gemini-3-pro" }
+      }
     }
   }
 }
 ```
 
 **Legacy Configuration**: If you have an existing single-provider config, it will automatically migrate to a profile named "default" on first use.
+
+### Models per Agent
+
+`codemie setup` chooses models per agent (EPMCDME-15641). The profile records
+them in `agentModels`, keyed by base agent name (as on `enterprise-sso` above):
+
+- `models` - the models that agent may use (at least one).
+- `model` - that agent's active model; it launches with it.
+- `confirmedModels` (optional) - ids accepted despite the agent's model-name
+  rule: typed names the rule rejects, and catalog routers/aliases. Launch
+  reports them as unverified instead of incompatible. Always a subset of `models`.
+
+The top-level `model` stays: it mirrors the first agent's active model, and is
+what agents outside `agentModels` and profile-level displays use. A profile
+without `agentModels` is a legacy single-model profile and behaves as before.
+
+#### The setup wizard
+
+`codemie setup` runs a full-screen wizard in the style of `codemie setup assistants`.
+A breadcrumb shows the stages (`Agents › Claude Code › Codex › Review`); Esc steps
+back one screen, and Ctrl+C or Cancel leaves without saving.
+
+1. **Agents** - "Which agents will use this profile?" (at least one). The offered
+   agents are `claude`, `codex`, `gemini`, `kimi`, `copilot-cli`, `opencode`, `pi`,
+   `codemie-code` and `openwiki`; ACP variants share their base agent's models.
+   An agent the provider cannot serve is shown but cannot be selected, with the
+   reason: `not supported by <provider>` (its `supportedProviders` excludes the
+   provider) or `no compatible model on <provider>` (no catalog model passes its
+   rules). A note lists the agents without model rules.
+2. **For each agent: Models** - lists only the models that agent supports.
+   Agents with a model classifier (`classifyModel` in their plugin metadata:
+   `claude`, `codex`, `gemini`, `kimi`, `copilot-cli`) hide models they cannot run;
+   router/alias names with no recognizable family are tagged `unverified`.
+   `opencode`, `pi`, `codemie-code` and `openwiki` have no model rules, so every
+   model is listed with the note "any model works". Typing filters the list;
+   a name that matches nothing can be added with `+ Use "<name>"` (a name the
+   agent's rules reject is saved as unverified). With no provider catalog, the
+   list starts empty and you type model names. Ollama adds a "Search Ollama
+   library" row.
+3. **For each agent: Active model** - one of that agent's picked models. Skipped
+   when the agent has a single model.
+
+   Agents with no in-session model menu (`activeModelOnly` in their plugin metadata:
+   `gemini`, `kimi`, `copilot-cli`, `openwiki`) always run on their active model, so
+   steps 2 and 3 become a single **Active model** screen. It lists the models the
+   agent supports, accepts typed names and search the same way, and notes that the
+   model is changed with `codemie models switch --agent <name>`. The saved set holds
+   that one model.
+4. **Review** - one line per agent, active model first; Save writes the profile.
+
+On an update, the saved agents and models are preselected. The wizard is skipped
+for providers that auto-pick their single model (`anthropic-subscription`,
+`moonshot-subscription`); no `agentModels` is saved.
+
+#### Switching and listing
+
+- `codemie models switch [model-id] [--agent <name>]` changes one agent's active
+  model in place, writing only that agent's `model` (plus the top-level `model`
+  when it is the first agent, and Claude's `haikuModel`/`sonnetModel`/`opusModel`
+  tiers when the agent is Claude). Without `--agent`, the model id picks the agent
+  when only one agent has it; otherwise you choose the agent, then its model, from
+  that agent's own list. An agent with one model is a no-op. On a legacy profile
+  `--agent` is rejected. An `activeModelOnly` agent has no saved list to choose
+  from: it is offered the provider's live catalog, narrowed to the models it can
+  use, and the chosen model replaces its set. A model id the catalog does not list
+  is accepted unless the agent's rules reject it; when the catalog cannot be
+  fetched, pass the model id.
+- `codemie models list [--agent <name>]` prints an "Agents:" block (each agent's
+  models, active first), then the catalog with an `AGENTS` column listing the
+  agents each model is available to, `*` marking the agents that start with it. A
+  legend explains the mark. Models any agent uses come first.
+  `--agent` tags only that agent's models as `(active)`/`(profile)`. A legacy
+  profile keeps the `(active)` tag only.
+- `codemie profile status` shows an "Agent models" row per agent.
+
+#### At launch
+
+- Each agent launches with its own active model; its in-session model menu
+  (Claude `/model`, Codex's catalog, OpenCode/codemie-code's dynamic config,
+  Pi's `models.json`) is limited to its own `models`, even a single one. A
+  legacy single-model profile, or an agent outside `agentModels`, shows the full
+  provider catalog.
+- `--model` or `CODEMIE_MODEL` overrides the agent's active model for that run.
+- Only the persisted active model is checked. If it is incompatible with the
+  launching agent, a profile with `agentModels` is blocked (exit 1), naming the
+  agent's compatible models and `codemie models switch --agent <name>`, or
+  `codemie setup` when none exists. A legacy profile only prints a warning and
+  continues. An agent outside `agentModels` launches with the top-level model,
+  under the same check.
 
 ## Supported Providers
 

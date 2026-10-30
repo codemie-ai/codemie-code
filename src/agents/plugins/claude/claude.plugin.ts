@@ -5,7 +5,8 @@ import type {
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
-import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
+import { isClaudeCompatibleModelName, resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
@@ -172,6 +173,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'ollama'],
   blockedModelPatterns: [],
+  classifyModel: (id, ctx) => classifyWithPredicate(isClaudeCompatibleModelName, id, ctx),
   // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
   // matches it against the live catalog and picks the current latest Sonnet.
   // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
@@ -509,9 +511,49 @@ export const ClaudePluginMetadata: AgentMetadata = {
         // needs no afterRun cleanup — writeConfigToTempFile() already registers deletion on exit.
         try {
           const options = await buildModelPickerOptions(env);
-          if (options.length > 0) {
+          // CODEMIE_PROFILE_MODELS (set for the agent's own list on a per-agent profile)
+          // narrows the menu to this profile's own list. Its absence is the
+          // fallback signal to show the full catalog, same as an empty
+          // intersection with a live catalog that dropped every one of those
+          // ids — never leave the picker empty (AC22).
+          let menuOptions = options;
+          if (env.CODEMIE_PROFILE_MODELS) {
+            const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
+            // The AC22 fallback is judged on the allowed-CSV intersection alone
+            // (before the active-model keep-case below), mirroring OpenCode/Pi's
+            // equivalents: when the profile's own list matches nothing in the
+            // live catalog at all, the whole unfiltered catalog is returned
+            // rather than silently narrowing it down to just the active model.
+            const matched = options.filter((option) => allowed.has(option.model.replace(/\[1m\]$/, '')));
+            if (matched.length > 0) {
+              // CR-002: never exclude the model this session is actually
+              // running, even when it falls outside the stored
+              // CODEMIE_PROFILE_MODELS (e.g. the tier-resolution loop above just
+              // retirement-healed it to a model not yet reflected there). Both
+              // sides are stripped of the `[1m]` opt-in suffix before comparing,
+              // since env.CODEMIE_MODEL may carry it too (applyContextWindow).
+              const activeBareId = env.CODEMIE_MODEL?.replace(/\[1m\]$/, '');
+              const alreadyIncludesActive = activeBareId
+                ? matched.some((option) => option.model.replace(/\[1m\]$/, '') === activeBareId)
+                : true;
+              if (alreadyIncludesActive) {
+                menuOptions = matched;
+              } else {
+                const activeOption = options.find(
+                  (option) => option.model.replace(/\[1m\]$/, '') === activeBareId
+                );
+                menuOptions = activeOption ? [...matched, activeOption] : matched;
+              }
+            } else {
+              // AC22: the user must see that the menu could not be limited, not just the log file.
+              logger.notice(
+                '[Claude] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog'
+              );
+            }
+          }
+          if (menuOptions.length > 0) {
             const settingsJson = JSON.stringify({
-              modelPicker: { options, replaceBuiltInOptions: true },
+              modelPicker: { options: menuOptions, replaceBuiltInOptions: true },
             });
             env.CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS = writeConfigToTempFile(settingsJson, 'claude-model-picker');
           }

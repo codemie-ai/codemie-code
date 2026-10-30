@@ -621,6 +621,40 @@ For profiles using AI/Run CodeMie SSO provider:
 - `status` - Shows active profile with auth status, prompts for re-auth if invalid
 - `refresh` - Re-authenticates with existing SSO configuration
 
+## Model Management Commands
+
+List the active provider's catalog, and switch an agent's active model in place.
+
+```bash
+codemie models list                          # Catalog, with the active profile's models per agent
+codemie models list --agent codex            # Tag only codex's models
+codemie models switch                        # Pick the agent (if several), then its model
+codemie models switch <model-id>             # Switch the agent that has this model
+codemie models switch --agent codex <id>     # Switch codex directly
+```
+
+**`codemie models list`** fetches the live catalog for the active provider. On a
+profile set up per agent (`agentModels`) it prints an "Agents:" block, then an
+`AGENTS` column listing the agents each model is available to, `*` marking the
+agents that start with it. `--agent` tags only
+that agent's models as `(active)`/`(profile)`. A legacy profile keeps the
+`(active)` tag. The full catalog is always shown.
+
+**`codemie models switch`** writes only the chosen agent's active model (plus the
+top-level `model` when it is the first agent, and Claude's haiku/sonnet/opus tiers
+when the agent is Claude) — never credentials, `reasoningEffort`, or workspace
+settings:
+- Without `--agent`, a model id picks the agent when only one agent has it;
+  otherwise you choose the agent, then one of its own models.
+- An agent with no in-session model menu (gemini, kimi, copilot-cli, openwiki)
+  has no saved list: it is offered the live catalog filtered by its rules, and
+  the chosen model replaces its set.
+- An unknown agent or model fails loudly (non-zero exit) and writes nothing.
+- An agent with one model, or a single-model legacy profile, is a no-op — run
+  `codemie setup` → "Update an existing profile" to add more.
+- Esc cancels without changes. It never takes a `--profile` flag — switch
+  profiles first with `codemie profile switch`.
+
 ## Analytics Commands
 
 Track and analyze your AI agent usage across all agents.

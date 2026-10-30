@@ -46,6 +46,21 @@ export interface CodemieSkill {
 }
 
 /**
+ * Models one agent uses on a profile, chosen per agent by `codemie setup` (EPMCDME-15641).
+ */
+export interface AgentModelSet {
+  /** The agent's models; never empty and always includes `model`. */
+  models: string[];
+  /** The agent's active model. */
+  model: string;
+  /**
+   * Ids accepted despite the agent's model-name rule (typed names, catalog routers).
+   * Always a subset of `models`; reported as unverified instead of incompatible.
+   */
+  confirmedModels?: string[];
+}
+
+/**
  * Provider profile configuration
  */
 export interface ProviderProfile {
@@ -53,7 +68,16 @@ export interface ProviderProfile {
   provider?: string;
   baseUrl?: string;
   apiKey?: string;
+  /**
+   * Active model. On a profile with `agentModels` it is the first agent's active model, used by
+   * agents outside the map and by profile-level displays.
+   */
   model?: string;
+  /**
+   * Per-agent models, keyed by base agent name (no `-acp` suffix). Absent on legacy profiles,
+   * which keep the single `model` (see `resolveProfileModels` in `src/utils/config.ts`).
+   */
+  agentModels?: Record<string, AgentModelSet>;
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
   reasoningEffort?: CanonicalReasoningEffort;
 

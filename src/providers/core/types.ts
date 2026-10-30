@@ -333,6 +333,13 @@ export interface ProviderSetupSteps {
   getRecommendedModels?(models: string[], credentials: ProviderCredentials): Promise<string[]>;
 
   /**
+   * Optional: ids from the fetched catalog that the provider flags as routers/aliases
+   * (`ModelInfo.metadata.isRouter`). Setup uses them so a router alias without "router" in its
+   * name is treated as unverified, not incompatible, when matching models to harnesses.
+   */
+  fetchRouterModels?(credentials: ProviderCredentials): Promise<string[]>;
+
+  /**
    * Step 3: Build final configuration
    *
    * Transform credentials + model selection into CodeMieConfigOptions

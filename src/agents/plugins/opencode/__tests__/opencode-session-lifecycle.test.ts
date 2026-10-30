@@ -17,6 +17,11 @@ const processEvent = vi.fn();
 const startIncrementalSync = vi.fn();
 const stopIncrementalSync = vi.fn();
 const ensureSessionFile = vi.fn();
+// Real fetchDynamicModelConfigs would hit the network (falling back to the
+// static catalogue on any error); mocked here so the CODEMIE_PROFILE_MODELS
+// narrowing integration test below (CR-005) controls the exact catalogue
+// filterToAllowed sees, rather than depending on static-fallback content.
+const fetchDynamicModelConfigsMock = vi.fn().mockResolvedValue({});
 
 vi.mock('../../../../cli/commands/hook.js', () => ({ processEvent }));
 vi.mock('../opencode.incremental-sync.js', () => ({
@@ -32,8 +37,30 @@ vi.mock('../../codemie-code-hooks/index.js', () => ({
   getHooksPluginFileUrl: () => 'file:///tmp/codemie-hooks/shell-hooks.ts',
   cleanupHooksPlugin: vi.fn(),
 }));
+vi.mock('../opencode-dynamic-models.js', () => ({
+  fetchDynamicModelConfigs: fetchDynamicModelConfigsMock,
+}));
 
 const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
+
+function stubModelConfig(id: string): Record<string, unknown> {
+  return {
+    id,
+    name: id,
+    family: 'gpt-5',
+    tool_call: true,
+    reasoning: true,
+    attachment: false,
+    temperature: false,
+    modalities: { input: ['text'], output: ['text'] },
+    knowledge: '2025-08-31',
+    release_date: '2025-12-11',
+    last_updated: '2025-12-11',
+    open_weights: false,
+    cost: { input: 1, output: 1 },
+    limit: { context: 1000, output: 1000 },
+  };
+}
 
 function baseEnv(): NodeJS.ProcessEnv {
   return {
@@ -192,6 +219,50 @@ describe('OpenCode beforeRun', () => {
 
     // Redirecting it would orphan the session history users already have.
     expect(env.XDG_DATA_HOME).toBeUndefined();
+  });
+
+  // CR-005: pins the real call site (beforeRun's filterToAllowed wiring into
+  // provider.models) rather than only the pure filterToAllowed helper in
+  // isolation — a wrong env var, swapped argument, or mis-ordered call here
+  // would previously ship with no test failing.
+  it('limits provider.models to CODEMIE_PROFILE_MODELS, keeping the active model (CR-005 integration)', async () => {
+    fetchDynamicModelConfigsMock.mockResolvedValueOnce({
+      'model-a': stubModelConfig('model-a'),
+      'model-b': stubModelConfig('model-b'),
+      'model-c': stubModelConfig('model-c'),
+    });
+    const env = {
+      ...baseEnv(),
+      CODEMIE_BASE_URL: 'http://localhost:1234',
+      CODEMIE_MODEL: 'model-a',
+      CODEMIE_PROFILE_MODELS: 'model-a,model-b',
+    };
+
+    await OpenCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+    const modelIds = Object.keys(config.provider['codemie-proxy'].models);
+    expect(modelIds.sort()).toEqual(['model-a', 'model-b']);
+  });
+
+  it('keeps the active model even when it is outside CODEMIE_PROFILE_MODELS (CR-005 integration)', async () => {
+    fetchDynamicModelConfigsMock.mockResolvedValueOnce({
+      'model-a': stubModelConfig('model-a'),
+      'model-b': stubModelConfig('model-b'),
+      'model-c': stubModelConfig('model-c'),
+    });
+    const env = {
+      ...baseEnv(),
+      CODEMIE_BASE_URL: 'http://localhost:1234',
+      CODEMIE_MODEL: 'model-c',
+      CODEMIE_PROFILE_MODELS: 'model-a,model-b',
+    };
+
+    await OpenCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+    const modelIds = Object.keys(config.provider['codemie-proxy'].models);
+    expect(modelIds.sort()).toEqual(['model-a', 'model-b', 'model-c']);
   });
 });
 

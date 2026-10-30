@@ -1,0 +1,100 @@
+{
+  "decision": "request-changes",
+  "rationale": "Five blocking findings after reading the real code: a catalog-less setup loop with no exit, an unthreaded catalog isRouter hint, session-confirmed ids lost on coverage retry, a stdout warning in legacy launch, and a generic Error (standards). All four lenses and the standards audit ran. 1 deferred (setup.ts size overage, pre-existing; written to code-review-deferred.md), 17 dismissed as noise (verified loader passes new fields, heuristic limits, test-hygiene items, spec-mandated override skip).",
+  "confidence": "high",
+  "risk_flags": ["public-api", "data-contract"],
+  "business_review": [
+    {"kind": "spec", "item": "ProviderProfile gains optional additive harnesses and confirmedModels (confirmedModels subset of models)", "status": "pass", "notes": "types.ts adds both fields; setup.ts filters confirmedModels to selected models before save"},
+    {"kind": "spec", "item": "Profile without harnesses is legacy: loads unchanged, nothing rewritten", "status": "pass", "notes": "No migration code; display, models and launch treat missing harnesses as legacy"},
+    {"kind": "spec", "item": "Optional classifyModel hook on AgentMetadata returning compatible|incompatible|unverified with ctx", "status": "pass", "notes": "types.ts adds classifyModel?; ModelClassifyContext carries isRouter"},
+    {"kind": "spec", "item": "Shared helper model-compat.ts reads hook via AgentRegistry; CLI and AgentCLI never import agents/plugins/*", "status": "pass", "notes": "Consumers import only core/model-compat.js; plugins import leaf model-classify.js"},
+    {"kind": "spec", "item": "Agent without classifyModel is unrestricted: always compatible, never fails coverage gate, never launch mismatch", "status": "pass", "notes": "classifyModelForAgent returns compatible when no hook"},
+    {"kind": "spec", "item": "Three-state meaning: compatible, incompatible, unverified (router/alias via catalog isRouter or router name; confirmed id unverified)", "status": "partial", "notes": "Catalog isRouter only wired into models list; setup, switch, status and launch are name-only (CR-005)"},
+    {"kind": "spec", "item": "Classifiers wrap existing Codex/Gemini/Kimi predicates; Claude gets new predicate; no new rules for others", "status": "pass", "notes": "claude.models.ts predicate; codex/gemini/kimi wrap existing via classifyWithPredicate"},
+    {"kind": "spec", "item": "Harness step runs after credentials/model fetch and before model step; required multi-select, no 'no restriction' entry", "status": "pass", "notes": "promptForHarnesses checkbox validates at least one pick"},
+    {"kind": "spec", "item": "Offered list from registry: claude, codex, gemini, kimi, opencode, pi, codemie-code; ACP folded; copilot-cli and openwiki excluded", "status": "pass", "notes": "getOfferedHarnesses filters -acp, analyticsOnly, NOT_HARNESSES"},
+    {"kind": "spec", "item": "Classifier-backed vs unrestricted agents; unrestricted-only selection equals today's behavior", "status": "pass", "notes": "buildHarnessContext returns undefined when no selected harness has a classifier"},
+    {"kind": "spec", "item": "Harness step skipped for auto-pick providers; harnesses not saved", "status": "pass", "notes": "Prompt lives only in the non-preselected branch"},
+    {"kind": "spec", "item": "On update pre-select profile.harnesses; legacy starts with nothing pre-selected", "status": "pass", "notes": "promptForHarnesses(existingProfile?.harnesses) sets checked from existing"},
+    {"kind": "spec", "item": "Catalog provider: offer only models not incompatible for at least one selected harness; rows show harnesses and 'unverified'", "status": "pass", "notes": "isVisible filter plus harnessLabel suffix; isRouter hint gap tracked in CR-005"},
+    {"kind": "spec", "item": "Selected harness with no compatible model: explain, let user change provider or harness, do not save", "status": "partial", "notes": "Dead-end check runs only when catalog non-empty; catalog-less path loops with no exit (CR-004)"},
+    {"kind": "spec", "item": "Catalog-less provider: typed name accepted silently if compatible/unverified; else warn and confirm; confirmed id to confirmedModels", "status": "partial", "notes": "Warn/confirm works, but confirmed ids are lost when the coverage gate loops back (CR-002)"},
+    {"kind": "spec", "item": "Active-model prompt chosen from selected models; incompatible-with-some allowed and labeled", "status": "pass", "notes": "promptForActiveModel labels choices with harnessLabel, no filtering"},
+    {"kind": "spec", "item": "Coverage gate on every save (create and update): every harness needs a non-incompatible chosen model, names the harness", "status": "pass", "notes": "uncoveredHarness loop plus post-install re-check"},
+    {"kind": "spec", "item": "models switch picker annotates each model with profile harnesses it works with", "status": "pass", "notes": "runModelsSwitch passes harnessAnnotations to the picker"},
+    {"kind": "spec", "item": "profile status shows harnesses and per-model harnesses; models list annotates rows; legacy unchanged", "status": "pass", "notes": "display.ts and profile.ts add Harnesses row and suffix; undefined for legacy"},
+    {"kind": "spec", "item": "Launch checks only persisted active model; skipped when --model given or CODEMIE_MODEL set", "status": "pass", "notes": "modelOverridden in AgentCLI validateCompatibility"},
+    {"kind": "spec", "item": "Profile with harnesses and incompatible active model: block exit 1; name compatible models and codemie models switch, else codemie setup", "status": "pass", "notes": "checkHarnessCompatibility returns false when harnesses present"},
+    {"kind": "spec", "item": "Legacy profile with same mismatch: warn naming mismatch and fix, then continue", "status": "pass", "notes": "Warns and returns true; output channel issue tracked in CR-001"},
+    {"kind": "spec", "item": "compatible and unverified models print nothing; unrestricted agents never checked", "status": "pass", "notes": "Early return unless classification is incompatible"},
+    {"kind": "spec", "item": "Docs updated: CONFIGURATION.md, COMMANDS.md, project-config.md, ARCHITECTURE-CONFIGURATION.md", "status": "pass", "notes": "All four files changed"},
+    {"kind": "spec", "item": "Non-goals respected: no migration, no buildConfig/installModel signature change, no per-agent active model", "status": "pass", "notes": "No such changes in diff"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "6 subjects in range all use allowed types (feat, docs) and allowed scopes (agents, cli) or no scope; all under 100 chars, imperative. Checked against git-workflow.md."},
+    {"kind": "code-quality", "status": "partial", "notes": "Mostly conforms: .js import extensions, explicit return types, no commented-out code. Gaps: setup.ts:374 bare Error (ConfigurationError exists); handlePluginSetup/promptForModelsSelection and setup.ts, AgentCLI.ts exceed size guidelines (much pre-existing)."},
+    {"kind": "security", "status": "pass", "notes": "Guide at .ai-run/guides/security/security-practices.md. No attribution headers, credential storage or user-input path I/O touched; new logger.error logs only model id and display name."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 767,
+      "title": "Legacy-profile mismatch warning writes to stdout",
+      "problem": "checkHarnessCompatibility prints the legacy-profile warning and the sibling/setup hint with console.log, then lets the launch continue. handleRun auto-enables silent mode for non-interactive, --task and ACP/SDK callers precisely because stdout is parsed, and the surrounding code (install error, Windows guidance) deliberately uses console.error for that reason. claude-acp, codex-acp and similar resolve to the base agent's classifier, so they reach this path.",
+      "impact": "A legacy profile whose active model does not match the launching harness injects non-protocol text into the stdout stream of ACP editors, SDKs and CI wrappers, which can break their parsing. Reachable on any legacy profile with a mismatching active model.",
+      "recommendation": "Write the warning and hint lines to stderr (console.error) or logger.warn instead of console.log in checkHarnessCompatibility; the harness-block path exits, so only the continuing legacy path matters."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 293,
+      "title": "Confirmed model ids lost when coverage gate loops back",
+      "problem": "In handlePluginSetup the retry loop rebuilds harnessCtx from existingProfile?.confirmedModels only. Ids the user confirmed during this session live in the local confirmed set of promptForModelsSelection and in result.confirmedModels, but are never carried into the next iteration. A typed id is also not in the outer catalog list, so on retry it is not a choice and drops out of the pre-checked selection.",
+      "impact": "When the coverage gate fails for a second harness after the user confirmed an incompatible typed id, the id is silently dropped or must be retyped and reconfirmed. Spec requirement for catalog-less confirm handling is only partly met.",
+      "recommendation": "Accumulate confirmed ids across loop iterations (seed from existingProfile.confirmedModels, add result.confirmedModels each pass) and pass the union to buildHarnessContext; keep pre-selected typed ids that are not in the catalog as visible choices on retry."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 374,
+      "title": "Post-install coverage gate throws generic Error",
+      "problem": "The new post-install check throws a bare Error ('No installed model works with ... profile not saved'). AGENTS.md Common Pitfalls require specific project error classes, and ConfigurationError exists in src/utils/errors.ts.",
+      "impact": "Breaks the documented error-handling convention in newly added code and leaves callers unable to distinguish this configuration failure from generic errors.",
+      "recommendation": "Throw ConfigurationError (src/utils/errors.ts) instead of Error at this site."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 725,
+      "title": "Catalog-less setup loops forever on unsupported provider",
+      "problem": "The dead-end check in handlePluginSetup runs only when models.length > 0. With an empty catalog, promptForManualOrSearchModel loops until uncoveredHarness is empty, but classifyModelForAgent returns incompatible for a provider outside the agent's supportedProviders before it consults confirmedModels, so no typed or confirmed id can ever cover that harness. Example: kimi supports only moonshot-subscription and ai-run-sso, so kimi on litellm with a failed or empty model fetch never terminates.",
+      "impact": "Setup hangs re-asking 'Enter a model for <harness>' with no explanation and no change-agents or cancel option; only Ctrl-C leaves. Spec requires explaining the dead end and letting the user change provider or harness.",
+      "recommendation": "Before the manual-entry loop, run the dead-end check for any selected classifier harness whose supportedProviders excludes the provider (promptForHarnessDeadEnd: change agents or cancel), and give the loop an exit for an unsatisfiable uncovered harness."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 819,
+      "title": "Catalog isRouter hint not threaded beyond models list",
+      "problem": "ModelInfo.metadata.isRouter is read only in `codemie models list`. The setup model filter (isVisible, harnessLabel, acceptTypedModel, uncoveredHarness), runModelsSwitch, ProfileDisplay and the launch check classify by name only. A catalog-flagged router or alias without 'router' in its id (e.g. sy-signal-terra-luna) is unverified in one view and incompatible in the others.",
+      "impact": "Such aliases are hidden from the setup picker, shown as [none] in switch and status, and, once a profile has harnesses, would hard-block launch with exit 1. Reachability of the launch block was confirmed from code (no catalog or router flag is available there). The spec's three-state rule and docs ('unverified' for routers/aliases) are only partly met.",
+      "recommendation": "Add an isRouter lookup built from catalog metadata to HarnessModelContext and pass it in the setup filter/label/accept/coverage calls and to harnessAnnotations in runModelsSwitch and ProfileDisplay; since launch has no catalog, persist ids accepted through the router hint (e.g. in confirmedModels) so checkHarnessCompatibility reports them unverified."
+    }
+  ]
+}

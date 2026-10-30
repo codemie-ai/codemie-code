@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import {
   CodeMieConfigOptions,
   ProviderProfile,
+  AgentModelSet,
   MultiProviderConfig,
   WorkspaceConfig,
   CodeMieIntegrationInfo,
@@ -25,6 +26,50 @@ import { ConfigurationError } from './errors.js';
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
 
 export { StorageScope };
+
+type ProfileModelFields = Pick<ProviderProfile, 'model' | 'agentModels'>;
+
+/** Base agent name: ACP variants share their base agent's models. */
+function baseAgentName(agent: string): string {
+  return agent.endsWith('-acp') ? agent.slice(0, -'-acp'.length) : agent;
+}
+
+/** The agent's own model set on a per-agent profile, if setup configured it. */
+export function resolveAgentModelSet(
+  profile: Pick<ProviderProfile, 'agentModels'>,
+  agent: string
+): AgentModelSet | undefined {
+  return profile.agentModels?.[baseAgentName(agent)];
+}
+
+/**
+ * Normalize a profile's model list at read time.
+ *
+ * With `agent`, the list is that agent's own models. Without it, a per-agent profile yields the
+ * union of every agent's models (in agent order). A legacy profile, or an agent the profile does
+ * not configure, is read as `[model]`, so every consumer can rely on a normalized array.
+ */
+export function resolveProfileModels(profile: ProfileModelFields, agent?: string): string[] {
+  const single = profile.model ? [profile.model] : [];
+  if (!profile.agentModels) return single;
+  if (agent) return resolveAgentModelSet(profile, agent)?.models ?? single;
+
+  const union = [...new Set(Object.values(profile.agentModels).flatMap(set => set.models))];
+  return union.length > 0 ? union : single;
+}
+
+/**
+ * The profile as one agent sees it: its active model and only its own models. An agent the
+ * profile does not configure keeps the top-level model and an empty map, so the profile still
+ * reads as one set up per agent. Legacy profiles are returned unchanged.
+ */
+export function withAgentModelView<T extends ProfileModelFields>(config: T, agent: string): T {
+  if (!config.agentModels) return config;
+  const set = resolveAgentModelSet(config, agent);
+  return set
+    ? { ...config, model: set.model, agentModels: { [baseAgentName(agent)]: set } }
+    : { ...config, agentModels: {} };
+}
 
 /**
  * Unified configuration loader with priority system:
@@ -766,6 +811,80 @@ export class ConfigLoader {
   }
 
   /**
+   * Switch the active profile's active model in place.
+   *
+   * Unlike switchProfile (which repoints activeProfile at a different
+   * profile), this patches the currently active profile's own `model` field
+   * (and, when tierOverrides is given, the three Claude tier fields) without
+   * touching the model lists, `reasoningEffort`, credentials, or workspace.
+   * With `agent` on a per-agent profile it patches that agent's active model,
+   * and the top-level `model` only when that agent is the first one. Writes
+   * to whichever scope (local/global) the active profile's definition
+   * actually lives in.
+   */
+  static async switchActiveProfileModel(
+    modelId: string,
+    workingDir: string = process.cwd(),
+    tierOverrides?: { haikuModel?: string; sonnetModel?: string; opusModel?: string },
+    agent?: string
+  ): Promise<{ profileName: string }> {
+    const activeProfileName = await this.getActiveProfileName(workingDir);
+    if (!activeProfileName) {
+      throw new Error('No active profile found. Run: codemie setup');
+    }
+
+    const applyMutation = (profile: ProviderProfile): void => {
+      const agentSet = agent ? resolveAgentModelSet(profile, agent) : undefined;
+      if (agentSet) {
+        // A model outside the agent's list (an active-model-only agent, switched from the
+        // catalog) becomes its only model.
+        if (!agentSet.models.includes(modelId)) {
+          agentSet.models = [modelId];
+          delete agentSet.confirmedModels;
+        }
+        agentSet.model = modelId;
+        // The top-level model mirrors the first agent's active model.
+        if (Object.values(profile.agentModels ?? {})[0] === agentSet) {
+          profile.model = modelId;
+        }
+      } else {
+        profile.model = modelId;
+      }
+      if (tierOverrides) {
+        profile.haikuModel = tierOverrides.haikuModel;
+        profile.sonnetModel = tierOverrides.sonnetModel;
+        profile.opusModel = tierOverrides.opusModel;
+      }
+    };
+
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const config = await this.loadJsonConfig(localConfigPath);
+
+      // An agent switch belongs to the scope that owns `agentModels`: a local copy without the
+      // map leaves the global one in effect (load() overlays local onto global).
+      const localProfile = isMultiProviderConfig(config) ? config.profiles[activeProfileName] : undefined;
+      if (localProfile && !(agent && !localProfile.agentModels)) {
+        applyMutation(localProfile);
+        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+        return { profileName: activeProfileName };
+      }
+    }
+
+    // Falls back to global when there's no local config, or the active
+    // profile's definition does not live in the local config.
+    const globalConfig = await this.loadMultiProviderConfig();
+    if (!globalConfig.profiles[activeProfileName]) {
+      throw new Error(`Active profile "${activeProfileName}" not found.`);
+    }
+    applyMutation(globalConfig.profiles[activeProfileName]);
+    await this.saveMultiProviderConfig(globalConfig);
+    return { profileName: activeProfileName };
+  }
+
+  /**
    * List all profiles
    * Returns profiles from both local (if exists) and global configs
    */
@@ -839,6 +958,18 @@ export class ConfigLoader {
    * Get a specific profile
    * Checks local config first, then falls back to global
    */
+  /**
+   * The profile `codemie models switch` acts on: what getProfile returns, with `agentModels` taken
+   * from the global profile of the same name when the local copy has none. load() overlays local
+   * onto global, so that global map is the one launches use.
+   */
+  static async getProfileForModelSwitch(profileName: string, workingDir: string = process.cwd()): Promise<ProviderProfile | null> {
+    const profile = await this.getProfile(profileName, workingDir);
+    if (!profile || profile.agentModels) return profile;
+    const globalProfile = (await this.loadMultiProviderConfig()).profiles[profileName];
+    return globalProfile?.agentModels ? { ...profile, agentModels: globalProfile.agentModels } : profile;
+  }
+
   static async getProfile(profileName: string, workingDir: string = process.cwd()): Promise<ProviderProfile | null> {
     // Check local config first
     const hasLocal = await this.hasLocalConfig(workingDir);
@@ -1492,6 +1623,12 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    // An agent's own list (per-agent profile) is exported even with one model: the user chose
+    // exactly those models for it. A legacy profile, or an agent the profile does not configure,
+    // keeps the full catalog. Always emitted (empty when absent) so a value inherited from a
+    // parent codemie session cannot narrow this agent's menu (same reason as the tiers below).
+    const hasAgentList = Object.keys(config.agentModels ?? {}).length > 0;
+    env.CODEMIE_PROFILE_MODELS = hasAgentList ? resolveProfileModels(config).join(',') : '';
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     // Always emit tier model vars — even when absent — so stale shell values are
     // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).

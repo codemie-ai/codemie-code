@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ConfigLoader } from '../config.js';
+import { ConfigLoader, withAgentModelView } from '../config.js';
 import type { CodeMieConfigOptions } from '../config.js';
 
 // Helper: build a partial config without fighting the full interface shape.
@@ -115,6 +115,47 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
 
       expect(env.CODEMIE_PROVIDER).toBe('totally-unknown-provider');
       expect(env.CODEMIE_API_KEY).toBe('');
+    });
+  });
+
+  describe('CODEMIE_PROFILE_MODELS (multi-model profiles)', () => {
+    const agentModels = {
+      claude: { models: ['a', 'b'], model: 'a' },
+      codex: { models: ['c'], model: 'c' },
+    };
+
+    it('exports the comma-separated union when a per-agent profile has 2+ models', () => {
+      const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a', agentModels }));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('a,b,c');
+    });
+
+    it('exports only the agent own list for its model view', () => {
+      const env = ConfigLoader.exportProviderEnvVars(withAgentModelView(cfg({ model: 'a', agentModels }), 'claude'));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('a,b');
+      expect(env.CODEMIE_MODEL).toBe('a');
+    });
+
+    // Empty rather than absent: it overrides a value inherited from a parent codemie session.
+    it('exports an empty key for a single-model profile (only model)', () => {
+      const env = ConfigLoader.exportProviderEnvVars(cfg({ model: 'a' }));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('');
+    });
+
+    it('exports the agent own list even when it holds a single model', () => {
+      const env = ConfigLoader.exportProviderEnvVars(withAgentModelView(cfg({ model: 'a', agentModels }), 'codex'));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('c');
+      expect(env.CODEMIE_MODEL).toBe('c');
+    });
+
+    it('exports an empty key for an agent the per-agent profile does not configure', () => {
+      const env = ConfigLoader.exportProviderEnvVars(withAgentModelView(cfg({ model: 'a', agentModels }), 'pi'));
+
+      expect(env.CODEMIE_PROFILE_MODELS).toBe('');
+      expect(env.CODEMIE_MODEL).toBe('a');
     });
   });
 

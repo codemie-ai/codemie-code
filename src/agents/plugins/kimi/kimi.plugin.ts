@@ -7,7 +7,8 @@ import { rm } from 'fs/promises';
 import { KimiSessionAdapter } from './kimi.session.js';
 import { KimiExtensionInstaller } from './kimi.extension-installer.js';
 import { KimiHookTransformer } from './kimi.hook-transformer.js';
-import { assertExplicitKimiModelAllowed, resolveKimiModel } from './kimi.models.js';
+import { assertExplicitKimiModelAllowed, isKimiCompatibleModelName, resolveKimiModel } from './kimi.models.js';
+import { classifyWithPredicate } from '../../core/model-classify.js';
 import { installNativeAgent } from '../../../utils/native-installer.js';
 import {
   AgentInstallationError,
@@ -53,6 +54,8 @@ export const KimiPluginMetadata: AgentMetadata = {
   },
   supportedProviders: ['moonshot-subscription', 'ai-run-sso'],
   blockedModelPatterns: [],
+  classifyModel: (id, ctx) => classifyWithPredicate(isKimiCompatibleModelName, id, ctx),
+  activeModelOnly: true, // no in-session model switcher
   recommendedModels: ['kimi-k2.6', 'kimi-for-coding', 'kimi-k2'],
   ssoConfig: { enabled: true, clientType: 'codemie-kimi' },
   flagMappings: {

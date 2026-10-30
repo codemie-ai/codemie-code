@@ -4,16 +4,19 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
+import { ConfigurationError } from '../../utils/errors.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import {
   getAllProviderChoices,
   displaySetupSuccess,
-  displaySetupError,
-  getAllModelChoices
+  displaySetupError
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
+import type { ProviderCredentials, ProviderSetupSteps } from '../../providers/core/types.js';
+import { runAgentModelsWizard, type AgentModelsResult } from './setup-wizard/index.js';
+import { agentModelsDisplay } from './profile/display.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
 
@@ -226,9 +229,9 @@ async function runSetupWizard(force?: boolean): Promise<void> {
  *
  * Uses ProviderSetupSteps from ProviderRegistry for clean, extensible setup
  */
-async function handlePluginSetup(
+export async function handlePluginSetup(
   providerName: string,
-  setupSteps: any,
+  setupSteps: ProviderSetupSteps,
   profileName: string | null,
   isUpdate: boolean,
   storageLocation: 'global' | 'local' = 'global'
@@ -252,32 +255,86 @@ async function handlePluginSetup(
       models = [];
     }
 
-    // Step 3: Model selection
+    // Step 3: Agent + per-agent model selection
     let selectedModel: string;
+    let selectedModels: string[];
+    // Models chosen per agent; undefined when the provider auto-picks the model.
+    let agentModels: AgentModelsResult | undefined;
     const preselectedModel = setupSteps.selectModel
       ? await setupSteps.selectModel(credentials, models, providerTemplate)
       : undefined;
 
     if (preselectedModel) {
       selectedModel = preselectedModel;
+      selectedModels = [preselectedModel];
       logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
-      selectedModel = await promptForModelSelection(models, providerTemplate, setupSteps, credentials);
+      // On an update, preselect the existing profile's agents and models.
+      const existingProfile = isUpdate && profileName
+        ? (await ConfigLoader.getProfile(profileName)) ?? undefined
+        : undefined;
+
+      const chosen = await runAgentModelsWizard({
+        models,
+        provider: providerName,
+        providerTemplate,
+        isRouter: await fetchRouterLookup(setupSteps, credentials, models),
+        recommendedIds: await fetchRecommendedIds(setupSteps, credentials, models),
+        searchModel: setupSteps.searchModel
+          ? async () => (await setupSteps.searchModel?.(credentials)) ?? undefined
+          : undefined,
+        existing: existingProfile,
+      });
+      if (!chosen) {
+        console.log(chalk.yellow('Setup cancelled - nothing was saved.'));
+        return;
+      }
+      agentModels = chosen;
+
+      selectedModels = [...new Set(Object.values(agentModels).flatMap(set => set.models))];
+      // The top-level model mirrors the first agent's active model.
+      selectedModel = Object.values(agentModels)[0].model;
     }
 
-    // Step 3.5: Install model if provider supports it (e.g., Ollama)
+    // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model.
+    // CR-007: a single failed install must not abort the whole setup before any
+    // profile is saved - each install is isolated, failures are collected and
+    // surfaced, and the profile is still saved with whichever models succeeded.
     if (providerTemplate?.supportsModelInstallation && setupSteps.installModel) {
-      await setupSteps.installModel(credentials, selectedModel, models);
+      const failedModelIds: string[] = [];
+      for (const modelId of selectedModels) {
+        try {
+          await setupSteps.installModel(credentials, modelId, models);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn(`Failed to install model "${modelId}": ${message}`);
+          failedModelIds.push(modelId);
+        }
+      }
+
+      if (failedModelIds.length > 0) {
+        if (failedModelIds.length === selectedModels.length) {
+          throw new Error(`Failed to install all selected models: ${failedModelIds.join(', ')}`);
+        }
+        console.log(
+          chalk.yellow(`⚠ Could not install: ${failedModelIds.join(', ')} - continuing with the rest`)
+        );
+        // Only the wizard picks several models, so agentModels is set here. Failed installs can
+        // remove the last model an agent had.
+        if (agentModels) {
+          agentModels = withoutModels(agentModels, failedModelIds);
+          selectedModel = Object.values(agentModels)[0].model;
+        }
+      }
     }
 
     // Step 3.6: Auto-configure model tiers for Claude
     let modelTiers: { haikuModel?: string; sonnetModel?: string; opusModel?: string } = {};
     const claudeAgent = AgentRegistry.getAgent('claude');
     if (claudeAgent) {
-      const claudeMetadata = (claudeAgent as any).metadata;
-      const supportsClaude = claudeMetadata?.supportedProviders?.includes(providerName);
+      const supportsClaude = claudeAgent.metadata.supportedProviders.includes(providerName);
       if (supportsClaude) {
-        modelTiers = await autoSelectModelTiers(models, selectedModel);
+        modelTiers = await autoSelectModelTiers(models, agentModels?.claude?.model ?? selectedModel);
       }
     }
 
@@ -293,6 +350,7 @@ async function handlePluginSetup(
     config.haikuModel = modelTiers.haikuModel;
     config.sonnetModel = modelTiers.sonnetModel;
     config.opusModel = modelTiers.opusModel;
+    config.agentModels = agentModels;
 
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
@@ -367,7 +425,7 @@ async function handlePluginSetup(
       }
 
       // Display success
-      displaySetupSuccess(finalProfileName!, providerName, selectedModel);
+      displaySetupSuccess(finalProfileName!, providerName, selectedModel, agentModelsDisplay(config));
 
       // Show next steps based on storage location
       if (storageLocation === 'local') {
@@ -441,110 +499,71 @@ async function promptForProfileName(providerName: string): Promise<string> {
 }
 
 /**
- * Prompt for model selection with metadata
- *
- * Uses getAllModelChoices for enriched display
+ * Catalog router hint: ids the provider flags as routers/aliases are unverified, not incompatible,
+ * even when the name carries no "router". Best effort - a failed lookup only loses the hint.
  */
-async function promptForModelSelection(
-  models: string[],
-  providerTemplate?: any,
-  setupSteps?: any,
-  credentials?: any
-): Promise<string> {
-  const canSearch = typeof setupSteps?.searchModel === 'function';
-
-  if (models.length === 0) {
-    if (canSearch) {
-      const { entryMethod } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'entryMethod',
-          message: 'No models found. How would you like to choose a model?',
-          choices: [
-            { name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' },
-            { name: 'Enter model name manually', value: 'manual' }
-          ]
-        }
-      ]);
-
-      if (entryMethod === 'search') {
-        const searched = await setupSteps.searchModel(credentials);
-        if (searched) {
-          return searched;
-        }
-        // User backed out of search - fall through to manual entry
-      }
-    }
-
-    const { manualModel } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'manualModel',
-        message: 'Enter model name manually:',
-        default: providerTemplate?.recommendedModels?.[0] || 'gpt-5.5',
-        validate: (input: string) => input.trim() !== '' || 'Model name is required'
-      }
-    ]);
-    return manualModel ? manualModel.trim() : manualModel;
+async function fetchRouterLookup(
+  setupSteps: ProviderSetupSteps,
+  credentials: ProviderCredentials,
+  models: string[]
+): Promise<((id: string) => boolean) | undefined> {
+  if (models.length === 0 || !setupSteps.fetchRouterModels) return undefined;
+  try {
+    const routerIds = new Set<string>(await setupSteps.fetchRouterModels(credentials));
+    return id => routerIds.has(id);
+  } catch (error) {
+    logger.debug('Could not fetch router models; using name rules only', error);
+    return undefined;
   }
+}
 
-  // Live-computed recommendations (fits this machine + agent-ready + most
-  // popular) when the provider supports it; falls back to the template's
-  // static recommendedModels inside getAllModelChoices otherwise.
-  let recommendedOverrideIds: Set<string> | undefined;
-  if (typeof setupSteps?.getRecommendedModels === 'function') {
-    const recommendSpinner = ora('Finding recommended models...').start();
-    try {
-      const recommended = await setupSteps.getRecommendedModels(models, credentials);
-      recommendedOverrideIds = new Set(recommended);
-      recommendSpinner.stop();
-    } catch {
-      recommendSpinner.stop();
-      // Non-fatal - just show the list without recommendations.
-    }
+/**
+ * Live-computed recommendations (fits this machine + agent-ready + most popular) when the
+ * provider supports it; the wizard falls back to the template's static recommendedModels.
+ */
+async function fetchRecommendedIds(
+  setupSteps: ProviderSetupSteps,
+  credentials: ProviderCredentials,
+  models: string[]
+): Promise<Set<string> | undefined> {
+  if (models.length === 0 || !setupSteps.getRecommendedModels) return undefined;
+  const recommendSpinner = ora('Finding recommended models...').start();
+  try {
+    return new Set<string>(await setupSteps.getRecommendedModels(models, credentials));
+  } catch {
+    // Non-fatal - just show the list without recommendations.
+    return undefined;
+  } finally {
+    recommendSpinner.stop();
   }
+}
 
-  // Loop so backing out of search re-shows this list instead of dead-ending
-  for (;;) {
-    // Use getAllModelChoices for enriched display with metadata
-    const choices = [
-      ...getAllModelChoices(models, providerTemplate, recommendedOverrideIds),
-      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' },
-      ...(canSearch ? [{ name: chalk.cyan('🔍 Search Ollama library...'), value: 'search' }] : [])
-    ];
-
-    const { selectedModel } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'selectedModel',
-        message: `Choose a model (${models.length} available):`,
-        choices,
-        pageSize: 15
-      }
-    ]);
-
-    if (selectedModel === 'search') {
-      const searched = await setupSteps.searchModel(credentials);
-      if (searched) {
-        return searched;
-      }
+/**
+ * Drops models (e.g. failed installs) from every agent. An agent that lost its active model falls
+ * back to its first remaining one; an agent left with no model fails the setup.
+ */
+export function withoutModels(agentModels: AgentModelsResult, removed: string[]): AgentModelsResult {
+  const result: AgentModelsResult = {};
+  const emptied: string[] = [];
+  for (const [agent, set] of Object.entries(agentModels)) {
+    const models = set.models.filter(id => !removed.includes(id));
+    if (models.length === 0) {
+      emptied.push(agent);
       continue;
     }
-
-    if (selectedModel === 'custom') {
-      const { customModel } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'customModel',
-          message: 'Enter model name:',
-          validate: (input: string) => input.trim() !== '' || 'Model is required'
-        }
-      ]);
-      return customModel ? customModel.trim() : customModel;
-    }
-
-    return selectedModel;
+    const confirmedModels = set.confirmedModels?.filter(id => models.includes(id));
+    result[agent] = {
+      models,
+      model: models.includes(set.model) ? set.model : models[0],
+      ...(confirmedModels?.length ? { confirmedModels } : {}),
+    };
   }
+  if (emptied.length > 0) {
+    throw new ConfigurationError(
+      `No installed model left for ${emptied.map(agent => `"${agent}"`).join(', ')} - profile not saved`
+    );
+  }
+  return result;
 }
 
 /**

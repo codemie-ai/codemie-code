@@ -1,0 +1,200 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { AgentRegistry } from '../../registry.js';
+import {
+  classifyWithPredicate,
+  classifyModelForAgent,
+  getClassifierAgents,
+  getOfferedHarnesses,
+  uncoveredHarnesses,
+  unsupportedProviderHarnesses,
+  agentsUsingModel,
+  getAgentDisplayName,
+  getModelRuleFreeAgents,
+  routerAcceptedModels,
+} from '../model-compat.js';
+
+const isClaude = (id: string) => /claude/i.test(id);
+const isGpt = (id: string) => /gpt/i.test(id);
+
+function fakeAgent(
+  name: string,
+  predicate?: (id: string) => boolean,
+  supportedProviders: string[] = [],
+  extra: Record<string, unknown> = {}
+) {
+  return {
+    name,
+    metadata: {
+      name,
+      displayName: `Display ${name}`,
+      ...extra,
+      supportedProviders,
+      ...(predicate
+        ? { classifyModel: (id: string, ctx?: { isRouter?: boolean }) => classifyWithPredicate(predicate, id, ctx) }
+        : {}),
+    },
+  };
+}
+
+const agents = new Map([
+  ['claude', fakeAgent('claude', isClaude)],
+  ['codex', fakeAgent('codex', isGpt, ['litellm', 'ai-run-sso'])],
+  ['codex-acp', fakeAgent('codex-acp', isGpt, ['litellm', 'ai-run-sso'])],
+  ['opencode', fakeAgent('opencode', undefined, ['litellm'])],
+  ['pi', fakeAgent('pi')],
+  ['openwiki', fakeAgent('openwiki')],
+  ['copilot-cli', fakeAgent('copilot-cli')],
+  ['native-only', fakeAgent('native-only', undefined, [], { analyticsOnly: true })],
+]);
+
+beforeEach(() => {
+  vi.spyOn(AgentRegistry, 'getAgent').mockImplementation((n: string) => agents.get(n) as never);
+  vi.spyOn(AgentRegistry, 'getAllAgents').mockImplementation(() => [...agents.values()] as never);
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe('classifyWithPredicate', () => {
+  it('returns compatible when the predicate matches', () => {
+    expect(classifyWithPredicate(isClaude, 'claude-sonnet-4')).toBe('compatible');
+  });
+
+  it('returns incompatible for a router that names another vendor family', () => {
+    expect(classifyWithPredicate(isClaude, 'gpt-smart-router')).toBe('incompatible');
+  });
+
+  it('returns unverified for a router name with no definite family', () => {
+    expect(classifyWithPredicate(isClaude, 'sy-router')).toBe('unverified');
+  });
+
+  it('returns unverified for a catalog-flagged router with no definite family', () => {
+    expect(classifyWithPredicate(isClaude, 'sy-signal-terra-luna', { isRouter: true })).toBe('unverified');
+  });
+
+  it('returns incompatible for an unknown non-router name', () => {
+    expect(classifyWithPredicate(isClaude, 'my-custom-model')).toBe('incompatible');
+  });
+});
+
+describe('classifyModelForAgent', () => {
+  it('treats an agent without a classifier as compatible', () => {
+    expect(classifyModelForAgent('opencode', 'anything')).toBe('compatible');
+    expect(classifyModelForAgent('not-an-agent', 'anything')).toBe('compatible');
+  });
+
+  it('reports a confirmed id as unverified', () => {
+    expect(classifyModelForAgent('claude', 'gpt-5', { confirmedModels: ['gpt-5'] })).toBe('unverified');
+    expect(classifyModelForAgent('claude', 'gpt-5')).toBe('incompatible');
+  });
+
+  it('folds an ACP agent into its base agent', () => {
+    expect(classifyModelForAgent('codex-acp', 'claude-x')).toBe('incompatible');
+    expect(classifyModelForAgent('codex-acp', 'gpt-5.4')).toBe('compatible');
+  });
+
+  it('is incompatible when the provider is outside the agent supportedProviders', () => {
+    expect(classifyModelForAgent('codex', 'gpt-5.4', { provider: 'moonshot-subscription' })).toBe('incompatible');
+    expect(classifyModelForAgent('codex', 'gpt-5.4', { provider: 'litellm' })).toBe('compatible');
+  });
+
+  it('never restricts an unrestricted agent by provider', () => {
+    expect(classifyModelForAgent('opencode', 'x', { provider: 'moonshot-subscription' })).toBe('compatible');
+  });
+
+  it('honors the isRouter hint, boolean or per-id lookup', () => {
+    expect(classifyModelForAgent('claude', 'sy-signal-terra', { isRouter: true })).toBe('unverified');
+    expect(classifyModelForAgent('claude', 'sy-signal-terra', { isRouter: (id) => id === 'sy-signal-terra' })).toBe('unverified');
+    expect(classifyModelForAgent('claude', 'sy-signal-terra', { isRouter: () => false })).toBe('incompatible');
+  });
+
+  it('classifies gpt-smart-router incompatible and sy-router unverified for claude', () => {
+    expect(classifyModelForAgent('claude', 'gpt-smart-router')).toBe('incompatible');
+    expect(classifyModelForAgent('claude', 'sy-router')).toBe('unverified');
+  });
+});
+
+describe('getClassifierAgents', () => {
+  it('lists base agents that define a classifier, without ACP variants', () => {
+    expect(getClassifierAgents()).toEqual(['claude', 'codex']);
+  });
+});
+
+describe('getOfferedHarnesses', () => {
+  it('offers base agents in a stable order, folding ACP and excluding analytics-only agents', () => {
+    expect(getOfferedHarnesses()).toEqual([
+      { name: 'claude', displayName: 'Display claude' },
+      { name: 'codex', displayName: 'Display codex' },
+      { name: 'copilot-cli', displayName: 'Display copilot-cli' },
+      { name: 'opencode', displayName: 'Display opencode' },
+      { name: 'pi', displayName: 'Display pi' },
+      { name: 'openwiki', displayName: 'Display openwiki' },
+    ]);
+  });
+});
+
+describe('getModelRuleFreeAgents', () => {
+  it('lists offered agents without a classifier, in offered order', () => {
+    expect(getModelRuleFreeAgents().map((h) => h.name)).toEqual(['copilot-cli', 'opencode', 'pi', 'openwiki']);
+  });
+});
+
+describe('uncoveredHarnesses', () => {
+  it('names every harness that has no non-incompatible model', () => {
+    expect(uncoveredHarnesses(['claude', 'codex'], ['llama-3'])).toEqual(['claude', 'codex']);
+  });
+
+  it('returns an empty list when every harness is covered', () => {
+    expect(uncoveredHarnesses(['claude', 'codex'], ['claude-sonnet-4', 'gpt-5.4'])).toEqual([]);
+  });
+});
+
+describe('unsupportedProviderHarnesses', () => {
+  it('names harnesses whose supportedProviders exclude the provider', () => {
+    expect(unsupportedProviderHarnesses(['claude', 'codex'], 'other')).toEqual(['codex']);
+  });
+
+  it('ignores harnesses with an empty supportedProviders list or a supported provider', () => {
+    expect(unsupportedProviderHarnesses(['claude', 'pi'], 'other')).toEqual([]);
+    expect(unsupportedProviderHarnesses(['codex'], 'litellm')).toEqual([]);
+  });
+
+  it('also names classifier-less harnesses whose supportedProviders exclude the provider', () => {
+    expect(unsupportedProviderHarnesses(['claude', 'opencode', 'pi', 'codex'], 'other')).toEqual(['opencode', 'codex']);
+  });
+});
+
+describe('routerAcceptedModels', () => {
+  it('lists catalog-flagged routers that the name rule alone would reject for a harness', () => {
+    const isRouter = (id: string) => id === 'sy-alias' || id === 'gpt-x';
+    expect(routerAcceptedModels(['codex'], ['sy-alias', 'gpt-x', 'claude-x'], { isRouter })).toEqual(['sy-alias']);
+  });
+
+  it('is empty without a router lookup', () => {
+    expect(routerAcceptedModels(['codex'], ['sy-alias'], {})).toEqual([]);
+  });
+});
+
+describe('agentsUsingModel', () => {
+  it('names the agents whose own list holds the model, in profile order', () => {
+    const profile = {
+      agentModels: {
+        claude: { models: ['claude-x', 'shared'], model: 'claude-x' },
+        opencode: { models: ['shared'], model: 'shared' },
+      },
+    };
+    expect(agentsUsingModel(profile, 'shared')).toEqual(['claude', 'opencode']);
+    expect(agentsUsingModel(profile, 'claude-x')).toEqual(['claude']);
+    expect(agentsUsingModel(profile, 'other')).toEqual([]);
+  });
+
+  it('is empty for a legacy profile', () => {
+    expect(agentsUsingModel({}, 'claude-x')).toEqual([]);
+  });
+});
+
+describe('getAgentDisplayName', () => {
+  it('returns the display name, folding ACP variants, and falls back to the id', () => {
+    expect(getAgentDisplayName('codex')).toBe('Display codex');
+    expect(getAgentDisplayName('codex-acp')).toBe('Display codex');
+    expect(getAgentDisplayName('unknown')).toBe('unknown');
+  });
+});

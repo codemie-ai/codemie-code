@@ -104,12 +104,26 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       const projectLine = await proc.waitFor(/Selected project:/i, 15_000);
       const selectedProject = projectLine.match(/Selected project:\s*(\S+)/i)?.[1];
 
-      // ── Step 7: Model selection → first option ──────────────────────────────────
-      // Match the model prompt itself: earlier list prompts (storage scope, provider)
-      // also print "(Use arrow keys)", and waitFor scans all prior lines, so a bare
-      // match resolves at once and the Enter lands while the integrations/models
-      // spinners are still discarding stdin.
-      await proc.waitFor(/Choose a model.*\(Use arrow keys\)/i, 30_000);
+      // ── Step 6.5: Agent selection → check the first agent (claude), continue ─────
+      // Full-screen per-agent wizard (EPMCDME-15641): at least one agent is required.
+      // Space checks the highlighted first row (Claude Code), Enter continues.
+      await proc.waitFor(/Which agents will use this profile/i, 30_000);
+      await new Promise(r => setTimeout(r, 500));
+      proc.write(' ');
+      await new Promise(r => setTimeout(r, 200));
+      proc.write('\r');
+
+      // ── Step 7: Claude Code models → check the first model, continue ───────────
+      // Lists only models Claude Code supports. A single checked model skips the
+      // agent's active-model screen, so Enter leads straight to the review screen.
+      await proc.waitFor(/Claude Code · Models/i, 30_000);
+      await new Promise(r => setTimeout(r, 500));
+      proc.write(' ');
+      await new Promise(r => setTimeout(r, 200));
+      proc.write('\r');
+
+      // ── Step 7.5: Review → Save (the buttons are focused on this screen) ───────
+      await proc.waitFor(/Save writes these models to the profile/i, 30_000);
       await new Promise(r => setTimeout(r, 500));
       proc.write('\r');
 
@@ -160,6 +174,12 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       expect(String(profile!.baseUrl ?? ''), 'baseUrl must include code-assistant-api').toMatch(
         /code-assistant-api/,
       );
+
+      // Agent step: the first agent offered (claude) was persisted with its own models
+      const agentModels = profile!.agentModels as Record<string, { models: string[]; model: string }> | undefined;
+      expect(Object.keys(agentModels ?? {}), 'agentModels must record the selected agent').toEqual(['claude']);
+      expect(agentModels?.claude.models, 'claude must have the checked model').toHaveLength(1);
+      expect(profile!.model, 'top-level model mirrors claude active model').toBe(agentModels?.claude.model);
 
       // Step 9 verification: profile was activated
       expect(cfg.activeProfile, 'activeProfile must be set to the new profile').toBe(

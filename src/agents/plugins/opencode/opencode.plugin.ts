@@ -1,7 +1,7 @@
 import { join } from 'path';
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
+import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs, filterToAllowed } from './opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
@@ -302,13 +302,23 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       const allModels = await fetchDynamicModelConfigs(baseUrl, env, selectedModel);
 
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
+      // modelConfig resolves from the unfiltered allModels so the active model always has a
+      // valid config even when CODEMIE_PROFILE_MODELS (set below) would otherwise exclude it.
       const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
 
       const { providerOptions } = modelConfig;
 
+      // Limit the model list OpenCode offers for in-session switching to the active
+      // profile's own models (CODEMIE_PROFILE_MODELS, set for an agent's own list on a per-agent profile).
+      // Its absence is the fallback signal to show the full catalogue, same as an empty
+      // intersection with a live catalogue that dropped every one of those ids (AC22).
+      const limitedModels = env.CODEMIE_PROFILE_MODELS
+        ? filterToAllowed(allModels, env.CODEMIE_PROFILE_MODELS, selectedModel)
+        : allModels;
+
       // Split models by API routing type
-      const chatModels = getChatCompletionsModelConfigs(allModels);
-      const responsesApiModels = getResponsesApiModelConfigs(allModels);
+      const chatModels = getChatCompletionsModelConfigs(limitedModels);
+      const responsesApiModels = getResponsesApiModelConfigs(limitedModels);
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';

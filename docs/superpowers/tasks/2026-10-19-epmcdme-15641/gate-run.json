@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "branch": "feature/EPMCDME-15641",
+  "head": "306bbd07345fa36df12705573996062c2f1602d2",
+  "runner": "npm",
+  "started_at": "2026-10-19T12:24:47Z",
+  "completed_at": "2026-10-19T12:34:53Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11179,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 38063,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15511,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also the hook-enforced typecheck in .husky/pre-commit."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 21947,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 164656,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "345 files, 4987 tests passed."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 162653,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "Run 1: 3 suites failed, all timeouts (doctor beforeAll 120s, list beforeAll 60s, skills help test 30s). Isolated rerun of those 3 files: doctor and skills passed, list.test.ts still failed (beforeAll 60s); 'node bin/codemie.js list' alone takes ~46s on this machine, so it times out under load. No assertion failures. Not confirmed whether baseline origin/main has same timeout."
+    },
+    {
+      "id": "commitlint-last",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1584,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 2048,
+      "command": "npx commitlint --from origin/main --to HEAD",
+      "exit_code": 0,
+      "notes": "CI runs this against PR base sha; origin/main used as proxy."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 3522,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan'. Exit 0 but no scan ran. Stage changes (git add) with Docker running to scan locally; CI Gitleaks job runs unconditionally."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged",
+      "notes": "Operates on staged files only; covered by lint and unit/cli gates."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit / --project cli on windows-latest",
+      "notes": "Needs Windows runner; see guide CRLF repro."
+    }
+  ],
+  "failures": {
+    "integration": "\u23af\u23af\u23af\u23af\u23af\u23af Failed Suites 2 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |cli| tests/integration/cli-commands/doctor.test.ts > Doctor Command\nError: Hook timed out in 120000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n \u276f tests/integration/cli-commands/doctor.test.ts:22:3\n     20|   let doctorResult: CommandResult;\n     21|\n     22|   beforeAll(() => {\n       |   ^\n     23|     // Execute once, validate many times\n     24|     doctorResult = cli.runSilent('doctor');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n \u276f tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 1 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  3 failed | 34 passed | 1 skipped (38)\n      Tests  1 failed | 269 passed | 18 skipped (288)\n   Start at  14:29:08\n   Duration  160.56s (transform 43.39s, setup 0ms, import 105.81s, tests 498.36s, environment 80ms)\n"
+  }
+}

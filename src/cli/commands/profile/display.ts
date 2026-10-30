@@ -7,7 +7,8 @@
 import chalk from 'chalk';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import type { AuthStatus } from '../../../providers/core/types.js';
-import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
+import { renderProfileInfo, type AgentModelsDisplay, type AuthStatusDisplay } from '../../../utils/profile.js';
+import { getAgentDisplayName } from '../../../agents/core/model-compat.js';
 
 /**
  * Profile information for display
@@ -19,6 +20,15 @@ export interface ProfileInfo {
   source?: 'local' | 'global';
 }
 
+/** Per-agent rows for a profile set up per agent; undefined for legacy profiles. */
+export function agentModelsDisplay(profile: CodeMieConfigOptions): AgentModelsDisplay[] | undefined {
+  if (!profile.agentModels) return undefined;
+  return Object.entries(profile.agentModels).map(([agent, set]) => ({
+    agent: getAgentDisplayName(agent),
+    model: set.model,
+    otherModels: set.models.filter(id => id !== set.model),
+  }));
+}
 
 /**
  * Profile display utility class
@@ -37,6 +47,7 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
+      agentModels: agentModelsDisplay(profile),
       codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       isActive: active
     });
@@ -118,6 +129,7 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
+      agentModels: agentModelsDisplay(profile),
       codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       authStatus: authStatusDisplay,
       isActive: active
