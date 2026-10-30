@@ -23,6 +23,7 @@ import { ConfigurationError } from '../../../utils/errors.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from './session/processors/gemini.conversations-processor.js';
 import { getGeminiTmpRoot } from './gemini.paths.js';
+import type { GeminiContent } from './session/utils/message-text.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -45,7 +46,7 @@ interface GeminiMessage {
   id: string;
   timestamp: string;
   type: 'user' | 'gemini' | 'assistant';
-  content: string;
+  content: GeminiContent;
   toolCalls?: GeminiToolCall[];
   thoughts?: string[];
   model?: string;
