@@ -7,7 +7,7 @@
  * Mirrors the mocking pattern established in AgentCLI-print-config.test.ts.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { AgentCLI } from '../AgentCLI.js';
 import type { AgentAdapter } from '../types.js';
 import { ConfigLoader } from '../../../utils/config.js';
@@ -58,6 +58,8 @@ function mockHandleRunDependencies(model: string) {
 }
 
 describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('sets CODEMIE_MODEL_SOURCE=cli when --model is passed explicitly (non-interactive, "claude-sonnet-5[1m]")', async () => {
     mockHandleRunDependencies('claude-sonnet-5[1m]');
     const run = vi.fn().mockResolvedValue(undefined);
@@ -91,6 +93,7 @@ describe('AgentCLI.handleRun — CODEMIE_MODEL_SOURCE propagation', () => {
   });
 
   it('sets CODEMIE_MODEL_SOURCE=default when --model is not passed (implicit/profile-sourced model)', async () => {
+    vi.stubEnv('CODEMIE_MODEL', undefined);
     mockHandleRunDependencies('claude-sonnet-5[1m]');
     const run = vi.fn().mockResolvedValue(undefined);
     const cli = new AgentCLI(createAdapter({ run })) as unknown as {

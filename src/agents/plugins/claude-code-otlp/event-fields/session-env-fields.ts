@@ -25,7 +25,7 @@ export interface SessionEnvFields {
   hostname_hash: string;
 }
 
-async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
+export async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
   try {
     const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;

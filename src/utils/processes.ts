@@ -529,6 +529,60 @@ function parseGitRemoteUrl(remoteUrl: string): string | undefined {
   return joined ? joined.toLowerCase() : undefined;
 }
 
+const DEFAULT_REMOTE_PORTS: Record<string, string> = { ssh: '22', https: '443', http: '80' };
+
+/**
+ * Credential-free `host[:port]/path` repository key, mirroring the backend's `normalize_remote`
+ * (codemie-backend-ingest-routing: src/codemie/service/project/repository_registration_service.py).
+ * Host lower-cased, path case kept; credentials, scheme, query/fragment, `.git`, trailing `/` and the
+ * scheme's default port (ssh 22, https 443, http 80) dropped; IPv6 hosts bracketed. An scp-style
+ * `user@host:path` has no port, so `git@h:8443/a/b` is `h/8443/a/b`.
+ *
+ * @returns the key, or undefined when there is no host or path. Never throws or echoes the input.
+ */
+export function repoKeyFromRemote(remote: string): string | undefined {
+  const text = (remote ?? '').trim();
+  let host: string;
+  let port = '';
+  let path: string;
+
+  const url = text.match(/^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i);
+  if (url) {
+    const authority = url[2].slice(url[2].lastIndexOf('@') + 1);
+    const hp = authority.match(/^\[([^\]]*)\](?::(\d*))?$/) ?? authority.match(/^([^:]*)(?::(\d*))?$/);
+    if (!hp) return undefined;
+    host = hp[1].toLowerCase();
+    port = hp[2] ?? '';
+    if (port && (Number(port) > 65535 || port === DEFAULT_REMOTE_PORTS[url[1].toLowerCase()])) port = '';
+    if (hp[2] === '') port = '';
+    path = url[3];
+  } else {
+    const scp = text.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/].*)$/);
+    if (!scp) return undefined;
+    host = scp[1].toLowerCase();
+    path = scp[2];
+  }
+
+  path = path.replace(/^\/+|\/+$/g, '');
+  if (path.endsWith('.git')) path = path.slice(0, -4).replace(/\/+$/, '');
+  if (!host || !path) return undefined;
+  const h = host.includes(':') ? `[${host}]` : host;
+  return port ? `${h}:${port}/${path}` : `${h}/${path}`;
+}
+
+/**
+ * Raw `origin` remote of a working directory. MAY CARRY CREDENTIALS: never log it; pass it only to
+ * `repoKeyFromRemote` or an evidence channel that expects a raw remote. Fails soft to undefined.
+ */
+export async function getRawGitOrigin(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000, windowsHide: true });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Detect the canonical repository identifier from a working directory's git `origin` remote.
  * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.

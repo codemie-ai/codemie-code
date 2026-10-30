@@ -92,6 +92,15 @@ import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otl
 // transcript/orchestrator.js mock factory, which closes over those consts.
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
 
+// Event derivation is under test in this file; evidence stamping has its own tests
+// (claude-evidence-inputs.test.ts, OtlpAgentAdapter.test.ts). Assigned (not spied) so restoreAllMocks keeps it.
+(ClaudeCodeOtlpPlugin.prototype as unknown as {
+  extractHookContext: (input: { cwd: string; session_id: string; hook_event_name: string; prompt?: string }) => object;
+}).extractHookContext = (input) => ({
+  cwd: input.cwd, sessionId: input.session_id,
+  prompt: input.hook_event_name === 'UserPromptSubmit' ? input.prompt : undefined,
+});
+
 const forwardOtlpEventsToSpool = vi.fn(async (_events: Record<string, unknown>[], _agentName: string) => true);
 
 const event = (name: string) => JSON.stringify({ session_id: 's', transcript_path: '', cwd: '/x', hook_event_name: name });

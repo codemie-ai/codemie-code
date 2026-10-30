@@ -736,7 +736,12 @@ export enum AgentAdapterType {
 export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
-  forwardOtlpEventsToSpool: (events: Record<string, unknown>[], agentName: string) => Promise<boolean>;
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  ) => Promise<boolean>;
 }
 
 /**

@@ -70,7 +70,7 @@ describe('project gate — ingest vs forwarding', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
     readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
-    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
   });
 
   afterEach(async () => {
@@ -138,7 +138,7 @@ describe('project gate — ingest vs forwarding', () => {
     await seedBoundA();
     const events: string[] = [];
     const started = deferred();
-    const response = deferred<{ ok: boolean; status: number }>();
+    const response = deferred<Response>();
     fetchMock.mockImplementation(async (_url: string, init: { headers: Record<string, string> }) => {
       events.push(`fetch:${init.headers['X-CodeMie-Project']}`);
       started.resolve();
@@ -149,7 +149,7 @@ describe('project gate — ingest vs forwarding', () => {
     await started.promise;
     await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
     events.push('conflict-persisted');
-    response.resolve({ ok: true, status: 200 });
+    response.resolve(new Response('{}', { status: 200 }));
     await pass;
     await forwardSession(SESSION, false, credentials as never); // next pass drains B's hook
 
@@ -200,7 +200,7 @@ describe('project gate — ingest vs forwarding', () => {
       const { readStatus } = await import('../session-status.js');
       await seedBoundA();
       await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
 
       await forwardSession(SESSION, true, credentials as never);
       expect((await readStatus(SESSION))?.cursors.hooks).toBe(0);
@@ -264,7 +264,7 @@ describe('project gate — ingest vs forwarding', () => {
           await appendSpool(SESSION, 'hooks', bLine, ['B']); // conflict lands while the first attempt is on the wire
           return { ok: false, status: 401 };
         });
-        fetchMock.mockResolvedValue({ ok: true, status: 200 });
+        fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
 
         await forwardSession(SESSION, true, credentials as never);
 

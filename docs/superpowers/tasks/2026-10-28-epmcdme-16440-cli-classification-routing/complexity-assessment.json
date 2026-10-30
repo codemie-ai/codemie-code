@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "task": "CLI: collect subscription classification evidence and resolve project in native claude and codemie-claude under user/project tracking scopes",
+  "generated": "2026-10-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "OtlpAgentAdapter identity fields, ConfigLoader workspace/project resolution, spool/forwarder session-project binding, claude-code-otlp connector and proxy, plus the claude plugin for codemie-claude; new classification-evidence abstraction. All in one repo." },
+    { "dimension": "requirements_clarity", "reason": "Backend contract is produced by a sibling child; unconfirmed whether codemie-claude events reach cli-analytics endpoints; AC4 conflicts with current global-profile precedence; overlap with 16383/16396/16394/16414." },
+    { "dimension": "technical_risk", "reason": "Org evidence comes from an undocumented ~/.claude.json format with no close pattern; must fail to Unknown and never log values (privacy/security gap, auto-bump). Project precedence change affects existing profile users; per-session stamp stability. Enumerated edge cases have no existing test template (bump)." },
+    { "dimension": "file_change_estimate", "reason": "About 8-10 modified source files plus new evidence reader and tests across src/agents/core, plugins, connectors, proxy, spool/forwarder and config." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: privacy/security-sensitive evidence handling with no matching existing pattern",
+    "Technical Risk bumped: enumerated edge cases lack an existing test template",
+    "Component Scope: touches multiple workflows (two launch modes, two scopes) and a core config path"
+  ],
+  "split_recommendation": null
+}

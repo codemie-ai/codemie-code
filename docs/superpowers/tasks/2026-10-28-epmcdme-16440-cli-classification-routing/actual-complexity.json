@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 89,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Evidence records, structural OTLP reader, classifier, typed send outcomes, policy cache, sticky Personal and endpoint identity across agents/core, claude-code-otlp plugin, sso proxy otlp-spool, utils and config: multiple subsystems with new abstractions." },
+    { "dimension": "technical_risk", "reason": "Privacy/routing-sensitive analytics forwarding with durable records and no exact precedent; review found 7 findings and Stage 7 QA needed a regression fix (2 commits)." },
+    { "dimension": "file_change_estimate", "reason": "About 89 files, ~8.4k diff lines (6.9k insertions), 20 commits over 16 plan tasks." },
+    { "dimension": "affected_layers", "reason": "Service, infrastructure (spool/proxy), persistence (durable evidence/cache) and external backend analytics endpoint; no UI or DB schema." }
+  ],
+  "red_flags_applied": [
+    "Assessed from delivery facts supplied by caller (no changed_files list); dependency count assumed none",
+    "Technical Risk held at XL: security/privacy-sensitive routing of analytics"
+  ],
+  "split_recommendation": null
+}

@@ -8,10 +8,11 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
+const recordStampLossMock = vi.fn().mockResolvedValue(undefined);
 const appendSpoolMock = vi.fn(
   async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
 );
-vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock }));
+vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, recordStampLoss: recordStampLossMock }));
 
 const scheduleMock = vi.fn();
 vi.mock('../otlp-spool/copilot-usage-enrichment.js', () => ({ scheduleCopilotUsageEnrichment: scheduleMock }));
@@ -153,6 +154,25 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
       return JSON.parse(spoolRecord.hookEvent) as Record<string, unknown>;
     });
     expect(decoded.map((e) => e['n'])).toEqual([1, 2, 3]);
+  });
+
+  it('CR001: an evidence_loss report with no events records a visible loss and spools nothing', async () => {
+    const res = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [], evidence_loss: { session_id: 's1', reason: 'no_credentials', events: 2 } });
+    expect(res.statusCode).toBe(202);
+    expect(recordStampLossMock).toHaveBeenCalledWith('s1', 'no_credentials', 2);
+    expect(appendSpoolMock).not.toHaveBeenCalled();
+    const bad = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [], evidence_loss: { session_id: '../x', reason: 'r', events: 1 } });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('carries evidence_v in the spool envelope only when the batch is marked, never in the event body', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', evidence_v: 1, hookEvents: [hookEvent('s1')] });
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    const parse = (i: number) =>
+      JSON.parse((appendSpoolMock.mock.calls[i] as [string, string, string])[2].trim()) as Record<string, string>;
+    expect(parse(0)['evidence_v']).toBe(1);
+    expect(JSON.parse(parse(0)['hookEvent'])).not.toHaveProperty('evidence_v');
+    expect(parse(1)).not.toHaveProperty('evidence_v');
   });
 
   it('passes the project names of the spooled events as the fourth argument', async () => {

@@ -1,13 +1,21 @@
+import { evidenceDir } from '../evidence/record-store.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
+const getRawGitOriginMock = vi.fn();
+const resolveProjectOriginMock = vi.fn();
 
-vi.mock('@/utils/processes.js', () => ({
+vi.mock('@/utils/processes.js', async () => ({
   detectGitBranch: detectGitBranchMock,
   detectGitRemoteRepo: detectGitRemoteRepoMock,
+  getRawGitOrigin: getRawGitOriginMock,
+  repoKeyFromRemote: (await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js')).repoKeyFromRemote,
 }));
 const resolveHookCredentialsMock = vi.fn();
 const resolveIdentityMock = vi.fn();
@@ -24,7 +32,7 @@ vi.mock('../identity-resolver.js', async () => ({
   resolveIdentity: resolveIdentityMock,
 }));
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock },
+  ConfigLoader: { getActiveProfileName: getActiveProfileNameMock, load: configLoadMock, hasLocalConfig: hasLocalConfigMock, resolveProjectOrigin: resolveProjectOriginMock, isLocalProfile: vi.fn(async () => false) },
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
 vi.mock('../session-project-pin.js', () => ({
@@ -132,8 +140,12 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     getCurrentCliVersionMock.mockResolvedValue('1.2.3');
     readPinnedProjectNameMock.mockResolvedValue(undefined);
     pinProjectNameMock.mockImplementation(async (_sessionId: string, project: string) => project);
+    getRawGitOriginMock.mockResolvedValue('https://user:secret@git.example.com/org/repo.git');
+    resolveProjectOriginMock.mockResolvedValue('profile');
+    hasLocalConfigMock.mockResolvedValue(false);
     delete process.env['SDLC_ANALYTICS_STORY_ID'];
     delete process.env['CODEMIE_PROJECT'];
+    delete process.env['CODEMIE_SESSION_ID']; // native launch unless a test sets it (ambient shells are managed)
     delete process.env['CLAUDE_PROJECT_DIR'];
   });
 
@@ -266,7 +278,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     it('stamps identity, project and version on every event, resolved for the hook cwd', async () => {
       await run({ payload: [{ a: 1 }, { a: 2 }] });
       expect(getActiveProfileNameMock).toHaveBeenCalledWith('/repo');
-      expect(configLoadMock).toHaveBeenCalledWith('/repo', { name: 'work' });
+      expect(configLoadMock).toHaveBeenCalledWith('/repo', { name: 'work' }, { preferLinkedProject: true });
       expect(resolveIdentityMock).toHaveBeenCalledWith(expect.objectContaining({ apiUrl: 'https://api' }), '/repo');
       for (const record of forwarded()) {
         expect(record).toMatchObject({
@@ -296,7 +308,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     it('omits the profile selector when there is no active profile', async () => {
       getActiveProfileNameMock.mockResolvedValue(null);
       await run();
-      expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined);
+      expect(configLoadMock).toHaveBeenCalledWith('/repo', undefined, { preferLinkedProject: true });
     });
 
     it('prefers CODEMIE_PROJECT over the resolved config, without even loading it', async () => {
@@ -324,7 +336,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       hasLocalConfigMock.mockResolvedValue(true);
       await run({ cwd: '/workspace/project/src' });
       expect(getActiveProfileNameMock).toHaveBeenCalledWith('/workspace/project');
-      expect(configLoadMock).toHaveBeenCalledWith('/workspace/project', { name: 'work' });
+      expect(configLoadMock).toHaveBeenCalledWith('/workspace/project', { name: 'work' }, { preferLinkedProject: true });
     });
 
     it('walks up from CLAUDE_PROJECT_DIR to the nearest ancestor with a local .codemie config', async () => {
@@ -773,6 +785,197 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
       await run();
       expect(onHookError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('durable evidence stamping (EPMCDME-16440)', () => {
+    class StampAdapter extends FakeAdapter {
+      inputs: { organization?: string; routing: { routed: boolean; routing_proof: 'proven' | 'unproven' } } | undefined = {
+        organization: 'Acme',
+        routing: { routed: true, routing_proof: 'proven' },
+      };
+      protected override extractHookContext(input: FakeInput): Context {
+        return { ...super.extractHookContext(input), evidenceInputs: this.inputs };
+      }
+    }
+    let home: string;
+    let prevHome: string | undefined;
+    const readRecords = () => {
+      const dir = evidenceDir();
+      const names = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
+      return names.map((n) => JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown>);
+    };
+
+    beforeEach(() => {
+      prevHome = process.env['CODEMIE_HOME'];
+      home = mkdtempSync(join(tmpdir(), 'ev-'));
+      process.env['CODEMIE_HOME'] = home;
+      adapter = new StampAdapter();
+    });
+    afterEach(() => {
+      if (prevHome === undefined) delete process.env['CODEMIE_HOME'];
+      else process.env['CODEMIE_HOME'] = prevHome;
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    it('awaits context enrichment before stamping and building the batch', async () => {
+      vi.spyOn(adapter as any, 'extractHookContext').mockResolvedValue({
+        cwd: '/repo', sessionId: 'async-session',
+        evidenceInputs: { organization: 'AsyncOrg', routing: { routed: true, routing_proof: 'proven' } },
+      });
+      await run({ sessionId: 'async-session', payload: [{ session_id: 'async-session' }] });
+      expect(readRecords()[0]).toMatchObject({ session_id: 'async-session', organization: 'AsyncOrg' });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake', { evidenceV: 1 });
+    });
+
+    it.each([
+      [false, false], [false, true], [true, false], [true, true],
+    ])('loss reporting never acknowledges or retries source data (enforced=%s, transport throws=%s)', async (enforced, transportThrows) => {
+      adapter.enforced = enforced;
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({ decision: 'forward', payload: [{ a: 1 }], retryOnce: true });
+      if (transportThrows) forwardToSpool.mockRejectedValue(new Error('loss transport failed'));
+      else forwardToSpool.mockResolvedValue(true);
+      const result = run({ sessionId: 's1' });
+      if (enforced) await expect(result).rejects.toThrow(AnalyticsSourceError);
+      else await expect(result).resolves.toBeUndefined();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool).toHaveBeenCalledWith([], 'fake', {
+        evidenceLoss: { sessionId: 's1', reason: 'no_credentials', events: 1 },
+      });
+    });
+
+    it('stamps a record, marks the envelope with evidence_v 1 and adds no event field', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake', { evidenceV: 1 });
+      expect(Object.keys(forwarded()[0])).not.toContain('evidence_v');
+      const [rec] = readRecords();
+      expect(rec).toMatchObject({
+        routed_via_codemie: true,
+        routing_proof: 'proven',
+        organization: 'Acme',
+        project: 'proj-1',
+        project_source: 'profile',
+        repo_key: 'git.example.com/org/repo',
+        api_identity: 'https://api',
+      });
+      expect(JSON.stringify(rec)).not.toContain('secret');
+    });
+
+    it('CR-005: project_source describes the project actually used; an env project that is not the config project has no attributable source', async () => {
+      process.env['CODEMIE_PROJECT'] = 'env-project'; // config says proj-1
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(readRecords()[0]).toMatchObject({ project: 'env-project', project_source: 'none' });
+      expect(resolveProjectOriginMock).not.toHaveBeenCalled();
+    });
+
+    it('CR-005: a project equal to the config project takes the config origin, asked with the real profile locality and launch mode', async () => {
+      resolveProjectOriginMock.mockResolvedValue('linked_folder');
+      await run({ sessionId: 's2', payload: [{ session_id: 's2' }] });
+      expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'linked_folder' });
+      expect(resolveProjectOriginMock).toHaveBeenCalledWith('/repo', false, true); // native, global profile
+    });
+
+    it('CR-005: an origin lookup failure degrades to none instead of failing the stamp', async () => {
+      resolveProjectOriginMock.mockRejectedValue(new Error('malformed local config'));
+      await run({ sessionId: 's3', payload: [{ session_id: 's3' }] });
+      expect(readRecords()[0]).toMatchObject({ project: 'proj-1', project_source: 'none' });
+    });
+
+    it('keeps the record project when the project changes mid-session; a later pin never overrides it', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      configLoadMock.mockResolvedValue({ codeMieProject: 'proj-2' });
+      readPinnedProjectNameMock.mockResolvedValue('pinned-other');
+      process.env['CODEMIE_PROJECT'] = 'env-other';
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwarded().map((e) => e['codemie_project_name'])).toEqual(['proj-1', 'proj-1']);
+      expect(readRecords()).toHaveLength(1);
+    });
+
+    it.each([
+      ['no credentials', () => resolveHookCredentialsMock.mockResolvedValue(null)],
+      ['unparsable api url', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: { codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, apiUrl: 'not a url', timestamp: 0 })],
+      ['no owner', () => resolveHookCredentialsMock.mockResolvedValue({ cookies: {}, apiUrl: 'https://api', timestamp: 0 })],
+    ])('enqueues nothing and logs a reason code when %s', async (_n, arrange) => {
+      arrange();
+      const { logger } = await import('@/utils/logger.js');
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      // Nothing enqueued; the dropped events are recorded as a visible loss (empty batch, no events).
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool).toHaveBeenCalledWith([], 'fake', { evidenceLoss: expect.objectContaining({ sessionId: 's1', events: 1 }) });
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('evidence record unavailable'));
+    });
+
+    it.each([
+      ['enforced hook', true, true],
+      ['unenforced hook', false, false],
+    ])('a failed stamp on an %s throws only when enforced, and never commits the finalize cursor', async (_n, enforced, throws) => {
+      adapter.enforced = enforced;
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({ decision: 'forward', payload: [{ a: 1 }], finalize });
+      const result = run({ sessionId: 's1' });
+      if (throws) await expect(result).rejects.toThrow(AnalyticsSourceError);
+      else await expect(result).resolves.toBeUndefined();
+      expect(forwardToSpool).not.toHaveBeenCalled(); // a finalize hook is re-derived next time: no loss marker either
+      expect(finalize).toHaveBeenCalledTimes(1);
+      expect(finalize).toHaveBeenCalledWith(false);
+    });
+
+    it('enqueues nothing when the record at the key is corrupt, and never rewrites it', async () => {
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      const dir = evidenceDir();
+      const file = join(dir, readdirSync(dir).filter((n) => n.endsWith('.json'))[0]);
+      writeFileSync(file, '{not json');
+      forwardToSpool.mockClear();
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(forwardToSpool.mock.calls[0][0]).toEqual([]);
+      expect(forwardToSpool.mock.calls[0][2]).toMatchObject({ evidenceLoss: { reason: 'stamp_invalid' } });
+      expect(readFileSync(file, 'utf-8')).toBe('{not json');
+    });
+
+    it('CR001: a blocking decision is emitted before any stamp, so a stamp failure can never lose a block', async () => {
+      resolveHookCredentialsMock.mockResolvedValue(null); // every stamp would fail
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await run({ sessionId: 's1', block: true, payload: [{ session_id: 's1' }] });
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } }));
+      expect(forwardToSpool).not.toHaveBeenCalled(); // no stamp attempt, so no loss report either
+    });
+
+    it('CR001: at the evidence cap the hook evicts an idle non-pending record and stamps instead of dropping the event', async () => {
+      process.env['CODEMIE_EVIDENCE_RECORD_MAX_FILES'] = '1';
+      try {
+        await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+        await run({ sessionId: 's2', payload: [{ session_id: 's2' }] });
+        expect(readRecords().map((r) => r['session_id'])).toEqual(['s2']);
+        expect(forwardToSpool).toHaveBeenCalledTimes(2);
+        for (const c of forwardToSpool.mock.calls) expect(c[2]).toEqual({ evidenceV: 1 }); // both sent, neither reported lost
+      } finally {
+        delete process.env['CODEMIE_EVIDENCE_RECORD_MAX_FILES'];
+      }
+    });
+
+    it('CR001: a dropped event with a cursor to protect (finalize) is retried by the next hook, so no loss is reported', async () => {
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1' }], finalize: async () => undefined });
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).not.toHaveBeenCalled();
+    });
+
+    it('stamps nothing for an untracked project and leaves the event path unchanged', async () => {
+      (adapter as FakeAdapter).tracked = false;
+      await run({ sessionId: 's1' });
+      expect(forwardToSpool).not.toHaveBeenCalled();
+      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(readRecords()).toEqual([]);
+    });
+
+    it('an adapter without evidence inputs keeps the legacy, unmarked path', async () => {
+      (adapter as StampAdapter).inputs = undefined;
+      await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake');
+      expect(readRecords()).toEqual([]);
     });
   });
 });

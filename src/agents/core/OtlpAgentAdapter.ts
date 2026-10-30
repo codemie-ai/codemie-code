@@ -6,6 +6,8 @@ import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, type IdentityFields } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
+import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
+import type { EvidenceRecord } from './evidence/record-store.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -24,10 +26,19 @@ export interface OtlpHookContext {
   prompt?: string;
   /** Pins the resolved project per session (see `resolveProjectName`); omitted adapters get the unpinned, per-hook-cwd behavior. */
   sessionId?: string;
+  /** Optional tool evidence, resolved with the context before the shared persistence step. */
+  evidenceInputs?: EvidenceInputs;
 }
 
 /** Agent-independent fields resolved by the base class at hook time. */
 type CommonFields = RepoFields & IdentityFields;
+
+interface PreparedForward {
+  events: Record<string, unknown>[];
+  options?: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']>[2];
+  /** A loss report never acknowledges source data, even if the transport accepts it. */
+  failure?: string;
+}
 
 /** Common fields an event may bring itself: its own non-empty value wins. All others are stamped. */
 const OVERRIDABLE_FIELD_KEYS = ['git_branch', 'repo_remote', 'story_id', 'story_source'] as const;
@@ -113,22 +124,22 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
           return;
         }
 
-        const context = this.extractHookContext(hookInput);
-        const [commonFields, agentFields] = await Promise.all([
-          this.resolveCommonFields(context),
-          this.resolveAgentFields(),
-        ]);
-        const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
-
-        // Built once: a retry below resends these exact bytes, event_ids included.
-        const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
-
-        accepted = await forwardOtlpEventsToSpool(events, this.name);
-        if (!accepted && decision.retryOnce) {
-          accepted = await forwardOtlpEventsToSpool(events, this.name);
+        const context = await this.extractHookContext(hookInput);
+        const batch = await this.prepareForward(context, decision);
+        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
+          ? [batch.events, this.name, batch.options]
+          : [batch.events, this.name];
+        // One transport call site; retries reuse the same prepared bytes and event IDs.
+        const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
+        if (batch.failure) {
+          // Loss reporting is best-effort and never acknowledges source data.
+          if (batch.options?.evidenceLoss) await send().catch(() => false);
+        } else {
+          accepted = await send();
+          if (!accepted && decision.retryOnce) accepted = await send();
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
-          throw new AnalyticsSourceError('Local analytics spool did not accept the hook event batch');
+          throw new AnalyticsSourceError(batch.failure ?? 'Local analytics spool did not accept the hook event batch');
         }
       } finally {
         try {
@@ -140,6 +151,37 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     } catch (err) {
       await this.onHookError(err, hookInput);
     }
+  }
+
+  /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
+  private async prepareForward(
+    context: OtlpHookContext,
+    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>
+  ): Promise<PreparedForward> {
+    let record: EvidenceRecord | undefined;
+    if (context.evidenceInputs) {
+      const stamp = await stampEvidence(context, context.evidenceInputs);
+      if (!stamp.ok) {
+        logger.warn(`[${this.name}] evidence record unavailable (${stamp.reason}${stamp.detail ? `: ${stamp.detail}` : ''}); event not enqueued`);
+        return {
+          events: [],
+          options: !decision.finalize && context.sessionId
+            ? { evidenceLoss: { sessionId: context.sessionId, reason: stamp.reason, events: decision.payload.length } }
+            : undefined,
+          failure: 'Evidence record unavailable; hook event not enqueued',
+        };
+      }
+      record = stamp.record;
+    }
+    const [commonFields, agentFields] = await Promise.all([
+      this.resolveCommonFields(context, record),
+      this.resolveAgentFields(),
+    ]);
+    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+    return {
+      events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
+      options: record ? { evidenceV: 1 } : undefined,
+    };
   }
 
   /**
@@ -175,7 +217,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Returns null to ignore a payload of an unknown shape. May throw on malformed JSON. */
   protected abstract parseHookInput(raw: string): TInput | null;
-  protected abstract extractHookContext(input: TInput): OtlpHookContext;
+  protected abstract extractHookContext(input: TInput): OtlpHookContext | Promise<OtlpHookContext>;
   /** Allowlist gate; evaluated before the daemon is started. */
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;
@@ -277,10 +319,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  private async resolveCommonFields(context: OtlpHookContext): Promise<CommonFields> {
+  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context),
+      resolveIdentityFields(context, record),
     ]);
     return { ...repoFields, ...identityFields };
   }

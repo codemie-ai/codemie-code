@@ -1,5 +1,6 @@
 import { unlink } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
+import { sweepRecords } from '@/agents/core/evidence/record-store.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   SPOOL_STREAMS,
@@ -30,14 +31,38 @@ import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js'
  * than the abandonment timeout may have its spool removed. That is safe — the
  * next producer write recreates the status and spool files from scratch.
  */
-export async function sweepSpool(): Promise<void> {
+/** Sessions with undelivered spool bytes: their evidence records must never be evicted. */
+export async function pendingSpoolSessionIds(): Promise<Set<string>> {
+  const pending = new Set<string>();
   for (const sessionId of await listSessionIds()) {
     try {
+      const status = (await readStatus(sessionId)) ?? createStatus();
+      if (!isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
+    } catch {
+      pending.add(sessionId); // unknown state: protect
+    }
+  }
+  return pending;
+}
+
+export async function sweepSpool(): Promise<void> {
+  const pending = new Set<string>();
+  for (const sessionId of await listSessionIds()) {
+    try {
+      const status = (await readStatus(sessionId)) ?? createStatus();
+      if (!isSessionDrained(await readSpoolState(sessionId, status))) pending.add(sessionId);
       await sweepSession(sessionId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.debug('[otlp-sweep] per-session error', ...sanitizeLogArgs({ sessionId, err: msg }));
     }
+  }
+  // Evidence records have their own retention (90 d idle / file cap); records of sessions with
+  // undelivered spool are never evicted. reserve:1 keeps room for the next new session.
+  try {
+    await sweepRecords({ pendingKeys: new Set(), pendingSessionIds: pending, reserve: 1 });
+  } catch (err) {
+    logger.debug('[otlp-sweep] record sweep error', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));
   }
 }
 
@@ -59,7 +84,8 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   if (!isSessionDrained(spool)) return false;
 
   const activityMs = await lastActivityMs(spool);
-  if (activityMs === null) return false; // nothing on disk to clean up
+  // Nothing on disk to clean up, except a status that only records a stamp loss: aged out like an abandoned session.
+  if (activityMs === null) return status.lastLoss ? Date.now() - status.lastLoss.at >= abandonedSessionGraceMs() : false;
 
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;

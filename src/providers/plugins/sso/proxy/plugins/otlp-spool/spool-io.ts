@@ -1,19 +1,26 @@
-import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { createStatus, readStatus, writeStatus, type SessionStatus } from './session-status.js';
-import { hooksOnlyForwardAllowed } from './spool-config.js';
+import { createStatus, readStatus, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
   decideProject,
   evaluateProjectPolicy,
-  hookEventProjectNames,
+  holdOrLose,
   hookRecordIsProject,
+  type HoldReason,
+  type LossReason,
   type SessionPolicy,
   type StreamPolicy,
 } from './session-project.js';
+import { readOrCreateEpoch } from './epoch.js';
+import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
+import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
+import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
+import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
 
 const NEWLINE = 0x0a;
 
@@ -46,72 +53,8 @@ function warnConflictStarted(sessionId: string, status: SessionStatus): void {
   );
 }
 
-async function hooksFileState(sessionId: string): Promise<{ exists: boolean; size: number }> {
-  try {
-    return { exists: true, size: (await stat(streamFile(sessionId, 'hooks'))).size };
-  } catch {
-    return { exists: false, size: 0 };
-  }
-}
-
 /* ------------------------------------------------------- unlocked internals --- */
 // These assume the caller already holds the session lock.
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Range-read everything after `cursor`, up to `end` when given. Never touches the acknowledged prefix. */
-async function readRange(
-  sessionId: string,
-  stream: SpoolStream,
-  cursor: number,
-  end?: number
-): Promise<Buffer | null> {
-  let handle;
-  try {
-    handle = await open(streamFile(sessionId, stream), 'r');
-  } catch {
-    return null; // missing file => nothing pending
-  }
-  try {
-    const { size: fileSize } = await handle.stat();
-    const size = end === undefined ? fileSize : Math.min(fileSize, end);
-    if (size <= cursor) return null; // drained
-    const buffer = Buffer.allocUnsafe(size - cursor);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, cursor);
-    return bytesRead > 0 ? buffer.subarray(0, bytesRead) : null;
-  } finally {
-    await handle.close();
-  }
-}
-
-/** Project names of every hook on disk, acknowledged prefix included. Malformed lines are skipped. */
-async function readHookProjectNames(sessionId: string): Promise<string[]> {
-  let text: string;
-  try {
-    text = await readFile(streamFile(sessionId, 'hooks'), 'utf-8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-  const names: string[] = [];
-  for (const line of text.split('\n')) {
-    if (line.trim().length === 0) continue;
-    try {
-      const { hookEvent } = JSON.parse(line) as { hookEvent: string };
-      names.push(...hookEventProjectNames(JSON.parse(hookEvent)));
-    } catch {
-      // unusable record: carries no usable project
-    }
-  }
-  return names;
-}
 
 /**
  * Legacy recovery: scan the hooks already on disk once and bind or conflict.
@@ -149,6 +92,111 @@ export async function discardBacklogLocked(
     }
   }
   return { changed: bytes > 0, bytes };
+}
+
+/**
+ * A hold that reached its retention bound: drop the held backlog of `streams` with a named, visible
+ * loss reason (persisted as `lastLoss`, logged). Never silent. Mutates `status` only; caller writes.
+ */
+export async function recordLossLocked(
+  sessionId: string,
+  status: SessionStatus,
+  reason: LossReason,
+  streams: readonly SpoolStream[] = SPOOL_STREAMS,
+  now: number = Date.now()
+): Promise<number> {
+  const { bytes } = await discardBacklogLocked(sessionId, status, streams);
+  status.lastLoss = { reason, at: now, bytes };
+  logger.warn('[otlp-spool] held analytics dropped at the retention bound', ...sanitizeLogArgs({ sessionId, reason, bytes }));
+  return bytes;
+}
+
+/**
+ * A hook that could not stamp dropped `events` events of this session (no durable record, so nothing
+ * was spooled): make it visible as `lastLoss` instead of a warning in a hook process nobody reads.
+ * Only the stamp-failure reasons the status can name; anything else is `stamp_invalid`.
+ */
+export async function recordStampLoss(sessionId: string, reason: string, events: number, now: number = Date.now()): Promise<void> {
+  const named = reason === 'evidence_capacity' || reason === 'session_id_absent' ? reason : 'stamp_invalid';
+  await withSessionLock(sessionId, async () => {
+    const status = (await readStatus(sessionId)) ?? createStatus();
+    status.lastLoss = { reason: named, at: now, bytes: 0 };
+    await writeStatus(sessionId, status);
+    logger.warn('[otlp-spool] hook events dropped: evidence record unavailable', ...sanitizeLogArgs({ sessionId, reason, events }));
+  });
+}
+
+/** Any pending hook line carries the `evidence_v: 1` envelope marker. Caller holds the lock. */
+export async function pendingHooksMarkedLocked(sessionId: string, status: SessionStatus): Promise<boolean> {
+  const pending = await readRange(sessionId, 'hooks', status.cursors.hooks);
+  if (!pending) return false;
+  return pending
+    .toString('utf-8')
+    .split('\n')
+    .some((line) => {
+      try {
+        return (JSON.parse(line) as { evidence_v?: unknown }).evidence_v === 1;
+      } catch {
+        return false;
+      }
+    });
+}
+
+/**
+ * Head-of-line hold of one stream (a proof hold past the verified prefix, Task 13). Persists the
+ * first-hold time; `null` clears it. Past `heldRetentionMs` the stream's held backlog is dropped
+ * with the hold's reason (recorded loss). Takes the session lock: never call while holding it.
+ */
+export async function noteStreamHold(
+  sessionId: string,
+  stream: SpoolStream,
+  reason: HoldReason | null,
+  now: number = Date.now()
+): Promise<'held' | 'lost' | 'clear'> {
+  return withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return 'clear';
+    const previous = status.holds?.[stream];
+    if (reason === null) {
+      if (!previous) return 'clear';
+      clearHold(status, stream);
+      await writeStatus(sessionId, status);
+      return 'clear';
+    }
+    const decision = holdOrLose(reason, previous?.since, now, heldRetentionMs());
+    if (decision.action === 'lose') {
+      clearHold(status, stream);
+      await recordLossLocked(sessionId, status, decision.reason, [stream], now);
+    } else {
+      status.holds = { ...status.holds, [stream]: { reason, since: previous?.since ?? now } };
+    }
+    await writeStatus(sessionId, status);
+    return decision.action === 'lose' ? 'lost' : 'held';
+  });
+}
+
+/** Remove one hold; drops the empty `holds` object. */
+export function clearHold(status: SessionStatus, scope: HoldScope): void {
+  if (!status.holds?.[scope]) return;
+  delete status.holds[scope];
+  if (Object.keys(status.holds).length === 0) delete status.holds;
+}
+
+/**
+ * The forwarder's own evidence identity (spec item 7: "found by the forwarder's own key"): the
+ * daemon credentials' API URL and signed-in email, the same pair the hook stamps with
+ * (`resolveHookCredentials` mirrors the daemon's credential choice). `null` = no key can be built.
+ */
+export function forwarderIdentity(
+  credentials: SSOCredentials | JWTCredentials
+): { api_identity: string; owner_hash: string } | null {
+  const email = resolveEmailFromCredentials(credentials);
+  if (!email) return null;
+  try {
+    return { api_identity: apiIdentity(credentials.apiUrl), owner_hash: ownerHash(email) };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -261,7 +309,9 @@ export async function appendSpool(
   projectNames?: string[]
 ): Promise<void> {
   await withSessionLock(sessionId, async () => {
-    await mkdir(spoolRoot(), { recursive: true });
+    // The epoch exists before this version writes any session status: a new session is never pre-epoch.
+    await readOrCreateEpoch();
+    await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });
 
     const path = streamFile(sessionId, stream);
     const exists = await fileExists(path);
@@ -290,11 +340,11 @@ export async function appendSpool(
       }
       await writeStatus(sessionId, status);
       if (!hadConflict && status.projectConflict) warnConflictStarted(sessionId, status);
-      await appendFile(path, data);
+      await appendFile(path, data, { mode: 0o600 });
       return;
     }
 
-    await appendFile(path, data);
+    await appendFile(path, data, { mode: 0o600 });
 
     const status = await readStatus(sessionId);
     if (!status) {
@@ -318,6 +368,8 @@ export interface PendingBytes {
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
   cursor: number;
   bytes: Buffer;
+  /** A `limit` was given and the window is full: bytes may follow it. */
+  more: boolean;
 }
 
 /**
@@ -325,11 +377,13 @@ export interface PendingBytes {
  *
  * The lock guarantees the snapshot never contains a partially written append,
  * so the protobuf payload handed to the backend is always whole.
+ * `limit` bounds the allocation to that many bytes (a window; the caller cuts it at an entry boundary).
  * Must NOT be called while already holding the session lock.
  */
 export async function snapshotPendingBytes(
   sessionId: string,
-  stream: SpoolStream
+  stream: SpoolStream,
+  limit?: number
 ): Promise<PendingBytes | null> {
   return withSessionLock(sessionId, async () => {
     const status = await readStatus(sessionId);
@@ -337,8 +391,8 @@ export async function snapshotPendingBytes(
     const gate = await gateStreamLocked(sessionId, status, stream);
     if (!gate) return null;
     const cursor = status.cursors[stream];
-    const bytes = await readRange(sessionId, stream, cursor);
-    return bytes ? { project: gate.project, cursor, bytes } : null;
+    const bytes = await readRange(sessionId, stream, cursor, limit === undefined ? undefined : cursor + limit);
+    return bytes ? { project: gate.project, cursor, bytes, more: limit !== undefined && bytes.length >= limit } : null;
   });
 }
 

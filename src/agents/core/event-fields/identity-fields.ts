@@ -5,6 +5,9 @@ import { getCurrentCliVersion } from '@/utils/cli-updater.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveHookCredentials } from '../hook-credentials.js';
 import { pinProjectName, readPinnedProjectName } from '../session-project-pin.js';
+import type { EvidenceRecord } from '../evidence/record-store.js';
+import { launchMode } from '../evidence/routing.js';
+import type { CodeMieConfigOptions } from '@/env/types.js';
 import {
   resolveCodemieCliEmail,
   resolveEmailFromCredentials,
@@ -35,10 +38,13 @@ export interface IdentityCandidateFields {
  * the git, codemie_cli and os tiers. Each of the three is resolved independently, so a failed
  * lookup yields that field's empty value only, never a dropped event and never a wider blank-out.
  */
-export async function resolveIdentityFields({ cwd, sessionId }: OtlpHookContext): Promise<IdentityFields> {
+export async function resolveIdentityFields(
+  { cwd, sessionId }: OtlpHookContext,
+  record?: EvidenceRecord
+): Promise<IdentityFields> {
   const [identityResult, projectName, version] = await Promise.all([
     resolveIdentityTier(cwd),
-    resolveProjectName(cwd, sessionId),
+    resolveProjectName(cwd, sessionId, record),
     getCurrentCliVersion().catch(() => null),
   ]);
   return {
@@ -80,7 +86,21 @@ async function resolveIdentityTier(
  * (an adapter that doesn't supply one), or without `CLAUDE_PROJECT_DIR` (a tool other than
  * Claude Code), resolution falls back to the hook's own `cwd`, unwalked and unpinned, as before.
  */
-async function resolveProjectName(cwd: string, sessionId: string | undefined): Promise<string> {
+async function resolveProjectName(
+  cwd: string,
+  sessionId: string | undefined,
+  record?: EvidenceRecord
+): Promise<string> {
+  // A stamped session's durable record is the single source: event project, spool binding and
+  // headers must agree, so env/pin/config are never consulted again (nor is a pin written).
+  if (record) {
+    return record.project ?? '';
+  }
+  return resolveSessionProject(cwd, sessionId);
+}
+
+/** The env/pin/config resolution, used for unstamped sessions and once to seed a new record. */
+export async function resolveSessionProject(cwd: string, sessionId: string | undefined): Promise<string> {
   const envProject = process.env['CODEMIE_PROJECT']?.trim();
   if (envProject) {
     return envProject;
@@ -95,16 +115,26 @@ async function resolveProjectName(cwd: string, sessionId: string | undefined): P
   return sessionId ? pinProjectName(sessionId, resolved) : resolved;
 }
 
-async function resolveProjectNameFromConfig(cwd: string): Promise<string> {
+/** The profile config the hook resolves for `cwd` (same walk as the project lookup); undefined on failure. */
+export async function loadHookConfig(
+  cwd: string
+): Promise<{ config: CodeMieConfigOptions; configDir: string } | undefined> {
   const projectDir = process.env['CLAUDE_PROJECT_DIR']?.trim();
   try {
     const configDir = projectDir ? await findNearestConfigDir(projectDir) : cwd;
     const profileName = await ConfigLoader.getActiveProfileName(configDir);
-    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined);
-    return config.codeMieProject ?? '';
+    // Native hooks have no launcher-exported CODEMIE_PROJECT: a linked folder's project beats the global profile's.
+    const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined, {
+      preferLinkedProject: launchMode(process.env) === 'native',
+    });
+    return { config, configDir };
   } catch {
-    return '';
+    return undefined;
   }
+}
+
+async function resolveProjectNameFromConfig(cwd: string): Promise<string> {
+  return (await loadHookConfig(cwd))?.config.codeMieProject ?? '';
 }
 
 /** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */

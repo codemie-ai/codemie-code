@@ -733,5 +733,63 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       expect(merged.codeMieUrl).toBe('https://local-workspace.example.com');
       expect(sources['codeMieUrl']?.source).toBe('project');
     });
+
+    describe('linked .codemie project vs global profile (AC7)', () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+
+      async function setup(globalProject?: string, localProject?: string) {
+        await writeGlobal('g', { g: { provider: 'ai-run-sso', model: 'm', name: 'g' } });
+        if (globalProject) {
+          const raw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: globalProject, codeMieUrl: 'https://g.example.com' };
+          await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+        if (localProject) {
+          await writeLocal('other', { other: { name: 'other' } });
+          const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+          raw.workspace = { codeMieProject: localProject };
+          await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(raw));
+        }
+      }
+
+      // The launcher (AgentCLI) loads config before it creates CODEMIE_SESSION_ID, so managed-vs-native
+      // is never inferred from that variable: the linked-project preference is an explicit opt-in.
+      beforeEach(() => {
+        delete process.env.CODEMIE_SESSION_ID;
+      });
+
+      it('default (launcher / profile commands, no session id yet): keeps the profile project', async () => {
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false);
+        expect(ws.codeMieProject).toBe('global-proj');
+        expect((await ConfigLoader.load(workingDir, { name: 'g' })).codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('native hook opt-in: linked project beats global profile project, origin linked_folder', async () => {
+        await setup('global-proj', 'linked-proj');
+        const ws = await ConfigLoader.resolveProfileWorkspace(workingDir, false, true);
+        expect(ws.codeMieProject).toBe('linked-proj');
+        expect(ws.codeMieUrl).toBe('https://g.example.com');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, true)).toBe('linked_folder');
+        expect((await ConfigLoader.load(workingDir, { name: 'g' }, { preferLinkedProject: true })).codeMieProject).toBe('linked-proj');
+      });
+
+      it('isLocalProfile: false for a global profile beside a linked workspace-only .codemie', async () => {
+        await setup('global-proj', 'linked-proj');
+        expect(await ConfigLoader.isLocalProfile(workingDir, 'g')).toBe(false);
+      });
+
+      it('no linked project: profile origin', async () => {
+        await setup('global-proj');
+        expect((await ConfigLoader.resolveProfileWorkspace(workingDir, false)).codeMieProject).toBe('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
+      });
+
+      it('no project anywhere: none', async () => {
+        await setup();
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('none');
+      });
+    });
   });
 });
