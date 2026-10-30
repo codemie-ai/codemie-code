@@ -76,6 +76,7 @@ export function createSyncProcessor(): SessionProcessor {
         baseUrl: context.apiBaseUrl,
         cookies: context.cookies,
         apiKey: context.apiKey,
+        authorization: context.authorization,
         timeout: DEFAULT_API_TIMEOUT_MS,
         retryAttempts: DEFAULT_RETRY_ATTEMPTS,
         version: context.version,

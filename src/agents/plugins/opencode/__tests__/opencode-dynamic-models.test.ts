@@ -48,7 +48,7 @@ describe('fetchDynamicModelConfigs', () => {
     const result = await fetchDynamicModelConfigs(proxyUrl, { CODEMIE_PROFILE_CONFIG: profile });
 
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
-    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, creds.authorization);
     expect(Object.keys(result)).toEqual(['live-model-1']);
   });
 

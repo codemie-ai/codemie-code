@@ -174,6 +174,30 @@ describe('SSOAuthPlugin', () => {
     );
     const context = createProxyContext();
 
-    await expect(interceptor.onRequest!(context)).rejects.toThrow(/Stored SSO session cookies are invalid/);
+    await expect(interceptor.onRequest!(context)).rejects.toThrow(/Stored SSO session has no valid cookies or authorization value/);
+  });
+
+  it('succeeds on empty cookies when an authorization fallback is set (reverse proxy strips cookies)', async () => {
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: {}, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000, authorization: 'Bearer backend-issued' })
+    );
+    const context = createProxyContext();
+
+    await interceptor.onRequest!(context);
+
+    expect(context.headers['cookie']).toBeUndefined();
+    expect(context.headers['authorization']).toBe('Bearer backend-issued');
+  });
+
+  it('sends both cookie and authorization headers when both are present', async () => {
+    const interceptor: ProxyInterceptor = await plugin.createInterceptor(
+      createPluginContext({ cookies: { session: 'abc' }, apiUrl: TARGET_API_URL, expiresAt: Date.now() + 60_000, authorization: 'Bearer backend-issued' })
+    );
+    const context = createProxyContext();
+
+    await interceptor.onRequest!(context);
+
+    expect(context.headers['cookie']).toBe('session=abc');
+    expect(context.headers['authorization']).toBe('Bearer backend-issued');
   });
 });

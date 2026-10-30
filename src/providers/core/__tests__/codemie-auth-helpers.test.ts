@@ -79,6 +79,27 @@ describe('buildAuthHeaders', () => {
     expect(headers.authorization).toBeUndefined();
   });
 
+  it('adds an Authorization header alongside cookies when the SSO authorization fallback is set', () => {
+    const headers = buildAuthHeaders({ session: 'abc' }, 'backend-issued-value');
+
+    expect(headers.cookie).toBe('session=abc');
+    expect(headers.authorization).toBe('backend-issued-value');
+  });
+
+  it('sends the authorization value verbatim, without a Bearer prefix', () => {
+    // Unlike the JWT overload, the SSO authorization fallback is whatever the backend put in
+    // the callback body — the CLI must not assume or add a scheme.
+    const headers = buildAuthHeaders({}, 'already-has-a-scheme xyz');
+
+    expect(headers.authorization).toBe('already-has-a-scheme xyz');
+  });
+
+  it('omits the authorization header when the fallback is not provided', () => {
+    const headers = buildAuthHeaders({ session: 'abc' });
+
+    expect(headers.authorization).toBeUndefined();
+  });
+
   it('builds Bearer authorization header from JWT string', () => {
     const headers = buildAuthHeaders('my-jwt-token');
 

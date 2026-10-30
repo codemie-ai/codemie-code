@@ -859,7 +859,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       const interceptor = await plugin.createInterceptor(context);
 
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
-      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', { auth: 'stale-cookie' });
+      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', { auth: 'stale-cookie' }, undefined);
 
       // A browser re-login completed; advance past both the credential-refresh throttle (5s)
       // and the model-cache TTL (10min) so the next request's loadModels() call re-fetches.
@@ -870,7 +870,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
 
-      expect(fetchCodeMieLlmModels).toHaveBeenLastCalledWith('https://api.anthropic.com', { auth: 'fresh-cookie' });
+      expect(fetchCodeMieLlmModels).toHaveBeenLastCalledWith('https://api.anthropic.com', { auth: 'fresh-cookie' }, undefined);
       vi.useRealTimers();
     });
 

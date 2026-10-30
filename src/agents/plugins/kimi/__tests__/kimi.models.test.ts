@@ -222,7 +222,7 @@ describe('resolveKimiModel SSO lookup (profile baseUrl first)', () => {
     const result = await resolveKimiModel({ CODEMIE_PROFILE_CONFIG: profile });
 
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
-    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, creds.authorization);
     expect(result.selectedModel).toBe('kimi-k2');
   });
 

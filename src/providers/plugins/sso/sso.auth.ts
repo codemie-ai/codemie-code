@@ -39,6 +39,19 @@ function normalizeToBase(url: string): string {
 }
 
 /**
+ * Whether a credential pair carries anything the server will actually accept:
+ * non-empty cookies, or a non-empty `authorization` fallback. A reverse proxy
+ * that strips cookies can leave `cookies` present but empty (`{}`), so a mere
+ * presence check on the field is not enough.
+ */
+export function hasUsableSsoCredential(
+  cookies: Record<string, string> | undefined,
+  authorization: string | undefined
+): boolean {
+  return Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim());
+}
+
+/**
  * Derive credential expiresAt from codemie_access_token JWT exp claim.
  * Falls back to 24h when the cookie is absent or the JWT cannot be decoded.
  */
@@ -134,11 +147,17 @@ export class CodeMieSSO {
       );
 
       // 5. Store credentials if successful
-      if (result.success && result.apiUrl && result.cookies) {
+      if (
+        result.success &&
+        result.apiUrl &&
+        hasUsableSsoCredential(result.cookies, result.authorization)
+      ) {
+        const cookies = result.cookies ?? {};
         const credentials: SSOCredentials = {
-          cookies: result.cookies,
+          cookies,
           apiUrl: result.apiUrl,
-          expiresAt: deriveExpiresAt(result.cookies),
+          expiresAt: deriveExpiresAt(cookies),
+          authorization: result.authorization,
         };
 
         const store = CredentialStore.getInstance();
@@ -355,19 +374,32 @@ export class CodeMieSSO {
       // Decode base64 token (following plugin pattern)
       const token = JSON.parse(Buffer.from(raw, 'base64').toString('ascii'));
 
-      if (!token.cookies) {
-        throw new Error('Token missing cookies field');
+      // A reverse proxy in front of the backend can strip cookies, in which case
+      // `token.cookies` arrives present but empty (`{}`) and the backend instead
+      // puts a session credential in `token.authorization`. Either is acceptable;
+      // neither is a hard failure.
+      const authorization: string | undefined =
+        typeof token.authorization === 'string' ? token.authorization : undefined;
+
+      if (!hasUsableSsoCredential(token.cookies, authorization)) {
+        throw new Error('Token missing cookies and authorization fields');
+      }
+
+      const cookieHeaders: Record<string, string> = {};
+      if (token.cookies && Object.keys(token.cookies).length > 0) {
+        cookieHeaders.cookie = Object.entries(token.cookies)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(';');
+      }
+      if (authorization) {
+        cookieHeaders.authorization = authorization;
       }
 
       // Try to fetch config.js to resolve actual API URL
       let apiUrl = ensureApiBase(this.codeMieUrl);
       try {
         const configResponse = await fetch(`${apiUrl}/config.js`, {
-          headers: {
-            'cookie': Object.entries(token.cookies)
-              .map(([key, value]) => `${key}=${value}`)
-              .join(';')
-          }
+          headers: cookieHeaders
         });
 
         if (configResponse.ok) {
@@ -380,11 +412,11 @@ export class CodeMieSSO {
       } catch {
         // Silently fallback to default API URL - config.js fetch is optional
       }
-
       return {
         success: true,
         apiUrl,
-        cookies: token.cookies
+        cookies: token.cookies,
+        authorization
       };
 
     } catch (error) {

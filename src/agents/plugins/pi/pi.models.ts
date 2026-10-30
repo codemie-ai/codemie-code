@@ -268,7 +268,7 @@ async function fetchCodeMieModels(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
       throw new Error(`SSO credentials not found for ${platformUrl}. Run: codemie profile login --url ${platformUrl}`);
     }
     logger.debug('[pi-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   }
 
   throw new Error('No CodeMie authentication available. Run codemie setup or set CODEMIE_JWT_TOKEN.');

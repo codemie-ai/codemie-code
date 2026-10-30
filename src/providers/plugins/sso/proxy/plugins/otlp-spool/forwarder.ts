@@ -39,7 +39,7 @@ function buildAuthHeadersFromCreds(
   credentials: SSOCredentials | JWTCredentials
 ): Record<string, string> | null {
   if (isSSOCredentials(credentials)) {
-    return buildAuthHeaders(credentials.cookies);
+    return buildAuthHeaders(credentials.cookies, credentials.authorization);
   }
   if (isJWTCredentials(credentials)) {
     return buildAuthHeaders(credentials.token);

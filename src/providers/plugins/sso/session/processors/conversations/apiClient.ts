@@ -44,6 +44,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
     baseUrl: config.baseUrl,
     cookies: config.cookies || '',
     apiKey: config.apiKey || '',
+    authorization: config.authorization || '',
     timeout: config.timeout || DEFAULT_API_TIMEOUT_MS,
     retryAttempts: config.retryAttempts || DEFAULT_RETRY_ATTEMPTS,
     version: config.version || '0.0.0',
@@ -137,6 +138,10 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           } else if (apiConfig.cookies) {
             // SSO: Cookie header
             headers['Cookie'] = apiConfig.cookies;
+          }
+          if (apiConfig.authorization) {
+            // SSO: Authorization header support
+            headers['Authorization'] = apiConfig.authorization;
           }
 
           let response: Response;

@@ -19,6 +19,8 @@ export interface ProcessingContext {
   cookies: string;
   /** API key for localhost development (user-id header) */
   apiKey?: string;
+  /** SSO authorization fallback (see `SSOCredentials.authorization`) */
+  authorization?: string;
   /** Client type identifier */
   clientType: string;
   /** Client version */

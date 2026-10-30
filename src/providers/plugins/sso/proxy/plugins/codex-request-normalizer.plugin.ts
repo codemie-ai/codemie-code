@@ -267,7 +267,7 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
       const models = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies)
+        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, credentials.authorization)
         : await fetchCodeMieLlmModels(apiUrl, credentials.token);
 
       this.availableModels = models

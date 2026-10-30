@@ -12,6 +12,7 @@ import {
   type DetachedLoginOutcome,
   type LoginWaitResult,
 } from '@/providers/plugins/sso/sso.detached-login.js';
+import { hasUsableSsoCredential } from '@/providers/plugins/sso/sso.auth.js';
 import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
 
@@ -93,7 +94,7 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
           provider: input.provider,
           baseUrl: input.baseUrl,
         });
-        hasValidAuth = Boolean(found?.credentials.cookies);
+        hasValidAuth = hasUsableSsoCredential(found?.credentials.cookies, found?.credentials.authorization);
       } catch (error) {
         logger.debug('[sso-auth-gate] Failed to load SSO credentials:', error);
       }

@@ -6,6 +6,10 @@ vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: vi.fn(function () {
     return { getStoredCredentials };
   }),
+  // Real implementation mirrored here since this mock factory replaces the whole
+  // module — see sso.auth.ts for the canonical definition.
+  hasUsableSsoCredential: (cookies?: Record<string, string>, authorization?: string) =>
+    Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim()),
 }));
 vi.mock('@/utils/analytics-auth-status.js', () => ({ getAnalyticsAuthStatus: vi.fn() }));
 vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
@@ -42,6 +46,22 @@ describe('ensureCodeMieSsoAuth', () => {
 
   it('passes when analytics is not configured', async () => {
     expect(await ensureCodeMieSsoAuth({})).toEqual({ ok: true });
+  });
+
+  it('passes on empty cookies when the stored credential has an authorization fallback (reverse proxy strips cookies)', async () => {
+    getStoredCredentials.mockResolvedValue({ cookies: {}, authorization: 'backend-issued-value' });
+
+    expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
+    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  it('starts a sign-in when cookies are empty and there is no authorization fallback either', async () => {
+    getStoredCredentials.mockResolvedValue({ cookies: {} });
+
+    const result = await ensureCodeMieSsoAuth(configured);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('no valid CodeMie SSO credentials found');
   });
 
   it('never starts a sign-in when an api key is set', async () => {

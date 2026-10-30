@@ -35,7 +35,15 @@ export function ensureApiBase(rawUrl: string): string {
   return base;
 }
 
-export function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {
+/**
+ * @param authorization - SSO-only fallback credential (see `SSOCredentials.authorization`).
+ * Sent as an additional `Authorization` header alongside the cookie header; never used with
+ * the JWT-string overload, since JWT credentials already own that header slot.
+ */
+export function buildAuthHeaders(
+  auth: Record<string, string> | string,
+  authorization?: string
+): Record<string, string> {
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -50,6 +58,9 @@ export function buildAuthHeaders(auth: Record<string, string> | string): Record<
     headers.cookie = Object.entries(auth)
       .map(([key, value]) => `${key}=${value}`)
       .join(';');
+    if (authorization) {
+      headers.authorization = authorization;
+    }
   }
 
   return headers;
@@ -270,7 +281,8 @@ export async function getStoredAnalyticsCredentials(
 /* eslint-disable no-redeclare */
 export function fetchCodeMieUserInfo(
   apiUrl: string,
-  cookies: Record<string, string>
+  cookies: Record<string, string>,
+  authorization?: string
 ): Promise<CodeMieUserInfo>;
 export function fetchCodeMieUserInfo(
   apiUrl: string,
@@ -278,10 +290,11 @@ export function fetchCodeMieUserInfo(
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
   apiUrl: string,
-  auth: Record<string, string> | string
+  auth: Record<string, string> | string,
+  authorization?: string
 ): Promise<CodeMieUserInfo> {
 /* eslint-enable no-redeclare */
-  const headers = buildAuthHeaders(auth);
+  const headers = buildAuthHeaders(auth, authorization);
   const url = `${apiUrl}/v1/user`;
 
   const client = new HTTPClient({
@@ -320,7 +333,8 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{
 
   const userInfo = await fetchCodeMieUserInfo(
     authResult.apiUrl,
-    authResult.cookies
+    authResult.cookies,
+    authResult.authorization
   );
 
   const applications = userInfo.applications || [];

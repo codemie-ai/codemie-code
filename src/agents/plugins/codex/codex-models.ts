@@ -388,7 +388,7 @@ async function fetchCodeMieModelsForCodex(env: NodeJS.ProcessEnv): Promise<LlmMo
     }
 
     logger.debug('[codex-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   }
 
   return [];

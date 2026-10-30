@@ -78,21 +78,33 @@ class SSOAuthInterceptor implements ProxyInterceptor {
       });
     }
 
-    if (cookiePairs.length === 0) {
+    // A reverse proxy in front of the backend can strip cookies, leaving `cookies`
+    // present but empty (or entirely invalid) — `current.authorization` (set from
+    // the callback body's `authorization` field) is then the only usable
+    // credential. Only fail when there is nothing left to send at all: no
+    // sanitized cookie pairs AND no authorization value.
+    if (cookiePairs.length === 0 && !current.authorization?.trim()) {
       throw new AuthenticationError(
-        'Stored SSO session cookies are invalid. Run `codemie profile login` and reconnect the proxy.'
+        'Stored SSO session has no valid cookies or authorization value. Run `codemie profile login` and reconnect the proxy.'
       );
     }
 
-    const cookieHeader = cookiePairs.join('; ');
+    if (cookiePairs.length > 0) {
+      const cookieHeader = cookiePairs.join('; ');
 
-    // Use lowercase 'cookie' to match Node.js HTTP header conventions
-    context.headers['cookie'] = cookieHeader;
+      // Use lowercase 'cookie' to match Node.js HTTP header conventions
+      context.headers['cookie'] = cookieHeader;
 
-    logger.debug(`[${this.name}] Injected SSO cookies:`, {
-      cookieCount: Object.keys(current.cookies).length,
-      cookieNames: Object.keys(current.cookies),
-      headerLength: cookieHeader.length
-    });
+      logger.debug(`[${this.name}] Injected SSO cookies:`, {
+        cookieCount: Object.keys(current.cookies).length,
+        cookieNames: Object.keys(current.cookies),
+        headerLength: cookieHeader.length
+      });
+    }
+
+    if (current.authorization) {
+      context.headers['authorization'] = current.authorization;
+      logger.debug(`[${this.name}] Injected SSO authorization header`);
+    }
   }
 }

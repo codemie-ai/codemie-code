@@ -75,6 +75,7 @@ export interface ConversationApiConfig {
   baseUrl: string;
   cookies?: string;
   apiKey?: string;
+  authorization?: string;
   timeout?: number;
   retryAttempts?: number;
   version?: string;

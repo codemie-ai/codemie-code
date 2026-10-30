@@ -172,6 +172,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         baseUrl: context.apiBaseUrl,
         cookies: context.cookies,
         apiKey: context.apiKey,
+        authorization: context.authorization,
         timeout: 30000,
         retryAttempts: 3,
         version: context.version,

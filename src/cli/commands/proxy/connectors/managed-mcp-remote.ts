@@ -150,7 +150,7 @@ export async function fetchManagedMcpServers(
       maxRetries: 3,
       rejectUnauthorized: isTlsVerificationEnabled(),
     });
-    const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(creds.cookies));
+    const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(creds.cookies, creds.authorization));
 
     const status = response.statusCode ?? 0;
     if (status < 200 || status >= 300) {

@@ -425,6 +425,12 @@ export interface SSOAuthResult {
   success: boolean;
   apiUrl?: string;
   cookies?: Record<string, string>;
+  /**
+   * Alternate session credential some backends put in the callback body when a
+   * reverse proxy in front of them strips cookies. Stored and replayed exactly
+   * like `cookies` — see `hasUsableSsoCredential()` in sso.auth.ts.
+   */
+  authorization?: string;
   error?: string;
 }
 
@@ -453,6 +459,8 @@ export interface SSOCredentials {
   cookies: Record<string, string>;
   apiUrl: string;
   expiresAt?: number;
+  /** See `SSOAuthResult.authorization`. */
+  authorization?: string;
 }
 
 /**

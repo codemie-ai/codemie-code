@@ -164,7 +164,7 @@ async function fetchCodeMieModelsForCopilot(env: NodeJS.ProcessEnv): Promise<Llm
     }
 
     logger.debug('[copilot-cli-models] Fetching CodeMie model list via SSO auth');
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   }
 
   return [];
