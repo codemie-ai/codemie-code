@@ -32,6 +32,12 @@ describe('stripPastedContentTags', () => {
       'indented\r\n\tmore',
     ],
     ['closing tag without attributes', '<pasted_content>a</pasted_content>', 'a'],
+    ['single-quoted attribute', "<pasted_content id='b23a'>\nStep 1\n</pasted_content id='b23a'>\n", 'Step 1'],
+    [
+      'a literal tag typed by the user is removed like an injected one',
+      'why does <pasted_content id="x"> show up in my logs?',
+      'why does  show up in my logs?',
+    ],
   ])('%s', (_name, input, expected) => {
     expect(stripPastedContentTags(input)).toBe(expected);
   });

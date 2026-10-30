@@ -501,6 +501,24 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(JSON.stringify(record)).not.toContain('AKIA');
     });
 
+    it('does not leave a lone high surrogate when the cut falls inside an emoji', async () => {
+      await run({
+        payload: [{
+          prompt: `${'p'.repeat(199)}😀tail`,
+          tool_input: `${'t'.repeat(299)}😀tail`,
+        }],
+      });
+      const record = forwarded()[0];
+      expect(record['prompt']).toBe('p'.repeat(199));
+      expect(record['prompt_body']).toBe('p'.repeat(199));
+      expect(record['tool_input']).toBe('t'.repeat(299));
+    });
+
+    it('keeps a whole emoji that ends exactly at the cut', async () => {
+      await run({ payload: [{ prompt: `${'p'.repeat(198)}😀tail` }] });
+      expect(forwarded()[0]['prompt']).toBe(`${'p'.repeat(198)}😀`);
+    });
+
     it('normalizes effort objects to their level and omits malformed values', async () => {
       await run({
         payload: [
