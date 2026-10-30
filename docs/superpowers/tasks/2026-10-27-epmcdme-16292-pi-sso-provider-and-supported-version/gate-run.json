@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16292_pi-sso-provider",
+  "head": "7865433e079b6f52f04a8bb2cab908e3877e3ce6",
+  "runner": "npm",
+  "started_at": "2026-10-27T14:20:42Z",
+  "completed_at": "2026-10-27T14:30:10Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6086,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 35745,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 18512,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 25440,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 95213,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 77649,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "tests/integration/cli-commands/list.test.ts beforeAll \"Hook timed out in 60000ms\" (`codemie list`); reproduced in full-ci run."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 767,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\" — script scans only `git diff --staged`; nothing staged. Branch range covered by ci gate gitleaks-branch."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 491,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Guide range HEAD~1..HEAD is narrower than CI (base..HEAD); CI range run as commitlint-range."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 41008,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 213965,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Fails at vitest --project cli: same list.test.ts beforeAll 60000ms timeout as integration gate."
+    },
+    {
+      "id": "lint-staged-eslint",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 5180,
+      "command": "npx eslint --max-warnings=0 --no-warn-ignored src/agents/plugins/pi/pi.models.ts src/agents/plugins/pi/pi.plugin.ts src/agents/plugins/pi/__tests__/pi.models.test.ts src/agents/plugins/pi/__tests__/pi.plugin.version-support.test.ts",
+      "exit_code": 0,
+      "notes": ".husky/pre-commit lint-staged (.lintstagedrc.mjs) eslint step, applied to branch-changed .ts files."
+    },
+    {
+      "id": "lint-staged-affected-tests",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 7847,
+      "command": "npx vitest run --passWithNoTests src/agents/plugins/pi/__tests__/pi.args.test.ts src/agents/plugins/pi/__tests__/pi.conversations-processor.test.ts src/agents/plugins/pi/__tests__/pi.discovery.test.ts src/agents/plugins/pi/__tests__/pi.extension-asset.test.ts src/agents/plugins/pi/__tests__/pi.extensions-scan.test.ts src/agents/plugins/pi/__tests__/pi.incremental-sync.test.ts src/agents/plugins/pi/__tests__/pi.linked-transcripts.test.ts src/agents/plugins/pi/__tests__/pi.mcp-config.test.ts src/agents/plugins/pi/__tests__/pi.metrics-processor.test.ts src/agents/plugins/pi/__tests__/pi.models.test.ts src/agents/plugins/pi/__tests__/pi.named-invocations.test.ts src/agents/plugins/pi/__tests__/pi.paths.test.ts src/agents/plugins/pi/__tests__/pi.plugin.version-support.test.ts src/agents/plugins/pi/__tests__/pi.run-ledger.test.ts",
+      "exit_code": 0,
+      "notes": ".husky/pre-commit lint-staged vitest step: adjacent __tests__ for changed Pi files."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 953,
+      "command": "npx commitlint --from 69c248d153141b65a1d1710e9b10cb456ce6e832 --to HEAD --verbose",
+      "exit_code": 0
+    },
+    {
+      "id": "gitleaks-branch",
+      "source": "ci",
+      "status": "PASS",
+      "duration_ms": 190,
+      "command": "git diff 69c248d153141b65a1d1710e9b10cb456ce6e832...HEAD | docker run --rm -i -v /home/oleksiiyurchenko/codemie-code/.gitleaks.toml:/gitleaks.toml ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose --config=/gitleaks.toml",
+      "exit_code": 0,
+      "notes": "CI secrets-detection job equivalent: gitleaks v8.30.1 over merge_base...HEAD diff with .gitleaks.toml."
+    },
+    {
+      "id": "pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gh pr view <PR> --json title | npx commitlint --verbose",
+      "exit_code": null,
+      "notes": "No PR exists yet; requires GitHub PR context. Check PR title follows Conventional Commits when opened."
+    },
+    {
+      "id": "test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Requires Windows runner; only CI can settle. CRLF repro hint in quality-gates.md."
+    }
+  ],
+  "failures": {
+    "integration": "- Checking Node.js...\n- Checking npm...\n- Checking npm prefix...\n- Checking Python...\n- Checking uv...\n- Checking AWS CLI...\n- Checking Active Profile...\n- Checking JWT Authentication...\n- Checking CodeMie Code...\n- Checking Claude Code...\n- Checking Claude Code ACP...\n- Checking Gemini CLI...\n- Checking Gemini CLI ACP...\n- Checking OpenCode CLI...\n- Checking OpenCode ACP...\n- Checking OpenAI Codex CLI...\n- Checking Codex ACP...\n- Checking Pi...\n- Checking Kimi Code...\n- Checking Kimi Code ACP...\n- Checking OpenWiki...\n- Checking GitHub Copilot CLI...\n- Checking Repository & Workflows...\n- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  276 passed | 12 skipped (288)\n   Start at  15:24:00\n   Duration  76.83s (transform 17.46s, setup 0ms, import 59.93s, tests 325.00s, environment 27ms)\n\n",
+    "full-ci": "- Checking Node.js...\n- Checking npm...\n- Checking npm prefix...\n- Checking Python...\n- Checking uv...\n- Checking AWS CLI...\n- Checking Active Profile...\n- Checking JWT Authentication...\n- Checking CodeMie Code...\n- Checking Claude Code...\n- Checking Claude Code ACP...\n- Checking Gemini CLI...\n- Checking Gemini CLI ACP...\n- Checking OpenCode CLI...\n- Checking OpenCode ACP...\n- Checking OpenAI Codex CLI...\n- Checking Codex ACP...\n- Checking Pi...\n- Checking Kimi Code...\n- Checking Kimi Code ACP...\n- Checking OpenWiki...\n- Checking GitHub Copilot CLI...\n- Checking Repository & Workflows...\n- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n\n Test Files  1 failed | 36 passed | 1 skipped (38)\n      Tests  276 passed | 12 skipped (288)\n   Start at  15:28:34\n   Duration  92.59s (transform 19.93s, setup 0ms, import 64.54s, tests 371.80s, environment 26ms)\n\n"
+  }
+}

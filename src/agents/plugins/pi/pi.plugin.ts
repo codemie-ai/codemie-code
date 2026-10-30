@@ -21,6 +21,12 @@ import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
 
+// Recommended Pi version, installed by `codemie install pi --supported`; a mismatch
+// only produces a non-blocking notice. There is deliberately no minimum supported
+// version: no installed Pi version is blocked from starting.
+// **UPDATE THIS WHEN BUMPING PI VERSION**
+const PI_SUPPORTED_VERSION = '1.4.0';
+
 /**
  * Pi flags that select an existing session. Pi rejects `--session-id` when any of
  * them is present (`validateSessionIdFlags` in Pi's `main.ts` calls `process.exit(1)`),
@@ -166,6 +172,7 @@ export const PiPluginMetadata: AgentMetadata = {
   displayName: 'Pi',
   description: 'Pi - open-source coding agent harness',
   npmPackage: '@earendil-works/pi-coding-agent',
+  supportedVersion: PI_SUPPORTED_VERSION,
   cliCommand: process.env.CODEMIE_PI_BIN || 'pi',
 
   sessionAnalyticsReport: true,

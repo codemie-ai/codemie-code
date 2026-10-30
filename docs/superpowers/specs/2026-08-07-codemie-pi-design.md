@@ -113,7 +113,7 @@ Per-model fields are derived from heuristics, consistent with `opencode-dynamic-
 - `thinkingLevelMap`: family-specific mapping
 - `input`: `['text', 'image']` if multimodal, else `['text']`
 - `contextWindow` / `maxTokens`: family-specific defaults
-- `compat`: provider-level `supportsReasoningEffort: true, thinkingFormat: "reasoning_effort"`; per-model `forceAdaptiveThinking: true` for newer Claude models
+- `compat`: provider-level `supportsReasoningEffort: true` only (`thinkingFormat` is omitted so Pi auto-detects it; its 1.x schema rejects `"reasoning_effort"`); per-model `forceAdaptiveThinking: true` for newer Claude models
 
 Provider-level fields:
 - `codemie-proxy.baseUrl`: `${CODEMIE_BASE_URL}/v1`
