@@ -115,42 +115,42 @@ function detectFormattingOptions(raw: string): FormattingOptions {
   return { insertSpaces, tabSize: insertSpaces ? indent.length : 4, eol };
 }
 
-/** Returns the existing `chat.hookFilesLocations` list; refuses any non-array value rather than overwriting it. */
-function readHookFileLocations(existing: unknown): string[] {
-  if (existing === undefined) return [];
-  if (!Array.isArray(existing)) {
+/**
+ * Returns the existing `chat.hookFilesLocations` map (path -> enabled). VS Code defines this
+ * setting as an object; a legacy array (written by older CodeMie versions, ignored by VS Code)
+ * is converted to the object form. Any other value is refused rather than overwritten.
+ */
+function readHookFileLocations(existing: unknown): Record<string, boolean> {
+  if (existing === undefined) return {};
+  if (Array.isArray(existing)) {
+    return Object.fromEntries(existing.filter((v): v is string => typeof v === 'string').map((v) => [v, true]));
+  }
+  if (typeof existing !== 'object' || existing === null) {
     throw new ConfigurationError(
-      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an array and was not changed. ` +
-      'Convert it to an array of paths (or remove it) and retry.'
+      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an object and was not changed. ` +
+      'Convert it to an object of paths (or remove it) and retry.'
     );
   }
-  return existing.filter((v): v is string => typeof v === 'string');
+  return { ...(existing as Record<string, boolean>) };
 }
 
-/** Adds `entry` to an existing `chat.hookFilesLocations` array, deduped. */
-function upsertHookFileLocation(existing: unknown, entry: string): string[] {
+/** Adds `entry` to `chat.hookFilesLocations`, enabled. */
+function upsertHookFileLocation(existing: unknown, entry: string): Record<string, boolean> {
+  return { ...readHookFileLocations(existing), [entry]: true };
+}
+
+function removeHookFileLocation(existing: unknown, entry: string): Record<string, boolean> {
   const current = readHookFileLocations(existing);
-  if (current.includes(entry)) {
-    return current;
-  }
-  return [...current, entry];
-}
-
-function removeHookFileLocation(existing: unknown, entry: string): string[] {
-  return readHookFileLocations(existing).filter((v) => v !== entry);
+  delete current[entry];
+  return current;
 }
 
 function buildHookFileContent(hookCommand: string): Record<string, unknown> {
-  const file: Record<string, unknown> = {};
+  const hooks: Record<string, unknown> = {};
   for (const eventName of CHAT_HOOK_EVENT_NAMES) {
-    file[eventName] = [
-      {
-        matcher: '',
-        hooks: [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }],
-      },
-    ];
+    hooks[eventName] = [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }];
   }
-  return file;
+  return { hooks };
 }
 
 /** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook
@@ -268,7 +268,7 @@ export async function removeCopilotChatOtlpConfig(
 
   const { settings, raw } = await readSettings(settingsPath);
   const currentLocations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
-  const hadEntry = currentLocations.includes(hookFilePath);
+  const hadEntry = hookFilePath in currentLocations;
 
   if (!hadEntry) {
     await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
@@ -277,7 +277,7 @@ export async function removeCopilotChatOtlpConfig(
 
   const remainingLocations = removeHookFileLocation(settings[HOOK_FILE_LOCATIONS_KEY], hookFilePath);
   const formattingOptions = detectFormattingOptions(raw);
-  const nextText = remainingLocations.length > 0
+  const nextText = Object.keys(remainingLocations).length > 0
     ? applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], remainingLocations, { formattingOptions }))
     : applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], undefined, { formattingOptions }));
 
