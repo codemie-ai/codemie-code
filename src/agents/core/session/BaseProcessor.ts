@@ -22,6 +22,8 @@ export interface ProcessingContext {
   apiKey?: string;
   /** Reports whether a newer sign-in replaced the cookies that were sent, so a rejection is not recorded */
   credentialsSuperseded?: CredentialsSupersededCheck;
+  /** SSO authorization fallback (see `SSOCredentials.authorization`) */
+  authorization?: string;
   /** Client type identifier */
   clientType: string;
   /** Client version */

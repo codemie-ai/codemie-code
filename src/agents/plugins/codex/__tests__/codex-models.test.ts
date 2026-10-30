@@ -279,7 +279,7 @@ describe('resolveCodexModel SSO lookup (profile baseUrl first)', () => {
     const result = await resolveCodexModel({ CODEMIE_PROFILE_CONFIG: profile });
 
     expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith('https://profile.example.com');
-    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies);
+    expect(fetchMock).toHaveBeenCalledWith(creds.apiUrl, creds.cookies, creds.authorization);
     expect(result.selectedModel).toBe('gpt-5-codex');
   });
 

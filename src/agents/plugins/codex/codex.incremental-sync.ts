@@ -176,14 +176,15 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-  if (!cookies) {
+  const { cookies, authorization, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies && !authorization) {
     logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
   return {
     apiBaseUrl: syncApiUrl,
     cookies,
+    authorization,
     credentialsSuperseded,
     clientType: env?.CODEMIE_CLIENT_TYPE || 'codemie-codex',
     version,

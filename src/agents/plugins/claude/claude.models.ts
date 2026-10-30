@@ -180,7 +180,7 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
       );
     }
     logger.debug('[claude-models] Fetching CodeMie model list via SSO auth');
-    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies);
+    models = await fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, found.credentials.authorization);
   } else {
     models = [];
   }

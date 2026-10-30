@@ -9,6 +9,8 @@ vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
   },
+  hasUsableSsoCredential: (cookies: Record<string, string> | undefined, authorization: string | undefined) =>
+    Object.keys(cookies ?? {}).length > 0 || Boolean(authorization?.trim()),
 }));
 
 import { requireAuthenticatedSession } from '../require-auth.js';

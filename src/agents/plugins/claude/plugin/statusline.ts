@@ -66,8 +66,15 @@ async function readStoredCredsFile(jwtPrefix, codeMieUrl) {
 
 export async function getAuthHeaders(codeMieUrl) {
   const sso = await readStoredCredsFile('', codeMieUrl);
-  if (sso?.cookies) {
-    return { cookie: Object.entries(sso.cookies).map(([k, v]) => `${k}=${v}`).join(';') };
+  const hasCookies = sso?.cookies && Object.keys(sso.cookies).length > 0;
+  // A reverse proxy in front of the backend can strip cookies, leaving `cookies: {}`
+  // and only the `authorization` fallback usable — see hasUsableSsoCredential() in
+  // sso.auth.ts (not imported here to keep this standalone-bundled file dependency-free).
+  if (hasCookies || sso?.authorization) {
+    return {
+      ...(hasCookies && { cookie: Object.entries(sso.cookies).map(([k, v]) => `${k}=${v}`).join(';') }),
+      ...(sso.authorization && { authorization: sso.authorization }),
+    };
   }
 
   const jwt = await readStoredCredsFile('jwt-', codeMieUrl);

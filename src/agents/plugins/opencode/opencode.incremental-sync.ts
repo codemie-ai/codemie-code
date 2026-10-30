@@ -156,14 +156,15 @@ async function buildUploadContext(
   version = '0.0.0',
   clientType = 'codemie-opencode'
 ): Promise<ProcessingContext | null> {
-  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
-  if (!cookies) {
+  const { cookies, authorization, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies && !authorization) {
     logger.debug('[opencode-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
   return {
     apiBaseUrl: syncApiUrl,
     cookies,
+    authorization,
     credentialsSuperseded,
     clientType,
     version,
