@@ -21,7 +21,7 @@
 |---|---|---|
 | G1 Base-class change `resolveAgentFields(input)` (Task 6) | Task 6 | Decided: optional-input signature, no behaviour change for Claude / Copilot Chat |
 | G2 Supported Copilot version bump to 1.0.92 (Task 6a) | Task 5 test fixtures | Approved (minimum → 1.0.83); 1.0.92 verified to exist on npm; only the `usage_record` threshold check in Task 0 remains |
-| G4 Backend plan B2 / B3 / B4 (`epm-cdme/codemie`, `docs/superpowers/plans/2026-10-28-epmcdme-16457-copilot-cli-session-analytics-backend-plan.md`, written and reviewed) | CLI release + Preview E2E (not CLI coding) | Open — owner: backend dev of EPMCDME-16457; must be merged before or with the CLI release |
+| G4 Backend plan B2 / B3 / B4 (`epm-cdme/codemie`, `docs/superpowers/plans/2026-10-28-epmcdme-16457-copilot-cli-session-analytics-backend-plan.md`, written and reviewed) | CLI release (not CLI coding) | Open — owner: backend dev of EPMCDME-16457; must be merged before or with the CLI release |
 | G5 Decision D1: backend USD cost for hook-only Copilot sessions stays $0 | CLI release | Assumed (Claude parity); ticket owner confirms (baseline EPMCDME-16301). If rejected, a backend pricing task is added and the release waits for it; no CLI code changes |
 
 ---
@@ -41,7 +41,7 @@
 | Premium requests | Not sent | Task 5 |
 | Cross-midnight | Each row carries its own request's timestamp | Task 5 |
 | Pricing | CLI sends normalized `model` + literal `model_raw`. The backend prices cache reads by `model_raw` (`cost_daily.model_name`), so backend task **B4** teaches `normalize_model` the dotted Claude names. Backend USD cost stays $0 for hook-only sessions (D1) | Task 5, B4, G5 |
-| `usage_partial` | Summary attribute only; no backend exposure (Claude has no such flag). E2E checks raw ingest | Task 5, E2E |
+| `usage_partial` | Summary attribute only; no backend exposure (Claude has no such flag) | Task 5 |
 
 ## Task 0 findings (local `~/.copilot/session-state`: 197 sessions, 134 with a shutdown record; Copilot 0.0.348 – 1.0.100)
 
@@ -103,7 +103,7 @@ New file: `copilot-cli-otlp.tool-payload.ts`
 
 - [x] `extractStartCalls(input)`: map `toolCalls[]` to `{ toolUseId: id, toolName: name, toolArgs: parseArgs(args) }`. `parseArgs` parses a JSON string when valid and otherwise keeps it as a string. Entries without `id` or `name` are dropped with one sanitized debug log line.
 - [x] `extractEndCall(input)`: `{ toolName, toolArgs: parseArgs(toolArgs), success, resultText?, errorMessage? }`.
-  - Failure: the `postToolUseFailure` event, or `toolResult.resultType === 'failure'`.
+  - Failure: the `postToolUseFailure` event, or any `toolResult.resultType` other than `success` (e.g. `failure`, `denied`, `rejected`). Assumption: Copilot emits `denied` / `rejected` as non-`success` result types (not verified here).
   - Do **not** forward `sessionLog` / `toolTelemetry`.
 - [x] Plugin handlers (one per event):
   - `onEnforcedEvent('preToolUse')`: auth once. On success, forward N `agent.tool.start` events with `tool_use_id = id`, **then** record the open starts (Task 3). On failure, keep the single `permissionDecision: 'deny'`, which denies the whole batch, as today; nothing is recorded, so a denied call can never leave an open start behind.
@@ -186,7 +186,7 @@ New file: `copilot-cli-otlp.request-usage.ts`. `copilot-cli-otlp.usage.ts` keeps
 ### Task 6 — Harness, version, attribution
 
 - [x] **Base-class change (G1):** `OtlpAgentAdapter.processOtlpEvent` calls `this.resolveAgentFields(hookInput)`, and the abstract signature becomes `resolveAgentFields(input: TInput)`. Subclasses that take no parameter stay type-compatible, so Claude and Copilot Chat are untouched. Needed because agent fields are resolved once per hook and spread **after** the event's own fields in `buildEvent`, so a per-event `client_version` could never win, and there is no other per-session hook. Add a base-class test that the input reaches `resolveAgentFields`.
-- [x] `resolveAgentFields(input)`: keep `platform: 'copilot-cli'` (backend B3 maps it to the display name). Add:
+- [x] `resolveAgentFields(input)`: `platform = resolveCopilotAgentKey(client_name)` read from the session's `workspace.yaml` on every hook: `copilot-desktop` for `client_name: vscode-agent-host` (Copilot desktop app), `copilot-cli` for anything else (VS Code, unknown, manifest not yet written). **Backend B3 maps both `copilot-cli` and `copilot-desktop`** (already on the backend branch). Assumptions: Copilot writes `workspace.yaml` before the first hook (otherwise early events carry `copilot-cli`), and VS Code sessions keep `copilot-cli` (EPMCDME-16526). Add:
   - `entrypoint`: `'managed'` only when `CODEMIE_SESSION_ID` is set **and** `input.sessionId === CODEMIE_SESSION_ID` (the managed launcher pins the native session UUID to it, `enrichArgs`); otherwise `'native'`. A native `copilot` started inside a managed shell inherits the env var but has a different session ID, so it is labelled correctly. Accepted limitation: a managed `--resume` / `--continue` session (no pinning) is labelled `native`; it is still counted once.
   - `client_version`: `session.start.data.copilotVersion` from a bounded head-read (64 KB) of `events.jsonl`, cached in `<sessionId>.session.json` (Task 3). Empty string when the file is not there yet. (Claude's `client-version-cache.ts` runs `claude --version` and is not reusable here.)
 - [x] **Add `entrypoint` to `TEMPLATE_FIELDS`** (`copilot-cli-otlp.usage.ts:96-99`) so usage and summary events built at session end carry it. The daemon final pass fills an empty `client_version` from the head of the same `events.jsonl`.
@@ -213,10 +213,20 @@ Copilot is the same: managed `COPILOT_HOME` defaults to `~/.copilot`, so the con
   - **never delete anything and never touch the default-home file.** A stale copy is harmless: the hook-time `isTracked` scope check ignores untracked projects;
   - if the user exported `COPILOT_HOME` globally and connected under it, the connector file is already there, the source does not exist, and nothing happens;
   - import `buildHookFileContent` dynamically from `cli/commands/proxy/connectors`, as `onSessionEnd` already does for `hook.js` (existing precedent for plugin → CLI imports).
-- [x] **Session-state root for the daemon (override case only), without any wire change:** the `sessionEnd` hook (not time-critical, no 150 ms budget) writes `sessionStateRoot` into `<sessionId>.session.json` when `getCopilotSessionStateRoot()` differs from the default. The daemon final pass reads it from that local file. Nothing is stamped on events, so **`forwarder.ts` / `unwrapHookRecords()` stay byte-for-byte unchanged**.
-  - Daemon validation: `realpath`; the last path segment is `session-state`; it lies under `os.homedir()` or equals the default; `realpath(<root>/<sessionId>/events.jsonl)` stays inside `realpath(root)`; and it is a regular file. Otherwise fall back to the default.
+- [x] **Session-state root for the daemon, without any wire change:** the `sessionEnd` hook (not time-critical, no 150 ms budget) always writes `sessionStateRoot` into `<sessionId>.session.json` (a failed write is logged). The daemon final pass reads it from that local file. Nothing is stamped on events, so **`forwarder.ts` / `unwrapHookRecords()` stay byte-for-byte unchanged**.
+  - Daemon validation: `realpath`; the last path segment is `session-state`; it lies under `os.homedir()`; `realpath(<root>/<sessionId>/events.jsonl)` stays inside `realpath(root)`; and it is a regular file. Otherwise fall back to the **default** root (`getDefaultCopilotSessionStateRoot()`), never the daemon's own `COPILOT_HOME`.
 - [x] Coexistence: the managed `lifecycle.onSessionStart` / `onSessionEnd` (`processEvent` → `MetricDelta`) and the user-hooks `eventNameMapping` (`hook.ts:681`) are unchanged. Auth in the managed `preToolUse` uses the same cached `ensureCodeMieSsoAuth` as in native and Claude. Hooks use the persistent proxy daemon (`ensureOtlpProxy`), separate from the managed per-session SSO proxy.
 - [x] Identity: Copilot's own `sessionId` in both modes (managed pins it to `CODEMIE_SESSION_ID`). A native `copilot` started inside a managed shell is a separate session and is tracked on its own. A managed session's proxy traffic writes nothing to CLI Analytics (there is no `agent.usage.request` producer under `sso/proxy`).
+
+### Task 8a — VS Code Copilot Chat connector fix (EPMCDME-16493, included in this PR)
+
+Scope decision: the `copilot-chat-otlp` connector fix and the desktop-app prompt-preamble stripping ship in this PR together with EPMCDME-16457; the PR description lists both tickets.
+
+- [x] `cli/commands/proxy/connectors/copilot-chat-otlp.ts`: `chat.hookFilesLocations` is written as an object (`{ "<absolute hook file path>": true }`), as VS Code defines it. A legacy array written by older CodeMie versions (ignored by VS Code) is migrated to the object form; any other value is refused and left unchanged. Disconnect removes only CodeMie's key.
+- [x] Hook file `~/.codemie/hooks/copilot-chat-hooks.json` uses the flat schema `{ hooks: { <event>: [{ type: 'command', command, timeout }] } }` (no `matcher`, no inner `hooks` wrapper).
+- [x] Desktop-app prompts have their internal preamble stripped (`stripDesktopPreamble`) in both the Copilot CLI and Copilot Chat pipelines.
+- **Reconnect requirement:** existing users get the new settings key and hook-file format only after re-running `codemie proxy connect --copilot-chat-otlp`.
+- **Assumptions (not verified in this plan):** (1) VS Code accepts the absolute path from `getCodemiePath('hooks', 'copilot-chat-hooks.json')` as the setting key (the ticket suggests `~/.codemie/hooks/...`); (2) it loads the flat hook entries.
 
 ### Task 8 — Docs
 
@@ -234,7 +244,7 @@ Copilot is the same: managed `COPILOT_HOME` defaults to `~/.copilot`, so the con
 |---|---|
 | B1-fallback | **Not planned.** Only if a future Copilot build drops both `usage_record` and the message count = request count property. Spec: nullable `usage_requests.request_count`; `UsageRow` mapping (`ingestor.py:145-148`); `_BUILD_REQUESTS` uses `max(request_count)` per group and `api_call_count += coalesce(request_count, 1)`; backfill. |
 | B2 Session Detail | `get_session_detail_tools` / `get_session_detail_events` (`reader.py:759-792`) read only spans/logs. Add a hook fallback behind a "no TOOL span in the session" guard: the breakdown from `invocations_hourly` kind 1 (the Session List source, so List = Detail), and the timeline from hook tool starts + a replicated `usage_requests` grouping (per-event cost 0, D1; row count must equal `cost_daily.api_call_count`). Both read rollups, so they lag until the recompute. |
-| B3 Harness | `coalesce(nullif(o.service_name,''), nullif(d.platform,''))` in `get_session_detail_meta` (`reader.py:657-681`); `session_dims.platform` already carries the hook `platform` and is already joined. Add `"copilot-cli": "GitHub Copilot CLI"` in `vocabulary.py:150-164`. Only Session Detail has a harness column. |
+| B3 Harness | `coalesce(nullif(o.service_name,''), nullif(d.platform,''))` in `get_session_detail_meta` (`reader.py:657-681`); `session_dims.platform` already carries the hook `platform` and is already joined. Add `"copilot-cli": "GitHub Copilot CLI"` and `"copilot-desktop": "GitHub Copilot Desktop"` in `vocabulary.py:150-164` (both already on the backend branch; EPMCDME-16526). Only Session Detail has a harness column. |
 | B4 Model-name resolution | `normalize_model` (`coding_agent_pricing.py:24`) maps dotted `claude-*` versions to dashes so cache-read pricing and `unpriced_models` resolve Copilot's `model_raw`. Lookup-only. USD cost itself stays $0 for hook-only sessions (D1). |
 | B5 Attribution | No change. Common fields + `TEMPLATE_FIELDS`; `entrypoint` and `client_version` land in `session_dims` already. |
 
@@ -249,10 +259,10 @@ Vitest, colocated `__tests__`, dynamic-import mocking (`.ai-run/guides/testing/t
 | Test file | Covers |
 |---|---|
 | `copilot-cli-otlp.types.test.ts` (extend) | `preToolUse` without `timestamp` accepted; other events without `timestamp` rejected; VS Code string `timestamp` rejected |
-| `copilot-cli-otlp.tool-payload.test.ts` | single and batched `toolCalls`; object and string `args`/`toolArgs`; entry without id or name dropped; `resultType` failure; `sessionLog` / `toolTelemetry` not forwarded |
-| `copilot-cli-otlp.tool-correlation.test.ts` | end pairs with the oldest open start (exact args, then name-only); identical parallel calls pair in order; start ID never replaced; end with no open start → `events.jsonl` lookup → orphan; open starts older than 30 min are dropped; a denied batch records nothing; budget exhaustion on `preToolUse` still emits real start IDs; concurrent writers; **stale lockfile (mtime > 2 s) is recovered, a live lock is not stolen** |
+| `copilot-cli-otlp.flow.test.ts` (tool payload) | single and batched `toolCalls`; object and string `args`/`toolArgs`; entry without id or name dropped; any non-`success` `resultType` (`failure`, `denied`, `rejected`) is a failure; `sessionLog` / `toolTelemetry` not forwarded |
+| `copilot-cli-otlp.flow.test.ts` (tool correlation, state lock) | end pairs with the oldest open start (exact args, then name-only); identical parallel calls pair in order; start ID never replaced; end with no open start → `events.jsonl` lookup → orphan; open starts older than 30 min are dropped; a denied batch records nothing; budget exhaustion on `preToolUse` still emits real start IDs; concurrent writers; **stale lockfile (mtime > 2 s) is recovered, a live lock is not stolen** |
 | `copilot-cli-otlp.plugin.test.ts` (extend) | **AC: 3 tool calls (2 ok, 1 failed) → 3 starts, 2 `agent.tool.end`, 1 `agent.tool.error`, correct names, paired IDs**; batched `preToolUse` → N starts with distinct `event_id`s (regression: `tool_use_id` is in the digest); `file_path` set for `create` / `edit` / `str_replace_editor` / `apply_patch` and extracted before truncation; auth failure denies once; `agentStop` sends one usage row per **new** request (the cursor never repeats a row across consecutive `agentStop`s; a rejected spool write does not advance it); sub-agent `agentStop` (`agentId`) sends nothing extra; incremental summary; skips quietly on a missing file or exhausted budget; whole-file read capped at 8 MB → `usage_partial`; `entrypoint` is `managed` only when `sessionId === CODEMIE_SESSION_ID`, `native` for a nested native session with the env var inherited |
-| `copilot-cli-otlp.request-usage.test.ts` | **Tier A:** one row per `usage_record`, `request_id = apiCallId`, per-model sums = shutdown, sub-agent → `scope_kind: 'agent'`, `stop_reason = finishReason`. **Tier B / AC:** `events.193-requests.jsonl` → 193 distinct `request_id`s (`messageId`), not 2; a pre-1.0.79 fixture takes the Tier B path. **Resume:** cumulative and reset fixtures → backend-equivalent sums (group by `request_id`, `max` per field, then sum) equal the latest cumulative total or the sum of reset segments, never more. Output residual only if non-negative. `resolveCopilotBillableModel`. Re-running the full build twice yields identical `event_id`s (daemon idempotency). |
+| `copilot-cli-otlp.flow.test.ts` (usage rows) | **Tier A:** one row per `usage_record`, `request_id = apiCallId`, per-model sums = shutdown, sub-agent → `scope_kind: 'agent'`, `stop_reason = finishReason`. **Tier B / AC:** `events.193-requests.jsonl` → 193 distinct `request_id`s (`messageId`), not 2; a pre-1.0.79 fixture takes the Tier B path. **Resume:** cumulative and reset fixtures → backend-equivalent sums (group by `request_id`, `max` per field, then sum) equal the latest cumulative total or the sum of reset segments, never more. Output residual only if non-negative. `resolveCopilotBillableModel`. Re-running the full build twice yields identical `event_id`s (daemon idempotency). |
 | `copilot-usage-enrichment.test.ts` (extend) | final summary with Claude field names + `started_at`/`ended_at`; two finals after a resume have distinct `event_id`s; a session with no usage rows still gets its final summary (`api_calls: 0`); the already-sent check keys on the final summary's `ended_at`, not on usage rows; `entrypoint` and `client_version` on built events (empty template version filled from `events.jsonl`); `sessionStateRoot` validation read from `<sessionId>.session.json` (`..`, symlink/junction, wrong last segment, relative, outside home) |
 | `forwarder.test.ts` (extend) | no payload change: hook records are still forwarded byte for byte, with no extra fields (regression for the dropped stamp approach) |
 | `OtlpAgentAdapter.test.ts` (extend) | `resolveAgentFields` receives the parsed hook input; adapters declaring no parameter keep working |
@@ -267,14 +277,7 @@ Policy note: `AGENTS.md` says to write tests only on explicit request. Here the 
 
 Commands: `npx vitest run src/agents/core src/agents/plugins/copilot-cli-otlp src/agents/plugins/copilot-cli src/agents/plugins/claude-code-otlp src/providers/plugins/sso/proxy/plugins/otlp-spool`, then `npm run lint`, `npm run typecheck` and `npm run build`.
 
-Preview E2E (both modes, Preview backend; **requires backend B2 / B3 / B4 deployed to Preview, gate G4**). Backend Detail tools, timeline and harness also wait for the backend rollup recompute after the CLI forwards the session (backend plan B2.1), and cost shows $0 (G5 / D1). Hooks-only sessions are forwarded after the spool's hooks-only wait: with the defaults (2 min send interval × 3 ticks) a session shows up about 6–8 minutes after exit. For E2E set `OTLP_SEND_INTERVAL_MINUTES=0.25` and `OTLP_SEND_MAX_ATTEMPTS=1` in the daemon environment (then about 30–60 s), and restart the daemon. are forwarded after the spool's hooks-only wait: with the defaults (2 min send interval × 3 ticks) a session shows up about 6–8 minutes after exit. For E2E set `OTLP_SEND_INTERVAL_MINUTES=0.25` and `OTLP_SEND_MAX_ATTEMPTS=1` in the daemon environment (then about 30–60 s), and restart the daemon.
-
-1. **Managed** `codemie-copilot` in a connected project: 3-tool scenario. Session List = Detail = Overview for tools, API calls, duration, models, harness `GitHub Copilot CLI`, project/branch, and `entrypoint: managed`. Then `codemie proxy disconnect` the project and relaunch: no new CLI Analytics session.
-2. **Native** `copilot`: same scenario plus a batched turn and a mid-session model switch. Usage arrives within the forwarding window above (the enrichment itself finishes within 10 s of exit).
-3. **Resume** a native session (`copilot --resume`) and run one more turn: API calls and tokens equal the cumulative shutdown total, not old + new. Run it on 1.0.92 (Tier A) **and** on a pre-1.0.92 build (Tier B).
-4. **Kill** a native session after ≥ 2 turns (`kill -9` on macOS / Linux, `Stop-Process -Id <pid> -Force` on Windows): it appears in Session List with the exact API-call count and tools. `usage_partial` is checked on the **raw ingested summary**, not the UI.
-5. Native `copilot` inside a managed shell: two sessions, each counted once; the native one is labelled `entrypoint: native`.
-6. Claude Code session: metrics unchanged.
+Manual / Preview end-to-end testing is out of scope for this plan.
 
 ---
 
@@ -306,4 +309,4 @@ Preview E2E (both modes, Preview backend; **requires backend B2 / B3 / B4 deploy
 3. **`premium_requests`:** not sent (strict Claude parity).
 4. **No `session.shutdown` (crash/kill):** usage rows are sent at each `agentStop`. Tier A rows are complete. Tier B rows carry exact counts and output tokens but no input/cache (`usage_partial`).
 5. **Resume:** Tier A is unaffected (unique `apiCallId`; the fresh-state `agentStop` read and the final pass re-send the same `event_id`s). Tier B splits at each shutdown and classifies totals as cumulative or reset by request count (both patterns occur in real data).
-6. **Backend dependency:** the backend plan exists (`epm-cdme/codemie`, same file name under `docs/superpowers/plans/`) and is aligned with this one (B2 / B3 / B4, decisions D1–D3); only the Preview E2E and the release depend on it (G4, G5).
+6. **Backend dependency:** the backend plan exists (`epm-cdme/codemie`, same file name under `docs/superpowers/plans/`) and is aligned with this one (B2 / B3 / B4, decisions D1–D3); only the release depends on it (G4, G5).

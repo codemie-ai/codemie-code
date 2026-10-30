@@ -63,7 +63,7 @@ const startLine = JSON.stringify({ type: 'session.start', timestamp: '2026-10-20
 
 let dir: string;
 let eventsFile: string;
-const savedEnv = { home: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME };
+const savedEnv = { home: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME, userHome: process.env.HOME, userProfile: process.env.USERPROFILE };
 
 async function spooled(): Promise<Record<string, unknown>[]> {
   let text = '';
@@ -85,9 +85,12 @@ function fakeClock() {
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'cop-enrich-'));
   process.env.CODEMIE_HOME = join(dir, 'codemie');
-  process.env.COPILOT_HOME = join(dir, 'copilot');
-  await mkdir(join(dir, 'copilot', 'session-state', SID), { recursive: true });
-  eventsFile = join(dir, 'copilot', 'session-state', SID, 'events.jsonl');
+  // The daemon reads the default root (never its own COPILOT_HOME), so point the home at the temp dir.
+  delete process.env.COPILOT_HOME;
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+  await mkdir(join(dir, '.copilot', 'session-state', SID), { recursive: true });
+  eventsFile = join(dir, '.copilot', 'session-state', SID, 'events.jsonl');
   resetScheduledForTests();
   vi.mocked(logger.warn).mockClear();
 });
@@ -95,8 +98,12 @@ beforeEach(async () => {
 afterEach(async () => {
   process.env.CODEMIE_HOME = savedEnv.home;
   process.env.COPILOT_HOME = savedEnv.copilot;
+  process.env.HOME = savedEnv.userHome;
+  process.env.USERPROFILE = savedEnv.userProfile;
   if (savedEnv.home === undefined) delete process.env.CODEMIE_HOME;
   if (savedEnv.copilot === undefined) delete process.env.COPILOT_HOME;
+  if (savedEnv.userHome === undefined) delete process.env.HOME;
+  if (savedEnv.userProfile === undefined) delete process.env.USERPROFILE;
   await rm(dir, { recursive: true, force: true });
 });
 

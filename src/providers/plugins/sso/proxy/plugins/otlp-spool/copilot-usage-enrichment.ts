@@ -4,7 +4,7 @@ import { join, relative, isAbsolute } from 'node:path';
 import { isSafeSessionId } from '../../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../../utils/security.js';
-import { getCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
+import { getDefaultCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotEvent } from '../../../../../../agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { buildDeferredUsageEvents } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
 import { readTranscriptFrom } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
@@ -51,17 +51,18 @@ function isInside(root: string, candidate: string): boolean {
  * resolves inside it and is a regular file.
  */
 function resolveStateRoot(sessionId: string): string {
+  const fallback = getDefaultCopilotSessionStateRoot();
   const recorded = readSessionState(sessionId).sessionStateRoot;
-  if (!recorded) return getCopilotSessionStateRoot();
+  if (!recorded) return fallback;
   try {
     const root = realpathSync(recorded);
     if (root.split(/[\\/]/).pop() !== 'session-state' || !isInside(realpathSync(homedir()), root)) {
-      return getCopilotSessionStateRoot();
+      return fallback;
     }
     const file = realpathSync(join(root, sessionId, 'events.jsonl'));
-    return isInside(root, file) && statSync(file).isFile() ? root : getCopilotSessionStateRoot();
+    return isInside(root, file) && statSync(file).isFile() ? root : fallback;
   } catch {
-    return getCopilotSessionStateRoot();
+    return fallback;
   }
 }
 

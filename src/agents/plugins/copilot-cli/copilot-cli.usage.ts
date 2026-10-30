@@ -147,6 +147,9 @@ export function extractCopilotUsage(events: CopilotEvent[]): CopilotUsageExtract
       const fallback = rollup.get(m.model);
       return fallback && (fallback.requests ?? 0) > (m.requests ?? 0) ? fallback : m;
     });
+    for (const [model, entry] of rollup) {
+      if (!merged.some((m) => m.model === model)) merged.push(entry);
+    }
     return { messages: merged, premiumRequests: shutdown?.totalPremiumRequests, partial: false };
   }
 

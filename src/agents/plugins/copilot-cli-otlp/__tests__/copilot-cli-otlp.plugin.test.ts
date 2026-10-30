@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -392,6 +392,26 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
 
     expect(event.prompt).toBe('Explain <div> tags in HTML');
     expect(event.prompt_body).toBe('Explain <div> tags in HTML');
+  });
+});
+
+describe('CopilotCliOtlpPlugin platform resolution', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const resolve = (sessionId: string) =>
+    (plugin as unknown as { resolveAgentFields(i: unknown): Promise<Record<string, unknown>> })
+      .resolveAgentFields({ sessionId, cwd: '/repo', codemieEventName: 'sessionStart' });
+  const writeManifest = (sessionId: string, clientName?: string) => {
+    const dir = join(process.env.COPILOT_HOME as string, 'session-state', sessionId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'workspace.yaml'), `id: ${sessionId}\n${clientName ? `client_name: ${clientName}\n` : ''}`);
+  };
+
+  it('labels desktop sessions copilot-desktop and everything else copilot-cli', async () => {
+    writeManifest('plat-desktop', 'vscode-agent-host');
+    writeManifest('plat-vscode', 'vscode');
+    expect((await resolve('plat-desktop')).platform).toBe('copilot-desktop');
+    expect((await resolve('plat-vscode')).platform).toBe('copilot-cli');
+    expect((await resolve('plat-missing')).platform).toBe('copilot-cli');
   });
 });
 
