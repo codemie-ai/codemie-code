@@ -231,6 +231,14 @@ describe('describeLogin', () => {
     expect(describeLogin('failed')).toContain('Could not open the browser sign-in');
   });
 
+  it('says the sign-in finished but this profile is still unauthenticated after a succeeded wait', () => {
+    const text = describeLogin('cooldown', { wait: { status: 'succeeded' } });
+    expect(text).toContain('sign-in finished');
+    expect(text).toContain('still not authenticated');
+    expect(text).not.toContain('did not complete');
+    expect(text).toContain('re-send your prompt');
+  });
+
   it('gives neutral text without the expected-expiry lead when no sign-in was attempted', () => {
     const text = describeLogin(undefined);
     expect(text).not.toContain('expired');

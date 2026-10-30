@@ -237,8 +237,21 @@ describe('ensureCodeMieSsoAuthOrWait', () => {
 
     const result = await ensureCodeMieSsoAuthOrWait(configured);
 
-    expect(result.ok).toBe(false);
+    // waitResult lets describeLogin say the sign-in finished instead of the misleading cooldown text.
+    expect(result).toMatchObject({ ok: false, loginOutcome: 'cooldown', waitResult: { status: 'succeeded' } });
     expect(waitForDetachedSsoLogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not wait or promise auto-continue when the allowed wait is too short', async () => {
+    getStoredCredentials.mockResolvedValue(null);
+    const onWaitStart = vi.fn();
+
+    const result = await ensureCodeMieSsoAuthOrWait(configured, { waitMs: 15_000, onWaitStart });
+
+    expect(result).toMatchObject({ ok: false, loginOutcome: 'started' });
+    expect(result).not.toHaveProperty('waitResult');
+    expect(onWaitStart).not.toHaveBeenCalled();
+    expect(waitForDetachedSsoLogin).not.toHaveBeenCalled();
   });
 
   it.each([

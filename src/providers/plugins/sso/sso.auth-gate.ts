@@ -15,6 +15,9 @@ import {
 import { normalizeUrlForKey } from '@/utils/credential-crypto.js';
 import { logger } from '@/utils/logger.js';
 
+/** Shortest wait worth holding a prompt for; below it the gate blocks with re-send guidance at once. */
+export const MIN_LOGIN_WAIT_MS = 30_000;
+
 export interface AuthGateInput {
   provider?: string;
   /** Workspace CodeMie URL (CODEMIE_URL); fallback when the profile URL has no login. */
@@ -134,12 +137,18 @@ export async function ensureCodeMieSsoAuthOrWait(
   opts: { waitMs?: number; onWaitStart?: (message: string) => void } = {}
 ): Promise<AuthGateResult> {
   const first = await ensureCodeMieSsoAuth(input);
-  if (first.ok || (first.loginOutcome !== 'started' && first.loginOutcome !== 'in-progress')) {
+  const waitMs = opts.waitMs ?? SSO_LOGIN_WAIT_MS;
+  // Too short a wait rarely outlasts a sign-in, so keep the manual re-send text instead of promising auto-continue.
+  if (first.ok || waitMs < MIN_LOGIN_WAIT_MS || (first.loginOutcome !== 'started' && first.loginOutcome !== 'in-progress')) {
     return first;
   }
 
   opts.onWaitStart?.(describeLogin(first.loginOutcome, { resume: 'auto' }));
-  const waitResult = await waitForDetachedSsoLogin({ timeoutMs: opts.waitMs ?? SSO_LOGIN_WAIT_MS });
+  const waitResult = await waitForDetachedSsoLogin({ timeoutMs: waitMs });
+  if (waitResult.status !== 'succeeded') {
+    return { ...first, waitResult };
+  }
   // The lock may have been released by another profile's login, so success still needs a re-check.
-  return waitResult.status === 'succeeded' ? ensureCodeMieSsoAuth(input) : { ...first, waitResult };
+  const recheck = await ensureCodeMieSsoAuth(input);
+  return recheck.ok ? recheck : { ...recheck, waitResult };
 }

@@ -322,6 +322,10 @@ export function describeLogin(
   if (wait?.status === 'failed') {
     return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}`;
   }
+  if (wait?.status === 'succeeded') {
+    // Reached only when the post-sign-in re-check still failed, e.g. the login was for another profile/URL.
+    return `${EXPIRED_LEAD}\nThe browser sign-in finished, but this CodeMie profile is still not authenticated (the sign-in may have been for a different profile or URL).\nRun \`codemie profile login\` for this profile. ${MANUAL_RESUME}`;
+  }
   if (wait?.status === 'timeout') {
     return `${EXPIRED_LEAD}\nThe browser sign-in did not finish in time.\nComplete it, or run \`codemie profile login\`. ${MANUAL_RESUME}`;
   }
