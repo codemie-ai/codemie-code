@@ -85,6 +85,7 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
+codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
@@ -1266,6 +1267,8 @@ codemie --version
 export CODEMIE_AUTO_UPDATE=true
 codemie --version
 ```
+
+A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
 
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default

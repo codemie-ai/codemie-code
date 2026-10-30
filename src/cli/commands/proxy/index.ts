@@ -2,22 +2,15 @@ import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { syncRegisteredSkills } from '../skills/setup/sync.js';
-import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
-import {
-  checkStatus,
-  readState,
-  spawnDaemon,
-  stopDaemon,
-  writeState,
-} from './daemon-manager.js';
+import { checkStatus, readState, stopDaemon, writeState } from './daemon-manager.js';
+import { launchDaemon } from './launch-daemon.js';
+import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
   daemonMatchesRequest,
-  verifySsoCredentials,
   printProxyError,
   connectTargets,
   type RequestedDaemonConfig,
@@ -158,28 +151,7 @@ export function createProxyCommand(): Command {
           throw new ConfigurationError(formatDaemonConflict(state));
         }
 
-        if (!config.baseUrl) {
-          throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
-        }
-
-        await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
-
-        const cwd = process.cwd();
-        await Promise.allSettled([
-          syncRegisteredSkills(profile, cwd),
-          syncPluginSkills(),
-        ]);
-
-        console.log('Starting proxy daemon...');
-        const daemonState = await spawnDaemon({
-          targetUrl: config.baseUrl,
-          provider: config.provider ?? 'ai-run-sso',
-          profile,
-          port: requestedPort,
-          project: config.codeMieProject,
-          syncApiUrl: config.ssoConfig?.apiUrl,
-          syncCodeMieUrl: config.codeMieUrl,
-        });
+        const daemonState = await launchDaemon(config, profile, { port: requestedPort });
 
         console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
       } catch (error) {
@@ -199,6 +171,19 @@ export function createProxyCommand(): Command {
       }
       await stopDaemon();
       console.log(chalk.green('✓ Proxy stopped'));
+    });
+
+  // ── proxy restart ───────────────────────────────────────────────────────────
+  proxy
+    .command('restart')
+    .description('Restart the background proxy daemon, preserving its identity')
+    .option('--profile <name>', 'Profile whose credentials to use (default: the running daemon\'s)')
+    .action(async (opts: { profile?: string }) => {
+      try {
+        await restartProxy(opts);
+      } catch (error) {
+        printProxyError(error, 'Failed to restart proxy');
+      }
     });
 
   // ── proxy status ─────────────────────────────────────────────────────────────

@@ -127,7 +127,7 @@ logger.debug(JSON.stringify(request)); // ❌ No sanitization
 - ❌ Log in performance-critical paths
 
 **Log File Location**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
-**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs in console
+**Debug Mode**: Set `CODEMIE_DEBUG=true` to see debug logs on stderr (a hook process writes every log level to the log file only; its stderr carries only its own message to the agent on a blocking exit)
 
 ---
 
@@ -274,7 +274,7 @@ GOOGLE_AI_API_KEY=...                 # For Gemini
 
 **Optional**:
 ```bash
-CODEMIE_DEBUG=true                    # Debug logging to console (default: false)
+CODEMIE_DEBUG=true                    # Debug logging to stderr (default: false)
 CODEMIE_PROFILE=work                  # Default profile (default: default)
 NODE_ENV=development                  # Environment mode
 ```

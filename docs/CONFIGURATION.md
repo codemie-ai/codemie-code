@@ -218,6 +218,9 @@ be used as the permanent corporate configuration.
 **Auto-Update Behavior:**
 - `true` (default) - Silently auto-update CLI in background on startup
 - `false` - Show update notification and prompt for confirmation
+
+With either value, a hook process (`codemie hook`, `codemie sound`) performs no update check, runs pending migrations silently and shows no what's-new notice; the next interactive `codemie` run checks and updates.
+
 - **Rate Limited**: Only checks once per interval (default: 24 hours)
   - First invocation: Checks npm registry (5s max timeout)
   - Subsequent invocations within interval: Instant (no network call)

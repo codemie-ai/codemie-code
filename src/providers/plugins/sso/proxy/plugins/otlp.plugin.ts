@@ -80,10 +80,18 @@ class OtlpInterceptor implements ProxyInterceptor {
     this.sweepHandle = undefined;
 
     // Bounded final flush: better delivery latency, but shutdown must never hang.
-    await Promise.race([
-      this.tick().catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
-    ]);
+    // The cap timer is cleared once the flush settles so it never holds the exit.
+    let flushTimeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.tick().catch(() => undefined),
+        new Promise((resolve) => {
+          flushTimeout = setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(flushTimeout);
+    }
   }
 
   /** Serialize ticks: a slow backlog drain must not stack up concurrent passes. */

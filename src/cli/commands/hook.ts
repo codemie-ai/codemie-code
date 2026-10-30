@@ -163,11 +163,11 @@ function initializeLoggerContext(): string {
   if (!agentName) {
     // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
     // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
-    // and stderr is surfaced by agent UIs and transcripts.
+    // and the log file is attached to bug reports and support requests.
     const codemieEnvVars = Object.keys(process.env)
       .filter(key => key.startsWith('CODEMIE_'))
       .join(', ');
-    console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+    logger.debug(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
     throw new Error('CODEMIE_AGENT environment variable is required');
   }
 

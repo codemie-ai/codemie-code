@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 13,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two loosely coupled capabilities across 4+ components: a new `codemie proxy restart` command (restart.ts) built on a refactored daemon launch path (launch-daemon.ts split into prepareDaemonLaunch/spawnForProfile) and registered in the proxy command index; plus the release-notes subsystem (whatsnew util range selection/decideUpgradeNotice/shouldRunUpgradeNotice, whatsnew command, bin/codemie.js startup notice) and the release.sh CHANGELOG gate. Shared launch utility refactor sits under existing start/connect flows." },
+    { "dimension": "file_change_estimate", "reason": "13 files changed per diffstat (11-15 band = XL): 1 new source file (restart.ts), 8 modified source/script/doc files (CHANGELOG.md, README.md, docs/COMMANDS.md, bin/codemie.js, scripts/release.sh, proxy/index.ts, launch-daemon.ts, whatsnew command and util), 3 test files, spanning src/cli/commands/proxy, src/cli/commands, src/utils, bin, scripts and docs. 935 insertions, majority in tests." },
+    { "dimension": "technical_risk", "reason": "Established patterns exist (proxy start/stop/checkStatus daemon-manager, existing whatsnew parser and semver utils). Moderate novelty in restart ordering: profile/SSO validation before stopping the running daemon, a cold-start race guard, and port-mismatch rollback that preserves the daemon identity (clientType, telemetryMode, gatewayKey passthrough - no new secret handling). Version-range selection is forward-only and well covered by unit tests. Kept at M; no auto-bump since existing test templates cover the error-path and edge-version cases. Calibration: lighter than the L project example profile-provider-decoupling (no data migration, no schema change), consistent with M." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,0 +1,39 @@
+{
+  "decision": "approve",
+  "rationale": "Targeted check graded all 4 prior blocking findings against HEAD 47783ead: CR-001 (signal subsystem extracted to signal-handlers.ts), CR-002 (win32 handler kills with no signal name, so no ENOSYS throw), CR-004 (self-exit test asserts exitSignals) are resolved in source, and CR-003 is resolved by a recorded product-owner decision keeping the PR's Scope. business_review and standards_review are carried forward from the final round unchanged; 1 deferred item was not re-checked.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"kind": "story-ac", "item": "On SIGTERM/SIGINT/SIGHUP the wrapper forwards the signal to the agent, waits (bounded) for exit and SessionEnd, then stops the proxy", "status": "partial", "notes": "POSIX forwards all three and keeps the proxy; 10 s fallback only for SIGTERM/SIGHUP, SIGINT wait unbounded; win32 kills the child instead of forwarding (CR-003)"},
+    {"kind": "story-ac", "item": "Session is finalized (completed, endTime set) and the end metric is delivered or persisted for retry", "status": "pending-stage-7", "notes": "child-exit path runs grace -> endSessionAndCleanup -> proxy stop for every signal incl. after fallback; delivery is runtime evidence"},
+    {"kind": "story-ac", "item": "SIGTERM/SIGINT to the wrapper: SessionEnd hook completes with the proxy still running; end metric delivered (no fetch failed)", "status": "pending-stage-7", "notes": "cleanup-before-kill handler removed; ordering covered by signals test; live delivery is Stage 7 evidence"},
+    {"kind": "story-ac", "item": "SIGHUP to the wrapper: session is finalized with endTime and not left active", "status": "pass", "notes": "POSIX SIGHUP handler kept until exit path ends; EIO/EPIPE guard; win32 SIGHUP path crashes (CR-002)"},
+    {"kind": "story-ac", "item": "Proxy stop happens only after the child exits or after a bounded timeout", "status": "pass", "notes": "signal handlers never stop the proxy; proxy.stop only via endSessionAndCleanup in exit/error handlers"},
+    {"kind": "story-ac", "item": "Automated test covers signal -> child exit -> proxy stop ordering", "status": "pass", "notes": "BaseAgentAdapter.signals.test.ts asserts kill -> onSessionEnd -> proxyStop plus fallback/SIGHUP/win32 variants"},
+    {"kind": "spec", "item": "Root cause: signal handler must not run cleanup() (proxy stop) before child kill/exit", "status": "pass", "notes": "handleSignal with await cleanup() removed; installSignalHandlers dispatcher"},
+    {"kind": "spec", "item": "Root cause: register a SIGHUP handler", "status": "pass", "notes": "SIGHUP forwarded on POSIX; process.once('SIGHUP') on win32"},
+    {"kind": "spec", "item": "Root cause: bin/codemie.js rethrows EIO when the TTY is closed", "status": "pass", "notes": "entry-point error listeners replaced at run() start by onOutputStreamError ignoring EIO/EPIPE"},
+    {"kind": "spec", "item": "PR: forward signals to the agent's whole process tree (signalTree, pgrep -P, deepest first)", "status": "pass", "notes": "signalTree/listChildPids in src/utils/processes.ts; ESRCH skipped; pgrep timeout 1000 ms"},
+    {"kind": "spec", "item": "PR: SIGTERM/SIGHUP 10 s fallback kills the tree, exit path finalizes, wrapper exits 128 + signal; SIGINT arms nothing", "status": "pass", "notes": "signalFallbackTimer unref'd; finally process.exit(128 + signal); tests 143/129"},
+    {"kind": "spec", "item": "PR: after the agent exits SIGINT/SIGTERM take default action again; late SIGHUP ignored", "status": "pass", "notes": "removeInterruptHandlers at exit-handler start; childExited guard"},
+    {"kind": "spec", "item": "PR: stdout/stderr ignore EIO/EPIPE from run() start until process end; others re-thrown", "status": "pass", "notes": "ignoreClosedOutputStreams first in run(); output-streams test suite"},
+    {"kind": "spec", "item": "PR: Windows handler no longer stops proxy first; SIGHUP (console close) takes same path", "status": "pass", "notes": "ordering correct, but child.kill('SIGHUP') throws on win32 (CR-002)"},
+    {"kind": "spec", "item": "PR: conversations API client clears the per-attempt abort timer once request and body read settle", "status": "pass", "notes": "clearTimeout in finally around fetch + body read; getTimerCount()==0 test"},
+    {"kind": "spec", "item": "PR: OTLP plugin clears the 5 s shutdown-flush cap timer once flush settles", "status": "pass", "notes": "onProxyStop try/finally clearTimeout(flushTimeout)"},
+    {"kind": "spec", "item": "PR: child-exit handler runs in try/finally so handler removal and fallback exit survive a throw", "status": "pass", "notes": "finally removes handlers and exits 128+signal; afterRun-throws test"},
+    {"kind": "spec", "item": "PR: docs/ARCHITECTURE-PROXY.md section 9.2 updated", "status": "pass", "notes": "shutdown flow block added"},
+    {"kind": "spec", "item": "PR: npm run ci green and live manual scenarios", "status": "pending-stage-7", "notes": "execution evidence owned by Stage 7"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "all 6 subjects in the range use <type>(<scope>): <subject> with allowed type fix and allowed scope agents, imperative mood, each under the 100-char subject-max-length"},
+    {"kind": "code-quality", "status": "partial", "notes": "new exports (signalTree, resetOutputStreamGuardForTests) carry explicit return types and JSDoc, imports use .js, constants are UPPER_SNAKE_CASE, no new console.log; but code-quality.md Code Structure Guidelines require files under 500 lines and this change adds ~200 lines of signal-handling code (SignalHandlers, ignoreClosedOutputStreams, installWin32SignalHandlers, installPosixSignalHandlers) to src/agents/core/BaseAgentAdapter.ts, now 1583 lines"},
+    {"kind": "security", "status": "pass", "notes": "no attribution header added/removed/rewritten (apiClient.ts change only moves the abort timer around the body read); no new secret logging; signalTree spawns pgrep via execFileSync with an argv array and a numeric pid, no shell; no user-input paths introduced"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "Signal subsystem and output-stream guard moved to src/agents/core/signal-handlers.ts (171 lines) and imported; BaseAgentAdapter.ts drops to 1427 lines, below its pre-change size"},
+    {"id": "CR-002", "status": "resolved", "notes": "installWin32SignalHandlers now calls child.kill() with no signal name for SIGINT/SIGTERM/SIGHUP; win32 test asserts kill:default and not.toThrow for each"},
+    {"id": "CR-003", "status": "resolved", "notes": "fix_evidence decision: product owner keeps the PR Scope (SIGTERM/SIGHUP bounded 10 s, SIGINT unbounded, Windows terminates) with a non-empty rationale"},
+    {"id": "CR-004", "status": "resolved", "notes": "Self-exit SIGTERM test (signals.test.ts:187) now asserts exitSignals equals ['SIGTERM'], pinning the fallbackSignal() ?? signal branch"}
+  ]
+}

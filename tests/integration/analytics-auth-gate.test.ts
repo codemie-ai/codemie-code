@@ -89,6 +89,8 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     };
 
     const env: NodeJS.ProcessEnv = { ...process.env };
+    // lint-staged sets NO_COLOR; with vitest's FORCE_COLOR Node would warn on the child's stderr
+    delete env.NO_COLOR;
     // Remove any analytics config leaking in from the runner.
     for (const key of Object.keys(env)) {
       if (key.startsWith("CODEMIE_")) delete env[key];
@@ -153,6 +155,19 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     expect(res.stderr).toContain('codemie profile login');
     expect(res.stderr).toContain('re-send your prompt');
     expect(res.stderr).not.toContain('API key');
+  });
+
+  it('with CODEMIE_DEBUG set, a blocked prompt carries only the block message on stderr (exit 2)', () => {
+    const res = runHook({ CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_DEBUG: '1' });
+    expect(res.code).toBe(2);
+    expect(res.stderr).toBe(
+      'Reason: no valid CodeMie SSO credentials found.\n' +
+        `${BLOCK_HEADER}\n` +
+        'Could not open the browser sign-in automatically. Run `codemie profile login`. After login completes, re-send your prompt.\n'
+    );
+    expect(res.stderr).not.toContain('[DEBUG]');
+    expect(res.stderr).not.toContain('[hook:init]');
+    expect(res.stdout).toBe('');
   });
 
   it('blocks the prompt when a valid api key is present but an invalid-auth marker exists (exit 2)', () => {

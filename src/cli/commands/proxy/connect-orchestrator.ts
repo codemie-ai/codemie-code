@@ -409,7 +409,7 @@ async function ensureDaemon(
     });
     unhealthy = !health.healthy;
     if (unhealthy) {
-      console.log(
+      logger.status(
         chalk.yellow(`Existing proxy is unhealthy (${health.reason ?? 'unknown'}). Restarting...`)
       );
     }
@@ -417,9 +417,9 @@ async function ensureDaemon(
 
   if (running && (!matches || unhealthy || force)) {
     if (force) {
-      console.log('Forcing a fresh proxy restart...');
+      logger.status('Forcing a fresh proxy restart...');
     } else if (!matches) {
-      console.log('Restarting proxy to match the requested client...');
+      logger.status('Restarting proxy to match the requested client...');
     }
     await stopDaemon();
     running = false;
@@ -428,7 +428,7 @@ async function ensureDaemon(
 
   let startedInThisRun = false;
   if (!running || !state) {
-    console.log('Starting proxy...');
+    logger.status('Starting proxy...');
     state = await spawnDaemon({
       targetUrl: config.baseUrl as string,
       provider: config.provider ?? 'ai-run-sso',
@@ -441,9 +441,7 @@ async function ensureDaemon(
       syncCodeMieUrl: config.codeMieUrl,
     });
     startedInThisRun = true;
-    console.log(verbose
-      ? chalk.green(`✓ Proxy started at ${state.url}`)
-      : chalk.green('✓ Proxy started'));
+    logger.success(verbose ? `Proxy started at ${state.url}` : 'Proxy started');
   }
 
   return { state, startedInThisRun };

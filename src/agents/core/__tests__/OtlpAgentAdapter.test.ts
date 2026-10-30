@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { format } from 'node:util';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 
 const detectGitBranchMock = vi.fn();
@@ -32,7 +33,16 @@ vi.mock('../session-project-pin.js', () => ({
   pinProjectName: pinProjectNameMock,
 }));
 vi.mock('@/utils/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), notice: vi.fn(), success: vi.fn(), status: vi.fn() },
+}));
+const readStateMock = vi.fn();
+const checkStatusMock = vi.fn();
+const spawnDaemonMock = vi.fn();
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
+  readState: readStateMock,
+  checkStatus: checkStatusMock,
+  spawnDaemon: spawnDaemonMock,
+  stopDaemon: vi.fn(),
 }));
 
 const { OtlpAgentAdapter } = await import('../OtlpAgentAdapter.js');
@@ -190,6 +200,54 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     await run({ block: true });
     expect(log).toHaveBeenCalledWith(JSON.stringify({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } }));
     expect(forwardToSpool).not.toHaveBeenCalled();
+  });
+
+  describe('stdout carries only the protocol answer', () => {
+    /** Every stdout write, console.log included (routed the way Node's console writes it). */
+    const captureStdout = () => {
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        process.stdout.write(`${format(...args)}\n`);
+      });
+      return write;
+    };
+
+    it('writes nothing to stdout on a non-blocking event', async () => {
+      const write = captureStdout();
+      await run();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('writes exactly one JSON line to stdout on a blocking event', async () => {
+      const write = captureStdout();
+      await run({ block: true });
+      expect(write).toHaveBeenCalledTimes(1);
+      const out = String(write.mock.calls[0][0]);
+      expect(out.endsWith('\n')).toBe(true);
+      expect(out.trimEnd().split('\n')).toHaveLength(1);
+      expect(JSON.parse(out)).toEqual({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } });
+    });
+
+    it('writes exactly one JSON line to stdout when the blocking event cold-starts the daemon', async () => {
+      configLoadMock.mockResolvedValue({ name: 'p', baseUrl: 'https://x.example.com/api', codeMieProject: 'proj-1' });
+      readStateMock.mockResolvedValue(null);
+      checkStatusMock.mockResolvedValue({ running: false, state: null });
+      spawnDaemonMock.mockResolvedValue({ pid: process.pid, port: 4001, url: 'http://127.0.0.1:4001', startedAt: new Date().toISOString() });
+      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/connect-orchestrator.js');
+      const write = captureStdout();
+
+      await adapter.processOtlpEvent(
+        JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], block: true }),
+        { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
+      );
+
+      expect(spawnDaemonMock).toHaveBeenCalledTimes(1);
+      expect(write).toHaveBeenCalledTimes(1);
+      const out = String(write.mock.calls[0][0]);
+      expect(out.trimEnd().split('\n')).toHaveLength(1);
+      expect(JSON.parse(out)).toMatchObject({ decision: 'block' });
+    });
   });
 
   it('merges the four common fields and agent fields into every record', async () => {
