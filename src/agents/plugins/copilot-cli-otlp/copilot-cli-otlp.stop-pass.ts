@@ -43,7 +43,7 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
   if (!read) return null;
   if (read.events.length === 0 && !cursor) return null;
 
-  const slice = summarizeSlice(sessionId, read.events, cursor ? 'incremental' : 'full');
+  const slice = summarizeSlice(sessionId, read.events, cursor ? 'incremental' : 'full', cursor?.model);
   const counters = addCounters(cursor?.counters ?? EMPTY_COUNTERS, slice.counters);
   const details = mergeDetails(cursor?.details ?? EMPTY_DETAILS, slice.details);
 
@@ -63,7 +63,14 @@ export function buildStopPass(sessionId: string, transcriptPath?: string): StopP
   });
   if (read.truncated) logger.debug('[copilot-cli-otlp] transcript above 8 MB, reading tail only');
 
-  const next: UsageCursor = { offset: read.nextOffset, lastEventTs, startedAt, counters, details };
+  const next: UsageCursor = {
+    offset: read.nextOffset,
+    lastEventTs,
+    startedAt,
+    counters,
+    details,
+    model: slice.lastModel ?? cursor?.model,
+  };
   return {
     events: [...slice.rows, summary],
     commit: async () => {

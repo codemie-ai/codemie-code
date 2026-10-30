@@ -333,3 +333,26 @@ describe('CopilotCliOtlpPlugin free-text field masking', () => {
     expect(JSON.stringify(event)).not.toContain(secret);
   });
 });
+
+describe('CopilotCliOtlpPlugin sub-agent agentStop', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const forwardOtlpEventsToSpool = vi.fn(async (_events: Array<Record<string, unknown>>, _agent: string) => true);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(isCopilotProjectTracked).mockResolvedValue(true);
+  });
+
+  it('forwards only the lifecycle event: no usage rows, no summary, no cursor', async () => {
+    await plugin.processOtlpEvent(hookInput({ codemieEventName: 'agentStop', agentId: 'agent-0001', transcriptPath: '/nonexistent/events.jsonl' }), {
+      ensureOtlpProxy: vi.fn(async () => {}),
+      forwardOtlpEventsToSpool,
+    });
+
+    const events = forwardOtlpEventsToSpool.mock.calls[0][0];
+    expect(events).toHaveLength(1);
+    expect(events.map((e) => e.type)).not.toContain('agent.usage.request');
+    expect(events.map((e) => e.type)).not.toContain('agent.session.summary');
+  });
+});

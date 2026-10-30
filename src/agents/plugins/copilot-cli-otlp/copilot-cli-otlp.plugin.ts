@@ -198,6 +198,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   /** Claude's `Stop`: usage and an incremental summary, so a killed session keeps what it produced. */
   private async onAgentStop(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     const base = this.normalizeEvent(input);
+    // A sub-agent stop fires mid-turn; advancing the usage cursor here would split the main turn's slices.
+    if (input.agentId) {
+      return { decision: 'forward', payload: [base] };
+    }
     let pass: StopPass | null = null;
     try {
       pass = buildStopPass(input.sessionId, input.transcriptPath);

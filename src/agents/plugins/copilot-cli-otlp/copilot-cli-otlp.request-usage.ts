@@ -59,6 +59,8 @@ export interface UsageRowsResult {
   rows: Record<string, unknown>[];
   /** True when some usage could not be attributed or reconciled. */
   partial: boolean;
+  /** Last model seen in the slice; seeds the next incremental slice. */
+  lastModel?: string;
 }
 
 interface MessageRow {
@@ -121,7 +123,12 @@ function hasTokens(b: CopilotUsageBuckets): boolean {
  * each shutdown segment's totals are attached to that segment's last message of the model.
  * An `incremental` read sends per-message rows only, without totals.
  */
-export function buildUsageRows(sessionId: string, events: CopilotEvent[], mode: 'full' | 'incremental'): UsageRowsResult {
+export function buildUsageRows(
+  sessionId: string,
+  events: CopilotEvent[],
+  mode: 'full' | 'incremental',
+  initialModel?: string
+): UsageRowsResult {
   let partial = false;
   const rows: Record<string, unknown>[] = [];
 
@@ -133,7 +140,7 @@ export function buildUsageRows(sessionId: string, events: CopilotEvent[], mode: 
   const records: Array<{ segment: number; row: Record<string, unknown> }> = [];
 
   let segment = 0;
-  let currentModel: string | undefined;
+  let currentModel: string | undefined = initialModel || undefined;
   for (const event of events) {
     const timestamp = event.timestamp ?? '';
     switch (event.type) {
@@ -168,6 +175,8 @@ export function buildUsageRows(sessionId: string, events: CopilotEvent[], mode: 
           segment,
         };
         messages.push(message);
+        // Remembered so the next incremental slice can label messages that omit `data.model`.
+        if (data.model) currentModel = data.model;
         if (!message.model) unlabelled.push(message);
         break;
       }
@@ -191,6 +200,10 @@ export function buildUsageRows(sessionId: string, events: CopilotEvent[], mode: 
   for (const record of records) rows.push(record.row);
 
   const tierBMessages = messages.filter((m) => m.model && !segmentHasRecords[m.segment]);
+  // A message that still has no model after backfill would otherwise vanish without a trace.
+  if (messages.some((m) => !m.model && !segmentHasRecords[m.segment])) partial = true;
+  // A trailing segment with Tier B messages and no shutdown (killed session) has no totals to reconcile.
+  if (mode === 'full' && tierBMessages.some((m) => !shutdownByModelBySegment[m.segment])) partial = true;
   const lastByKey = new Map<string, number>();
   const tierBRows = tierBMessages.map((m, index) => {
     lastByKey.set(`${m.segment}|${m.model}`, index);
@@ -223,7 +236,7 @@ export function buildUsageRows(sessionId: string, events: CopilotEvent[], mode: 
     }));
   }
 
-  return { rows, partial };
+  return { rows, partial, lastModel: currentModel };
 }
 
 interface AttachInput {

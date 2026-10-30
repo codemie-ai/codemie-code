@@ -147,6 +147,26 @@ describe('usage rows', () => {
     expect(rows[0]).toMatchObject({ input_tokens: 0 });
   });
 
+  it('incremental slice without model_change or data.model uses the seeded model', () => {
+    const unlabelled = ev('assistant.message', { messageId: 'm1', outputTokens: 10 }, '2026-01-01T00:00:01.000Z');
+    const seeded = buildUsageRows(SID, [unlabelled], 'incremental', 'gpt-5.3-codex');
+    expect(seeded.partial).toBe(false);
+    expect(seeded.rows).toHaveLength(1);
+    expect(seeded.rows[0]).toMatchObject({ request_id: 'm1', model: 'gpt-5.3-codex' });
+
+    const unseeded = buildUsageRows(SID, [unlabelled], 'incremental');
+    expect(unseeded.partial).toBe(true);
+    expect(unseeded.rows).toHaveLength(0);
+  });
+
+  it('remembers the last model for the next incremental slice', () => {
+    expect(buildUsageRows(SID, [message(1, 10, 'gpt-5.4')], 'incremental').lastModel).toBe('gpt-5.4');
+  });
+
+  it('a killed session (Tier B messages, no shutdown) is flagged partial in full mode', () => {
+    expect(buildUsageRows(SID, [message(1, 10)], 'full').partial).toBe(true);
+  });
+
   it('keeps non-claude names and dashes dotted claude versions', () => {
     expect(resolveCopilotBillableModel('claude-haiku-4.5')).toBe('claude-haiku-4-5');
     expect(resolveCopilotBillableModel('gpt-5.3-codex')).toBe('gpt-5.3-codex');
@@ -203,6 +223,15 @@ describe('agentStop pass and final pass', () => {
       client_version: '1.0.92', entrypoint: 'managed',
     });
     expect(summary.tools).toEqual({ create: { calls: 1, errors: 0 } });
+  });
+
+  it('a truncated transcript yields usage rows but no tail-only final summary', () => {
+    const events = [
+      ev('session.usage_record', { usage: { model: 'gpt-5.3-codex', apiCallId: 'a1', inputTokens: 5, outputTokens: 1 } }, '2026-01-01T00:00:01.000Z'),
+      ev('session.shutdown', { modelMetrics: {} }, '2026-01-01T00:00:05.000Z'),
+    ];
+    const wire = buildDeferredUsageEvents({ session_id: SID }, events as never, '', true);
+    expect(wire.map((e) => e.type)).toEqual(['agent.usage.request']);
   });
 
   it('persists session state atomically under the lock', async () => {

@@ -28,9 +28,10 @@ export const EMPTY_COUNTERS: SummaryCounters = { toolCalls: 0, toolErrors: 0, ap
 export function summarizeSlice(
   sessionId: string,
   events: CopilotEvent[],
-  mode: 'full' | 'incremental'
-): { counters: SummaryCounters; details: SummaryDetails; rows: Record<string, unknown>[]; partial: boolean } {
-  const { rows, partial } = buildUsageRows(sessionId, events, mode);
+  mode: 'full' | 'incremental',
+  initialModel?: string
+): { counters: SummaryCounters; details: SummaryDetails; rows: Record<string, unknown>[]; partial: boolean; lastModel?: string } {
+  const { rows, partial, lastModel } = buildUsageRows(sessionId, events, mode, initialModel);
   const activity = extractCopilotToolActivity(events);
   const mainRequests = new Set<string>();
   const models: Record<string, number> = {};
@@ -77,6 +78,7 @@ export function summarizeSlice(
     details: { tools, filesWritten: [...written], filesEdited: [...edited], linesAdded, linesRemoved },
     rows,
     partial,
+    lastModel,
   };
 }
 
@@ -162,7 +164,8 @@ export const TEMPLATE_FIELDS = [
 export function buildDeferredUsageEvents(
   template: Record<string, unknown>,
   events: CopilotEvent[],
-  fallbackClientVersion = ''
+  fallbackClientVersion = '',
+  truncated = false
 ): Record<string, unknown>[] {
   const sessionId = String(template['session_id'] ?? '');
   const common: Record<string, unknown> = {};
@@ -175,15 +178,19 @@ export function buildDeferredUsageEvents(
   const start = events.find((e) => e.type === 'session.start')?.data as { startTime?: string } | undefined;
   const lastShutdown = [...events].reverse().find((e) => e.type === 'session.shutdown');
   const endedAt = lastShutdown?.timestamp ?? '';
-  const summary = buildSessionSummaryEvent({
-    sessionId,
-    phase: 'final',
-    counters: slice.counters,
-    details: slice.details,
-    startedAt: start?.startTime ?? events[0]?.timestamp ?? endedAt,
-    endedAt,
-    usagePartial: slice.partial,
-  });
+  // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
+  const outgoing: Record<string, unknown>[] = [...slice.rows];
+  if (!truncated) {
+    outgoing.push(buildSessionSummaryEvent({
+      sessionId,
+      phase: 'final',
+      counters: slice.counters,
+      details: slice.details,
+      startedAt: start?.startTime ?? events[0]?.timestamp ?? endedAt,
+      endedAt,
+      usagePartial: slice.partial,
+    }));
+  }
 
-  return [...slice.rows, summary].map((event) => ({ ...common, ...event }));
+  return outgoing.map((event) => ({ ...common, ...event }));
 }

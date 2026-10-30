@@ -96,6 +96,8 @@ export interface UsageCursor {
   startedAt: string;
   counters: SummaryCounters;
   details: SummaryDetails;
+  /** Last model seen, so an incremental slice without `session.model_change` can still label messages. */
+  model?: string;
 }
 
 export interface SessionState {

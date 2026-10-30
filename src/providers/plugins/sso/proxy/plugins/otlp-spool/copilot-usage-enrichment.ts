@@ -65,8 +65,9 @@ function resolveStateRoot(sessionId: string): string {
   }
 }
 
-function readEvents(sessionId: string): CopilotEvent[] {
-  return readTranscriptFrom(join(resolveStateRoot(sessionId), sessionId, 'events.jsonl'))?.events ?? [];
+function readEvents(sessionId: string): { events: CopilotEvent[]; truncated: boolean } {
+  const read = readTranscriptFrom(join(resolveStateRoot(sessionId), sessionId, 'events.jsonl'));
+  return { events: read?.events ?? [], truncated: read?.truncated ?? false };
 }
 
 /** True if the hooks spool already holds the final summary for this shutdown (survives a daemon restart). */
@@ -95,7 +96,7 @@ export async function enrichSessionUsage(
 
   try {
     for (;;) {
-      const events = readEvents(sessionId);
+      const { events, truncated } = readEvents(sessionId);
       const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
       const shutdownMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
       // A resumed session can hold an older shutdown: only one after this sessionEnd counts.
@@ -105,7 +106,7 @@ export async function enrichSessionUsage(
           return 'duplicate';
         }
         const start = events.find((e) => e.type === 'session.start')?.data as { copilotVersion?: string } | undefined;
-        const wire = buildDeferredUsageEvents(template, events, start?.copilotVersion ?? '');
+        const wire = buildDeferredUsageEvents(template, events, start?.copilotVersion ?? '', truncated);
         await appendSpool(sessionId, 'hooks', wire
           .map((hookEvent) => JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(hookEvent) }))
           .join('\n') + '\n');
