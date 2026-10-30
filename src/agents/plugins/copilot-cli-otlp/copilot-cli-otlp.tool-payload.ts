@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/utils/logger.js';
+import { isSensitiveFilePath } from '@/agents/plugins/claude-code-otlp/event-fields/tool-fields.js';
 import type { CopilotCliHookInput } from './copilot-cli-otlp.types.js';
 
 /** Tools whose `args.path` is the file they write; independent of the managed adapter's set. */
@@ -75,21 +76,30 @@ export function buildToolEvent(
   toolArgs: unknown,
   opts: { toolUseId: string; end?: ToolEndCall }
 ): Record<string, unknown> {
+  const targetPath = argsPath(toolArgs);
+  const sensitive = targetPath !== undefined && isSensitiveFilePath(targetPath);
   const event: Record<string, unknown> = {
     ...base,
     tool_name: toolName.slice(0, 300),
     tool_use_id: opts.toolUseId,
-    tool_input: toolArgs,
+    tool_input: sensitive ? { path: targetPath } : toolArgs,
   };
   const filePath = extractFilePath(toolName, toolArgs);
   if (filePath !== undefined) event.file_path = filePath;
   const skillName = extractSkillName(toolName, toolArgs);
   if (skillName !== undefined) event.skill_name = skillName;
-  if (opts.end?.success && opts.end.resultText !== undefined) event.tool_response = opts.end.resultText;
-  if (opts.end?.errorMessage !== undefined && event.error_message === undefined) {
+  if (!sensitive && opts.end?.success && opts.end.resultText !== undefined) event.tool_response = opts.end.resultText;
+  if (!sensitive && opts.end?.errorMessage !== undefined && event.error_message === undefined) {
     event.error_message = opts.end.errorMessage.slice(0, 300);
   }
   return event;
+}
+
+/** `args.path` of any tool, used to detect credential files before content is forwarded. */
+function argsPath(toolArgs: unknown): string | undefined {
+  if (typeof toolArgs !== 'object' || toolArgs === null) return undefined;
+  const path = (toolArgs as Record<string, unknown>)['path'];
+  return typeof path === 'string' && path.length > 0 ? path : undefined;
 }
 
 /** Skill invoked by Copilot's `skill` tool (`args.skill`), taken before the base class truncates `tool_input`. */

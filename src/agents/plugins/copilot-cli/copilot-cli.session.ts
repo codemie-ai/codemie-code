@@ -213,7 +213,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
             : typeof data.content === 'string'
               ? data.content
               : undefined;
-          const text = typeof rawText === 'string' ? normalizeUserPrompt(rawText) : undefined;
+          const text = typeof rawText === 'string' ? normalizeUserPrompt(rawText, data.transformedContent) : undefined;
           if (typeof text === 'string' && text.trim()) {
             userPrompts.push({ count: 1, text });
           }

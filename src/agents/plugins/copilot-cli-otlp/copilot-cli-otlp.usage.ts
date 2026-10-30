@@ -1,5 +1,6 @@
 import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { extractCopilotToolActivity } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
+import { extractSlashCommand } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE } from './copilot-cli-otlp.request-usage.js';
 
 export { stableEventId, USAGE_REQUEST_EVENT_TYPE };
@@ -20,6 +21,8 @@ export interface SummaryDetails {
   filesEdited: string[];
   linesAdded: number | null;
   linesRemoved: number | null;
+  /** Slash commands in call order, repeats kept, no leading slash (same contract as the Claude summary). */
+  commands?: string[];
 }
 
 export const EMPTY_COUNTERS: SummaryCounters = { toolCalls: 0, toolErrors: 0, apiCalls: 0, turns: 0, models: {} };
@@ -54,6 +57,14 @@ export function summarizeSlice(
     toolErrors += errors;
   }
 
+  const commands: string[] = [];
+  for (const e of events) {
+    if (e.type !== 'user.message') continue;
+    const data = (e.data ?? {}) as { content?: string; transformedContent?: string };
+    const command = extractSlashCommand(data.content, data.transformedContent);
+    if (command) commands.push(command);
+  }
+
   const written = new Set(activity.fileOperations.filter((o) => o.type === 'write').map((o) => o.path));
   const edited = new Set(activity.fileOperations.filter((o) => o.type === 'edit').map((o) => o.path));
   let linesAdded: number | null = null;
@@ -75,7 +86,7 @@ export function summarizeSlice(
       turns: events.filter((e) => e.type === 'user.message').length,
       models,
     },
-    details: { tools, filesWritten: [...written], filesEdited: [...edited], linesAdded, linesRemoved },
+    details: { tools, filesWritten: [...written], filesEdited: [...edited], linesAdded, linesRemoved, commands: [...commands] },
     rows,
     partial,
     lastModel,
@@ -108,6 +119,7 @@ export function mergeDetails(a: SummaryDetails, b: SummaryDetails): SummaryDetai
     filesEdited: [...edited],
     linesAdded: b.linesAdded ?? a.linesAdded,
     linesRemoved: b.linesRemoved ?? a.linesRemoved,
+    commands: [...(a.commands ?? []), ...(b.commands ?? [])],
   };
 }
 
@@ -138,6 +150,8 @@ export function buildSessionSummaryEvent(input: {
     tool_errors: counters.toolErrors,
     tool_results: counters.toolCalls,
     ...(details.tools ? { tools: details.tools } : {}),
+    commands: details.commands ?? [],
+    primary_command: details.commands?.[0] ?? '',
     turns: counters.turns,
     models: ranked,
     primary_model: ranked[0] ?? '',

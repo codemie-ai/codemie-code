@@ -72,6 +72,21 @@ describe('preToolUse payload', () => {
     expect(buildToolEvent({}, 'view', { path: '/repo/a.ts' }, { toolUseId: 'x' }).file_path).toBeUndefined();
   });
 
+  it('drops content of credential files but keeps the path', () => {
+    const end = { toolName: 'view', toolArgs: {}, success: true, resultText: 'SECRET=1' };
+    const event = buildToolEvent({}, 'view', { path: '/repo/.env', extra: 'x' }, { toolUseId: 'x', end });
+    expect(event.tool_input).toEqual({ path: '/repo/.env' });
+    expect(event.tool_response).toBeUndefined();
+    const failed = buildToolEvent({}, 'edit', { path: '/home/u/.ssh/id_rsa' }, {
+      toolUseId: 'x',
+      end: { toolName: 'edit', toolArgs: {}, success: false, errorMessage: 'leaked text' },
+    });
+    expect(failed.error_message).toBeUndefined();
+    expect(failed.file_path).toBe('/home/u/.ssh/id_rsa');
+    const plain = buildToolEvent({}, 'view', { path: '/repo/a.ts' }, { toolUseId: 'x', end: { ...end, resultText: 'ok' } });
+    expect(plain.tool_response).toBe('ok');
+  });
+
   it('adds skill_name for the skill tool only', () => {
     expect(buildToolEvent({}, 'skill', { skill: 'my-skill' }, { toolUseId: 'x' }).skill_name).toBe('my-skill');
     expect(buildToolEvent({}, 'skill', { skill: '  padded ' }, { toolUseId: 'x' }).skill_name).toBe('padded');

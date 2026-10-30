@@ -38,10 +38,34 @@ export function stripDesktopPreamble(text: string): string {
 
 // For slash commands (/review, /security-review, /fleet, ...) Copilot swaps the typed command for an internal
 // instruction ("The user has requested ... via the /review command. Use the task tool ...").
-const SLASH_INSTRUCTION_RE = /^The user has (?:requested|invoked)\b[^\n]*?\bvia the (\/[\w-]+) command\b/i;
+// Command token: letter-led segments joined by `:` or `.`, so `/sdlc-factory:x` matches but `/v1.2` and `/1` do not.
+const SLASH_INSTRUCTION_RE = /^The user has (?:requested|invoked)\b[^\n]*?\bvia the (\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*) command\b/i;
+const TYPED_SLASH_RE = /^(\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*)(?=\s|$)/;
 
-/** The user's own prompt: desktop preamble removed and Copilot's internal slash-command instruction replaced by the command. */
-export function normalizeUserPrompt(text: string): string {
+// /fleet is injected as "You are now in fleet mode. Dispatch sub-agents ..." with no "via the /x command" wording.
+const FLEET_INSTRUCTION_RE = /^You are now in fleet mode\b/i;
+
+// Copilot ends the fleet instruction with "User request: <typed text>"; its `content` is a display label ("Fleet deployed: ...").
+const FLEET_REQUEST_RE = /\n\s*User request:\s*([\s\S]*?)\s*$/i;
+
+// Fallback when only the label is available (the hook may not carry the transformed text).
+const FLEET_LABEL_RE = /^Fleet deployed:\s*([\s\S]*?)\s*$/;
+
+function fleetTitle(instruction: string): string {
+  const request = (FLEET_REQUEST_RE.exec(instruction) ?? FLEET_LABEL_RE.exec(instruction))?.[1];
+  return request ? `/fleet: ${request}` : '/fleet';
+}
+
+/**
+ * The user's own prompt: desktop preamble removed and Copilot's internal slash-command instruction replaced by the command.
+ * `transformed` is the instruction Copilot actually sent to the model, when the raw text is only a label.
+ */
+export function normalizeUserPrompt(text: string, transformed?: string): string {
+  for (const candidate of [transformed, text]) {
+    if (typeof candidate !== 'string') continue;
+    const instruction = stripDesktopPreamble(candidate);
+    if (FLEET_INSTRUCTION_RE.test(instruction) || FLEET_LABEL_RE.test(instruction)) return fleetTitle(instruction);
+  }
   const stripped = stripDesktopPreamble(text);
   const slash = SLASH_INSTRUCTION_RE.exec(stripped);
   return slash ? slash[1] : stripped;
@@ -52,7 +76,8 @@ export function extractSlashCommand(content?: string, transformedContent?: strin
   for (const candidate of [transformedContent, content]) {
     if (typeof candidate !== 'string') continue;
     const text = stripDesktopPreamble(candidate);
-    const match = SLASH_INSTRUCTION_RE.exec(text) ?? /^(\/[\w-]+)(?=\s|$)/.exec(text);
+    if (FLEET_INSTRUCTION_RE.test(text) || FLEET_LABEL_RE.test(text)) return 'fleet';
+    const match = SLASH_INSTRUCTION_RE.exec(text) ?? TYPED_SLASH_RE.exec(text);
     if (match) return match[1].slice(1);
   }
   return undefined;

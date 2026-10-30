@@ -67,9 +67,9 @@ const ENFORCED_EVENTS = new Set(['userPromptTransformed', 'preToolUse']);
 const FREE_TEXT_MAX_CHARS = 300;
 
 /** The user's own prompt text: the desktop app's internal preamble removed; undefined when nothing remains. */
-function userPrompt(prompt: string | undefined): string | undefined {
+function userPrompt(prompt: string | undefined, transformed?: string): string | undefined {
   if (typeof prompt !== 'string') return undefined;
-  const text = normalizeUserPrompt(prompt);
+  const text = normalizeUserPrompt(prompt, transformed);
   return text.length > 0 ? text : undefined;
 }
 
@@ -91,7 +91,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   protected extractHookContext(input: CopilotCliHookInput): OtlpHookContext {
     return {
       cwd: input.cwd,
-      prompt: input.codemieEventName === 'userPromptTransformed' ? userPrompt(input.prompt) : undefined,
+      prompt: input.codemieEventName === 'userPromptTransformed' ? userPrompt(input.prompt, input.transformedPrompt) : undefined,
     };
   }
 
@@ -272,7 +272,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
     if (input.source !== undefined) normalized.source = this.boundedFreeText(input.source);
     if (input.reason !== undefined) normalized.reason = this.boundedFreeText(input.reason);
-    const prompt = userPrompt(input.prompt);
+    const prompt = userPrompt(input.prompt, input.transformedPrompt);
     if (prompt !== undefined) normalized.prompt = prompt;
     if (input.codemieEventName === 'userPromptTransformed') {
       const command = extractSlashCommand(input.prompt, input.transformedPrompt);
