@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Single-function change to detectGitBranch in src/utils/processes.ts (git symbolic-ref --short -q HEAD, handling unborn HEAD); sibling detectGitHeadSha is the nearby pattern. Non-critical path, no auth or security surface (fixed argv, no user input interpolated). New real-git test file enumerates edge cases (unborn HEAD, detached HEAD, non-repo) and scrubs GIT_* env for isolation, so test coverage matches the defensive pattern; score S." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 2 files (1 modified source file, 1 new test file), 108 insertions and 15 deletions, in one directory tree (src/utils); maps to S under the 2-3 files diffstat rule." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
