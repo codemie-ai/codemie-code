@@ -104,12 +104,28 @@ type FixedCodemieEnvKey = Exclude<
 const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
   CLAUDE_CODE_ENABLE_TELEMETRY: '1',
   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
-  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
   OTEL_LOGS_EXPORTER: 'otlp',
   OTEL_METRICS_EXPORTER: 'otlp',
   OTEL_TRACES_EXPORTER: 'otlp',
   OTEL_LOG_TOOL_DETAILS: '1',
 };
+
+/**
+ * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
+ * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
+ * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
+ * to today's default with no `--force`, and a disconnect still clean it up.
+ */
+const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
+  OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
+};
+
+function isHistoricalCodemieValue(key: string, value: string): boolean {
+  return (
+    (CODEMIE_ENV_HISTORICAL_VALUES as Partial<Record<string, readonly string[]>>)[key]?.includes(value) ?? false
+  );
+}
 
 /**
  * True if `value` is (still) codemie's own value for `key`, without a live
@@ -143,7 +159,7 @@ function isCodemieOwnedEnvValue(
     const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
     return typeof endpoint === 'string' && endpoint.endsWith('/v1/analytics/otlp');
   }
-  return CODEMIE_ENV_FIXED_VALUES[key] === value;
+  return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
 /**
@@ -475,9 +491,15 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    if (currentVal !== undefined && currentVal !== desiredVal) {
-      envConflicts.push(key);
+    if (currentVal === undefined || currentVal === desiredVal) {
+      continue;
     }
+    // A prior CodeMie version's own value for this key — migrated to today's default by
+    // this same write below, not a conflict requiring --force.
+    if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    envConflicts.push(key);
   }
 
   // A non-array value under ANY existing hooks event key (not just the ones we

@@ -222,7 +222,9 @@ describe('appendSpool — project binding', () => {
     await appendSpool(SESSION, 'logs', Buffer.from('abc'));
 
     const status = await readStatus(SESSION);
-    expect(status?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect(status?.cursors).toEqual({
+      hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
+    });
     expect(status?.projectScanned).toBeUndefined();
   });
 });
@@ -249,6 +251,9 @@ describe('snapshots — project gate under the lock', () => {
       logs: 1,
       metrics: 2,
       traces: 3,
+      logsJson: 0,
+      metricsJson: 0,
+      tracesJson: 0,
     });
   }
 

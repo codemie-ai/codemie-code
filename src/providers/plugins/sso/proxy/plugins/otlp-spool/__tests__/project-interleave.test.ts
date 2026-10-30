@@ -95,6 +95,9 @@ describe('project gate — ingest vs forwarding', () => {
       logs: 1,
       metrics: 2,
       traces: 3,
+      logsJson: 0,
+      metricsJson: 0,
+      tracesJson: 0,
     });
   }
 

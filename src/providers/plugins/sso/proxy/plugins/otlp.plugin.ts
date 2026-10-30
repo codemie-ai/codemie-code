@@ -5,8 +5,8 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
-import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { listSessionIds } from './otlp-spool/spool-paths.js';
+import { sanitizeLogArgs, maskSecretsDeep } from '../../../../../utils/security.js';
+import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
@@ -305,8 +305,63 @@ class OtlpInterceptor implements ProxyInterceptor {
       return true;
     }
 
-    const bytes = ctx.requestBody;
+    const contentType = (ctx.headers['content-type'] ?? '').toLowerCase();
+    if (contentType.startsWith('application/json')) {
+      return this.handleOtlpJson(ctx.requestBody, res, signal);
+    }
+    return this.handleOtlpBinary(ctx.requestBody, res, signal);
+  }
 
+  /** `application/json` OTLP: parsed, masked, and NDJSON-spooled into the signal's `*Json` stream. */
+  private async handleOtlpJson(
+    body: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
+    const text = body.toString('utf8');
+    const jsonMatch = UUID_V4_RE.exec(text);
+    const sessionId = jsonMatch ? jsonMatch[0] : '';
+
+    if (!sessionId) {
+      // No session id found: same as the byte-blind path's no-session-id case —
+      // log and 200, nothing spooled. Never falls through to the byte-blind branch:
+      // these bytes are JSON, not protobuf, so re-parsing them there would be wrong.
+      logger.debug(
+        '[otlp-ingest] no session id in JSON payload, dropping',
+        ...sanitizeLogArgs({ signal, bytes: body.length })
+      );
+      res.statusCode = 200;
+      res.end();
+      return true;
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      const masked = maskSecretsDeep(parsed);
+      const line = JSON.stringify(masked);
+      await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
+    } catch (err) {
+      // Masking is the guarantee this path exists for: a parse/mask/spool failure drops
+      // the record (logged) rather than falling through to spool the original bytes
+      // unmasked through the byte-blind branch below.
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[otlp-ingest] ${signal} JSON parse/mask/spool failure, dropping record`,
+        ...sanitizeLogArgs({ sessionId, err: msg })
+      );
+    }
+
+    res.statusCode = 200;
+    res.end();
+    return true;
+  }
+
+  /** Anything else (protobuf, or no Content-Type): byte-blind, unmasked, unchanged. */
+  private async handleOtlpBinary(
+    bytes: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
     // Extract session ID via UUID v4 regex on latin1-decoded bytes
     const latin1Str = Buffer.from(bytes).toString('latin1');
     const match = UUID_V4_RE.exec(latin1Str);

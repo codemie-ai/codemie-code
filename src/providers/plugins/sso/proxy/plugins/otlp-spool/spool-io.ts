@@ -1,7 +1,7 @@
 import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { OTEL_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
+import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { createStatus, readStatus, writeStatus, type SessionStatus } from './session-status.js';
 import { hooksOnlyForwardAllowed } from './spool-config.js';
@@ -180,7 +180,7 @@ export async function applyProjectPolicyLocked(
     dirty ||= result.changed;
   }
   if (policy.otel.kind === 'discard') {
-    const result = await discardBacklogLocked(sessionId, status, OTEL_STREAMS);
+    const result = await discardBacklogLocked(sessionId, status, [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]);
     otelBytes = result.bytes;
     dirty ||= result.changed;
   }
@@ -409,5 +409,48 @@ export async function snapshotPendingHookRecords(
       dropped,
       filtered: Boolean(gate.onlyProject),
     };
+  });
+}
+
+export interface PendingNdjsonBatch {
+  /** Project the session is bound to; sent as `X-CodeMie-Project`. */
+  project: string;
+  /** Cursor the snapshot was taken from — pass it back when acknowledging. */
+  cursor: number;
+  /** Complete, newline-terminated NDJSON records that may be sent. */
+  records: string[];
+  /** Exact number of source bytes consumed, including the trailing newline of the last record. */
+  byteLength: number;
+}
+
+/**
+ * Consistent snapshot of the complete masked-JSON NDJSON records pending for one OTEL JSON stream.
+ * Cuts at the last newline byte so an incomplete trailing record stays pending.
+ * Must NOT be called while already holding the session lock.
+ */
+export async function snapshotPendingNdjsonRecords(
+  sessionId: string,
+  stream: SpoolStream
+): Promise<PendingNdjsonBatch | null> {
+  return withSessionLock(sessionId, async () => {
+    const status = await readStatus(sessionId);
+    if (!status) return null;
+    const gate = await gateStreamLocked(sessionId, status, stream);
+    if (!gate) return null;
+
+    const cursor = status.cursors[stream];
+    const pending = await readRange(sessionId, stream, cursor, gate.limit);
+    if (!pending) return null;
+
+    const lastNewline = pending.lastIndexOf(NEWLINE);
+    if (lastNewline < 0) return null;
+
+    const complete = pending.subarray(0, lastNewline + 1);
+    const records = complete
+      .toString('utf-8')
+      .split('\n')
+      .filter((line) => line.trim().length > 0);
+
+    return { project: gate.project, cursor, records, byteLength: complete.length };
   });
 }

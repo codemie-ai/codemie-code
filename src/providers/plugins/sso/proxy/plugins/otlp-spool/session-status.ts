@@ -42,7 +42,10 @@ export interface SessionStatus {
 }
 
 export function createStatus(): SessionStatus {
-  return { cursors: { hooks: 0, logs: 0, metrics: 0, traces: 0 }, waitTicks: 0 };
+  return {
+    cursors: { hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 },
+    waitTicks: 0,
+  };
 }
 
 function toOffset(value: unknown): number {

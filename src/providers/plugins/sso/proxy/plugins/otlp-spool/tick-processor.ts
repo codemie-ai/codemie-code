@@ -3,7 +3,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
 import { withSessionLock } from './session-lock.js';
 import { readStatus, writeStatus } from './session-status.js';
-import { OTEL_STREAMS } from './spool-paths.js';
+import { OTEL_STREAMS, OTEL_JSON_STREAMS } from './spool-paths.js';
 import { hasPendingData, readSpoolState } from './spool-state.js';
 import { applyProjectPolicyLocked } from './spool-io.js';
 import { gateDecision } from './completeness-gate.js';
@@ -79,7 +79,7 @@ export async function processSessionTick(
       // Accepted trade-off: a tracked session whose first hook arrives after the
       // wait limit loses the OTEL bytes received before that.
       if (pending) {
-        for (const stream of OTEL_STREAMS) {
+        for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
           status.cursors[stream] = Math.max(status.cursors[stream], spool.streams[stream].size);
         }
         await writeStatus(sessionId, status);

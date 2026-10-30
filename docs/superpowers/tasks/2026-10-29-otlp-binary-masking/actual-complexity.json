@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated": "2026-10-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 15,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches three distinct components across the full OTLP pipeline: the CLI connector that writes Claude Code's exporter env vars (claude-code-otlp.ts, protocol switched to http/json plus OTEL_LOG_TOOL_DETAILS), the proxy ingestion handler (otlp.plugin.ts, new handleOtlpJson branch alongside the existing byte-blind handleOtlpBinary path), and the otlp-spool subsystem (spool-paths.ts, spool-io.ts, spool-state.ts, session-status.ts, tick-processor.ts, forwarder.ts) extended with a parallel OtelJsonStream type, new PendingNdjsonBatch/snapshotPendingNdjsonRecords abstractions, and a forwardOtelJsonStream path."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent existed for masking native OTEL telemetry (only hook events were masked previously, per the prior commit 54e24e7); the fix reuses the existing maskSecretsDeep utility directly in handleOtlpJson, which is standard, but the work is explicitly security-sensitive (EPMCDME-16383, secrets leaking into analytics attrs) and required a coordinated protocol switch (protobuf to http/json) across the CLI connector, proxy ingestion, spool format, and forwarder content-type."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "15 files changed total per diffstat (14 modified, 1 new test file: otlp.plugin.otel-json.test.ts), spanning src/cli/commands/proxy/connectors/ and the otlp-spool subsystem under src/providers/plugins/sso/proxy/plugins/ — maps to the 11-15 file band (XL)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four layers touched: Infrastructure/CLI (claude-code-otlp.ts env config), Service/API (otlp.plugin.ts request handling), DB-Persistence (otlp-spool file format extended with new logsJson/metricsJson/tracesJson streams and cursor fields), and External (forwarder.ts posting application/json to the analytics backend) — matches the L criteria of 3-4 layers including persistence."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): the change is explicitly a security fix (masking secrets in forwarded OTLP telemetry) with no prior precedent for the native-OTEL-JSON path in this codebase."
+  ],
+  "split_recommendation": null
+}

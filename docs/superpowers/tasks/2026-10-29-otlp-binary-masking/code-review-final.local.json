@@ -1,0 +1,118 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two critical defects break the feature end-to-end: otelGroupPresent/gateDecision never recognize the new logsJson/metricsJson/tracesJson streams, so masked OTEL JSON is never forwarded for any session that also has hooks (the common case), and a JSON parse/mask failure in handleOtlp silently falls through and spools the original unmasked bytes with no log signal. Six further major findings: a duplicate-send bug in forwardOtelJsonStream, a cursor-drain gap in tick-processor's skip branch, a reconnect/disconnect regression for already-connected users, a stale test fixture, a missing test for the new masking path, and an unrelated .codemie/codemie-cli.config.json profile edit mixed into the changeset (standards-flagged, blocking). Standards review spent its budget (truncated), capping confidence at medium; 6 other blind-lens claims (session-id validation skip, NDJSON-stall risk, filtered-flag intent, policy-branch completeness, status backfill, shared-regex lastIndex) were checked against the real code and dismissed as false positives.",
+  "confidence": "medium",
+  "risk_flags": ["security", "breaking-change"],
+  "business_review": [
+    { "kind": "spec", "item": "claude-code-otlp.ts writes OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json'", "status": "pass", "notes": "claude-code-otlp.ts:107, CODEMIE_ENV_FIXED_VALUES literal changed from 'http/protobuf' to 'http/json'" },
+    { "kind": "spec", "item": "handleOtlp parses, masks (maskSecretsDeep, no skip-list), and NDJSON-spools any application/json OTLP POST", "status": "pass", "notes": "otlp.plugin.ts:300-322 branches on content-type, calls maskSecretsDeep with no skip-keys, appends via appendSpool" },
+    { "kind": "spec", "item": "Any non-JSON OTLP POST is spooled via the existing byte-blind path, unchanged", "status": "pass", "notes": "otlp.plugin.ts:325-348 untouched latin1/UUID extraction + appendSpool path" },
+    { "kind": "spec", "item": "Both .bin and .ndjson spool extensions coexist per OTEL stream, both discoverable by listing/cleanup", "status": "pass", "notes": "spool-paths.ts:39-48 STREAM_EXT adds *.ndjson; ALL_SUFFIXES derives from it so listSessionIds/sweep pick up both" },
+    { "kind": "spec", "item": ".ndjson streams forward one POST per record; .bin streams keep forwarding one accumulated POST", "status": "pass", "notes": "forwarder.ts forwardOtelJsonStream (new) loops per record; forwardOtelStream (bin) untouched" },
+    { "kind": "spec", "item": "JSON OTEL telemetry masked before leaving the spool; protobuf spooled/forwarded exactly as before", "status": "pass", "notes": "maskSecretsDeep applied before appendSpool in the JSON branch; protobuf branch byte-for-byte unchanged" },
+    { "kind": "spec", "item": "OtlpAgentAdapter.limitPayload and the backend are untouched", "status": "pass", "notes": "no reference to limitPayload or OtlpAgentAdapter.ts anywhere in the diff" },
+    { "kind": "spec", "item": "Non-goal: no user-facing or config-driven protocol toggle, only the connector's fixed default changes", "status": "pass", "notes": "only the CODEMIE_ENV_FIXED_VALUES literal changed; no new flag/override/config surface" },
+    { "kind": "spec", "item": "Non-goal: decoding/parsing/masking protobuf payloads is out of scope", "status": "pass", "notes": "protobuf/no-content-type branch performs no parsing or masking, consistent with the non-goal" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "diff_base resolves to HEAD; the review range has zero commits — everything is uncommitted working-tree changes, so commit-subject format cannot be checked yet." },
+    { "kind": "code-quality", "status": "partial", "notes": "New OTLP masking code follows code-quality.md conventions, but the changeset carries an unrelated .codemie/codemie-cli.config.json profile edit, violating the no-mixed-changes rule — see CR-001." },
+    { "kind": "security", "status": "na", "notes": "No security guide ArtifactRef was supplied, so the formal check is na; manual review found no new issue beyond the already-documented, accepted protobuf-fallback residual risk." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": ".codemie/codemie-cli.config.json",
+      "title": "Unrelated profile-switch mixed into feature changeset",
+      "problem": "The changeset bundles an edit to .codemie/codemie-cli.config.json switching activeProfile/profile name/workspace.codeMieProject from 'epm-cdme' to 'epm-cdme-cp', unrelated to the OTLP binary-masking feature.",
+      "impact": "Mixes an unrelated local/environment profile switch into this feature's history, breaking commit atomicity and complicating review and future revert of the masking change.",
+      "recommendation": "Revert this file to its previously committed value, or stage/commit it separately with its own rationale, before finalizing this change."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/__tests__/claude-code-otlp.test.ts",
+      "line": 70,
+      "title": "Test fixture hardcodes stale OTLP protocol",
+      "problem": "buildExpectedEnv() still sets OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', while the source literal it asserts against now resolves to 'http/json' (claude-code-otlp.ts:107).",
+      "impact": "Every exact-equality assertion built from buildExpectedEnv (lines 143, 304, 485, 564, 851, 877) now compares against a stale expected value and will fail.",
+      "recommendation": "Update buildExpectedEnv's OTEL_EXPORTER_OTLP_PROTOCOL literal to 'http/json' to match the new default."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/claude-code-otlp.ts",
+      "line": 107,
+      "title": "Protocol literal change breaks existing connections",
+      "problem": "CODEMIE_ENV_FIXED_VALUES.OTEL_EXPORTER_OTLP_PROTOCOL changed from 'http/protobuf' to 'http/json' with no accommodation for users already connected under the old value; isCodemieOwnedEnvValue(key, value) only matches the new literal exactly (line 146).",
+      "impact": "A previously-connected user's settings.json still has 'http/protobuf' stored. Their next connect sees currentVal !== desiredVal (line 465) and fails with a 'conflicting env values' error requiring --force; their next disconnect no longer recognizes the stale value as codemie-owned and leaves it orphaned in settings.json.",
+      "recommendation": "Treat 'http/protobuf' as also codemie-owned for this key in isCodemieOwnedEnvValue (a small historical-values check), so reconnect and disconnect both still recognize and migrate/clean up the pre-upgrade value."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.ts",
+      "line": 306,
+      "title": "Partial NDJSON batch failure resends sent records",
+      "problem": "forwardOtelJsonStream loops batch.records calling send() per record, but only calls advanceCursor once, after the whole loop succeeds (line 313).",
+      "impact": "If send() succeeds for the first N records in a batch and then fails, the cursor stays at the pre-batch position; the next tick re-snapshots from the same cursor and resends the already-delivered records, duplicating OTEL JSON data at the backend.",
+      "recommendation": "Advance the cursor incrementally after each record's successful send (tracking bytes sent so far), the same way forwardHooks/forwardOtelStream acknowledge only what was actually confirmed."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-state.ts",
+      "line": 71,
+      "title": "otelGroupPresent ignores the new JSON OTEL streams",
+      "problem": "otelGroupPresent(spool) only checks OTEL_STREAMS (the .bin streams) and was not updated to also check OTEL_JSON_STREAMS (logsJson/metricsJson/tracesJson).",
+      "impact": "Under the new http/json default protocol, OTEL data lands only in the json streams, so otelGroupPresent always reports otel=false. gateDecision then never returns 'send' for a session that also has hooks — it returns 'hooks-only-force' instead, which forwardSession short-circuits before ever reaching the OTEL_STREAMS/OTEL_JSON_STREAMS forwarding loops. The masked OTEL JSON telemetry this feature exists to deliver is never sent to the backend for any session with hook data, which is the common case.",
+      "recommendation": "Include OTEL_JSON_STREAMS in otelGroupPresent's presence check: [...OTEL_STREAMS, ...OTEL_JSON_STREAMS].some((s) => hasData(spool.streams[s]))."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/tick-processor.ts",
+      "line": 82,
+      "title": "'skip' branch leaves JSON OTEL cursors undrained",
+      "problem": "The 'skip' decision branch only force-advances cursors for OTEL_STREAMS (for (const stream of OTEL_STREAMS)), not for OTEL_JSON_STREAMS.",
+      "impact": "An OTEL-only session past the wait limit whose data lives in the json streams never has those cursors advanced to EOF, so the json spool files never read as drained and the sweeper can never delete the session — a permanent spool leak for json-only sessions.",
+      "recommendation": "Iterate [...OTEL_STREAMS, ...OTEL_JSON_STREAMS] in the skip branch, matching the discard-branch fix already made in applyProjectPolicyLocked."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp.plugin.ts",
+      "line": 319,
+      "title": "Mask failure silently leaks unmasked payload",
+      "problem": "The catch block around JSON.parse/maskSecretsDeep/appendSpool (lines 319-322) swallows every error with no logger call, then falls through to the byte-blind branch below, which re-extracts a session id from the original request bytes and spools them unmasked through appendSpool(sessionId, signal, bytes) — the .bin path.",
+      "impact": "Any malformed body, masking exception, or disk-write error on the new JSON path causes the original, unmasked JSON payload to be spooled and later forwarded to the backend as if it were protobuf, with zero diagnostic trail — defeating the masking guarantee this feature exists to provide, beyond the explicitly-accepted protobuf residual risk.",
+      "recommendation": "Log the parse/mask/spool failure (sanitized) before falling through, and do not let a masking failure fall through to the unmasked byte-blind path — either retry, drop the record, or require masking to have succeeded before any spool write."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp.plugin.ts",
+      "title": "No test covers the masked-JSON OTLP path",
+      "problem": "No test posts an application/json OTLP body through handleOtlp (or exercises OTEL_JSON_STREAM_BY_SIGNAL / forwardOtelJsonStream) and asserts the spooled/forwarded record is masked and routed to the right signal.",
+      "impact": "A regression in maskSecretsDeep's application on this path, an OTEL_JSON_STREAM_BY_SIGNAL/OTEL_SIGNAL_BY_JSON_STREAM mismatch, or a forwardOtelJsonStream mis-slice would ship with no test catching it — the exact class of defect found in CR-004, CR-005 and CR-007 above.",
+      "recommendation": "Add a test posting a secret-bearing application/json OTLP body to handleOtlp and asserting the masked, correctly-routed record on disk/forwarded, covering the gap forwarder.test.ts's hooks-only fixtures leave open."
+    }
+  ]
+}

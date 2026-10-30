@@ -69,7 +69,7 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
     CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
     OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/otlp`,
     OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${state.gatewayKey}`,
-    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
     OTEL_LOGS_EXPORTER: 'otlp',
     OTEL_METRICS_EXPORTER: 'otlp',
     OTEL_TRACES_EXPORTER: 'otlp',
@@ -512,6 +512,21 @@ describe('claude-code-otlp connector', () => {
         const result = await writeClaudeCodeOtlpConfig();
 
         expect(result.written).toBe(true);
+      });
+
+      it('(CR-003) does not require force when OTEL_EXPORTER_OTLP_PROTOCOL still holds the pre-upgrade http/protobuf value, and migrates it to http/json', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ env: { OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' } }, null, 2)
+        );
+
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.written).toBe(true);
+        const merged = await readJson(settingsPath);
+        expect(merged.env.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/json');
       });
 
       it('overwrites a malformed (non-array) existing hooks event value when force is true', async () => {
@@ -1272,6 +1287,23 @@ describe('claude-code-otlp connector', () => {
         const result = await removeClaudeCodeOtlpConfig();
 
         expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+        const final = await readJson(settingsPath);
+        expect(final.env).toEqual({ FOO: 'bar' });
+        expect(final.theme).toBe('dark');
+      });
+
+      it('(CR-003) strips a pre-upgrade http/protobuf OTEL_EXPORTER_OTLP_PROTOCOL value on disconnect', async () => {
+        const settingsPath = await seedSettings(
+          JSON.stringify({
+            theme: 'dark',
+            env: { FOO: 'bar', OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' },
+            hooks: { Stop: [codemieHookGroup()] },
+          })
+        );
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ mode: 'full', removed: true, path: settingsPath });
         const final = await readJson(settingsPath);
         expect(final.env).toEqual({ FOO: 'bar' });
         expect(final.theme).toBe('dark');
