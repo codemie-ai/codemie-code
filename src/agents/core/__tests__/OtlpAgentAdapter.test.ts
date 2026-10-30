@@ -89,9 +89,11 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
     }
     return { decision: 'forward', payload: input.payload };
   }
-  protected async resolveAgentFields(): Promise<Record<string, unknown>> {
+  protected async resolveAgentFields(input: FakeInput): Promise<Record<string, unknown>> {
+    this.resolvedWith.push(input);
     return { platform: 'fake-platform' };
   }
+  resolvedWith: FakeInput[] = [];
   protected resolveEventType(event: Record<string, unknown>): string {
     return event['kind'] === 'start' ? 'fake.start' : 'fake.event';
   }
@@ -270,6 +272,12 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     const [own, empty] = forwarded();
     expect(own).toMatchObject({ git_branch: 'own-branch', repo_remote: 'own/remote' });
     expect(empty).toMatchObject({ git_branch: 'main', repo_remote: 'org/repo' });
+  });
+
+  it('passes the parsed hook input to resolveAgentFields', async () => {
+    await run({ cwd: '/input-repo' });
+    expect(adapter.resolvedWith).toHaveLength(1);
+    expect(adapter.resolvedWith[0]).toMatchObject({ cwd: '/input-repo' });
   });
 
   it('lets agent fields override everything else', async () => {

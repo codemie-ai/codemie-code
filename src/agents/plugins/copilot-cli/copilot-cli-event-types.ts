@@ -18,6 +18,8 @@ export interface CopilotWorkspaceManifest {
   hostType?: string;
   branch?: string;
   name?: string;
+  /** Host application that created the session (`github/cli`, `github/autopilot` for the desktop app, `vscode-agent-host` for VS Code Chat). */
+  clientName?: string;
   /** Epoch ms. */
   createdAt?: number;
   /** Epoch ms. */
@@ -33,6 +35,7 @@ export interface RawWorkspaceYaml {
   host_type?: string;
   branch?: string;
   name?: string;
+  client_name?: string;
   created_at?: string;
   updated_at?: string;
 }

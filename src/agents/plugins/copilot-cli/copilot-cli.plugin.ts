@@ -9,10 +9,13 @@ import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
+  PINNED_NATIVE_SESSION_ENV,
 } from './copilot-cli.constants.js';
 import { recordRolloutCorrelation } from '../codex/codex.correlation.js';
-import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
+import { getCopilotSessionStateRoot, sameDirectory } from './copilot-cli.paths.js';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   assertExplicitCopilotModelAllowed,
@@ -28,14 +31,45 @@ export {
 // Recommended version (one non-blocking notice on mismatch) and the hard gate
 // below which the agent refuses to launch. Rule: the minimum is the previously
 // recommended version — when bumping the former, move its old value to the latter.
-const COPILOT_SUPPORTED_VERSION = '1.0.83';
-const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
+const COPILOT_SUPPORTED_VERSION = '1.0.92';
+const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.83';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 
+const CONNECTOR_HOOK_FILE = join('hooks', 'codemie-copilot-cli-hooks.json');
+
+/**
+ * With an explicit COPILOT_HOME the user's connector hook file (in the default home) is not
+ * loaded, so a managed session would not reach CLI Analytics. Writes the CodeMie-owned hook
+ * file into the override when it is missing or different. Never deletes anything: a stale
+ * copy is neutralised by the hook-time connector scope check.
+ */
+export async function syncConnectorHookFile(copilotHome: string): Promise<void> {
+  const defaultHome = join(homedir(), '.copilot');
+  if (sameDirectory(copilotHome, defaultHome) || !existsSync(join(defaultHome, CONNECTOR_HOOK_FILE))) {
+    return;
+  }
+  try {
+    const { buildHookFileContent } = await import('../../../cli/commands/proxy/connectors/copilot-cli-otlp.js');
+    const { writeAtomically } = await import('../../../cli/commands/proxy/connectors/vscode.js');
+    const target = join(copilotHome, CONNECTOR_HOOK_FILE);
+    const content = `${JSON.stringify(buildHookFileContent(), null, 2)}\n`;
+    let current: string | undefined;
+    try {
+      current = await readFile(target, 'utf-8');
+    } catch {
+      current = undefined;
+    }
+    if (current !== content) {
+      await writeAtomically(target, content);
+    }
+  } catch (error) {
+    logger.warn(`[copilot-cli] could not sync CodeMie hook file into COPILOT_HOME: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // Flags that make Copilot pick (or resume) a session itself; CodeMie must not add --session-id.
 const COPILOT_SESSION_SELECTION_FLAGS = ['--session-id', '--resume', '-r', '--continue', '--connect'];
-const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
   return {
@@ -188,11 +222,10 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       delete env.GITHUB_TOKEN;
       delete env.COPILOT_TOKEN;
 
-      if (!env.COPILOT_HOME) {
-        env.COPILOT_HOME = this.resolveDataPath();
-      }
-
-      await this.ensureDirectory(env.COPILOT_HOME);
+      const copilotHome = env.COPILOT_HOME || this.resolveDataPath();
+      env.COPILOT_HOME = copilotHome;
+      await this.ensureDirectory(copilotHome);
+      await syncConnectorHookFile(copilotHome);
 
       const availableModels = (env.CODEMIE_COPILOT_AVAILABLE_MODELS || '')
         .split(',')

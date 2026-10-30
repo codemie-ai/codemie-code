@@ -522,6 +522,25 @@ describe('loadNativeSessions — ownership gate for managed Copilot CLI', () => 
   });
 });
 
+describe('realNativeDeps.parse — copilot-desktop', () => {
+  it('parses a copilot-desktop session with the copilot-cli session adapter', async () => {
+    const { AgentRegistry } = await import('../../../../agents/registry.js');
+    const { realNativeDeps } = await import('../native-loader.js');
+    const parseSessionFile = vi.fn(async () => ({ sessionId: 'd1' }));
+    const spy = vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ parseSessionFile }) } as never);
+
+    try {
+      const parsed = await realNativeDeps.parse('copilot-desktop', '/logs/d1/events.jsonl', 'd1');
+
+      expect(spy).toHaveBeenCalledWith('copilot-cli');
+      expect(parseSessionFile).toHaveBeenCalledWith('/logs/d1/events.jsonl', 'd1');
+      expect(parsed).toEqual({ sessionId: 'd1' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('realNativeDeps.hasOwnershipMarker — ownership index excludes external-resume records (EPMCDME-12992)', () => {
   const ownedTranscript = join(mockSessionsDir, 'owned.jsonl');
   const externalTranscript = join(mockSessionsDir, 'external.jsonl');

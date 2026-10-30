@@ -13,7 +13,12 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
 import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
 
-const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '' }));
+const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '' }));
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => mocks.home || actual.homedir() };
+});
 
 vi.mock('../vscode.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vscode.js')>()),
@@ -25,6 +30,7 @@ vi.mock('@/utils/project-root.js', () => ({
 }));
 
 import {
+  getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
   removeCopilotChatOtlpConfig,
@@ -87,34 +93,94 @@ describe('copilot-chat-otlp connector', () => {
 
       expect(result.allowlist).toEqual([]);
       expect(result.hookFilePath).toBe(getCopilotChatHookFilePath());
-      const hookFile = JSON.parse(await readFile(result.hookFilePath, 'utf-8')) as Record<string, unknown>;
-      expect(Object.keys(hookFile)).toHaveLength(result.hookEvents);
+      const hookFile = JSON.parse(await readFile(result.hookFilePath, 'utf-8')) as {
+        hooks: Record<string, Array<Record<string, unknown>>>;
+      };
+      expect(Object.keys(hookFile)).toEqual(['hooks']);
+      expect(Object.keys(hookFile.hooks)).toHaveLength(result.hookEvents);
+      for (const entries of Object.values(hookFile.hooks)) {
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({ type: 'command', command: expect.stringContaining('hook --agent') });
+        expect(entries[0]).not.toHaveProperty('hooks');
+      }
 
       const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
       expect(settings['editor.fontSize']).toBe(14);
-      expect(settings[HOOK_LOCATIONS_KEY]).toEqual([result.hookFilePath]);
+      expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ [result.hookFilePath]: true });
       expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('keys the hook file ~/-relative (VS Code skips absolute and /-prefixed paths) and drops the legacy keys', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        const absoluteKey = getCopilotChatHookFilePath();
+        const slashKey = '/.codemie/hooks/copilot-chat-hooks.json';
+        await writeSettingsRaw(JSON.stringify({
+          [HOOK_LOCATIONS_KEY]: { [absoluteKey]: true, [slashKey]: true, '/other/hooks.json': true },
+        }));
+
+        await writeCopilotChatOtlpConfig();
+
+        const homeKey = '~/.codemie/hooks/copilot-chat-hooks.json';
+        expect(getCopilotChatHookFileLocationKey()).toBe(homeKey);
+        const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [homeKey]: true });
+
+        const result = await removeCopilotChatOtlpConfig();
+        expect(result.mode).toBe('full');
+        const after = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(after[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
+      } finally {
+        mocks.home = '';
+      }
+    });
+
+    it('disconnect removes a legacy /-prefixed key left by an earlier version', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        await writeSettingsRaw(JSON.stringify({
+          [HOOK_LOCATIONS_KEY]: { '/.codemie/hooks/copilot-chat-hooks.json': true, '/other/hooks.json': true },
+        }));
+
+        const result = await removeCopilotChatOtlpConfig();
+        expect(result.mode).toBe('full');
+        const after = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+        expect(after[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
+      } finally {
+        mocks.home = '';
+      }
     });
 
     it('creates settings.json when none exists', async () => {
       const result = await writeCopilotChatOtlpConfig();
 
       const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
-      expect(settings[HOOK_LOCATIONS_KEY]).toEqual([result.hookFilePath]);
+      expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ [result.hookFilePath]: true });
     });
 
     it('preserves other hook file locations and does not duplicate its own on reconnect', async () => {
-      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: ['/other/hooks.json'] }));
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
 
       const { hookFilePath } = await writeCopilotChatOtlpConfig();
       await writeCopilotChatOtlpConfig();
 
       const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
-      expect(settings[HOOK_LOCATIONS_KEY]).toEqual(['/other/hooks.json', hookFilePath]);
+      expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [hookFilePath]: true });
+    });
+
+    it('migrates a legacy array value to the object form, keeping other entries', async () => {
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: ['/other/hooks.json'] }));
+
+      const { hookFilePath } = await writeCopilotChatOtlpConfig();
+
+      const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
+      expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true, [hookFilePath]: true });
     });
 
     it('full disconnect removes only its own location, the hook file and disables the connector', async () => {
-      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: ['/other/hooks.json'] }));
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
       const { hookFilePath } = await writeCopilotChatOtlpConfig();
 
       const result = await removeCopilotChatOtlpConfig();
@@ -122,7 +188,7 @@ describe('copilot-chat-otlp connector', () => {
       expect(result).toMatchObject({ removed: true, mode: 'full' });
       expect(existsSync(hookFilePath)).toBe(false);
       const settings = JSON.parse(await readSettingsRaw()) as Record<string, unknown>;
-      expect(settings[HOOK_LOCATIONS_KEY]).toEqual(['/other/hooks.json']);
+      expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
       expect(await readScopeRecord()).toEqual({ enabled: false });
     });
   });
@@ -193,18 +259,18 @@ describe('copilot-chat-otlp connector', () => {
       expect(existsSync(getCopilotConnectorsConfigPath())).toBe(false);
     });
 
-    it('rejects a non-array chat.hookFilesLocations on connect without changing it', async () => {
-      const original = JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/some/dir': true } }, null, 2);
+    it('rejects a non-object chat.hookFilesLocations on connect without changing it', async () => {
+      const original = JSON.stringify({ [HOOK_LOCATIONS_KEY]: '/some/dir' }, null, 2);
       await writeSettingsRaw(original);
 
-      await expect(writeCopilotChatOtlpConfig()).rejects.toThrow(/not an array/);
+      await expect(writeCopilotChatOtlpConfig()).rejects.toThrow(/not an object/);
 
       expect(await readSettingsRaw()).toBe(original);
       expect(existsSync(getCopilotChatHookFilePath())).toBe(false);
     });
 
-    it('rejects a non-array chat.hookFilesLocations on disconnect without changing it', async () => {
-      const original = JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/some/dir': true } }, null, 2);
+    it('rejects a non-object chat.hookFilesLocations on disconnect without changing it', async () => {
+      const original = JSON.stringify({ [HOOK_LOCATIONS_KEY]: '/some/dir' }, null, 2);
       await writeSettingsRaw(original);
 
       await expect(removeCopilotChatOtlpConfig()).rejects.toBeInstanceOf(ConfigurationError);

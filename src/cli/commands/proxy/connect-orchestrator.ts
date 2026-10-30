@@ -752,7 +752,7 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
     } else {
       console.log(chalk.dim('  Tracked projects: all projects'));
     }
-    console.log(chalk.dim('  Managed `copilot-cli` launches are ignored by this adapter (no double counting).'));
+    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
     console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
     return { label, ok: true };
   } catch (error) {

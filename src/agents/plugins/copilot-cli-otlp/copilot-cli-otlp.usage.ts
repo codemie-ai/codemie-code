@@ -1,91 +1,176 @@
-import { createHash } from 'node:crypto';
-import type { CopilotUsageMessage } from '@/agents/plugins/copilot-cli/copilot-cli.usage.js';
+import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
+import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
+import { extractSlashCommand } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE } from './copilot-cli-otlp.request-usage.js';
 
-export const USAGE_REQUEST_EVENT_TYPE = 'agent.usage.request';
+export { stableEventId, USAGE_REQUEST_EVENT_TYPE };
 export const SESSION_SUMMARY_EVENT_TYPE = 'agent.session.summary';
 
-/**
- * Copilot reports `inputTokens` as the TOTAL prompt (OpenAI convention, cache reads and writes
- * included); the backend's `input_tokens` is the non-cached part only. Same peel-off as
- * `readCopilotCli` in `src/cli/commands/analytics/cost/usage-readers.ts`: cache writes are
- * clamped to the fresh input they were written from so an inconsistent rollup cannot bill more
- * cache creation than the prompt contained.
- */
-function toBackendTokens(usage: CopilotUsageMessage['usage']): {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheCreation: number;
-  thinking: number;
+/** Running totals a summary is built from; also what the `agentStop` cursor persists. */
+export interface SummaryCounters {
+  toolCalls: number;
+  toolErrors: number;
+  apiCalls: number;
+  turns: number;
+  models: Record<string, number>;
+}
+
+export interface SummaryDetails {
+  tools?: Record<string, { calls: number; errors: number }>;
+  filesWritten: string[];
+  filesEdited: string[];
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  /** Slash commands in call order, repeats kept, no leading slash (same contract as the Claude summary). */
+  commands?: string[];
+}
+
+export const EMPTY_COUNTERS: SummaryCounters = { toolCalls: 0, toolErrors: 0, apiCalls: 0, turns: 0, models: {} };
+
+/** Counters of one slice of the transcript, plus the usage rows built from it. */
+export function summarizeSlice(
+  sessionId: string,
+  events: CopilotEvent[],
+  mode: 'full' | 'incremental',
+  initialModel?: string,
+  seedOpenCalls?: Record<string, OpenToolCall>
+): {
+  counters: SummaryCounters;
+  details: SummaryDetails;
+  rows: Record<string, unknown>[];
+  partial: boolean;
+  lastModel?: string;
+  openCalls: Record<string, OpenToolCall>;
 } {
-  const cacheRead = usage.cacheReadTokens ?? 0;
-  const freshInput = Math.max(0, (usage.inputTokens ?? 0) - cacheRead);
-  const cacheCreation = Math.min(usage.cacheWriteTokens ?? 0, freshInput);
+  const { rows, partial, lastModel } = buildUsageRows(sessionId, events, mode, initialModel);
+  const activity = extractCopilotToolActivity(events, seedOpenCalls);
+  const mainRequests = new Set<string>();
+  const models: Record<string, number> = {};
+  for (const row of rows) {
+    if (row['scope_kind'] !== 'main') continue;
+    const requestId = String(row['request_id']);
+    if (mainRequests.has(requestId)) continue;
+    mainRequests.add(requestId);
+    const model = String(row['model']);
+    models[model] = (models[model] ?? 0) + 1;
+  }
+
+  let toolCalls = 0;
+  let toolErrors = 0;
+  const tools: Record<string, { calls: number; errors: number }> = {};
+  for (const [name, count] of Object.entries(activity.tools)) {
+    const errors = activity.toolStatus[name]?.failure ?? 0;
+    tools[name] = { calls: count, errors };
+    toolCalls += count;
+    toolErrors += errors;
+  }
+
+  const commands: string[] = [];
+  for (const e of events) {
+    if (e.type !== 'user.message') continue;
+    const data = (e.data ?? {}) as { content?: string; transformedContent?: string };
+    const command = extractSlashCommand(data.content, data.transformedContent);
+    if (command) commands.push(command);
+  }
+
+  const written = new Set(activity.fileOperations.filter((o) => o.type === 'write').map((o) => o.path));
+  const edited = new Set(activity.fileOperations.filter((o) => o.type === 'edit').map((o) => o.path));
+  let linesAdded: number | null = null;
+  let linesRemoved: number | null = null;
+  const shutdown = [...events].reverse().find((e) => e.type === 'session.shutdown')?.data as CopilotShutdownData | undefined;
+  if (shutdown?.codeChanges) {
+    linesAdded = shutdown.codeChanges.linesAdded ?? null;
+    linesRemoved = shutdown.codeChanges.linesRemoved ?? null;
+    for (const path of shutdown.codeChanges.filesModified ?? []) {
+      if (!written.has(path)) edited.add(path);
+    }
+  }
+
   return {
-    input: freshInput - cacheCreation,
-    output: usage.outputTokens ?? 0,
-    cacheRead,
-    cacheCreation,
-    thinking: usage.reasoningTokens ?? 0,
+    counters: {
+      toolCalls,
+      toolErrors,
+      apiCalls: mainRequests.size,
+      turns: events.filter((e) => e.type === 'user.message').length,
+      models,
+    },
+    details: { tools, filesWritten: [...written], filesEdited: [...edited], linesAdded, linesRemoved, commands: [...commands] },
+    rows,
+    partial,
+    lastModel,
+    openCalls: activity.openCalls,
   };
 }
 
-/**
- * One `agent.usage.request` per model in the session rollup. Copilot records usage per model for
- * the whole session, not per request, so `request_id` is derived from the session and model: a
- * re-sent sessionEnd then carries the same identity instead of inflating the totals.
- * Copilot exposes no cache-TTL split, so cache writes go to the 5m bucket.
- */
-export function buildUsageRequestEvents(
-  sessionId: string,
-  messages: CopilotUsageMessage[],
-  timestamp: string
-): Record<string, unknown>[] {
-  return messages.map((message) => {
-    const tokens = toBackendTokens(message.usage);
-    return {
-      type: USAGE_REQUEST_EVENT_TYPE,
-      session_id: sessionId,
-      request_id: `${sessionId}:${message.model}`,
-      model_raw: message.model,
-      model: message.model,
-      input_tokens: tokens.input,
-      cache_creation_5m_tokens: tokens.cacheCreation,
-      cache_creation_1h_tokens: 0,
-      cache_read_tokens: tokens.cacheRead,
-      output_tokens: tokens.output,
-      thinking_tokens: tokens.thinking,
-      timestamp,
-    };
-  });
+export function addCounters(a: SummaryCounters, b: SummaryCounters): SummaryCounters {
+  const models = { ...a.models };
+  for (const [model, count] of Object.entries(b.models)) models[model] = (models[model] ?? 0) + count;
+  return {
+    toolCalls: a.toolCalls + b.toolCalls,
+    toolErrors: a.toolErrors + b.toolErrors,
+    apiCalls: a.apiCalls + b.apiCalls,
+    turns: a.turns + b.turns,
+    models,
+  };
 }
 
-/** Minimal final summary: lets the backend stamp the session's end and primary model. */
-export function buildSessionSummaryEvent(
-  sessionId: string,
-  messages: CopilotUsageMessage[],
-  startedAt: string,
-  endedAt: string
-): Record<string, unknown> {
-  const diff = Date.parse(endedAt) - Date.parse(startedAt);
-  const ranked = [...messages].sort((a, b) => (b.requests ?? 0) - (a.requests ?? 0));
-  const primary = ranked[0]?.model ?? '';
+export function mergeDetails(a: SummaryDetails, b: SummaryDetails): SummaryDetails {
+  const tools: Record<string, { calls: number; errors: number }> = { ...(a.tools ?? {}) };
+  for (const [name, t] of Object.entries(b.tools ?? {})) {
+    const prior = tools[name] ?? { calls: 0, errors: 0 };
+    tools[name] = { calls: prior.calls + t.calls, errors: prior.errors + t.errors };
+  }
+  const written = new Set([...a.filesWritten, ...b.filesWritten]);
+  const edited = new Set([...a.filesEdited, ...b.filesEdited].filter((p) => !written.has(p)));
+  return {
+    tools,
+    filesWritten: [...written],
+    filesEdited: [...edited],
+    linesAdded: b.linesAdded ?? a.linesAdded,
+    linesRemoved: b.linesRemoved ?? a.linesRemoved,
+    commands: [...(a.commands ?? []), ...(b.commands ?? [])],
+  };
+}
+
+export function buildSessionSummaryEvent(input: {
+  sessionId: string;
+  phase: 'incremental' | 'final';
+  counters: SummaryCounters;
+  details: SummaryDetails;
+  startedAt: string;
+  endedAt: string;
+  usagePartial: boolean;
+}): Record<string, unknown> {
+  const { sessionId, phase, counters, details, startedAt, endedAt } = input;
+  const diff = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : NaN;
+  const ranked = Object.entries(counters.models).sort((a, b) => b[1] - a[1]).map(([model]) => model);
+  const filesChanged = new Set([...details.filesWritten, ...details.filesEdited]);
   return {
     type: SESSION_SUMMARY_EVENT_TYPE,
     session_id: sessionId,
-    timestamp: endedAt,
-    is_final: true,
+    timestamp: endedAt || undefined,
+    event_id: stableEventId(SESSION_SUMMARY_EVENT_TYPE, sessionId, `${phase}:${endedAt}`),
+    is_final: phase === 'final',
     started_at: startedAt,
-    ended_at: endedAt,
+    ended_at: endedAt || null,
     duration_ms: Number.isFinite(diff) && diff >= 0 ? diff : null,
-    primary_model: primary,
-    models: ranked.map((m) => m.model),
+    api_calls: counters.apiCalls,
+    tool_calls: counters.toolCalls,
+    tool_errors: counters.toolErrors,
+    tool_results: counters.toolCalls,
+    ...(details.tools ? { tools: details.tools } : {}),
+    commands: details.commands ?? [],
+    primary_command: details.commands?.[0] ?? '',
+    turns: counters.turns,
+    models: ranked,
+    primary_model: ranked[0] ?? '',
+    lines_added: details.linesAdded,
+    lines_removed: details.linesRemoved,
+    files_changed: filesChanged.size,
+    files_written: details.filesWritten.length,
+    files_edited: details.filesEdited.length,
+    usage_partial: input.usagePartial,
   };
-}
-
-/** Stable across re-runs: the backend dedups on (type, session_id, event_id). */
-export function stableEventId(type: string, sessionId: string, discriminator: string): string {
-  return createHash('sha256').update(`${type}\0${sessionId}\0${discriminator}`).digest('hex').slice(0, 32);
 }
 
 /**
@@ -93,29 +178,42 @@ export function stableEventId(type: string, sessionId: string, discriminator: st
  * `agent.session.end` event. Reused verbatim so deferred events carry the same user, project,
  * repo and branch as the lifecycle events, without the daemon resolving anything itself.
  */
-const TEMPLATE_FIELDS = [
+export const TEMPLATE_FIELDS = [
   'user_email', 'developer_name', 'identity_source', 'codemie_project_name', 'codemie_cli_version',
-  'git_branch', 'repo_remote', 'story_id', 'story_source', 'platform', 'client_version', 'cwd', 'schema_version',
+  'git_branch', 'repo_remote', 'story_id', 'story_source', 'platform', 'client_version', 'entrypoint', 'cwd', 'schema_version',
 ] as const;
 
-/** Wire-ready deferred events (usage per model + final summary) for one finished session. */
+/** Wire-ready deferred events (every usage row + the final summary) for one finished session, built from scratch. */
 export function buildDeferredUsageEvents(
   template: Record<string, unknown>,
-  messages: CopilotUsageMessage[],
-  startedAt: string,
-  endedAt: string
+  events: CopilotEvent[],
+  fallbackClientVersion = '',
+  truncated = false
 ): Record<string, unknown>[] {
   const sessionId = String(template['session_id'] ?? '');
   const common: Record<string, unknown> = {};
   for (const key of TEMPLATE_FIELDS) {
     if (template[key] !== undefined) common[key] = template[key];
   }
-  const raw = [
-    ...buildUsageRequestEvents(sessionId, messages, endedAt),
-    buildSessionSummaryEvent(sessionId, messages, startedAt, endedAt),
-  ];
-  return raw.map((event) => {
-    const discriminator = String(event['request_id'] ?? 'summary');
-    return { ...common, ...event, event_id: stableEventId(String(event['type']), sessionId, discriminator) };
-  });
+  if (!common['client_version'] && fallbackClientVersion) common['client_version'] = fallbackClientVersion;
+
+  const slice = summarizeSlice(sessionId, events, 'full');
+  const start = events.find((e) => e.type === 'session.start')?.data as { startTime?: string } | undefined;
+  const lastShutdown = [...events].reverse().find((e) => e.type === 'session.shutdown');
+  const endedAt = lastShutdown?.timestamp ?? '';
+  // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
+  const outgoing: Record<string, unknown>[] = [...slice.rows];
+  if (!truncated) {
+    outgoing.push(buildSessionSummaryEvent({
+      sessionId,
+      phase: 'final',
+      counters: slice.counters,
+      details: slice.details,
+      startedAt: start?.startTime ?? events[0]?.timestamp ?? endedAt,
+      endedAt,
+      usagePartial: slice.partial,
+    }));
+  }
+
+  return outgoing.map((event) => ({ ...common, ...event }));
 }

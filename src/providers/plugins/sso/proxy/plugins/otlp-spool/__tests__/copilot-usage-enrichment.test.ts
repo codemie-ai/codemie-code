@@ -63,7 +63,7 @@ const startLine = JSON.stringify({ type: 'session.start', timestamp: '2026-10-20
 
 let dir: string;
 let eventsFile: string;
-const savedEnv = { home: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME };
+const savedEnv = { home: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOME, userHome: process.env.HOME, userProfile: process.env.USERPROFILE };
 
 async function spooled(): Promise<Record<string, unknown>[]> {
   let text = '';
@@ -85,9 +85,12 @@ function fakeClock() {
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'cop-enrich-'));
   process.env.CODEMIE_HOME = join(dir, 'codemie');
-  process.env.COPILOT_HOME = join(dir, 'copilot');
-  await mkdir(join(dir, 'copilot', 'session-state', SID), { recursive: true });
-  eventsFile = join(dir, 'copilot', 'session-state', SID, 'events.jsonl');
+  // The daemon reads the default root (never its own COPILOT_HOME), so point the home at the temp dir.
+  delete process.env.COPILOT_HOME;
+  process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
+  await mkdir(join(dir, '.copilot', 'session-state', SID), { recursive: true });
+  eventsFile = join(dir, '.copilot', 'session-state', SID, 'events.jsonl');
   resetScheduledForTests();
   vi.mocked(logger.warn).mockClear();
 });
@@ -95,8 +98,12 @@ beforeEach(async () => {
 afterEach(async () => {
   process.env.CODEMIE_HOME = savedEnv.home;
   process.env.COPILOT_HOME = savedEnv.copilot;
+  process.env.HOME = savedEnv.userHome;
+  process.env.USERPROFILE = savedEnv.userProfile;
   if (savedEnv.home === undefined) delete process.env.CODEMIE_HOME;
   if (savedEnv.copilot === undefined) delete process.env.COPILOT_HOME;
+  if (savedEnv.userHome === undefined) delete process.env.HOME;
+  if (savedEnv.userProfile === undefined) delete process.env.USERPROFILE;
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -188,11 +195,47 @@ describe('enrichSessionUsage', () => {
     expect(new Set(first).size).toBe(first.length);
   });
 
-  it('emits nothing when the shutdown carries no model usage', async () => {
+  it('emits only the final summary when the shutdown carries no model usage', async () => {
     await writeFile(eventsFile, `${startLine}\n${JSON.stringify({ type: 'session.shutdown', timestamp: new Date(END_MS + 1200).toISOString(), data: {} })}\n`);
     const clock = fakeClock();
-    expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('no-usage');
-    expect(await spooled()).toEqual([]);
+    expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('enriched');
+    const events = await spooled();
+    expect(events.map((e) => e.type)).toEqual(['agent.session.summary']);
+    expect(events[0]).toMatchObject({ is_final: true, api_calls: 0 });
+  });
+
+  it('uses a recorded session-state root under the home directory, and ignores one outside it', async () => {
+    const savedProfile = { home: process.env.HOME, profile: process.env.USERPROFILE };
+    process.env.HOME = dir;
+    process.env.USERPROFILE = dir;
+    try {
+      const stateDir = join(dir, 'codemie', 'otlp', 'copilot-cli');
+      await mkdir(stateDir, { recursive: true });
+      const place = async (root: string): Promise<void> => {
+        await mkdir(join(root, SID), { recursive: true });
+        await writeFile(join(root, SID, 'events.jsonl'), `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+      };
+
+      const inside = join(dir, 'alt', 'session-state');
+      await place(inside);
+      await writeFile(join(stateDir, `${SID}.session.json`), JSON.stringify({ sessionStateRoot: inside }));
+      const clock = fakeClock();
+      expect(await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now)).toBe('enriched');
+
+      await rm(join(dir, 'codemie', 'proxy'), { recursive: true, force: true });
+      const outsideBase = await mkdtemp(join(tmpdir(), 'cop-outside-'));
+      const outside = join(outsideBase, 'session-state');
+      await place(outside);
+      await writeFile(join(stateDir, `${SID}.session.json`), JSON.stringify({ sessionStateRoot: outside }));
+      await rm(eventsFile, { force: true });
+      resetScheduledForTests();
+      const clock2 = fakeClock();
+      expect(await enrichSessionUsage(sessionEnd(), clock2.sleep, clock2.now)).toBe('timeout');
+      await rm(outsideBase, { recursive: true, force: true });
+    } finally {
+      if (savedProfile.home === undefined) delete process.env.HOME; else process.env.HOME = savedProfile.home;
+      if (savedProfile.profile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedProfile.profile;
+    }
   });
 
   it('enriches a resumed session again: usage from an earlier sessionEnd does not count as a duplicate', async () => {
@@ -243,17 +286,13 @@ describe('scheduleCopilotUsageEnrichment', () => {
     expect((await spooled()).filter((e) => e.type === 'agent.usage.request')).toHaveLength(1);
   });
 
-  it('retries a later delivery of the same sessionEnd after a non-final outcome', async () => {
+  it('emits only the final summary (api_calls 0) when the shutdown carries no model usage', async () => {
     const noUsage = `${startLine}\n${JSON.stringify({ type: 'session.shutdown', timestamp: new Date(END_MS + 50).toISOString(), data: {} })}\n`;
     await writeFile(eventsFile, noUsage);
     scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [sessionEnd()]);
-    await new Promise((r) => setTimeout(r, 100));
-    expect(await spooled()).toEqual([]);
 
-    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 50)}\n`);
-    scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [sessionEnd()]);
-
-    await vi.waitFor(async () => expect((await spooled()).length).toBe(2));
+    await vi.waitFor(async () => expect((await spooled()).length).toBe(1));
+    expect((await spooled())[0]).toMatchObject({ type: 'agent.session.summary', is_final: true, api_calls: 0 });
   });
 
   it('does not schedule an unsafe session id', async () => {

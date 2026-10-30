@@ -125,7 +125,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         const context = this.extractHookContext(hookInput);
         const [commonFields, agentFields] = await Promise.all([
           this.resolveCommonFields(context),
-          this.resolveAgentFields(),
+          this.resolveAgentFields(hookInput),
         ]);
         const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
 
@@ -189,7 +189,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;
   /** Agent-owned fields (platform, version, entrypoint, ...); override everything else. */
-  protected abstract resolveAgentFields(): Promise<Record<string, unknown>>;
+  protected abstract resolveAgentFields(input: TInput): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
