@@ -1,4 +1,5 @@
-import { isSensitiveKey, maskSecretsDeep, maskSecretsInLongText, REDACTED } from '@/utils/security.js';
+import { maskSecretsInLongText } from '@/utils/long-text-masking.js';
+import { isSensitiveKey, maskSecretsDeep, REDACTED } from '@/utils/security.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
