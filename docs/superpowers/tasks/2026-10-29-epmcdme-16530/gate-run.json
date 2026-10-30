@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16530_unborn-head-branch",
+  "head": "84baa5927bdadbea9fda6357b23f377066c4bcde",
+  "runner": "npm",
+  "started_at": "2026-10-30T14:32:54Z",
+  "completed_at": "2026-10-30T14:37:44Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 38000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "First run in the caller shell failed (unit: 14 tests in 6 unrelated files; cli: 4 in sso-claude-plugin.test.ts) because 25 ambient CODEMIE_* env vars leaked into tests; none of the failing files are touched by the diff. Re-run with CODEMIE_* unset passed fully."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 67000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "First run in the caller shell failed (unit: 14 tests in 6 unrelated files; cli: 4 in sso-claude-plugin.test.ts) because 25 ambient CODEMIE_* env vars leaked into tests; none of the failing files are touched by the diff. Re-run with CODEMIE_* unset passed fully."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan' - script scans staged changes only, so nothing was scanned. Stage changes (or run gitleaks over the range) to enable; CI secrets-detection job still owed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {}
+}
