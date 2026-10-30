@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
+import { exitWithCommandError } from './profile/command-error.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import {
   getAllProviderChoices,
@@ -41,13 +42,20 @@ export function createSetupCommand(): Command {
       try {
         await runSetupWizard(options.force);
       } catch (error: unknown) {
-        logger.error('Setup failed:', error);
-        process.exit(1);
+        if (error instanceof Error && displayedSetupErrors.has(error)) {
+          // Already shown with remediation by displaySetupError()
+          logger.error('Setup failed:', error);
+          process.exit(1);
+        }
+        exitWithCommandError('Setup failed', error);
       }
     });
 
   return command;
 }
+
+// Errors the provider flow already showed via displaySetupError()
+const displayedSetupErrors = new WeakSet<Error>();
 
 async function runSetupWizard(force?: boolean): Promise<void> {
   // Show ecosystem introduction
@@ -108,8 +116,8 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         isUpdate = true;
         console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
 
-        // For updates, use existing storage location (detect from current state)
-        storageLocation = hasLocalConfig ? 'local' : 'global';
+        // For updates, keep the profile in the config that defines it
+        storageLocation = await ConfigLoader.getProfileScope(selectedProfile);
       } else {
         // Adding new profile - ask where to store it
         console.log(chalk.white('\nConfiguring new profile...\n'));
@@ -308,36 +316,27 @@ async function handlePluginSetup(
       const workingDir = process.cwd();
 
       if (storageLocation === 'local') {
-        // Save to local .codemie/ directory
-        await ConfigLoader.initProjectConfig(workingDir, {
-          profileName: finalProfileName!,
-          ...config
-        });
+        // Merge into the local .codemie/ config, keeping other profiles and keys
+        const { activated } = await ConfigLoader.saveLocalProfile(workingDir, finalProfileName!, config, { isUpdate });
 
         const configPath = `${workingDir}/.codemie/codemie-cli.config.json`;
         saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to local config`));
         console.log(chalk.dim(`  Location: ${configPath}`));
 
-        // For local configs, the profile is automatically active if it's the only one or if it's being created
-        // Check if we should prompt to activate it
-        if (!isUpdate) {
-          const profiles = await ConfigLoader.listProfiles(workingDir);
-          const activeProfile = await ConfigLoader.getActiveProfileName(workingDir);
-
-          if (profiles.length > 1 && activeProfile !== finalProfileName) {
-            const { switchToNew } = await inquirer.prompt([
-              {
-                type: 'confirm',
-                name: 'switchToNew',
-                message: `Switch to profile "${finalProfileName}" as active in local config?`,
-                default: true
-              }
-            ]);
-
-            if (switchToNew) {
-              await ConfigLoader.switchProfile(finalProfileName!, workingDir);
-              console.log(chalk.green(`✓ Switched to profile "${finalProfileName}" in local config`));
+        // A new profile that did not become active on its own: ask whether to switch
+        if (!isUpdate && !activated) {
+          const { switchToNew } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'switchToNew',
+              message: `Switch to profile "${finalProfileName}" as active in local config?`,
+              default: true
             }
+          ]);
+
+          if (switchToNew) {
+            await ConfigLoader.switchProfile(finalProfileName!, workingDir);
+            console.log(chalk.green(`✓ Switched to profile "${finalProfileName}" in local config`));
           }
         }
       } else {
@@ -392,6 +391,9 @@ async function handlePluginSetup(
     const errorMessage = error instanceof Error ? error.message : String(error);
     const providerTemplate = ProviderRegistry.getProvider(providerName);
     displaySetupError(new Error(errorMessage), providerTemplate?.setupInstructions);
+    if (error instanceof Error) {
+      displayedSetupErrors.add(error);
+    }
     throw error;
   }
 }

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-standard",
+  "slug": "profile-scope-ownership-gaps",
+  "branch": "fix/profile-scope-ownership",
+  "phase": "maintenance",
+  "started_at": "2026-10-20T16:20:00Z",
+  "completed_at": "2026-10-21T09:01:49Z",
+  "last_sync_commit": "62c45617"
+}

@@ -208,6 +208,7 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
+      ConfigLoader.enableFallbackWarning();
       const config = await ConfigLoader.load(process.cwd(), {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,

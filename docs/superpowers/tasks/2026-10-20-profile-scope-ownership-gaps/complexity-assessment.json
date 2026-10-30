@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "task": "On top of PR #575, close the remaining profile scope-ownership gaps in codemie-code: visible profile/auth command errors, scope-aware renameProfile with local reference repair, non-destructive local writes in switchProfile and setup (initProjectConfig), a one-time warning when a dangling local activeProfile falls back to global, fresh-dir local registration that does not select a profile, and regression tests for the client bug scenarios.",
+  "generated": "2026-10-20",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "The base score is M (3). The work spans the ConfigLoader service (renameProfile, switchProfile, initProjectConfig, getEffectiveActiveProfileName, fresh-dir local registration) and the CLI command layer (profile index/auth catch blocks, setup Local save), and possibly isMultiProviderConfig in env/types. The pattern is clear (loadConfigByScope/saveConfigByScope, StorageScope returns, the chalk.red error idiom). Two scope red flags raise it to XL. ConfigLoader is a core shared utility on every agent launch path. The fixes also reach several workflows: profile switch/rename/delete/status, setup, assistants/skills local registration, and the fallback warning seen by every agent launch, which must stay silent for ACP stdio." },
+    { "dimension": "file_change_estimate", "reason": "The analysis estimates 4-6 source files (src/utils/config.ts, src/cli/commands/profile/index.ts, src/cli/commands/profile/auth.ts, src/cli/commands/setup.ts, possibly src/env/types.ts and an assistants/skills setup writer) plus 3-4 test files (config-project-override.test.ts, profile/__tests__/index.test.ts, env/__tests__/types.test.ts, possibly a new rename/setup test). That is about 8-10 files across 3+ directories (src/utils, src/cli/commands/profile, src/cli/commands, src/env), with an optional .ai-run/guides/usage/project-config.md update for rename semantics." },
+    { "dimension": "requirements_clarity", "reason": "The gaps (E1, E2, E4, setup destructiveness, E3 once-only warning, fresh-dir default selection) are enumerated with file and line evidence, and the client bug report supplies the ACs. A few design decisions remain open. What value should a fresh-dir registration write instead of 'default'? How should the warning be emitted exactly once without leaking into agent TUIs or ACP? How should rename treat cross-scope name collisions while unique-names enforcement (PR #585) is still open?" },
+    { "dimension": "technical_risk", "reason": "Established patterns cover most of the work. The 'merge into existing JSON, never replace' convention exists, and so do test harnesses: the real-FS config-project-override.test.ts and the process.exit/console.error spy pattern. The risk is blast radius rather than novelty. Local writes can destroy committed team configuration (codemieAssistants, codemieSkills, workspace), ConfigLoader.load runs on every agent launch, and logger.error must not be changed globally (234 call sites). There is no security, auth, schema or data-migration surface, and rollback is a normal CLI release." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches a core shared utility (ConfigLoader in src/utils/config.ts, on every agent launch path via ConfigLoader.load)",
+    "Component Scope bumped from L to XL: affects multiple workflows/agents (profile switch/rename/delete/status, setup Local save, assistants/skills local registration, and the dangling-activeProfile fallback warning seen by every agent launch)"
+  ],
+  "split_recommendation": null
+}
