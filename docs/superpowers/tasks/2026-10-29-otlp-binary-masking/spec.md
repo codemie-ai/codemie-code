@@ -43,6 +43,12 @@ header (currently ignored entirely):
   scan, so this is safe to apply blanket across OTLP's
   `resourceLogs[].scopeLogs[].logRecords[].attributes[]` /
   `resourceSpans[]...attributes[]` shape without a schema-aware extractor.
+  Before that scan, a shape-based pass (`maskOtlpJson`,
+  `plugins/otlp-json-masking.ts`) redacts the `AnyValue` of every OTLP
+  `{key, value}` attribute whose `key` is a secret name (`isSensitiveKey`:
+  `api_key`, `auth_token`, `password`, ...): in OTLP the attribute name is data,
+  not a property name, so `maskSecretsDeep` alone cannot see it and would pass a
+  secret in an unrecognised format. It is not a skip-list — it only ever redacts.
   Append the masked JSON as one NDJSON line to a new per-stream JSON spool
   file. A parse, masking or spool-write failure **drops the record** (logged at
   `warn`, session id and error message only — never the payload) and still
@@ -96,6 +102,9 @@ tracked/forwarded stream and neither blocks on or orphans the other.
 - `claude-code-otlp.ts` writes `OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json'`.
 - `handleOtlp` parses, masks (`maskSecretsDeep`, no custom skip-list), and
   NDJSON-spools any `application/json` OTLP POST.
+- An OTLP attribute whose name is a secret name has its value replaced by
+  `{"stringValue":"[REDACTED]"}` whatever the value looks like; attribute order
+  and all other attributes are unchanged.
 - A JSON OTLP POST that fails to parse, mask or spool is dropped with a `warn`
   log and a 200 response; its original bytes are never written to any spool
   stream.

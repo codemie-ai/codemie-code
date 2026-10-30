@@ -192,6 +192,24 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
       expect(input['new_string']).toBe('const client = new Client("[REDACTED]");');
     });
 
+    it('redacts a secret-named attribute whose value matches no known secret format', async () => {
+      const plain = 'correct-horse-battery-staple';
+      const res = await postOtlpJson(
+        'logs',
+        logsExport([stringAttr('tool_name', 'Bash'), stringAttr('api_key', plain), stringAttr('auth_token', plain)])
+      );
+
+      expect(res.statusCode).toBe(200);
+      const line = spooledLine();
+      expect(line).not.toContain(plain);
+      expect(spooledAttributes(line)).toEqual([
+        stringAttr('session.id', SESSION_ID),
+        stringAttr('tool_name', 'Bash'),
+        { key: 'api_key', value: { stringValue: '[REDACTED]' } },
+        { key: 'auth_token', value: { stringValue: '[REDACTED]' } },
+      ]);
+    });
+
     it('leaves a secret-free record structurally identical, including typed values', async () => {
       const typed: OtlpAttribute[] = [
         stringAttr('tool_name', 'Read'),

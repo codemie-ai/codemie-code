@@ -54,7 +54,7 @@ const SENSITIVE_VALUE_PATTERNS = [
 /**
  * Check if a key name indicates sensitive data
  */
-function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERNS.some(pattern => pattern.test(key));
 }
 
@@ -132,7 +132,7 @@ export function sanitizeObject(obj: Record<string, unknown>): Record<string, unk
 }
 
 /** Marker that replaces a secret; no part of the secret is shown. */
-const REDACTED = '[REDACTED]';
+export const REDACTED = '[REDACTED]';
 
 /** Longest text scanned by `maskSecretsInText`; anything beyond is dropped so the scan stays bounded. */
 const MAX_MASK_INPUT_CHARS = 64 * 1024;
