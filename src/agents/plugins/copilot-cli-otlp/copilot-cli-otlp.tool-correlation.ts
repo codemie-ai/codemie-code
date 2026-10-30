@@ -5,7 +5,7 @@ import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot
 import type { CopilotEvent, CopilotToolCompleteData, CopilotToolStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { logger } from '@/utils/logger.js';
 import { parseArgs, type ToolStartCall } from './copilot-cli-otlp.tool-payload.js';
-import { readState, STATE_BUDGET_MS, toolsStatePath, withStateLock, writeStateAtomic } from './copilot-cli-otlp.state.js';
+import { readState, TOOL_STATE_BUDGET_MS, toolsStatePath, withStateLock, writeStateAtomic } from './copilot-cli-otlp.state.js';
 
 const MAX_OPEN_STARTS = 500;
 const OPEN_START_MAX_AGE_MS = 30 * 60 * 1000;
@@ -45,7 +45,7 @@ export async function recordOpenStarts(sessionId: string, calls: ToolStartCall[]
     const added = calls.map((c) => ({ id: c.toolUseId, name: c.toolName, argsKey: argsKeyOf(c.toolArgs), startedAt: now }));
     state.openStarts = [...state.openStarts, ...added].slice(-MAX_OPEN_STARTS);
     writeStateAtomic(path, state);
-  });
+  }, TOOL_STATE_BUDGET_MS);
 }
 
 /** Newest `tool.execution_start` with this name and args whose call has not completed, from the file tail. */
@@ -117,7 +117,7 @@ export async function resolveEndToolUseId(
     }
     writeStateAtomic(path, state);
     return id;
-  }, STATE_BUDGET_MS);
+  }, TOOL_STATE_BUDGET_MS);
   if (matched) return matched;
 
   const fromTranscript = lookupFromTranscript(sessionId, name, argsKey, stateRoot);

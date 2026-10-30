@@ -10,6 +10,8 @@ const LOCK_STALE_MS = 2_000;
 const LOCK_RETRY_MS = 10;
 const SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const STATE_BUDGET_MS = 150;
+/** Tool start/end pairing decides whether a call counts as successful, so it waits longer for the lock. */
+export const TOOL_STATE_BUDGET_MS = 750;
 
 export function getStateDir(): string {
   return getCodemiePath('otlp', 'copilot-cli');
