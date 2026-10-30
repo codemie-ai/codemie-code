@@ -156,6 +156,8 @@ const PROMPT =
  * actually saw for that id so a stale exclusion doesn't go unnoticed.
  */
 const EXCLUDED_MODEL_IDS: Record<string, string> = {
+  'gemini-nano-banana-2.1':
+    'image-generation model, not a chat/coding model — its cost is not a per-token text rate, so it has no row in pricing.json and is out of scope for this cost sweep',
   'gpt-5-2025-08-07':
     'upstream LiteLLM 400 "Model Group=gpt-5-2025-08-07 ... Fallbacks=None" — catalog marks it enabled but the backend cannot serve it',
   'gpt-5-mini-2025-08-07':
@@ -329,6 +331,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-live-mode
   });
 
   it('meta.unpricedModels is empty', () => {
-    expect(payload.meta.unpricedModels).toEqual([]);
+    // Ids in EXCLUDED_MODEL_IDS are exempt here as well, otherwise an excluded model would still
+    // fail this check through the report metadata.
+    const unpriced = payload.meta.unpricedModels.filter((id) => !Object.hasOwn(EXCLUDED_MODEL_IDS, id));
+    expect(unpriced).toEqual([]);
   });
 });
