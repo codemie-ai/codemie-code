@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Switch native OTLP telemetry (metrics/logs/traces) from binary protobuf to JSON end-to-end so secret-bearing attributes can be masked before forwarding to analytics, mirroring the existing hook-event masking fix.",
+  "generated": "2026-10-29T12:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "5 components across the full pipeline: CLI connector env var (claude-code-otlp.ts), proxy ingestion handler (otlp.plugin.ts handleOtlp), spool storage format (spool-paths.ts + spool-io.ts, moving from concatenated protobuf bytes to a new NDJSON-per-record framing — a new abstraction), the forwarder (forwarder.ts forwardOtelStream, changing both content-type and per-record POST semantics), and a new OTLP-attribute-aware masking pass extending/adapting maskSecretsDeep for the nested resourceLogs/resourceSpans attribute arrays." },
+    { "dimension": "technical_risk", "reason": "No exact precedent in this codebase for the new NDJSON-per-export-call spool framing or for masking OTLP's generic attributes[] array shape (the shipped hook-fix pattern is hook-schema-specific, not directly reusable); zero existing tests or fixtures touch handleOtlp/forwardOtelStream today, so the fix starts from scratch on fixtures as well as logic. Security red flag applied: bumped from L (4) to XL (5) because masking secrets before they reach the analytics backend is the explicit purpose of this fix (active data-leak remediation), not an incidental property." },
+    { "dimension": "requirements_clarity", "reason": "Core intent (binary -> JSON, then mask) is explicit, but several concrete design decisions are open per the technical analysis: the exact NDJSON record framing to replace protobuf's concatenation trick, the masking target/skip-list for OTLP's nested attribute arrays (distinct from the hook pipeline's UNMASKED_FIELD_KEYS), and whether the fix's scope extends beyond Claude Code's bundled OTel SDK to other agent plugins (noted as unclear in Risk Indicators)." },
+    { "dimension": "file_change_estimate", "reason": "~6 modified files (claude-code-otlp.ts, otlp.plugin.ts, spool-paths.ts, spool-io.ts, forwarder.ts, security.ts) plus at least 1 new module for OTLP-attribute masking, spanning 4 directories (cli/commands/proxy/connectors, providers/plugins/sso/proxy/plugins, .../otlp-spool, utils) — directory spread crosses into the L band even though raw file counts sit near the M/L boundary." },
+    { "dimension": "affected_layers", "reason": "4 distinct layers: CLI/config (Infrastructure), proxy request handling (API/Service), on-disk spool persistence (DB-Persistence, undergoing a schema-like reframing from binary blob to NDJSON), and the forwarder's External call to the analytics backend — matching the L criteria of 3-4 layers including a persistence format change." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): secrets-masking of forwarded telemetry is the explicit security purpose of this fix, not an incidental concern."
+  ],
+  "split_recommendation": null
+}

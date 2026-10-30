@@ -14,8 +14,26 @@ export function spoolRoot(): string {
 export const OTEL_STREAMS = ['logs', 'metrics', 'traces'] as const;
 export type OtelStream = (typeof OTEL_STREAMS)[number];
 
+/** JSON/NDJSON counterpart of each OTEL signal — masked exports produced by the http/json proxy path. */
+export const OTEL_JSON_STREAMS = ['logsJson', 'metricsJson', 'tracesJson'] as const;
+export type OtelJsonStream = (typeof OTEL_JSON_STREAMS)[number];
+
+/** Signal -> JSON stream id (ingestion handler picks the spool target from the request's signal). */
+export const OTEL_JSON_STREAM_BY_SIGNAL: Record<OtelStream, OtelJsonStream> = {
+  logs: 'logsJson',
+  metrics: 'metricsJson',
+  traces: 'tracesJson',
+};
+
+/** JSON stream id -> signal (forwarder picks the backend endpoint from the stream it is sending). */
+export const OTEL_SIGNAL_BY_JSON_STREAM: Record<OtelJsonStream, OtelStream> = {
+  logsJson: 'logs',
+  metricsJson: 'metrics',
+  tracesJson: 'traces',
+};
+
 /** Every spool stream, in a stable order. */
-export const SPOOL_STREAMS = ['hooks', ...OTEL_STREAMS] as const;
+export const SPOOL_STREAMS = ['hooks', ...OTEL_STREAMS, ...OTEL_JSON_STREAMS] as const;
 export type SpoolStream = (typeof SPOOL_STREAMS)[number];
 
 const STREAM_EXT: Record<SpoolStream, string> = {
@@ -23,6 +41,9 @@ const STREAM_EXT: Record<SpoolStream, string> = {
   logs: '.otel_logs.bin',
   metrics: '.otel_metrics.bin',
   traces: '.otel_traces.bin',
+  logsJson: '.otel_logs.ndjson',
+  metricsJson: '.otel_metrics.ndjson',
+  tracesJson: '.otel_traces.ndjson',
 };
 
 export const STATUS_EXT = '.status';

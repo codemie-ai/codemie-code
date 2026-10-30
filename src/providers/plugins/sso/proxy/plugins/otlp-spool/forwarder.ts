@@ -5,7 +5,14 @@ import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.j
 import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
 import { buildAuthHeaders } from '../../../../../core/codemie-auth-helpers.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
-import { OTEL_STREAMS, type OtelStream, type SpoolStream } from './spool-paths.js';
+import {
+  OTEL_STREAMS,
+  OTEL_JSON_STREAMS,
+  OTEL_SIGNAL_BY_JSON_STREAM,
+  type OtelStream,
+  type OtelJsonStream,
+  type SpoolStream,
+} from './spool-paths.js';
 import {
   advanceCursor,
   markSessionEnded,
@@ -15,6 +22,7 @@ import {
   isSendAllowed,
   snapshotPendingBytes,
   snapshotPendingHookRecords,
+  snapshotPendingNdjsonRecords,
 } from './spool-io.js';
 import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 
@@ -275,6 +283,42 @@ async function forwardOtelStream(
   return 'ok';
 }
 
+/** Forward masked-JSON OTEL records: one complete application/json POST per NDJSON line. */
+async function forwardOtelJsonStream(
+  sessionId: string,
+  stream: OtelJsonStream,
+  baseUrl: string,
+  credentials: SSOCredentials | JWTCredentials
+): Promise<SendResult | 'idle'> {
+  const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
+  if (!batch) {
+    return 'idle';
+  }
+
+  if (batch.records.length === 0) {
+    // Nothing sendable, but the bytes were consumed — keep the cursor aligned.
+    await advanceCursor(sessionId, stream, batch.cursor + batch.byteLength);
+    return 'idle';
+  }
+
+  const url = `${baseUrl}${OTEL_ENDPOINTS[OTEL_SIGNAL_BY_JSON_STREAM[stream]]}`;
+  // Acknowledge each record right after its own confirmed send — not once for the whole
+  // batch — so a failure partway through a batch never re-sends what already succeeded.
+  let cursor = batch.cursor;
+  for (const record of batch.records) {
+    const recordByteLength = Buffer.byteLength(record, 'utf8') + 1; // +1 for the newline cut off when the batch was split
+    const range = { cursor, end: cursor + recordByteLength, filtered: false };
+    const result = await send(sessionId, stream, url, record, 'application/json', credentials, batch.project, range);
+    if (result !== 'ok') {
+      return result;
+    }
+    cursor += recordByteLength;
+    await advanceCursor(sessionId, stream, cursor);
+  }
+
+  return 'ok';
+}
+
 /**
  * Forward everything a session has pending to the CodeMie analytics backend.
  *
@@ -305,6 +349,14 @@ export async function forwardSession(
 
   for (const stream of OTEL_STREAMS) {
     const result = await forwardOtelStream(sessionId, stream, baseUrl, credentials);
+    if (result === 'auth-expired') {
+      markCredentialsStale();
+      return;
+    }
+  }
+
+  for (const stream of OTEL_JSON_STREAMS) {
+    const result = await forwardOtelJsonStream(sessionId, stream, baseUrl, credentials);
     if (result === 'auth-expired') {
       markCredentialsStale();
       return;

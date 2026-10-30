@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "branch": "epmcdme-16383-otel-logs-traces-masking",
+  "head": "8b8bedb69389228c51e77a809e762963d925726d",
+  "runner": "npm",
+  "started_at": "2026-10-30T09:53:40Z",
+  "completed_at": "2026-10-30T10:06:32Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6520,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 32589,
+      "command": "npm run lint",
+      "exit_code": 0,
+      "notes": "Also satisfies .husky/pre-commit step 2 (same command)."
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13255,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also satisfies .husky/pre-commit step 2 (same command)."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 22246,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 125102,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "Run with CODEMIE_/CLAUDE_/ANTHROPIC_ env vars unset (this orchestrating session's own CodeMie Code env, e.g. CODEMIE_URL/CODEMIE_PROFILE_CONFIG, would otherwise leak into fixture assertions) to match a normal developer shell. 388/388 files, 6280 passed, 2 skipped, exit 0."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 84013,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "Run with the same env-cleaning as 'unit' (env was clean in all 3 attempts below, ruling out env pollution). Ran 3 times to characterize the failure; a different file/assertion failed each time, which is the signature of resource contention under full-suite parallel subprocess spawning in this sandbox, not a deterministic regression: attempt 1 (5 files failed) — help/profile/version/workflow.test.ts each hit 'Hook timed out in 10000ms' in beforeAll() spawning the CLI subprocess, plus skills.test.ts hit a 30000ms test timeout on one subcommand; attempt 2 (2 files failed) — session-syncer.test.ts 'should not sync when no pending deltas' got mockSendMetricCalls.length=1 instead of 0, plus skills.test.ts timed out on a different subcommand ('shows help for each subcommand'); attempt 3 (3 files failed, reported as authoritative/last) — self-update.test.ts failed with 'Could not check for updates' (network-dependent check against the real npm registry) plus skills.test.ts timed out again on 'shows help for each subcommand'. No single file failed in all 3 runs with the same assertion, and none of the failures relate to the OTLP masking changes under review (connectors/otlp-spool/otlp.plugin paths all passed cleanly across all 3 runs). Recorded as FAIL per the exit code actually observed; not re-run further to chase a clean pass. Enablement: re-run `npx vitest run --project cli` in isolation (not under this heavy agent sandbox) or raise hookTimeout/testTimeout for the CLI-subprocess-spawning specs (help/profile/version/workflow/skills.test.ts) to rule out resource contention as the root cause. Side effect observed (not caused directly by this agent; an inherent effect of spawning the real codemie CLI in this working directory during profile/version/help/doctor-related subprocess tests): .codemie/codemie-cli.config.json ended this run with an unstaged working-tree modification (activeProfile/profile-key renamed epm-cdme -> epm-cdme-cp, matching this orchestrating session's own CODEMIE_PROFILE_NAME), consistent with the CLI's doctor-time stale-path auto-heal (recent commit 8b8bedb). Left as-is per instruction not to stage/unstage/revert anything; caller should be aware this tracked file now differs from its staged index content."
+    },
+    {
+      "id": "secrets-scan",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4376,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Gitleaks via Docker; no leaks found. Scans `git diff --staged` only per scripts/validate-secrets.js."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": null,
+      "notes": "No new commit was created during this QA run (explicit instruction: do not commit, stage, or unstage); this gate lints HEAD~1..HEAD of an actual commit range, which is unchanged."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run check:pre-commit",
+      "exit_code": null,
+      "notes": "Composite of 'typecheck' && 'lint', both already executed individually above (both PASS). Not re-run to avoid duplicating identical work; see those two gates for evidence."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "exit_code": null,
+      "notes": "Composite of 'license-check' && 'lint' && 'build' && 'unit' && 'integration', all already executed individually above. Not re-run to avoid duplicating expensive work; the composite would stop at the 'integration' step (FAIL), consistent with the overall BLOCKED status already determined by that gate."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 32111,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Previously blocked (prior gate-run.json: 'lint-staged' FAIL — 'code-review-final.local.json ... intent-to-add entry ... git-stash-based backup step cannot handle this mismatch'). `git ls-files --stage` now shows a real blob for that path (not the empty-blob intent-to-add hash), confirming the user's own re-staging resolved the mismatch; no git state was staged/unstaged by this agent. lint-staged ran its internal backup-stash/eslint/vitest(related)/cleanup pipeline against the 15 staged *.ts files end-to-end and cleaned up its own backup stash on success (git stash list afterward shows only a pre-existing, unrelated stash from a different branch)."
+    },
+    {
+      "id": "secrets-detection-ci",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows/.github/workflows/reusable-secrets-detection.yml@main (ci.yml job: secrets-detection)",
+      "exit_code": null,
+      "notes": "Requires GitHub Actions-hosted reusable workflow (separate repo); not reachable from this local checkout. Guide's local 'secrets-scan' gate covers the same risk area but only over the staged diff, not an equivalent CI-grade scan — still owed to CI."
+    },
+    {
+      "id": "codeql",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows/.github/workflows/reusable-codeql.yml@main (codeql.yml)",
+      "exit_code": null,
+      "notes": "CodeQL static analysis runs only via GitHub Actions; no local equivalent exists in this repo. Still owed to CI."
+    },
+    {
+      "id": "pr-title-lint",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows/.github/workflows/reusable-commit-lint.yml@main (pr-title-lint.yml)",
+      "exit_code": null,
+      "notes": "Workflow triggers only on an open pull request's title; no PR has been opened for this branch yet."
+    }
+  ],
+  "failures": {
+    "integration": "Attempt 3 (last run, exit 1) tail:\n\nstderr: - Checking for CodeMie CLI updates...\n✖ Could not check for updates\n: expected 1 to be +0 // Object.is equality\n\n- Expected\n+ Received\n\n- 0\n+ 1\n\n ❯ tests/integration/cli-commands/self-update.test.ts:51:7\n     49|       result.status,\n     50|       `self-update --check failed\\nstdout: ${result.stdout}\\nstderr: $…\n     51|     ).toBe(0);\n       |       ^\n     52|\n     53|     // Command must produce one of the two expected messages.\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯\n\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (subprocess e2e) > shows help for each subcommand\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n ❯ tests/integration/cli-commands/skills.test.ts:120:3\n    118|   });\n    119|\n    120|   it('shows help for each subcommand', () => {\n       |   ^\n    121|     for (const sub of ['add', 'update', 'remove', 'list', 'find']) {\n    122|       const result = runCLI([sub, '--help']);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯\n\n\n Test Files  3 failed | 34 passed | 1 skipped (38)\n      Tests  2 failed | 278 passed | 13 skipped (293)\n   Start at  13:04:22\n   Duration  79.34s (transform 46.92s, setup 0ms, import 70.23s, tests 415.66s, environment 13ms)\n\n---\nAttempt 1 (exit 1) distinguishing tail: help/profile/version/workflow.test.ts all failed identically with 'Error: Hook timed out in 10000ms' inside beforeAll() spawning the CLI subprocess (e.g. `cli.runSilent('profile')`), plus skills.test.ts timed out on 'blocks every subcommand on unauthenticated invocation (spec §7)'. Test Files 5 failed | 32 passed | 1 skipped (38); Tests 1 failed | 273 passed | 19 skipped (293).\n\n---\nAttempt 2 (exit 1) distinguishing tail: tests/integration/session-syncer.test.ts > SessionSyncer - API Sync Validation > should not sync when no pending deltas\nAssertionError: expected 1 to be +0 // Object.is equality\n ❯ tests/integration/session-syncer.test.ts:266:40\n    264|     expect(result.success).toBe(true);\n    265|     expect(result.message).toContain('No pending');\n    266|     expect(mockSendMetricCalls.length).toBe(0);\n       |                                        ^\n    267|   });\nplus skills.test.ts timed out on 'shows help for each subcommand' (a different subtest than attempt 1/3). Test Files 2 failed | 35 passed | 1 skipped (38); Tests 3 failed | 280 passed | 10 skipped (293)."
+  }
+}
