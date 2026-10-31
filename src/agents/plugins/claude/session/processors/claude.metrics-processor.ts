@@ -16,10 +16,19 @@ import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractClaudeFileOperation } from '../claude-file-operation.js';
-import { extractNamedInvocations } from '../claude-named-invocations.js';
 import { stripClear } from '../strip-clear.js';
 import { takeMessagesBefore } from './messages-before.js';
-import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
+import type { ClaudeMessage } from '../../claude-message-types.js';
+import { collectRunPromptsAndInvocations, PROMPTS_RECORD_SUFFIX } from './run-prompts.js';
+
+interface RunOptions {
+  /** Lines stamped before it give the run no prompt or named invocation. */
+  cutoffMs?: number;
+  /** The SessionEnd pass: the trailing lines with no emitted group are counted too. */
+  finalPass?: boolean;
+  /** A subagent file: its trailing lines on the final pass give named invocations only, no prompt. */
+  namedOnly?: boolean;
+}
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -46,7 +55,7 @@ export class MetricsProcessor implements SessionProcessor {
    */
   private async processMessages(
     session: ParsedSession,
-    _context: ProcessingContext
+    context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
       // Load session state to get previously processed record IDs
@@ -72,7 +81,10 @@ export class MetricsProcessor implements SessionProcessor {
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
       // Pass existing processed IDs instead of creating empty Set
-      const deltas = this.transformMessagesToDeltas(session, existingProcessedIds);
+      const deltas = this.transformMessagesToDeltas(session, existingProcessedIds, {
+        cutoffMs: sessionMetadata.sync?.metrics?.baselineCutoffMs,
+        finalPass: context.finalPass === true
+      });
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -122,11 +134,11 @@ export class MetricsProcessor implements SessionProcessor {
     const processedIds = new Set<string>(existingIds);
     const priorSession: ParsedSession = {
       ...session,
-      messages: takeMessagesBefore(session.messages as any[], cutoffMs),
+      messages: takeMessagesBefore(session.messages as ClaudeMessage[], cutoffMs),
       ...(session.subagents && {
         subagents: session.subagents.map(subagent => ({
           ...subagent,
-          messages: takeMessagesBefore(subagent.messages as any[], cutoffMs)
+          messages: takeMessagesBefore(subagent.messages as ClaudeMessage[], cutoffMs)
         }))
       })
     };
@@ -139,7 +151,8 @@ export class MetricsProcessor implements SessionProcessor {
    */
   private transformMessagesToDeltas(
     session: ParsedSession,
-    existingProcessedIds: Set<string>
+    existingProcessedIds: Set<string>,
+    options: RunOptions = {}
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
     const processedIds = existingProcessedIds;
@@ -150,7 +163,8 @@ export class MetricsProcessor implements SessionProcessor {
       session.sessionId,
       session.agentName,
       processedIds,
-      attachedUserPrompts
+      attachedUserPrompts,
+      options
     );
     deltas.push(...mainDeltas);
 
@@ -161,7 +175,8 @@ export class MetricsProcessor implements SessionProcessor {
           session.sessionId,
           session.agentName,
           processedIds,
-          attachedUserPrompts
+          attachedUserPrompts,
+          { cutoffMs: options.cutoffMs, finalPass: options.finalPass, namedOnly: true }
         );
         deltas.push(...subDeltas);
       }
@@ -178,7 +193,8 @@ export class MetricsProcessor implements SessionProcessor {
     sessionId: string,
     agentName: string,
     processedIds: Set<string>,
-    attachedUserPrompts: Set<string>
+    attachedUserPrompts: Set<string>,
+    { cutoffMs, finalPass = false, namedOnly = false }: RunOptions = {}
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const messages = stripClear(rawMessages) as any[];
 
@@ -224,57 +240,32 @@ export class MetricsProcessor implements SessionProcessor {
     let lastProcessedMsgIndex = -1;
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      if (msg.message?.role === 'assistant' && msg.message?.id && processedIds.has(msg.message.id)) {
+      if (
+        (msg.message?.role === 'assistant' && msg.message?.id && processedIds.has(msg.message.id)) ||
+        (msg.uuid && processedIds.has(`${msg.uuid}${PROMPTS_RECORD_SUFFIX}`))
+      ) {
         lastProcessedMsgIndex = i;
       }
     }
-
-    const userPromptsMap = new Map<string, string>();
-    for (let i = lastProcessedMsgIndex + 1; i < messages.length; i++) {
-      const msg = messages[i];
-      if (
-        msg.message?.role === 'user' &&
-        msg.uuid &&
-        !this.isSyntheticUserPrompt(msg, messagesByUuid)
-      ) {
-        let textContent = '';
-
-        if (Array.isArray(msg.message.content)) {
-          for (const block of msg.message.content) {
-            if (block.type === 'text' && typeof block.text === 'string' && block.text) {
-              textContent = block.text;
-              break;
-            }
-          }
-        } else if (typeof msg.message.content === 'string') {
-          textContent = msg.message.content;
-        }
-
-        if (textContent) {
-          userPromptsMap.set(msg.uuid, stripPastedContentTags(textContent));
-        }
-      }
-    }
-
-    // Named invocations (skill/agent/command names) are session-wide: skills/agents come from
-    // tool_use input and commands from user-message XML. We extract once via the shared helper
-    // and attach to the first delta (the aggregator sums across deltas, so totals are unchanged).
-    const sessionNamed = extractNamedInvocations(messages);
 
     // Group messages by message.id to handle streaming chunks
     // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
     // for the same API response, each with the same message.id and usage
     const messageGroups = new Map<string, any[]>();
+    const groupLastIndex = new Map<string, number>();
 
-    for (const msg of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       if (msg.message?.role === 'assistant' && msg.message?.id) {
         const messageId = msg.message.id;
         if (!messageGroups.has(messageId)) {
           messageGroups.set(messageId, []);
         }
         messageGroups.get(messageId)!.push(msg);
+        groupLastIndex.set(messageId, i);
       }
     }
+    let lastEmittedIndex = -1;
 
     // Helper function to process a message or group of messages into a delta
     const processDelta = (messages: any[], trackingId: string) => {
@@ -356,31 +347,16 @@ export class MetricsProcessor implements SessionProcessor {
         ...(Object.keys(tools).length > 0 && { tools }),
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
         ...(completedMsg.message?.model && { models: [completedMsg.message.model] }),
-        ...(apiErrorMessage && { apiErrorMessage }),
-        // Named invocations are session-wide — attach all three to the first delta only.
-        ...(deltas.length === 0 && Object.keys(sessionNamed.skillInvocations).length > 0 && { skillInvocations: sessionNamed.skillInvocations }),
-        ...(deltas.length === 0 && Object.keys(sessionNamed.agentInvocations).length > 0 && { agentInvocations: sessionNamed.agentInvocations }),
-        ...(deltas.length === 0 && Object.keys(sessionNamed.commandInvocations).length > 0 && { commandInvocations: sessionNamed.commandInvocations })
+        ...(apiErrorMessage && { apiErrorMessage })
       };
 
       if (fileOperations.length > 0) {
         (delta as any).fileOperations = fileOperations;
       }
 
-      // Attach user prompts to first delta
-      if (deltas.length === 0 && attachedUserPrompts.size === 0 && userPromptsMap.size > 0) {
-        const prompts: Array<{ count: number; text: string }> = [];
-        for (const [uuid, text] of userPromptsMap.entries()) {
-          prompts.push({ count: 1, text });
-          attachedUserPrompts.add(uuid);
-        }
-        if (prompts.length > 0) {
-          (delta as any).userPrompts = prompts;
-        }
-      }
-
       deltas.push(delta);
       processedIds.add(trackingId);
+      lastEmittedIndex = Math.max(lastEmittedIndex, groupLastIndex.get(trackingId)!);
     };
 
     // Process grouped messages (streaming chunks with same message.id)
@@ -388,25 +364,28 @@ export class MetricsProcessor implements SessionProcessor {
       processDelta(groupedMessages, messageId);
     }
 
-    return deltas;
-  }
-
-  private isToolResultMessage(msg: any): boolean {
-    if (msg?.type !== 'user') return false;
-
-    const content = msg.message?.content;
-    if (!Array.isArray(content)) return false;
-
-    return content.some((item: any) => item.type === 'tool_result');
-  }
-
-  private isSyntheticUserPrompt(msg: any, messagesByUuid: Map<string, any>): boolean {
-    if (msg?.type !== 'user' || !msg.parentUuid) {
-      return false;
+    if (deltas.length === 0 && !finalPass) {
+      return deltas;
     }
 
-    const parent = messagesByUuid.get(msg.parentUuid);
-    return this.isToolResultMessage(parent);
-  }
+    const { prompts, named, promptsDelta } = collectRunPromptsAndInvocations(messages, messagesByUuid, {
+      sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex,
+      emittedDeltas: deltas.length > 0, cutoffMs, finalPass, namedOnly
+    });
+    if (promptsDelta) deltas.push(promptsDelta);
 
+    if (deltas.length === 0) {
+      return deltas;
+    }
+
+    const first = deltas[0];
+    if (Object.keys(named.skillInvocations).length > 0) first.skillInvocations = named.skillInvocations;
+    if (Object.keys(named.agentInvocations).length > 0) first.agentInvocations = named.agentInvocations;
+    if (Object.keys(named.commandInvocations).length > 0) first.commandInvocations = named.commandInvocations;
+    if (prompts.length > 0) {
+      first.userPrompts = prompts;
+    }
+
+    return deltas;
+  }
 }

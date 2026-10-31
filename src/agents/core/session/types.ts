@@ -93,6 +93,8 @@ export interface MetricsSyncState {
   lastProcessedTimestamp: number;
   processedRecordIds: string[];
   attachedUserPromptTexts?: string[];
+  /** Start-of-record cutoff the claude baseline applied; lines stamped before it give a run no prompt. */
+  baselineCutoffMs?: number;
 
   // Remote sync state
   lastSyncedRecordId?: string;

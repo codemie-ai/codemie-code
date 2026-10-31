@@ -18,6 +18,8 @@ import { readJSONL } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
+import { SessionStore } from '../../core/session/SessionStore.js';
+import { applyClaudeBaseline } from './session/claude-baseline.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
 import { extractNamedInvocations } from './session/claude-named-invocations.js';
 import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/transcript-lines.js';
@@ -41,6 +43,8 @@ function decodeClaudeProjectDir(encoded: string): string {
 export class ClaudeSessionAdapter implements SessionAdapter {
   readonly agentName = 'claude';
   private processors: SessionProcessor[] = [];
+  private readonly metricsProcessor = new MetricsProcessor();
+  private readonly conversationsProcessor = new ConversationsProcessor();
 
   constructor(private readonly metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
@@ -58,10 +62,10 @@ export class ClaudeSessionAdapter implements SessionAdapter {
    */
   private initializeProcessors(): void {
     // Register metrics processor (priority 1)
-    this.registerProcessor(new MetricsProcessor());
+    this.registerProcessor(this.metricsProcessor);
 
     // Register conversations processor (priority 2)
-    this.registerProcessor(new ConversationsProcessor());
+    this.registerProcessor(this.conversationsProcessor);
 
     logger.debug(`[claude-adapter] Initialized ${this.processors.length} processors`);
   }
@@ -491,7 +495,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     results: Array<{ metadata?: any }>
   ): Promise<void> {
     try {
-      const { SessionStore } = await import('../../core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const session = await sessionStore.loadSession(sessionId);
 
@@ -612,6 +615,50 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
       // 1. Parse session file once (includes sub-agent discovery)
       const parsedSession = await this.parseSessionFile(filePath, sessionId);
+
+      // 1b. A record that starts on an existing transcript (resume) skips what precedes its start.
+      // A failed baseline skips the whole run: processing without it would send the earlier
+      // records again. The marker stays, so the next run retries it.
+      let baselineCutoffMs: number | undefined;
+      try {
+        const sessionStore = new SessionStore();
+        const session = await sessionStore.loadSession(sessionId);
+        if (!session) {
+          // The marker is unknown, so the run is skipped as if it were set.
+          logger.error('[claude-adapter] Session record could not be loaded, run skipped', { sessionId });
+          return {
+            success: false,
+            processors: { baseline: { success: false, message: 'Run skipped: session record could not be loaded' } },
+            totalRecords: 0,
+            failedProcessors: ['baseline']
+          };
+        }
+        baselineCutoffMs = session.runtimeCheckpoint?.baselineCutoffMs;
+        if (baselineCutoffMs !== undefined) {
+          await applyClaudeBaseline({
+            sessionStore,
+            metricsProcessor: this.metricsProcessor,
+            conversationsProcessor: this.conversationsProcessor,
+            parsedSession,
+            cutoffMs: baselineCutoffMs,
+            context,
+            caller: 'cli',
+            loadedSession: session
+          });
+        }
+      } catch (error) {
+        if (baselineCutoffMs !== undefined) {
+          logger.error('[claude-adapter] Baseline failed, run skipped', { sessionId, error });
+          const message = `Run skipped: baseline failed: ${error instanceof Error ? error.message : String(error)}`;
+          return {
+            success: false,
+            processors: { baseline: { success: false, message } },
+            totalRecords: 0,
+            failedProcessors: ['baseline']
+          };
+        }
+        logger.error('[claude-adapter] Baseline failed, processing without it', { sessionId, error });
+      }
 
       // 2. Execute processors in priority order and collect results
       const processorResults: Record<string, {

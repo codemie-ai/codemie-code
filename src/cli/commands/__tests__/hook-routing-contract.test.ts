@@ -215,6 +215,41 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(saved.correlation.status).toBe('matched');
       expect(saved.correlation.agentSessionId).toBe(claudeId);
       expect(saved.correlation.agentSessionFile).toBe(transcript);
+      // A new claude record skips whatever its transcript already holds before its own start.
+      expect(saved.runtimeCheckpoint.baselineCutoffMs).toBe(saved.startTime);
+    });
+
+    async function startRecord(agentName: string) {
+      const sessionId = `route-start-${agentName}-${process.pid}`;
+      const agentSessionId = `${agentName}-start-1`;
+      createdSessions.add([sessionId, agentSessionId]);
+      cleanupSession(sessionId, agentSessionId);
+
+      const event = {
+        session_id: agentSessionId,
+        hook_event_name: 'SessionStart',
+        transcript_path: transcriptFile(`start-${agentName}`),
+        permission_mode: 'default',
+        cwd: TMP,
+        source: 'startup',
+      } as unknown as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, agentName, sessionId });
+      return JSON.parse(readFileSync(getSessionPath(sessionId), 'utf-8'));
+    }
+
+    it('SessionStart for claude-acp → the record carries the baseline marker at its start', async () => {
+      const saved = await startRecord('claude-acp');
+
+      expect(saved.agentName).toBe('claude-acp');
+      expect(saved.runtimeCheckpoint.baselineCutoffMs).toBe(saved.startTime);
+    });
+
+    it('SessionStart for a non-Claude agent → no baseline marker', async () => {
+      const saved = await startRecord('gemini');
+
+      expect(saved.agentName).toBe('gemini');
+      expect(saved.runtimeCheckpoint?.baselineCutoffMs).toBeUndefined();
     });
 
     it('SessionEnd → handleSessionEnd marks completed and renames {id}.json → completed_{id}.json', async () => {
@@ -242,6 +277,45 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(saved.status).toBe('completed');
       expect(saved.reason).toBe('logout');
       expect(typeof saved.endTime).toBe('number');
+    });
+
+    it('SessionEnd → the final pass writes the trailing unanswered prompt as a prompts-only delta', async () => {
+      const sessionId = `route-end-prompts-${process.pid}`;
+      const claudeId = 'claude-end-prompts-1';
+      createdSessions.add([sessionId, claudeId]);
+      // The answered turn was emitted by an earlier run.
+      writeActiveSession(sessionId, { sync: { metrics: { processedRecordIds: ['msg-a1'] } } });
+      const line = (fields: Record<string, unknown>) => JSON.stringify({ sessionId: claudeId, cwd: TMP, ...fields });
+      const transcript = join(TMP, 'end-prompts-1.jsonl');
+      writeFileSync(transcript, [
+        line({ type: 'user', uuid: 'u1', timestamp: '2026-10-31T12:00:00.000Z', message: { role: 'user', content: 'answered prompt' } }),
+        line({
+          type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: '2026-10-31T12:00:01.000Z',
+          message: {
+            id: 'msg-a1', role: 'assistant', model: 'claude-sonnet-5',
+            content: [{ type: 'text', text: 'done' }], usage: { input_tokens: 10, output_tokens: 5 }
+          }
+        }),
+        line({ type: 'user', uuid: 'u2', parentUuid: 'a1', timestamp: '2026-10-31T12:00:05.000Z', message: { role: 'user', content: 'unanswered prompt' } }),
+      ].join('\n') + '\n');
+
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'SessionEnd',
+        transcript_path: transcript,
+        permission_mode: 'default',
+        cwd: TMP,
+        reason: 'prompt_input_exit',
+      } as unknown as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, sessionId });
+
+      const metricsFile = getCodemiePath('sessions', `completed_${sessionId}_metrics.jsonl`);
+      const deltas = existsSync(metricsFile)
+        ? readFileSync(metricsFile, 'utf-8').trim().split('\n').map(l => JSON.parse(l))
+        : [];
+      const promptsDelta = deltas.find(d => String(d.recordId).endsWith(':prompts'));
+      expect(promptsDelta?.userPrompts).toEqual([{ count: 1, text: 'unanswered prompt' }]);
     });
 
     it('UserPromptSubmit → handleUserPromptSubmit starts activity tracking (sets activityStartedAt)', async () => {

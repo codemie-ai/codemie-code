@@ -53,7 +53,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
       const existingCallIds = new Set(existing.map((d) => d.recordId));
 
       const records = session.messages as CodexRolloutRecord[];
-      const functionCalls: Array<{ callId: string; item: CodexResponseItem }> = [];
+      const functionCalls: Array<{ callId: string; item: CodexResponseItem; timestamp?: string }> = [];
       const outputs = new Map<string, CodexResponseItem>();
 
       for (const record of records) {
@@ -62,7 +62,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
         if (!item.call_id) continue;
 
         if (item.type === 'function_call') {
-          functionCalls.push({ callId: item.call_id, item });
+          functionCalls.push({ callId: item.call_id, item, timestamp: record.timestamp });
         } else if (item.type === 'function_call_output') {
           outputs.set(item.call_id, item);
         }
@@ -73,20 +73,20 @@ export class CodexMetricsProcessor implements SessionProcessor {
 
       let deltasWritten = 0;
 
-      for (const { callId, item } of functionCalls) {
+      for (const { callId, item, timestamp } of functionCalls) {
         if (existingCallIds.has(callId)) continue;
+        // No output yet: the call gets its delta, with its real status, once the output appears.
+        if (!outputs.has(callId)) continue;
 
         const toolName = (item.name ?? 'unknown').toLowerCase();
-        const success = outputs.has(callId);
-        const status = success ? { success: 1, failure: 0 } : { success: 0, failure: 1 };
 
         const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
           recordId: callId,
           sessionId: session.sessionId,
           agentSessionId: meta.codexSessionId,
-          timestamp: baseTimestamp,
+          timestamp: typeof timestamp === 'string' && !isNaN(Date.parse(timestamp)) ? Date.parse(timestamp) : baseTimestamp,
           tools: { [toolName]: 1 },
-          toolStatus: { [toolName]: status },
+          toolStatus: { [toolName]: { success: 1, failure: 0 } },
           ...(resolvedBranch ? { gitBranch: resolvedBranch } : {}),
           ...(meta.model ? { models: [meta.model] } : {}),
         };
