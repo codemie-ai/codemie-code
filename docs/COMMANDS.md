@@ -1668,13 +1668,30 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 
 | Command | Effect |
 |---|---|
-| `codemie proxy analytics disable` | Stop all analytics collection. No session sends data to the backend and no SSO check is triggered solely for analytics, even though the hooks stay installed. |
+| `codemie proxy analytics disable` | Stop all hook-based analytics collection. While it is off, no hook event is forwarded, nothing is written to the daemon spool, and the hooks trigger no SSO check or daemon start, even though they stay installed. See "What is and is not covered" below. |
 | `codemie proxy analytics enable` | Resume collection. |
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
-| `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). Does not touch the `settings.json` allowlist. |
+| `codemie proxy analytics include [path]` | Remove a project from the exclusion list (default: the current project root). It only undoes an `exclude`: it does not touch the `settings.json` allowlist and does not start tracking a project that is outside the Project-scope allowlist (the command tells you when that is the case). |
 | `codemie proxy analytics status [--json]` | Show whether hooks are installed, the effective scope and tracked projects, whether collection is enabled, the excluded projects, and whether the current directory is tracked right now and why. |
 
 A corrupt `claude-analytics.json` fails closed on the hook path (collection stops) and `status` reports it; a `disable`/`enable`/`exclude`/`include` write refuses to touch a corrupt file and exits with an error instead of overwriting it.
+
+**What is and is not covered.** These commands control the **hook pipeline**: the hooks that `connect --claude-code-otlp` installs in `~/.claude/settings.json`. `codemie claude` sessions load the same global hooks, so they are covered too. They do **not** control:
+
+- the daily analytics collector, a separate scheduled job (outside this repository) that exports local session data;
+- the session sync that `codemie claude` runs through its own plugin hooks (`codemie hook` without `--agent`).
+
+**Which command do I use?**
+
+| I want to... | Use |
+|---|---|
+| Pause analytics but keep the integration installed | `analytics disable`, later `analytics enable` |
+| Stop one project, even under Global scope | `analytics exclude [path]`, later `analytics include [path]` |
+| Track only chosen projects (an opt-in list) | `connect --claude-code-otlp --scope project` in each project; `disconnect --claude-code-otlp --scope project` removes one |
+| Remove the integration entirely | `disconnect --claude-code-otlp` |
+| See what is collected and why | `analytics status` |
+
+`include` and `enable` only edit the opt-out layer, which is separate from the Project-scope allowlist that `connect` manages. So after `include` or `enable` the command prints whether the project is collected right now and, if it is not, the exact command that changes that (for example `connect --claude-code-otlp --scope project` when the project is not in the allowlist). `status` shows the same as a `Hint:` line. This is advice only: it never changes the result of the command.
 
 ### Copilot CLI and Copilot Chat analytics — disable
 
@@ -1704,7 +1721,7 @@ codemie proxy analytics status --copilot-chat-otlp
 
 **Where state lives.** `~/.codemie/copilot-analytics.json` holds one `{ "enabled": ..., "excludedProjects": [...] }` record per connector. It is deliberately separate from `copilot-connectors.json` (the connector scope written by `connect`/`disconnect`), so reconnecting, switching `--scope`, or disconnecting never resets your exclusions. A connector with no record is fully enabled with nothing excluded.
 
-**What these settings can and cannot do.** They only narrow collection. A connector that was never connected, or was disconnected, collects nothing whatever these settings say, and `enable`/`include` do not connect it; use `codemie proxy connect` for that. `connect --scope project` does not clear an earlier exclusion; `status` shows both the connector scope and the exclusions.
+**What these settings can and cannot do.** They only narrow collection. A connector that was never connected, or was disconnected, collects nothing whatever these settings say, and `enable`/`include` do not connect it; use `codemie proxy connect` for that. `connect --scope project` does not clear an earlier exclusion; `status` shows both the connector scope and the exclusions. Managed `codemie copilot-cli` launches are not collected by the native Copilot CLI hook (an existing guard), so these settings do not apply to them, and the daily collector is not controlled by them either. After `include` or `enable` the command reports whether the project is collected now and what to run if it is not, exactly as described for Claude Code above.
 
 **Failure behavior.**
 - A corrupt `copilot-analytics.json` fails closed on the hook path (nothing is collected) and `status` reports `preferencesCorrupt`. `disable`/`enable`/`exclude`/`include` refuse to touch a corrupt file and exit with an error, leaving its bytes unchanged. The reader and the writer apply the same validity rules.
