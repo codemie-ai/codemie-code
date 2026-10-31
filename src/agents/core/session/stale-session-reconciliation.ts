@@ -74,7 +74,7 @@ export function reconcileLockPath(sessionId: string): string {
 
 export type ProcessEventFn = (event: BaseHookEvent, config: HookProcessingConfig) => Promise<void>;
 export type DeliverSessionFn = (sessionId: string, config: HookProcessingConfig) => Promise<void>;
-export type RenameSessionFilesFn = (sessionId: string) => Promise<void>;
+export type RenameSessionFilesFn = (sessionId: string, bounds?: { deadlineMs?: number; signal?: AbortSignal }) => Promise<void>;
 
 /** The hook pipeline the reconciler drives; tests replace it at this boundary. */
 export interface HookPipeline {
@@ -330,22 +330,22 @@ interface AttemptOptions {
  * A record past its attempts whose finalize still fails is closed here, nothing sent: `completed`,
  * `interrupted`, ending at its latest recorded activity, renamed — so it never holds a slot of the cap.
  */
-async function closeExhaustedLocally(sessionId: string, error: unknown, pipeline: HookPipeline, deliver: boolean): Promise<void> {
+async function closeExhaustedLocally(sessionId: string, error: unknown, options: AttemptOptions, deliver: boolean): Promise<void> {
   const current = await readLiveRecord(sessionId);
   if (!current) throw error;
   const endTime = await lastRecordedActivityAt(current);
   await new SessionStore().saveSession({ ...current, status: 'completed', reason: 'interrupted', endTime });
   // A record this launch was not to deliver (another host, no send path, legacy) is never marked
   if (deliver) await markDroppedIfUndelivered(sessionId);
-  await pipeline.renameSessionFiles(sessionId);
+  await options.pipeline.renameSessionFiles(sessionId, { deadlineMs: options.deadlineMs, signal: options.parent });
   const msg = error instanceof Error ? error.message : String(error);
   logger.warn(`[reconcile] ${sessionId}: finalize failed past ${MAX_ATTEMPTS} attempts (${msg}); closed locally, nothing sent`);
 }
 
 /** Closes a record that takes no attempt (a gone Desktop daemon's, an unqueued one); true when it was one. */
-async function closeWithoutAttempt(record: Session, kind: RecordKind, pipeline: HookPipeline): Promise<boolean> {
+async function closeWithoutAttempt(record: Session, options: AttemptOptions): Promise<boolean> {
   const id = record.sessionId;
-  if (kind === 'desktop-gone') {
+  if (options.kind === 'desktop-gone') {
     const checkpoint = record.runtimeCheckpoint;
     const times = [record.startTime, checkpoint?.lastSeenActivityAt ?? 0, checkpoint?.lastDiscoveredAt ?? 0];
     const endTime = Math.max(...times.filter((time) => Number.isFinite(time)));
@@ -353,9 +353,9 @@ async function closeWithoutAttempt(record: Session, kind: RecordKind, pipeline: 
     logger.info(`[reconcile] ${id}: Claude Desktop record of a gone daemon closed locally (its daemon delivers it)`);
     return true;
   }
-  if (kind === 'unqueued') {
+  if (options.kind === 'unqueued') {
     logger.info(`[reconcile] ${id}: completed record with no CodeMie host; renamed, nothing sent`);
-    await pipeline.renameSessionFiles(id);
+    await options.pipeline.renameSessionFiles(id, { deadlineMs: options.deadlineMs, signal: options.parent });
     return true;
   }
   return false;
@@ -378,11 +378,11 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
     await pipeline.processEvent(event, recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
     if (!exhausted) throw error;
-    await closeExhaustedLocally(id, error, pipeline, deliver);
+    await closeExhaustedLocally(id, error, options, deliver);
     return true;
   }
   if (kind === 'legacy') {
-    await pipeline.renameSessionFiles(id);
+    await pipeline.renameSessionFiles(id, { deadlineMs, signal });
   }
   return false;
 }
@@ -391,7 +391,7 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
 async function attemptRecord(record: Session, options: AttemptOptions): Promise<void> {
   const { kind, launch, pipeline, parent, deadlineMs } = options;
   const id = record.sessionId;
-  if (await closeWithoutAttempt(record, kind, pipeline)) return;
+  if (await closeWithoutAttempt(record, options)) return;
 
   const controller = new AbortController();
   const follow = () => controller.abort();
@@ -407,7 +407,7 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
         if (exhausted) {
           logger.warn(`[reconcile] ${id}: undelivered after ${MAX_ATTEMPTS} attempts; renamed without sending`);
           await markDroppedIfUndelivered(id);
-          await pipeline.renameSessionFiles(id);
+          await pipeline.renameSessionFiles(id, { deadlineMs, signal: controller.signal });
         } else {
           logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
           await pipeline.deliverSession(id, recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));

@@ -26,7 +26,7 @@ import { logger } from '@/utils/logger.js';
 import { createApiClient as createConversationApiClient } from './apiClient.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { readJSONL } from '../../utils/jsonl-reader.js';
-import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
+import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import {
   DEFAULT_API_TIMEOUT_MS,
   DEFAULT_RETRY_ATTEMPTS,
@@ -62,7 +62,7 @@ export function createSyncProcessor(): SessionProcessor {
       // Read conversation payloads from JSONL
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
-      const pendingPayloads = await prepareSendList(allPayloads, conversationsFile, context);
+      const pendingPayloads = await prepareSendList(allPayloads, session.sessionId, context);
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -93,6 +93,8 @@ export function createSyncProcessor(): SessionProcessor {
       let lastSentConversationId: string | undefined;
       const successfulPayloadIds = new Set<string>();
       const failedByPayloadId = new Map<string, string>();
+      // payloadId -> syncError of every payload sent this run, in send order
+      const runOutcomes = new Map<string, string | undefined>();
 
       for (const pendingPayload of pendingPayloads) {
         // Stop BEFORE sending the next payload when the caller's sync deadline
@@ -158,13 +160,20 @@ export function createSyncProcessor(): SessionProcessor {
           failedByPayloadId.set(payloadId, syncError);
         }
 
-        // Persist THIS payload's outcome immediately (atomic full-file rewrite).
-        // A kill mid-loop must never lose progress made so far.
+        // Persist the outcomes immediately (atomic full-file rewrite).
+        // A kill mid-loop must never lose progress made so far. The file is re-read under its lock and
+        // every outcome of this run applied by payloadId, so a payload appended during the network wait is kept.
         applyPayloadOutcome(allPayloads, payloadId, syncError);
+        runOutcomes.set(payloadId, syncError);
         try {
-          await writeJSONLAtomic(conversationsFile, allPayloads);
+          await rewriteSessionFile<ConversationPayloadRecord>('conversation', session.sessionId, (current) => {
+            for (const [outcomeId, outcomeError] of runOutcomes) {
+              applyPayloadOutcome(current, outcomeId, outcomeError);
+            }
+            return current;
+          }, context);
         } catch (writeError) {
-          // Keep going: in-memory state is ahead of disk, a later iteration may persist it
+          // Keep going: the next payload's rewrite re-applies this outcome; after the last one it stays pending on disk
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist payload outcome:`, writeError);
         }
       }
@@ -287,7 +296,7 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
  */
 async function prepareSendList(
   allPayloads: ConversationPayloadRecord[],
-  conversationsFile: string,
+  sessionId: string,
   context: ProcessingContext
 ): Promise<ConversationPayloadRecord[]> {
   // Heal: a candidate whose payloadId already has a success record was synced.
@@ -305,7 +314,11 @@ async function prepareSendList(
       `${supersededCount} fully covered payload(s)`
     );
     try {
-      await writeJSONLAtomic(conversationsFile, allPayloads);
+      await rewriteSessionFile<ConversationPayloadRecord>('conversation', sessionId, (current) => {
+        healSyncedDuplicates(current);
+        collapseSupersededPayloads(current.filter(isSendCandidate));
+        return current;
+      }, context);
     } catch (writeError) {
       logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to persist healed/superseded payloads:`, writeError);
     }

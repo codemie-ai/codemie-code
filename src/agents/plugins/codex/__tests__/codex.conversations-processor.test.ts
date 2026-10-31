@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -82,6 +82,30 @@ describe('CodexConversationsProcessor — incremental', () => {
     };
     writeFileSync(sessionPath, JSON.stringify(session));
   }
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');
+    const messages = [
+      { type: 'event_msg', payload: { type: 'user_message', message: 'hello' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: 'hi' }] } },
+    ];
+    const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const record = join(tempHome, 'sessions', 'sess-conv-1.json');
+    const file = join(tempHome, 'sessions', 'sess-conv-1_conversation.jsonl');
+    const hidden = join(tempHome, 'sessions', 'completed_sess-conv-1.json');
+
+    // A SessionEnd rename in flight: the record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const dropped = await new CodexConversationsProcessor().process(buildSession(messages), ctx);
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+
+    renameSync(hidden, record);
+    const retried = await new CodexConversationsProcessor().process(buildSession(messages), ctx);
+    expect(retried.metadata?.syncUpdates).toBeDefined();
+    expect(readFileSync(file, 'utf-8').trim().split('\n')).toHaveLength(1);
+  });
 
   it('appends only new messages on subsequent runs', async () => {
     const { CodexConversationsProcessor } = await import('../session/processors/codex.conversations-processor.js');

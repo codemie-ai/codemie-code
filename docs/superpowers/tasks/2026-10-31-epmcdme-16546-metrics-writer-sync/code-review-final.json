@@ -1,0 +1,86 @@
+{
+  "decision": "request-changes",
+  "rationale": "All 4 lenses and the standards audit ran; story ACs for EPMCDME-16546/16538 pass, but the real `codemie hook` processing context never carries hookProcess/deadline/abort (CR-002), untimed kimi/opencode deltas can be dropped by the new window (CR-001, reachability unconfirmed), a wall-clock writer test is flaky (CR-003) and two commit headers exceed commitlint's 100 chars (CR-004). 2 deferred to code-review-deferred.local.md: unlocked /clear generation move (pre-existing) and codex/copilot cross-record double count (pre-existing, no window before); 16 candidates dismissed as noise, spec-intended behaviour or style (incl. deep relative imports, pervasive and not gate-enforced).",
+  "confidence": "medium",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-16546: delta appended between snapshot read and rewrite survives the sync (success and failure)", "status": "pass", "notes": "metrics-sync-processor rewrites via rewriteSessionFile under the metrics lock, applying statuses by recordId" },
+    { "kind": "story-ac", "item": "EPMCDME-16546: concurrency test covers append during an in-flight sync", "status": "pass", "notes": "metrics-sync-processor.merge.test.ts appends D2 inside mocked fetch; asserts 200 and 400 outcomes" },
+    { "kind": "story-ac", "item": "EPMCDME-16538: repeated processing of an unchanged Gemini transcript appends no new deltas", "status": "pass", "notes": "appendDeltas drops recordIds already in the file" },
+    { "kind": "story-ac", "item": "EPMCDME-16538: each new message produces exactly one delta", "status": "pass", "notes": "one delta per gemini message keyed by msg.id; writer dedupes within and across batches" },
+    { "kind": "story-ac", "item": "EPMCDME-16538: unit test covers repeated processing", "status": "pass", "notes": "gemini.metrics-processor.window.test.ts three runs on one record" },
+    { "kind": "spec", "item": "appendDeltas replaces every appendDelta call site", "status": "pass", "notes": "no appendDelta( left under src" },
+    { "kind": "spec", "item": "batched append under <id>.metrics.lock (25 ms poll, 10 s budget), bounded by a hook's deadline/abort", "status": "partial", "notes": "callee honours bounds, but hook.ts:407 processing context never sets abortSignal/syncDeadlineMs/hookProcess; see CR-002" },
+    { "kind": "spec", "item": "drop dup / before startTime / at-after next record start; no upper bound in a hook process; non-finite time kept", "status": "partial", "notes": "real hook context lacks hookProcess so resolveRunWindow scans nextRecordStart in hooks; see CR-002" },
+    { "kind": "spec", "item": "expired lock throws, nothing written, ids not marked processed", "status": "pass", "notes": "SessionFileLockTimeoutError; covered by MetricsWriter test" },
+    { "kind": "spec", "item": "each call logs in/dup/before_start/after_end/written", "status": "pass", "notes": "logger.debug in MetricsWriter" },
+    { "kind": "spec", "item": "codex and copilot apply no lower bound, marked in code", "status": "pass", "notes": "startTime -Infinity with ponytail comments; upper bound inert for codex (deferred DF-002)" },
+    { "kind": "spec", "item": "metrics sync final rewrite re-reads under lock, applies statuses by recordId, tmp + rename", "status": "pass", "notes": "applyStatuses over current; writeJSONLAtomic" },
+    { "kind": "spec", "item": "conversation lock; six processors append under it; sync rewrites merge by payloadId re-applying outcomes", "status": "pass", "notes": "appendSessionFile in all six; syncProcessor-merge.test.ts" },
+    { "kind": "spec", "item": "sync rewrites take the lock on the 10 s budget alone", "status": "pass", "notes": "rewriteSessionFile bounds = pidOnlyLiveness only" },
+    { "kind": "spec", "item": "completed_ rename takes both locks first, bounded by caller deadline/abort", "status": "pass", "notes": "renameLiveSet; delivery.ts and reconciler pass bounds" },
+    { "kind": "spec", "item": "write finding its live file gone is dropped, never re-creates it; copilot completed_ branch removed", "status": "pass", "notes": "withSessionFile existence check; /clear move still unlocked (deferred DF-001)" },
+    { "kind": "spec", "item": "conversation processors advance bookkeeping only on a successful append", "status": "pass", "notes": "per-processor dropped-write tests" },
+    { "kind": "spec", "item": "Gemini needs no processor change beyond the shared writer; mid-turn freeze documented", "status": "pass", "notes": "window test documents first-version freeze" },
+    { "kind": "spec", "item": "new failure paths throw SessionRecordNotFoundError and SessionFileLockTimeoutError", "status": "pass", "notes": "errors.ts CodeMieError subclasses" },
+    { "kind": "spec", "item": "docs define run window; opencode dedupe in shared writer", "status": "pass", "notes": "ANALYTICS-REPORT.md and external-integrations.md" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "partial", "notes": "all 3 subjects use allowed type fix and allowed scope analytics, and the subject parts (78/100/91 chars) meet the documented subject-max-length 100; but commitlint.config.cjs extends @commitlint/config-conventional, whose header-max-length is 100, and 2 headers are 116 and 107 chars (commits 997f8856, 07cc00e0), so the commit-msg hook the guide says enforces Conventional Commits would reject them" },
+    { "kind": "code-quality", "status": "partial", "notes": "added exports have explicit return types, imports carry .js, new errors are specific CodeMieError subclasses, no console.log, logging uses logger; the new src/providers/plugins/sso/session/utils/locked-jsonl.ts and src/agents/core/session/run-window.ts use deep relative imports (../../../../../utils/...) that AGENTS.md Common Pitfalls says to replace with the @/ alias, while delivery.ts in the same change does use @/" },
+    { "kind": "security", "status": "pass", "notes": "no attribution header, Responses user field or JWT claim touched; no secrets added; new log lines carry only session ids, record ids, counts and basenames, not credentials; lock/session paths come from getCodemieHome()-based session-config helpers, not user input" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/kimi/session/processors/kimi.metrics-processor.ts",
+      "line": 216,
+      "title": "Untimed deltas dropped by run window",
+      "problem": "kimi.metrics-processor.ts:216 and opencode.metrics-processor.ts:393-394 substitute Date.now() when a step/message lacks a timestamp. With the new run window, that synthetic 'now' is judged against the upper bound (next record's startTime) instead of being kept as untimed, which MetricsWriter otherwise does for non-finite times.",
+      "impact": "In a wrapper/daemon pass over a transcript shared with a later record, every untimed kimi step or opencode message is dropped as after_end and its tokens/tools are never reported for any record. Reachability unconfirmed: depends on how often transcripts omit event.time / time.created.",
+      "recommendation": "Stop substituting Date.now() for a missing event time: use NaN (kimi.metrics-processor.ts:216 `typeof event.time === 'number' ? event.time : NaN`; opencode.metrics-processor.ts:393-394 return NaN) so MetricsWriter keeps the delta as untimed instead of judging a synthetic 'now' against the upper bound. Check downstream consumers tolerate a non-finite timestamp."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/hook.ts",
+      "line": 407,
+      "title": "Hook processing context omits hookProcess and bounds",
+      "problem": "Regression gap: performIncrementalSync builds its ProcessingContext via buildProcessingContext and only adds recordsBeforeMs; it never sets hookProcess, abortSignal or syncDeadlineMs (only delivery.ts:157-163 sets them, on the sync context). resolveRunWindow (run-window.ts:22) and lockBoundsOf therefore treat `codemie hook` as a wrapper: they run the nextRecordStart scan hook.ts:314-315 deliberately skips, and lock waits ignore the hook's deadline/abort and pid-only liveness. Every window test hands processors a hand-built { hookProcess: true } context, so no test catches it.",
+      "impact": "Consumer: Stop and SessionEnd hooks via performIncrementalSync -> sessionAdapter.processSession -> every metrics/conversation processor. Contrary to the PR's stated contract, a hook applies a later-record upper bound (dropping deltas as after_end) and a held metrics/conversation lock can block the hook for the full 10 s budget past its deadline/abort.",
+      "recommendation": "In performIncrementalSync (or buildProcessingContext), set context.hookProcess, context.abortSignal and context.syncDeadlineMs from the hook's options (as delivery.ts:157-163 does for the sync context), and add a test that drives performIncrementalSync/handleSessionEnd with hookProcess=true and asserts the context handed to processSession carries them."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/session/processors/metrics/__tests__/MetricsWriter.test.ts",
+      "line": 165,
+      "title": "Wall-clock perf assertion in writer test",
+      "problem": "The test 'appends one delta to a 20 000-line file quickly' asserts performance.now() delta < 100 ms, while appendDeltas reads every recordId in the file under a pid-lock.",
+      "impact": "Timing-dependent assertion on loaded CI runners makes the suite flaky and can block unrelated merges. Reachability of the flake on CI unconfirmed.",
+      "recommendation": "Replace the <100 ms wall-clock assertion with a deterministic check (e.g. assert the file is not rewritten / bytes appended only), or widen the bound generously so CI load cannot fail it."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit headers exceed commitlint 100-char limit",
+      "problem": "git-workflow.md requires Conventional Commits enforced by commitlint.config.cjs, which extends @commitlint/config-conventional (header-max-length 100, error level). Headers of 997f8856 (116 chars) and 07cc00e0 (107 chars) exceed it.",
+      "impact": "The commit-msg hook would reject these headers, so they either bypassed the hook or will fail commitlint in CI or on rebase, blocking the workflow.",
+      "recommendation": "Shorten the headers of 997f8856 (116 chars) and 07cc00e0 (107 chars) to 100 chars or fewer, moving the second clause into the body, or ensure the squash-merge PR title is 100 chars or fewer."
+    }
+  ],
+  "deferred": [
+    { "id": "DF-001", "severity": "major", "file": "src/agents/core/session/session-generation.ts", "line": 38, "title": "/clear generation move renames files unlocked", "problem": "moveSetToGeneration renames live metrics/conversation files without the metrics/conversation pid-locks; a racing append can re-create the live file.", "preexisting": "moveSetToGeneration body unchanged by this branch; /clear flow is outside EPMCDME-16546/16538" },
+    { "id": "DF-002", "severity": "major", "file": "src/agents/plugins/codex/session/processors/codex.metrics-processor.ts", "line": 88, "title": "Codex/Copilot resumed rollouts double count across records", "problem": "Delta timestamp is session createdAt, so with startTime -Infinity the upper bound never excludes a call; every record over a resumed rollout writes every call.", "preexisting": "No run window existed before this branch, so every record already wrote every call; per-call rollout time tracked as 13d1" }
+  ]
+}

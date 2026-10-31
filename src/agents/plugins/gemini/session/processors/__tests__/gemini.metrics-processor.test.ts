@@ -4,12 +4,15 @@ import type { ParsedSession } from '../../../../../core/session/BaseSessionAdapt
 import type { ProcessingContext } from '../../../../../core/session/BaseProcessor.js';
 
 // Mock MetricsWriter to avoid actual file system writes during unit testing
-const mockAppendDelta = vi.fn();
+const mockAppendDeltas = vi.fn();
+vi.mock('../../../../../core/session/run-window.js', () => ({
+  resolveRunWindow: async () => ({ startTime: 0 }),
+}));
 vi.mock('../../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js', () => {
   return {
     MetricsWriter: class {
       constructor(public sessionId: string) {}
-      appendDelta = mockAppendDelta;
+      appendDeltas = mockAppendDeltas;
     }
   };
 });
@@ -68,14 +71,15 @@ describe('GeminiMetricsProcessor', () => {
       gitBranch: 'feature-metrics-fix',
     } as any;
 
-    mockAppendDelta.mockClear();
+    mockAppendDeltas.mockClear();
 
     const result = await processor.process(session, context);
     expect(result.success).toBe(true);
 
     // Verify written delta details
-    expect(mockAppendDelta).toHaveBeenCalledTimes(1);
-    const delta = mockAppendDelta.mock.calls[0][0];
+    expect(mockAppendDeltas).toHaveBeenCalledTimes(1);
+    expect(mockAppendDeltas.mock.calls[0][0]).toHaveLength(1);
+    const delta = mockAppendDeltas.mock.calls[0][0][0];
 
     expect(delta.recordId).toBe('assistant-turn');
     expect(delta.sessionId).toBe('sess-abc');
@@ -132,11 +136,12 @@ describe('GeminiMetricsProcessor', () => {
       metrics: { tools: {}, toolStatus: {}, fileOperations: [] }
     };
 
-    mockAppendDelta.mockClear();
+    mockAppendDeltas.mockClear();
     await processor.process(session, {} as any);
 
-    expect(mockAppendDelta).toHaveBeenCalledTimes(1);
-    const delta = mockAppendDelta.mock.calls[0][0];
+    expect(mockAppendDeltas).toHaveBeenCalledTimes(1);
+    expect(mockAppendDeltas.mock.calls[0][0]).toHaveLength(1);
+    const delta = mockAppendDeltas.mock.calls[0][0][0];
     expect(delta.userPrompts).toBeUndefined();
   });
 });

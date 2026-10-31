@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -19,6 +19,9 @@ describe('CodexMetricsProcessor — per-call_id deltas', () => {
     tempHome = mkdtempSync(join(tmpdir(), 'codex-metrics-test-'));
     originalCodemieHome = process.env.CODEMIE_HOME;
     process.env.CODEMIE_HOME = tempHome;
+    // The live record the metrics writer needs: its start time and its existence
+    mkdirSync(join(tempHome, 'sessions'), { recursive: true });
+    writeFileSync(join(tempHome, 'sessions', 'codemie-session-xyz.json'), JSON.stringify({ sessionId: 'codemie-session-xyz', startTime: 0 }));
     vi.resetModules();
   });
 
@@ -167,6 +170,21 @@ describe('CodexMetricsProcessor — per-call_id deltas', () => {
     expect(lines[1]).toMatchObject({ recordId: 'c3', tools: { apply_patch: 1 } });
   });
 
+  it('writes calls of a resumed rollout whose time predates the record start, and dedupes them by recordId', async () => {
+    const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
+    // createdAt (2026-05-09) is long before the record's start
+    writeFileSync(join(tempHome, 'sessions', 'codemie-session-xyz.json'), JSON.stringify({ sessionId: 'codemie-session-xyz', startTime: Date.parse('2026-10-01T00:00:00Z') }));
+    const session = buildSession();
+
+    const first = await new CodexMetricsProcessor().process(session, {} as never);
+    const second = await new CodexMetricsProcessor().process(session, {} as never);
+
+    expect(first.metadata?.deltasWritten).toBe(1);
+    expect(second.metadata?.deltasWritten).toBe(0);
+    const jsonlPath = join(tempHome, 'sessions', `${session.sessionId}_metrics.jsonl`);
+    expect(readFileSync(jsonlPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l).recordId)).toEqual(['c1']);
+  });
+
   it('returns success with deltasWritten=0 when there are no function_calls', async () => {
     const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
     const session = {
@@ -197,6 +215,9 @@ describe('CodexMetricsProcessor — gitBranch fallback', () => {
     tempHome = mkdtempSync(join(tmpdir(), 'codex-metrics-fallback-'));
     originalCodemieHome = process.env.CODEMIE_HOME;
     process.env.CODEMIE_HOME = tempHome;
+    // The live record the metrics writer needs: its start time and its existence
+    mkdirSync(join(tempHome, 'sessions'), { recursive: true });
+    writeFileSync(join(tempHome, 'sessions', 'sess-no-branch.json'), JSON.stringify({ sessionId: 'sess-no-branch', startTime: 0 }));
     vi.resetModules();
   });
 
@@ -211,7 +232,10 @@ describe('CodexMetricsProcessor — gitBranch fallback', () => {
 
   it('falls back to detectGitBranch when session metadata has no branch', async () => {
     const detectGitBranch = vi.fn().mockResolvedValue('main');
-    vi.doMock('../../../../utils/processes.js', () => ({ detectGitBranch }));
+    vi.doMock('../../../../utils/processes.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../../utils/processes.js')>()),
+      detectGitBranch,
+    }));
 
     const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
     const session = {

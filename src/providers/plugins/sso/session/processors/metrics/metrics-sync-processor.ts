@@ -21,7 +21,7 @@ import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
 import { readJSONL } from '../../utils/jsonl-reader.js';
-import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
+import { rewriteSessionFile } from '../../utils/locked-jsonl.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 
@@ -255,7 +255,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // far are persisted, unprocessed branches keep their deltas pending.
       const syncedAt = Date.now();
 
-      const updatedDeltas = allDeltas.map((d): MetricDelta => {
+      // The file is re-read under its lock: a line a hook appended during the network wait stays as read.
+      const applyStatuses = (current: MetricDelta[]): MetricDelta[] => current.map((d): MetricDelta => {
         if (successfulRecordIds.has(d.recordId)) {
           return {
             ...d,
@@ -279,7 +280,14 @@ export class MetricsSyncProcessor implements SessionProcessor {
         return d;
       });
 
-      await writeJSONLAtomic(metricsFile, updatedDeltas);
+      let updatedDeltas = allDeltas;
+      const rewritten = await rewriteSessionFile<MetricDelta>('metrics', session.sessionId, (current) => {
+        updatedDeltas = applyStatuses(current);
+        return updatedDeltas;
+      }, context);
+      if (!rewritten) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone, sync outcome dropped`);
+      }
 
       const successCount = successfulRecordIds.size;
       const failedCount = failedByRecordId.size;

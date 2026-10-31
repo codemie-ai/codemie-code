@@ -1,5 +1,6 @@
 import type { HookProcessingConfig } from '../hook.js';
 import { EXIT_DEADLINE_ENV } from '@/agents/core/session/stale-session-reconciliation.js';
+import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
 /** The bounds and mode of one SessionEnd. */
 export interface SessionEndOptions {
@@ -22,4 +23,35 @@ export function sessionEndOptions(config?: HookProcessingConfig, abortSignal?: A
     holdsReconcileLock: config.holdsReconcileLock,
     localOnly: config.localOnly,
   };
+}
+
+/**
+ * Default budget (ms) for the SessionEnd API sync. Claude Code kills the hook
+ * process quickly at exit, so the sync must stop sending and defer leftovers
+ * instead of blocking teardown.
+ * Override via CODEMIE_SESSION_END_SYNC_BUDGET_MS (invalid or non-positive
+ * values fall back to this default).
+ */
+const DEFAULT_SESSION_END_SYNC_BUDGET_MS = 2000;
+
+function resolveSessionEndSyncBudgetMs(): number {
+  const parsed = Number.parseInt(process.env.CODEMIE_SESSION_END_SYNC_BUDGET_MS ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SESSION_END_SYNC_BUDGET_MS;
+  }
+  return parsed;
+}
+
+/**
+ * Bounds a processing run by the hook's options: a hook process and a caller without bounds get the
+ * sync budget; an in-process caller with a deadline or abort signal is bounded by those alone.
+ */
+export function applySessionEndOptions(context: ProcessingContext, options: SessionEndOptions): void {
+  const callerBounded = !options.hookProcess && (options.deadlineMs !== undefined || options.abortSignal !== undefined);
+  const budgetDeadlineMs = Date.now() + resolveSessionEndSyncBudgetMs();
+  context.syncDeadlineMs = callerBounded
+    ? options.deadlineMs
+    : Math.min(budgetDeadlineMs, options.deadlineMs ?? budgetDeadlineMs);
+  context.abortSignal = options.abortSignal;
+  context.hookProcess = options.hookProcess === true;
 }

@@ -557,6 +557,64 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     expect(readdirSync(sessionsDir).filter((n) => n.startsWith(`completed_${id}`) && n.endsWith('.json'))).toEqual([`completed_${id}.json`]);
   });
 
+  it('a rename of the metrics file waits for the file\'s lock, and the append behind it is dropped', async () => {
+    const id = newId();
+    writeRecord(baseRecord({ sessionId: id }));
+    writeFileSync(join(sessionsDir, `${id}_metrics.jsonl`), 'line\n');
+    const { acquirePidLock } = await import('../../../utils/pid-lock.js');
+    const lock = await acquirePidLock(join(sessionsDir, `${id}.metrics.lock`), { mode: 'try' });
+    expect(lock).not.toBeNull();
+
+    const renaming = renameSessionFiles(id);
+    // Time-based: the rename polls the lock every 25 ms, so it is still waiting well after this
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(existsSync(join(sessionsDir, `${id}_metrics.jsonl`))).toBe(true);
+    expect(existsSync(join(sessionsDir, `completed_${id}_metrics.jsonl`))).toBe(false);
+
+    await lock!.release();
+    await renaming;
+    expect(existsSync(join(sessionsDir, `${id}_metrics.jsonl`))).toBe(false);
+    expect(readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8')).toBe('line\n');
+
+    const { MetricsWriter } = await import('../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
+    const dropped = await new MetricsWriter(id).appendDeltas(
+      [{ recordId: 'late', sessionId: id, agentSessionId: 'x', timestamp: Date.now(), tools: {} }],
+      { startTime: 0 }
+    );
+    expect(dropped.written).toBe(0);
+    expect(existsSync(join(sessionsDir, `${id}_metrics.jsonl`))).toBe(false);
+  });
+
+  it.each(['metrics', 'conversation'] as const)('a %s lock held past the bounds renames nothing and the set stays writable', async (kind) => {
+    const id = newId();
+    writeRecord(baseRecord({ sessionId: id }));
+    writeFileSync(join(sessionsDir, `${id}_metrics.jsonl`), '');
+    writeFileSync(join(sessionsDir, `${id}_conversation.jsonl`), '');
+    const { acquirePidLock } = await import('../../../utils/pid-lock.js');
+    const lock = await acquirePidLock(join(sessionsDir, `${id}.${kind}.lock`), { mode: 'try' });
+    expect(lock).not.toBeNull();
+    vi.mocked(logger.warn).mockClear();
+
+    await renameSessionFiles(id, { deadlineMs: Date.now() + 100 });
+    await lock!.release();
+
+    expect(readdirSync(sessionsDir).filter((n) => n.startsWith('completed_') && n.includes(id))).toEqual([]);
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.map(([line]) => String(line)))
+      .toEqual([expect.stringContaining('File rename errors: not renamed: Timed out waiting for lock')]);
+
+    const { MetricsWriter } = await import('../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
+    const later = await new MetricsWriter(id).appendDeltas(
+      [{ recordId: 'later', sessionId: id, agentSessionId: 'x', timestamp: Date.now(), tools: {} }],
+      { startTime: 0 }
+    );
+    expect(later.written).toBe(1);
+    expect(readFileSync(join(sessionsDir, `${id}_metrics.jsonl`), 'utf-8')).toContain('"later"');
+    const { appendSessionFile } = await import('../../../providers/plugins/sso/session/utils/locked-jsonl.js');
+    expect(await appendSessionFile('conversation', id, '{"payloadId":"later"}\n')).toBe(true);
+    expect(readFileSync(join(sessionsDir, `${id}_conversation.jsonl`), 'utf-8')).toBe('{"payloadId":"later"}\n');
+  });
+
   it('moves an older completed_ set aside when neither record file is readable', async () => {
     const id = newId();
     writeFileSync(join(sessionsDir, `completed_${id}.json`), '{"older');

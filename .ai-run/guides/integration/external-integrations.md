@@ -165,7 +165,7 @@ CodeMie injects model config via env vars before spawning OpenCode:
 
 ### Metrics Processor
 
-`file:src/agents/plugins/opencode/session/processors/opencode.metrics-processor.ts` — priority 1; extracts tokens, duration, cost; writes deduplicated JSONL deltas.
+`file:src/agents/plugins/opencode/session/processors/opencode.metrics-processor.ts` — priority 1; extracts tokens, duration, cost; hands its deltas to the shared `MetricsWriter`, which dedupes them by `recordId`, applies the run window and appends them to the JSONL.
 
 ---
 

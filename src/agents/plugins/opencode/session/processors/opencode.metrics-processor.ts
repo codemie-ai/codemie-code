@@ -25,6 +25,7 @@ import type {
 } from '../../opencode-message-types.js';
 import { isToolPart } from '../../opencode-message-types.js';
 import { readJsonlTolerant, loadPartsForMessage } from '../../opencode.storage-utils.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { logger } from '../../../../../utils/logger.js';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -182,9 +183,9 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
           models: delta.models,
           userPrompts: (delta as any).userPrompts?.length || 0
         });
-
-        await writer.appendDelta(delta);
       }
+
+      await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
 
       logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
       logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);

@@ -19,7 +19,7 @@ import { syntheticSessionEnd } from '@/agents/core/session/synthetic-session-end
 import { nextRecordStart } from '@/agents/core/session/next-record-start.js';
 import { isClosedGeneration, moveSetToGeneration } from '@/agents/core/session/session-generation.js';
 import { configSendPathApiUrl, getConfigValue } from './hook/config-value.js';
-import { sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
+import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
 import type { PidLock } from '@/utils/pid-lock.js';
 import { buildProcessingContext } from './hook/processing-context.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
@@ -360,7 +360,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
     // 0. Final activity accumulation (handles edge case: session ends without Stop)
     await accumulateActiveDuration(sessionId);
     // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
-    await performIncrementalSync(event, 'SessionEnd', sessionId, config, undefined, { finalPass: true });
+    await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, undefined, { finalPass: true });
     // 2. Update session status
     await updateSessionStatus(event, sessionId, event.endTime, config);
     return;
@@ -373,7 +373,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
   // The later-record bound is a wrapper-side scan; a hook process keeps the lower bound alone
   const recordsBeforeMs = record && !options.hookProcess ? await nextRecordStart(record) : undefined;
 
-  const lastRecordAt = await performIncrementalSync(event, 'SessionEnd', sessionId, config, recordsBeforeMs, { finalPass: true });
+  const lastRecordAt = await performIncrementalSync(event, 'SessionEnd', sessionId, config, options, recordsBeforeMs, { finalPass: true });
 
   // ponytail: activity that produced no transcript record is not counted
   const endTime = event.endTime ?? Math.max(
@@ -437,13 +437,15 @@ function logProcessingResult(
  *   With `holdsReconcileLock` (the start pass, the wrapper's own-record step) a failed flush throws, so
  *   a SessionEnd stops before its status write and the record stays `active` for a later attempt;
  *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
- * @param options.finalPass - Set only by SessionEnd: the session's last processing pass
+ * @param options - The hook's bounds and mode, applied to the processing context; absent → the context stays unbounded
+ * @param finalPass - `{ finalPass }`, set only by SessionEnd: the session's last processing pass
  */
 async function performIncrementalSync(
   event: BaseHookEvent,
   hookName: string,
   sessionId: string,
   config?: HookProcessingConfig,
+  options?: SessionEndOptions,
   recordsBeforeMs?: number,
   { finalPass = false }: { finalPass?: boolean } = {}
 ): Promise<number | undefined> {
@@ -500,6 +502,7 @@ async function performIncrementalSync(
     }
 
     const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
+    if (options) applySessionEndOptions(context, options);
     context.recordsBeforeMs = recordsBeforeMs;
     if (finalPass) {
       context.finalPass = true;
@@ -677,7 +680,7 @@ async function handleStop(event: BaseHookEvent, sessionId: string, config: HookP
   // Accumulate active duration FIRST (marks end of active period)
   await accumulateActiveDuration(sessionId);
   // Then sync metrics/conversations
-  await performIncrementalSync(event, 'Stop', sessionId, config);
+  await performIncrementalSync(event, 'Stop', sessionId, config, options);
 }
 
 
@@ -690,7 +693,7 @@ async function handleSubagentStop(event: SubagentStopEvent, sessionId: string, c
   if (generation === 'deferred' || generation === 'closed') {
     return;
   }
-  await performIncrementalSync(event, 'SubagentStop', sessionId, config);
+  await performIncrementalSync(event, 'SubagentStop', sessionId, config, options);
 }
 
 /**

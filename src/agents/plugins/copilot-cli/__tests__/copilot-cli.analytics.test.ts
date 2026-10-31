@@ -193,6 +193,12 @@ describe('CopilotCliMetricsProcessor', () => {
     readFileSync(join(sessionsDir(), name), 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { recordId: string; tools?: Record<string, number> });
   const toolTotal = (rows: Array<{ tools?: Record<string, number> }>) => rows.reduce((n, r) => n + (r.tools?.view ?? 0), 0);
 
+  // The live record: a metrics file is created only while it exists
+  beforeEach(() => {
+    mkdirSync(sessionsDir(), { recursive: true });
+    writeFileSync(join(sessionsDir(), `${sid}.json`), JSON.stringify({ sessionId: sid, startTime: 0 }));
+  });
+
   it('writes nothing for a zero-turn session and one delta per real assistant turn otherwise', async () => {
     const empty = writeNative('empty', [start('empty'), user(10)]);
     await run(empty);
@@ -212,10 +218,11 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(toolTotal(rows)).toBe(1);
   });
 
-  it('does not duplicate when SessionEnd runs again after the completed_ rename', async () => {
+  it('drops the write when SessionEnd runs again after the completed_ rename', async () => {
     const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40)]);
     await run(file);
     renameSync(join(sessionsDir(), `${sid}_metrics.jsonl`), join(sessionsDir(), `completed_${sid}_metrics.jsonl`));
+    renameSync(join(sessionsDir(), `${sid}.json`), join(sessionsDir(), `completed_${sid}.json`));
     await run(file);
 
     expect(readdirSync(sessionsDir()).filter((f) => f.endsWith('_metrics.jsonl'))).toEqual([`completed_${sid}_metrics.jsonl`]);

@@ -8,7 +8,9 @@
  * `_conversation.jsonl` spool for the shared sync pipeline.
  */
 
-import { appendFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
+
 import { dirname } from 'path';
 import type {
   SessionProcessor,
@@ -359,7 +361,11 @@ export class CopilotCliConversationsProcessor implements SessionProcessor {
         status: CONVERSATION_SYNC_STATUS.PENDING,
       };
 
-      await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
+      const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+      if (!appended) {
+        logger.warn(`[${CONVERSATION_PROCESSOR_NAME}] Turn ${sentinel} write dropped, will retry on the next pass`);
+        break;
+      }
 
       payloadsWritten += 1;
       recordsProcessed += history.length;

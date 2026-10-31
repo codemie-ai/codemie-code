@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
@@ -36,6 +36,8 @@ beforeEach(() => {
   originalCodemieHome = process.env.CODEMIE_HOME;
   process.env.CODEMIE_HOME = codemieHome;
   mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
+  // The live record: a conversation file is created only while it exists
+  writeFileSync(join(codemieHome, 'sessions', `${SESSION_ID}.json`), JSON.stringify({ sessionId: SESSION_ID, startTime: 0 }));
   lastEntryId = null;
   upsertConversation.mockReset();
   upsertConversation.mockResolvedValue({ success: true, message: 'ok', new_messages: 1, total_messages: 1 });
@@ -574,6 +576,29 @@ describe('PiConversationsProcessor', () => {
 
     expect(second.success).toBe(true);
     expect(second.metadata?.recordsProcessed).toBe(0);
+    expect(readPayloads()).toHaveLength(1);
+  });
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const processor = await createProcessor();
+    const entries = [
+      userEntry('first question'),
+      assistantEntry([{ type: 'text', text: 'first answer' }]),
+    ];
+    const record = join(codemieHome, 'sessions', `${SESSION_ID}.json`);
+    const hidden = join(codemieHome, 'sessions', `completed_${SESSION_ID}.json`);
+
+    // A SessionEnd rename in flight: the live record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const dropped = await processor.process(buildSession(entries), buildContext());
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.recordsProcessed).toBe(0);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(readPayloads()).toHaveLength(0);
+
+    renameSync(hidden, record);
+    const retried = await processor.process(buildSession(entries), buildContext());
+    expect(retried.metadata?.syncUpdates).toBeDefined();
     expect(readPayloads()).toHaveLength(1);
   });
 

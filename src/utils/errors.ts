@@ -62,6 +62,20 @@ export class AmbiguousIdentifierError extends CodeMieError {
   }
 }
 
+export class SessionRecordNotFoundError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Session record not found: ${sessionId}`);
+    this.name = 'SessionRecordNotFoundError';
+  }
+}
+
+export class SessionFileLockTimeoutError extends CodeMieError {
+  constructor(lockPath: string) {
+    super(`Timed out waiting for lock ${lockPath}`);
+    this.name = 'SessionFileLockTimeoutError';
+  }
+}
+
 export class PartialRegistrationError extends CodeMieError {
   constructor(
     public readonly written: string[],

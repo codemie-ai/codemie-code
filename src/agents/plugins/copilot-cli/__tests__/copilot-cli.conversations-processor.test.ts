@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -102,5 +102,40 @@ describe('CopilotCliConversationsProcessor', () => {
         event_kind: 'tool_call',
       },
     });
+  });
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const { CopilotCliConversationsProcessor } = await import('../session/processors/copilot-cli.conversations-processor.js');
+    const parsedSession = {
+      sessionId: 'sess-copilot',
+      agentName: 'GitHub Copilot CLI',
+      metadata: { createdAt: '2026-08-11T11:29:15.437Z', projectPath: '/repo/app' },
+      messages: [
+        { type: 'user', timestamp: '2026-08-11T11:29:21.539Z', message: { role: 'user', content: 'Hi' } },
+        {
+          type: 'assistant',
+          timestamp: '2026-08-11T11:29:25.092Z',
+          message: { role: 'assistant', model: 'gpt-5.5-2026-04-24', content: 'Hello there' },
+        },
+      ],
+      metrics: { userPrompts: [{ count: 1, text: 'Hi' }] },
+    } as unknown as import('../../../core/session/BaseSessionAdapter.js').ParsedSession;
+    const ctx = { agentSessionId: 'cp-turn-1' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
+    const record = join(tempHome, 'sessions', 'sess-copilot.json');
+    const hidden = join(tempHome, 'sessions', 'completed_sess-copilot.json');
+    const spool = join(tempHome, 'sessions', 'sess-copilot_conversation.jsonl');
+
+    // A SessionEnd rename in flight: the live record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const dropped = await new CopilotCliConversationsProcessor().process(parsedSession, ctx);
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.recordsProcessed).toBe(0);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(spool)).toBe(false);
+
+    renameSync(hidden, record);
+    const retried = await new CopilotCliConversationsProcessor().process(parsedSession, ctx);
+    expect(retried.metadata?.recordsProcessed).toBe(2);
+    expect(readFileSync(spool, 'utf-8').trim().split('\n')).toHaveLength(1);
   });
 });

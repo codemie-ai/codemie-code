@@ -19,6 +19,7 @@ import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { stripClear } from '../strip-clear.js';
 import { takeMessagesBefore } from './messages-before.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { collectRunPromptsAndInvocations, PROMPTS_RECORD_SUFFIX } from './run-prompts.js';
 
 interface RunOptions {
@@ -94,9 +95,7 @@ export class MetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
-      }
+      await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
 
       logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
 

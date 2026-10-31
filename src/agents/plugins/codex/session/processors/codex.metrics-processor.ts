@@ -14,6 +14,7 @@
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import type {
   CodexRolloutRecord,
@@ -32,7 +33,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
     return session.messages.length > 0;
   }
 
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       if (!hasCodexMetadata(session.metadata)) {
         return {
@@ -71,7 +72,7 @@ export class CodexMetricsProcessor implements SessionProcessor {
       const baseTimestamp = resolveTimestamp(meta.createdAt);
       const resolvedBranch = await resolveBranch(meta);
 
-      let deltasWritten = 0;
+      const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
 
       for (const { callId, item, timestamp } of functionCalls) {
         if (existingCallIds.has(callId)) continue;
@@ -91,10 +92,17 @@ export class CodexMetricsProcessor implements SessionProcessor {
           ...(meta.model ? { models: [meta.model] } : {}),
         };
 
-        await writer.appendDelta(delta);
+        deltas.push(delta);
         existingCallIds.add(callId);
-        deltasWritten++;
       }
+
+      if (deltas.length > 0) {
+        // ponytail: a call without a timestamped line gets the session's createdAt, earlier than a resumed record's
+        // start, so the window's lower bound stays off; enable it once every call carries its own line time.
+        const window = await resolveRunWindow(session.sessionId, context);
+        await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+      }
+      const deltasWritten = deltas.length;
 
       logger.debug(
         '[codex-metrics] Wrote deltas',

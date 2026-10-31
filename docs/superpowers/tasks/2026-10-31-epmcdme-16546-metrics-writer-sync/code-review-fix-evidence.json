@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "reviewed_head": "b22458f16732479d31d3761783ef8bdb1a170aed",
+  "findings": {
+    "CR-001": {
+      "decision": {
+        "outcome": "Kept as is, named in the PR description: a kimi step or an opencode message with no time of its own keeps the processing time as its delta time, as before this branch, and the run window judges it at that time.",
+        "rationale": "The Date.now() fallback predates the branch (kimi.metrics-processor.ts:217 and opencode.metrics-processor.ts:392-393 are identical on the base); only the window's judgement of that value is new. The recommended NaN is not safe end to end: metrics-sync-processor.ts:96-98 does `new Date(d.timestamp).toISOString()` for a number, which throws RangeError on NaN, and metrics-aggregator.ts:325-332 takes Math.min/Math.max over the timestamps, so one NaN makes the batch duration NaN. Reachability, opencode: resolveTimestamp (:374-395) falls to Date.now() only when msg.time.created is falsy AND the session has no updatedAt; on the sqlite path updatedAt comes from session.time_updated, which OpenCode's own schema declares NOT NULL (CREATE TABLE session ... time_updated integer NOT NULL; message.time_created integer NOT NULL as well), and in 16 captured copies of real OpenCode databases (4 sessions, 35 messages) every message JSON carries time.created and no session lacks time_updated — so the branch is reachable only through the legacy JSON-file storage with both fields absent. kimi: the step time is optional in its wire type and the kimi plugin is tracked in its own ticket, outside EPMCDME-16546 / 16538. A hook process applies no upper bound (run-window.ts:22), so only a wrapper or daemon pass over a transcript shared with a later record could drop such a delta from the earlier record, and that later record's own lower bound admits it. The delta timestamp never reaches the wire: POST /v1/metrics carries {name, attributes} and the only time-derived attribute is session_duration_ms (metrics-aggregator.ts:319-345), so the backend's day buckets and prices do not depend on it. The PR description's Impact section states the limit."
+      }
+    },
+    "CR-002": {
+      "decision": {
+        "outcome": "Fixed: the processor context of every hook path (Stop, SessionEnd, SubagentStop) carries hookProcess, abortSignal and syncDeadlineMs through the one mapping delivery.ts already applied to the sync context.",
+        "rationale": "src/cli/commands/hook/session-end-options.ts: applySessionEndOptions(context, options) holds the former inline block of delivery.ts (callerBounded, syncDeadlineMs = callerBounded ? deadlineMs : min(now + budget, deadlineMs ?? now + budget), abortSignal, hookProcess === true), with DEFAULT_SESSION_END_SYNC_BUDGET_MS and resolveSessionEndSyncBudgetMs moved beside it; delivery.ts syncPendingDataToAPI calls the helper (same semantics, same moment). hook.ts performIncrementalSync(event, hookName, sessionId, config?, options?, recordsBeforeMs?) applies the options right after buildProcessingContext; finalizeSession passes its options on both calls, handleStop and handleSubagentStop take options and the router passes sessionEndOptions(config, abortSignal, hookProcess) to all three. Effect in a codemie hook process: resolveRunWindow sees hookProcess and keeps the lower bound alone (no nextRecordStart scan), and lockBoundsOf gives every session-file lock wait the hook's deadline, abort and pid-only liveness. Tests: hook-routing-contract.test.ts, describe 'the processor context carries the hook bounds' — Stop, SessionEnd and SubagentStop driven through createHookCommand().parseAsync with CODEMIE_SESSION_END_SYNC_BUDGET_MS=700 assert hookProcess true, an AbortSignal and syncDeadlineMs within [start+700, end+700]; Stop and SessionEnd in process with { abortSignal, deadlineMs } assert hookProcess false, the same signal and syncDeadlineMs === deadlineMs. With the reviewed head's hook.ts swapped in, the five tests fail ('expected undefined to be true' / 'to be false'); 22/22 on the fix. Gate: lint, tsc, build green; unit 6776/6776; cli 301 passed, 1 failed (self-update TC-030, fails on the base too)."
+      }
+    },
+    "CR-003": {
+      "decision": {
+        "outcome": "Fixed: the 20 000-line writer test allows 1 000 ms instead of 100 ms.",
+        "rationale": "MetricsWriter.test.ts 'appends one delta to a 20 000-line file quickly (a guard, not a benchmark)': the bound is 1000 with the comment that it guards against a full-file rewrite or a quadratic scan (seconds at 20 000 lines), not against a slow runner. The measured cost here is <= 44 ms; a regression to a rewrite or an O(n^2) scan at 20 000 lines still fails the test."
+      }
+    },
+    "CR-004": {
+      "decision": {
+        "outcome": "Fixed: the branch is one commit, b22458f1, whose header is 100 characters; the two over-length headers (07cc00e0, 997f8856) are no longer in the branch's history.",
+        "rationale": "git log 1ca84cf8..HEAD shows one commit: 'fix(analytics): dedupe metric deltas in a shared run window; merge the sync rewrite, never overwrite' (100 characters, type fix, scope analytics, imperative, keys only in the footer 'Closes EPMCDME-16546, EPMCDME-16538'); npx commitlint --from 1ca84cf8 --to HEAD reports no problem. The commit went through the repository's pre-commit (lint-staged, typecheck, Gitleaks) and commit-msg (commitlint) hooks."
+      }
+    }
+  }
+}

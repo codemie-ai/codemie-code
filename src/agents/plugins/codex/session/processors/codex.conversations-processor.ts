@@ -26,6 +26,7 @@ import type {
 import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { logger } from '../../../../../utils/logger.js';
 
@@ -175,7 +176,7 @@ export class CodexConversationsProcessor implements SessionProcessor {
         };
       }
 
-      const { appendFile, mkdir } = await import('fs/promises');
+      const { mkdir } = await import('fs/promises');
       const { dirname } = await import('path');
       await mkdir(dirname(conversationsPath), { recursive: true });
 
@@ -196,7 +197,15 @@ export class CodexConversationsProcessor implements SessionProcessor {
         status: CONVERSATION_SYNC_STATUS.PENDING,
       };
 
-      await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n', 'utf-8');
+      const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+      if (!appended) {
+        logger.warn(`[codex-conversations] Window ${sentinel} write dropped, will retry on the next pass`);
+        return {
+          success: true,
+          message: 'Conversation write dropped',
+          metadata: { recordsProcessed: 0 }
+        };
+      }
 
       return {
         success: true,

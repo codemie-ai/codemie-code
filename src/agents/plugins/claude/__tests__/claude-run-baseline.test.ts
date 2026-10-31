@@ -98,7 +98,8 @@ describe('claude run baseline', () => {
       sessionId: SESSION_ID,
       agentName: 'claude',
       provider: 'ai-run-sso',
-      startTime: START_MS,
+      // A record never starts after its own lines: a resumed record starts at its cutoff, a fresh one before its transcript
+      startTime: baselineCutoffMs ?? START_MS - 24 * 60 * 60_000,
       workingDirectory: '/tmp/work',
       status: 'active',
       activeDurationMs: 0,

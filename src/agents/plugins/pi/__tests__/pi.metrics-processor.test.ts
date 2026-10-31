@@ -17,10 +17,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { PiMetricsProcessor } from '../session/processors/pi.metrics-processor.js';
 import type { PiMetricsProcessingContext } from '../session/processors/pi.metrics-processor.js';
-import { getSessionMetricsPath } from '../../../core/session/session-config.js';
+import { getSessionMetricsPath, getSessionPath } from '../../../core/session/session-config.js';
 import type { ParsedSession } from '../../../core/session/BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../core/session/BaseProcessor.js';
 import type { MetricDelta } from '../../../core/metrics/types.js';
@@ -231,10 +232,15 @@ beforeEach(() => {
   sessionId = `test-pi-metrics-${Math.random().toString(36).slice(2)}`;
   sessionRecords.clear();
   delete process.env.CODEMIE_MODEL;
+  // A metrics file is created only while the run's live record exists
+  mkdirSync(dirname(getSessionPath(sessionId)), { recursive: true });
+  writeFileSync(getSessionPath(sessionId), '{}');
+  seedSessionRecord();
 });
 
 afterEach(() => {
   rmSync(getSessionMetricsPath(sessionId), { force: true });
+  rmSync(getSessionPath(sessionId), { force: true });
 });
 
 describe('bashExecution entries', () => {

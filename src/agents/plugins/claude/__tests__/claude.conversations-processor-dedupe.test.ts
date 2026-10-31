@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -141,6 +141,28 @@ describe('ClaudeConversationsProcessor — dedupe before append (AC5)', () => {
     expect(await loadPointer()).toBe(uuid);
     const syncUpdates = result.metadata?.syncUpdates as { conversations: { lastSyncedMessageUuid: string } } | undefined;
     expect(syncUpdates?.conversations.lastSyncedMessageUuid).toBe(uuid);
+  });
+
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    await seedSession();
+    const record = join(tempHome, 'sessions', `${SESSION_ID}.json`);
+    const hidden = join(tempHome, 'sessions', `completed_${SESSION_ID}.json`);
+
+    // A SessionEnd rename in flight: the live record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const pointerBefore = await loadPointer();
+    const dropped = await processSession();
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(existsSync(conversationsFile)).toBe(false);
+    expect(existsSync(record)).toBe(false);
+    expect(await loadPointer()).toBe(pointerBefore);
+
+    renameSync(hidden, record);
+    const retried = await processSession();
+    expect(retried.message).toBe('Generated 1 turn');
+    expect(readQueued()).toHaveLength(1);
+    expect(await loadPointer()).toBe(await nextTurnUuid());
   });
 
   it('still queues the next turn after skipping an already-queued one in the same drain', async () => {

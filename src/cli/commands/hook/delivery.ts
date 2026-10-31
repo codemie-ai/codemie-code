@@ -3,9 +3,10 @@ import { getSessionMetricsPath, getSessionConversationPath } from '@/agents/core
 import { markDroppedIfUndelivered } from '@/agents/core/session/stale-session-reconciliation.js';
 import { hasSendPath } from '@/agents/core/session/send-path.js';
 import { renameSessionFiles } from '@/agents/core/session/session-generation.js';
+import { lockBoundsOf } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { syncApplies } from './config-value.js';
-import { sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
+import { applySessionEndOptions, sessionEndOptions, type SessionEndOptions } from './session-end-options.js';
 import { buildProcessingContext } from './processing-context.js';
 import { sendSessionEndMetrics } from './end-metric.js';
 
@@ -48,7 +49,7 @@ export async function deliverSessionRecord(
   if (await isDeliveryDone(sessionId, config)) {
     // A line past its sync-attempt cap counts as done: it leaves the queue unsent
     if (syncApplies(config)) await markDroppedIfUndelivered(sessionId);
-    await renameSessionFiles(sessionId);
+    await renameSessionFiles(sessionId, lockBoundsOf({ syncDeadlineMs: options.deadlineMs, abortSignal: options.abortSignal, hookProcess: options.hookProcess }));
   } else {
     logger.info(`[hook:SessionEnd] Session ${sessionId} is not completed or not fully delivered yet; kept as ${sessionId}.json for a later run`);
   }
@@ -111,23 +112,6 @@ async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig):
 }
 
 /**
- * Default budget (ms) for the SessionEnd API sync. Claude Code kills the hook
- * process quickly at exit, so the sync must stop sending and defer leftovers
- * instead of blocking teardown.
- * Override via CODEMIE_SESSION_END_SYNC_BUDGET_MS (invalid or non-positive
- * values fall back to this default).
- */
-const DEFAULT_SESSION_END_SYNC_BUDGET_MS = 2000;
-
-function resolveSessionEndSyncBudgetMs(): number {
-  const parsed = Number.parseInt(process.env.CODEMIE_SESSION_END_SYNC_BUDGET_MS ?? '', 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_SESSION_END_SYNC_BUDGET_MS;
-  }
-  return parsed;
-}
-
-/**
  * Sync pending data to API using SessionSyncer
  * Same service used by plugin timer - ensures consistency
  *
@@ -155,13 +139,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, c
 
     // Bound the sync. Sync loops check the deadline between items, the clients abort a
     // request in flight at it; the rest stays pending for a later run.
-    const callerBounded = !options.hookProcess && (options.deadlineMs !== undefined || options.abortSignal !== undefined);
-    const budgetDeadlineMs = Date.now() + resolveSessionEndSyncBudgetMs();
-    context.syncDeadlineMs = callerBounded
-      ? options.deadlineMs
-      : Math.min(budgetDeadlineMs, options.deadlineMs ?? budgetDeadlineMs);
-    context.abortSignal = options.abortSignal;
-    context.hookProcess = options.hookProcess === true;
+    applySessionEndOptions(context, options);
 
     // Use SessionSyncer service (same as plugin)
     const { SessionSyncer } = await import(

@@ -18,6 +18,7 @@ import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/proces
 import type { ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
 import { logger } from '@/utils/logger.js';
+import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { takeMessagesBefore } from './messages-before.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '../transcript-lines.js';
@@ -107,7 +108,7 @@ export class ConversationsProcessor implements SessionProcessor {
       });
 
       const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { appendFile, mkdir } = await import('fs/promises');
+      const { mkdir } = await import('fs/promises');
       const { dirname } = await import('path');
       const { existsSync } = await import('fs');
 
@@ -198,10 +199,15 @@ export class ConversationsProcessor implements SessionProcessor {
             `[${this.name}] Turn ${payloadRecord.payloadId} already queued, skipping append`
           );
         } else {
-          await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
-          queuedPayloadIds.add(payloadRecord.payloadId);
-          totalRecords += result.history.length;
-          turnsWritten++;
+          const appended = await appendSessionFile('conversation', session.sessionId, JSON.stringify(payloadRecord) + '\n', context);
+          if (appended) {
+            queuedPayloadIds.add(payloadRecord.payloadId);
+            totalRecords += result.history.length;
+            turnsWritten++;
+          } else {
+            logger.warn(`[${this.name}] Turn ${payloadRecord.payloadId} write dropped, will retry on the next pass`);
+            break;
+          }
         }
         lastSyncUpdate = {
           conversations: {
