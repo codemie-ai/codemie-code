@@ -16,6 +16,7 @@ import {
   readClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
+import { adviceForReason } from './analytics-hints.js';
 import {
   getCopilotAnalyticsPreferencesPath,
   readCopilotAnalyticsPreferences,
@@ -82,6 +83,13 @@ export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): stri
   lines.push(
     `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
   );
+  // 'preferences-corrupt' already has its own explicit line below.
+  const claudeAdvice = status.current.tracked || status.current.reason === 'preferences-corrupt'
+    ? undefined
+    : adviceForReason('claude-code-otlp', status.current.reason, status.current.path);
+  if (claudeAdvice?.nextStep) {
+    lines.push(`Hint: ${claudeAdvice.nextStep}`);
+  }
   if (!status.hooksInstalled) {
     lines.push('Run: codemie proxy connect --claude-code-otlp');
   }
@@ -152,6 +160,13 @@ export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): st
   lines.push(
     `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
   );
+  // 'scope-disabled' (the "Run: ... connect" line below) and 'preferences-corrupt' (explicit line below) are already explained.
+  const copilotAdvice = status.current.tracked || status.current.reason === 'scope-disabled' || status.current.reason === 'preferences-corrupt'
+    ? undefined
+    : adviceForReason(status.connector, status.current.reason, status.current.path);
+  if (copilotAdvice?.nextStep) {
+    lines.push(`Hint: ${copilotAdvice.nextStep}`);
+  }
   if (status.scope === 'not-connected') {
     lines.push(`Run: codemie proxy connect --${status.connector}`);
   }

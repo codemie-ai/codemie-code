@@ -15,6 +15,7 @@ vi.mock('@/utils/paths.js', async () => {
   return {
     ...actual,
     getCodemiePath: (...paths: string[]) => join(tempDir, ...paths),
+    resolveHomeDir: (relativePath = '') => join(tempDir, 'home', relativePath),
   };
 });
 

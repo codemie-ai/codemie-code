@@ -25,6 +25,11 @@ import {
   getCopilotAnalyticsPreferencesPath,
   updateCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
+import { evaluateClaudeAnalyticsGate } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js';
+import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
+import { logger } from '@/utils/logger.js';
+import { adviceForReason } from './analytics-hints.js';
+import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -105,9 +110,43 @@ function printSaved(store: AnalyticsStore, suffix = ''): void {
   console.log(chalk.green(`✓ Saved to ${store.path()}. Applies to the next ${store.label} hook event.${suffix}`));
 }
 
+/**
+ * Says whether `target` is collected right now and, if not, why and which command changes that.
+ * `include`/`enable` only edit the opt-out layer; whether a project is collected at all also depends
+ * on the connector scope written by `connect`, so this closes the gap between the two. Advisory
+ * only: it reads state, never throws, and never changes the command's outcome.
+ */
+async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: string): Promise<void> {
+  try {
+    const decision =
+      connectorId === CLAUDE_CODE_OTLP_AGENT_NAME
+        ? await evaluateClaudeAnalyticsGate(target)
+        : await evaluateCopilotAnalyticsGate(connectorId, target);
+    if (decision.tracked) {
+      // The Claude gate only models opt-outs; with no CodeMie hooks in settings.json nothing runs at all.
+      if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME && !(await hasClaudeCodeOtlpHooks())) {
+        console.log(chalk.yellow(`Note: ${target} is NOT tracked — the Claude Code hooks are not installed.`));
+        console.log(chalk.yellow(`  Next step: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`));
+        return;
+      }
+      console.log(chalk.dim(`Effective now: ${target} is tracked.`));
+      return;
+    }
+    const reason = 'reason' in decision ? decision.reason : 'unknown';
+    const advice = adviceForReason(connectorId, reason, target);
+    console.log(chalk.yellow(`Note: ${target} is NOT tracked${advice ? ` — ${advice.description}` : ` (${reason})`}.`));
+    if (advice?.nextStep) {
+      console.log(chalk.yellow(`  Next step: ${advice.nextStep}`));
+    }
+  } catch (error) {
+    logger.debug('[proxy analytics] could not compute the effective state', error);
+  }
+}
+
 async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
-    const store = storeForConnector(resolveAnalyticsConnector(opts));
+    const connectorId = resolveAnalyticsConnector(opts);
+    const store = storeForConnector(connectorId);
     let changed = true;
     await store.update((current) => {
       changed = current.enabled !== enabled;
@@ -115,9 +154,12 @@ async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<voi
     });
     if (!changed) {
       console.log(chalk.dim('Nothing to change.'));
-      return;
+    } else {
+      printSaved(store);
     }
-    printSaved(store);
+    if (enabled) {
+      await reportEffectiveState(connectorId, process.cwd());
+    }
   });
 }
 
@@ -168,7 +210,8 @@ async function excludeProject(path: string | undefined, opts: ConnectorOptions):
 
 async function includeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
-    const store = storeForConnector(resolveAnalyticsConnector(opts));
+    const connectorId = resolveAnalyticsConnector(opts);
+    const store = storeForConnector(connectorId);
     const target = path ?? resolveProjectRoot();
     const canonical = await canonicalizePath(target);
     let removed = true;
@@ -192,9 +235,10 @@ async function includeProject(path: string | undefined, opts: ConnectorOptions):
     }
     if (!removed) {
       console.log(chalk.dim('Nothing to change.'));
-      return;
+    } else {
+      printSaved(store, ` (project: ${canonical})`);
     }
-    printSaved(store, ` (project: ${canonical})`);
+    await reportEffectiveState(connectorId, canonical);
   });
 }
 
