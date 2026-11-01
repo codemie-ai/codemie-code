@@ -10,12 +10,12 @@ let directory: string;
 let home: string;
 const bin = resolve('bin/codemie.js');
 
-function run(name: string, args: string[]): { report: ReportPayload; stderr: string } {
+function run(name: string, args: string[], sessionHome = home): { report: ReportPayload; stderr: string } {
   const output = join(directory, `${name}.json`);
   const command = [bin, 'analytics', ...args, '--export', 'json', '-o', output];
   const result = spawnSync(process.execPath, command, {
     cwd: directory, encoding: 'utf8', timeout: 45_000,
-    env: { ...process.env, HOME: directory, USERPROFILE: directory, CODEMIE_HOME: home,
+    env: { ...process.env, HOME: directory, USERPROFILE: directory, CODEMIE_HOME: sessionHome,
       PI_CODING_AGENT_SESSION_DIR: join(directory, 'pi'), CODEMIE_SKIP_UPDATE_CHECK: 'true' },
   });
   if (result.error || result.status !== 0) throw new Error(`Built CLI failed: ${result.error?.message ?? result.status}\n${result.stdout}\n${result.stderr}`);
@@ -28,8 +28,8 @@ function run(name: string, args: string[]): { report: ReportPayload; stderr: str
   return { report, stderr: result.stderr };
 }
 
-function session(id: string, agent: string, start: string): void {
-  const sessions = join(home, 'sessions');
+function session(id: string, agent: string, start: string, sessionHome = home): void {
+  const sessions = join(sessionHome, 'sessions');
   writeFileSync(join(sessions, `completed_${id}.json`), JSON.stringify({ sessionId: id, agentName: agent, provider: 'native',
     workingDirectory: '/repo', startTime: Date.parse(start), endTime: Date.parse(start) + 1000, status: 'completed' }));
   writeFileSync(join(sessions, `completed_${id}_metrics.jsonl`), JSON.stringify({ sessionId: id, recordId: `${id}-turn-0`,
@@ -96,6 +96,29 @@ describe('actual built CLI JSON and date contract', () => {
     expect(report.sessions).toHaveLength(1);
     expect(report.sessions[0]).toMatchObject({ agentName: 'pi', turns: 1, tokens: { input: 1000, output: 200, cacheRead: 300, cacheCreation: 400, total: 1900 } });
     expect(report.sessions[0].costUSD).toBeCloseTo(0.00253, 10);
+  });
+  it('prices two short native requests at base rates even when their aggregate input exceeds 100k', () => {
+    const id = 'short-context';
+    const time = '2026-10-24T12:00:00Z';
+    const sessionHome = join(directory, id);
+    mkdirSync(join(sessionHome, 'sessions'), { recursive: true });
+    session(id, 'claude', time, sessionHome);
+    writeFileSync(join(sessionHome, 'sessions', `completed_${id}_metrics.jsonl`), [0, 1].map((index) => JSON.stringify({
+      sessionId: id, recordId: `${id}-turn-${index}`, timestamp: Date.parse(time),
+      tools: {}, gitBranch: 'main', syncStatus: 'synced', syncAttempts: 0,
+    })).join('\n') + '\n');
+    const nativeFile = join(sessionHome, `${id}.jsonl`);
+    writeFileSync(nativeFile, [1, 2].map((index) => JSON.stringify({ type: 'assistant', uuid: `${id}-${index}`, timestamp: time,
+      message: { id: `${id}-${index}`, role: 'assistant', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'fixture' }],
+        usage: { input_tokens: 60000, output_tokens: 1000 } } })).join('\n') + '\n');
+    const metadata = join(sessionHome, 'sessions', `completed_${id}.json`);
+    const record = JSON.parse(readFileSync(metadata, 'utf8')) as Record<string, unknown>;
+    writeFileSync(metadata, JSON.stringify({ ...record, correlation: { status: 'matched', agentSessionId: id, agentSessionFile: nativeFile } }));
+    const { report } = run(id, ['--session', id], sessionHome);
+    expect(report.sessions).toHaveLength(1);
+    expect(report.sessions[0]).toMatchObject({ turns: 2, tokens: { input: 120000, output: 2000 } });
+    // Two independent base-rate responses: 2 * (.06*.1 + .001*.5), not a long-context tier.
+    expect(report.sessions[0].costUSD).toBeCloseTo(0.013, 10);
   });
   contract('KNOWN DEFECT EPMCDME-16617: date-only end includes noon on its own UTC date', () => {
     expect(day.sessions.map((item) => item.sessionId).sort()).toEqual(['midnight', 'noon']);
