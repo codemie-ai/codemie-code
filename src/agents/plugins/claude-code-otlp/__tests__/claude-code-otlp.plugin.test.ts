@@ -190,7 +190,7 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
       value: { version: 1, enabled: false, excludedProjects: [] },
     });
     await plugin.processOtlpEvent(event('UserPromptSubmit'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
-    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
+    expect(ensureCodeMieSsoAuthOrWait).not.toHaveBeenCalled();
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });

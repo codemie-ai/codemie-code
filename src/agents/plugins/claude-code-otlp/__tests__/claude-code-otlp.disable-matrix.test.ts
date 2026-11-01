@@ -28,7 +28,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitHeadSha: vi.fn(async () => 'abc123def456'),
   detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
-vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn(async () => ({ ok: true })) }));
+vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: vi.fn(async () => ({ ok: true })) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));
@@ -81,7 +81,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
 const { updateClaudeAnalyticsPreferences } = await import('../claude-code-otlp.preferences.js');
-const { ensureCodeMieSsoAuth } = await import('@/providers/plugins/sso/sso.auth-gate.js');
+const { ensureCodeMieSsoAuthOrWait } = await import('@/providers/plugins/sso/sso.auth-gate.js');
 
 async function writeSettings(allowlist: string[] | undefined): Promise<void> {
   const path = join(tempDir, '.claude', 'settings.json');
@@ -107,7 +107,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     ensureOtlpProxy = vi.fn(async () => {});
     forwardOtlpEventsToSpool = vi.fn(async () => true);
     plugin = new ClaudeCodeOtlpPlugin();
-    vi.mocked(ensureCodeMieSsoAuth).mockClear();
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockClear();
   });
 
   afterEach(async () => {
@@ -123,13 +123,13 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
   function expectNothingStarted(): void {
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
-    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
+    expect(ensureCodeMieSsoAuthOrWait).not.toHaveBeenCalled();
   }
 
   function resetCalls(): void {
     forwardOtlpEventsToSpool.mockClear();
     ensureOtlpProxy.mockClear();
-    vi.mocked(ensureCodeMieSsoAuth).mockClear();
+    vi.mocked(ensureCodeMieSsoAuthOrWait).mockClear();
   }
 
   describe.each([
@@ -148,7 +148,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
       // Control: the tracked project does start the proxy and run the SSO gate, so the assertions above can fail.
       expect(ensureOtlpProxy).toHaveBeenCalled();
-      expect(ensureCodeMieSsoAuth).toHaveBeenCalled();
+      expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalled();
     });
 
     it('disable all stops every project regardless of scope', async () => {
