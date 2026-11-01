@@ -13,6 +13,7 @@ import { Readable } from 'node:stream';
 import { rename, writeFile } from 'fs/promises';
 import type { Session } from '../../../agents/core/session/types.js';
 import { onFakeClock } from '../../../../tests/helpers/fake-clock.js';
+import { writeDb, sqlText } from '../../../agents/plugins/opencode/__tests__/opencode-db.js';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: {
@@ -59,6 +60,8 @@ const { MetricsDataLoader } = await import('../analytics/data-loader.js');
 const { PiPluginMetadata } = await import('../../../agents/plugins/pi/pi.plugin.js');
 const { stopPiIncrementalSync } = await import('../../../agents/plugins/pi/pi.incremental-sync.js');
 const { CodeMieCodePluginMetadata } = await import('../../../agents/plugins/codemie-code.plugin.js');
+const { isSqliteAvailable } = await import('../../../agents/plugins/opencode/opencode.sqlite-reader.js');
+const sqliteAvailable = await isSqliteAvailable();
 
 const HOST = 'https://codemie.example.com';
 const API = 'http://127.0.0.1:4999';
@@ -315,6 +318,75 @@ describe('SessionEnd with endTimeFromActivity (the synthetic end)', () => {
 
     expect(readRecord(stranded.sessionId, 'completed_').endTime).toBe(Date.parse('2026-10-01T10:11:00Z'));
     expect(readFileSync(join(sessionsDir, `${resumed.sessionId}.json`), 'utf-8')).toBe(resumedBefore);
+  });
+
+  it('a record with no transcript path takes the one its SessionEnd located', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:05:00Z', '2026-10-01T10:06:00Z']);
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: '' },
+    });
+    writeRecord(session);
+
+    await processEvent(syntheticEnd(transcript), config(session));
+
+    const done = readRecord(session.sessionId, 'completed_');
+    expect(done.correlation.agentSessionFile).toBe(transcript);
+    expect(done.correlation.status).toBe('matched');
+  });
+
+  it('a record that carries a transcript path keeps it whatever path its SessionEnd names', async () => {
+    const own = writeTranscript(['2026-10-01T10:05:00Z', '2026-10-01T10:06:00Z']);
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: own },
+    });
+    writeRecord(session);
+
+    await processEvent(syntheticEnd(join(home, 'other.jsonl')), config(session));
+
+    expect(readRecord(session.sessionId, 'completed_').correlation.agentSessionFile).toBe(own);
+  });
+
+  it('a record never takes a shared sqlite store its SessionEnd names as its transcript', async () => {
+    const session = baseRecord({
+      agentName: 'opencode',
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'ses_run', agentSessionFile: '' },
+    });
+    writeRecord(session);
+
+    await processEvent(syntheticEnd(join(home, 'opencode.db')), config(session));
+
+    expect(readRecord(session.sessionId, 'completed_').correlation.agentSessionFile).toBe('');
+  });
+
+  it.skipIf(!sqliteAvailable)('an opencode SessionEnd flushes every session the run created in its directory, each under its own id', async () => {
+    const project = join(home, 'project');
+    mkdirSync(project);
+    const t0 = Date.now() - 10 * 60 * SECOND;
+    const session = baseRecord({ agentName: 'opencode', startTime: t0, workingDirectory: project });
+    writeRecord(session);
+    const dbPath = join(home, 'opencode.db');
+    const rows = ['ses_first', 'ses_after_new'].flatMap((id, i) => {
+      const at = t0 + (i + 1) * 60 * SECOND;
+      return [
+        `INSERT INTO session VALUES ('${id}', 'p', 's', '${project}', 't', '1.0.0', ${at}, ${at + 2 * SECOND});`,
+        `INSERT INTO message VALUES ('msg_${id}_u', '${id}', ${at}, ${at}, ${sqlText({ role: 'user', time: { created: at } })});`,
+        `INSERT INTO part VALUES ('prt_${id}_u', 'msg_${id}_u', '${id}', ${at}, ${at}, ${sqlText({ type: 'text', text: `prompt ${id}` })});`,
+      ];
+    });
+    await writeDb(dbPath, `
+      CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+      ${rows.join('\n')}
+    `);
+
+    await processEvent(
+      { ...syntheticEnd(dbPath), session_id: session.sessionId, endTimeFromActivity: undefined, reason: 'exit' },
+      config(session)
+    );
+
+    const deltas = readDeltas(session.sessionId, 'completed_') as unknown as Array<{ agentSessionId: string }>;
+    expect(deltas.map((d) => d.agentSessionId).sort()).toEqual(['ses_after_new', 'ses_first']);
   });
 
   it('a normal SessionEnd still ends now', async () => {
@@ -2725,5 +2797,136 @@ describe('the exit notice', () => {
 
     expect(existsSync(join(sessionsDir, `completed_${own.sessionId}.json`))).toBe(true);
     expect(stderr).not.toHaveBeenCalled();
+  });
+});
+
+describe('one server id per run: the start metric\'s session_id', () => {
+  const startEvent = (sessionId: string) => ({
+    hook_event_name: 'SessionStart',
+    session_id: sessionId,
+    transcript_path: '',
+    permission_mode: 'default',
+    cwd: home,
+    source: 'startup',
+  });
+  const exitEnd = (sessionId: string) => ({ ...syntheticEnd(), session_id: sessionId, endTimeFromActivity: undefined, reason: 'exit' });
+
+  /** The run's agent session id is linked after its start (a copilot `--continue` run's SessionEnd). */
+  function linkNativeId(sessionId: string, agentSessionId: string): void {
+    const record = readRecord(sessionId);
+    writeRecord({ ...record, correlation: { ...record.correlation, agentSessionId } });
+  }
+
+  it('a start metric the server accepted is stored on the record, and the end metric carries it', async () => {
+    const session = baseRecord({ agentName: 'copilot-cli' });
+
+    await processEvent(startEvent('codemie-start-id'), config(session));
+    expect(readRecord(session.sessionId).startMetricSessionId).toBe('codemie-start-id');
+
+    linkNativeId(session.sessionId, 'native-linked-id');
+    await processEvent(exitEnd('native-linked-id'), config(session));
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['codemie-start-id']);
+  });
+
+  it('a start metric refused with 503 stores nothing; the end metric takes the agent session id', async () => {
+    const session = baseRecord({ agentName: 'copilot-cli' });
+    respond = (metric) => metric.attributes.status === 'started'
+      ? new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } })
+      : ok();
+
+    // The start metric's retries back off on the fake clock
+    await onFakeClock(() => processEvent(startEvent('codemie-start-id'), config(session)));
+    expect(readRecord(session.sessionId).startMetricSessionId).toBeUndefined();
+
+    linkNativeId(session.sessionId, 'native-linked-id');
+    await processEvent(exitEnd('native-linked-id'), config(session));
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['native-linked-id']);
+  });
+});
+
+describe('one server id per run: an empty stored id and Pi', () => {
+  const exitEnd = (sessionId: string) => ({ ...syntheticEnd(), session_id: sessionId, endTimeFromActivity: undefined, reason: 'exit' });
+
+  it('an empty stored start metric id falls through: the end metric takes the agent session id', async () => {
+    const session = baseRecord({ agentName: 'copilot-cli', startMetricSessionId: '' });
+    writeRecord(session);
+
+    await processEvent(exitEnd('native-linked-id'), config(session));
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['native-linked-id']);
+  });
+
+  it('a Pi run: the deltas and the end metric carry the start metric\'s id, not Pi\'s own', async () => {
+    const session = baseRecord({
+      agentName: 'pi',
+      startMetricSessionId: 'codemie-start-id',
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'pi-native-id' },
+    });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+
+    // The Pi plugin's SessionEnd carries Pi's own session id
+    await processEvent(exitEnd('pi-native-id'), config(session));
+
+    expect(requests.map((r) => [r.name, r.attributes.session_id])).toEqual([
+      ['codemie_cli_session_total', 'codemie-start-id'],
+      ['codemie_cli_tool_usage_total', 'codemie-start-id'],
+    ]);
+  });
+});
+
+describe('the launch\'s resume id on the record', () => {
+  const startEvent = (sessionId: string) => ({
+    hook_event_name: 'SessionStart',
+    session_id: sessionId,
+    transcript_path: '',
+    permission_mode: 'default',
+    cwd: home,
+    source: 'startup',
+  });
+
+  it.each([
+    ['ses_named', 'ses_named'],
+    ['', undefined],
+  ])('an in-process SessionStart with CODEMIE_RESUME_SESSION_ID %j → resumeSessionId %j', async (resumeId, stored) => {
+    const session = baseRecord({ agentName: 'opencode' });
+
+    await processEvent(startEvent(session.sessionId), config(session, {
+      env: { CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_RESUME_SESSION_ID: resumeId } as NodeJS.ProcessEnv,
+    }));
+
+    expect(readRecord(session.sessionId).resumeSessionId).toBe(stored);
+  });
+
+  it.each([
+    ['1', true],
+    ['', undefined],
+  ])('an in-process SessionStart with CODEMIE_CONTINUE_SESSION %j → continuesPriorSession %j', async (flag, stored) => {
+    const session = baseRecord({ agentName: 'opencode' });
+
+    await processEvent(startEvent(session.sessionId), config(session, {
+      env: { CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_CONTINUE_SESSION: flag } as NodeJS.ProcessEnv,
+    }));
+
+    expect(readRecord(session.sessionId).continuesPriorSession).toBe(stored);
+  });
+
+  it('a hook process (no config) never reads the resume id from its environment', async () => {
+    const session = baseRecord({ agentName: 'opencode' });
+    Object.assign(process.env, {
+      CODEMIE_AGENT: 'opencode',
+      CODEMIE_SESSION_ID: session.sessionId,
+      CODEMIE_PROVIDER: 'ai-run-sso',
+      CODEMIE_URL: HOST,
+      CODEMIE_BASE_URL: API,
+      CODEMIE_TARGET_API_URL: UPSTREAM,
+      CODEMIE_RESUME_SESSION_ID: 'ses_named',
+    });
+
+    await processEvent(startEvent(session.sessionId));
+
+    expect(readRecord(session.sessionId).resumeSessionId).toBeUndefined();
   });
 });

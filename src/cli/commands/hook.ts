@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
-import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
@@ -27,6 +27,7 @@ import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 import { existsSync } from 'fs';
+import { recordLocatedTranscript, recordStartMetricSessionId } from './hook/session-record-updates.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -290,16 +291,18 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
 
   try {
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
-    let record = await new SessionStore().loadSession(sessionId);
+    const store = new SessionStore();
+    let record = await store.loadSession(sessionId);
     if (record && isOtherGeneration(record, event.session_id)) {
       if (!(await establishOwnGenerationLocked(event, sessionId, record, config, options))) {
         return;
       }
-      record = await new SessionStore().loadSession(sessionId);
+      record = await store.loadSession(sessionId);
     }
 
     // Re-checked under the lock: a record another process already completed is only delivered
     if (record?.status !== 'completed') {
+      if (record) await recordLocatedTranscript(store, record, event.transcript_path);
       if (!(await finalizeSession(event, sessionId, config, options))) {
         return;
       }
@@ -981,6 +984,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const codemieUrl = getConfigValue('CODEMIE_URL', config);
     const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
+    // Only an in-process start reads the launch's resume id: never the agent child or its hooks
+    const resumeSessionId = config?.env?.[RESUME_SESSION_ENV_KEY];
+    const continuesPriorSession = config?.env?.[CONTINUE_SESSION_ENV_KEY] === '1';
 
     // Create session record with correlation already matched
     const startTime = event.startTime ?? Date.now();
@@ -1000,6 +1006,8 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking
       ...(origin && { origin }),
+      ...(resumeSessionId && { resumeSessionId }),
+      ...(continuesPriorSession && { continuesPriorSession: true as const }),
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -1324,6 +1332,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       mcpSummary,         // MCP configuration summary
       extensionsSummary   // Extensions scan summary
     );
+    await recordStartMetricSessionId(sessionId, agentSessionId);
 
     logger.info('[hook:SessionStart] Session start metrics sent successfully');
   } catch (error) {

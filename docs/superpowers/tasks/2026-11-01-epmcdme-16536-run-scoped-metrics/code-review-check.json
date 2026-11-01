@@ -1,0 +1,49 @@
+{
+  "decision": "approve",
+  "rationale": "All 4 prior blocking findings are resolved, checked against the source at HEAD b29ec3d3 (the fix-up diff matches): copilotRunWindows now looks up on-disk bounds for every started run and uses the earlier of those and the loaded-sibling bound, with a cost-enricher test, and copilot-cli.analytics.test.ts now covers both delete paths, run-scoped skills and the shutdown lines/files subtraction. CR-001..003 were test gaps, so they were resolved through the changed test file and not their own source paths. Tests were not run because Stage 7 owns execution, and no new findings were sought.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-16536: continuing an opencode session syncs only the new run's deltas; no earlier recordId re-sent", "status": "pass", "notes": "selectRunSessions picks the named/continued session; metrics appended through resolveRunWindow" },
+    { "kind": "story-ac", "item": "EPMCDME-16536: the continued run's own conversation exchange reaches the server", "status": "pass", "notes": "getPriorRunsCheckpoint watermark + per-conversation checkpoint; A->C->D test" },
+    { "kind": "story-ac", "item": "EPMCDME-16536: a run with no opencode session of its own syncs nothing from other sessions", "status": "pass", "notes": "newest-anywhere fallback removed; fresh run selects only sessions created in its window" },
+    { "kind": "story-ac", "item": "EPMCDME-16536: automated tests cover continuation and the no-own-session case", "status": "pass", "notes": "opencode.run-session.test.ts, AgentCLI-resume.test.ts" },
+    { "kind": "spec", "item": "EPMCDME-16536 root cause: onSessionEnd must not pick the newest opencode session with no lower time bound", "status": "pass", "notes": "codemie-code and opencode onSessionEnd use locateSessionTranscript" },
+    { "kind": "spec", "item": "EPMCDME-16536 root cause: conversation sync must not restart at history_index 0 for a continued session", "status": "pass", "notes": "history_index over full session with prior-run checkpoint" },
+    { "kind": "story-ac", "item": "EPMCDME-16474: a resumed/continued Copilot run is counted consistently and synced", "status": "pass", "notes": "runSessionIdOf for full UUID; locateRunTranscript by run window; metrics/usage windowed" },
+    { "kind": "story-ac", "item": "EPMCDME-16474: original session's numbers unchanged; turns/model calls and tokens/cost from the same requests", "status": "pass", "notes": "parseSessionFile and extractCopilotRunUsage scoped to [startTime, upperBound); cost enricher per-run windows" },
+    { "kind": "story-ac", "item": "EPMCDME-16474 E4: explicit --session-id <uuid> run is CodeMie-managed, in default report and synced", "status": "pass", "notes": "extractNativeResumeId reads --session-id; transcript located under session-state/<id>" },
+    { "kind": "story-ac", "item": "EPMCDME-16475: a run without native transcript is not 'matched' and names no non-existent native session", "status": "pass", "notes": "recordNoTranscript sets failed, drops file, uses CodeMie id" },
+    { "kind": "story-ac", "item": "EPMCDME-16475: 'Priced sessions' counts only sessions in the report", "status": "pass", "notes": "keptCostSummary recounts over kept sessions; copilot-managed-report.test.ts" },
+    { "kind": "spec", "item": "PR: resolveRunSession is the single lookup for the three OpenCode agents, incremental sync and synthetic session end", "status": "pass", "notes": "opencode.run-session.ts locateRun/selectRunSessions/runSessionIds" },
+    { "kind": "spec", "item": "PR: 'newest anywhere' fallback and the 10 s grace constant are removed", "status": "pass", "notes": "STARTED_AT_GRACE_MS and selectSessionFromDb removed" },
+    { "kind": "spec", "item": "PR: a discovered descriptor's own ses_ id is read from the db directly", "status": "pass", "notes": "parseSessionFromDb reads by id" },
+    { "kind": "spec", "item": "PR: incremental-sync tick bounds the conversation by the next record's start", "status": "pass", "notes": "recordsBeforeMs passed into context and applied in conversations-processor" },
+    { "kind": "spec", "item": "PR: startMetricSessionId stored on start-metric success; deltas and end metric prefer it", "status": "pass", "notes": "recordStartMetricSessionId; metrics-aggregator and end-metric prefer it" },
+    { "kind": "spec", "item": "PR: Pi start, deltas and end under the CodeMie id; test pins the wire id", "status": "pass", "notes": "hook.session-delivery.test.ts" },
+    { "kind": "spec", "item": "PR: copilot full UUID from --resume/-r/--session-id is the SessionStart session_id; others keep CodeMie id", "status": "pass", "notes": "flagValue handles = forms; FULL_SESSION_UUID case-insensitive" },
+    { "kind": "spec", "item": "PR: copilot conversation under the transcript's native session, own turns only, per-conversation checkpoint", "status": "pass", "notes": "transcriptSessionId + selectRunTurns; historyIndexByConversation" },
+    { "kind": "spec", "item": "PR: correlation.status matched only when a transcript was found, else failed with CodeMie id", "status": "pass", "notes": "recordNoTranscript; tests present" },
+    { "kind": "spec", "item": "PR: copilot session-level fields over the run window; cumulative counters minus last prior shutdown", "status": "pass", "notes": "inRun/runShutdownShare/extractCopilotRunUsage; base subtraction for lines/files untested (CR-003)" },
+    { "kind": "spec", "item": "PR: file lines from tool telemetry and apply_patch headers; helpers in copilot-cli.file-operations.ts", "status": "pass", "notes": "callFileOperations/applyShutdownShare; delete path untested (CR-001)" },
+    { "kind": "spec", "item": "PR: copilot supplement delta stamped inside the window; run window lower bound applied", "status": "pass", "notes": "copilot-cli.metrics-processor.ts carryAt + latestRecordTime" },
+    { "kind": "spec", "item": "PR: a continued copilot run bounds the run it continued (records keyed by native id)", "status": "pass", "notes": "next-record-start.ts sameTranscriptKeys; stale-session-reconciliation test" },
+    { "kind": "spec", "item": "PR: SessionEnd persists a located transcript when the record has none; a shared .db is never stored", "status": "pass", "notes": "recordLocatedTranscript before finalizeSession" },
+    { "kind": "spec", "item": "PR: cost enricher prices a resumed copilot run in its own sibling window; no start time left unpriced", "status": "pass", "notes": "copilotRunWindows/parseCopilotRun; bound precedence defect tracked as CR-004" },
+    { "kind": "spec", "item": "PR: new functions live in new modules; over-500-line files only in-place edits", "status": "pass", "notes": "new modules added; large-file edits small or delegating" },
+    { "kind": "spec", "item": "PR: docs updated (ANALYTICS-REPORT.md, COMMANDS.md, external-integrations.md)", "status": "pass", "notes": "all three changed" },
+    { "kind": "spec", "item": "PR: npm run ci green (lint, build, unit, CLI tests)", "status": "pending-stage-7", "notes": "execution evidence owned by Stage 7" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "4 subjects use type fix, scope analytics, under 100 chars, no ticket key in subject; bundled multi-change subjects tolerated under squash-and-merge" },
+    { "kind": "code-quality", "status": "pass", "notes": "relative imports carry .js; no require/__dirname; new exports have explicit return types and JSDoc; new files under 500 lines; oversized files grew only 2-21 lines" },
+    { "kind": "security", "status": "pass", "notes": "no attribution headers or proxy files touched; no secrets or credential logging; sqlite reader uses prepared statements and escaped argv for CLI fallback" }
+  ],
+  "findings": [],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "Two new tests at HEAD: telemetry deletedPaths drives the deleted.has branch (telemetry paths present), and an apply_patch Delete File header with no telemetry drives PATCH_OPERATION; both assert type 'delete'." },
+    { "id": "CR-002", "status": "resolved", "notes": "New test adds skill.invoked inside run A's window (150) and run C's window (1150); the bounded parses assert {skill-a:1} and {skill-c:1}." },
+    { "id": "CR-003", "status": "resolved", "notes": "New test: shutdown {2,[x]} before resume, {5,[x,y]} in run C; asserts C's fileOperations is [{edit y, +3, -0}], pinning the subtraction and the priorFiles filter." },
+    { "id": "CR-004", "status": "resolved", "notes": "copilotRunWindows now batches nextRecordStarts for every started run and bounds each run by earliest(sibling, disk); its only consumer reads bounds.get. New cost-enricher test checks A bounded at 2000, not 3000." }
+  ]
+}

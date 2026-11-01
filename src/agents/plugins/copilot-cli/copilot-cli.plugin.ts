@@ -1,5 +1,6 @@
 import type { AgentConfig, AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { flagValue } from '../../core/flag-transform.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
@@ -14,6 +15,8 @@ import { recordRolloutCorrelation } from '../codex/codex.correlation.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { RESUME_SESSION_ENV_KEY } from '../../core/session/types.js';
+import { FULL_SESSION_UUID } from './copilot-cli.constants.js';
 import {
   assertExplicitCopilotModelAllowed,
   resolveCopilotModel,
@@ -36,6 +39,51 @@ const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 // Flags that make Copilot pick (or resume) a session itself; CodeMie must not add --session-id.
 const COPILOT_SESSION_SELECTION_FLAGS = ['--session-id', '--resume', '-r', '--continue', '--connect'];
 const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
+
+/**
+ * The id a run goes under: the native session a launch resumes by its full UUID (`--resume`, `-r`,
+ * `--session-id`), lower-cased as copilot names its `session-state/<id>/` directory, so the whole run
+ * continues that session; else the CodeMie id.
+ *
+ * A `--continue`, an id prefix or a session name keeps its metrics under the CodeMie id (the start
+ * metric goes out before the transcript is known); its conversation goes under the native session
+ * once the transcript is located.
+ */
+function runSessionIdOf(sessionId: string, env: NodeJS.ProcessEnv): string {
+  const resumed = env[RESUME_SESSION_ENV_KEY];
+  return resumed && FULL_SESSION_UUID.test(resumed) ? resumed.toLowerCase() : sessionId;
+}
+
+/**
+ * The run's native transcript: a pinned or resumed run's own session exactly (none when it is missing);
+ * a session the wrapper could not name (`--continue`, an id prefix, a name) by the run window.
+ */
+async function locateRunTranscript(sessionId: string): Promise<{ runSessionId: string; native?: string }> {
+  const { SessionStore } = await import('../../core/session/SessionStore.js');
+  const record = await new SessionStore().loadSession(sessionId);
+  const runSessionId = record?.correlation?.agentSessionId || sessionId;
+  const pinned = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId;
+  if (pinned || runSessionId !== sessionId || !record) {
+    const eventsFile = join(getCopilotSessionStateRoot(), runSessionId, 'events.jsonl');
+    return { runSessionId, native: existsSync(eventsFile) ? eventsFile : undefined };
+  }
+  const [native] = await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).locateTranscript(record);
+  return { runSessionId, native };
+}
+
+/**
+ * A run with no native transcript is not correlated: nothing of it is read, and the correlation names
+ * the CodeMie record instead of a native session that does not exist.
+ */
+async function recordNoTranscript(sessionId: string): Promise<void> {
+  const { SessionStore } = await import('../../core/session/SessionStore.js');
+  const store = new SessionStore();
+  const record = await store.loadSession(sessionId);
+  if (!record) return;
+  const { agentSessionFile: _none, ...correlation } = record.correlation;
+  record.correlation = { ...correlation, agentSessionId: record.sessionId, status: 'failed' };
+  await store.saveSession(record);
+}
 
 function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
   return {
@@ -167,7 +215,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         await processEvent(
           {
             hook_event_name: 'SessionStart',
-            session_id: sessionId,
+            session_id: runSessionIdOf(sessionId, env),
             transcript_path: '',
             permission_mode: 'default',
             cwd: process.cwd(),
@@ -259,27 +307,21 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
         // Native Copilot session events live under COPILOT_HOME, which may be a custom path.
         if (env.COPILOT_HOME) process.env.COPILOT_HOME = env.COPILOT_HOME;
 
-        // Only a session CodeMie pinned via --session-id is correlated. No heuristic
-        // matching: a missing transcript means "no native session", never "newest one".
-        const pinnedId = process.env[PINNED_NATIVE_SESSION_ENV] === sessionId ? sessionId : undefined;
-        const eventsFile = pinnedId ? join(getCopilotSessionStateRoot(), pinnedId, 'events.jsonl') : undefined;
-        const native = eventsFile && existsSync(eventsFile) ? eventsFile : undefined;
-
-        const transcriptPath = native ?? '';
-        const agentSessionId = native ? (pinnedId as string) : sessionId;
+        const { runSessionId, native } = await locateRunTranscript(sessionId);
+        // Must land before SessionEnd renames the record to completed_{id}.json.
         if (native) {
-          // Must land before SessionEnd renames the record to completed_{id}.json.
           await recordRolloutCorrelation(sessionId, native);
         } else {
-          logger.warn('[copilot-cli] No pinned native Copilot transcript for this run; skipping correlation');
+          logger.warn('[copilot-cli] No native Copilot transcript for this run; not correlated');
+          await recordNoTranscript(sessionId);
         }
 
         const { processEvent } = await import('../../../cli/commands/hook.js');
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
-            session_id: agentSessionId,
-            transcript_path: transcriptPath,
+            session_id: runSessionId,
+            transcript_path: native ?? '',
             permission_mode: 'default',
             cwd: process.cwd(),
             reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
@@ -307,6 +349,11 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
       this.sessionAdapter = new CopilotCliSessionAdapter(this.metadata);
     }
     return this.sessionAdapter;
+  }
+
+  /** The session the launch names in copilot's own forms: `-r <id>`, `--session-id <id>` / `--session-id=<id>`. */
+  extractNativeResumeId(args: string[]): string | undefined {
+    return flagValue(args, ['-r', '--session-id']);
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {

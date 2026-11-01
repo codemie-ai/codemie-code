@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "reviewed_head": "92d8593eb06c64855f851db41d0ed6119e35b841",
+  "findings": {
+    "CR-001": {
+      "decision": {
+        "outcome": "Fixed by tests: src/agents/plugins/copilot-cli/__tests__/copilot-cli.analytics.test.ts — 'a call whose telemetry lists a path as deleted is a delete' (deletedPaths telemetry → [{ type: 'delete', path }]) and 'an apply_patch with no telemetry and a Delete File header is a delete of the absolute path' (patch header → delete of <cwd>/x.txt).",
+        "rationale": "Both delete paths of callFileOperations (copilot-cli.file-operations.ts:52, the deleted.has(path) branch and PATCH_OPERATION.Delete) are now asserted; each test was shown red against the branch flipped to 'edit' and green on the fix-up commit."
+      }
+    },
+    "CR-002": {
+      "decision": {
+        "outcome": "Fixed by a test: copilot-cli.analytics.test.ts — 'each bounded run counts only the skills invoked inside its window': skill.invoked events inside run A's and run C's windows of one resumed native session; A counts only skill-a, C only skill-c.",
+        "rationale": "The inRun(event, bounds) guard on skill.invoked (copilot-cli.session.ts:266) is now covered; the test was shown red with the guard dropped (C counts both skills)."
+      }
+    },
+    "CR-003": {
+      "decision": {
+        "outcome": "Fixed by a test: copilot-cli.analytics.test.ts — 'a resumed run with no per-call lines takes the shutdown lines and files beyond the prior shutdown': shutdown {linesAdded 2, files [x]} before the resume, shutdown {linesAdded 5, files [x, y]} inside run C → C's fileOperations [{ type: 'edit', path: y, linesAdded: 3, linesRemoved: 0 }].",
+        "rationale": "runShutdownShare / applyShutdownShare (copilot-cli.usage.ts:101) base subtraction is now asserted; the test was shown red with the subtraction removed (linesAdded 5, both files)."
+      }
+    },
+    "CR-004": {
+      "decision": {
+        "outcome": "Fixed in code: src/cli/commands/analytics/cost/copilot-runs.ts copilotRunWindows asks deps.nextRecordStarts (one batch call) for every copilot run with a start time and sets each run's upper bound to the earlier of the loaded sibling's start and the on-disk next record's start (either absent → the other). Test: cost-enricher.test.ts 'a run is bounded by a filtered-out record on disk that starts before its loaded sibling' (A 1000, filtered-out X 2000, loaded C 3000 → A's upperBound 2000; the batch is called once with ['A','C']).",
+        "rationale": "The window no longer depends on the report's filter, as the function's docstring states; the disk lookup stays one directory pass per report. The test was shown red on the reviewed head (A's bound = C's 3000)."
+      }
+    }
+  }
+}

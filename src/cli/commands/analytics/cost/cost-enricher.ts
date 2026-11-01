@@ -10,7 +10,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
-import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
+import type { ParsedSession, RunBounds, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
@@ -33,18 +33,28 @@ import { enrichClaudeDispatchCosts } from './claude-dispatch-allocation.js';
 import { enrichSkillDispatchCost } from './dispatch-allocation.js';
 import { normalizeModelName } from '@/utils/model-normalizer.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { nextRecordStarts } from '@/agents/core/session/next-record-start.js';
+import type { Session } from '@/agents/core/session/types.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { ClaudeSessionAdapter } from '@/agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '@/agents/plugins/claude/claude.plugin.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
 import { isLocalModel } from './local-models.js';
+import { copilotRunWindows, isCopilotRun, parseCopilotRun } from './copilot-runs.js';
 import { logger } from '@/utils/logger.js';
 
 export interface EnricherDeps {
   resolveAgentName(raw: RawSessionData): string;
   /** Native agent log path for a session, or null if not resolvable. */
   loadAgentSessionFile(raw: RawSessionData): Promise<string | null>;
-  parseNative(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
+  /** `run`: the session's own slice of a native log it shares with the runs that resumed it. */
+  parseNative(agentName: string, filePath: string, sessionId: string, run?: RunBounds): Promise<ParsedSession | null>;
+  /**
+   * The start of the next CodeMie record on disk over the same native session of each id, whether or
+   * not the report loaded it; absent — a run with no loaded sibling keeps no upper bound.
+   */
+  nextRecordStarts?(sessionIds: string[]): Promise<Map<string, number | undefined>>;
 }
 
 /**
@@ -89,22 +99,27 @@ export const realDeps: EnricherDeps = {
     }
     return null;
   },
-  async parseNative(agentName, filePath, sessionId) {
+  async parseNative(agentName, filePath, sessionId, run) {
     const adapter = resolveSessionAdapter(agentName);
     if (!adapter) {
       return null;
     }
     try {
-      return await adapter.parseSessionFile(filePath, sessionId);
+      return await adapter.parseSessionFile(filePath, sessionId, undefined, run);
     } catch (e) {
       logger.debug(`[cost] native parse failed for ${sessionId}:`, e);
       return null;
     }
   },
+  async nextRecordStarts(sessionIds) {
+    const store = new SessionStore();
+    const records = await Promise.all(sessionIds.map((id) => store.loadSession(id)));
+    return nextRecordStarts(records.filter((record): record is Session => !!record));
+  },
 };
 
 /** Parsed native log for one session, plus ordering/attribution metadata. */
-interface ParsedEntry {
+export interface ParsedEntry {
   sessionId: string;
   agentName: string;
   hadLog: boolean;
@@ -112,6 +127,8 @@ interface ParsedEntry {
   filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
+  /** Why the session's log was not parsed, when that is known. */
+  unavailableReason?: string;
   /** Provider the session was launched with (start event), used to recognise free local models. */
   provider?: string;
   capturedAt?: number;
@@ -255,14 +272,14 @@ function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefin
   return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
 }
 
-/** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
+/** Phase 1: resolve + parse a session's native log (a copilot run's waits for its window). Safe to run in parallel. */
 async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<ParsedEntry> {
   const agentName = deps.resolveAgentName(raw);
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
   const capture = raw[INTERNAL_PARSED_FAMILY];
   const parsed = capture?.parsed
-    ?? (filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
+    ?? (filePath && !isCopilotRun(agentName) ? await deps.parseNative(agentName, filePath, raw.sessionId) : null);
   return {
     sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0,
     ...(raw.startEvent?.data?.provider && { provider: raw.startEvent.data.provider }),
@@ -564,6 +581,8 @@ export async function enrichCosts(
   const sharedFileGroups = groupSharedFileSiblings(ordered);
   const reportedObservedEnd = computeReportedObservedEnd(sharedFileGroups);
   const nextSiblingStart = computeNextSiblingStart(sharedFileGroups);
+  const copilot = await copilotRunWindows(ordered, nextSiblingStart, deps);
+  await mapWithConcurrency(copilot.runs, 16, (entry) => parseCopilotRun(entry, copilot.bounds, deps));
   const dedupWindowEnd = computeDedupWindowEnd(sharedFileGroups);
   // CR-002: a Claude SDK modelUsage rollup is a whole-file aggregate, not a per-session one —
   // trusting it for a session sharing its native log file would let every sharing session
@@ -699,6 +718,8 @@ export async function enrichCosts(
       } catch (e) {
         logger.debug(`[cost] dispatch extraction failed for ${entry.sessionId}:`, e);
       }
+    } else if (entry.unavailableReason) {
+      cost.usageUnavailableReason = entry.unavailableReason;
     }
     index.set(cost.sessionId, cost);
     u.forEach((m) => unpriced.add(m));

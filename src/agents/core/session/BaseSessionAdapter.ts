@@ -8,6 +8,7 @@
 
 import type { SessionDiscoveryOptions, SessionDescriptor } from './discovery-types.js';
 import type { Session } from './types.js';
+import type { RunWindow } from '../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js';
 
 // Re-export for convenience
 export type { SessionDiscoveryOptions, SessionDescriptor };
@@ -37,6 +38,9 @@ export interface ParsedSession {
 
   /** Times (epoch ms, ISO string or unset) of the transcript's top-level records, as parsed */
   recordTimes?: Array<number | string | undefined>;
+
+  /** The run window the transcript was parsed for, so a processor does not resolve it again */
+  runWindow?: RunWindow;
 
   /** The main transcript for the conversation sync — the counted lines with each duplicated `uuid` kept once: its first copy when a compaction lies between the copies, else its last copy (as `messages`). */
   conversationMessages?: unknown[];
@@ -143,6 +147,12 @@ export function latestRecordTime(
   return latest;
 }
 
+/** A run's slice of a shared transcript: [`startTime`, `upperBound`), no upper bound when absent. */
+export interface RunBounds {
+  startTime: number;
+  upperBound?: number;
+}
+
 /**
  * Base interface for session adapters.
  * Each agent implements this to provide agent-specific parsing logic.
@@ -183,12 +193,16 @@ export interface SessionAdapter {
    *   by adapters whose storage holds many sessions in one file (e.g. OpenCode's
    *   SQLite database) and which therefore must disambiguate. Adapters reading a
    *   one-session-per-file transcript ignore it.
+   * @param run - The run's own slice of the transcript. Only an adapter whose one transcript
+   *   is shared by every run that resumed it (Copilot) scopes its usage and session-level
+   *   counters to it; the others ignore it.
    * @returns Parsed session in agent-agnostic format
    */
   parseSessionFile(
     filePath: string,
     sessionId: string,
-    agentSessionId?: string
+    agentSessionId?: string,
+    run?: RunBounds
   ): Promise<ParsedSession>;
 
   /**

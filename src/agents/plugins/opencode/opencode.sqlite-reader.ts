@@ -188,19 +188,27 @@ interface PartRow {
  * project they have ever opened.
  *
  * @param dbPath - Path to opencode.db
- * @param options - Optional filtering (maxAgeDays, cwd, limit)
+ * @param options - Optional filtering: `id` (that session alone), else `updatedSince` (sessions
+ *   updated at or after it, any age), else `maxAgeDays` by creation; then `cwd`, `limit`
  * @returns Array of OpenCodeSession objects, newest first
  */
 export async function readSessionsFromDb(
   dbPath: string,
-  options?: { maxAgeDays?: number; cwd?: string; limit?: number }
+  options?: { maxAgeDays?: number; cwd?: string; limit?: number; id?: string; updatedSince?: number }
 ): Promise<OpenCodeSession[]> {
-  const maxAgeMs = (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - maxAgeMs;
   const normalizedCwd = options?.cwd?.replace(/\/+$/, '');
-
-  const conditions: string[] = ['(time_created IS NULL OR time_created >= ?)'];
-  const params: SqlParam[] = [cutoff];
+  const conditions: string[] = [];
+  const params: SqlParam[] = [];
+  if (options?.id !== undefined) {
+    conditions.push('id = ?');
+    params.push(options.id);
+  } else if (options?.updatedSince !== undefined) {
+    conditions.push('time_updated >= ?');
+    params.push(options.updatedSince);
+  } else {
+    conditions.push('(time_created IS NULL OR time_created >= ?)');
+    params.push(Date.now() - (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000);
+  }
 
   if (normalizedCwd) {
     // OpenCode stores `directory` without a trailing separator; accept both forms.

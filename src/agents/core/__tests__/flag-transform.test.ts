@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformFlags } from '../flag-transform.js';
+import { flagValue, transformFlags } from '../flag-transform.js';
 import type { FlagMappings, AgentConfig } from '../types.js';
 
 describe('transformFlags', () => {
@@ -238,5 +238,15 @@ describe('transformFlags', () => {
 
       expect(result).toEqual(['-p', 'test', '--workspace', 'prod', '-t', '600', '--verbose']);
     });
+  });
+});
+
+describe('flagValue reads flags only before a bare --', () => {
+  it.each([
+    [['--', '--session', 'x'], undefined],
+    [['--session', 'x', '--'], 'x'],
+    [['--session=x'], 'x'],
+  ])('%j → %s', (args, expected) => {
+    expect(flagValue(args, ['--session'])).toBe(expected);
   });
 });

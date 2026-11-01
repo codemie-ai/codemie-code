@@ -119,6 +119,8 @@ export interface ProcessingResult {
         totalSyncAttempts?: number;
         conversationId?: string;
         lastSyncAt?: number;
+        /** The highest synced `history_index` of each conversation id the sync sent. */
+        historyIndexByConversation?: Record<string, number>;
       };
     };
     [key: string]: unknown;

@@ -7,7 +7,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import { writeDb, sqlText } from './opencode-db.js';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn(), isDebugMode: () => false },
@@ -19,22 +20,7 @@ const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
 const MINUTE = 60_000;
 const SESSION_ID = '00000000-0000-4000-8000-0000000000aa';
 
-/** Builds the db the way the reader reads it: node:sqlite (Node 22.5+), else the sqlite3 CLI. */
-async function writeDb(dbPath: string, sql: string): Promise<void> {
-  try {
-    const { DatabaseSync } = await import('node:sqlite');
-    const db = new DatabaseSync(dbPath);
-    db.exec(sql);
-    db.close();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ERR_UNKNOWN_BUILTIN_MODULE') throw error;
-    execFileSync('sqlite3', [dbPath, sql]);
-  }
-}
-
 const hasSqlite3 = spawnSync('sqlite3', ['--version']).status === 0;
-
-const sqlText = (value: unknown) => `'${JSON.stringify(value).replace(/'/g, "''")}'`;
 
 let root: string;
 const previousHome = process.env.CODEMIE_HOME;

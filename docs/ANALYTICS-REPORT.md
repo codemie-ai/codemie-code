@@ -56,6 +56,8 @@ Discovered sessions that CodeMie did not launch are **excluded by default**; see
   - records marked `droppedAt` since this wrapper started (its start pass, its exit, its hooks' `/clear`): ``CodeMie: analytics of <N> session(s) could not be delivered and were dropped. Check the connection to CodeMie with `codemie doctor`.``
 - **generation** — the part of a Claude Code session before a `/clear`: `/clear` keeps the session id, so each earlier part is kept as `completed_<id>-<gen>.json` (with its `_metrics.jsonl` / `_conversation.jsonl`), `<gen>` being that part's Claude session id; `--session <uuid>` selects the session and its generations.
 - **run window** — a record's own slice of a shared transcript: from its `startTime` up to (not including) the `startTime` of the next CodeMie record over the same transcript. A transcript record outside the window belongs to another record and produces no metric delta. The `recordId` dedupe and the run window live in the shared metrics writer, so every agent gets them: a delta whose `recordId` is already in the record's metrics file, or whose time falls outside the window, is dropped (a delta with no usable time is kept). A hook process knows no later record, so its window has no upper bound.
+
+  For Copilot CLI, a resumed or continued `copilot` run's tools, lines, tokens and conversation turns are counted over the same native log from this run's start up to the next CodeMie record's start (its run window); the Cost view prices the run inside that window, and **Priced sessions** counts the sessions the report keeps.
 - **legacy record** — an `active` record written before owners were recorded (no `ownerPid`): finalized locally once idle for more than 72 hours, nothing sent.
 - **`reason: desktop-daemon-restart`** — a Claude Desktop session the CodeMie daemon finalized at its own restart; **`reason: desktop-daemon-gone`** — a Claude Desktop session a CodeMie CLI start closed locally because its daemon was gone (left `<id>.json` for the daemon to deliver).
 
@@ -167,7 +169,7 @@ Estimated API-equivalent spend (token usage × model pricing). If you use Claude
 Key elements:
 
 - **Coverage banner** — tells you how many sessions were successfully priced and which agents have full, partial, or missing token data
-- **Coverage by agent table** — per-agent breakdown of total sessions, priced sessions, sessions with a native log, and coverage status
+- **Coverage by agent table** — per-agent breakdown of total sessions, priced sessions, sessions with a native log, and coverage status. A Copilot CLI run shares its native log with the runs that resumed it.
 - **Cost by agent** — doughnut chart
 - **Cost by model** — horizontal bar chart of USD spend per model
 - **Most expensive sessions** — top 10 ranked by cost, with per-session token breakdown (input, output, cached)
@@ -381,7 +383,7 @@ The report-generation flags shown above are the complete set. Any other flag nam
 
 **Every filter and source flag governs the terminal output and the HTML report alike.** There is no report-only or terminal-only filtering: `--include-external` and the date/project/agent filters all decide which sessions the command sees, and both outputs are rendered from that same set.
 
-**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>`, and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
+**Cost is always computed**, with or without `--export`. The terminal summary always shows the total cost, `Priced sessions: <priced>/<total>` (both over the sessions the report keeps, so an empty session it drops is counted in neither), and (when non-empty) an `Unpriced models:` list, an `Estimated models:` list and a `Local models (free):` list.
 
 The date filters control which sessions are **embedded** in the report; the client-side range presets (Today / 7d / 30d / 90d) then let the report viewer narrow further within that data.
 

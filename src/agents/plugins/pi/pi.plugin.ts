@@ -112,8 +112,9 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
  * - `correlation.agentSessionFile` — the analytics cost path resolves the native
  *   transcript through this field. Pi left it empty, so token and cost figures were
  *   never readable for a Pi session, and the report blamed a missing token reader.
- * - `correlation.agentSessionId` — the metrics aggregator prefers it when labelling
- *   the wire `session_id`, which should be Pi's id rather than CodeMie's.
+ * - `correlation.agentSessionId` — Pi's id: the conversation is filed under it. The
+ *   start metric goes under the CodeMie id; the deltas and the end metric carry the
+ *   id the start metric was accepted under, this id only when none was accepted.
  * - `workingDirectory` / `gitBranch` / `repository` — `--session <path>` runs the
  *   whole session under the transcript's cwd, which may be a different repository
  *   than the one CodeMie was launched from.
@@ -464,7 +465,7 @@ export const PiPluginMetadata: AgentMetadata = {
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
-            // Pi's own session id, so the backend joins on the agent's identity.
+            // Pi's own session id: the conversation's; the end metric carries the start metric's id.
             session_id: ledger.piSessionId ?? sessionId,
             transcript_path: ledger.transcripts[0] ?? '',
             transcript_paths: ledger.transcripts.length > 0 ? ledger.transcripts : undefined,

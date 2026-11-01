@@ -33,6 +33,8 @@ import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/s
 import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/session/processors/conversations/constants.js';
 import { appendSessionFile } from '@/providers/plugins/sso/session/utils/locked-jsonl.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
+import { persistedHistoryIndexOf } from '../../../../core/session/conversation-checkpoint.js';
+import { getPriorRunsCheckpoint } from './opencode.conversation-checkpoints.js';
 import { loadPartsForMessage } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
 import { readJSONLTolerant } from '@/agents/core/session/utils/jsonl-reader.js';
@@ -91,9 +93,9 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
     return session.messages.length > 0;
   }
 
-  // The context only bounds the file lock wait: conversation identity comes from
-  // session.metadata.openCodeSessionId, never from context.agentSessionId,
-  // which differs between the timer/Stop and in-process SessionEnd paths.
+  // The context bounds the file lock wait and the run's events (`recordsBeforeMs`):
+  // conversation identity comes from session.metadata.openCodeSessionId, never from
+  // context.agentSessionId, which differs between the timer/Stop and in-process SessionEnd paths.
   async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       const metadata = session.metadata as (OpenCodeMetadata & { storagePath?: string }) | undefined;
@@ -109,7 +111,10 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       }
 
       const messages = session.messages as OpenCodeMessage[];
-      const events = await normalizeEvents(messages, storagePath, openCodeSessionId, metadata?.partsMap);
+      const sessionEvents = await normalizeEvents(messages, storagePath, openCodeSessionId, metadata?.partsMap);
+      // Events from the next record's start on belong to that record's run
+      const until = context.recordsBeforeMs;
+      const events = until === undefined ? sessionEvents : sessionEvents.filter(event => Date.parse(event.date) < until);
 
       logger.debug(
         `[opencode-conversations] Normalised ${events.length} events from ${messages.length} messages`
@@ -122,9 +127,11 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       const { SessionStore } = await import('../../../../core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const sessionMetadata = await sessionStore.loadSession(session.sessionId);
-      const persistedHistoryIndex = sessionMetadata?.sync?.conversations?.lastSyncedHistoryIndex ?? -1;
+      // A record's run can hold several sessions: each conversation keeps its own checkpoint
+      const syncState = sessionMetadata?.sync?.conversations;
+      const persistedHistoryIndex = persistedHistoryIndexOf(syncState, openCodeSessionId);
       const lastSyncedSourceIndex = parseLastSyncedSourceIndex(
-        sessionMetadata?.sync?.conversations?.lastSyncedMessageUuid,
+        syncState?.lastSyncedMessageUuid?.startsWith(`${openCodeSessionId}@`) ? syncState.lastSyncedMessageUuid : undefined,
         persistedHistoryIndex
       );
 
@@ -132,10 +139,12 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
       const existingPayloads = await readJSONLTolerant<ConversationPayloadRecord>(conversationsPath, '[opencode-conversations]');
 
       // Payloads already queued but not yet uploaded also advance the watermark,
-      // otherwise every tick re-queues the same turn.
-      const queuedCheckpoint = getQueuedCheckpoint(existingPayloads);
-      const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex);
-      const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex);
+      // otherwise every tick re-queues the same turn; the session's turns before the
+      // record's start are earlier runs'.
+      const queuedCheckpoint = getQueuedCheckpoint(existingPayloads.filter(payload => payload.payload.conversationId === openCodeSessionId));
+      const priorCheckpoint = getPriorRunsCheckpoint(events, sessionMetadata?.startTime);
+      const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex, priorCheckpoint.sourceIndex);
+      const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex, priorCheckpoint.historyIndex);
 
       const turn = buildIncrementalTurn(events, effectiveSourceIndex, effectiveHistoryIndex);
 

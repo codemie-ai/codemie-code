@@ -121,4 +121,19 @@ describe('ensureSessionFile (Risk 1 — session record clobbering)', () => {
     await ensureSessionFile(SESSION_ID, env, 'opencode');
     expect(readFileSync(getSessionPath(SESSION_ID), 'utf-8')).toBe(written);
   });
+
+  it('with no prior record carries the launch resume id and continue flag', async () => {
+    const env = {
+      CODEMIE_AGENT: 'opencode',
+      CODEMIE_RESUME_SESSION_ID: 'ses_resumed',
+      CODEMIE_CONTINUE_SESSION: '1',
+    } as NodeJS.ProcessEnv;
+    const { ensureSessionFile } = await import('../../../core/session/ensure-session.js');
+    await ensureSessionFile(SESSION_ID, env, 'opencode');
+
+    const { getSessionPath } = await import('../../../core/session/session-config.js');
+    const session = JSON.parse(readFileSync(getSessionPath(SESSION_ID), 'utf-8'));
+    expect(session.resumeSessionId).toBe('ses_resumed');
+    expect(session.continuesPriorSession).toBe(true);
+  });
 });

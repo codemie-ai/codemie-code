@@ -20,7 +20,9 @@ import type {
   CopilotShutdownData,
   CopilotAssistantMessageData,
   CopilotUsageBuckets,
+  CopilotUsageRecordData,
 } from './copilot-cli-event-types.js';
+import type { RunBounds } from '../../core/session/BaseSessionAdapter.js';
 
 /** One model's usage within a session, as Copilot reported it. */
 export interface CopilotUsageMessage {
@@ -44,6 +46,95 @@ export interface CopilotUsageExtract {
 
 const NO_USAGE_REASON =
   'No usage data in transcript — this Copilot CLI version recorded no token telemetry';
+
+const RESUMED_NO_RECORD_REASON =
+  'No usage record in this run\'s window of a resumed Copilot session — its share of the session rollup is unknown';
+
+const USAGE_BUCKETS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const;
+
+const eventTime = (event: CopilotEvent): number => Date.parse(event.timestamp ?? '');
+
+/**
+ * The rule for every time comparison against a run: an event with no usable time lies in no bounded
+ * window, so the runs sharing a transcript never each count it; only the whole-session window holds it.
+ */
+function isWholeSession(run: RunBounds): boolean {
+  return run.startTime === -Infinity && run.upperBound === undefined;
+}
+
+/** Whether a time lies before the run's end (an untimed one only in the whole-session window). */
+function beforeRunEnd(time: number, run: RunBounds): boolean {
+  if (!Number.isFinite(time)) return isWholeSession(run);
+  return !(run.upperBound !== undefined && time >= run.upperBound);
+}
+
+/** Whether an event lies in the run's window (an untimed one only in the whole-session window). */
+export function inRun(event: CopilotEvent, run: RunBounds): boolean {
+  const time = eventTime(event);
+  return beforeRunEnd(time, run) && (!Number.isFinite(time) || time >= run.startTime);
+}
+
+/**
+ * Whether the copilot session itself started inside the run (a fresh session, not a resumed one). A
+ * missing or untimed `session.start` counts as fresh only for a run with no start bound.
+ */
+export function startedInRun(events: CopilotEvent[], run: RunBounds): boolean {
+  const start = events.find((event) => event.type === 'session.start');
+  const time = start ? eventTime(start) : NaN;
+  if (!Number.isFinite(time)) return run.startTime === -Infinity;
+  return !(time < run.startTime);
+}
+
+/** The run's share of the cumulative `session.shutdown` counters. */
+export interface ShutdownShare {
+  premiumRequests?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  filesModified: string[];
+}
+
+/**
+ * A cumulative counter's share of the run: its last value before the run's end minus its last value
+ * before the run's start. With no shutdown before the start the base is 0 when the copilot session
+ * started inside the run, else the counters are not carried (a resumed session after a kill).
+ */
+export function runShutdownShare(events: CopilotEvent[], run: RunBounds): ShutdownShare | undefined {
+  let base: CopilotShutdownData | undefined;
+  let last: CopilotShutdownData | undefined;
+  for (const event of events) {
+    if (event.type !== 'session.shutdown' || !event.data) continue;
+    const time = eventTime(event);
+    if (time < run.startTime) base = event.data as CopilotShutdownData;
+    if (beforeRunEnd(time, run)) last = event.data as CopilotShutdownData;
+  }
+  if (!last || (!base && !startedInRun(events, run))) return undefined;
+  // Copilot's counters are cumulative across resumed processes: the clamp is a defence, not a path
+  const minus = (value: number | undefined, prior: number | undefined) =>
+    value === undefined ? undefined : Math.max(0, value - (prior ?? 0));
+  const priorFiles = new Set(base?.codeChanges?.filesModified ?? []);
+  return {
+    premiumRequests: minus(last.totalPremiumRequests, base?.totalPremiumRequests),
+    linesAdded: minus(last.codeChanges?.linesAdded, base?.codeChanges?.linesAdded),
+    linesRemoved: minus(last.codeChanges?.linesRemoved, base?.codeChanges?.linesRemoved),
+    filesModified: (last.codeChanges?.filesModified ?? []).filter((path) => !priorFiles.has(path)),
+  };
+}
+
+/** Per-model usage summed over `session.usage_record` events, one request each. */
+function fromUsageRecords(records: CopilotEvent[]): CopilotUsageMessage[] {
+  const byModel = new Map<string, CopilotUsageMessage & { requests: number }>();
+  for (const record of records) {
+    const usage = (record.data as CopilotUsageRecordData | undefined)?.usage;
+    if (!usage?.model) continue;
+    const entry = byModel.get(usage.model) ?? { model: usage.model, usage: {}, requests: 0 };
+    for (const bucket of USAGE_BUCKETS) {
+      entry.usage[bucket] = (entry.usage[bucket] ?? 0) + (usage[bucket] ?? 0);
+    }
+    entry.requests += 1;
+    byModel.set(usage.model, entry);
+  }
+  return [...byModel.values()];
+}
 
 /** Last shutdown wins: a resumed session can record more than one. */
 function lastShutdown(events: CopilotEvent[]): CopilotShutdownData | null {
@@ -131,4 +222,21 @@ export function extractCopilotUsage(events: CopilotEvent[]): CopilotUsageExtract
     partial: false,
     unavailableReason: NO_USAGE_REASON,
   };
+}
+
+/**
+ * The run's own usage: tokens and requests from the `session.usage_record` events inside its window;
+ * a window with none carries the session rollup only for a fresh session, nothing for a resumed one.
+ * Premium requests (no per-event source) by the shutdown subtraction.
+ */
+export function extractCopilotRunUsage(events: CopilotEvent[], run: RunBounds): CopilotUsageExtract {
+  const premiumRequests = runShutdownShare(events, run)?.premiumRequests;
+  const records = events.filter((event) => event.type === 'session.usage_record' && inRun(event, run));
+  if (records.length > 0) {
+    return { messages: fromUsageRecords(records), premiumRequests, partial: false };
+  }
+  if (startedInRun(events, run)) {
+    return extractCopilotUsage(events.filter((event) => beforeRunEnd(eventTime(event), run)));
+  }
+  return { messages: [], premiumRequests, partial: false, unavailableReason: RESUMED_NO_RECORD_REASON };
 }

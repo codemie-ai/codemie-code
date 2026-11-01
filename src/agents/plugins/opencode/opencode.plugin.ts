@@ -4,10 +4,12 @@ import { logger } from '../../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { flagValue, hasFlagBeforeSeparator } from '../../core/flag-transform.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { commandExists, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
+import type { LocatedRun } from './opencode.run-session.js';
 import { getOpenCodeConfigDir, getOpenCodeDbPath, getOpenCodeDataDir } from './opencode.paths.js';
 import {
   startOpenCodeIncrementalSync,
@@ -236,8 +238,6 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // injected plugin never loads.
       startOpenCodeIncrementalSync({
         sessionId,
-        startedAt: Date.now(),
-        cwd: process.cwd(),
         metadata: OpenCodePluginMetadata,
         buildContext: () => ({
           sessionId,
@@ -464,23 +464,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       stopOpenCodeIncrementalSync(sessionId);
 
       try {
-        // Discover the transcript to re-parse. Constrained to this working
-        // directory: the CLI reads the user's shared opencode.db, which holds
-        // sessions from every project they have open.
-        let transcriptPath = '';
+        // The transcript of this record's run (the shared selection): the user's shared
+        // opencode.db holds sessions from every project they have open.
+        let located: LocatedRun | undefined;
         try {
           const adapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
-          const sessions = await adapter.discoverSessions({
-            maxAgeDays: 1,
-            limit: 1,
-            cwd: process.cwd(),
-          });
-          if (sessions.length > 0) {
-            transcriptPath = sessions[0].filePath;
-            logger.debug(`[opencode] Discovered OpenCode session: ${sessions[0].sessionId}`);
-          } else {
-            logger.debug('[opencode] No recent OpenCode sessions found for this directory');
-          }
+          located = await adapter.locateSessionTranscript(sessionId);
+          logger.debug(`[opencode] Run transcript: ${located?.transcript ?? 'none'}`);
         } catch (discoverError) {
           const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
           logger.debug(`[opencode] Session discovery failed (non-blocking): ${msg}`);
@@ -490,8 +480,9 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
+            // The CodeMie id: processing takes every OpenCode session of the record's run, each in turn
             session_id: sessionId,
-            transcript_path: transcriptPath,
+            transcript_path: located?.transcript ?? '',
             permission_mode: 'default',
             cwd: process.cwd(),
             reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
@@ -557,6 +548,17 @@ export class OpenCodePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /** The session the launch names: `--session <ses_>` / `--session=<ses_>`. */
+  extractNativeResumeId(args: string[]): string | undefined {
+    // Only `--session` is a native resume form here: `-s` is the wrapper's own `--silent` and never reaches opencode; `--resume <ses_>` is the wrapper's form and travels separately
+    return flagValue(args, ['--session']);
+  }
+
+  /** A `--continue` / `-c` launch continues the last session without naming it. */
+  continuesNativeSession(args: string[]): boolean {
+    return hasFlagBeforeSeparator(args, ['--continue', '-c']);
   }
 
   /**

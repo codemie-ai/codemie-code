@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
-import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -436,11 +436,14 @@ export class AgentCLI {
         }
       }
 
+      // Strip only control characters before using the value in output.
+      // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
+      // so we must not validate the format here.
+      const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
+      providerEnv[RESUME_SESSION_ENV_KEY] = resumeId;
+      providerEnv[CONTINUE_SESSION_ENV_KEY] = this.adapter.continuesNativeSession?.(args) ? '1' : '';
+
       if (options.resume || nativeResumeId) {
-        // Strip only control characters before using the value in output.
-        // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
-        // so we must not validate the format here.
-        const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
         const resolveResumeOwnership = this.adapter.resolveResumeOwnership?.bind(this.adapter);
 
         if (resolveResumeOwnership && resumeId) {

@@ -140,7 +140,7 @@ CodeMie injects model config via env vars before spawning OpenCode:
 ### Session Analytics Flow
 
 1. OpenCode exits → grace period for file writes
-2. `onSessionEnd` hook: discovers and processes latest session → writes JSONL deltas
+2. `onSessionEnd` hook: selects the run's own sessions — the session id the launch named (`--session <ses_>`), exactly; else every session created inside the run window `[startTime, nextRecordStart)` in the record's working directory (by realpath), plus, for a run launched as a continuation (`--continue` / `-c`), the newest session updated inside the window. A fresh run with no session of its own selects nothing: nothing is flushed, the record still finalizes. There is no "newest anywhere" fallback. Each selected session is processed in turn — its deltas go to the record's JSONL, its turns to its own conversation
 3. `SessionSyncer` reads JSONL → POSTs to `v1/metrics` API
 
 `file:src/agents/plugins/opencode/opencode.plugin.ts:145-326`

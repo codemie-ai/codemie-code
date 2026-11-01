@@ -18,9 +18,10 @@ import type {
   ProcessingContext,
   ProcessingResult,
 } from '../../../../core/session/BaseProcessor.js';
-import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { resolveRunWindow } from '../../../../core/session/run-window.js';
+import { inRun } from '../../copilot-cli.usage.js';
 import { logger } from '../../../../../utils/logger.js';
 
 interface TurnRecord {
@@ -44,6 +45,7 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
         '../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js'
       );
       const writer = new MetricsWriter(session.sessionId);
+      const window = session.runWindow ?? (await resolveRunWindow(session.sessionId, context));
       const existing = await writer.readAll();
       const written = new Set(existing.map((d) => d.recordId));
 
@@ -81,23 +83,23 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
         ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
       });
 
+      // The run's activity rides its first new turn inside the window: a turn outside it is dropped by the writer
+      const carryAt = newTurns.findIndex(({ turn }) => inRun(turn, window));
       const deltas = newTurns.map(({ turn, recordId }, i) =>
-        build(recordId, turn.timestamp ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0)
+        build(recordId, turn.timestamp ?? Date.now(), turn.gitBranch, turn.message?.model, i === carryAt)
       );
 
-      // Activity that arrived after every turn was already written has no turn to ride on.
-      // Keep it (never silently drop) as a clearly-identified supplement delta.
-      if (deltas.length === 0 && hasActivity(pending)) {
+      // Activity with no turn of this run to ride on (it arrived after every turn was written) is kept
+      // as a clearly-identified supplement delta, stamped with the run's last transcript record.
+      if (carryAt === -1 && hasActivity(pending)) {
         const key = `${agentSessionId}-supplement-${existing.length}`;
-        deltas.push(build(key, session.metadata?.createdAt ?? Date.now(), undefined, undefined, true));
+        const lastRecordAt = latestRecordTime(session.recordTimes, window.upperBound);
+        deltas.push(build(key, lastRecordAt ?? Date.now(), undefined, undefined, true));
       }
 
       let deltasWritten = 0;
       if (deltas.length > 0) {
-        // ponytail: copilot's supplement delta time is session-level, not per-event, so the run window's lower
-        // bound cannot apply here yet; restore it once the supplement delta carries lastRecordAt (13d3b).
-        const window = await resolveRunWindow(session.sessionId, context);
-        const appended = await writer.appendDeltas(deltas, { ...window, startTime: -Infinity });
+        const appended = await writer.appendDeltas(deltas, window);
         if (appended.gone) {
           logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
           return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };

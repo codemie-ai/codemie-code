@@ -229,6 +229,7 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       expect(conversations).not.toHaveProperty('lastSyncedMessageUuid');
       expect(conversations.lastSyncedHistoryIndex).toBe(1);
       expect(conversations.conversationId).toBe('conv-1');
+      expect(conversations.historyIndexByConversation).toEqual({ 'conv-1': 1 });
 
       const { applyProcessingSyncUpdates } = await import('@/agents/core/session/sync-state-utils.js');
       const session = {
@@ -236,6 +237,7 @@ describe('createSyncProcessor — duplicate payload ids', () => {
           conversations: {
             lastSyncedMessageUuid: UUIDS[2],
             lastSyncedHistoryIndex: 2,
+            historyIndexByConversation: { 'conv-1': 0, 'conv-9': 4 } as Record<string, number>,
             totalMessagesSynced: 0,
             totalSyncAttempts: 0,
           },
@@ -243,6 +245,7 @@ describe('createSyncProcessor — duplicate payload ids', () => {
       };
       applyProcessingSyncUpdates(session as never, [result as never]);
       expect(session.sync.conversations.lastSyncedMessageUuid).toBe(UUIDS[2]);
+      expect(session.sync.conversations.historyIndexByConversation).toEqual({ 'conv-1': 1, 'conv-9': 4 });
     });
   });
 

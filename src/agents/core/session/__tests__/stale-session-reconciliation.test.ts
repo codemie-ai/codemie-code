@@ -48,7 +48,7 @@ const {
   LEGACY_IDLE_MS,
   ABANDON_WAIT_MS,
 } = await import('../stale-session-reconciliation.js');
-const { nextRecordStart } = await import('../next-record-start.js');
+const { nextRecordStart, nextRecordStarts } = await import('../next-record-start.js');
 const { processEvent } = await import('@/cli/commands/hook.js');
 
 const HOUR = 60 * 60 * 1000;
@@ -971,6 +971,27 @@ describe('nextRecordStart', () => {
     expect(vi.mocked(fsPromises.readFile).mock.calls.map(([p]) => String(p))).not.toContain(marker);
   });
 
+  it('a batch gives each record the later start over its own transcript; a record with no later sibling gets none', async () => {
+    const t0 = Date.now() - 3 * HOUR;
+    const minute = 60 * 1000;
+    const a = claudeRecord(t0, '/transcripts/batch-a.jsonl');
+    const b = claudeRecord(t0 + 30 * minute, '/transcripts/batch-b.jsonl');
+    const alone = claudeRecord(t0 + 5 * minute, '/transcripts/batch-c.jsonl');
+    [
+      a, b, alone,
+      claudeRecord(t0 + 60 * minute, '/transcripts/batch-a.jsonl'),
+      // An earlier record over b's transcript: it bounds nothing of b's
+      claudeRecord(t0 + 15 * minute, '/transcripts/batch-b.jsonl'),
+      claudeRecord(t0 + 90 * minute, '/transcripts/batch-b.jsonl'),
+    ].forEach((r) => save(r));
+
+    const bounds = await nextRecordStarts([a, b, alone]);
+
+    expect(bounds.get(a.sessionId)).toBe(t0 + 60 * minute);
+    expect(bounds.get(b.sessionId)).toBe(t0 + 90 * minute);
+    expect(bounds.get(alone.sessionId)).toBeUndefined();
+  });
+
   it('parses a file again only when its mtime changed', async () => {
     const t0 = Date.now() - 3 * HOUR;
     const earlier = claudeRecord(t0, '/transcripts/d.jsonl');
@@ -1002,6 +1023,18 @@ describe('nextRecordStart', () => {
 
     expect(await nextRecordStart(earlier)).toBe(t0 + HOUR);
     expect(await nextRecordStart(unknown)).toBeUndefined();
+  });
+
+  it('bounds a copilot-cli run by a later run that continued its native session under its own id', async () => {
+    const t0 = Date.now() - 3 * HOUR;
+    const file = '/home/u/.copilot/session-state/copilot-native-a/events.jsonl';
+    const copilot = (startTime: number, agentSessionId: string) =>
+      record({ agentName: 'copilot-cli', startTime, ownerPid: process.pid, correlation: { status: 'matched', retryCount: 0, agentSessionId, agentSessionFile: file } });
+    const a = copilot(t0, 'copilot-native-a');
+    save(a);
+    save(copilot(t0 + HOUR, 'codemie-run-c'));
+
+    expect(await nextRecordStart(a)).toBe(t0 + HOUR);
   });
 
   it.each(['opencode', 'codemie-code'])('bounds a %s record by the later one in the same directory reached through a symlink', async (agentName) => {
