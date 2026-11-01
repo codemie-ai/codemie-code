@@ -188,6 +188,23 @@ describe('reconcileOtherSessions', () => {
     expect(closed).toMatchObject({ status: 'completed', reason: 'desktop-daemon-gone', endTime: start + 60_000, ownerPid: DEAD_PID });
   });
 
+  it('closes a Claude Desktop record of a dead daemon at its last activity, not its later last discovery', async () => {
+    const start = Date.now() - 5 * HOUR;
+    const desktop = record({
+      agentName: 'claude-desktop',
+      startTime: start,
+      runtimeCheckpoint: { externalSessionId: 'x', transcriptPath: '/t', lastDiscoveredAt: start + 70_000, lastSeenActivityAt: start + 60_000 },
+    });
+    save(desktop);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+
+    expect(hook.processEvent).not.toHaveBeenCalled();
+    expect(hook.deliverSession).not.toHaveBeenCalled();
+    expect(load(desktop.sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-gone', endTime: start + 60_000 });
+  });
+
   it('closes a Claude Desktop record without startTime of a dead daemon with a finite endTime', async () => {
     const start = Date.now() - 5 * HOUR;
     const desktop = record({

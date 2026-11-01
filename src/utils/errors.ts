@@ -74,6 +74,13 @@ export class PartialRegistrationError extends CodeMieError {
   }
 }
 
+export class ReconcileLockHeldError extends CodeMieError {
+  constructor(sessionId: string) {
+    super(`Reconcile lock of ${sessionId} is held by another process`);
+    this.name = 'ReconcileLockHeldError';
+  }
+}
+
 /**
  * npm error codes for categorizing failures
  */

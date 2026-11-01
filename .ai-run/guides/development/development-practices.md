@@ -23,6 +23,7 @@ Core development practices for CodeMie Code: error handling, logging, process ex
 | `ToolExecutionError` | Tool exec failed | Command execution errors | src/utils/errors.ts:29-34 |
 | `PathSecurityError` | Path validation failed | Path traversal attempt | src/utils/errors.ts:36-41 |
 | `NpmError` | npm operations | Network, permission, package issues | src/utils/errors.ts:57-66 |
+| `ReconcileLockHeldError` | Session reconcile lock held | Another process holds a Desktop session's reconcile lock at finalization | src/utils/errors.ts:77-82 |
 
 ### Pattern: Throw & Catch
 
