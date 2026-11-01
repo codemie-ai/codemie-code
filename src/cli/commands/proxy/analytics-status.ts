@@ -16,7 +16,7 @@ import {
   readClaudeAnalyticsPreferences,
 } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
-import { adviceForReason } from './analytics-hints.js';
+import { adviceForReason, unaffectedChannels } from './analytics-hints.js';
 import {
   getCopilotAnalyticsPreferencesPath,
   readCopilotAnalyticsPreferences,
@@ -35,7 +35,8 @@ export interface ClaudeAnalyticsStatus {
   excludedProjects: string[];
   preferencesCorrupt: boolean;
   preferencesPath: string;
-  current: { path: string; tracked: boolean; reason: ClaudeAnalyticsGateReason };
+  /** `hooks-not-installed`: the gate would track this directory, but no CodeMie hooks run at all. */
+  current: { path: string; tracked: boolean; reason: ClaudeAnalyticsGateReason | 'hooks-not-installed' };
 }
 
 export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeAnalyticsStatus> {
@@ -60,7 +61,11 @@ export async function collectClaudeAnalyticsStatus(cwd: string): Promise<ClaudeA
     excludedProjects: preferences.kind === 'ok' ? preferences.value.excludedProjects : [],
     preferencesCorrupt: preferences.kind === 'corrupt',
     preferencesPath: getClaudeAnalyticsPreferencesPath(),
-    current: { path: cwd, tracked: gateDecision.tracked, reason: gateDecision.reason },
+    // The gate models opt-outs only; without installed hooks nothing is collected whatever it says.
+    current:
+      gateDecision.tracked && !hooksInstalled
+        ? { path: cwd, tracked: false, reason: 'hooks-not-installed' }
+        : { path: cwd, tracked: gateDecision.tracked, reason: gateDecision.reason },
   };
 }
 
@@ -83,8 +88,8 @@ export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): stri
   lines.push(
     `Current directory (${status.current.path}): ${status.current.tracked ? 'tracked' : `not tracked (${status.current.reason})`}`
   );
-  // 'preferences-corrupt' already has its own explicit line below.
-  const claudeAdvice = status.current.tracked || status.current.reason === 'preferences-corrupt'
+  // 'preferences-corrupt' and 'hooks-not-installed' already have their own explicit lines.
+  const claudeAdvice = status.current.tracked || status.current.reason === 'preferences-corrupt' || status.current.reason === 'hooks-not-installed'
     ? undefined
     : adviceForReason('claude-code-otlp', status.current.reason, status.current.path);
   if (claudeAdvice?.nextStep) {
@@ -93,6 +98,7 @@ export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): stri
   if (!status.hooksInstalled) {
     lines.push('Run: codemie proxy connect --claude-code-otlp');
   }
+  lines.push(`Not affected by these settings: ${unaffectedChannels('claude-code-otlp')}.`);
   if (status.preferencesCorrupt) {
     lines.push(`Preferences file is corrupt — collection is stopped. Fix or delete ${status.preferencesPath}.`);
   }
@@ -170,6 +176,7 @@ export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): st
   if (status.scope === 'not-connected') {
     lines.push(`Run: codemie proxy connect --${status.connector}`);
   }
+  lines.push(`Not affected by these settings: ${unaffectedChannels(status.connector)}.`);
   if (status.preferencesCorrupt) {
     lines.push(`Preferences file is corrupt — collection is stopped. Fix or delete ${status.preferencesPath}.`);
   }

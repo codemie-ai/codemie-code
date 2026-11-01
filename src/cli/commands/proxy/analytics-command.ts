@@ -28,7 +28,8 @@ import {
 import { evaluateClaudeAnalyticsGate } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { logger } from '@/utils/logger.js';
-import { adviceForReason } from './analytics-hints.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+import { adviceForReason, coverageNote, resumeNote } from './analytics-hints.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
@@ -122,24 +123,23 @@ async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: s
       connectorId === CLAUDE_CODE_OTLP_AGENT_NAME
         ? await evaluateClaudeAnalyticsGate(target)
         : await evaluateCopilotAnalyticsGate(connectorId, target);
-    if (decision.tracked) {
-      // The Claude gate only models opt-outs; with no CodeMie hooks in settings.json nothing runs at all.
-      if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME && !(await hasClaudeCodeOtlpHooks())) {
-        console.log(chalk.yellow(`Note: ${target} is NOT tracked — the Claude Code hooks are not installed.`));
-        console.log(chalk.yellow(`  Next step: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`));
-        return;
-      }
+    // The Claude gate only models opt-outs; with no CodeMie hooks in settings.json nothing runs at all.
+    const hooksMissing = decision.tracked && connectorId === CLAUDE_CODE_OTLP_AGENT_NAME && !(await hasClaudeCodeOtlpHooks());
+    if (decision.tracked && !hooksMissing) {
       console.log(chalk.dim(`Effective now: ${target} is tracked.`));
       return;
     }
-    const reason = 'reason' in decision ? decision.reason : 'unknown';
+    const reason = hooksMissing ? 'hooks-not-installed' : 'reason' in decision ? decision.reason : 'unknown';
     const advice = adviceForReason(connectorId, reason, target);
     console.log(chalk.yellow(`Note: ${target} is NOT tracked${advice ? ` — ${advice.description}` : ` (${reason})`}.`));
     if (advice?.nextStep) {
       console.log(chalk.yellow(`  Next step: ${advice.nextStep}`));
     }
   } catch (error) {
-    logger.debug('[proxy analytics] could not compute the effective state', error);
+    logger.debug(
+      '[proxy analytics] could not compute the effective state',
+      ...sanitizeLogArgs({ err: error instanceof Error ? error.message : String(error) })
+    );
   }
 }
 
@@ -157,15 +157,22 @@ async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<voi
     } else {
       printSaved(store);
     }
-    if (enabled) {
-      await reportEffectiveState(connectorId, process.cwd());
+    if (!enabled) {
+      console.log(chalk.dim(coverageNote(connectorId)));
+      return;
     }
+    const resume = changed ? resumeNote(connectorId) : undefined;
+    if (resume) {
+      console.log(chalk.dim(resume));
+    }
+    await reportEffectiveState(connectorId, process.cwd());
   });
 }
 
 async function excludeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
   await withErrorHandling(async () => {
-    const store = storeForConnector(resolveAnalyticsConnector(opts));
+    const connectorId = resolveAnalyticsConnector(opts);
+    const store = storeForConnector(connectorId);
     const target = path ?? resolveProjectRoot();
     const canonical = await canonicalizePath(target);
     let changed = true;
@@ -205,6 +212,7 @@ async function excludeProject(path: string | undefined, opts: ConnectorOptions):
       return;
     }
     printSaved(store, ` (project: ${canonical})`);
+    console.log(chalk.dim(coverageNote(connectorId)));
   });
 }
 
@@ -237,6 +245,10 @@ async function includeProject(path: string | undefined, opts: ConnectorOptions):
       console.log(chalk.dim('Nothing to change.'));
     } else {
       printSaved(store, ` (project: ${canonical})`);
+      const resume = resumeNote(connectorId);
+      if (resume) {
+        console.log(chalk.dim(resume));
+      }
     }
     await reportEffectiveState(connectorId, canonical);
   });

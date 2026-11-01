@@ -68,6 +68,25 @@ describe('analytics-status', () => {
       expect(status.excludedProjects).toEqual([]);
     });
 
+    it('reports a directory as NOT tracked (hooks-not-installed) when the gate would track it but no hooks are installed (CR-006)', async () => {
+      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
+      const status = await collectClaudeAnalyticsStatus('/work/a');
+      expect(status.hooksInstalled).toBe(false);
+      expect(status.current).toEqual({ path: '/work/a', tracked: false, reason: 'hooks-not-installed' });
+    });
+
+    it('keeps the more specific gate reason when hooks are missing AND collection is disabled', async () => {
+      await writePreferences(JSON.stringify({ version: 1, enabled: false, excludedProjects: [] }));
+      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
+      expect((await collectClaudeAnalyticsStatus('/work/a')).current.reason).toBe('disabled');
+    });
+
+    it('reports tracked once the hooks are installed', async () => {
+      await writeSettings({ hooks: { SessionStart: [HOOK_ENTRY] } });
+      const { collectClaudeAnalyticsStatus } = await import('../analytics-status.js');
+      expect((await collectClaudeAnalyticsStatus('/work/a')).current.tracked).toBe(true);
+    });
+
     it('reports project scope with tracked projects', async () => {
       await writeSettings({
         hooks: { SessionStart: [HOOK_ENTRY] },

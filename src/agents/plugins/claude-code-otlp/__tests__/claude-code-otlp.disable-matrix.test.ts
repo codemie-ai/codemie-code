@@ -81,6 +81,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
 const { updateClaudeAnalyticsPreferences } = await import('../claude-code-otlp.preferences.js');
+const { ensureCodeMieSsoAuth } = await import('@/providers/plugins/sso/sso.auth-gate.js');
 
 async function writeSettings(allowlist: string[] | undefined): Promise<void> {
   const path = join(tempDir, '.claude', 'settings.json');
@@ -106,6 +107,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     ensureOtlpProxy = vi.fn(async () => {});
     forwardOtlpEventsToSpool = vi.fn(async () => true);
     plugin = new ClaudeCodeOtlpPlugin();
+    vi.mocked(ensureCodeMieSsoAuth).mockClear();
   });
 
   afterEach(async () => {
@@ -115,6 +117,19 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
   async function fire(cwd: string): Promise<void> {
     await plugin.processOtlpEvent(event('SessionStart', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
     await plugin.processOtlpEvent(event('UserPromptSubmit', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+  }
+
+  /** AC1: a blocked event forwards nothing, starts no proxy and never triggers SSO. */
+  function expectNothingStarted(): void {
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    expect(ensureCodeMieSsoAuth).not.toHaveBeenCalled();
+  }
+
+  function resetCalls(): void {
+    forwardOtlpEventsToSpool.mockClear();
+    ensureOtlpProxy.mockClear();
+    vi.mocked(ensureCodeMieSsoAuth).mockClear();
   }
 
   describe.each([
@@ -127,10 +142,13 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
 
       await fire('/work/a');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expectNothingStarted();
 
       await fire('/work/b');
       expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
+      // Control: the tracked project does start the proxy and run the SSO gate, so the assertions above can fail.
+      expect(ensureOtlpProxy).toHaveBeenCalled();
+      expect(ensureCodeMieSsoAuth).toHaveBeenCalled();
     });
 
     it('disable all stops every project regardless of scope', async () => {
@@ -139,8 +157,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
 
       await fire('/work/a');
       await fire('/work/b');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
-      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+      expectNothingStarted();
     });
   });
 
@@ -153,8 +170,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
 
       await fire('');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
-      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+      expectNothingStarted();
     });
 
     it('with nothing excluded, an empty cwd is forwarded exactly as before', async () => {
@@ -169,7 +185,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     await writeSettings(undefined);
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
     await fire('/work/a');
-    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expectNothingStarted();
 
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: [] }));
     await fire('/work/a');
@@ -180,7 +196,7 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
     await writeSettings(undefined);
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
     await fire('/work/a');
-    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    expectNothingStarted();
 
     await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: true }));
     await fire('/work/a');
@@ -209,11 +225,11 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
 
       await fire('/work/a');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expectNothingStarted();
 
       vi.stubEnv('CODEMIE_SESSION_ID', 'managed-session-1');
       await fire('/work/a');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expectNothingStarted();
     });
 
     it('exclude-one leaves the other project forwarded the same way whether CODEMIE_SESSION_ID is set or not', async () => {
@@ -221,14 +237,14 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
 
       await fire('/work/a');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expectNothingStarted();
       await fire('/work/b');
       expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
-      forwardOtlpEventsToSpool.mockClear();
+      resetCalls();
 
       vi.stubEnv('CODEMIE_SESSION_ID', 'managed-session-1');
       await fire('/work/a');
-      expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expectNothingStarted();
       await fire('/work/b');
       expect(forwardOtlpEventsToSpool).toHaveBeenCalled();
     });

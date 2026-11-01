@@ -8,6 +8,33 @@ const CLAUDE = 'claude-code-otlp';
 const CLI = 'copilot-cli-otlp';
 const CHAT = 'copilot-chat-otlp';
 
+describe('coverage and resume notes', () => {
+  it('names, per connector, the channels the settings do not control', async () => {
+    const { unaffectedChannels, coverageNote } = await import('../analytics-hints.js');
+    expect(unaffectedChannels(CLAUDE)).toMatch(/daily analytics collector/);
+    expect(unaffectedChannels(CLAUDE)).toMatch(/codemie claude/);
+    expect(unaffectedChannels(CLI)).toMatch(/copilot-cli/);
+    expect(unaffectedChannels(CHAT)).toBe('the daily analytics collector');
+    expect(coverageNote(CLAUDE)).toMatch(/^Controls the hook pipeline only — not affected: .+\.$/);
+  });
+
+  it('warns about reporting on resume for Claude and Copilot CLI, not for Copilot Chat', async () => {
+    const { resumeNote } = await import('../analytics-hints.js');
+    expect(resumeNote(CLAUDE)).toMatch(/transcripts/);
+    expect(resumeNote(CLI)).toMatch(/whole-session usage/);
+    expect(resumeNote(CHAT)).toBeUndefined();
+  });
+
+  it('knows the hooks-not-installed reason for Claude only', async () => {
+    const { adviceForReason } = await import('../analytics-hints.js');
+    expect(adviceForReason(CLAUDE, 'hooks-not-installed', '/work/a')).toEqual({
+      description: 'the Claude Code hooks are not installed',
+      nextStep: 'codemie proxy connect --claude-code-otlp',
+    });
+    expect(adviceForReason(CLI, 'hooks-not-installed', '/work/a')).toBeUndefined();
+  });
+});
+
 describe('adviceForReason', () => {
   it('returns nothing for a tracked project and for reasons it does not know', async () => {
     const { adviceForReason } = await import('../analytics-hints.js');

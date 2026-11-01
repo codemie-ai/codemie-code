@@ -122,6 +122,81 @@ describe('analytics advice', () => {
     expect(out()).toContain('Project-scope allowlist');
   });
 
+  it('disable and exclude state the coverage boundary, per connector (CR-005)', async () => {
+    await run(['disable']);
+    expect(out()).toContain('Controls the hook pipeline only');
+    expect(out()).toContain('session sync that `codemie claude` runs itself');
+    logSpy.mockClear();
+    await run(['exclude', '/work/a']);
+    expect(out()).toContain('Controls the hook pipeline only');
+    logSpy.mockClear();
+    await run(['disable', '--copilot-cli-otlp']);
+    expect(out()).toContain('managed `codemie copilot-cli` launches');
+    logSpy.mockClear();
+    await run(['exclude', '/work/a', '--copilot-chat-otlp']);
+    expect(out()).toContain('not affected: the daily analytics collector.');
+  });
+
+  it('an exclude that changes nothing prints no coverage note', async () => {
+    await run(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await run(['exclude', '/work/a']);
+    expect(out()).toContain('Nothing to change');
+    expect(out()).not.toContain('Controls the hook pipeline only');
+  });
+
+  it('enable and include that really change something warn that transcript usage is reported on resume (CR-002)', async () => {
+    await installClaudeHooks();
+    await run(['disable']);
+    logSpy.mockClear();
+    await run(['enable']);
+    expect(out()).toContain('may be reported now that it is back on');
+    logSpy.mockClear();
+    await run(['exclude', '/work/a']);
+    logSpy.mockClear();
+    await run(['include', '/work/a']);
+    expect(out()).toContain('may be reported now that it is back on');
+    logSpy.mockClear();
+    await run(['enable']);
+    expect(out()).toContain('Nothing to change.');
+    expect(out()).not.toContain('may be reported');
+  });
+
+  it('Copilot CLI gets the whole-session note on resume; Copilot Chat gets none', async () => {
+    await run(['disable', '--copilot-cli-otlp']);
+    logSpy.mockClear();
+    await run(['enable', '--copilot-cli-otlp']);
+    expect(out()).toContain('whole-session usage');
+    await run(['disable', '--copilot-chat-otlp']);
+    logSpy.mockClear();
+    await run(['enable', '--copilot-chat-otlp']);
+    expect(out()).not.toContain('usage');
+  });
+
+  it('status text lists the channels these settings do not control; --json is unchanged', async () => {
+    await run(['status']);
+    expect(out()).toContain('Not affected by these settings:');
+    logSpy.mockClear();
+    await run(['status', '--copilot-chat-otlp']);
+    expect(out()).toContain('Not affected by these settings: the daily analytics collector.');
+    logSpy.mockClear();
+    await run(['status', '--json']);
+    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(JSON.stringify(parsed)).not.toContain('Not affected');
+  });
+
+  it('status --json reports tracked=false with reason hooks-not-installed when no hooks are installed (CR-006)', async () => {
+    await run(['status', '--json']);
+    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(parsed.hooksInstalled).toBe(false);
+    expect(parsed.current).toMatchObject({ tracked: false, reason: 'hooks-not-installed' });
+    logSpy.mockClear();
+    await run(['status']);
+    expect(out()).toContain('not tracked (hooks-not-installed)');
+    expect(out()).toContain('Run: codemie proxy connect --claude-code-otlp');
+    expect(out()).not.toContain('Hint:');
+  });
+
   it('exclude and disable never print advice', async () => {
     await writeClaudeAllowlist(['/work/other']);
     logSpy.mockClear();

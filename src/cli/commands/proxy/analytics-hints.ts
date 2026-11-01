@@ -33,6 +33,11 @@ function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefine
         description: 'it is not in the Project-scope allowlist',
         nextStep: `run this inside that project: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME} --scope project`,
       };
+    case 'hooks-not-installed':
+      return {
+        description: 'the Claude Code hooks are not installed',
+        nextStep: `codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
+      };
     case 'preferences-corrupt':
       return {
         description: 'the analytics preferences file is corrupt',
@@ -69,6 +74,42 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
       };
     default:
       return undefined;
+  }
+}
+
+/**
+ * Channels these settings do NOT control. The commands gate the hook pipeline only, so a user who
+ * runs `disable` must not believe that nothing is ever sent.
+ */
+export function unaffectedChannels(connectorId: string): string {
+  switch (connectorId) {
+    case COPILOT_CLI_OTLP_AGENT_NAME:
+      return 'managed `codemie copilot-cli` launches and the daily analytics collector';
+    case COPILOT_CHAT_OTLP_AGENT_NAME:
+      return 'the daily analytics collector';
+    default:
+      return 'the daily analytics collector and the session sync that `codemie claude` runs itself';
+  }
+}
+
+/** One-line statement of the coverage boundary, printed after `disable`/`exclude`. */
+export function coverageNote(connectorId: string): string {
+  return `Controls the hook pipeline only — not affected: ${unaffectedChannels(connectorId)}.`;
+}
+
+/**
+ * What a user should know when collection resumes. Usage is read from session transcripts, which keep
+ * growing while collection is off, so it is reported once collection is back on. Copilot Chat has no
+ * transcript pass, hence no note.
+ */
+export function resumeNote(connectorId: string): string | undefined {
+  switch (connectorId) {
+    case COPILOT_CHAT_OTLP_AGENT_NAME:
+      return undefined;
+    case COPILOT_CLI_OTLP_AGENT_NAME:
+      return 'A Copilot CLI session that was running while collection was off reports its whole-session usage when it ends.';
+    default:
+      return 'Usage already written to session transcripts while collection was off may be reported now that it is back on.';
   }
 }
 
