@@ -120,7 +120,7 @@ Deliver the ACs with the **fewest changes that could break anything**:
 - **Git:** at investigation time the checkout was on an unrelated branch (`EPMCDME-15411_global-profile-identity-isolation`). Branch `EPMCDME-16396` from a **freshly fetched `origin/main`**. AGENTS.md allows git operations only on explicit user request, so confirm with the user before creating the branch and before the first commit.
 - Edge cases to cover:
   - Windows path casing, trailing slash, and the sibling-prefix case (`/repo` vs `/repo2`);
-  - `cwd` undefined → not excluded;
+  - `cwd` undefined or empty → fail closed: counts as excluded when at least one project is excluded, behaves as today when nothing is excluded (amended after code review; it was originally "not excluded");
   - a corrupt config file;
   - `exclude` run twice → a single entry;
   - `include` of a path that is not excluded → "Nothing to change.";

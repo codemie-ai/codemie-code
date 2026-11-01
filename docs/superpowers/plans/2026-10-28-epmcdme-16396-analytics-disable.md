@@ -77,7 +77,8 @@
   - `('/a/b/c', ['/a/b'])` → true.
   - `('/a/b', ['/a/b/'])` → true.
   - `('/a/bc', ['/a/b'])` → false.
-  - `(undefined, ['/a'])` → false.
+  - `(undefined, ['/a'])` → true (fail closed; amended after code review, originally false).
+  - `(undefined, [])` → false.
   - `('/x', [])` → false.
 
 - [ ] **Step 2: Run** `npx vitest run src/agents/plugins/claude-code-otlp/__tests__/claude-code-otlp.analytics-config.test.ts`. Expected: FAIL (module not found).

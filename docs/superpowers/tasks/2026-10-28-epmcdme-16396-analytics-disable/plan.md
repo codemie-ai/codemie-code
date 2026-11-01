@@ -80,7 +80,8 @@
   - `('/a/b/c', ['/a/b'])` → `true` (nested subdirectory).
   - `('/a/b', ['/a/b/'])` → `true` (trailing slash on the excluded entry).
   - `('/a/bc', ['/a/b'])` → `false` (sibling with a shared string prefix, not nested).
-  - `(undefined, ['/a'])` → `false`.
+  - `(undefined, ['/a'])` → `true` (fail closed: no cwd cannot be proven outside an excluded project; amended after code review, originally `false`).
+  - `(undefined, [])` → `false` (nothing excluded: behavior unchanged).
   - `('/x', [])` → `false`.
 
   Mock `@/utils/paths.js`'s `getCodemiePath` to redirect into a `mkdtemp` temp dir (per-test, cleaned up in `afterEach`).
@@ -122,7 +123,7 @@
   - Absent preferences file → identical `tracked` result to calling `isProjectTracked` directly with the same allowlist state (i.e. the gate is a strict superset, never narrower, when nothing is configured).
   - Exclusion wins over an allowlist entry that covers the same path (allowlist says tracked, exclusion says no → not tracked).
   - Exclusion applies when the allowlist is absent/empty (Global scope) — the AC2 case with no prior coverage anywhere in the codebase.
-  - `cwd === undefined` with an exclusion configured → not excluded (falls through to the allowlist check), matching `isProjectExcluded(undefined, …) === false` from Task 1.
+  - `cwd === undefined` with an exclusion configured → `{ tracked: false, reason: 'project-excluded' }` (fail closed), matching `isProjectExcluded(undefined, ['/a']) === true` from Task 1; with nothing excluded it falls through to the allowlist check unchanged. (Amended after code review; originally "not excluded".)
 
   Mock `./claude-code-otlp.preferences.js` (`vi.mock`) and `./claude-code-otlp.allowlist.js` (`vi.mock`) independently per test case.
 

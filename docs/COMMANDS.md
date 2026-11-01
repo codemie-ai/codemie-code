@@ -1681,6 +1681,12 @@ A corrupt `claude-analytics.json` fails closed on the hook path (collection stop
 - the daily analytics collector, a separate scheduled job (outside this repository) that exports local session data;
 - the session sync that `codemie claude` runs through its own plugin hooks (`codemie hook` without `--agent`).
 
+`disable` and `exclude` repeat this boundary in their output, and `status` lists it as "Not affected by these settings".
+
+**What happens when collection resumes.** Nothing is sent while collection is off, but usage is read from the session transcript, which keeps growing. After `enable` or `include`, the next collected hook event reports usage that was written to the transcript during the off period. `enable` and `include` print a note when this applies. The same holds for the existing Project-scope allowlist. Copilot CLI behaves similarly: a session that was running while collection was off reports its whole-session usage when it ends. Copilot Chat forwards per-event data only and has no such catch-up.
+
+`status` reports `current.tracked: false` with `current.reason: "hooks-not-installed"` when no CodeMie hooks are installed, even if the exclusion settings alone would allow the directory.
+
 **Which command do I use?**
 
 | I want to... | Use |
