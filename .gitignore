@@ -53,7 +53,10 @@ local/*
 /_bmad*
 /.agent/
 /.codex/
-/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/weekly-local-analytics-regression.yml
 /.crush/
 /.cursor/
 /.opencode/

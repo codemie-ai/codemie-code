@@ -7,6 +7,35 @@ import { emptyUsage, addUsage, costForUsage, costBreakdown } from '../cost-calcu
 import { lookupPrice } from '@/utils/pricing.js';
 
 describe('cost-calculator', () => {
+  it('Haiku 5.5 mapping prices the inclusive 100k-input boundary at the published base tier', () => {
+    const price = lookupPrice('claude-haiku-5-5');
+    if (!price) throw new Error('Missing supported Haiku 5.5 base mapping');
+    expect(costBreakdown({ input: 100000, output: 1000, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 101000 }, price).total)
+      .toBeCloseTo(0.0105, 10);
+  });
+
+  it.each([
+    ['claude-haiku-4-5', 1, 5, 0.2, 4.5, 10.7],
+    ['converse/global.anthropic.claude-haiku-4-5-20251001-v1:0', 1, 5, 0.2, 4.5, 10.7],
+    ['converse/us.anthropic.claude-haiku-4-5-20251001-v1:0', 1.1, 5.5, 0.22, 4.95, 11.77],
+    ['converse/eu.anthropic.claude-haiku-4-5-20251001-v1:0', 1.1, 5.5, 0.22, 4.95, 11.77],
+    ['converse/apac.anthropic.claude-haiku-4-5-20251001-v1:0', 1.1, 5.5, 0.22, 4.95, 11.77],
+    ['converse/us.anthropic.claude-opus-4-1-20250805-v1:0', 15, 75, 3, 67.5, 160.5],
+  ])('R59 prices %s using independent published rates and both cache TTLs', (model, input, output, cacheRead, cacheCreation, total) => {
+    // Anthropic pricing: 4.5+ regional premium is 10%; Opus 4.1 has no premium.
+    // Creation = 2M five-minute + 1M one-hour; the one-hour subset is not added twice.
+    const usage = { input: 1_000_000, output: 1_000_000, cacheRead: 2_000_000,
+      cacheCreation: 3_000_000, cacheCreation1h: 1_000_000, total: 7_000_000 };
+    const price = lookupPrice(model);
+    if (!price) throw new Error(`Expected published pricing for ${model}`);
+    const actual = costBreakdown(usage, price);
+    expect(actual.input).toBeCloseTo(input, 10);
+    expect(actual.output).toBeCloseTo(output, 10);
+    expect(actual.cacheRead).toBeCloseTo(cacheRead, 10);
+    expect(actual.cacheCreation).toBeCloseTo(cacheCreation, 10);
+    expect(actual.total).toBeCloseTo(total, 10);
+  });
+
   it('emptyUsage is all zeros', () => {
     expect(emptyUsage()).toEqual({ input: 0, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 0 });
   });
