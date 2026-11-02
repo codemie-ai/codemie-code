@@ -139,17 +139,22 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             headers['Cookie'] = apiConfig.cookies;
           }
 
-          const response = await fetch(url, {
-            method: 'PUT',
-            headers,
-            body: JSON.stringify(payload),
-            signal: controller.signal
-          });
-
-          clearTimeout(timeoutId);
+          let response: Response;
+          let body: unknown;
+          try {
+            response = await fetch(url, {
+              method: 'PUT',
+              headers,
+              body: JSON.stringify(payload),
+              signal: controller.signal
+            });
+            body = response.ok ? await response.json() : await response.text();
+          } finally {
+            clearTimeout(timeoutId);
+          }
 
           if (!response.ok) {
-            const errorText = await response.text();
+            const errorText = body as string;
             let errorData;
 
             try {
@@ -179,7 +184,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           }
 
           // Success
-          const data = await response.json() as {
+          const data = body as {
             conversation_id: string;
             new_messages: number;
             total_messages: number;
@@ -269,16 +274,23 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(metadata),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+      let response: Response;
+      let errorText = '';
+      try {
+        response = await fetch(url, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(metadata),
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          errorText = await response.text();
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
-        const errorText = await response.text();
         let errorData;
 
         try {

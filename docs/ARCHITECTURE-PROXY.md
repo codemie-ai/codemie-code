@@ -651,7 +651,7 @@ In short: Codex = detect-in-stream, no retry, permanent latch for later requests
 
 **Log Destinations**: `~/.codemie/logs/debug-YYYY-MM-DD.log`
 
-**Log Level**: DEBUG (file only, console when CODEMIE_DEBUG=1)
+**Log Level**: DEBUG (file only, stderr when CODEMIE_DEBUG=1)
 
 **Lifecycle Hooks**:
 
@@ -1167,6 +1167,26 @@ src/providers/plugins/sso/session/
 
 ```
 1. User exits agent (Ctrl+C or normal exit), or sends SIGTERM/SIGINT to the daemon
+
+   CLI wrapper (POSIX): SIGINT / SIGTERM / SIGHUP
+   ├─ Forwarded to the agent's process tree first (descendants deepest first,
+   │  then the agent); the proxy keeps running
+   ├─ Agent exits (no exit within 10 s of the first SIGTERM / SIGHUP / SIGINT
+   │  within 2 s of the previous one → the agent's process tree is killed and the
+   │  exit path below finalizes, then the wrapper exits 128 + signal; any other
+   │  SIGINT is forwarded and arms nothing, since the agent may only interrupt its
+   │  turn)
+   ├─ 2 s grace period for the agent's final API calls
+   ├─ onSessionEnd
+   └─ Cleanup below (proxy.stop())
+   EIO / EPIPE on the wrapper's stdout / stderr (closed terminal or pipe) are
+   ignored from run() until the wrapper process ends.
+   Windows: SIGINT / SIGTERM / SIGHUP (console close) terminate the agent
+   (any signal is TerminateProcess there; no proxy stop first); the exit path
+   above then finalizes (grace period, onSessionEnd, proxy.stop()); the handlers
+   are one-shot, a second signal takes Node's default action; after a console
+   close Windows ends the wrapper a few seconds later, so that finalization is
+   best-effort.
 
 2. Cleanup
    ├─ Stop the ProxyWatcher (daemon mode only)

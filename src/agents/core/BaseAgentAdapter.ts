@@ -4,7 +4,8 @@ import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
+import { constants as osConstants } from 'os';
 import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../providers/plugins/sso/index.js';
 import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
@@ -35,6 +36,12 @@ import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 import { applySystemProxyEnvironment } from '../../utils/system-proxy.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
+import {
+  ignoreClosedOutputStreams,
+  installPosixSignalHandlers,
+  installWin32SignalHandlers,
+  type SignalHandlers,
+} from './signal-handlers.js';
 
 /**
  * Base class for all agent adapters
@@ -523,6 +530,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
+    ignoreClosedOutputStreams();
+
     // Version handling (EPMCDME-13734): known-broken versions are refused,
     // everything else is a one-time recommendation — no prompts, no re-nagging.
     await this.blockIfBelowMinimum();
@@ -858,26 +867,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         windowsHide: isWindows // Hide console window on Windows
       });
 
-      // Signal handler for graceful shutdown
-      const handleSignal = async (signal: NodeJS.Signals) => {
-        logger.debug(`Received ${signal}, cleaning up proxy...`);
-        await cleanup();
-        // Kill child process gracefully
-        child.kill(signal);
-      };
-
-      // Register signal handlers
-      const sigintHandler = () => handleSignal('SIGINT');
-      const sigtermHandler = () => handleSignal('SIGTERM');
-
-      process.once('SIGINT', sigintHandler);
-      process.once('SIGTERM', sigtermHandler);
+      const { removeSignalHandlers, removeInterruptHandlers, onChildGone, fallbackSignal } =
+        this.installSignalHandlers(child, isWindows);
 
       return new Promise((resolve, reject) => {
         child.on('error', async (error) => {
+          onChildGone();
           // Remove signal handlers to prevent memory leaks
-          process.off('SIGINT', sigintHandler);
-          process.off('SIGTERM', sigtermHandler);
+          removeSignalHandlers();
 
           // Lifecycle hook: session end, then proxy cleanup (triggers final sync)
           await endSessionAndCleanup(1);
@@ -889,49 +886,64 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
 
         child.on('exit', async (code, signal) => {
-          // Remove signal handlers to prevent memory leaks
-          process.off('SIGINT', sigintHandler);
-          process.off('SIGTERM', sigtermHandler);
+          try {
+            onChildGone();
+            // POSIX keeps only its SIGHUP handler until this path ends, so a
+            // closing terminal does not kill the wrapper mid-finalization.
+            removeInterruptHandlers();
 
-          // Show shutting down message (skip in silent mode)
-          if (!this.metadata.silentMode) {
-            console.log(''); // Empty line for spacing
-            console.log(chalk.yellow('Shutting down...'));
-          }
+            // Show shutting down message (skip in silent mode)
+            if (!this.metadata.silentMode) {
+              console.log(''); // Empty line for spacing
+              console.log(chalk.yellow('Shutting down...'));
+            }
 
-          // Grace period: wait for any final API calls from the external agent
-          // Many agents (Claude, Gemini) send telemetry/session data on shutdown
-          if (this.proxy) {
-            const gracePeriodMs = 2000; // 2 seconds
-            logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
-            await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
-          }
+            // Grace period: wait for any final API calls from the external agent
+            // Many agents (Claude, Gemini) send telemetry/session data on shutdown
+            if (this.proxy) {
+              const gracePeriodMs = 2000; // 2 seconds
+              logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
+              await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
+            }
 
-          // Preserve signal information for lifecycle hooks. A null exit code
-          // means the process was terminated by a signal; agents still need the
-          // session-end hook to finalize metrics.
-          if (signal) {
-            env.CODEMIE_EXIT_SIGNAL = signal;
-          }
-          const effectiveExitCode = code ?? 1;
+            // Preserve signal information for lifecycle hooks. A null exit code
+            // means the process was terminated by a signal; agents still need the
+            // session-end hook to finalize metrics. After the fallback's SIGKILL the
+            // hooks see the signal the wrapper forwarded, not SIGKILL.
+            const exitSignal = fallbackSignal() ?? signal;
+            if (exitSignal) {
+              env.CODEMIE_EXIT_SIGNAL = exitSignal;
+            }
+            const effectiveExitCode = code ?? 1;
 
-          // Lifecycle hook: session end, then proxy cleanup
-          await endSessionAndCleanup(effectiveExitCode);
+            // Lifecycle hook: session end, then proxy cleanup
+            await endSessionAndCleanup(effectiveExitCode);
 
-          // Lifecycle hook: afterRun (provider-aware)
-          if (code !== null) {
-            await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
-          }
+            // Lifecycle hook: afterRun (provider-aware)
+            if (code !== null) {
+              await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
+            }
 
-          // Write the per-session analytics report (gated, non-fatal).
-          await this.maybeWriteSessionReport(env);
+            // Write the per-session analytics report (gated, non-fatal).
+            await this.maybeWriteSessionReport(env);
 
-          this.renderSessionEnd();
+            this.renderSessionEnd();
 
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`${this.displayName} exited with code ${code}`));
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`${this.displayName} exited with code ${code}`));
+            }
+          } catch (error) {
+            reject(error);
+          } finally {
+            removeSignalHandlers();
+            // A rejection would end in the CLI's generic failure exit (1); the
+            // killed agent's wrapper exits as the forwarded signal instead.
+            const firedFor = fallbackSignal();
+            if (firedFor) {
+              process.exit(128 + osConstants.signals[firedFor]);
+            }
           }
         });
       });
@@ -945,6 +957,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       throw error;
     }
+  }
+
+  /**
+   * Install the wrapper's signal handlers for a spawned agent. `fallbackSignal`
+   * is the forwarded signal the 10 s fallback fired for, if it did.
+   */
+  private installSignalHandlers(child: ChildProcess, isWindows: boolean): SignalHandlers {
+    return isWindows
+      ? installWin32SignalHandlers(child, this.displayName)
+      : installPosixSignalHandlers(child, this.displayName);
   }
 
   /**

@@ -93,6 +93,8 @@ export interface MetricsSyncState {
   lastProcessedTimestamp: number;
   processedRecordIds: string[];
   attachedUserPromptTexts?: string[];
+  /** Start-of-record cutoff the claude baseline applied; lines stamped before it give a run no prompt. */
+  baselineCutoffMs?: number;
 
   // Remote sync state
   lastSyncedRecordId?: string;
@@ -143,6 +145,7 @@ export interface Session {
   workingDirectory: string; // CWD where agent was launched
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
   repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback
+  model?: string; // Last-resort model for metrics when neither a branch's deltas nor the session's history name one
 
   correlation: CorrelationResult;
   status: SessionStatus;

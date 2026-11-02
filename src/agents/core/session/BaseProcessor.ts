@@ -41,6 +41,8 @@ export interface ProcessingContext {
   syncDeadlineMs?: number;
   /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
   abortSignal?: AbortSignal;
+  /** The last processing pass of the session (SessionEnd): no later run will see its trailing lines */
+  finalPass?: boolean;
 }
 
 /**

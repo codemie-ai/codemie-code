@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const snapshotPendingHookRecordsMock = vi.fn();
 const snapshotPendingBytesMock = vi.fn();
+const snapshotPendingNdjsonRecordsMock = vi.fn();
 const advanceCursorMock = vi.fn();
 const markSessionEndedMock = vi.fn();
 const isSendAllowedMock = vi.fn();
@@ -11,6 +12,7 @@ const fetchMock = vi.fn();
 vi.mock('../spool-io.js', () => ({
   snapshotPendingHookRecords: snapshotPendingHookRecordsMock,
   snapshotPendingBytes: snapshotPendingBytesMock,
+  snapshotPendingNdjsonRecords: snapshotPendingNdjsonRecordsMock,
   isSendAllowed: isSendAllowedMock,
 }));
 vi.mock('../session-status.js', () => ({
@@ -85,6 +87,7 @@ describe('forwardSession (hooks)', () => {
     readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
     isSendAllowedMock.mockResolvedValue(true);
     snapshotPendingBytesMock.mockResolvedValue(null);
+    snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
     snapshotPendingHookRecordsMock.mockResolvedValue({
       project: 'Proj A',
       records: [spoolLine({ type: 'agent.session.end', session_id: 's1' })],
@@ -215,6 +218,7 @@ describe('forwardSession (project header)', () => {
       cursor: 4,
       bytes: Buffer.from(`${stream}-bytes`),
     }));
+    snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
     fetchMock.mockResolvedValue({ ok: true, status: 200 });
   });
 
@@ -361,5 +365,222 @@ describe('forwardSession (project header)', () => {
 
     expect(advanceCursorMock).not.toHaveBeenCalled();
     expect(areCredentialsStale()).toBe(false);
+  });
+
+  it.each([400, 413, 422])('keeps retrying a hooks batch the backend answers with %i: skipping would drop the whole batch', async (status) => {
+    fetchMock.mockResolvedValue({ ok: false, status });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', true, credentials);
+
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps retrying accumulated binary OTLP bytes the backend answers with 413', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('LL') } : null
+    );
+    fetchMock.mockResolvedValue({ ok: false, status: 413 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('forwardSession (OTEL JSON streams)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    isSendAllowedMock.mockResolvedValue(true);
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function logsOnlyBatch(records: string[], cursor = 0) {
+    const byteLength = records.reduce((sum, r) => sum + Buffer.byteLength(r, 'utf8') + 1, 0);
+    return { project: 'Proj A', cursor, records, byteLength };
+  }
+
+  it('POSTs each masked-JSON record as its own application/json request, routed to the matching signal endpoint', async () => {
+    const record = JSON.stringify({ n: 1 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([record], 100) : null
+    );
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const logsCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs'));
+    expect(logsCalls).toHaveLength(1);
+    expect(logsCalls[0][1].body).toBe(record);
+    expect(logsCalls[0][1].headers['Content-Type']).toBe('application/json');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', 100 + Buffer.byteLength(record, 'utf8') + 1);
+  });
+
+  it('(CR-004) acknowledges a multi-record batch one record at a time, in order', async () => {
+    const r1 = JSON.stringify({ n: 1 });
+    const r2 = JSON.stringify({ n: 2 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([r1, r2], 100) : null
+    );
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const logsCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs'));
+    expect(logsCalls.map(([, init]) => init.body)).toEqual([r1, r2]);
+
+    const r1End = 100 + Buffer.byteLength(r1, 'utf8') + 1;
+    const r2End = r1End + Buffer.byteLength(r2, 'utf8') + 1;
+    expect(advanceCursorMock).toHaveBeenNthCalledWith(1, 's1', 'logsJson', r1End);
+    expect(advanceCursorMock).toHaveBeenNthCalledWith(2, 's1', 'logsJson', r2End);
+  });
+
+  it('(CR-004) stops at the first failing record and never resends the records already confirmed', async () => {
+    const r1 = JSON.stringify({ n: 1 });
+    const r2 = JSON.stringify({ n: 2 });
+    const r3 = JSON.stringify({ n: 3 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([r1, r2, r3], 0) : null
+    );
+    fetchMock.mockImplementation(async (_url: string, init: { body: string }) =>
+      init.body === r2 ? { ok: false, status: 500 } : { ok: true, status: 200 }
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const logsCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs'));
+    // r3 is never attempted: the loop stops as soon as r2 fails.
+    expect(logsCalls.map(([, init]) => init.body)).toEqual([r1, r2]);
+
+    const r1End = Buffer.byteLength(r1, 'utf8') + 1;
+    expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', r1End);
+  });
+
+  describe('a record the backend permanently rejects', () => {
+    const r1 = JSON.stringify({ n: 1 });
+    const r2 = JSON.stringify({ n: 2 });
+    const r3 = JSON.stringify({ n: 3 });
+    const byteEnd = (...records: string[]): number =>
+      records.reduce((sum, r) => sum + Buffer.byteLength(r, 'utf8') + 1, 0);
+
+    function respondWith(status: number, rejectedBody: string): void {
+      fetchMock.mockImplementation(async (_url: string, init: { body: string }) =>
+        init.body === rejectedBody ? { ok: false, status } : { ok: true, status: 200 }
+      );
+    }
+
+    function logsCalls(): string[] {
+      return fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/logs')).map(([, init]) => init.body);
+    }
+
+    beforeEach(() => {
+      snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+        stream === 'logsJson' ? logsOnlyBatch([r1, r2, r3], 0) : null
+      );
+    });
+
+    it.each([400, 413, 422])('is skipped on a %i, so the records behind it still go out', async (status) => {
+      respondWith(status, r2);
+      const { forwardSession } = await import('../forwarder.js');
+      const { logger } = await import('@/utils/logger.js');
+
+      await forwardSession('s1', false, credentials);
+
+      expect(logsCalls()).toEqual([r1, r2, r3]);
+      expect(advanceCursorMock.mock.calls.map(([, , cursor]) => cursor)).toEqual([
+        byteEnd(r1),
+        byteEnd(r1, r2),
+        byteEnd(r1, r2, r3),
+      ]);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not log the rejected payload', async () => {
+      respondWith(413, r2);
+      const { forwardSession } = await import('../forwarder.js');
+      const { logger } = await import('@/utils/logger.js');
+
+      await forwardSession('s1', false, credentials);
+
+      expect(JSON.stringify((logger.warn as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(r2);
+    });
+
+    it('lets the stream finish when every record is rejected', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 413 });
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('s1', false, credentials);
+
+      expect(logsCalls()).toEqual([r1, r2, r3]);
+      expect(advanceCursorMock).toHaveBeenLastCalledWith('s1', 'logsJson', byteEnd(r1, r2, r3));
+    });
+
+    it.each([404, 405, 408, 409, 429, 500, 502, 503])(
+      'is retried, not skipped, on a %i: the cursor stays and the records behind it wait',
+      async (status) => {
+        respondWith(status, r2);
+        const { forwardSession } = await import('../forwarder.js');
+        const { logger } = await import('@/utils/logger.js');
+
+        await forwardSession('s1', false, credentials);
+
+        expect(logsCalls()).toEqual([r1, r2]);
+        expect(advanceCursorMock).toHaveBeenCalledTimes(1);
+        expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', byteEnd(r1));
+        expect(logger.warn).not.toHaveBeenCalled();
+      }
+    );
+
+    it('is retried when the send is no longer allowed, even though nothing was rejected', async () => {
+      isSendAllowedMock.mockResolvedValue(false);
+      const { forwardSession } = await import('../forwarder.js');
+
+      await forwardSession('s1', false, credentials);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(advanceCursorMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('marks credentials stale and stops after an auth-expired JSON-stream response', async () => {
+    const record = JSON.stringify({ n: 1 });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? logsOnlyBatch([record], 0) : null
+    );
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+    const { forwardSession } = await import('../forwarder.js');
+    const { areCredentialsStale } = await import('../auth-state.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(areCredentialsStale()).toBe(true);
+  });
+
+  it('advances the cursor without a request when the only pending bytes are an incomplete trailing record', async () => {
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      stream === 'logsJson' ? { project: 'Proj A', cursor: 5, records: [], byteLength: 20 } : null
+    );
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', 25);
   });
 });

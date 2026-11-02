@@ -24,6 +24,9 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
         logs: '.otel_logs.bin',
         metrics: '.otel_metrics.bin',
         traces: '.otel_traces.bin',
+        logsJson: '.otel_logs.ndjson',
+        metricsJson: '.otel_metrics.ndjson',
+        tracesJson: '.otel_traces.ndjson',
       };
       return pathJoin(state.root, sessionId + ext[stream]);
     },
@@ -79,13 +82,23 @@ describe('project gate — ingest vs forwarding', () => {
     await rm(state.root, { recursive: true, force: true });
   });
 
-  /** Session bound to A with hooks and all three OTLP streams pending. */
+  // Distinct sizes per stream, so a cursor parked at the wrong stream's EOF cannot pass.
+  const JSON_SEED = {
+    logsJson: '{"x":1}\n',
+    metricsJson: '{"x":1}\n{"x":2}\n',
+    tracesJson: '{"x":1}\n{"x":2}\n{"x":3}\n',
+  } as const;
+
+  /** Session bound to A with hooks and all six OTLP streams (binary and masked JSON) pending. */
   async function seedBoundA(): Promise<void> {
     const { appendSpool } = await import('../spool-io.js');
     await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
     await appendSpool(SESSION, 'logs', Buffer.from('L'));
     await appendSpool(SESSION, 'metrics', Buffer.from('MM'));
     await appendSpool(SESSION, 'traces', Buffer.from('TTT'));
+    await appendSpool(SESSION, 'logsJson', JSON_SEED.logsJson);
+    await appendSpool(SESSION, 'metricsJson', JSON_SEED.metricsJson);
+    await appendSpool(SESSION, 'tracesJson', JSON_SEED.tracesJson);
   }
 
   async function cursorsAtEof(hooksSize: number): Promise<void> {
@@ -95,6 +108,9 @@ describe('project gate — ingest vs forwarding', () => {
       logs: 1,
       metrics: 2,
       traces: 3,
+      logsJson: Buffer.byteLength(JSON_SEED.logsJson),
+      metricsJson: Buffer.byteLength(JSON_SEED.metricsJson),
+      tracesJson: Buffer.byteLength(JSON_SEED.tracesJson),
     });
   }
 
