@@ -3039,6 +3039,64 @@ describe('subagent that may be a skill fork is deferred until provable (EPMCDME-
       expect(totalOut(later)).toBe(10);
     });
 
+    // A prefix that parses (a user line, a request cut before its newline, one request of several) is
+    // not proof that the file is complete: the path must stay registered until SessionEnd.
+    const requests = (events: Record<string, unknown>[]): string[] =>
+      events
+        .filter((e) => e.type === 'agent.usage.request')
+        .map((e) => `${e.scope_kind}:${e.scope_name}:${e.output_tokens}`);
+    const u1 = (): string => usageLine({ uuid: 'uuid-f1', messageId: 'msg-f1', outputTokens: 10 });
+    const u2 = (): string => usageLine({ uuid: 'uuid-f2', messageId: 'msg-f2', outputTokens: 7 });
+
+    describe.each([
+      ['a complete user line only', () => `${noUsageLine('uuid-u0')}\n`, () => `${u1()}\n`, [], ['skill:forkme:10'], 10],
+      ['one usage object without its trailing newline', () => u1(), () => '\n', [], ['skill:forkme:10'], 10],
+      ['one consumed request, another arrives later', () => `${u1()}\n`, () => `${u2()}\n`, ['skill:forkme:10'], ['skill:forkme:7'], 17],
+    ] as const)('prefix: %s', (_name, initial, rest, atStop, afterRest, total) => {
+      const arrange = async (id: string) => {
+        const sessionId = `session-prefix-${id}`;
+        const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
+        const filePath = elsewhere(`agent-${sessionId}.jsonl`);
+        writeFileSync(filePath, initial());
+        const stopped = await subagentEvents(sessionId, { agentId: 'fork1', filePath, agentType: 'general-purpose', skillName: 'forkme' });
+        expect(requests(stopped)).toEqual(atStop); // proven usage is not withheld
+        appendFileSync(filePath, rest());
+        return { sessionId, mainPath };
+      };
+      const cumulative = (events: Record<string, unknown>[]): number =>
+        (events.find((e) => e.type === 'agent.subagent.usage')?.usage as { output_tokens: number }[]).reduce((n, u) => n + u.output_tokens, 0);
+
+      it('a later Stop sends only what is new, once; a clean SessionEnd then sends nothing', async () => {
+        const { sessionId, mainPath } = await arrange(`stop-${_name.length}`);
+        const later = await mainEvents(sessionId, mainPath, 'Stop');
+        expect(requests(later)).toEqual(afterRest);
+        expect(cumulative(later)).toBe(total);
+        expect(requests(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
+        const end = await openSessionEndPass(sessionId, mainPath, '/repo');
+        await end.finalize(true);
+        expect(requests(end.events)).toEqual([]);
+      });
+
+      it('a clean SessionEnd with no Stop in between still sends it', async () => {
+        const { sessionId, mainPath } = await arrange(`end-${_name.length}`);
+        const end = await openSessionEndPass(sessionId, mainPath, '/repo');
+        await end.finalize(true);
+        expect(requests(end.events)).toEqual(afterRest);
+        expect(cumulative(end.events)).toBe(total);
+      });
+
+      it('a failed send keeps the candidate: the retry sends the same requests once', async () => {
+        const { sessionId, mainPath } = await arrange(`retry-${_name.length}`);
+        const failed = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+        expect(requests(failed.events)).toEqual(afterRest);
+        await failed.finalize(false);
+        const retry = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+        expect(requests(retry.events)).toEqual(afterRest);
+        await retry.finalize(true);
+        expect(requests(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
+      });
+    });
+
     it('a failed send of the settling pass keeps the candidate: the retry sends it once', async () => {
       const sessionId = 'session-late-file-retry';
       const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);

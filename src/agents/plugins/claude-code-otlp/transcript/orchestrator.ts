@@ -863,10 +863,12 @@ function clearDeferred(state: TranscriptParseState, agentId: string): void {
 }
 
 /**
- * Derive one subagent, forgetting its deferral first. When the file has no content yet (the desktop
- * app may create it after `SubagentStop`) nothing can be consumed: keep the candidate — its path and
- * any positive skill evidence, never a guessed scope — deferred so a later `Stop`/`SessionEnd`
- * finds the file, unless this is the last chance (`final`).
+ * Derive one subagent and, unless this is the last chance (`final`), keep it as a candidate — its
+ * path and any positive skill evidence, never a guessed scope — until `SessionEnd`. Nothing in a
+ * pass proves that a subagent file is complete: the desktop app can create it after `SubagentStop`,
+ * and a prefix (a user line, a request cut before its newline, one request of several) still
+ * yields a summary. The path registry is therefore only released at `SessionEnd`; usage already
+ * proven is sent now, and the offsets keep unchanged requests from being sent again.
  */
 async function deriveOrRetain(
   state: TranscriptParseState,
@@ -876,7 +878,7 @@ async function deriveOrRetain(
 ): Promise<Record<string, unknown>[]> {
   clearDeferred(state, file.agentId);
   const events = await deriveSubagentEvents(state, sessionId, file);
-  if (!final && !events.some((e) => e.type === 'agent.subagent.usage')) {
+  if (!final) {
     const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
     state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
     (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description, skillName };
@@ -893,7 +895,7 @@ function deferredCandidates(state: TranscriptParseState): SubagentFile[] {
  * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
  * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
  * `Stop`, when the evidence (a `Skill` result, an `Agent` result) may have arrived: a subagent
- * that is still pending stays deferred; one already covered by its offset is just forgotten. No-op
+ * that is still pending stays deferred; one already covered by its offset stays registered too (more may be appended) until `SessionEnd`. No-op
  * when nothing is deferred. A failing subagent is skipped, state intact.
  */
 async function settleDeferredSubagents(
@@ -909,10 +911,8 @@ async function settleDeferredSubagents(
   for (const rawFile of await findSubagentFiles(transcriptPath, { extra: deferredCandidates(state) })) {
     if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
     const file: SubagentFile = { ...rawFile, cwd };
-    if (await subagentAlreadyCovered(state, file)) {
-      clearDeferred(state, file.agentId);
-      continue;
-    }
+    // Covered by its offset: nothing to send now, but more may still be appended - stay registered.
+    if (await subagentAlreadyCovered(state, file)) continue;
     const snapshot = structuredClone(state);
     try {
       events.push(...(await deriveOrRetain(state, sessionId, file)));
@@ -1346,6 +1346,7 @@ export async function openSessionEndPass(
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
       if (await subagentAlreadyCovered(state, file)) {
+        clearDeferred(state, file.agentId); // last chance: release the registry entry
         continue;
       }
       const snapshot = structuredClone(state);
