@@ -48,6 +48,8 @@ export interface ProcessingContext {
    * belong to that later session, not to this one. Unset when no later record exists (or inside a hook process).
    */
   recordsBeforeMs?: number;
+  /** The last processing pass of the session (SessionEnd): no later run will see its trailing lines */
+  finalPass?: boolean;
 }
 
 /** Why a bounded sync or request stopped before its work was done. */

@@ -1394,8 +1394,9 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(fresh.startTime).toBeGreaterThanOrEqual(before);
     expect(fresh.correlation.agentSessionId).toBe('claude-native-next');
 
-    // The fresh generation's Stop writes onto its own record and its own metrics file
-    const transcript = writeTranscript(['2026-10-01T11:00:00Z', '2026-10-01T11:00:05Z']);
+    // The fresh generation's Stop writes onto its own record and its own metrics file; a Claude record
+    // over an existing transcript counts only the lines after its start
+    const transcript = writeTranscript([fresh.startTime + SECOND, fresh.startTime + 5 * SECOND].map((t) => new Date(t).toISOString()));
     await processEvent({ ...clearStart(), hook_event_name: 'Stop', transcript_path: transcript }, config(session));
 
     expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-stuck_metrics.jsonl`))).toBe(false);

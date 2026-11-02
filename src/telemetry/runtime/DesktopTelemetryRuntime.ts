@@ -276,7 +276,9 @@ export class DesktopTelemetryRuntime {
     const baselineCutoffMs = session.runtimeCheckpoint?.baselineCutoffMs;
     if (baselineCutoffMs !== undefined && this.adapter.applyBaseline) {
       await this.adapter.applyBaseline(parsedSession, baselineCutoffMs, context);
-      delete session.runtimeCheckpoint!.baselineCutoffMs;
+      if (!parsedSession.subagentsIncomplete) {
+        delete session.runtimeCheckpoint!.baselineCutoffMs;
+      }
     }
 
     const result = await this.adapter.processParsedSession(parsedSession, context);

@@ -167,6 +167,45 @@ describe('ClaudeDesktopTelemetryAdapter.applyBaseline', () => {
     expect(stored.sync.conversations).toMatchObject({ lastSyncedMessageUuid: 'a1', lastSyncedHistoryIndex: 0 });
   });
 
+  it('persists the cutoff, so a prompt stamped before it gives its later reply no prompt', async () => {
+    const desktop = await adapter();
+    const straddling = [
+      ...transcript().slice(0, 4),
+      userMessage('u-straddle', 'typed before the daemon started', at(-1)),
+      assistantMessage('a-straddle', 'answered after the daemon started', at(1)),
+    ];
+    const later = [
+      ...straddling,
+      userMessage('u-after', 'question after the daemon started', at(3)),
+      assistantMessage('a-after', 'answer after the daemon started', at(4)),
+    ];
+
+    await desktop.applyBaseline(parsedSession(straddling), CUTOFF_MS, context);
+    expect(JSON.parse(readFileSync(sessionFile(), 'utf-8')).sync.metrics.baselineCutoffMs).toBe(CUTOFF_MS);
+    await desktop.processParsedSession(parsedSession(straddling), context);
+    await desktop.processParsedSession(parsedSession(later), context);
+
+    const deltas = readJsonl('metrics');
+    expect(deltas.map(d => d.recordId)).toEqual(['a-straddle', 'a-after']);
+    expect(deltas[0].userPrompts).toBeUndefined();
+    expect(deltas[1].userPrompts).toEqual([{ count: 1, text: 'question after the daemon started' }]);
+  });
+
+  it('keeps a stored conversation pointer that is past the baseline pointer', async () => {
+    const record = JSON.parse(readFileSync(sessionFile(), 'utf-8'));
+    writeFileSync(sessionFile(), JSON.stringify({
+      ...record,
+      sync: { conversations: { lastSyncedMessageUuid: 'a3', lastSyncedHistoryIndex: 2 } }
+    }));
+    const desktop = await adapter();
+
+    await desktop.applyBaseline(parsedSession(transcript()), CUTOFF_MS, context);
+
+    const stored = JSON.parse(readFileSync(sessionFile(), 'utf-8'));
+    expect(stored.runtimeCheckpoint.baselineCutoffMs).toBeUndefined();
+    expect(stored.sync.conversations).toMatchObject({ lastSyncedMessageUuid: 'a3', lastSyncedHistoryIndex: 2 });
+  });
+
   it('writes no pending records for the skipped history itself', async () => {
     const desktop = await adapter();
     const beforeOnly = transcript().slice(0, 4);

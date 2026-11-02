@@ -312,7 +312,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
     // 0. Final activity accumulation (handles edge case: session ends without Stop)
     await accumulateActiveDuration(sessionId);
     // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
-    await performIncrementalSync(event, 'SessionEnd', sessionId, config);
+    await performIncrementalSync(event, 'SessionEnd', sessionId, config, undefined, { finalPass: true });
     // 2. Update session status
     await updateSessionStatus(event, sessionId, event.endTime, config);
     return;
@@ -325,7 +325,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
   // The later-record bound is a wrapper-side scan; a hook process keeps the lower bound alone
   const recordsBeforeMs = record && !options.hookProcess ? await nextRecordStart(record) : undefined;
 
-  const lastRecordAt = await performIncrementalSync(event, 'SessionEnd', sessionId, config, recordsBeforeMs);
+  const lastRecordAt = await performIncrementalSync(event, 'SessionEnd', sessionId, config, recordsBeforeMs, { finalPass: true });
 
   // ponytail: activity that produced no transcript record is not counted
   const endTime = event.endTime ?? Math.max(
@@ -389,13 +389,15 @@ function logProcessingResult(
  *   With `holdsReconcileLock` (the start pass, the wrapper's own-record step) a failed flush throws, so
  *   a SessionEnd stops before its status write and the record stays `active` for a later attempt;
  *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
+ * @param options.finalPass - Set only by SessionEnd: the session's last processing pass
  */
 async function performIncrementalSync(
   event: BaseHookEvent,
   hookName: string,
   sessionId: string,
   config?: HookProcessingConfig,
-  recordsBeforeMs?: number
+  recordsBeforeMs?: number,
+  { finalPass = false }: { finalPass?: boolean } = {}
 ): Promise<number | undefined> {
   // Latest timed transcript record read across the processed files
   let lastRecordAt: number | undefined;
@@ -451,6 +453,9 @@ async function performIncrementalSync(
 
     const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
     context.recordsBeforeMs = recordsBeforeMs;
+    if (finalPass) {
+      context.finalPass = true;
+    }
 
     // Process every transcript file. Per-file entry deduplication inside the
     // adapter prevents forked/copied history from being double-counted.
@@ -884,6 +889,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const model = getConfigValue('CODEMIE_MODEL', config);
 
     // Create session record with correlation already matched
+    const startTime = Date.now();
     const session = {
       sessionId,
       agentName,
@@ -893,7 +899,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(codemieUrl && { codemieUrl }),
       ...(clientType && { clientType }),
       ...(model && { model }),
-      startTime: Date.now(),
+      startTime,
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
@@ -905,7 +911,17 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         agentSessionId: event.session_id,
         agentSessionFile: event.transcript_path,
         retryCount: 0
-      }
+      },
+      // A resumed Claude transcript already holds earlier records: the first processing run
+      // treats everything before this record's start as already sent.
+      ...((agentName === 'claude' || agentName === 'claude-acp') && event.session_id && event.transcript_path && {
+        runtimeCheckpoint: {
+          externalSessionId: event.session_id,
+          transcriptPath: event.transcript_path,
+          lastDiscoveredAt: startTime,
+          baselineCutoffMs: startTime
+        }
+      })
     };
 
     // Save session

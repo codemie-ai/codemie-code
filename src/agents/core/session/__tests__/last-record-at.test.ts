@@ -32,6 +32,20 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The CodeMie record the adapters load; no baseline cutoff, so every transcript record counts. */
+function writeRecord(transcriptPath: string): void {
+  writeFileSync(join(root, 'codemie', 'sessions', `${SESSION_ID}.json`), JSON.stringify({
+    sessionId: SESSION_ID,
+    agentName: 'claude',
+    provider: 'ai-run-sso',
+    startTime: Date.parse(T1),
+    workingDirectory: root,
+    status: 'active',
+    activeDurationMs: 0,
+    correlation: { status: 'matched', agentSessionId: 'native', agentSessionFile: transcriptPath, retryCount: 0 },
+  }));
+}
+
 function writeJsonl(name: string, lines: unknown[]): string {
   const path = join(root, name);
   writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
@@ -142,6 +156,7 @@ function context(recordsBeforeMs?: number) {
 describe('lastRecordAt', () => {
   it.each(cases)('$agent: the last record, or the last one before recordsBeforeMs', async ({ adapter, transcript }) => {
     const path = transcript();
+    writeRecord(path);
     const sessionAdapter = await adapter();
 
     const unbounded = await sessionAdapter.processSession(path, SESSION_ID, context());

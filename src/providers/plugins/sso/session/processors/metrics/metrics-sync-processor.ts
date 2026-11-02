@@ -17,12 +17,13 @@ import { shouldStopSync, SyncStoppedError } from '../../../../../../agents/core/
 import type { ParsedSession } from '../../BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
-import { aggregateDeltas } from './metrics-aggregator.js';
+import { aggregateDeltas, branchKeyOf } from './metrics-aggregator.js';
 import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/session/session-config.js';
 import { readJSONL } from '../../utils/jsonl-reader.js';
 import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
+import type { Session } from '../../../../../../agents/core/session/types.js';
 
 const MAX_SYNC_ATTEMPTS = 3;
 
@@ -30,6 +31,17 @@ const MAX_SYNC_ATTEMPTS = 3;
 export function isDeltaSendCandidate(delta: Pick<MetricDelta, 'syncStatus' | 'syncAttempts'>): boolean {
   return delta.syncStatus === 'pending' ||
     (delta.syncStatus === 'failed' && (delta.syncAttempts ?? 0) < MAX_SYNC_ATTEMPTS);
+}
+
+/**
+ * Per branch: the last model of the newest delta on that branch that names one, else of the newest such delta
+ * on any branch, whatever its sync status. The model does not depend on the branch, so a branch with no history
+ * of its own keeps the session's.
+ */
+function lastKnownModelByBranch(deltas: MetricDelta[], session: Session): (branch: string) => string | undefined {
+  const modeledNewestFirst = [...deltas].reverse().filter(d => d.models?.length);
+  const sessionModel = modeledNewestFirst[0]?.models?.at(-1);
+  return branch => modeledNewestFirst.find(d => branchKeyOf(d, session) === branch)?.models?.at(-1) ?? sessionModel;
 }
 
 export class MetricsSyncProcessor implements SessionProcessor {
@@ -135,7 +147,11 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       // 5. Aggregate pending deltas into metrics grouped by branch
       const clientType = context.clientType || 'codemie-cli';
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, agentConfig);
+      // A branch whose pending deltas name no model keeps the branch's, else the session's, last known one.
+      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, {
+        agentConfig,
+        fallbackModelByBranch: lastKnownModelByBranch(allDeltas, sessionMetadata)
+      });
 
       logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 

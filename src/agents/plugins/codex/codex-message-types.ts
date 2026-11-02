@@ -18,7 +18,7 @@ import { ConfigurationError } from '../../../utils/errors.js';
 
 /** Top-level wrapper for every JSONL line in a rollout file */
 export interface CodexRolloutRecord {
-  /** ISO 8601 wall-clock time the line was written */
+  /** ISO 8601 time the line was written (absent on older rollouts) */
   timestamp?: string;
   type: 'session_meta' | 'turn_context' | 'response_item' | 'event_msg';
   payload: CodexSessionMeta | CodexTurnContext | CodexResponseItem | CodexEventMsg;

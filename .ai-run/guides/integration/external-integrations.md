@@ -201,7 +201,7 @@ The MCP proxy bridges stdio JSON-RPC to streamable HTTP with automatic OAuth 2.0
 Codex uses two pipelines (same model as Claude). Cost computed server-side; CLI never sends `money_spent`.
 
 **Pipeline A — CLI tool/lifecycle → `POST /v1/metrics`**
-- Tool deltas: `file:src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`)
+- Tool deltas: `file:src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`): a call gives its delta once its output appears, as success, at its own line's time; a call without output is not counted
 - Lifecycle: `file:src/agents/plugins/codex/codex.plugin.ts` (`onSessionStart`/`onSessionEnd`) → `processEvent` in `file:src/cli/commands/hook.ts:170-228`
 - `status` hardcoded `'completed'`; end signal travels in `reason` field. Stranded sessions (a dead owner) → `reason: 'interrupted'`, sent with the native `session_id`.
 
@@ -241,7 +241,7 @@ Claude Code's `Stop` hook fires only when the assistant responds. A burst of `!b
 | Empty-history exit | Loop breaks immediately when `transformMessages` returns `history: []` |
 | Advance guard | Loop breaks if `lastProcessedMessageUuid` and `currentHistoryIndex` are both unchanged from the previous iteration |
 
-The main-transcript sync reads the conversation view `conversationMessages`: a line re-written with the same `uuid` after a compaction (`compact_boundary` between the copies) keeps its first copy, so it is not turned into a history entry again after the sync pointer; other duplicates keep their last copy, as in `messages`. `computeBaselinePointer` reads the same view.
+The main-transcript sync reads the conversation view `conversationMessages`: a line re-written with the same `uuid` after a compaction (`compact_boundary` between the copies) keeps its first copy, so it is not turned into a history entry again after the sync pointer; other duplicates keep their last copy, as in `messages`. `computeBaselinePointer` reads the same view. A CLI `claude` / `claude-acp` record takes the same start-time baseline as Desktop, judged by each line's timestamp rather than its position in the file, so a resumed or continued transcript sends only what follows the record's start, and a run takes no prompt or invocation from a line stamped before it; invocation counts are per run. The `SessionEnd` pass also counts the prompts typed after the last answered turn, as one prompts-only delta when no turn emits.
 
 `file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:119-177`
 
