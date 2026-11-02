@@ -1556,6 +1556,15 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(String(forwarded['prompt_body'])).toHaveLength(200);
   });
 
+  it('keeps UUID fragments and non-ticket tokens out of ticket_mentions', async () => {
+    await plugin.processOtlpEvent(
+      promptEvent('see 38a8bb8d-39d4-49b2-a43e-20c8e1f66c87 and SHA-256 then EPMCDME-15301'),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+
+    expect(forwardedEvents()[0]['ticket_mentions']).toEqual(['EPMCDME-15301']);
+  });
+
   it('finds a ticket mention that sits beyond the 200-char cut', async () => {
     await plugin.processOtlpEvent(promptEvent(`${'x '.repeat(150)}see ABC-99`), {
       ensureOtlpProxy,
