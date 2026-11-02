@@ -22,6 +22,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
+import { evidenceCacheFor } from './evidence-index.js';
 import { probePromptHead, resolveForkSkills } from './fork-skill.js';
 import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
@@ -248,12 +249,14 @@ export async function resolveSubagentSnapshot(
     else files.push(merged);
     if (merged.settled) await refreshHead(merged);
   }
+  const evidence = evidenceCacheFor(mainTranscriptPath);
   const { skillByAgentId, pendingAgentIds, unprovenAgentIds, slashPromptIds } = await resolveForkSkills(
     mainTranscriptPath,
     files,
     options.raw,
-    options
+    { ...options, evidence }
   );
+  await evidence.save();
   for (const file of files) {
     const skillName = skillByAgentId.get(file.agentId);
     if (skillName) {

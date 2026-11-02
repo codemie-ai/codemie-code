@@ -28,6 +28,7 @@
  */
 
 import { open, readFile } from 'node:fs/promises';
+import { EvidenceCache, emptyEvidence, evidenceStillValid, readRange, sealEvidence } from './evidence-index.js';
 import { plainSlashCommandName } from '../../claude/session/claude-named-invocations.js';
 
 /** The slice of a discovered subagent file this module needs. */
@@ -45,6 +46,8 @@ export interface ForkCandidate {
   settled?: boolean;
   /** The subagent's `promptId` as recorded when it settled (skips reading the file head). */
   promptId?: string;
+  /** The head of its file was read completely (see `PromptHead.done`). */
+  headDone?: boolean;
 }
 
 export interface ForkSkillResolution {
@@ -137,7 +140,8 @@ function resultAgentId(line: Line, block: Block): string {
   }
 }
 
-function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt = ''): void {
+/** Scans transcript text into `into`; returns the prompt in force at its end. */
+function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt = ''): string {
   let prompt = startPrompt; // promptId of the latest user turn seen
   for (const text of raw.split('\n')) {
     if (!text.includes('"tool_use"') && !text.includes('"tool_result"') && !(withSlash && text.includes('"user"'))) {
@@ -173,6 +177,78 @@ function scanTranscript(raw: string, into: Scan, withSlash: boolean, startPrompt
       }
     }
   }
+  return prompt;
+}
+
+/** The only calls a subagent's evidence can concern (a `.meta.json` `toolUseId` names one of them). */
+const INDEXED_TOOLS = new Set(['Skill', ...AGENT_TOOLS]);
+
+/**
+ * Read one subagent transcript's call/result evidence into `scan`, through the persistent index when
+ * it can be trusted (see `evidence-index.ts`): an unchanged file costs ~1 KiB of reads, a grown one only
+ * its new bytes up to the last complete line, whose prompt context is carried across the boundary. A
+ * trailing partial line is scanned for this pass only and never indexed. Without a usable index (no
+ * cache, start prompt not known yet, any I/O or format problem) it is the plain full read.
+ */
+async function scanSubagentFile(file: ForkCandidate, scan: Scan, cache?: EvidenceCache): Promise<void> {
+  const head = file.settled
+    ? { promptId: file.promptId ?? '', done: !!(file.promptId || file.headDone) }
+    : await probePromptHead(file.filePath);
+  // A start prompt that is not final yet would be baked into the carried context: do not index.
+  if (cache && (head.promptId || head.done)) {
+    try {
+      await scanIndexed(file.filePath, head.promptId, scan, cache);
+      return;
+    } catch {
+      cache.drop(file.filePath);
+    }
+  }
+  scanTranscript(await readText(file.filePath), scan, false, head.promptId);
+}
+
+async function scanIndexed(filePath: string, start: string, scan: Scan, cache: EvidenceCache): Promise<void> {
+  const handle = await open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    let ev = await cache.get(filePath);
+    if (ev && (ev.start !== start || !(await evidenceStillValid(handle, ev, size)))) ev = undefined;
+    const base = ev ?? emptyEvidence(start);
+    const previousOffset = base.offset;
+    const region = size > previousOffset ? await readRange(handle, previousOffset, size - previousOffset) : Buffer.alloc(0);
+    const lastNewline = region.lastIndexOf(0x0a);
+    const complete = region.subarray(0, lastNewline + 1);
+    const tail = region.subarray(lastNewline + 1);
+    if (complete.length > 0) {
+      const delta = newScan();
+      base.prompt = scanTranscript(complete.toString('utf-8'), delta, false, base.prompt);
+      for (const [id, name] of delta.toolNameById) {
+        if (!INDEXED_TOOLS.has(name)) continue;
+        const skill = delta.skillByToolUseId.get(id);
+        base.calls[id] = { n: name, p: delta.promptByToolUseId.get(id) ?? '', ...(skill ? { s: skill } : {}) };
+      }
+      for (const [id, agentId] of delta.resultAgentIdByToolUseId) {
+        if (!Object.hasOwn(base.calls, id)) continue;
+        base.results[id] = { a: agentId, ...(delta.failedToolUseIds.has(id) || base.results[id]?.e ? { e: 1 as const } : {}) };
+      }
+      base.offset += complete.length;
+      await sealEvidence(handle, base, complete, previousOffset);
+      cache.set(filePath, base);
+    } else if (!ev && base.offset === 0) {
+      cache.drop(filePath); // nothing indexable (empty / only a partial line): keep no stale entry
+    }
+    for (const [id, call] of Object.entries(base.calls)) {
+      scan.toolNameById.set(id, call.n);
+      scan.promptByToolUseId.set(id, call.p);
+      if (call.s) scan.skillByToolUseId.set(id, call.s);
+    }
+    for (const [id, result] of Object.entries(base.results)) {
+      scan.resultAgentIdByToolUseId.set(id, result.a);
+      if (result.e) scan.failedToolUseIds.add(id);
+    }
+    if (tail.length > 0) scanTranscript(tail.toString('utf-8'), scan, false, base.prompt);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function readText(filePath: string): Promise<string> {
@@ -183,7 +259,7 @@ async function readText(filePath: string): Promise<string> {
   }
 }
 
-const HEAD_CHUNK = 16 * 1024;
+const HEAD_CHUNK = 4 * 1024;
 
 /**
  * The head of a file: read in chunks until `lines` newlines are seen or `limit` bytes are read, so a
@@ -276,7 +352,7 @@ export async function resolveForkSkills(
   mainTranscriptPath: string,
   files: readonly ForkCandidate[],
   rawTranscript?: string,
-  options: { final?: boolean } = {}
+  options: { final?: boolean; evidence?: EvidenceCache } = {}
 ): Promise<ForkSkillResolution> {
   const result: ForkSkillResolution = {
     skillByAgentId: new Map(),
@@ -310,10 +386,7 @@ export async function resolveForkSkills(
     (f) => !f.skillName && !f.settled && (!f.toolUseId || !scan.toolNameById.has(f.toolUseId))
   );
   if (needsCalls) {
-    for (const file of files) {
-      const startPrompt = file.settled ? (file.promptId ?? '') : await firstPromptId(file.filePath);
-      scanTranscript(await readText(file.filePath), scan, false, startPrompt);
-    }
+    for (const file of files) await scanSubagentFile(file, scan, options.evidence);
   }
 
   const skillForks = new Map<string, string>(); // agentId -> skill, from a Skill result
