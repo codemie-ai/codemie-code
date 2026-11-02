@@ -305,6 +305,28 @@ describe('repoKeyFromRemote (backend host[:port]/path parity)', () => {
       expect(repoKeyFromRemote(remote)).toBeUndefined();
     }
   );
+
+  it.each([
+    'C:\\Users\\me\\repo.git',
+    'c:/Users/me/repo.git',
+    'D:repo',
+    'file://C:/Users/me/repo.git',
+    'file:///home/me/repo',
+    '\\\\server\\share\\repo.git',
+    '/home/me/repo.git',
+    './repo',
+    '../repo',
+    'host:\\path\\repo',
+  ])('local path %j is never a key and leaks nothing', (remote) => {
+    expect(repoKeyFromRemote(remote)).toBeUndefined();
+  });
+
+  it('valid https, ssh and scp keys stay supported', () => {
+    expect(repoKeyFromRemote('https://github.com/o/r.git')).toBe('github.com/o/r');
+    expect(repoKeyFromRemote('ssh://git@host:2222/o/r.git')).toBe('host:2222/o/r');
+    expect(repoKeyFromRemote('git@github.com:o/r.git')).toBe('github.com/o/r');
+    expect(repoKeyFromRemote('gh:o/r')).toBe('gh/o/r');
+  });
 });
 
 describe('getRawGitOrigin', () => {

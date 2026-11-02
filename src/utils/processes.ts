@@ -680,7 +680,12 @@ export function repoKeyFromRemote(remote: string): string | undefined {
   let port = '';
   let path: string;
 
+  // Local filesystem remotes are never a repository key and must not leak their path: a Windows
+  // drive path (`C:\u\r`, `C:/u/r`, drive-relative `c:r`) would otherwise parse as scp host `c`.
+  if (/^[a-z]:/i.test(text)) return undefined;
+
   const url = text.match(/^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)/i);
+  if (url && url[1].toLowerCase() === 'file') return undefined;
   if (url) {
     const authority = url[2].slice(url[2].lastIndexOf('@') + 1);
     const hp = authority.match(/^\[([^\]]*)\](?::(\d*))?$/) ?? authority.match(/^([^:]*)(?::(\d*))?$/);
@@ -691,7 +696,7 @@ export function repoKeyFromRemote(remote: string): string | undefined {
     if (hp[2] === '') port = '';
     path = url[3];
   } else {
-    const scp = text.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/].*)$/);
+    const scp = text.match(/^(?:[^@/\s]+@)?([^:/\s]+):([^/\\].*)$/);
     if (!scp) return undefined;
     host = scp[1].toLowerCase();
     path = scp[2];
