@@ -857,14 +857,22 @@ function clearDeferred(state: TranscriptParseState, agentId: string): void {
   if (state.deferredAgentIds) {
     state.deferredAgentIds = state.deferredAgentIds.filter((id) => id !== agentId);
   }
+  if (state.deferredSubagentFiles) {
+    delete state.deferredSubagentFiles[agentId];
+  }
+}
+
+/** The deferred subagents as file candidates, at the paths their `SubagentStop` reported. */
+function deferredCandidates(state: TranscriptParseState): SubagentFile[] {
+  return Object.entries(state.deferredSubagentFiles ?? {}).map(([agentId, f]) => ({ agentId, ...f }));
 }
 
 /**
  * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
  * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
  * `Stop`, when the evidence (a `Skill` result, an `Agent` result) may have arrived: a subagent
- * that is still pending stays deferred. No-op when nothing is deferred. A failing subagent is
- * skipped, state intact.
+ * that is still pending stays deferred; one already covered by its offset is just forgotten. No-op
+ * when nothing is deferred. A failing subagent is skipped, state intact.
  */
 async function settleDeferredSubagents(
   state: TranscriptParseState,
@@ -876,9 +884,13 @@ async function settleDeferredSubagents(
     return [];
   }
   const events: Record<string, unknown>[] = [];
-  for (const rawFile of await findSubagentFiles(transcriptPath)) {
+  for (const rawFile of await findSubagentFiles(transcriptPath, { extra: deferredCandidates(state) })) {
     if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
     const file: SubagentFile = { ...rawFile, cwd };
+    if (await subagentAlreadyCovered(state, file)) {
+      clearDeferred(state, file.agentId);
+      continue;
+    }
     const snapshot = structuredClone(state);
     try {
       clearDeferred(state, file.agentId);
@@ -917,7 +929,9 @@ export async function openMainTranscriptPass(
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
     const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
-    if (trigger === 'Stop') {
+    // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
+    // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
+    if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
       events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
     }
 
@@ -1239,7 +1253,11 @@ export async function openSubagentPass(
     let events: Record<string, unknown>[] = [];
     if (subagentFile.pending) {
       state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), subagentFile.agentId])];
+      const { agentId, filePath, toolUseId, agentType, spawnDepth, description } = subagentFile;
+      (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description };
     } else {
+      // A resolved stop (also a later one of a subagent deferred before) is derived now: forget it.
+      clearDeferred(state, subagentFile.agentId);
       events = await deriveSubagentEvents(state, sessionId, subagentFile);
     }
 
@@ -1297,7 +1315,10 @@ export async function openSessionEndPass(
     const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
 
     // End of the session: nothing more will arrive, so a subagent still unproven is an agent.
-    const subagentFiles = await findSubagentFiles(transcriptPath, { final: true });
+    const subagentFiles = await findSubagentFiles(transcriptPath, {
+      final: true,
+      extra: deferredCandidates(state),
+    });
     for (const rawFile of subagentFiles) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).

@@ -416,11 +416,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // non-empty above, so it is always a safe final fallback.
     const derivedAgentId = basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, '');
     const agentId = hookInput.agent_id || derivedAgentId || agentTranscriptPath;
-    const resolved = marker.skillName
-      ? { skillName: marker.skillName, pending: false }
-      : await resolveSubagentSkill(hookInput.transcript_path, agentId);
-    const skillName = resolved.skillName;
-    const subagentFile: SubagentFile = {
+    const candidate: SubagentFile = {
       agentId,
       filePath: agentTranscriptPath,
       // `tool_use_id` is not declared on the SDK's SubagentStopHookInput type; the hook payload
@@ -428,8 +424,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       toolUseId: readOptionalString(hookInput, 'tool_use_id') ?? meta.toolUseId,
       agentType: hookInput.agent_type,
       spawnDepth: meta.spawnDepth,
-      description: meta.description || (skillName ? `/${skillName}` : undefined),
+      description: meta.description,
       cwd: hookInput.cwd,
+    };
+    // Resolved from the hook's own file (the actual candidate), not only from directory discovery.
+    const resolved = marker.skillName
+      ? { skillName: marker.skillName, pending: false }
+      : await resolveSubagentSkill(hookInput.transcript_path, agentId, candidate);
+    const skillName = resolved.skillName;
+    const subagentFile: SubagentFile = {
+      ...candidate,
+      description: candidate.description || (skillName ? `/${skillName}` : undefined),
       skillName: skillName || undefined,
       pending: resolved.pending || undefined,
     };

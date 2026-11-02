@@ -951,7 +951,12 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
 
     await plugin.processOtlpEvent(rawEvent, { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
-    expect(resolveSubagentSkillMock).toHaveBeenCalledWith('/tmp/transcript.jsonl', 'fork-1');
+    // The hook's own transcript path travels as the candidate, so a path discovery cannot find resolves.
+    expect(resolveSubagentSkillMock).toHaveBeenCalledWith(
+      '/tmp/transcript.jsonl',
+      'fork-1',
+      expect.objectContaining({ agentId: 'fork-1', filePath: '/tmp/agent-fork-1.jsonl' })
+    );
     expect(forwardedEvents()[0]).toMatchObject({ skill_name: 'forkme', description: '/forkme' });
   });
 

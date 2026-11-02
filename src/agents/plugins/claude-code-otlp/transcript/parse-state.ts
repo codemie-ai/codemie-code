@@ -70,6 +70,13 @@ export interface TranscriptParseState {
   /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
    *  absent in a state saved before it existed. */
   deferredAgentIds?: string[];
+  /** The file facts of each deferred subagent, by `agentId`: its actual transcript path (which
+   *  directory discovery may not find, or may not find yet) and the ids that resolved it, so a later
+   *  `Stop`/`SessionEnd`, also after a restart, resolves the same candidate. */
+  deferredSubagentFiles?: Record<
+    string,
+    { filePath: string; toolUseId?: string; agentType?: string; spawnDepth?: number; description?: string }
+  >;
 }
 
 /**

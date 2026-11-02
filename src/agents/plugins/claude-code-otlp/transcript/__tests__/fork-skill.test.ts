@@ -8,7 +8,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveForkSkills } from '../fork-skill.js';
-import { findSubagentFiles } from '../subagent-usage.js';
+import { findSubagentFiles, resolveSubagentSkill } from '../subagent-usage.js';
 import { extractOrderedNamedInvocations } from '../../../claude/session/claude-named-invocations.js';
 
 let dir: string;
@@ -331,6 +331,57 @@ describe('main transcript not yet flushed (desktop ordering)', () => {
   it('a started Agent call whose result is not flushed yet still holds a flushed-prompt child pending', async () => {
     const { main } = session([user('p1', '/inlineme'), toolUse('t', 'Agent', {})], [{ id: 'a', promptId: 'p1' }]);
     expect(await kinds(main)).toEqual({ a: 'pending' });
+  });
+});
+
+describe('main transcript absent or empty (CR-002)', () => {
+  const kinds = async (main: string, final = false) =>
+    Object.fromEntries((await findSubagentFiles(main, { final })).map((f) => [f.agentId, f.pending ? 'pending' : f.skillName || 'agent']));
+
+  it.each(['absent', 'empty'])('holds unproven children pending while the main transcript is %s, then resolves after the flush', async (state) => {
+    const { main } = session([user('p1', '/forkme')], [{ id: 'a', promptId: 'p1' }, { id: 'b', meta: { toolUseId: 'tuX' } }]);
+    if (state === 'absent') rmSync(main);
+    else writeFileSync(main, '');
+    expect(await kinds(main)).toEqual({ a: 'pending', b: 'pending' });
+    expect(await kinds(main, true)).toEqual({ a: 'agent', b: 'agent' });
+    writeFileSync(main, user('p1', '/forkme') + '\n');
+    expect(await kinds(main)).toEqual({ a: 'forkme', b: 'agent' });
+  });
+
+  it('keeps a marker-named fork (positive evidence) out of the pending set', async () => {
+    const { main } = session([], [{ id: 'm', promptId: 'p1', marker: 'forkme' }]);
+    rmSync(main);
+    expect(await kinds(main)).toEqual({ m: 'forkme' });
+  });
+});
+
+describe('resolveSubagentSkill with the hook candidate (CR-005)', () => {
+  const firstLine = (promptId: string): string => j({ type: 'user', promptId, message: { role: 'user', content: 'go' } }) + '\n';
+
+  it('finds a subagent outside the standard directory from its path and explicit tool id', async () => {
+    const { main } = session([toolUse('tu1', 'Skill', { skill: 'forkme' })], [{ id: 'sib', promptId: 'p0' }]);
+    mkdirSync(join(dir, 'elsewhere'));
+    const filePath = join(dir, 'elsewhere', 'agent-x.jsonl');
+    writeFileSync(filePath, firstLine('p9'));
+    expect(await resolveSubagentSkill(main, 'x', { agentId: 'x', filePath, toolUseId: 'tu1' })).toEqual({ skillName: 'forkme', pending: false });
+    expect(await resolveSubagentSkill(main, 'x', { agentId: 'x', filePath, toolUseId: 'tuNone' })).toEqual({ skillName: '', pending: false });
+  });
+
+  it('a subagent found nowhere is pending, and a missing file stays pending until it appears', async () => {
+    const { main } = session([user('p1', 'hi')], []);
+    expect(await resolveSubagentSkill(main, 'ghost')).toEqual({ skillName: '', pending: true });
+    const filePath = join(dir, 'late', 'agent-late.jsonl');
+    const candidate = { agentId: 'late', filePath };
+    expect((await resolveSubagentSkill(main, 'late', candidate)).pending).toBe(true);
+    mkdirSync(join(dir, 'late'));
+    writeFileSync(filePath, firstLine('p1'));
+    writeFileSync(main, user('p1', '/forkme') + '\n');
+    expect(await resolveSubagentSkill(main, 'late', candidate)).toEqual({ skillName: 'forkme', pending: false });
+  });
+
+  it('normal discovery still resolves a sibling without a candidate', async () => {
+    const { main } = session([user('p1', '/forkme')], [{ id: 'a', promptId: 'p1' }]);
+    expect(await resolveSubagentSkill(main, 'a')).toEqual({ skillName: 'forkme', pending: false });
   });
 });
 

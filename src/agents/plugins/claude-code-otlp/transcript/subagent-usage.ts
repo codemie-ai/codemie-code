@@ -169,12 +169,26 @@ export async function discoverSubagentFiles(mainTranscriptPath: string): Promise
  * {@link discoverSubagentFiles} plus the skill of each marker-less fork, resolved from the
  * transcripts by exact ids (see `fork-skill.ts`). A subagent that cannot yet be told from a skill
  * fork is flagged `pending` (never with `final`, which is the end of the session). Never throws.
+ *
+ * `extra` are candidates the caller already knows by path (the `SubagentStop` hook's own
+ * `agent_transcript_path`, or a path kept in the parse state for a deferred subagent): directory
+ * discovery cannot see a file outside the standard directory or one not created yet. An extra
+ * replaces the discovered entry with the same `agentId` (its path is the actual one) and is merged
+ * with the sidecars read at that path.
  */
 export async function findSubagentFiles(
   mainTranscriptPath: string,
-  options: { final?: boolean } = {}
+  options: { final?: boolean; extra?: readonly SubagentFile[] } = {}
 ): Promise<SubagentFile[]> {
   const files = await discoverSubagentFiles(mainTranscriptPath);
+  for (const extra of options.extra ?? []) {
+    const [meta, marker] = await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
+    const known = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined));
+    const merged = { ...meta, ...marker, ...known } as SubagentFile;
+    const at = files.findIndex((f) => f.agentId === extra.agentId);
+    if (at >= 0) files[at] = merged;
+    else files.push(merged);
+  }
   const { skillByAgentId, pendingAgentIds } = await resolveForkSkills(mainTranscriptPath, files, undefined, options);
   for (const file of files) {
     const skillName = skillByAgentId.get(file.agentId);
@@ -190,15 +204,21 @@ export async function findSubagentFiles(
 
 /**
  * What one subagent is, from its marker or the transcripts ({@link findSubagentFiles}):
- * `skillName` of a skill fork (`''` for an ordinary agent or one not found) and whether that is
- * still `pending`.
+ * `skillName` of a skill fork (`''` for an ordinary agent) and whether that is still `pending`.
+ * A subagent found neither by discovery nor as `candidate` is `pending`.
  */
 export async function resolveSubagentSkill(
   mainTranscriptPath: string,
-  agentId: string
+  agentId: string,
+  candidate?: SubagentFile
 ): Promise<{ skillName: string; pending: boolean }> {
-  const file = (await findSubagentFiles(mainTranscriptPath)).find((f) => f.agentId === agentId);
-  return { skillName: file?.skillName ?? '', pending: file?.pending === true };
+  const file = (await findSubagentFiles(mainTranscriptPath, { extra: candidate ? [candidate] : [] })).find(
+    (f) => f.agentId === agentId
+  );
+  // A subagent that cannot be found is unproven, not a settled ordinary agent: its scope would be
+  // permanent. (A caller that knows the file passes it as `candidate`.)
+  if (!file) return { skillName: '', pending: true };
+  return { skillName: file.skillName ?? '', pending: file.pending === true };
 }
 
 /** One row of the contract's `usage[]`: `agent.usage.request`'s own fields, plus `api_calls`. */

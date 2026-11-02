@@ -213,7 +213,16 @@ export async function resolveForkSkills(
   if (files.length === 0) return result;
 
   const raw = rawTranscript ?? (await readText(mainTranscriptPath));
-  if (!raw) return result;
+  if (!raw) {
+    // The main transcript is missing, unreadable or empty (the desktop app may not have flushed it
+    // yet): neither a Skill result nor a `/name` line nor a starting call can be seen, so no
+    // subagent that the marker has not named can be told from a skill fork. Unproven until the
+    // transcript has content, or until the session ends (`final`, then an agent).
+    if (!options.final) {
+      for (const file of files) if (!file.skillName) result.pendingAgentIds.add(file.agentId);
+    }
+    return result;
+  }
   const scan = newScan();
   scanTranscript(raw, scan, true);
 
