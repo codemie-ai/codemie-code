@@ -769,7 +769,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
         agentType: 'explore',
         cwd: '/repo',
       },
-      NO_ENV_CHECK
+      NO_ENV_CHECK,
+      '/tmp/transcript.jsonl'
     );
   });
 
@@ -788,7 +789,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
     expect(openSubagentPassMock).toHaveBeenCalledWith(
       'sid-1',
       expect.objectContaining({ agentId: 'sub-2' }),
-      NO_ENV_CHECK
+      NO_ENV_CHECK,
+      '/tmp/transcript.jsonl'
     );
   });
 
@@ -838,7 +840,8 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent dispatch', () => {
         description: 'task',
         cwd: '/repo',
       },
-      NO_ENV_CHECK
+      NO_ENV_CHECK,
+      '/tmp/transcript.jsonl'
     );
   });
 

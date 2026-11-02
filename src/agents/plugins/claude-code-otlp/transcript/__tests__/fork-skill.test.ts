@@ -103,7 +103,13 @@ describe('slash-command forks', () => {
 
   it('does not name an Agent-tool subagent of the same prompt (result or toolUseId)', async () => {
     const { main } = session(
-      [user('p1', '/forkme'), toolUse('tu1', 'Agent', {}), toolResult('tu1', { agentId: 'a1' })],
+      [
+        user('p1', '/forkme'),
+        toolUse('tu1', 'Agent', {}),
+        toolResult('tu1', { agentId: 'a1' }),
+        toolUse('tu9', 'Agent', {}),
+        toolResult('tu9', { agentId: 'a2' }),
+      ],
       [{ id: 'a1', promptId: 'p1' }, { id: 'a2', promptId: 'p1', meta: { toolUseId: 'tu9' } }]
     );
     expect(await resolve(main)).toEqual({ a1: '', a2: '' });
@@ -316,7 +322,14 @@ describe('main transcript not yet flushed (desktop ordering)', () => {
 
   it('does not delay a child that an exact id already proves to be an agent or a Skill fork', async () => {
     const { main } = session(
-      [toolUse('tu9', 'Agent', {}), toolResult('tu9', { agentId: 'b' }), toolUse('tu8', 'Skill', { skill: 'other' }), toolResult('tu8', { agentId: 'c' })],
+      [
+        toolUse('tu9', 'Agent', {}),
+        toolResult('tu9', { agentId: 'b' }),
+        toolUse('tu8', 'Skill', { skill: 'other' }),
+        toolResult('tu8', { agentId: 'c' }),
+        toolUse('tuX', 'Bash', {}), // a seen call of another tool: its id proves an ordinary agent
+        toolResult('tuX', undefined),
+      ],
       [{ id: 'b', promptId: 'p1' }, { id: 'c', promptId: 'p1' }, { id: 'd', promptId: 'p1', meta: { toolUseId: 'tuX' } }]
     );
     expect(await kinds(main)).toEqual({ b: 'agent', c: 'other', d: 'agent' });
@@ -345,6 +358,9 @@ describe('main transcript absent or empty (CR-002)', () => {
     expect(await kinds(main)).toEqual({ a: 'pending', b: 'pending' });
     expect(await kinds(main, true)).toEqual({ a: 'agent', b: 'agent' });
     writeFileSync(main, user('p1', '/forkme') + '\n');
+    // b's tool id names a call the main transcript does not show yet: still unproven.
+    expect(await kinds(main)).toEqual({ a: 'forkme', b: 'pending' });
+    writeFileSync(main, [user('p1', '/forkme'), toolUse('tuX', 'Bash', {})].map((l) => l + '\n').join(''));
     expect(await kinds(main)).toEqual({ a: 'forkme', b: 'agent' });
   });
 
@@ -364,7 +380,33 @@ describe('resolveSubagentSkill with the hook candidate (CR-005)', () => {
     const filePath = join(dir, 'elsewhere', 'agent-x.jsonl');
     writeFileSync(filePath, firstLine('p9'));
     expect(await resolveSubagentSkill(main, 'x', { agentId: 'x', filePath, toolUseId: 'tu1' })).toEqual({ skillName: 'forkme', pending: false });
-    expect(await resolveSubagentSkill(main, 'x', { agentId: 'x', filePath, toolUseId: 'tuNone' })).toEqual({ skillName: '', pending: false });
+  });
+
+  it('a tool id is not proof until the call it names is seen (EPMCDME-16352, unflushed Skill call)', async () => {
+    // The main transcript has other content, but not the call that started this subagent.
+    const { main } = session([user('p1', 'hello'), toolUse('tuA', 'Bash', {})], [{ id: 'x', meta: { toolUseId: 'tuLate' } }]);
+    const candidate = { agentId: 'x', filePath: join(dir, 's1', 'subagents', 'agent-x.jsonl'), toolUseId: 'tuLate' };
+    expect(await resolveSubagentSkill(main, 'x', candidate)).toEqual({ skillName: '', pending: true });
+    // Never an agent before the end of the session...
+    const atEnd = (await findSubagentFiles(main, { final: true })).find((f) => f.agentId === 'x');
+    expect(atEnd?.pending).toBeUndefined();
+    expect(atEnd?.skillName).toBeUndefined();
+    // ...and the call, once flushed, decides: a Skill call names the skill, another tool proves an agent.
+    appendFileSync(main, toolUse('tuLate', 'Skill', { skill: 'forkme' }) + '\n');
+    expect(await resolveSubagentSkill(main, 'x', candidate)).toEqual({ skillName: 'forkme', pending: false });
+    const other = session([user('p1', 'hello'), toolUse('tuLate', 'Task', {})], [{ id: 'x', meta: { toolUseId: 'tuLate' } }]);
+    expect(await resolveSubagentSkill(other.main, 'x', candidate)).toEqual({ skillName: '', pending: false });
+  });
+
+  it('a call made inside another subagent proves the id (nested Agent), without waiting for the end of the session', async () => {
+    const { main } = session([user('p1', 'hello')], [{ id: 'parent' }, { id: 'child', meta: { toolUseId: 'tuNested' } }]);
+    appendFileSync(join(dir, 's1', 'subagents', 'agent-parent.jsonl'), toolUse('tuNested', 'Agent', {}) + '\n');
+    expect(await resolveSubagentSkill(main, 'child')).toEqual({ skillName: '', pending: false });
+  });
+
+  it('a marker names the skill whatever the tool id says', async () => {
+    const { main } = session([user('p1', 'hello')], [{ id: 'm', meta: { toolUseId: 'tuLate' }, marker: 'forkme' }]);
+    expect(await resolveSubagentSkill(main, 'm')).toEqual({ skillName: 'forkme', pending: false });
   });
 
   it('a subagent found nowhere is pending, and a missing file stays pending until it appears', async () => {

@@ -20,7 +20,7 @@
  */
 
 import { readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
 import { resolveForkSkills } from './fork-skill.js';
 import { isSyntheticModel } from './synthetic-model.js';
@@ -178,8 +178,26 @@ export async function discoverSubagentFiles(mainTranscriptPath: string): Promise
  */
 export async function findSubagentFiles(
   mainTranscriptPath: string,
-  options: { final?: boolean; extra?: readonly SubagentFile[] } = {}
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
 ): Promise<SubagentFile[]> {
+  return (await resolveSubagentSnapshot(mainTranscriptPath, options)).files;
+}
+
+/** One resolution of the subagent set: the files and the prompts whose plain `/name` started a fork. */
+export interface SubagentSnapshot {
+  files: SubagentFile[];
+  slashPromptIds: Set<string>;
+}
+
+/**
+ * {@link findSubagentFiles} that also returns the confirmed slash-fork prompts, so the session
+ * summary (`commands`) and the usage events are derived from one and the same resolution of the same
+ * candidate set. `raw`, when given, is the main transcript text already read by the caller.
+ */
+export async function resolveSubagentSnapshot(
+  mainTranscriptPath: string,
+  options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
+): Promise<SubagentSnapshot> {
   const files = await discoverSubagentFiles(mainTranscriptPath);
   for (const extra of options.extra ?? []) {
     const [meta, marker] = await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
@@ -189,7 +207,12 @@ export async function findSubagentFiles(
     if (at >= 0) files[at] = merged;
     else files.push(merged);
   }
-  const { skillByAgentId, pendingAgentIds } = await resolveForkSkills(mainTranscriptPath, files, undefined, options);
+  const { skillByAgentId, pendingAgentIds, slashPromptIds } = await resolveForkSkills(
+    mainTranscriptPath,
+    files,
+    options.raw,
+    options
+  );
   for (const file of files) {
     const skillName = skillByAgentId.get(file.agentId);
     if (skillName) {
@@ -199,7 +222,14 @@ export async function findSubagentFiles(
       file.pending = true;
     }
   }
-  return files;
+  return { files, slashPromptIds };
+}
+
+/** Whether directory discovery ({@link discoverSubagentFiles}) finds this subagent file by itself. */
+export function isDiscoverableSubagentFile(mainTranscriptPath: string, file: SubagentFile): boolean {
+  // A path that merely spells the same file differently reads as "not discoverable": it is then
+  // kept registered, the safe direction.
+  return resolve(file.filePath) === resolve(subagentFilePath(mainTranscriptPath, file.agentId));
 }
 
 /**

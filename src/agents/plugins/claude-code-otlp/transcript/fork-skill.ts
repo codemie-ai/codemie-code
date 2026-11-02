@@ -19,7 +19,9 @@
  * `Skill` call has no result yet (the result names its fork), or a tool-less slash candidate has an
  * `Agent`/`Task`/`Skill` call without a result (that call may be its starter). The caller defers the
  * subagent's usage until a later pass resolves it, or until the session ends (`final`), when a
- * pending subagent is left an ordinary agent. Ambiguity that evidence cannot lift (several
+ * pending subagent is left an ordinary agent. A `.meta.json` `toolUseId` proves an ordinary agent only
+ * once the call it names is seen (in the main transcript or a subagent's own); an unseen id may be a
+ * `Skill` call whose line is not flushed yet, so it stays pending. Ambiguity that evidence cannot lift (several
  * candidates or several `/name` lines for one prompt) is also left an agent.
  *
  * Pure reads; never throws (unreadable inputs resolve to "nothing found").
@@ -228,7 +230,8 @@ export async function resolveForkSkills(
 
   // A subagent's own calls (a nested Agent, a Skill fork started inside a subagent) matter to the
   // checks below; only read the subagent transcripts when some subagent still needs them.
-  const needsCalls = files.some((f) => !f.skillName && !f.toolUseId);
+  // (A tool id the main transcript does not show may belong to a call made inside a subagent.)
+  const needsCalls = files.some((f) => !f.skillName && (!f.toolUseId || !scan.toolNameById.has(f.toolUseId)));
   if (needsCalls) {
     for (const file of files) {
       scanTranscript(await readText(file.filePath), scan, false, await firstPromptId(file.filePath));
@@ -275,6 +278,17 @@ export async function resolveForkSkills(
     const bySkillTool = (file.toolUseId && scan.skillByToolUseId.get(file.toolUseId)) || skillForks.get(file.agentId);
     if (bySkillTool) {
       if (!file.skillName) result.skillByAgentId.set(file.agentId, bySkillTool);
+      continue;
+    }
+    // A tool id proves an ordinary agent only once the call it names is seen: a `Skill` call whose
+    // line is not flushed yet (desktop lag) would otherwise be settled, irreversibly, as an agent.
+    if (
+      !file.skillName &&
+      file.toolUseId &&
+      !scan.toolNameById.has(file.toolUseId) &&
+      !startedByOtherTool.has(file.agentId)
+    ) {
+      leavePending(file);
       continue;
     }
     if (!file.skillName && (file.toolUseId || startedByOtherTool.has(file.agentId))) continue;

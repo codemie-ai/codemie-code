@@ -73,10 +73,19 @@ import {
 import {
   type SubagentFile,
   buildSubagentUsageEvent,
-  discoverSubagentFiles,
-  findSubagentFiles,
+  type SubagentSnapshot,
+  isDiscoverableSubagentFile,
+  resolveSubagentSnapshot,
 } from './subagent-usage.js';
-import { resolveForkSkills } from './fork-skill.js';
+
+/**
+ * The subagent resolution of ONE hook pass. The session summary (`commands`) and the settling of
+ * deferred subagents (usage) both need it, over the same candidates and the same main-transcript
+ * text: whichever runs first stores it here and the other reuses it. Never kept across passes.
+ */
+interface PassSnapshot {
+  snapshot?: SubagentSnapshot;
+}
 
 // Re-exported so callers (e.g. claude-code-otlp.plugin.ts) can import both `SubagentFile` and
 // the pass openers from this one module.
@@ -350,7 +359,12 @@ function isGenuineUserTurn(parsed: TranscriptLine): boolean {
  * - Compactions come from `compact_boundary` system lines, not from the `PreCompact` hook, which
  *   fires before the boundary line exists.
  */
-async function buildFullAccumulator(transcriptPath: string, final = false): Promise<{
+async function buildFullAccumulator(
+  transcriptPath: string,
+  final: boolean,
+  extra: readonly SubagentFile[],
+  pass: PassSnapshot
+): Promise<{
   acc: SessionSummaryAccumulator;
   named: NamedInvocationCounts;
   startedAt: string;
@@ -426,7 +440,10 @@ async function buildFullAccumulator(transcriptPath: string, final = false): Prom
 
   // A forked skill run as `/name` leaves no command wrapper; count its plain line when a fork
   // proves the prompt started one.
-  const { slashPromptIds } = await resolveForkSkills(transcriptPath, await discoverSubagentFiles(transcriptPath), raw, { final });
+  // Resolved over the same candidates (discovered + hook-reported/deferred paths) the usage events
+  // use, so a fork recovered from a path outside discovery is counted here too.
+  pass.snapshot = await resolveSubagentSnapshot(transcriptPath, { final, extra, raw });
+  const { slashPromptIds } = pass.snapshot;
   const named = extractOrderedNamedInvocations(parsedLines, slashPromptIds);
   acc.commandsInOrder = named.commandsInOrder;
 
@@ -529,7 +546,8 @@ async function deriveMainEvents(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
-  trigger: MainTranscriptDerivationTrigger
+  trigger: MainTranscriptDerivationTrigger,
+  pass: PassSnapshot = {}
 ): Promise<Record<string, unknown>[]> {
   const { lines, nextOffset } = await readNewLines(transcriptPath, state.mainOffset);
 
@@ -592,7 +610,12 @@ async function deriveMainEvents(
   }
 
   if (trigger === 'Stop' || trigger === 'SessionEnd') {
-    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(transcriptPath, trigger === 'SessionEnd');
+    const { acc, named, startedAt, endedAt } = await buildFullAccumulator(
+      transcriptPath,
+      trigger === 'SessionEnd',
+      deferredCandidates(state),
+      pass
+    );
     const phase = trigger === 'SessionEnd' ? 'final' : 'incremental';
     const summaryEvent = buildSessionSummaryEvent(
       sessionId,
@@ -863,22 +886,32 @@ function clearDeferred(state: TranscriptParseState, agentId: string): void {
 }
 
 /**
- * Derive one subagent and, unless this is the last chance (`final`), keep it as a candidate — its
- * path and any positive skill evidence, never a guessed scope — until `SessionEnd`. Nothing in a
- * pass proves that a subagent file is complete: the desktop app can create it after `SubagentStop`,
- * and a prefix (a user line, a request cut before its newline, one request of several) still
- * yields a summary. The path registry is therefore only released at `SessionEnd`; usage already
- * proven is sent now, and the offsets keep unchanged requests from being sent again.
+ * Whether a resolved subagent must stay in the parse-state registry: a file outside the standard
+ * `subagents/` directory (the registry is then the only memory of its path, for later usage and for
+ * every later session summary), or a skill fork (its positive evidence may have come from the hook
+ * alone). An ordinary agent in the standard directory is not kept: discovery finds it again and
+ * `SessionEnd` sends whatever is still unconsumed.
+ */
+function needsRegistry(transcriptPath: string | undefined, file: SubagentFile): boolean {
+  return !!file.skillName || !transcriptPath || !isDiscoverableSubagentFile(transcriptPath, file);
+}
+
+/**
+ * Derive one subagent and keep it registered — its path and any positive skill evidence, never a
+ * guessed scope — when discovery cannot recover it by itself. Nothing in a pass proves that a
+ * subagent file is complete: the desktop app can create it after `SubagentStop`, and a prefix (a user
+ * line, a request cut before its newline, one request of several) still yields a summary. Usage
+ * already proven is sent now, and the offsets keep unchanged requests from being sent again.
  */
 async function deriveOrRetain(
   state: TranscriptParseState,
   sessionId: string,
-  file: SubagentFile,
-  final = false
+  transcriptPath: string | undefined,
+  file: SubagentFile
 ): Promise<Record<string, unknown>[]> {
   clearDeferred(state, file.agentId);
   const events = await deriveSubagentEvents(state, sessionId, file);
-  if (!final) {
+  if (needsRegistry(transcriptPath, file)) {
     const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
     state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
     (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description, skillName };
@@ -902,20 +935,23 @@ async function settleDeferredSubagents(
   state: TranscriptParseState,
   sessionId: string,
   transcriptPath: string,
+  pass: PassSnapshot,
   cwd?: string
 ): Promise<Record<string, unknown>[]> {
   if (!state.deferredAgentIds?.length) {
     return [];
   }
   const events: Record<string, unknown>[] = [];
-  for (const rawFile of await findSubagentFiles(transcriptPath, { extra: deferredCandidates(state) })) {
+  // Same resolution the session summary used in this pass, when there was one (no re-read).
+  pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, { extra: deferredCandidates(state) });
+  for (const rawFile of pass.snapshot.files) {
     if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
     const file: SubagentFile = { ...rawFile, cwd };
     // Covered by its offset: nothing to send now, but more may still be appended - stay registered.
     if (await subagentAlreadyCovered(state, file)) continue;
     const snapshot = structuredClone(state);
     try {
-      events.push(...(await deriveOrRetain(state, sessionId, file)));
+      events.push(...(await deriveOrRetain(state, sessionId, transcriptPath, file)));
     } catch (err) {
       Object.assign(state, snapshot);
       const msg = err instanceof Error ? err.message : String(err);
@@ -949,11 +985,12 @@ export async function openMainTranscriptPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger);
+    const pass: PassSnapshot = {};
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, trigger, pass);
     // Any pass that reads the main transcript may find the evidence a deferred subagent waits for
     // (also a failed turn, or a compaction): resolved ones are sent, unresolved ones stay deferred.
     if (trigger === 'Stop' || trigger === 'StopFailure' || trigger === 'PreCompact') {
-      events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, envCheck?.cwd)));
+      events.push(...(await settleDeferredSubagents(state, sessionId, transcriptPath, pass, envCheck?.cwd)));
     }
 
     if (envCheck) {
@@ -1264,7 +1301,9 @@ async function deriveSubagentEvents(
 export async function openSubagentPass(
   sessionId: string,
   subagentFile: SubagentFile,
-  envCheck?: SessionEnvCheckInput
+  envCheck?: SessionEnvCheckInput,
+  /** The main transcript; without it a resolved candidate is always kept registered (safe side). */
+  transcriptPath?: string
 ): Promise<TranscriptPass> {
   let release: (() => Promise<void>) | undefined;
   try {
@@ -1280,7 +1319,7 @@ export async function openSubagentPass(
     } else {
       // A resolved stop (also a later one of a subagent deferred before) is derived now; if its file
       // has no content yet the candidate stays deferred (with its positive evidence) until it does.
-      events = await deriveOrRetain(state, sessionId, subagentFile);
+      events = await deriveOrRetain(state, sessionId, transcriptPath, subagentFile);
     }
 
     if (envCheck) {
@@ -1334,24 +1373,26 @@ export async function openSessionEndPass(
   try {
     release = await acquireParseStateLock(sessionId);
     const state = await loadParseState(sessionId);
-    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd');
+    const pass: PassSnapshot = {};
+    const events = await deriveMainEvents(state, sessionId, transcriptPath, 'SessionEnd', pass);
 
-    // End of the session: nothing more will arrive, so a subagent still unproven is an agent.
-    const subagentFiles = await findSubagentFiles(transcriptPath, {
+    // End of the session: nothing more will arrive, so a subagent still unproven is an agent. The
+    // summary above resolved the same candidates with the same `final`: reuse it.
+    pass.snapshot ??= await resolveSubagentSnapshot(transcriptPath, {
       final: true,
       extra: deferredCandidates(state),
     });
-    for (const rawFile of subagentFiles) {
+    for (const rawFile of pass.snapshot.files) {
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
       if (await subagentAlreadyCovered(state, file)) {
-        clearDeferred(state, file.agentId); // last chance: release the registry entry
+        if (!needsRegistry(transcriptPath, file)) clearDeferred(state, file.agentId);
         continue;
       }
       const snapshot = structuredClone(state);
       try {
-        events.push(...(await deriveOrRetain(state, sessionId, file, true)));
+        events.push(...(await deriveOrRetain(state, sessionId, transcriptPath, file)));
       } catch (err) {
         Object.assign(state, snapshot);
         const msg = err instanceof Error ? err.message : String(err);
