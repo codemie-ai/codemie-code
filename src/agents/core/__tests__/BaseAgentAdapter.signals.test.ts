@@ -7,14 +7,17 @@ import type { AgentMetadata } from '../types.js';
 import type { CodeMieProxy } from '../../../providers/plugins/sso/index.js';
 import { logger } from '../../../utils/logger.js';
 import { executeAfterRun } from '../lifecycle-helpers.js';
+import { signalProcess, signalTree } from '../../../utils/processes.js';
 
 const FAKE_CHILD_PID = 4242;
 
 // What happened, in order: the forwarded kills, the session-end hook, the proxy stop.
-const { events, exitSignals } = vi.hoisted(() => ({
+const { events, exitSignals, helpers } = vi.hoisted(() => ({
   events: [] as string[],
   // CODEMIE_EXIT_SIGNAL as each onSessionEnd call saw it.
   exitSignals: [] as (string | undefined)[],
+  // The agent's descendants as `pgrep` lists them when a signal arrives, and which of them still run.
+  helpers: { descendants: [] as { pid: number; parentPid: number }[], alive: new Set<number>() },
 }));
 
 vi.mock('../../../providers/core/registry.js', () => ({
@@ -48,10 +51,21 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
   getCommandPath: vi.fn(() => Promise.resolve(null)),
+  // The 10 s fallback kills the agent's whole tree; reaping kills a leftover's tree.
   signalTree: vi.fn((pid: number, signal: NodeJS.Signals) => {
-    events.push(`kill:${signal}`);
-    expect(pid).toBe(FAKE_CHILD_PID);
+    if (pid === FAKE_CHILD_PID) {
+      events.push(`kill:${signal}`);
+      return;
+    }
+    events.push(`tree:${pid}:${signal}`);
+    helpers.alive.delete(pid);
   }),
+  // A forwarded signal reaches the agent alone; any other pid is one of its leftovers.
+  signalProcess: vi.fn((pid: number, signal: NodeJS.Signals) => {
+    events.push(pid === FAKE_CHILD_PID ? `kill:${signal}` : `helper:${pid}:${signal}`);
+  }),
+  listDescendants: vi.fn(() => [...helpers.descendants]),
+  isProcessAlive: vi.fn((pid: number) => helpers.alive.has(pid)),
 }));
 
 vi.mock('../../../cli/commands/skills/setup/sync.js', () => ({
@@ -79,7 +93,19 @@ vi.mock('child_process', async (importOriginal) => ({
 
 class FakeChild extends EventEmitter {
   pid = FAKE_CHILD_PID;
-  // Only the win32 path kills the child directly; POSIX signals its tree.
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+
+  // A real ChildProcess has both set by the time it emits 'exit'.
+  emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === 'exit') {
+      this.exitCode = args[0] as number | null;
+      this.signalCode = args[1] as NodeJS.Signals | null;
+    }
+    return super.emit(event, ...args);
+  }
+
+  // Only the win32 path calls this; POSIX signals the agent through signalProcess.
   kill = vi.fn((signal?: NodeJS.Signals) => {
     events.push(`kill:${signal ?? 'default'}`);
     return true;
@@ -145,6 +171,8 @@ describe('BaseAgentAdapter.run signals and output streams', () => {
   beforeEach(() => {
     events.length = 0;
     exitSignals.length = 0;
+    helpers.descendants.length = 0;
+    helpers.alive.clear();
     vi.clearAllMocks();
     child = new FakeChild();
     vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
@@ -475,6 +503,110 @@ describe('BaseAgentAdapter.run signals and output streams', () => {
       await running;
 
       expect(SIGNALS.map(addedListenerCount)).toEqual([0, 0, 0]);
+    });
+
+    it('signals the agent alone and leaves its helpers, such as the SessionEnd hook, to it', async () => {
+      helpers.descendants.push({ pid: 5001, parentPid: FAKE_CHILD_PID }, { pid: 5002, parentPid: FAKE_CHILD_PID });
+      helpers.alive.add(5001);
+      const { running } = await startRun();
+
+      signalHandler('SIGTERM')('SIGTERM');
+      expect(events).toEqual(['kill:SIGTERM']);
+      expect(signalProcess).toHaveBeenCalledExactlyOnceWith(FAKE_CHILD_PID, 'SIGTERM');
+      expect(signalTree).not.toHaveBeenCalled();
+
+      // The agent handled the signal and exited on its own: what it still runs is its own to end.
+      child.emit('exit', 1, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(running).rejects.toThrow('Signal Agent exited with code 1');
+      expect(events).toEqual(['kill:SIGTERM', 'onSessionEnd', 'proxyStop']);
+    });
+
+    it('signals what a launcher left behind, waits for it to exit, then finalizes', async () => {
+      helpers.descendants.push({ pid: 5001, parentPid: FAKE_CHILD_PID });
+      helpers.alive.add(5001);
+      const { running } = await startRun();
+
+      signalHandler('SIGTERM')('SIGTERM');
+      child.emit('exit', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(events).toEqual(['kill:SIGTERM', 'helper:5001:SIGTERM']);
+
+      helpers.alive.delete(5001);
+      await vi.advanceTimersByTimeAsync(2_100);
+      await expect(running).rejects.toThrow('Signal Agent exited with code null');
+      expect(events).toEqual(['kill:SIGTERM', 'helper:5001:SIGTERM', 'onSessionEnd', 'proxyStop']);
+      expect(exitSignals).toEqual(['SIGTERM']);
+    });
+
+    it('ignores a leftover that is already gone when the agent exits', async () => {
+      helpers.descendants.push({ pid: 5001, parentPid: FAKE_CHILD_PID });
+      const { running } = await startRun();
+
+      signalHandler('SIGTERM')('SIGTERM');
+      child.emit('exit', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(running).rejects.toThrow('Signal Agent exited with code null');
+
+      expect(events).toEqual(['kill:SIGTERM', 'onSessionEnd', 'proxyStop']);
+    });
+
+    it('kills a leftover that ignores the signal 10 s after it and then exits as that signal', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      helpers.descendants.push({ pid: 5001, parentPid: FAKE_CHILD_PID });
+      helpers.alive.add(5001);
+      await startRun();
+
+      // A lone SIGINT arms no fallback, so the 10 s bound here is the leftover's own.
+      signalHandler('SIGINT')('SIGINT');
+      child.emit('exit', null, 'SIGINT');
+      await vi.advanceTimersByTimeAsync(9_900);
+      expect(events).toEqual(['kill:SIGINT', 'helper:5001:SIGINT']);
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(events).toEqual(['kill:SIGINT', 'helper:5001:SIGINT', 'tree:5001:SIGKILL']);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(130));
+      expect(events).toEqual(['kill:SIGINT', 'helper:5001:SIGINT', 'tree:5001:SIGKILL', 'onSessionEnd', 'proxyStop']);
+    });
+
+    it('signals only the top of what a launcher left behind, not the hook running under the real agent', async () => {
+      // launcher (dead) -> real agent 5001 -> SessionEnd hook 5002
+      helpers.descendants.push({ pid: 5002, parentPid: 5001 }, { pid: 5001, parentPid: FAKE_CHILD_PID });
+      helpers.alive.add(5001).add(5002);
+      const { running } = await startRun();
+
+      signalHandler('SIGTERM')('SIGTERM');
+      child.emit('exit', null, 'SIGTERM');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(events).toEqual(['kill:SIGTERM', 'helper:5001:SIGTERM']);
+
+      // The agent runs its hook, then both end on their own.
+      helpers.alive.clear();
+      await vi.advanceTimersByTimeAsync(2_100);
+      await expect(running).rejects.toThrow('Signal Agent exited with code null');
+      expect(events).toEqual(['kill:SIGTERM', 'helper:5001:SIGTERM', 'onSessionEnd', 'proxyStop']);
+    });
+
+    it('kills the current tree of a leftover that hangs, not only the pids seen at the signal', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      helpers.descendants.push({ pid: 5001, parentPid: FAKE_CHILD_PID });
+      helpers.alive.add(5001);
+      await startRun();
+
+      signalHandler('SIGHUP')('SIGHUP');
+      child.emit('exit', null, 'SIGHUP');
+      await vi.advanceTimersByTimeAsync(10_100);
+
+      // signalTree finds what 5001 spawned after the snapshot; a bare kill of 5001 would not.
+      expect(events).toContain('tree:5001:SIGKILL');
+      expect(events).not.toContain('helper:5001:SIGKILL');
+      // The fallback timer does not aim at the launcher that is already dead.
+      expect(events).not.toContain('kill:SIGKILL');
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(129));
     });
 
     // libuv on Windows rejects SIGHUP with ENOSYS; any kill there is TerminateProcess.
