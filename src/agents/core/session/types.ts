@@ -145,6 +145,7 @@ export interface Session {
   workingDirectory: string; // CWD where agent was launched
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
   repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback
+  model?: string; // Model the metrics fall back to when a batch's deltas name none
 
   correlation: CorrelationResult;
   status: SessionStatus;

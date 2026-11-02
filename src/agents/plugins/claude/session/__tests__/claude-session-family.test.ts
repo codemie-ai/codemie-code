@@ -78,6 +78,7 @@ describe('ClaudeSessionAdapter family evidence', () => {
         requestShape: 'background', requestNonInteractive: false,
       }),
     ]));
+    expect(parsed.subagentsIncomplete).toBeUndefined();
   });
 
   it('keeps readable usage and protocol rows when sibling metadata or transcript is damaged', async () => {
@@ -115,6 +116,7 @@ describe('ClaudeSessionAdapter family evidence', () => {
     const readable = parsed.subagents?.find(subagent => subagent.agentId === 'readable');
 
     expect(parsed.subagents?.map(subagent => subagent.agentId).sort()).toEqual(['no-meta', 'readable']);
+    expect(parsed.subagentsIncomplete).toBe(true);
     expect(readable?.messages).toHaveLength(2);
     expect(readable?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.objectContaining({ usage: { input_tokens: 13, output_tokens: 8 } }) }),

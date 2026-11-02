@@ -262,6 +262,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         requestShape?: string;
         requestNonInteractive?: boolean;
       }> = [];
+      let subagentsIncomplete = false;
 
       for (const subagentFile of subagentFiles) {
         try {
@@ -288,6 +289,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
             `[claude-adapter] Failed to parse sub-agent file ${subagentFile.filePath}:`,
             error
           );
+          subagentsIncomplete = true;
           // Continue with other sub-agents even if one fails
         }
       }
@@ -304,6 +306,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         messages,  // Keep-last view for metrics, extractMetrics and the codemie analytics / cost readers
         conversationMessages,  // Read by the conversation sync
         subagents: subagents.length > 0 ? subagents : undefined, // Include sub-agents if any
+        ...(subagentsIncomplete && { subagentsIncomplete }),
         metrics    // Extracted metrics for metrics processor
       };
 

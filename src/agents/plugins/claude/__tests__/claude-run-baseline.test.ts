@@ -62,8 +62,8 @@ function sharedTranscript() {
   ];
 }
 
-function parsed(messages: unknown[], subagents?: unknown[]): ParsedSession {
-  return { sessionId: SESSION_ID, agentName: 'claude', agentSessionId: AGENT_SESSION_ID, metadata: {}, messages, subagents } as unknown as ParsedSession;
+function parsed(messages: unknown[], subagents?: unknown[], subagentsIncomplete?: boolean): ParsedSession {
+  return { sessionId: SESSION_ID, agentName: 'claude', agentSessionId: AGENT_SESSION_ID, metadata: {}, messages, subagents, subagentsIncomplete } as unknown as ParsedSession;
 }
 
 describe('claude run baseline', () => {
@@ -132,10 +132,13 @@ describe('claude run baseline', () => {
   });
 
   /** One processing run through the shared claude session adapter, as performIncrementalSync does. */
-  async function run(messages: unknown[], { finalPass = false, subagents = undefined as unknown[] | undefined } = {}) {
+  async function run(
+    messages: unknown[],
+    { finalPass = false, subagents = undefined as unknown[] | undefined, subagentsIncomplete = undefined as boolean | undefined } = {}
+  ) {
     const { ClaudeSessionAdapter } = await import('../claude.session.js');
     const adapter = new ClaudeSessionAdapter({ name: 'claude', dataPaths: { home: '.claude' } } as never);
-    vi.spyOn(adapter, 'parseSessionFile').mockResolvedValue(parsed(messages, subagents));
+    vi.spyOn(adapter, 'parseSessionFile').mockResolvedValue(parsed(messages, subagents, subagentsIncomplete));
     return adapter.processSession(
       '/tmp/transcript.jsonl',
       SESSION_ID,
@@ -303,6 +306,28 @@ describe('claude run baseline', () => {
       expect(record.sync.conversations).toMatchObject({ lastSyncedMessageUuid: 'res-a-bravo', lastSyncedHistoryIndex: 2 });
       expect(conversationIndices().filter((index: number) => index <= 2)).toEqual([]);
     });
+  });
+
+  it('an unreadable subagent transcript keeps the marker; the next run baselines its pre-start records', async () => {
+    writeRecord(START_MS);
+
+    await run(sharedTranscript(), { subagentsIncomplete: true });
+
+    expect(stored().sync.metrics.processedRecordIds).toEqual(expect.arrayContaining(['msg-a-alpha', 'msg-a-bravo']));
+    expect(stored().runtimeCheckpoint.baselineCutoffMs).toBe(START_MS);
+    expect(deltas().map(d => d.recordId)).toEqual(['a-bravo']);
+
+    const subagent = {
+      agentId: 'sub-late',
+      filePath: '/tmp/subagents/agent-sub-late.jsonl',
+      messages: [textReply('s-pre', 'before start', at(-57)), textReply('s-post', 'after start', at(3))]
+    };
+    await run(sharedTranscript(), { subagents: [subagent] });
+
+    const record = stored();
+    expect(record.sync.metrics.processedRecordIds).toContain('msg-s-pre');
+    expect(record.runtimeCheckpoint.baselineCutoffMs).toBeUndefined();
+    expect(deltas().map(d => d.recordId)).toEqual(['a-bravo', 's-post']);
   });
 
   it('a record that cannot be loaded skips the run: no delta, no conversation payload', async () => {

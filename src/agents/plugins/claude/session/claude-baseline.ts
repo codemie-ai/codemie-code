@@ -72,7 +72,11 @@ export async function applyClaudeBaseline({
       lastSyncedHistoryIndex: pointer.lastSyncedHistoryIndex
     };
   }
-  if (session.runtimeCheckpoint) {
+  // An unreadable sub-agent transcript keeps the marker: the next run re-enters the baseline with
+  // the same cutoff and adds that transcript's pre-cutoff ids once it reads.
+  if (parsedSession.subagentsIncomplete) {
+    logger.warn(`[claude-baseline] Baseline incomplete (a sub-agent transcript was unreadable), marker kept (next run retries): ${parsedSession.sessionId}`);
+  } else if (session.runtimeCheckpoint) {
     delete session.runtimeCheckpoint.baselineCutoffMs;
   }
 

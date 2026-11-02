@@ -26,6 +26,11 @@ import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js
 
 const MAX_SYNC_ATTEMPTS = 3;
 
+/** The last model of the newest delta that names one, whatever its sync status. */
+function lastKnownModel(deltas: MetricDelta[]): string | undefined {
+  return [...deltas].reverse().find(d => d.models?.length)?.models?.at(-1);
+}
+
 export class MetricsSyncProcessor implements SessionProcessor {
   readonly name = 'metrics-sync';
   readonly priority = 2; // Run after metrics transformation (priority 1)
@@ -132,7 +137,15 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       // 5. Aggregate pending deltas into metrics grouped by branch
       const clientType = context.clientType || 'codemie-cli';
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, agentConfig);
+      // A batch of prompts-only deltas names no model: it keeps the session's last known one.
+      const fallbackModel = pendingDeltas.some(d => d.models?.length) ? undefined : lastKnownModel(allDeltas);
+      const metrics = aggregateDeltas(
+        pendingDeltas,
+        fallbackModel ? { ...sessionMetadata, model: fallbackModel } : sessionMetadata,
+        context.version,
+        clientType,
+        agentConfig
+      );
 
       logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 

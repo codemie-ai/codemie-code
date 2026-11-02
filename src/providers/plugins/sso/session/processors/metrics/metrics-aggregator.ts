@@ -222,8 +222,7 @@ function buildSessionAttributes(
   }
 
   // Determine most-used model
-  const sessionModel = (session as Session & { model?: string }).model;
-  const primaryModel = getMostUsedModel(modelCounts) || sessionModel;
+  const primaryModel = getMostUsedModel(modelCounts) || session.model;
 
   // Calculate total tool calls from internal counts
   const totalToolCalls = Object.values(toolCounts).reduce((sum, c) => sum + c, 0);

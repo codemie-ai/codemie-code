@@ -1,5 +1,5 @@
 import type { MetricDelta } from '../../../../core/metrics/types.js';
-import { extractNamedInvocations } from '../claude-named-invocations.js';
+import { extractNamedInvocations, type NamedInvocationCounts } from '../claude-named-invocations.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 
@@ -7,6 +7,13 @@ import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 export const PROMPTS_RECORD_SUFFIX = ':prompts';
 
 type PendingDelta = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
+
+/** What one run contributes to its first delta: its typed prompts, its named invocations and, on the final pass, the prompts-only delta. */
+export interface RunPromptsResult {
+  prompts: Array<{ count: number; text: string }>;
+  named: NamedInvocationCounts;
+  promptsDelta?: PendingDelta;
+}
 
 /**
  * Prompts and named invocations (skill/agent/command names) of this run: the lines after the
@@ -30,7 +37,7 @@ export function collectRunPromptsAndInvocations(
     finalPass: boolean;
     namedOnly: boolean;
   }
-) {
+): RunPromptsResult {
   let promptsDelta: PendingDelta | undefined;
   const runStart = lastProcessedMsgIndex + 1;
   const trailingStart = Math.max(runStart, lastEmittedIndex + 1);
