@@ -2975,6 +2975,86 @@ describe('subagent that may be a skill fork is deferred until provable (EPMCDME-
     expect(scopes((await openSessionEndPass(other, main2, '/repo')).events)).toEqual([]);
   });
 
+  describe('resolved subagent whose file has no content yet, outside discovery (CR-005 sibling)', () => {
+    const elsewhere = (name: string): string => {
+      const d = join(transcriptDir, 'elsewhere');
+      mkdirSync(d, { recursive: true });
+      return join(d, name);
+    };
+    const totalOut = (events: Record<string, unknown>[]): number =>
+      events
+        .filter((e) => e.type === 'agent.usage.request')
+        .reduce((n, e) => n + (e.output_tokens as number), 0);
+    const usageTotals = (events: Record<string, unknown>[]): unknown =>
+      (events.find((e) => e.type === 'agent.subagent.usage')?.usage as { scope_kind: string; scope_name: string; output_tokens: number }[])?.map(
+        (u) => `${u.scope_kind}:${u.scope_name}:${u.output_tokens}`
+      );
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['partial line', '{"type":"user"'],
+    ])('keeps the skill candidate while the file is %s, sends skill-scoped usage when it arrives (Stop, then clean SessionEnd sends nothing more)', async (_n, initial) => {
+      const sessionId = `session-late-file-${_n.replace(' ', '-')}`;
+      const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
+      const filePath = elsewhere(`agent-${sessionId}.jsonl`);
+      if (initial !== undefined) writeFileSync(filePath, initial);
+      const stopped = { agentId: 'fork1', filePath, agentType: 'general-purpose', skillName: 'forkme' };
+
+      expect(await subagentEvents(sessionId, stopped)).toEqual([]);
+      expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]); // still no content: stays
+
+      writeFileSync(filePath, lines(...forkUsage()));
+      const later = await mainEvents(sessionId, mainPath, 'Stop');
+      expect(scopes(later)).toEqual(['skill:forkme']);
+      expect(totalOut(later)).toBe(10);
+      expect(usageTotals(later)).toEqual(['skill:forkme:10']);
+
+      const end = await openSessionEndPass(sessionId, mainPath, '/repo');
+      await end.finalize(true);
+      expect(scopes(end.events)).toEqual([]);
+    });
+
+    it('a clean SessionEnd right after the file arrives (no Stop between) still sends it skill-scoped', async () => {
+      const sessionId = 'session-late-file-end';
+      const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
+      const filePath = elsewhere('agent-late-end.jsonl');
+      await subagentEvents(sessionId, { agentId: 'fork1', filePath, agentType: 'general-purpose', skillName: 'forkme' });
+      writeFileSync(filePath, lines(...forkUsage()));
+      const end = await openSessionEndPass(sessionId, mainPath, '/repo');
+      await end.finalize(true);
+      expect(scopes(end.events)).toEqual(['skill:forkme']);
+      expect(totalOut(end.events)).toBe(10);
+      expect(scopes((await openSessionEndPass(sessionId, mainPath, '/repo')).events)).toEqual([]);
+    });
+
+    it('a resolved ordinary agent outside discovery is retained the same way, with its agent scope', async () => {
+      const sessionId = 'session-late-file-agent';
+      const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m')]);
+      const filePath = elsewhere('agent-late-ag.jsonl');
+      await subagentEvents(sessionId, { agentId: 'ag1', filePath, agentType: 'general-purpose' });
+      writeFileSync(filePath, lines(...forkUsage()));
+      const later = await mainEvents(sessionId, mainPath, 'Stop');
+      expect(scopes(later)).toEqual(['agent:general-purpose']);
+      expect(totalOut(later)).toBe(10);
+    });
+
+    it('a failed send of the settling pass keeps the candidate: the retry sends it once', async () => {
+      const sessionId = 'session-late-file-retry';
+      const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
+      const filePath = elsewhere('agent-late-retry.jsonl');
+      await subagentEvents(sessionId, { agentId: 'fork1', filePath, agentType: 'general-purpose', skillName: 'forkme' });
+      writeFileSync(filePath, lines(...forkUsage()));
+      const failed = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+      expect(scopes(failed.events)).toEqual(['skill:forkme']);
+      await failed.finalize(false);
+      const retry = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+      expect(scopes(retry.events)).toEqual(['skill:forkme']);
+      await retry.finalize(true);
+      expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
+    });
+  });
+
   it('a later resolved SubagentStop clears the deferral: failed send retries once, nothing re-derived at the next Stop', async () => {
     const sessionId = 'session-resolved-stop';
     const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall]);

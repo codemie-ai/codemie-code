@@ -862,6 +862,28 @@ function clearDeferred(state: TranscriptParseState, agentId: string): void {
   }
 }
 
+/**
+ * Derive one subagent, forgetting its deferral first. When the file has no content yet (the desktop
+ * app may create it after `SubagentStop`) nothing can be consumed: keep the candidate — its path and
+ * any positive skill evidence, never a guessed scope — deferred so a later `Stop`/`SessionEnd`
+ * finds the file, unless this is the last chance (`final`).
+ */
+async function deriveOrRetain(
+  state: TranscriptParseState,
+  sessionId: string,
+  file: SubagentFile,
+  final = false
+): Promise<Record<string, unknown>[]> {
+  clearDeferred(state, file.agentId);
+  const events = await deriveSubagentEvents(state, sessionId, file);
+  if (!final && !events.some((e) => e.type === 'agent.subagent.usage')) {
+    const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
+    state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
+    (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description, skillName };
+  }
+  return events;
+}
+
 /** The deferred subagents as file candidates, at the paths their `SubagentStop` reported. */
 function deferredCandidates(state: TranscriptParseState): SubagentFile[] {
   return Object.entries(state.deferredSubagentFiles ?? {}).map(([agentId, f]) => ({ agentId, ...f }));
@@ -893,8 +915,7 @@ async function settleDeferredSubagents(
     }
     const snapshot = structuredClone(state);
     try {
-      clearDeferred(state, file.agentId);
-      events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+      events.push(...(await deriveOrRetain(state, sessionId, file)));
     } catch (err) {
       Object.assign(state, snapshot);
       const msg = err instanceof Error ? err.message : String(err);
@@ -1142,7 +1163,8 @@ async function subagentAlreadyCovered(state: TranscriptParseState, subagentFile:
   }
   try {
     const info = await stat(subagentFile.filePath);
-    return info.size === offset;
+    // An empty file at offset 0 has consumed nothing: not covered, so a deferred candidate survives.
+    return offset > 0 && info.size === offset;
   } catch {
     return false;
   }
@@ -1256,9 +1278,9 @@ export async function openSubagentPass(
       const { agentId, filePath, toolUseId, agentType, spawnDepth, description } = subagentFile;
       (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description };
     } else {
-      // A resolved stop (also a later one of a subagent deferred before) is derived now: forget it.
-      clearDeferred(state, subagentFile.agentId);
-      events = await deriveSubagentEvents(state, sessionId, subagentFile);
+      // A resolved stop (also a later one of a subagent deferred before) is derived now; if its file
+      // has no content yet the candidate stays deferred (with its positive evidence) until it does.
+      events = await deriveOrRetain(state, sessionId, subagentFile);
     }
 
     if (envCheck) {
@@ -1328,8 +1350,7 @@ export async function openSessionEndPass(
       }
       const snapshot = structuredClone(state);
       try {
-        clearDeferred(state, file.agentId);
-        events.push(...(await deriveSubagentEvents(state, sessionId, file)));
+        events.push(...(await deriveOrRetain(state, sessionId, file, true)));
       } catch (err) {
         Object.assign(state, snapshot);
         const msg = err instanceof Error ? err.message : String(err);

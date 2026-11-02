@@ -75,7 +75,16 @@ export interface TranscriptParseState {
    *  `Stop`/`SessionEnd`, also after a restart, resolves the same candidate. */
   deferredSubagentFiles?: Record<
     string,
-    { filePath: string; toolUseId?: string; agentType?: string; spawnDepth?: number; description?: string }
+    {
+      filePath: string;
+      toolUseId?: string;
+      agentType?: string;
+      spawnDepth?: number;
+      description?: string;
+      /** Positive skill evidence already established for a resolved subagent whose file had no
+       *  content yet; kept so the late content is sent with that scope. */
+      skillName?: string;
+    }
   >;
 }
 
