@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'child_process';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, copyFileSync, cpSync, linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -39,6 +39,7 @@ interface StatusJson {
 
 let sandbox: string;
 let templateHome: string;
+let claudeShimDir: string;
 let codemieHome: string;
 let userHome: string;
 
@@ -104,8 +105,10 @@ function installHooks(trackedProjects?: string[]): void {
 const skipLogs = (rel: string): boolean => rel === 'logs' || rel.startsWith('logs/');
 
 /**
- * Written by the hook only after the analytics gate let the event through (it resolves the
- * client version for the event it is about to forward). A silenced hook never reaches it.
+ * Written by the hook only after the analytics gate let the event through: it resolves the
+ * installed `claude` version for the event it is about to forward and caches it. A silenced
+ * hook never reaches it. The cache is only written when `claude --version` succeeds, which
+ * CI runners cannot be relied on for, so every hook run gets a stand-in `claude` on PATH.
  */
 function forwardingMarker(): string {
   return join(codemieHome, 'cache', 'claude-code-client-version.json');
@@ -125,12 +128,35 @@ function runPromptHook(
   const userBefore = snapshotDir(userHome);
   const run = runCli(['hook', '--agent', 'claude-code-otlp'], {
     cwd: project,
+    pathPrefix: claudeShimDir,
     input: JSON.stringify({ session_id: sessionId, cwd: project, hook_event_name: 'UserPromptSubmit', prompt: `prompt for ${sessionId}` }),
   });
   const wroteState =
     JSON.stringify(snapshotDir(codemieHome, skipLogs)) !== JSON.stringify(homeBefore) ||
     JSON.stringify(snapshotDir(userHome)) !== JSON.stringify(userBefore);
   return { run, forwarded: existsSync(forwardingMarker()), wroteState };
+}
+
+/**
+ * A `claude` executable that answers `--version`, for hosts without the real CLI. Node spawns
+ * it without a shell, so Windows needs a real .exe (node itself, which prints its version) and
+ * POSIX a script with a shebang.
+ */
+function createClaudeShim(dir: string): string {
+  const shimDir = realDir(dir);
+  if (process.platform === 'win32') {
+    const target = join(shimDir, 'claude.exe');
+    try {
+      linkSync(process.execPath, target);
+    } catch {
+      copyFileSync(process.execPath, target);
+    }
+  } else {
+    const script = join(shimDir, 'claude');
+    writeFileSync(script, '#!/bin/sh\necho 9.9.9\n', 'utf-8');
+    chmodSync(script, 0o755);
+  }
+  return shimDir;
 }
 
 describe('Claude Code analytics opt-out', () => {
@@ -141,6 +167,7 @@ describe('Claude Code analytics opt-out', () => {
       if (build.status !== 0) throw new Error(`npm run build failed:\n${build.stdout}\n${build.stderr}`);
     }
     sandbox = realDir(mkdtempSync(join(tmpdir(), 'codemie-analytics-')));
+    claudeShimDir = createClaudeShim(join(sandbox, 'claude-shim'));
 
     // Known product defect tracked in EPMCDME-16716, outside this story: the first CLI run in
     // an empty CODEMIE_HOME prints the one-time migration banner on stdout, ahead of any

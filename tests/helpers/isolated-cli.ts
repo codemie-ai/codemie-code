@@ -8,7 +8,7 @@
 
 import { spawnSync } from 'child_process';
 import { mkdirSync, readdirSync, realpathSync, statSync } from 'fs';
-import { join, relative, resolve } from 'path';
+import { delimiter, join, relative, resolve } from 'path';
 import { expect } from 'vitest';
 
 export interface IsolatedRunResult {
@@ -23,6 +23,8 @@ export interface IsolatedRunOptions {
   cwd?: string;
   input?: string;
   env?: Record<string, string>;
+  /** Directory put in front of PATH, e.g. to stand in for a CLI the machine may not have. */
+  pathPrefix?: string;
 }
 
 export interface IsolatedHomes {
@@ -52,13 +54,19 @@ export function runIsolatedCli(
   args: string[],
   options: IsolatedRunOptions & { cwd: string; timeoutMs?: number }
 ): IsolatedRunResult {
+  const baseEnv = isolatedEnv();
+  if (options.pathPrefix) {
+    // Windows spells the variable `Path`; setting a second `PATH` would be ambiguous.
+    const pathKey = Object.keys(baseEnv).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    baseEnv[pathKey] = `${options.pathPrefix}${delimiter}${baseEnv[pathKey] ?? ''}`;
+  }
   const result = spawnSync(process.execPath, [resolve('./bin/codemie.js'), ...args], {
     cwd: options.cwd,
     input: options.input ?? '',
     encoding: 'utf-8',
     timeout: options.timeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS,
     env: {
-      ...isolatedEnv(),
+      ...baseEnv,
       NO_COLOR: '1',
       FORCE_COLOR: '0',
       CODEMIE_HOME: homes.codemieHome,
