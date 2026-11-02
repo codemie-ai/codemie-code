@@ -4,11 +4,13 @@
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
 import { existsSync, realpathSync } from 'fs';
-import { extname } from 'path';
+import { basename, extname } from 'path';
 import { getCommandPath } from './processes.js';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
 const NEEDS_QUOTING = /[ \t,;=()&|<>^%[\]{}]/;
+
+const CODEMIE_ENTRY = /^codemie(\.(cmd|ps1|exe|[cm]?js))?$/i;
 
 // The bundled agent package (@codemieai/codemie-opencode) registers `codemie` as
 // its own bin name, so in dev checkouts node_modules/.bin/codemie symlinks to the
@@ -73,8 +75,10 @@ async function resolveBinary(): Promise<string> {
     // fall through
   }
 
+  // argv[1] is only this CLI when the entry is named codemie; under a test runner
+  // (vitest) or a sibling bin (codemie-claude) it would bake the wrong program into hooks.
   const argv1 = process.argv[1];
-  if (argv1) {
+  if (argv1 && CODEMIE_ENTRY.test(basename(toForwardSlash(argv1)))) {
     // A Windows .js argv[1] is not directly invocable as a hook command — bash
     // needs a `node` prefix; both tokens use forward slashes and are quoted to
     // survive spaces in paths like "C:/Program Files/...".

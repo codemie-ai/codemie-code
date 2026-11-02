@@ -84,6 +84,17 @@ describe('hook-command resolver', () => {
     spy.mockRestore();
   });
 
+  it.each([
+    ['a test runner', '/repo/node_modules/.bin/vitest'],
+    ['a sibling agent bin', '/repo/bin/codemie-claude.js'],
+  ])('resolveCodemieBinary ignores an argv[1] that is %s and falls back to bare codemie', async (_label, argv1) => {
+    vi.doMock('../processes.js', () => ({ getCommandPath: vi.fn().mockResolvedValue(null) }));
+    const spy = vi.spyOn(process, 'argv', 'get').mockReturnValue(['node', argv1]);
+    const { resolveCodemieBinary } = await import('../hook-command.js');
+    expect(await resolveCodemieBinary()).toBe('codemie');
+    spy.mockRestore();
+  });
+
   it('resolveCodemieBinary never throws — falls back when getCommandPath is unavailable/throws', async () => {
     // Simulates an incomplete mock or a resolver failure: must degrade, not crash.
     vi.doMock('../processes.js', () => ({}));
