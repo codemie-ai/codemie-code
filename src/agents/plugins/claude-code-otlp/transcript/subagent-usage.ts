@@ -48,6 +48,11 @@ export interface SubagentFile {
   /** Set when the subagent cannot yet be told from a skill fork; its usage must not be sent yet
    *  (see `fork-skill.ts`). */
   pending?: boolean;
+  /** Settled by an earlier pass (from the parse-state registry): usage scope is known and is not
+   *  resolved again; see `ForkCandidate.settled`. */
+  settled?: boolean;
+  /** The `promptId` recorded when the subagent settled. */
+  promptId?: string;
 }
 
 interface SubagentMeta {
@@ -143,7 +148,11 @@ export function subagentFilePath(mainTranscriptPath: string, agentId: string): s
  * Never throws: a missing subagents directory, an unreadable directory, or any other failure all
  * resolve to `[]`. Names a skill only from the marker; see {@link findSubagentFiles}.
  */
-export async function discoverSubagentFiles(mainTranscriptPath: string): Promise<SubagentFile[]> {
+export async function discoverSubagentFiles(
+  mainTranscriptPath: string,
+  /** Agents whose sidecars need not be read (the caller supplies them as settled candidates). */
+  skipSidecars: ReadonlySet<string> = new Set()
+): Promise<SubagentFile[]> {
   try {
     const subagentsDir = subagentsDirFor(mainTranscriptPath);
 
@@ -154,6 +163,7 @@ export async function discoverSubagentFiles(mainTranscriptPath: string): Promise
         .map(async (f): Promise<SubagentFile> => {
           const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '');
           const filePath = join(subagentsDir, f);
+          if (skipSidecars.has(agentId)) return { agentId, filePath };
           const [meta, marker] = await Promise.all([readSubagentMeta(filePath), readForkedSkillMarker(filePath)]);
           return { agentId, filePath, ...meta, ...marker };
         })
@@ -198,9 +208,15 @@ export async function resolveSubagentSnapshot(
   mainTranscriptPath: string,
   options: { final?: boolean; extra?: readonly SubagentFile[]; raw?: string } = {}
 ): Promise<SubagentSnapshot> {
-  const files = await discoverSubagentFiles(mainTranscriptPath);
+  const files = await discoverSubagentFiles(
+    mainTranscriptPath,
+    new Set((options.extra ?? []).filter((e) => e.settled).map((e) => e.agentId))
+  );
   for (const extra of options.extra ?? []) {
-    const [meta, marker] = await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
+    // A settled candidate carries everything needed: no sidecar reads.
+    const [meta, marker] = extra.settled
+      ? [{}, {}]
+      : await Promise.all([readSubagentMeta(extra.filePath), readForkedSkillMarker(extra.filePath)]);
     const known = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined));
     const merged = { ...meta, ...marker, ...known } as SubagentFile;
     const at = files.findIndex((f) => f.agentId === extra.agentId);

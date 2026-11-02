@@ -442,8 +442,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const pass = await openSubagentPass(
       hookInput.session_id,
       subagentFile,
-      envCheckInput(hookInput),
-      hookInput.transcript_path
+      envCheckInput(hookInput)
     );
     const stopFields = resolveSubagentStopFields(subagentFile, pass.events);
     const stopPayload = {

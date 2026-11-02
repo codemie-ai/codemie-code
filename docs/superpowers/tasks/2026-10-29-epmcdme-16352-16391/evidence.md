@@ -86,3 +86,9 @@ Harness: `replay-desktop-hookpath.mjs` feeds the captured native hook payloads, 
 5. Real nested-agent runs were not captured (source/fixture coverage only). The Desktop `SessionEnd` was never captured live (synthetic backstop); the CLI control's was.
 6. Cost: pending checks read the main and subagent transcripts on SubagentStop/Stop for sessions with unresolved subagents.
 7. Next: team review of the PR (published from the fork `IvanKryzhanovskyi/codemie-code`, the account has no push access upstream), the Jira label/comment recording, and a live-backend smoke. Never merged by this work.
+
+## Round 4 — comments 4443628179 and 4443628188 (known scope + path registry + offsets + command projection)
+
+- **4443628179** (late usage of a resolved ordinary agent): every resolved subagent is registered as `settled` (path, type, skill evidence, `promptId`); the next Stop/StopFailure/PreCompact delivers bytes appended since the consumed offset with the known scope, once; no age/count/latest-turn scope guess. Tests: delivery before SessionEnd, no resend at the next Stop/SessionEnd, rejected send then retry (StopFailure, PreCompact), legacy entry without `settled`.
+- **4443628188** (full-transcript cost): settled files are not re-resolved (no sidecar, `firstPromptId` or `hasContent` reads); `hasContent`/`firstPromptId` read chunks up to the first newline(s) instead of the whole file/256 KiB; a settled skill fork keeps its `promptId` for slash confirmation. Measurement: `_local/epmcdme-16352-16391/measure-fix12` (30 subagents x 201 lines, 3.1 MB; before = 18aff30e).
+- Not changed: an unsettled/pending candidate still makes the pass read every subagent file (parent-call evidence of nested calls); the SubagentStart/Stop pre-lock resolver still reads sidecars of all discovered files; `structuredClone(state)` per grown file; the registry grows with the number of subagents.

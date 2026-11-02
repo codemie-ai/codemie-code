@@ -84,6 +84,11 @@ export interface TranscriptParseState {
       /** Positive skill evidence already established for a resolved subagent whose file had no
        *  content yet; kept so the late content is sent with that scope. */
       skillName?: string;
+      /** Scope already established and sent with: later passes only append new usage (stat vs
+       *  offset) and never resolve this subagent again. Absent in older state = unsettled. */
+      settled?: boolean;
+      /** The subagent's `promptId` at settling time (for the slash-fork confirmation). */
+      promptId?: string;
     }
   >;
 }

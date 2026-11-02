@@ -70,11 +70,11 @@ import {
   type Compaction,
   type SignalLine,
 } from './session-signals.js';
+import { firstPromptId } from './fork-skill.js';
 import {
   type SubagentFile,
   buildSubagentUsageEvent,
   type SubagentSnapshot,
-  isDiscoverableSubagentFile,
   resolveSubagentSnapshot,
 } from './subagent-usage.js';
 
@@ -886,36 +886,32 @@ function clearDeferred(state: TranscriptParseState, agentId: string): void {
 }
 
 /**
- * Whether a resolved subagent must stay in the parse-state registry: a file outside the standard
- * `subagents/` directory (the registry is then the only memory of its path, for later usage and for
- * every later session summary), or a skill fork (its positive evidence may have come from the hook
- * alone). An ordinary agent in the standard directory is not kept: discovery finds it again and
- * `SessionEnd` sends whatever is still unconsumed.
- */
-function needsRegistry(transcriptPath: string | undefined, file: SubagentFile): boolean {
-  return !!file.skillName || !transcriptPath || !isDiscoverableSubagentFile(transcriptPath, file);
-}
-
-/**
- * Derive one subagent and keep it registered — its path and any positive skill evidence, never a
- * guessed scope — when discovery cannot recover it by itself. Nothing in a pass proves that a
- * subagent file is complete: the desktop app can create it after `SubagentStop`, and a prefix (a user
- * line, a request cut before its newline, one request of several) still yields a summary. Usage
- * already proven is sent now, and the offsets keep unchanged requests from being sent again.
+ * Derive one subagent and register it as settled: its path, its type and any positive skill
+ * evidence — never a guessed scope. The registry is the memory of "known scope + path + offset", so
+ * a later `Stop`/`StopFailure`/`PreCompact`/`SessionEnd` sends what was appended since (nothing
+ * proves a subagent file complete: it can be created after `SubagentStop`, and a prefix still yields
+ * a summary) without resolving the subagent again. Usage already proven is sent now, and the
+ * offsets keep unchanged requests from being sent again.
  */
 async function deriveOrRetain(
   state: TranscriptParseState,
   sessionId: string,
-  transcriptPath: string | undefined,
   file: SubagentFile
 ): Promise<Record<string, unknown>[]> {
   clearDeferred(state, file.agentId);
   const events = await deriveSubagentEvents(state, sessionId, file);
-  if (needsRegistry(transcriptPath, file)) {
-    const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
-    state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
-    (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description, skillName };
-  }
+  const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
+  state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
+  (state.deferredSubagentFiles ??= {})[agentId] = {
+    filePath,
+    toolUseId,
+    agentType,
+    spawnDepth,
+    description,
+    skillName,
+    settled: true,
+    promptId: file.promptId ?? (await firstPromptId(filePath)),
+  };
   return events;
 }
 
@@ -951,7 +947,7 @@ async function settleDeferredSubagents(
     if (await subagentAlreadyCovered(state, file)) continue;
     const snapshot = structuredClone(state);
     try {
-      events.push(...(await deriveOrRetain(state, sessionId, transcriptPath, file)));
+      events.push(...(await deriveOrRetain(state, sessionId, file)));
     } catch (err) {
       Object.assign(state, snapshot);
       const msg = err instanceof Error ? err.message : String(err);
@@ -1301,9 +1297,7 @@ async function deriveSubagentEvents(
 export async function openSubagentPass(
   sessionId: string,
   subagentFile: SubagentFile,
-  envCheck?: SessionEnvCheckInput,
-  /** The main transcript; without it a resolved candidate is always kept registered (safe side). */
-  transcriptPath?: string
+  envCheck?: SessionEnvCheckInput
 ): Promise<TranscriptPass> {
   let release: (() => Promise<void>) | undefined;
   try {
@@ -1319,7 +1313,7 @@ export async function openSubagentPass(
     } else {
       // A resolved stop (also a later one of a subagent deferred before) is derived now; if its file
       // has no content yet the candidate stays deferred (with its positive evidence) until it does.
-      events = await deriveOrRetain(state, sessionId, transcriptPath, subagentFile);
+      events = await deriveOrRetain(state, sessionId, subagentFile);
     }
 
     if (envCheck) {
@@ -1387,12 +1381,11 @@ export async function openSessionEndPass(
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
       if (await subagentAlreadyCovered(state, file)) {
-        if (!needsRegistry(transcriptPath, file)) clearDeferred(state, file.agentId);
         continue;
       }
       const snapshot = structuredClone(state);
       try {
-        events.push(...(await deriveOrRetain(state, sessionId, transcriptPath, file)));
+        events.push(...(await deriveOrRetain(state, sessionId, file)));
       } catch (err) {
         Object.assign(state, snapshot);
         const msg = err instanceof Error ? err.message : String(err);

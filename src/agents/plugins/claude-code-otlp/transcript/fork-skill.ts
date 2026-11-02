@@ -37,6 +37,14 @@ export interface ForkCandidate {
   toolUseId?: string;
   /** Set when the sidecar marker already named the skill. */
   skillName?: string;
+  /**
+   * Already settled by an earlier pass: its usage was derived with a scope that cannot change, so it
+   * is not resolved again (no reads of its file). A settled skill fork still takes part in the
+   * slash-line confirmation, with its recorded `promptId`.
+   */
+  settled?: boolean;
+  /** The subagent's `promptId` as recorded when it settled (skips reading the file head). */
+  promptId?: string;
 }
 
 export interface ForkSkillResolution {
@@ -173,13 +181,41 @@ async function readText(filePath: string): Promise<string> {
   }
 }
 
-async function firstPromptId(filePath: string): Promise<string> {
+const HEAD_CHUNK = 16 * 1024;
+
+/**
+ * The head of a file: read in chunks until `lines` newlines are seen or `limit` bytes are read, so a
+ * file with a short head is not read (or allocated) in full. `lines` newlines = the first `lines`
+ * lines are complete. Never throws.
+ */
+async function readHead(filePath: string, lines: number, limit: number): Promise<{ text: string; newlines: number }> {
   let handle;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let newlines = 0;
   try {
     handle = await open(filePath, 'r');
-    const buffer = Buffer.allocUnsafe(HEAD_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, HEAD_BYTES, 0);
-    const lines = buffer.toString('utf-8', 0, bytesRead).split('\n').slice(0, PROMPT_ID_LINES);
+    const chunk = Buffer.allocUnsafe(HEAD_CHUNK);
+    while (total < limit && newlines < lines) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(HEAD_CHUNK, limit - total), total);
+      if (bytesRead === 0) break;
+      for (let i = 0; i < bytesRead; i++) if (chunk[i] === 0x0a) newlines++;
+      chunks.push(Buffer.from(chunk.subarray(0, bytesRead)));
+      total += bytesRead;
+    }
+  } catch {
+    // unreadable or missing file: whatever was read
+  } finally {
+    await handle?.close();
+  }
+  return { text: Buffer.concat(chunks).toString('utf-8'), newlines };
+}
+
+/** The `promptId` of a subagent file, from its first lines (`''` when none). */
+export async function firstPromptId(filePath: string): Promise<string> {
+  try {
+    const { text } = await readHead(filePath, PROMPT_ID_LINES, HEAD_BYTES);
+    const lines = text.split('\n').slice(0, PROMPT_ID_LINES);
     for (const raw of lines) {
       try {
         const id = (JSON.parse(raw) as Line).promptId;
@@ -190,15 +226,13 @@ async function firstPromptId(filePath: string): Promise<string> {
     }
   } catch {
     // unreadable file
-  } finally {
-    await handle?.close();
   }
   return '';
 }
 
-/** False while the subagent file is missing or has no complete line yet. */
+/** False while the subagent file is missing or has no complete line yet (reads up to the first newline). */
 async function hasContent(filePath: string): Promise<boolean> {
-  return (await readText(filePath)).includes('\n');
+  return (await readHead(filePath, 1, Number.MAX_SAFE_INTEGER)).newlines > 0;
 }
 
 export async function resolveForkSkills(
@@ -221,7 +255,7 @@ export async function resolveForkSkills(
     // subagent that the marker has not named can be told from a skill fork. Unproven until the
     // transcript has content, or until the session ends (`final`, then an agent).
     if (!options.final) {
-      for (const file of files) if (!file.skillName) result.pendingAgentIds.add(file.agentId);
+      for (const file of files) if (!file.skillName && !file.settled) result.pendingAgentIds.add(file.agentId);
     }
     return result;
   }
@@ -231,10 +265,15 @@ export async function resolveForkSkills(
   // A subagent's own calls (a nested Agent, a Skill fork started inside a subagent) matter to the
   // checks below; only read the subagent transcripts when some subagent still needs them.
   // (A tool id the main transcript does not show may belong to a call made inside a subagent.)
-  const needsCalls = files.some((f) => !f.skillName && (!f.toolUseId || !scan.toolNameById.has(f.toolUseId)));
+  // A settled subagent needs nothing, but its transcript is still read when another one does: it
+  // may hold the parent call of that other one (a nested Agent/Skill).
+  const needsCalls = files.some(
+    (f) => !f.skillName && !f.settled && (!f.toolUseId || !scan.toolNameById.has(f.toolUseId))
+  );
   if (needsCalls) {
     for (const file of files) {
-      scanTranscript(await readText(file.filePath), scan, false, await firstPromptId(file.filePath));
+      const startPrompt = file.settled ? (file.promptId ?? '') : await firstPromptId(file.filePath);
+      scanTranscript(await readText(file.filePath), scan, false, startPrompt);
     }
   }
 
@@ -275,6 +314,8 @@ export async function resolveForkSkills(
     if (!options.final) result.pendingAgentIds.add(file.agentId);
   };
   for (const file of files) {
+    // Settled ordinary agent: scope already sent, nothing to decide and nothing to read.
+    if (file.settled && !file.skillName) continue;
     const bySkillTool = (file.toolUseId && scan.skillByToolUseId.get(file.toolUseId)) || skillForks.get(file.agentId);
     if (bySkillTool) {
       if (!file.skillName) result.skillByAgentId.set(file.agentId, bySkillTool);
@@ -292,7 +333,7 @@ export async function resolveForkSkills(
       continue;
     }
     if (!file.skillName && (file.toolUseId || startedByOtherTool.has(file.agentId))) continue;
-    const promptId = await firstPromptId(file.filePath);
+    const promptId = file.settled ? (file.promptId ?? '') : await firstPromptId(file.filePath);
     const slashLine = !!promptId && scan.slashByPrompt.has(promptId);
     // The desktop app can flush a prompt's lines to the main transcript after the fork has stopped:
     // until the main transcript knows the subagent's prompt, neither a `/name` line nor a starting

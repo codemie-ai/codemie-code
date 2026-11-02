@@ -3113,7 +3113,7 @@ describe('subagent that may be a skill fork is deferred until provable (EPMCDME-
     });
   });
 
-  it('registers only what discovery cannot recover; an ordinary standard-directory agent is released but its late bytes still reach SessionEnd', async () => {
+  it('registers every resolved subagent as settled; late bytes of an ordinary standard-directory agent are delivered at the next Stop, once, before SessionEnd', async () => {
     const { loadParseState } = await import('../parse-state.js');
     const sessionId = 'session-registry-scope';
     const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
@@ -3126,19 +3126,55 @@ describe('subagent that may be a skill fork is deferred until provable (EPMCDME-
     writeFileSync(outsidePath, lines(noUsageLine('uuid-o')));
 
     const resolved = { agentType: 'general-purpose' };
-    await openSubagentPass(sessionId, { ...plain, ...resolved }, undefined, mainPath).then((p) => p.finalize(true));
-    await openSubagentPass(sessionId, { ...fork, ...resolved, skillName: 'forkme' }, undefined, mainPath).then((p) => p.finalize(true));
-    await openSubagentPass(sessionId, { agentId: 'out1', filePath: outsidePath, ...resolved }, undefined, mainPath).then((p) => p.finalize(true));
+    await openSubagentPass(sessionId, { ...plain, ...resolved }).then((p) => p.finalize(true));
+    await openSubagentPass(sessionId, { ...fork, ...resolved, skillName: 'forkme' }).then((p) => p.finalize(true));
+    await openSubagentPass(sessionId, { agentId: 'out1', filePath: outsidePath, ...resolved }).then((p) => p.finalize(true));
     const registry = (await loadParseState(sessionId)).deferredSubagentFiles ?? {};
-    expect(Object.keys(registry).sort()).toEqual(['fork1', 'out1']); // not 'plain'
+    expect(Object.keys(registry).sort()).toEqual(['fork1', 'out1', 'plain']);
+    expect(registry.plain).toMatchObject({ settled: true, promptId: 'p9' });
     expect(registry.fork1.skillName).toBe('forkme'); // positive evidence kept
 
     appendFileSync(plain.filePath, lines(usageLine({ uuid: 'uuid-plain', messageId: 'msg-plain', outputTokens: 4 })));
+    const stop = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+    expect(scopes(stop.events)).toEqual(['agent:general-purpose']);
+    expect(stop.events.find((e) => e.type === 'agent.usage.request')).toMatchObject({ agent_id: 'plain', output_tokens: 4 });
+    await stop.finalize(true);
+    // Delivered once: neither the next Stop nor SessionEnd resends it.
     expect(scopes(await mainEvents(sessionId, mainPath, 'Stop'))).toEqual([]);
     const end = await openSessionEndPass(sessionId, mainPath, '/repo');
     await end.finalize(true);
-    expect(scopes(end.events)).toEqual(['agent:general-purpose']);
-    expect(end.events.find((e) => e.type === 'agent.usage.request')).toMatchObject({ agent_id: 'plain', output_tokens: 4 });
+    expect(scopes(end.events)).toEqual([]);
+  });
+
+  it.each(['StopFailure', 'PreCompact'] as const)(
+    '%s also delivers late bytes of a settled ordinary agent; a rejected send is retried, then not repeated',
+    async (trigger) => {
+      const sessionId = `session-settled-${trigger}`;
+      const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m')]);
+      const plainUser = JSON.stringify({ type: 'user', uuid: 'u-p', promptId: 'p1', message: { role: 'user', content: 'go' } });
+      const plain = writeSubagentFixture(sessionId, 'plain', [plainUser], { agentType: 'general-purpose', toolUseId: 'tu-none' });
+      await subagentEvents(sessionId, { ...plain, agentType: 'general-purpose' });
+      appendFileSync(plain.filePath, lines(usageLine({ uuid: 'uuid-pl', messageId: 'msg-pl', outputTokens: 6 })));
+      const failed = await openMainTranscriptPass(sessionId, mainPath, trigger);
+      expect(scopes(failed.events)).toEqual(['agent:general-purpose']);
+      await failed.finalize(false);
+      const retry = await openMainTranscriptPass(sessionId, mainPath, trigger);
+      expect(scopes(retry.events)).toEqual(['agent:general-purpose']);
+      await retry.finalize(true);
+      expect(scopes(await mainEvents(sessionId, mainPath, trigger))).toEqual([]);
+    }
+  );
+
+  it('state saved before the settled flag (legacy entry) is still resolved, then settled', async () => {
+    const { loadParseState } = await import('../parse-state.js');
+    const sessionId = 'session-legacy-registry';
+    const mainPath = writeTranscript(`${sessionId}.jsonl`, [noUsageLine('uuid-m'), skillCall, skillResult]);
+    const fork = writeSubagentFixture(sessionId, 'fork1', forkUsage(), { agentType: 'general-purpose' });
+    await subagentEvents(sessionId, { ...fork, agentType: 'general-purpose', pending: true }); // legacy shape: no settled
+    const stop = await openMainTranscriptPass(sessionId, mainPath, 'Stop');
+    expect(scopes(stop.events)).toEqual(['skill:forkme']);
+    await stop.finalize(true);
+    expect((await loadParseState(sessionId)).deferredSubagentFiles?.fork1).toMatchObject({ settled: true, skillName: 'forkme' });
   });
 
   it('an old unanswered Skill call keeps a promptless, metadata-less child pending (no turn can be trusted); an error result closes it', async () => {
