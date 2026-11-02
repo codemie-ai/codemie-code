@@ -71,6 +71,7 @@ const ENDPOINT_KEYS = [
   'ANTHROPIC_BEDROCK_BASE_URL',
   'ANTHROPIC_VERTEX_BASE_URL',
   'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_USE_FOUNDRY',
 ];
 
 /**
@@ -78,9 +79,12 @@ const ENDPOINT_KEYS = [
  * Claude applies it). Undefined = unknown: a non-scalar settings value, or an empty settings value that
  * would override a non-empty process value, cannot be classified either way.
  */
-function effectiveEndpointEnv(input: RoutingInput): Record<string, string | undefined> | undefined {
+function effectiveEndpointEnv(
+  input: RoutingInput,
+  keys: readonly string[] = ENDPOINT_KEYS
+): Record<string, string | undefined> | undefined {
   const out: Record<string, string | undefined> = {};
-  for (const name of ENDPOINT_KEYS) {
+  for (const name of keys) {
     const s = input.settingsEnv?.[name];
     const fromProcess = input.env[name] || undefined;
     if (s === undefined) {
@@ -101,6 +105,30 @@ function underBase(candidate: string | undefined, base: string | undefined): boo
   return !!candidate && !!base && (candidate === base || candidate.startsWith(`${base}/`));
 }
 
+const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+/** Conservative: anything but an explicit off value counts as set, so an unfamiliar spelling never reads as OAuth. */
+const flagSet = (v: string | undefined): boolean => !!v && !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase());
+/** Credentials that make Claude authenticate with something other than the saved OAuth login. Only presence is read. */
+const CREDENTIAL_KEYS = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_FOUNDRY_API_KEY', 'AWS_BEARER_TOKEN_BEDROCK',
+];
+
+/**
+ * True only when the saved Claude OAuth login (`.claude.json` `oauthAccount`) is what the session pays with:
+ * the effective env (settings.json over process env) selects no cloud provider, carries no API key / auth
+ * token / OAuth token, no `apiKeyHelper` exists, and the endpoint is the first-party default. Anything
+ * ambiguous or unreadable is false, so the organization is withheld and the session is Unknown. Values are
+ * only tested for presence and never returned.
+ */
+export function oauthAccountPays(input: RoutingInput & { apiKeyHelper?: boolean }): boolean {
+  if (input.settingsUnknown || input.apiKeyHelper) return false;
+  const effective = effectiveEndpointEnv(input, [...ENDPOINT_KEYS, ...CLOUD_FLAGS, ...CREDENTIAL_KEYS]);
+  if (!effective) return false;
+  if (CLOUD_FLAGS.some((name) => flagSet(effective[name])) || CREDENTIAL_KEYS.some((name) => effective[name])) return false;
+  const endpoint = effective.ANTHROPIC_BASE_URL;
+  return !endpoint || identity(endpoint) === identity(ANTHROPIC_DIRECT);
+}
+
 export function routedViaCodemie(input: RoutingInput): RoutingResult {
   const { env } = input;
   const effective = input.settingsUnknown ? undefined : effectiveEndpointEnv(input);
@@ -111,6 +139,8 @@ export function routedViaCodemie(input: RoutingInput): RoutingResult {
   // api.anthropic.com.
   const cloud = truthy(get('CLAUDE_CODE_USE_BEDROCK')) || truthy(get('CLAUDE_CODE_USE_VERTEX'));
   const endpoint = cloud ? get('ANTHROPIC_BEDROCK_BASE_URL') || get('ANTHROPIC_VERTEX_BASE_URL') : get('ANTHROPIC_BASE_URL');
+  // Foundry is a cloud provider this module cannot resolve an endpoint for: nothing is provable.
+  if (truthy(get('CLAUDE_CODE_USE_FOUNDRY'))) return UNPROVEN;
   const endpointId = identity(endpoint);
   // Positively direct: the executor's default endpoint or explicit first-party Anthropic. A foreign override is not.
   const direct = !endpoint || (!cloud && endpointId === identity(ANTHROPIC_DIRECT));

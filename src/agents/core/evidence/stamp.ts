@@ -30,7 +30,10 @@ async function projectSource(
   if (!project || !hookConfig || hookConfig.config.codeMieProject !== project) return 'none';
   try {
     const isLocalProfile = await ConfigLoader.isLocalProfile(configDir, hookConfig.config.name);
-    return await ConfigLoader.resolveProjectOrigin(configDir, isLocalProfile, launchMode(process.env) === 'native');
+    const native = launchMode(process.env) === 'native';
+    const origin = await ConfigLoader.resolveProjectOrigin(configDir, isLocalProfile, native);
+    // A managed launch's project may sit on the selected profile record itself, outside any workspace.
+    return origin === 'none' && !native ? 'profile' : origin;
   } catch {
     return 'none';
   }

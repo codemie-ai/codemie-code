@@ -122,7 +122,10 @@ export async function loadHookConfig(
   const projectDir = process.env['CLAUDE_PROJECT_DIR']?.trim();
   try {
     const configDir = projectDir ? await findNearestConfigDir(projectDir) : cwd;
-    const profileName = await ConfigLoader.getActiveProfileName(configDir);
+    // A managed launch exports the profile it was started with (`--profile X` included); it, not the
+    // globally active profile, selects hook config, routing proof and project. Native has no such export.
+    const launched = launchMode(process.env) === 'managed' ? process.env['CODEMIE_PROFILE_NAME']?.trim() : undefined;
+    const profileName = launched || (await ConfigLoader.getActiveProfileName(configDir));
     // Native hooks have no launcher-exported CODEMIE_PROJECT: a linked folder's project beats the global profile's.
     const config = await ConfigLoader.load(configDir, profileName ? { name: profileName } : undefined, {
       preferLinkedProject: launchMode(process.env) === 'native',

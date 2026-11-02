@@ -7,6 +7,8 @@ export interface ClaudeSettingsEnv {
   env: Record<string, unknown>;
   /** False when any layer exists but could not be read/parsed/shaped: the merged env is then not trustworthy. */
   complete: boolean;
+  /** True when any layer configures an `apiKeyHelper`: the session then authenticates with an API key, not OAuth. */
+  apiKeyHelper?: boolean;
 }
 
 /** Enterprise managed settings, highest precedence; only the file Claude Code reads on this platform. */
@@ -63,12 +65,15 @@ export async function readClaudeSettingsEnv(
   const layers = await Promise.all(settingsLayerPaths(cwd, env, platform).map(readLayer));
   const merged: Record<string, unknown> = {};
   let complete = true;
+  let apiKeyHelper = false;
   for (const layer of layers) {
     if (layer === 'absent') continue;
     if (layer === 'unreadable') {
       complete = false;
       continue;
     }
+    // forceLoginMethod 'console' bills the API, not the saved subscription login: same effect as a key helper.
+    if ((typeof layer.apiKeyHelper === 'string' && layer.apiKeyHelper.trim()) || layer.forceLoginMethod === 'console') apiKeyHelper = true;
     const block = layer.env;
     if (block === undefined) continue;
     if (typeof block !== 'object' || block === null || Array.isArray(block)) {
@@ -77,5 +82,5 @@ export async function readClaudeSettingsEnv(
     }
     Object.assign(merged, block);
   }
-  return { env: merged, complete };
+  return { env: merged, complete, ...(apiKeyHelper ? { apiKeyHelper } : {}) };
 }

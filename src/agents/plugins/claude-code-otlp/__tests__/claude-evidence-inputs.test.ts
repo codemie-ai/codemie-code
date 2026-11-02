@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const readSettingsMock = vi.fn();
 const readOrgMock = vi.fn();
@@ -35,16 +35,59 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env['CODEMIE_SESSION_ID'];
-    delete process.env['ANTHROPIC_BASE_URL'];
+    for (const k of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete process.env[k];
     readOrgMock.mockResolvedValue('Acme');
     settings({});
     profile('ai-run-sso', 'sso');
   });
 
-  it('reads settings for the hook cwd; native with the settings.json endpoint on the gateway is routed and proven; org passes through', async () => {
+  it('reads settings for the hook cwd; native with the settings.json endpoint on the gateway is routed and proven; a gateway session is not paid by the saved login', async () => {
     settings({ ANTHROPIC_BASE_URL: GATEWAY });
-    expect(await call()).toEqual({ organization: 'Acme', routing: PROVEN_ROUTED });
+    expect(await call()).toEqual({ organization: undefined, routing: PROVEN_ROUTED });
     expect(readSettingsMock).toHaveBeenCalledWith('/x');
+  });
+
+  describe('organization only when the saved OAuth login is what pays (review finding 2)', () => {
+    afterEach(() => {
+      for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete process.env[k];
+    });
+
+    it('a direct first-party session passes the organization through', async () => {
+      expect((await call()).organization).toBe('Acme');
+      settings({ ANTHROPIC_BASE_URL: 'https://api.anthropic.com' });
+      expect((await call()).organization).toBe('Acme');
+    });
+
+    it.each([
+      ['process ANTHROPIC_API_KEY', () => { process.env.ANTHROPIC_API_KEY = 'k'; }],
+      ['process ANTHROPIC_AUTH_TOKEN', () => { process.env.ANTHROPIC_AUTH_TOKEN = 'k'; }],
+      ['process Bedrock flag', () => { process.env.CLAUDE_CODE_USE_BEDROCK = '1'; }],
+      ['process Vertex flag', () => { process.env.CLAUDE_CODE_USE_VERTEX = 'true'; }],
+      ['settings env API key', () => settings({ ANTHROPIC_API_KEY: 'k' })],
+      ['settings env auth token', () => settings({ ANTHROPIC_AUTH_TOKEN: 'k' })],
+      ['settings env Bedrock', () => settings({ CLAUDE_CODE_USE_BEDROCK: 'true' })],
+      ['settings env Vertex', () => settings({ CLAUDE_CODE_USE_VERTEX: '1' })],
+      ['settings env Foundry', () => settings({ CLAUDE_CODE_USE_FOUNDRY: '1' })],
+      ['process Bedrock flag spelled yes', () => { process.env.CLAUDE_CODE_USE_BEDROCK = 'yes'; }],
+      ['process Foundry flag', () => { process.env.CLAUDE_CODE_USE_FOUNDRY = 'on'; }],
+      ['an apiKeyHelper (or forceLoginMethod console)', () => readSettingsMock.mockResolvedValue({ env: {}, complete: true, apiKeyHelper: true })],
+      ['a non-CodeMie gateway', () => settings({ ANTHROPIC_BASE_URL: 'https://litellm.corp.example.net' })],
+      ['an unreadable settings layer (ambiguous)', () => settings({}, false)],
+      ['an empty settings value over a process key (ambiguous)', () => { process.env.ANTHROPIC_API_KEY = 'k'; settings({ ANTHROPIC_API_KEY: '' }); }],
+    ])('%s: organization withheld', async (_name, arrange) => {
+      arrange();
+      expect((await call()).organization).toBeUndefined();
+    });
+
+    it('a Foundry session is never proven direct', async () => {
+      process.env.CLAUDE_CODE_USE_FOUNDRY = '1';
+      expect((await call()).routing).toEqual(UNPROVEN);
+    });
+
+    it('an API key does not change the routing verdict itself', async () => {
+      process.env.ANTHROPIC_API_KEY = 'k';
+      expect((await call()).routing).toEqual(PROVEN_DIRECT);
+    });
   });
 
   it('an unmatched endpoint is unproven, never routed', async () => {
