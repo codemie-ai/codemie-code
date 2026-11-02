@@ -4,11 +4,21 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-10-30
+
+### Added
+
+- `codemie proxy restart` command, and update notes that match the installed version
+- Prompts are resumed automatically after SSO re-authentication
+
 ### Fixed
 
 - Codemie hooks run under PowerShell on Windows, and stale hook paths are healed automatically
 - Secrets are masked in forwarded OTLP hook events
 - Secrets are masked in forwarded native Claude Code telemetry (logs, metrics, traces), including secret-named attributes and JSON-encoded tool parameters
+- Hook output is no longer swallowed, so the agent receives the answer from `codemie hook`
+- Signals sent to the wrapper are forwarded to the agent before the proxy is stopped
+- `pasted_content` tags are stripped from Claude hook prompts in analytics
 
 ### Changed
 
