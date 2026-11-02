@@ -123,6 +123,38 @@ describe('ClaudeSessionAdapter family evidence', () => {
       expect.objectContaining({ type: 'system', subtype: 'task-notification', taskId: 'child-task', status: 'completed' }),
     ]));
   });
+  it('marks sub-agents incomplete when the subagents directory cannot be listed', async () => {
+    const sessionId = 'unlistable-family';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await mkdir(join(tempDir, sessionId), { recursive: true });
+    await writeFile(join(tempDir, sessionId, 'subagents'), 'not a directory');
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T11:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBe(true);
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
+  it('leaves sub-agents complete when the subagents directory is absent', async () => {
+    const sessionId = 'no-subagents';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T12:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBeUndefined();
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
   it('excludes api-request-blob lines from a subagent transcript', async () => {
     const sessionId = 'blob-family';
     const sessionFile = join(tempDir, `${sessionId}.jsonl`);

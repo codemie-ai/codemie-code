@@ -262,9 +262,10 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         requestShape?: string;
         requestNonInteractive?: boolean;
       }> = [];
-      let subagentsIncomplete = false;
+      // An unreadable subagents directory hides sub-agents that may still be emitted later.
+      let subagentsIncomplete = subagentFiles === null;
 
-      for (const subagentFile of subagentFiles) {
+      for (const subagentFile of subagentFiles ?? []) {
         try {
           const subagentMessages = this.dedupeByUuid(
             (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
@@ -400,7 +401,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   /**
    * Find all agent-*.jsonl files in the subagents directory
    * @param sessionFilePath - Path to the main session file
-   * @returns Array of sub-agent file info
+   * @returns Array of sub-agent file info; `[]` when the directory is absent, `null` when it exists
+   * but cannot be listed
    */
   private async findSubagentFiles(sessionFilePath: string): Promise<Array<{
     agentId: string;
@@ -411,72 +413,77 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     spawnDepth?: number;
     requestShape?: string;
     requestNonInteractive?: boolean;
-  }>> {
+  }> | null> {
+    const parentDir = dirname(sessionFilePath);
+    const filename = basename(sessionFilePath);
+    const sessionId = filename.replace('.jsonl', '');
+
+    // Look in {parentDir}/{sessionId}/subagents/
+    const subagentsDir = join(parentDir, sessionId, 'subagents');
+
+    let files: string[];
     try {
-      const parentDir = dirname(sessionFilePath);
-      const filename = basename(sessionFilePath);
-      const sessionId = filename.replace('.jsonl', '');
-
-      // Look in {parentDir}/{sessionId}/subagents/
-      const subagentsDir = join(parentDir, sessionId, 'subagents');
-
-      if (!existsSync(subagentsDir)) {
+      files = await readdir(subagentsDir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
         logger.debug(`[claude-adapter] Subagents directory not found: ${subagentsDir}`);
         return [];
       }
-
-      // Find all agent-*.jsonl files
-      const files = await readdir(subagentsDir);
-      const agentFiles = await Promise.all(
-        files
-          .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
-          .map(async f => {
-            const agentId = f.replace('agent-', '').replace('.jsonl', '');
-            const filePath = join(subagentsDir, f);
-            let toolUseId: string | undefined;
-            let agentType: string | undefined;
-            let parentAgentId: string | undefined;
-            let spawnDepth: number | undefined;
-            let requestShape: string | undefined;
-            let requestNonInteractive: boolean | undefined;
-            try {
-              const metaRaw = JSON.parse(
-                await readFile(join(subagentsDir, f.replace('.jsonl', '.meta.json')), 'utf-8')
-              );
-              if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
-              if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
-              if (typeof metaRaw.parentAgentId === 'string') parentAgentId = metaRaw.parentAgentId;
-              if (typeof metaRaw.spawnDepth === 'number') spawnDepth = metaRaw.spawnDepth;
-              if (typeof metaRaw.requestShape === 'string') requestShape = metaRaw.requestShape;
-              if (typeof metaRaw.requestNonInteractive === 'boolean') {
-                requestNonInteractive = metaRaw.requestNonInteractive;
-              }
-            } catch {
-              // meta file absent or malformed — proceed without it
-            }
-            return {
-              agentId,
-              filePath,
-              toolUseId,
-              agentType,
-              parentAgentId,
-              spawnDepth,
-              requestShape,
-              requestNonInteractive,
-            };
-          })
-      );
-
-      logger.debug(
-        `[claude-adapter] Found ${agentFiles.length} sub-agent file${agentFiles.length !== 1 ? 's' : ''} ` +
-        `for session ${sessionId}`
-      );
-
-      return agentFiles;
-    } catch (error) {
-      logger.debug(`[claude-adapter] Failed to find sub-agent files:`, error);
-      return [];
+      logger.warn(`[claude-adapter] Failed to list subagents directory ${subagentsDir} (${code}):`, error);
+      return null;
     }
+
+    // Find all agent-*.jsonl files
+    const agentFiles = await Promise.all(
+      files
+        .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
+        .map(f => this.readSubagentFile(subagentsDir, f))
+    );
+
+    logger.debug(
+      `[claude-adapter] Found ${agentFiles.length} sub-agent file${agentFiles.length !== 1 ? 's' : ''} ` +
+      `for session ${sessionId}`
+    );
+
+    return agentFiles;
+  }
+
+  /** One sub-agent transcript with the fields of its `.meta.json` sidecar, when that is present and readable. */
+  private async readSubagentFile(subagentsDir: string, f: string) {
+    const agentId = f.replace('agent-', '').replace('.jsonl', '');
+    const filePath = join(subagentsDir, f);
+    let toolUseId: string | undefined;
+    let agentType: string | undefined;
+    let parentAgentId: string | undefined;
+    let spawnDepth: number | undefined;
+    let requestShape: string | undefined;
+    let requestNonInteractive: boolean | undefined;
+    try {
+      const metaRaw = JSON.parse(
+        await readFile(join(subagentsDir, f.replace('.jsonl', '.meta.json')), 'utf-8')
+      );
+      if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
+      if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
+      if (typeof metaRaw.parentAgentId === 'string') parentAgentId = metaRaw.parentAgentId;
+      if (typeof metaRaw.spawnDepth === 'number') spawnDepth = metaRaw.spawnDepth;
+      if (typeof metaRaw.requestShape === 'string') requestShape = metaRaw.requestShape;
+      if (typeof metaRaw.requestNonInteractive === 'boolean') {
+        requestNonInteractive = metaRaw.requestNonInteractive;
+      }
+    } catch {
+      // meta file absent or malformed — proceed without it
+    }
+    return {
+      agentId,
+      filePath,
+      toolUseId,
+      agentType,
+      parentAgentId,
+      spawnDepth,
+      requestShape,
+      requestNonInteractive,
+    };
   }
 
   /**

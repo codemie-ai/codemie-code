@@ -59,7 +59,7 @@ describe('MetricsSyncProcessor', () => {
     try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
   });
 
-  it('a prompts-only batch carries the model of the last synced reply', async () => {
+  async function syncDeltas(deltas: Array<ReturnType<typeof delta>>) {
     writeFileSync(join(home, 'sessions', `${SESSION_ID}.json`), JSON.stringify({
       sessionId: SESSION_ID,
       agentName: 'claude',
@@ -71,10 +71,10 @@ describe('MetricsSyncProcessor', () => {
       activeDurationMs: 0,
       correlation: { status: 'matched', agentSessionId: 'agent-1', retryCount: 0 }
     }));
-    writeFileSync(join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`), [
-      delta('a-1', 'synced', { models: ['claude-sonnet-5'] }),
-      delta('u-2:prompts', 'pending', { userPrompts: [{ count: 1, text: 'story' }] })
-    ].map(d => JSON.stringify(d)).join('\n') + '\n');
+    writeFileSync(
+      join(home, 'sessions', `${SESSION_ID}_metrics.jsonl`),
+      deltas.map(d => JSON.stringify(d)).join('\n') + '\n'
+    );
     const { port } = server.address() as AddressInfo;
     const context = {
       apiBaseUrl: `http://127.0.0.1:${port}`,
@@ -84,12 +84,42 @@ describe('MetricsSyncProcessor', () => {
       dryRun: false
     } as ProcessingContext;
 
-    const result = await new MetricsSyncProcessor().process(
+    return new MetricsSyncProcessor().process(
       { sessionId: SESSION_ID, agentName: 'claude', metadata: {}, messages: [] } as ParsedSession,
       context
     );
+  }
+
+  it('a prompts-only batch carries the model of the last synced reply', async () => {
+    const result = await syncDeltas([
+      delta('a-1', 'synced', { models: ['claude-sonnet-5'] }),
+      delta('u-2:prompts', 'pending', { userPrompts: [{ count: 1, text: 'story' }] })
+    ]);
 
     expect(result.success).toBe(true);
     expect(bodies.map(body => JSON.parse(body).attributes.llm_model)).toEqual(['claude-sonnet-5']);
+  });
+
+  it('a prompts-only branch keeps its own last model when another branch has a modeled reply pending', async () => {
+    const result = await syncDeltas([
+      delta('b-1', 'synced', { gitBranch: 'B', models: ['model-B'] }),
+      delta('a-2', 'pending', { gitBranch: 'A', models: ['model-A'] }),
+      delta('u-3:prompts', 'pending', { gitBranch: 'B', userPrompts: [{ count: 1, text: 'story' }] })
+    ]);
+
+    expect(result.success).toBe(true);
+    const uploaded = bodies.map(body => JSON.parse(body).attributes);
+    expect(Object.fromEntries(uploaded.map(a => [a.branch, a.llm_model]))).toEqual({ A: 'model-A', B: 'model-B' });
+    expect(uploaded).toHaveLength(2);
+  });
+
+  it('a prompts-only branch with no model history of its own carries the session\'s last model', async () => {
+    const result = await syncDeltas([
+      delta('a-1', 'synced', { models: ['model-X'] }),
+      delta('u-2:prompts', 'pending', { gitBranch: 'feature', userPrompts: [{ count: 1, text: 'story' }] })
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(bodies.map(body => JSON.parse(body).attributes.llm_model)).toEqual(['model-X']);
   });
 });
