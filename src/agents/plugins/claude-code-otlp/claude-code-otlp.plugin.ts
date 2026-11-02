@@ -22,6 +22,8 @@ import type {
 import { type AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, SSO_LOGIN_WAIT_MS } from '@/providers/plugins/sso/sso.detached-login.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
@@ -35,7 +37,8 @@ import {
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from './claude-code-otlp.constants.js';
 import { type ClaudeForwardDecision, isClaudeCodeHookInput } from './claude-code-otlp.types.js';
 import { buildClaudeEventId } from './claude-code-otlp.event-id.js';
-import { isProjectTracked, readAllowlistState, readPromptHookTimeoutSeconds } from './claude-code-otlp.allowlist.js';
+import { readPromptHookTimeoutSeconds } from './claude-code-otlp.allowlist.js';
+import { evaluateClaudeAnalyticsGate } from './claude-code-otlp.gate.js';
 import {
   buildSessionEnvEvent,
   openMainTranscriptPass,
@@ -104,7 +107,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   protected async isTracked(hookInput: HookInput): Promise<boolean> {
-    return isProjectTracked(hookInput.cwd, await readAllowlistState());
+    const decision = await evaluateClaudeAnalyticsGate(hookInput.cwd);
+    logger.debug(`[${this.name}] analytics gate decision`, ...sanitizeLogArgs({ reason: decision.reason }));
+    return decision.tracked;
   }
 
   /** Resolved once per call so every record in the batch shares one client-version lookup. */
