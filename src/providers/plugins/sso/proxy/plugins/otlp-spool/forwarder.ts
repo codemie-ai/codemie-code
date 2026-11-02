@@ -30,6 +30,7 @@ import { areCredentialsStale, markCredentialsStale } from './auth-state.js';
 import { withSessionLock } from './session-lock.js';
 import { authHeadersFor, resolveAnalyticsEndpoint, type AnalyticsEndpoint } from './classification.js';
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
+import { proveJsonRecord } from './otlp-json-reader.js';
 import { PROJECT_HEADER, evidenceContext, evidenceHeaders, reclassify, type EvidenceContext } from './evidence-send.js';
 import { decodeResponse, readBoundedBody, type BodyRead, type SendOutcome } from './response.js';
 
@@ -140,7 +141,13 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       if (response && isAuthFailure(response)) return { kind: 'auth-expired' };
     }
     if (!response) return { kind: 'failed', reason: 'not_sendable' };
-    return decodeResponse(response.status, response.contentType, response.body, stream === 'hooks');
+    const outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks');
+    // Legacy JSON exports are independent records; retain main's payload-rejection policy.
+    // Evidence requests keep 400 retryable because missing evidence headers are recoverable.
+    if (!req.evidence && OTEL_JSON_STREAMS.includes(stream as OtelJsonStream) && [400, 413, 422].includes(response.status)) {
+      return { kind: 'discarded', reason: 'payload_rejected' };
+    }
+    return outcome;
   };
 
   try {
@@ -372,8 +379,9 @@ async function forwardOtelJsonStream(
   sessionId: string,
   stream: OtelJsonStream,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials
-): Promise<SendResult | 'idle'> {
+  credentials: SSOCredentials | JWTCredentials,
+  evidence?: EvidenceContext
+): Promise<SendOutcome | 'idle'> {
   const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
   if (!batch) {
     return 'idle';
@@ -392,21 +400,19 @@ async function forwardOtelJsonStream(
   for (const record of batch.records) {
     const recordByteLength = Buffer.byteLength(record, 'utf8') + 1; // +1 for the newline cut off when the batch was split
     const range = { cursor, end: cursor + recordByteLength, filtered: false };
-    const result = await send(sessionId, stream, url, record, 'application/json', credentials, batch.project, range);
-    if (result === 'rejected') {
-      // One record per request, so skipping drops just this export; retrying it would stall every record behind it.
-      logger.warn(
-        '[otlp-forwarder] dropping a record the backend permanently rejected',
-        ...sanitizeLogArgs({ sessionId, stream, bytes: recordByteLength })
-      );
-    } else if (result !== 'ok') {
-      return result;
+    if (evidence) {
+      const proof = proveJsonRecord(record, { sessionId, project: evidence.record.project || undefined, signal: OTEL_SIGNAL_BY_JSON_STREAM[stream] });
+      if ((await noteProof(sessionId, stream, proof.verified, Buffer.byteLength(record), proof.hold)) === 'lost') return 'idle';
+      if (proof.hold) return 'idle';
     }
+    const result = await send({ sessionId, stream, url, body: record, contentType: 'application/json', credentials,
+      project: batch.project, range, evidence });
+    if (!acknowledged(result)) return result;
     cursor += recordByteLength;
-    await advanceCursor(sessionId, stream, cursor);
+    await acknowledge(sessionId, stream, cursor, recordByteLength, result);
   }
 
-  return 'ok';
+  return { kind: 'ok' };
 }
 const authExpired = (r: SendOutcome | 'idle'): boolean => r !== 'idle' && r.kind === 'auth-expired';
 
@@ -468,8 +474,8 @@ export async function forwardSession(
   }
 
   for (const stream of OTEL_JSON_STREAMS) {
-    const result = await forwardOtelJsonStream(sessionId, stream, baseUrl, credentials);
-    if (result === 'auth-expired') {
+    const result = await forwardOtelJsonStream(sessionId, stream, baseUrl, credentials, evidence);
+    if (authExpired(result)) {
       markCredentialsStale();
       return;
     }

@@ -601,7 +601,8 @@ describe('forwardSession (OTEL JSON streams)', () => {
       await forwardSession('s1', false, credentials);
 
       expect(logsCalls()).toEqual([r1, r2, r3]);
-      expect(advanceCursorMock).toHaveBeenLastCalledWith('s1', 'logsJson', byteEnd(r1, r2, r3));
+      expect(advanceCursorMock).toHaveBeenLastCalledWith('s1', 'logsJson', byteEnd(r1, r2, r3),
+        expect.objectContaining({ reason: 'payload_rejected', stream: 'logsJson', bytes: Buffer.byteLength(r3) + 1 }));
     });
 
     it.each([404, 405, 408, 409, 429, 500, 502, 503])(
@@ -698,6 +699,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     getPolicyStateMock.mockResolvedValue(usable(policyV1));
     refreshPolicyMock.mockResolvedValue(usable(null));
     noteStreamHoldMock.mockResolvedValue('clear');
+    snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
     snapshotPendingHookRecordsMock.mockResolvedValue(hooksBatch([line('s1')]));
     snapshotPendingBytesMock.mockResolvedValue(null);
     proveRangeMock.mockImplementation((bytes: Buffer) => ({ verified: bytes.length }));
@@ -705,6 +707,37 @@ describe('send outcomes and evidence requests (Task 13)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it.each([200, 400, 503])('JSON evidence sends retain identity and acknowledge only confirmed responses (%i)', async (status) => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    const recordJson = JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: [{
+      attributes: [{ key: 'session.id', value: { stringValue: 's1' } }],
+    }] }] }] });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_id: string, stream: string) => stream === 'logsJson'
+      ? { project: 'Proj A', cursor: 4, records: [recordJson], byteLength: Buffer.byteLength(recordJson) + 1 } : null);
+    fetchMock.mockImplementation(async () => json({}, status));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(headersOf(0)['X-CodeMie-Session-Id']).toBe('s1');
+    expect(headersOf(0)['X-CodeMie-Subscription-Type']).toBe('corporate');
+    expect(fetchMock.mock.calls[0][1].body).toBe(recordJson);
+    if (status === 200) expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', 4 + Buffer.byteLength(recordJson) + 1);
+    else expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('holds a JSON evidence record with a mismatching session before sending', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    const recordJson = JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: [{
+      attributes: [{ key: 'session.id', value: { stringValue: 'other' } }],
+    }] }] }] });
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_id: string, stream: string) => stream === 'logsJson'
+      ? { project: 'Proj A', cursor: 0, records: [recordJson], byteLength: recordJson.length + 1 } : null);
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', false, credentials);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(noteStreamHoldMock).toHaveBeenCalledWith('s1', 'logsJson', 'session_mismatch');
   });
 
   it('legacy sends carry no Session-Id or evidence header', async () => {

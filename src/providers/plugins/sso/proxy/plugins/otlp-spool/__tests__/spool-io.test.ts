@@ -430,7 +430,7 @@ describe('snapshots — project gate under the lock', () => {
     });
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
-    expect((await readStatus(SESSION))?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect((await readStatus(SESSION))?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 });
   });
 
   it('AC8: an evidence session without a project is snapshotted under no project and not discarded', async () => {
@@ -446,7 +446,7 @@ describe('snapshots — project gate under the lock', () => {
     expect(await snapshotPendingHookRecords(SESSION)).toMatchObject({ project: '', cursor: 0, records: [line.trim()] });
     expect(await snapshotPendingBytes(SESSION, 'logs')).toMatchObject({ project: '', cursor: 0 });
     expect(await isSendAllowed(SESSION, 'logs', '', { cursor: 0, end: 1, filtered: false })).toBe(true);
-    expect((await readStatus(SESSION))?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect((await readStatus(SESSION))?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 });
   });
 });
 
@@ -475,7 +475,7 @@ describe('holds, losses and the epoch', () => {
 
     expect(await noteStreamHold(SESSION, 'logs', 'otlp_unparseable', 1_000 + heldRetentionMs())).toBe('lost');
     const status = await readStatus(SESSION);
-    expect(status?.cursors).toEqual({ hooks: 0, logs: 4, metrics: 0, traces: 0 });
+    expect(status?.cursors).toEqual({ hooks: 0, logs: 4, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 });
     expect(status?.holds?.logs).toBeUndefined();
     expect(status?.lastLoss).toEqual({ reason: 'otlp_unparseable', at: 1_000 + heldRetentionMs(), bytes: 4 });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('dropped'), expect.anything());

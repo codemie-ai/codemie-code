@@ -505,7 +505,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     const status = await current();
     expect(status.holds?.session?.reason).toBe('stamp_invalid');
     expect(status.evidenceMarked).toBe(true);
-    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 });
     expect(forwardSession).not.toHaveBeenCalled();
   });
 
@@ -534,7 +534,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
 
     await tick();
     const status = await current();
-    expect(status.cursors).toEqual({ hooks: 0, logs: 5, metrics: 0, traces: 3 });
+    expect(status.cursors).toEqual({ hooks: 0, logs: 5, metrics: 0, traces: 3, logsJson: 0, metricsJson: 0, tracesJson: 0 });
     expect(status.lastLoss).toMatchObject({ reason: 'no_evidence_timeout', bytes: 8 });
     expect(status.holds).toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();
@@ -554,7 +554,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
     const status = await current();
     expect(status.sendMode).toBe('evidence');
     expect(status.project).toBeUndefined();
-    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect(status.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0 });
   });
 
   describe('classification consumer seam and sticky verdict (Task 14)', () => {
