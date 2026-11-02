@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Readable } from 'node:stream';
-import { rename } from 'fs/promises';
+import { rename, writeFile } from 'fs/promises';
 import type { Session } from '../../../agents/core/session/types.js';
 
 vi.mock('@/utils/logger.js', () => ({
@@ -31,7 +31,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
-  return { ...actual, rename: vi.fn(actual.rename) };
+  return { ...actual, rename: vi.fn(actual.rename), writeFile: vi.fn(actual.writeFile) };
 });
 
 // Process spawns are a boundary: the hook must never spawn `ps` inside the agent's SessionEnd budget
@@ -52,6 +52,7 @@ const { noticeDeliveryAtExit } = await import('../../../agents/core/session/exit
 const { logger } = await import('@/utils/logger.js');
 const { ensureSessionFile } = await import('../../../agents/core/session/ensure-session.js');
 const { exec } = await import('@/utils/exec.js');
+const { clearAnalyticsAuthStatus } = await import('@/utils/analytics-auth-status.js');
 const { MetricsDataLoader } = await import('../analytics/data-loader.js');
 const { PiPluginMetadata } = await import('../../../agents/plugins/pi/pi.plugin.js');
 const { stopPiIncrementalSync } = await import('../../../agents/plugins/pi/pi.incremental-sync.js');
@@ -351,6 +352,20 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     expect(done.endMetricSentAt).toBeTypeOf('number');
     expect(readDeltas(session.sessionId, 'completed_').map((d) => d.syncStatus)).toEqual(['synced']);
     expect(existsSync(join(sessionsDir, `${session.sessionId}.json`))).toBe(false);
+  });
+
+  it('an in-process plugin\'s own SessionEnd whose flush fails still completes and delivers the record', async () => {
+    const session = baseRecord();
+    writeRecord(session);
+    const transcript = join(home, 'unparseable.jsonl');
+    writeFileSync(transcript, '{"type":"user","uuid":\n');
+
+    // The plugin's own hook config (as codex.plugin.ts builds it) holds no reconcile lock
+    await expect(processEvent({ ...syntheticEnd(transcript), reason: 'exit', endTimeFromActivity: undefined }, config(session)))
+      .resolves.toBeUndefined();
+
+    expect(endMetrics()).toHaveLength(1);
+    expect(readRecord(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 
   it('a line failed past its sync-attempt cap counts as done: renamed, marked dropped', async () => {
@@ -884,6 +899,108 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeUndefined();
   });
 
+  it('a start with no stored credentials leaves an undelivered record in place: no request, no attempt, never renamed unsent', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
+    vi.mocked(getStoredAnalyticsCredentials).mockResolvedValue(null);
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    const attempts: Array<number | string | undefined> = [];
+    try {
+      for (let start = 0; start < 4; start++) {
+        await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+        attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryAttempts : 'renamed');
+      }
+    } finally {
+      vi.mocked(getStoredAnalyticsCredentials).mockImplementation(async () => ({ credentials: { cookies: { session: 'abc' } } }) as Awaited<ReturnType<typeof getStoredAnalyticsCredentials>>);
+    }
+
+    expect(attempts).toEqual([undefined, undefined, undefined, undefined]);
+    expect(requests).toEqual([]);
+  });
+
+  it('a start while the analytics auth of this host is marked invalid leaves an undelivered record in place: no request, no attempt; delivered once a re-login clears the mark', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+    // The server rejects the stored cookies once: the analytics auth of this send path is marked invalid
+    respond = () => new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+    expect(existsSync(join(home, 'analytics-auth-status.json'))).toBe(true);
+    requests = [];
+    respond = () => ok();
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(requests).toEqual([]);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
+
+    await clearAnalyticsAuthStatus();
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(endMetrics()).toHaveLength(1);
+    expect(readRecord(session.sessionId, 'completed_').endMetricSentAt).toBeTypeOf('number');
+  });
+
+  it('a start whose end metric meets rejected credentials (401) spends no attempt; the record is kept for a re-login', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(session);
+    respond = () => new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(endMetrics().length).toBeGreaterThan(0);
+    const kept = readRecord(session.sessionId);
+    expect(kept.deliveryAttempts).toBeUndefined();
+    expect(kept.endMetricSentAt).toBeUndefined();
+  });
+
+  it('a stranded record whose delta sync meets rejected credentials (401) gets its finalize attempt back; the record is kept', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({
+      ownerPid: 999_999,
+      ownerStartedAt: Date.parse('2026-10-01T09:00:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-1', agentSessionFile: transcript },
+    });
+    writeRecord(session);
+    respond = (metric) => (metric.name === 'codemie_cli_session_total' && metric.attributes.status === 'completed'
+      ? ok()
+      : new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } }));
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(requests.length).toBeGreaterThan(endMetrics().length);
+    const kept = readRecord(session.sessionId);
+    expect(kept.status).toBe('completed');
+    expect(kept.finalizeAttempts).toBeUndefined();
+    expect(readDeltas(session.sessionId).some((delta) => delta.syncStatus !== 'synced')).toBe(true);
+  });
+
+  it('an undelivered record whose only pending request, a conversation, meets rejected credentials (401) spends no attempt; the record is kept', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z') });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }]);
+    writeFileSync(join(sessionsDir, `${session.sessionId}_conversation.jsonl`), `${JSON.stringify({
+      payloadId: 'payload-1',
+      timestamp: session.startTime + SECOND,
+      isTurnContinuation: false,
+      historyIndices: [0],
+      messageCount: 1,
+      payload: { conversationId: 'conv-1', history: [{ role: 'User', message: 'hi', history_index: 0 }] },
+      status: 'pending',
+    })}\n`);
+    respond = () => new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
+
+    await reconcileOtherSessions({ env: nextStart, ownSessionId: 'own' }).done;
+
+    expect(urls.filter((url) => !url.includes('/v1/conversations/'))).toEqual([]);
+    expect(urls.some((url) => url.includes('/v1/conversations/'))).toBe(true);
+    expect(readRecord(session.sessionId).deliveryAttempts).toBeUndefined();
+  });
+
   describe('a live wrapper (CODEMIE_WRAPPER_PID) on a normal exit', () => {
     const liveWrapper = { CODEMIE_WRAPPER_PID: String(process.pid) };
     const DEAD_WRAPPER_PID = '999999';
@@ -1187,8 +1304,11 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(moved.droppedAt).toBeUndefined();
   });
 
-  /** Runs `/clear` while another live process holds the lock, which it lets go of `releaseAfterMs` in (never when undefined). */
-  async function clearAgainstHeldLock(session: Session, releaseAfterMs: number | undefined): Promise<number> {
+  /**
+   * Runs `/clear` while another live process holds the lock, which it lets go of `releaseAfterMs` in
+   * (never when undefined), right after its last write under it (`holderWrite`).
+   */
+  async function clearAgainstHeldLock(session: Session, releaseAfterMs: number | undefined, holderWrite?: () => void): Promise<number> {
     const lockPath = join(sessionsDir, `${session.sessionId}.reconcile.lock`);
     const { processStartedAt } = await import('../../../utils/processes.js');
     writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
@@ -1197,12 +1317,20 @@ describe('SessionStart source=clear closes the previous generation', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
       const startedAt = Date.now();
-      if (releaseAfterMs !== undefined) setTimeout(() => rmSync(lockPath), releaseAfterMs);
+      let released = releaseAfterMs === undefined;
+      if (releaseAfterMs !== undefined) {
+        setTimeout(() => {
+          holderWrite?.();
+          rmSync(lockPath);
+          released = true;
+        }, releaseAfterMs);
+      }
       let finishedAt: number | undefined;
       const start = processEvent(clearStart(), config(session)).then(() => {
         finishedAt = Date.now();
       });
-      while (finishedAt === undefined && Date.now() - startedAt < 30 * SECOND) {
+      // The holder runs to its release even when the start is done before it
+      while ((finishedAt === undefined || !released) && Date.now() - startedAt < 30 * SECOND) {
         await vi.advanceTimersByTimeAsync(25);
         await new Promise((resolve) => realSetTimeout(resolve, 1));
       }
@@ -1227,16 +1355,77 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
   });
 
-  it('a lock still held at 10 s is given up: logged, the generation neither delivered nor moved', async () => {
+  it('a lock held throughout is given up: logged, the generation left in place undelivered, no fresh record', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-stuck' } });
     writeRecord(session);
+    const previousBytes = readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8');
 
     const waitedMs = await clearAgainstHeldLock(session, undefined);
 
-    expect(waitedMs).toBeGreaterThanOrEqual(10 * SECOND);
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('locked by another process; left in place'))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(`${session.sessionId}.reconcile.lock is still held`))).toBe(true);
     expect(endMetrics()).toHaveLength(0);
+    expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(previousBytes);
     expect(readdirSync(sessionsDir).some((n) => n.startsWith(`completed_${session.sessionId}-`))).toBe(false);
+    // The close's wait and the fresh record's guard share one 10 s budget
+    expect(waitedMs).toBeGreaterThanOrEqual(10 * SECOND);
+    expect(waitedMs).toBeLessThan(15 * SECOND);
+  });
+
+  it('a lock released 8 s into the SessionStart\'s 10 s budget: the holder\'s last write goes with the generation moved aside, a fresh record its own', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-stuck' } });
+    writeRecord(session);
+    const before = Date.now();
+    // The holder stamps the record by id under the lock (as markEndMetric does), then lets go
+    const holderMark = 1_700_000_000_000;
+    const holderWrite = () => writeRecord({ ...readRecord(session.sessionId), endMetricSentAt: holderMark });
+    vi.mocked(logger.warn).mockClear();
+
+    await clearAgainstHeldLock(session, 8 * SECOND, holderWrite);
+
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('left in place'))).toBe(false);
+    expect(endMetrics()).toHaveLength(0);
+    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-stuck.json`), 'utf-8')) as Session;
+    expect(moved).toMatchObject({ status: 'completed', endMetricSentAt: holderMark, correlation: { agentSessionId: 'gen-stuck' } });
+    const fresh = readRecord(session.sessionId);
+    expect(fresh.status).toBe('active');
+    expect(fresh.endTime).toBeUndefined();
+    expect(fresh.endMetricSentAt).toBeUndefined();
+    expect(fresh.startTime).toBeGreaterThanOrEqual(before);
+    expect(fresh.correlation.agentSessionId).toBe('claude-native-next');
+
+    // The fresh generation's Stop writes onto its own record and its own metrics file
+    const transcript = writeTranscript(['2026-10-01T11:00:00Z', '2026-10-01T11:00:05Z']);
+    await processEvent({ ...clearStart(), hook_event_name: 'Stop', transcript_path: transcript }, config(session));
+
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-stuck_metrics.jsonl`))).toBe(false);
+    expect(readRecord(session.sessionId).status).toBe('active');
+    expect(readDeltas(session.sessionId).length).toBeGreaterThan(0);
+  });
+
+  it('a reconcile lock that cannot be created (ENOSPC) is logged; the start metric is still sent', async () => {
+    const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-eacces' } });
+    writeRecord(session);
+    vi.mocked(logger.warn).mockClear();
+    const actualWriteFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).writeFile;
+    let refused = false;
+    vi.mocked(writeFile).mockImplementation((async (path: string, data: string, options: unknown) => {
+      if (String(path).endsWith('.reconcile.lock')) {
+        refused = true;
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      }
+      return actualWriteFile(path, data, options as Parameters<typeof actualWriteFile>[2]);
+    }) as typeof writeFile);
+
+    try {
+      await expect(processEvent(clearStart(), config(session))).resolves.toBeUndefined();
+    } finally {
+      vi.mocked(writeFile).mockImplementation(actualWriteFile);
+    }
+
+    expect(refused).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(`Could not write the session record of ${session.sessionId}: ENOSPC`))).toBe(true);
+    expect(requests.map((r) => [r.name, r.attributes.status])).toEqual([['codemie_cli_session_total', 'started']]);
   });
 
   it.each(['startup', 'resume', 'compact'])('source=%s over a live record of the same id re-enters it, nothing moved', async (source) => {

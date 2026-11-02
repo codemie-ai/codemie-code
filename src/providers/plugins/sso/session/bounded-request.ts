@@ -42,7 +42,7 @@ export async function backoffWithin(ms: number, bounds: SyncBounds): Promise<voi
 const signalsThatSent = new WeakSet<AbortSignal>();
 
 /**
- * Records that a send ran under `signal`: a request started, or the send found no credentials.
+ * Records that a request started under `signal`.
  * Lets a caller that owns the signal tell an attempt that reached the server from one stopped before it.
  */
 export function noteSendAttempt(signal: AbortSignal | undefined): void {
@@ -52,6 +52,21 @@ export function noteSendAttempt(signal: AbortSignal | undefined): void {
 /** Whether a send ran under `signal` (see {@link noteSendAttempt}). */
 export function sendWasAttempted(signal: AbortSignal): boolean {
   return signalsThatSent.has(signal);
+}
+
+const signalsRejected = new WeakSet<AbortSignal>();
+
+/**
+ * Records that the server rejected the credentials of a request under `signal` (401 / 403, or an
+ * SSO login page): the caller that owns the signal does not count it as a delivery attempt.
+ */
+export function noteAuthFailure(signal: AbortSignal | undefined): void {
+  if (signal) signalsRejected.add(signal);
+}
+
+/** Whether a request under `signal` met rejected credentials (see {@link noteAuthFailure}). */
+export function authWasRejected(signal: AbortSignal): boolean {
+  return signalsRejected.has(signal);
 }
 
 export interface BoundedRequest {

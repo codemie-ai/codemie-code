@@ -16,12 +16,12 @@ async function markEndMetric(
 
 /**
  * The cookie header of the end metric: the config's, else the stored SSO credentials. Undefined
- * without credentials, which counts as a failed send, re-delivered later.
+ * without credentials: nothing is sent and no delivery attempt is spent — the record waits for a
+ * launch that has them.
  */
-async function endMetricCookieHeader(
+export async function endMetricCookieHeader(
   ssoUrl: string,
-  config: HookProcessingConfig | undefined,
-  abortSignal: AbortSignal | undefined
+  config: HookProcessingConfig | undefined
 ): Promise<string | undefined> {
   let cookieHeader = config?.cookies || '';
   if (!cookieHeader && ssoUrl) {
@@ -42,8 +42,6 @@ async function endMetricCookieHeader(
   }
 
   if (!cookieHeader) {
-    const { noteSendAttempt } = await import('../../../providers/plugins/sso/session/bounded-request.js');
-    noteSendAttempt(abortSignal);
     logger.info(`[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`);
     return undefined;
   }
@@ -126,7 +124,7 @@ export async function sendSessionEndMetrics(
       reason
     };
 
-    const cookieHeader = await endMetricCookieHeader(ssoUrl, config, options.abortSignal);
+    const cookieHeader = await endMetricCookieHeader(ssoUrl, config);
     if (!cookieHeader) return;
 
     // Use MetricsSender to send session end metric

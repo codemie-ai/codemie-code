@@ -20,7 +20,7 @@ import {
   RETRY_DELAY_MS
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
 
 /**
  * Conversation API Client interface
@@ -169,6 +169,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             const apiDetails = errorData?.error?.details
               || errorData?.details;
             const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
+            if (response.status === 401 || response.status === 403) {
+              noteAuthFailure(bounds.abortSignal);
+            }
 
             // Check for non-retryable errors
             if (isNonRetryableError(response.status)) {

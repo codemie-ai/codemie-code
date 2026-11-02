@@ -19,7 +19,7 @@ import { logger } from '@/utils/logger.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
-  return { ...actual, readFile: vi.fn(actual.readFile), stat: vi.fn(actual.stat) };
+  return { ...actual, readFile: vi.fn(actual.readFile), stat: vi.fn(actual.stat), writeFile: vi.fn(actual.writeFile) };
 });
 
 vi.mock('@/utils/logger.js', () => ({
@@ -557,6 +557,129 @@ describe('reconcileOtherSessions', () => {
 
     const read = vi.mocked(fsPromises.readFile).mock.calls.map(([path]) => String(path));
     expect(read.filter((path) => path.startsWith(sessionsDir))).toEqual([]);
+  });
+});
+
+describe('a failed flush through the real hook pipeline', () => {
+  /** A claude transcript whose only line does not parse */
+  function unparseableTranscript(): string {
+    const path = join(home, 'unparseable.jsonl');
+    writeFileSync(path, '{"type":"user","uuid":\n');
+    return path;
+  }
+
+  /** Runs `work` with every request recorded and answered 200; returns the requested URLs. */
+  async function recordingRequests(work: () => Promise<void>): Promise<string[]> {
+    const urls: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ success: true, message: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    try {
+      await work();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    return urls;
+  }
+
+  it('a stranded record whose transcript does not parse stays active with its attempt spent: nothing sent, not renamed', async () => {
+    const stranded = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: unparseableTranscript() } });
+    save(stranded);
+
+    const urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
+
+    expect(urls).toEqual([]);
+    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 1 });
+    expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
+  });
+
+  it('a stranded record whose failing flush runs past the attempt deadline, nothing sent, is counted', async () => {
+    const transcript = unparseableTranscript();
+    const stranded = record({ finalizeAttempts: 1, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: transcript } });
+    save(stranded);
+    // The clock passes the attempt's 10 s deadline while the flush reads the transcript
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const actualReadFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).readFile;
+    vi.mocked(fsPromises.readFile).mockImplementation((async (path: string, options: unknown) => {
+      if (String(path) === transcript) vi.setSystemTime(Date.now() + 11_000);
+      return actualReadFile(path, options as Parameters<typeof actualReadFile>[1]);
+    }) as typeof fsPromises.readFile);
+
+    let urls: string[];
+    try {
+      urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
+    } finally {
+      vi.mocked(fsPromises.readFile).mockImplementation(actualReadFile);
+      vi.useRealTimers();
+    }
+
+    expect(urls).toEqual([]);
+    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 2 });
+  });
+
+  it('at its 4th start, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
+    const start = Date.parse('2026-10-01T10:00:00Z');
+    const stranded = record({
+      startTime: start,
+      finalizeAttempts: 3,
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: unparseableTranscript() },
+    });
+    save(stranded);
+    writeFileSync(join(sessionsDir, `${stranded.sessionId}_metrics.jsonl`), `${JSON.stringify({
+      recordId: 'rec-0', sessionId: stranded.sessionId, timestamp: start + 300_000, syncStatus: 'pending', syncAttempts: 0,
+    })}\n`);
+    // The disk fills at the status write: the first `completed` copy of the record fails to land
+    const actualWriteFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).writeFile;
+    let failed = false;
+    vi.mocked(fsPromises.writeFile).mockImplementation((async (path: string, data: string, options: unknown) => {
+      if (!failed && String(path).startsWith(join(sessionsDir, `${stranded.sessionId}.json.`)) && String(data).includes('"status": "completed"')) {
+        failed = true;
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      }
+      return actualWriteFile(path, data, options as Parameters<typeof actualWriteFile>[2]);
+    }) as typeof fsPromises.writeFile);
+
+    let urls: string[];
+    try {
+      urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
+    } finally {
+      vi.mocked(fsPromises.writeFile).mockImplementation(actualWriteFile);
+    }
+
+    expect(failed).toBe(true);
+    expect(urls).toEqual([]);
+    expect(existsSync(join(sessionsDir, `${stranded.sessionId}.json`))).toBe(false);
+    const closed = load(stranded.sessionId, 'completed_');
+    expect(closed).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: start + 300_000 });
+    expect(closed.droppedAt).toBeTypeOf('number');
+  });
+
+  it('a hook process (no config) meeting the same unparseable transcript returns normally and still ends the record', async () => {
+    const session = record({ ownerPid: undefined, ownerStartedAt: undefined, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u' } });
+    save(session);
+    const envBefore = { ...process.env };
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CODEMIE_') && key !== 'CODEMIE_HOME') delete process.env[key];
+    }
+    Object.assign(process.env, { CODEMIE_AGENT: 'claude', CODEMIE_SESSION_ID: session.sessionId, CODEMIE_PROVIDER: 'ai-run-sso' });
+    try {
+      await expect(processEvent({
+        hook_event_name: 'SessionEnd',
+        session_id: 'native-u',
+        transcript_path: unparseableTranscript(),
+        permission_mode: 'default',
+        cwd: '/repo',
+        reason: 'exit',
+      } as BaseHookEvent)).resolves.toBeUndefined();
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in envBefore)) delete process.env[key];
+      }
+      Object.assign(process.env, envBefore);
+    }
+
+    expect(load(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 });
 

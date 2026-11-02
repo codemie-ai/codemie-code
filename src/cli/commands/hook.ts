@@ -19,6 +19,7 @@ import { nextRecordStart } from '@/agents/core/session/next-record-start.js';
 import { moveSetToGeneration } from '@/agents/core/session/session-generation.js';
 import { configSendPathApiUrl, getConfigValue } from './hook/config-value.js';
 import { sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
+import type { PidLock } from '@/utils/pid-lock.js';
 import { buildProcessingContext } from './hook/processing-context.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
 
@@ -103,7 +104,11 @@ export interface HookProcessingConfig {
   abortSignal?: AbortSignal;
   /** Epoch ms past which the SessionEnd network work stops (a wrapper's exit deadline may come in `env` instead) */
   deadlineMs?: number;
-  /** The caller already holds this session's reconcile lock (SessionEnd must not take it again) */
+  /**
+   * The caller (the start pass, the wrapper's own-record step) already holds this session's reconcile
+   * lock: SessionEnd does not take it again, and a failed flush or status write throws; the record
+   * stays `active` and the next start's pass retries it (the start pass counts its attempts)
+   */
   holdsReconcileLock?: boolean;
   /** Finalize the record locally only: no end metric, no sync, no rename */
   localOnly?: boolean;
@@ -195,12 +200,18 @@ function initializeLoggerContext(): string {
  * Creates session correlation document using hook data
  */
 async function handleSessionStart(event: SessionStartEvent, _rawInput: string, sessionId: string, config: HookProcessingConfig | undefined, endOptions: SessionEndOptions): Promise<void> {
+  // One lock-wait budget for the whole SessionStart: the close and the fresh record's guard share it
+  const { PID_LOCK_WAIT_BUDGET_MS } = await import('../../utils/pid-lock.js');
+  const startOptions: SessionEndOptions = {
+    ...endOptions,
+    deadlineMs: Math.min(Date.now() + PID_LOCK_WAIT_BUDGET_MS, endOptions.deadlineMs ?? Infinity),
+  };
   // `/clear` starts a new generation under the same id: close the previous one first
   if (event.source === 'clear') {
-    await closeClearedGeneration(sessionId, config, endOptions);
+    await closeClearedGeneration(sessionId, config, startOptions);
   }
   // Create session record with correlation information
-  await createSessionRecord(event, sessionId, config);
+  await createSessionRecordOverUnclosed(event, sessionId, config, startOptions);
   // Send session start metrics when CodeMie analytics auth is configured
   await sendSessionStartMetrics(event, sessionId, event.session_id, config);
   // Sync CodeMie skills to Claude Code (.claude/skills/)
@@ -303,7 +314,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
     // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
     await performIncrementalSync(event, 'SessionEnd', sessionId, config);
     // 2. Update session status
-    await updateSessionStatus(event, sessionId, event.endTime);
+    await updateSessionStatus(event, sessionId, event.endTime, config);
     return;
   }
 
@@ -327,7 +338,7 @@ async function finalizeSession(event: SessionEndEvent, sessionId: string, config
     `(last record ${lastRecordAt ?? 'none'}, last delta ${lastDeltaAt ?? 'none'})`
   );
   await accumulateActiveDuration(sessionId, endTime);
-  await updateSessionStatus(event, sessionId, endTime);
+  await updateSessionStatus(event, sessionId, endTime, config);
 }
 
 /**
@@ -338,12 +349,46 @@ async function handlePermissionRequest(event: BaseHookEvent, _rawInput?: string)
 }
 
 /**
+ * Logs a session adapter's result; for a caller holding the reconcile lock a failed processor throws
+ * its error, so the flush counts as failed.
+ */
+function logProcessingResult(
+  result: { success: boolean; totalRecords: number; failedProcessors: string[]; processors: Record<string, unknown> },
+  hookName: string,
+  agentSessionFile: string,
+  config: HookProcessingConfig | undefined
+): void {
+  if (result.success) {
+    logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
+  } else {
+    logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
+  }
+
+  const failures: string[] = [];
+  for (const [name, procResult] of Object.entries(result.processors)) {
+    const processor = procResult as { success: boolean; message?: string };
+    if (processor.success) {
+      logger.debug(`[hook:${hookName}] Processor ${name}: ${processor.message || 'success'}`);
+    } else {
+      logger.error(`[hook:${hookName}] Processor ${name}: ${processor.message || 'failed'}`);
+      failures.push(`${name}: ${processor.message || 'failed'}`);
+    }
+  }
+  if (!result.success && config?.holdsReconcileLock) {
+    throw new Error(`Session processing failed for ${agentSessionFile}: ${failures.join('; ') || result.failedProcessors.join(', ')}`);
+  }
+}
+
+/**
  * Perform incremental sync using unified SessionAdapter
  *
  * @param event - Hook event with transcript_path and session_id
  * @param hookName - Name of the hook for logging (e.g., "Stop", "UserPromptSubmit")
  * @param sessionId - The CodeMie session ID to use for this extraction
- * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param config - Optional configuration object (if not provided, reads from environment variables).
+ *   With `holdsReconcileLock` (the start pass, the wrapper's own-record step) a failed flush throws, so
+ *   a SessionEnd stops before its status write and the record stays `active` for a later attempt;
+ *   otherwise (a hook process, an in-process plugin's own hook) it is logged and the SessionEnd goes on.
  */
 async function performIncrementalSync(
   event: BaseHookEvent,
@@ -421,26 +466,15 @@ async function performIncrementalSync(
         lastRecordAt = result.lastRecordAt;
       }
 
-      if (result.success) {
-        logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
-      } else {
-        logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
-      }
-
-      // Log processor results
-      for (const [name, procResult] of Object.entries(result.processors)) {
-        const result = procResult as { success: boolean; message?: string; recordsProcessed?: number };
-        if (result.success) {
-          logger.debug(`[hook:${hookName}] Processor ${name}: ${result.message || 'success'}`);
-        } else {
-          logger.error(`[hook:${hookName}] Processor ${name}: ${result.message || 'failed'}`);
-        }
-      }
+      logProcessingResult(result, hookName, agentSessionFile, config);
     }
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:${hookName}] Session processing failed: ${errorMessage}`);
+    if (config?.holdsReconcileLock) {
+      throw error;
+    }
     // Don't throw - hook should not block agent execution or user prompts
   }
   return lastRecordAt;
@@ -787,11 +821,6 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // leaving an `active` record that still carries a past endTime. A post-clear session must start
     // fresh, so completed records fall through to the fresh-build below. (resume runs in a new CLI
     // process with a fresh CODEMIE_SESSION_ID, so it never reaches this branch.)
-    // An undelivered previous generation still at `{id}.json` stays in the delivery queue
-    if ((await readLiveRecord(sessionId))?.status === 'completed') {
-      logger.error(`[hook:SessionStart] /clear: the previous generation of ${sessionId} could not be closed; the fresh record is not written`);
-      return;
-    }
     const existing = await sessionStore.loadSession(sessionId);
     if (existing && existing.status === 'active' && existing.endTime === undefined) {
       const {
@@ -905,6 +934,61 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:SessionStart] Failed to create session record: ${errorMessage}`);
     // Don't throw - hook should not block agent execution
+  }
+}
+
+/**
+ * Creates the session record; over a completed `{id}.json` the `/clear` close left in place, first
+ * moves that generation aside, so the fresh generation's hooks never write onto it. The move and the
+ * fresh write run under the reconcile lock: a process still holding it may write the old generation
+ * by id. A lock still held after the wait leaves the generation in place and writes no fresh record.
+ * A failure here is logged, never thrown: the rest of the SessionStart still runs.
+ */
+async function createSessionRecordOverUnclosed(
+  event: SessionStartEvent,
+  sessionId: string,
+  config: HookProcessingConfig | undefined,
+  options: SessionEndOptions
+): Promise<void> {
+  try {
+    if ((await readLiveRecord(sessionId))?.status !== 'completed') {
+      await createSessionRecord(event, sessionId, config);
+      return;
+    }
+    const lock = await waitReconcileLock(sessionId, options);
+    if (!lock) {
+      logger.warn(`[hook:SessionStart] /clear: ${reconcileLockPath(sessionId)} is still held; the previous generation of ${sessionId} left in place, the fresh record is not written`);
+      return;
+    }
+    try {
+      // Re-checked under the lock: the holder may have delivered and renamed it meanwhile
+      if ((await readLiveRecord(sessionId))?.status === 'completed' && !(await moveUnclosedGeneration(sessionId))) {
+        return;
+      }
+      await createSessionRecord(event, sessionId, config);
+    } finally {
+      await lock.release();
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.warn(`[hook:SessionStart] Could not write the session record of ${sessionId}: ${msg}`);
+    // Don't throw - hook should not block agent execution
+  }
+}
+
+/**
+ * Moves a completed `{id}.json` set the `/clear` close left in place to its generation name; it
+ * stays local, unsent. False when the move failed: the set is kept and no fresh record is written.
+ */
+async function moveUnclosedGeneration(sessionId: string): Promise<boolean> {
+  try {
+    const moved = await moveSetToGeneration(sessionId, '');
+    logger.warn(`[hook:SessionStart] /clear: the previous generation of ${sessionId} could not be closed; it stays local as ${moved}, unsent`);
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`[hook:SessionStart] /clear: the previous generation of ${sessionId} could not be closed; the fresh record is not written: ${errorMessage}`);
+    return false;
   }
 }
 
@@ -1069,8 +1153,10 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
  *
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID
+ * @param config - With `holdsReconcileLock` a failed status write throws (the record stays `active`
+ *   for a later attempt); otherwise it is only logged
  */
-async function updateSessionStatus(event: SessionEndEvent, sessionId: string, endTime?: number): Promise<void> {
+async function updateSessionStatus(event: SessionEndEvent, sessionId: string, endTime?: number, config?: HookProcessingConfig): Promise<void> {
   try {
     // Import session store
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -1103,14 +1189,28 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string, en
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`[hook:SessionEnd] Failed to update session status: ${errorMessage}`);
+    if (config?.holdsReconcileLock) {
+      throw error;
+    }
     // Don't throw - hook should not block agent execution
   }
 }
 
+/** The session's reconcile lock, waited for up to the lock helper's 10 s budget, the deadline or the abort. */
+async function waitReconcileLock(sessionId: string, options: SessionEndOptions): Promise<PidLock | null> {
+  const { acquirePidLock } = await import('../../utils/pid-lock.js');
+  return acquirePidLock(reconcileLockPath(sessionId), {
+    mode: 'wait',
+    deadlineMs: options.deadlineMs,
+    signal: options.abortSignal,
+    pidOnlyLiveness: options.hookProcess === true,
+  });
+}
+
 /**
  * `/clear` (SessionStart `source: clear`) closes the generation it replaces, under the
- * session's reconcile lock (waited for up to the lock helper's 10 s budget: a start pass holding it
- * stops its attempt by then), delivering within {@link CLEAR_DELIVERY_BUDGET_MS} once the lock is
+ * session's reconcile lock (waited for within the SessionStart's 10 s lock budget, shared with the
+ * fresh record's guard: a start pass holding it stops its attempt by then), delivering within {@link CLEAR_DELIVERY_BUDGET_MS} once the lock is
  * taken: a record still `active` (its SessionEnd never came or was cut) gets the synthetic end over
  * its OWN transcript; a `completed` `{id}.json` (undelivered) is delivered; then every set of the
  * id — live or `completed_` — moves to its generation name, delivered or not, so the fresh record
@@ -1121,15 +1221,7 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string, en
  */
 async function closeClearedGeneration(sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<void> {
   try {
-    const { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS } = await import('../../utils/pid-lock.js');
-    const lockDeadlineMs = Math.min(Date.now() + PID_LOCK_WAIT_BUDGET_MS, options.deadlineMs ?? Infinity);
-
-    const lock = await acquirePidLock(reconcileLockPath(sessionId), {
-      mode: 'wait',
-      deadlineMs: lockDeadlineMs,
-      signal: options.abortSignal,
-      pidOnlyLiveness: options.hookProcess === true,
-    });
+    const lock = await waitReconcileLock(sessionId, options);
     if (!lock) {
       logger.warn(`[hook:SessionStart] /clear: the previous generation of ${sessionId} is locked by another process; left in place`);
       return;

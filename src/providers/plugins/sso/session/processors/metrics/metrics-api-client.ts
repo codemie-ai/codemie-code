@@ -31,7 +31,7 @@ import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../uti
 import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
-import { backoffWithin, boundedRequest, throwIfStopped } from '../../bounded-request.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
@@ -97,6 +97,7 @@ class MetricsApiClient {
         // Record credential rejections (401/403 or HTML SSO login page) so the
         // hook auth gate can prompt the user to re-authenticate
         if ((error as MetricsRequestError).isAuthFailure) {
+          noteAuthFailure(this.bounds.abortSignal);
           await markAnalyticsAuthInvalid(
             statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
             this.config.baseUrl

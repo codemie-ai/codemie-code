@@ -246,6 +246,7 @@ describe('acquirePidLock', () => {
     }) as typeof rename);
 
     await expect(reclaimStaleLock(lockPath, 'stale')).resolves.toBe(false);
+    expect(vi.mocked((await import('../logger.js')).logger.warn)).toHaveBeenCalledWith(expect.stringContaining(`back to ${lockPath}: EIO`));
   });
 
   it('reclaims an empty lock older than 5 s and keeps one written a second ago', async () => {

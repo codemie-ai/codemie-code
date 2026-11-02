@@ -28,8 +28,9 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { isOwnerAlive } from '@/utils/processes.js';
-import { sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
-import { hasSendPath, recordHookConfig, sameHost } from './send-path.js';
+import { authWasRejected, sendWasAttempted } from '@/providers/plugins/sso/session/bounded-request.js';
+import { hasSendPath, recordHookConfig, sameHost, sendPathApiUrl } from './send-path.js';
+import { getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
 import { getPayloadId } from '@/providers/plugins/sso/session/processors/conversations/payload-queue.js';
 import { CONVERSATION_SYNC_STATUS, type ConversationPayloadRecord } from '@/providers/plugins/sso/session/processors/conversations/types.js';
@@ -165,7 +166,60 @@ async function legacyLastActivity(record: Session): Promise<number> {
   return Math.max(...times.filter((time) => Number.isFinite(time)));
 }
 
-async function classifyRecord(record: Session, env: NodeJS.ProcessEnv, now: number): Promise<RecordKind | undefined> {
+/**
+ * This launch holds the credentials a delivery of the record would carry (its end metric's cookies),
+ * and the server has not rejected them: the analytics auth marked invalid for this launch's host
+ * holds until a re-login or a 2xx on an analytics request clears it. Without them no request is
+ * made, so no attempt is spent on the record.
+ */
+async function hasCredentials(record: Session, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const marker = await getAnalyticsAuthStatus();
+  if (marker) {
+    const { markerAppliesToProfile } = await import('@/providers/plugins/sso/sso.auth-gate.js');
+    if (markerAppliesToProfile(marker, [env.CODEMIE_URL, sendPathApiUrl(env), env.CODEMIE_TARGET_API_URL])) {
+      logger.info(`[reconcile] Analytics auth for ${marker.baseUrl} marked invalid (${marker.reason}); its records wait for a re-login`);
+      return false;
+    }
+  }
+  const { endMetricCookieHeader } = await import('@/cli/commands/hook/end-metric.js');
+  return (await endMetricCookieHeader(env.CODEMIE_URL ?? '', recordHookConfig(record, env, { deliver: true }))) !== undefined;
+}
+
+/** This launch's env, and its credential answer looked up once per provider for the pass that holds it. */
+interface Launch {
+  env: NodeJS.ProcessEnv;
+  hasCredentials(record: Session): Promise<boolean>;
+}
+
+/**
+ * The answer depends only on this launch's URL and the record's provider, so a pass reuses it. A
+ * lookup that fails is no credentials: the records wait, the pass goes on.
+ */
+function launchOf(env: NodeJS.ProcessEnv): Launch {
+  const answers = new Map<string | undefined, Promise<boolean>>();
+  return {
+    env,
+    hasCredentials(record) {
+      let answer = answers.get(record.provider);
+      if (!answer) {
+        answer = hasCredentials(record, env).catch((error: unknown) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.warn(`[reconcile] Credential lookup for provider ${record.provider} failed; counted as no credentials: ${msg}`);
+          return false;
+        });
+        answers.set(record.provider, answer);
+      }
+      return answer;
+    },
+  };
+}
+
+/** This launch can deliver the record: same CodeMie host, a send path and credentials. */
+async function canDeliver(record: Session, launch: Launch): Promise<boolean> {
+  return sameHost(record, launch.env) && hasSendPath(launch.env) && (await launch.hasCredentials(record));
+}
+
+async function classifyRecord(record: Session, launch: Launch, now: number): Promise<RecordKind | undefined> {
   if (record.status === 'active') {
     if (record.ownerPid !== undefined) {
       if (await isOwnerAlive({ pid: record.ownerPid, startedAt: record.ownerStartedAt })) return undefined;
@@ -182,8 +236,8 @@ async function classifyRecord(record: Session, env: NodeJS.ProcessEnv, now: numb
     }
     if (!record.codemieUrl) return 'unqueued';
     // Another host's record is delivered by a launch against that host; a launch that cannot
-    // send leaves it for one that can, without spending a slot of the cap on it
-    return sameHost(record, env) && hasSendPath(env) ? 'undelivered' : undefined;
+    // send, or has no credentials, leaves it for one that can, without spending a slot of the cap on it
+    return (await canDeliver(record, launch)) ? 'undelivered' : undefined;
   }
   return undefined;
 }
@@ -229,9 +283,28 @@ async function beginAttempt(
   return { attempt: { sessionId: record.sessionId, field, before, signal }, exhausted };
 }
 
-/** An attempt stopped by the abort / deadline before any send is not an attempt: its counter goes back. */
+/** An attempt stopped by the pass's abort before any send is not an attempt: its counter goes back. */
 async function rollBackAttempt(attempt: Attempt): Promise<void> {
   if (sendWasAttempted(attempt.signal)) return;
+  await restoreCounter(attempt, 'attempt stopped before any send');
+}
+
+/**
+ * Settles an attempt that ran to its end or threw: rejected credentials anywhere in it, or an abort of
+ * the pass before any send, put its counter back; any other outcome keeps it counted — the attempt's
+ * own deadline expiring included, so a record that always runs past it reaches its last attempt.
+ */
+async function settleAttempt(attempt: Attempt, aborted: boolean): Promise<void> {
+  if (authWasRejected(attempt.signal)) {
+    // Rejected credentials are no attempt: the record waits for a re-login
+    await restoreCounter(attempt, 'credentials rejected by the server');
+  } else if (aborted) {
+    await rollBackAttempt(attempt);
+  }
+}
+
+/** Puts the attempt's counter back to its value before the attempt. */
+async function restoreCounter(attempt: Attempt, why: string): Promise<void> {
   const store = new SessionStore();
   const record = await store.loadSession(attempt.sessionId);
   if (!record) return;
@@ -242,12 +315,12 @@ async function rollBackAttempt(attempt: Attempt): Promise<void> {
     restored[attempt.field] = attempt.before;
   }
   await store.saveSession(restored);
-  logger.info(`[reconcile] ${attempt.sessionId}: attempt stopped before any send; ${attempt.field} rolled back`);
+  logger.info(`[reconcile] ${attempt.sessionId}: ${why}; ${attempt.field} rolled back`);
 }
 
 interface AttemptOptions {
   kind: RecordKind;
-  env: NodeJS.ProcessEnv;
+  launch: Launch;
   pipeline: HookPipeline;
   /** The attempt's requests stop with it */
   parent: AbortSignal;
@@ -295,16 +368,16 @@ async function closeWithoutAttempt(record: Session, kind: RecordKind, pipeline: 
  * finalize past its attempts failed and the record was closed locally instead.
  */
 async function finalizeRecord(record: Session, options: AttemptOptions, signal: AbortSignal, exhausted: boolean): Promise<boolean> {
-  const { kind, env, pipeline, deadlineMs } = options;
+  const { kind, launch, pipeline, deadlineMs } = options;
   const id = record.sessionId;
-  const deliver = kind === 'stranded' && sameHost(record, env) && hasSendPath(env);
+  const deliver = kind === 'stranded' && (await canDeliver(record, launch));
   if (exhausted) {
     logger.warn(`[reconcile] ${id}: ${kind} after ${MAX_ATTEMPTS} attempts; finalized without the flush`);
   }
   logger.info(`[reconcile] ${id}: ${kind} ${record.agentName} record; finalizing${deliver ? ' and delivering' : ' locally'}`);
   const event = await syntheticSessionEnd(record, { flush: !exhausted });
   try {
-    await pipeline.processEvent(event, recordHookConfig(record, env, { deliver, abortSignal: signal, deadlineMs }));
+    await pipeline.processEvent(event, recordHookConfig(record, launch.env, { deliver, abortSignal: signal, deadlineMs }));
   } catch (error) {
     if (!exhausted) throw error;
     await closeExhaustedLocally(id, error, pipeline, deliver);
@@ -318,7 +391,7 @@ async function finalizeRecord(record: Session, options: AttemptOptions, signal: 
 
 /** One attempt on a record whose lock the caller holds. */
 async function attemptRecord(record: Session, options: AttemptOptions): Promise<void> {
-  const { kind, env, pipeline, parent, deadlineMs } = options;
+  const { kind, launch, pipeline, parent, deadlineMs } = options;
   const id = record.sessionId;
   if (await closeWithoutAttempt(record, kind, pipeline)) return;
 
@@ -326,34 +399,34 @@ async function attemptRecord(record: Session, options: AttemptOptions): Promise<
   const follow = () => controller.abort();
   parent.addEventListener('abort', follow, { once: true });
   if (parent.aborted) controller.abort();
-  const stopped = () => controller.signal.aborted || (deadlineMs !== undefined && Date.now() >= deadlineMs);
 
   try {
     const field = kind === 'undelivered' ? 'deliveryAttempts' : 'finalizeAttempts';
     const { attempt, exhausted } = await beginAttempt(record, field, controller.signal);
-
-    if (kind === 'undelivered') {
-      if (exhausted) {
-        logger.warn(`[reconcile] ${id}: undelivered after ${MAX_ATTEMPTS} attempts; renamed without sending`);
-        await markDroppedIfUndelivered(id);
-        await pipeline.renameSessionFiles(id);
+    let closedLocally = false;
+    try {
+      if (kind === 'undelivered') {
+        if (exhausted) {
+          logger.warn(`[reconcile] ${id}: undelivered after ${MAX_ATTEMPTS} attempts; renamed without sending`);
+          await markDroppedIfUndelivered(id);
+          await pipeline.renameSessionFiles(id);
+        } else {
+          logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
+          await pipeline.deliverSession(id, recordHookConfig(record, launch.env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
+        }
       } else {
-        logger.info(`[reconcile] ${id}: undelivered … redeliver(attempt ${(attempt.before ?? 0) + 1}/${MAX_ATTEMPTS})`);
-        await pipeline.deliverSession(id, recordHookConfig(record, env, { deliver: true, abortSignal: controller.signal, deadlineMs }));
+        closedLocally = await finalizeRecord(record, options, controller.signal, exhausted);
       }
-    } else if (await finalizeRecord(record, options, controller.signal, exhausted)) {
-      return;
-    }
-
-    if (stopped()) {
-      await rollBackAttempt(attempt);
+    } finally {
+      // Also on a throw: a flush cut by the pass's abort or met by rejected credentials is no attempt
+      if (!closedLocally) await settleAttempt(attempt, controller.signal.aborted);
     }
   } finally {
     parent.removeEventListener('abort', follow);
   }
 }
 
-async function listCandidates(env: NodeJS.ProcessEnv, ownSessionId: string): Promise<Session[]> {
+async function listCandidates(launch: Launch, ownSessionId: string): Promise<Session[]> {
   const sessionsDir = getCodemiePath('sessions');
   let names: string[];
   try {
@@ -373,7 +446,7 @@ async function listCandidates(env: NodeJS.ProcessEnv, ownSessionId: string): Pro
       continue;
     }
     if (record.sessionId !== name.slice(0, -'.json'.length) || record.sessionId === ownSessionId) continue;
-    if (await classifyRecord(record, env, now)) candidates.push(record);
+    if (await classifyRecord(record, launch, now)) candidates.push(record);
   }
   return candidates
     .sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0))
@@ -383,7 +456,7 @@ async function listCandidates(env: NodeJS.ProcessEnv, ownSessionId: string): Pro
 /** One record of the start pass under its reconcile lock, skipped when another process holds it. */
 async function attemptLocked(
   id: string,
-  env: NodeJS.ProcessEnv,
+  launch: Launch,
   pipeline: HookPipeline,
   parent: AbortSignal,
   budgetMs: number
@@ -397,12 +470,12 @@ async function attemptLocked(
     if (parent.aborted) return;
     // Re-checked under the lock: another process may have handled it meanwhile
     const record = await readLiveRecord(id);
-    const kind = record ? await classifyRecord(record, env, Date.now()) : undefined;
+    const kind = record ? await classifyRecord(record, launch, Date.now()) : undefined;
     if (!record || !kind) {
       logger.debug(`[reconcile] ${id}: no longer needs handling`);
       return;
     }
-    await attemptRecord(record, { kind, env, pipeline, parent, deadlineMs: Date.now() + budgetMs });
+    await attemptRecord(record, { kind, launch, pipeline, parent, deadlineMs: Date.now() + budgetMs });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.warn(`[reconcile] ${id}: failed: ${msg}`);
@@ -425,14 +498,15 @@ export function reconcileOtherSessions(ctx: ReconcileContext): ReconcilePass {
 
   const run = async (): Promise<void> => {
     const pipeline = await loadHookPipeline(ctx.pipeline);
-    const candidates = await listCandidates(ctx.env, ctx.ownSessionId);
+    const launch = launchOf(ctx.env);
+    const candidates = await listCandidates(launch, ctx.ownSessionId);
     if (candidates.length > 0) {
       logger.info(`[reconcile] ${candidates.length} record(s) to finalize or deliver`);
     }
 
     for (const listed of candidates) {
       if (controller.signal.aborted) return;
-      await attemptLocked(listed.sessionId, ctx.env, pipeline, controller.signal, EXIT_NETWORK_BUDGET_MS);
+      await attemptLocked(listed.sessionId, launch, pipeline, controller.signal, EXIT_NETWORK_BUDGET_MS);
     }
   };
 
@@ -480,14 +554,15 @@ export async function finalizeOwnRecord(sessionId: string, ctx: OwnRecordContext
     const record = await readLiveRecord(sessionId);
     if (!record) return;
     const pipeline = await loadHookPipeline(ctx.pipeline);
+    const launch = launchOf(ctx.env);
     if (record.status === 'active') {
       logger.info(`[reconcile] Own record ${sessionId} still active at exit; finalizing it`);
       const event = await syntheticSessionEnd(record, { flush: true });
       await pipeline.processEvent(event, recordHookConfig(record, ctx.env, { deliver: true, deadlineMs: ctx.deadlineMs }));
-    } else if (record.status === 'completed' && hasSendPath(ctx.env)) {
+    } else if (record.status === 'completed' && hasSendPath(ctx.env) && (await launch.hasCredentials(record))) {
       await attemptRecord(record, {
         kind: 'undelivered',
-        env: ctx.env,
+        launch,
         pipeline,
         parent: new AbortController().signal,
         deadlineMs: ctx.deadlineMs,

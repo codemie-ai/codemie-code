@@ -110,7 +110,8 @@ export async function reclaimStaleLock(path: string, stale: string | null): Prom
   try {
     await putBackLock(aside, path);
   } catch (error) {
-    logger.debug(`[reclaimStaleLock] Could not put ${aside} back to ${path}:`, error);
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn(`[reclaimStaleLock] Could not put the lock ${aside} back to ${path}: ${reason}`);
   }
   return false;
 }
