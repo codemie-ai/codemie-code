@@ -13,7 +13,9 @@
       temporary file in each probed directory (disable with -NoWriteProbe);
     - temporary gpresult XML files under %TEMP% (deleted after parsing);
     - running read-only commands: node/npm --version, npm config, npm view,
-      codemie --version, codemie doctor (disable with -SkipDoctor), gpresult.
+      vswhere, python/py --version, node -e "require(keytar.node)" (load test
+      of an installed keytar binary), codemie --version, codemie doctor
+      (disable with -SkipDoctor), gpresult.
 
   Secrets (API keys, tokens, passwords, cookies, npm auth, proxy credentials)
   and e-mail addresses are masked in the report.
@@ -93,7 +95,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
-$ScriptVersion = '2026.10.16.4'
+$ScriptVersion = '2026.11.02.1'
 $PackageName = '@codemieai/code'
 $MinimumNodeMajor = 20
 $MinimumWindowsMajor = 10
@@ -127,6 +129,24 @@ $IntegrityLevels = @{
   'S-1-16-16384' = 'System'
 }
 $SensitiveNamePattern = '(?i)(key|token|secret|password|passwd|pwd|auth|cookie|credential)'
+$VcToolsComponents = @{
+  'x64'   = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+  'ia32'  = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+  'arm64' = 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+}
+$WindowsSdkPattern = '^Microsoft\.VisualStudio\.Component\.Windows(10|11)SDK(\.\d+)?$'
+$VsYears = @{ 15 = '2017'; 16 = '2019'; 17 = '2022'; 18 = '2026' }
+$BuildToolsInstallHint = 'winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" (elevated)'
+$NodeManagerPatterns = @(
+  @{ Pattern = '(?i)[\\/](nvm|nvm4w)[\\/]'; Name = 'nvm-windows' },
+  @{ Pattern = '(?i)[\\/]\.?nvs[\\/]'; Name = 'nvs' },
+  @{ Pattern = '(?i)[\\/](fnm|fnm_multishells)[\\/]'; Name = 'fnm' },
+  @{ Pattern = '(?i)[\\/]\.?volta[\\/]'; Name = 'Volta' },
+  @{ Pattern = '(?i)[\\/]nodist[\\/]'; Name = 'nodist' },
+  @{ Pattern = '(?i)[\\/]scoop[\\/]'; Name = 'Scoop' },
+  @{ Pattern = '(?i)[\\/]chocolatey[\\/]'; Name = 'Chocolatey' },
+  @{ Pattern = '(?i)[\\/]WinGet[\\/]Packages[\\/]'; Name = 'winget (portable package)' }
+)
 
 $Script:OnWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ($IsWindows -eq $true)
 $Script:Results = New-Object System.Collections.Generic.List[object]
@@ -143,6 +163,11 @@ $Script:Ctx = @{
   LiteralVarEntries = New-Object System.Collections.Generic.List[object]
   EntraJoined   = $false
   MdmEnrolled   = $false
+  NodeVersion   = ''
+  NodeArch      = ''
+  GitHubReachable = $null
+  BuildToolingSummary = ''
+  PackageDirs   = New-Object System.Collections.Generic.List[string]
 }
 
 # ============================================================================
@@ -454,7 +479,7 @@ function Resolve-NodeAndNpm {
 }
 
 function Get-NpmConfigValue {
-  param([string]$Key)
+  param([string]$Key, [switch]$CachedOnly)
   if (-not $Script:Ctx.NpmPath) { return '' }
 
   if (-not $Script:Ctx.NpmConfigRead) {
@@ -470,7 +495,7 @@ function Get-NpmConfigValue {
     $prop = $Script:Ctx.NpmConfig.PSObject.Properties[$Key]
     if ($prop) { $value = $prop.Value }
   }
-  if ($null -eq $value) {
+  if ($null -eq $value -and -not ($CachedOnly -and $Script:Ctx.NpmConfig)) {
     $res = Invoke-External $Script:Ctx.NpmPath @('config', 'get', $Key) 30
     if ($res.ExitCode -eq 0) { $value = Get-FirstLine $res.StdOut }
   }
@@ -607,7 +632,10 @@ function Invoke-SystemRequirementsCheck {
       Add-Check 'Requirements' 'Node.js' 'OK' "$nodeVersion at $nodePath"
     }
     $archRes = Invoke-External $nodePath @('-p', 'process.arch') 30
-    Add-Check 'Requirements' 'Node.js architecture' 'INFO' (Get-FirstLine $archRes.StdOut)
+    $Script:Ctx.NodeVersion = $nodeVersion
+    $Script:Ctx.NodeArch = Get-FirstLine $archRes.StdOut
+    Add-Check 'Requirements' 'Node.js architecture' 'INFO' $Script:Ctx.NodeArch
+    Add-Check 'Requirements' 'Node.js install source' 'INFO' (Get-NodeInstallSource $nodePath)
   }
 
   $npmPath = $Script:Ctx.NpmPath
@@ -666,6 +694,7 @@ function Invoke-SystemRequirementsCheck {
   }
 
   $npmProxyForHttps = if ($npmHttpsProxy) { $npmHttpsProxy } else { $npmProxy }
+  $gitHubReachable = $true
   foreach ($url in $targets) {
     $uri = $null
     try { $uri = New-Object System.Uri($url) } catch { continue }
@@ -675,12 +704,15 @@ function Invoke-SystemRequirementsCheck {
     try { $systemProxy = [System.Net.WebRequest]::GetSystemWebProxy().GetProxy($uri) } catch { }
     $route = if ($systemProxy -and $systemProxy.AbsoluteUri -ne $uri.AbsoluteUri) { "via system proxy $(Protect-Url $systemProxy.AbsoluteUri)" } else { 'direct' }
 
+    $reachable = $false
     $probe = Test-HttpsEndpoint $url
     if ($probe.Reachable) {
+      $reachable = $true
       Add-Check 'Requirements' $label 'OK' "$($probe.Detail), $route"
     } elseif ($npmProxyForHttps) {
       $viaNpm = Test-HttpsEndpoint $url $npmProxyForHttps
       if ($viaNpm.Reachable) {
+        $reachable = $true
         Add-Check 'Requirements' $label 'OK' "$($viaNpm.Detail) via npm proxy (system route failed: $($probe.Detail))"
       } else {
         Add-Check 'Requirements' $label 'FAIL' "unreachable (${route}: $($probe.Detail); npm proxy: $($viaNpm.Detail))"
@@ -688,11 +720,13 @@ function Invoke-SystemRequirementsCheck {
     } else {
       Add-Check 'Requirements' $label 'FAIL' "unreachable ($route): $($probe.Detail)"
     }
+    if (-not $reachable -and ($GitHubTargets -contains $url)) { $gitHubReachable = $false }
 
     $tcpPort = if ($uri.Port -gt 0) { $uri.Port } else { 443 }
     $direct = Test-TcpEndpoint -HostName $uri.Host -Port $tcpPort
     Add-Check 'Requirements' "  direct TCP $($uri.Host):$tcpPort" 'INFO' $(if ($direct) { 'open' } else { 'blocked/unreachable (normal behind a mandatory proxy)' })
   }
+  $Script:Ctx.GitHubReachable = $gitHubReachable
 
   Write-SubHeader "Package visibility ($PackageName)"
   $viewRes = Invoke-External $npmPath @('view', $PackageName, 'version') 90
@@ -703,6 +737,247 @@ function Invoke-SystemRequirementsCheck {
   } else {
     $err = Protect-SensitiveText (Get-FirstLine (($viewRes.StdErr -split "`r?`n" | Where-Object { $_ -match 'npm (ERR|error)' }) -join "`n"))
     Add-Check 'Requirements' "npm view $PackageName" 'FAIL' "not visible via $(Protect-Url $effectiveRegistry): $err"
+  }
+}
+
+# ============================================================================
+# Section 1 (continued): Node.js install source and build tooling
+# ============================================================================
+
+function Get-NodeMsiRegistrations {
+  $found = New-Object System.Collections.Generic.List[object]
+  if (-not $Script:OnWindows) { return $found }
+
+  foreach ($sub in @('SOFTWARE\Node.js', 'SOFTWARE\WOW6432Node\Node.js')) {
+    $key = Open-RegistryKey 'HKLM' $sub
+    if ($null -eq $key) { continue }
+    try {
+      $path = [string](Get-RegistryValueSafe $key 'InstallPath')
+      if ($path) { $found.Add([PSCustomObject]@{ Path = $path; Version = [string](Get-RegistryValueSafe $key 'Version'); Source = "HKLM\$sub" }) }
+    } finally {
+      try { $key.Close() } catch { }
+    }
+  }
+
+  $uninstall = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+  foreach ($loc in @(@('HKLM', $uninstall), @('HKLM', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'), @('HKCU', $uninstall))) {
+    $root = Open-RegistryKey $loc[0] $loc[1]
+    if ($null -eq $root) { continue }
+    try {
+      foreach ($name in (Get-RegistrySubKeyNames $root)) {
+        $k = $null
+        try { $k = $root.OpenSubKey($name, $false) } catch { }
+        if ($null -eq $k) { continue }
+        try {
+          if ([string](Get-RegistryValueSafe $k 'DisplayName') -notmatch '^Node\.js\b') { continue }
+          $path = [string](Get-RegistryValueSafe $k 'InstallLocation')
+          $normalized = ConvertTo-NormalizedPath $path
+          if ($path -and ($found | Where-Object { (ConvertTo-NormalizedPath $_.Path) -eq $normalized })) { continue }
+          $found.Add([PSCustomObject]@{ Path = $path; Version = [string](Get-RegistryValueSafe $k 'DisplayVersion'); Source = "$($loc[0])\$($loc[1])\$name" })
+        } finally {
+          try { $k.Close() } catch { }
+        }
+      }
+    } finally {
+      try { $root.Close() } catch { }
+    }
+  }
+  return $found
+}
+
+function Get-NodeInstallSource {
+  param([string]$NodePath)
+  $nodeDir = Split-Path $NodePath -Parent
+  $realDir = $nodeDir
+  try {
+    $item = Get-Item -LiteralPath $nodeDir -Force -ErrorAction Stop
+    if ($item.LinkType -and $item.Target) { $realDir = [string](@($item.Target)[0]) }
+  } catch { }
+  $location = if ($realDir -ne $nodeDir) { "$nodeDir -> $realDir ($($item.LinkType))" } else { $nodeDir }
+
+  if ($env:NVM_HOME -and $realDir.StartsWith($env:NVM_HOME.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+    return "nvm-windows (NVM_HOME=$env:NVM_HOME), $location"
+  }
+  foreach ($manager in $NodeManagerPatterns) {
+    if ("$nodeDir;$realDir" -match $manager.Pattern) { return "$($manager.Name), $location" }
+  }
+
+  $targets = @((ConvertTo-NormalizedPath $nodeDir), (ConvertTo-NormalizedPath $realDir))
+  $msi = @(Get-NodeMsiRegistrations)
+  $match = $msi | Where-Object { $_.Path -and ($targets -contains (ConvertTo-NormalizedPath $_.Path)) } | Select-Object -First 1
+  $others = @($msi | Where-Object { $_.Path -and $_ -ne $match })
+  $othersText = if ($others.Count -gt 0) { "; other Node.js MSI registration(s): $(($others | ForEach-Object { "$($_.Version) at $($_.Path)" }) -join '; ')" } else { '' }
+
+  if ($match) {
+    $versionNote = ''
+    if ($match.Version -and $Script:Ctx.NodeVersion -and ("v$($match.Version.TrimStart('v'))" -notlike "$($Script:Ctx.NodeVersion)*")) {
+      $versionNote = " (registry says $($match.Version), node reports $($Script:Ctx.NodeVersion): files were replaced outside the installer)"
+    }
+    return "MSI installer (nodejs.org MSI, winget or software distribution; $($match.Source))$versionNote, $location$othersText"
+  }
+  if ($msi.Count -gt 0 -and $others.Count -eq 0) {
+    return "probably MSI installer (a Node.js uninstall entry exists without an install location: $(($msi | ForEach-Object { $_.Version }) -join ', ')), $location"
+  }
+  return "portable / unpacked archive (no version manager path and no Node.js MSI registration for this folder), $location$othersText"
+}
+
+function Get-VisualStudioInstances {
+  $vswhere = Join-PathSafe ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+  $result = [PSCustomObject]@{ VswherePath = $vswhere; Available = $false; Instances = @(); Error = '' }
+  if (-not $vswhere -or -not (Test-Path -LiteralPath $vswhere -PathType Leaf -ErrorAction SilentlyContinue)) { return $result }
+
+  $result.Available = $true
+  $res = Invoke-External $vswhere @('-products', '*', '-prerelease', '-include', 'packages', '-format', 'json', '-utf8') 90
+  if ($res.ExitCode -ne 0) {
+    $result.Error = "vswhere exit $($res.ExitCode): $(Get-FirstLine ($res.StdErr + $res.Error))"
+    return $result
+  }
+  try {
+    $parsed = $res.StdOut | ConvertFrom-Json
+    $result.Instances = @($parsed | ForEach-Object { $_ })
+  } catch {
+    $result.Error = "could not parse vswhere output: $($_.Exception.Message)"
+  }
+  return $result
+}
+
+function Find-Python {
+  $candidates = New-Object System.Collections.Generic.List[object]
+  $configured = Get-NpmConfigValue 'python' -CachedOnly
+  if ($configured) { $candidates.Add([PSCustomObject]@{ Label = 'npm config python'; Path = $configured; Arguments = @('--version'); Explicit = $true }) }
+  foreach ($name in @('NODE_GYP_FORCE_PYTHON', 'PYTHON')) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ($value) { $candidates.Add([PSCustomObject]@{ Label = "env:$name"; Path = $value; Arguments = @('--version'); Explicit = $true }) }
+  }
+  foreach ($name in @('python3.exe', 'python.exe')) {
+    foreach ($cmd in @(Get-Command $name -All -CommandType Application -ErrorAction SilentlyContinue)) {
+      $path = if ($cmd.Source) { $cmd.Source } else { $cmd.Path }
+      $candidates.Add([PSCustomObject]@{ Label = 'PATH'; Path = $path; Arguments = @('--version'); Explicit = $false })
+    }
+  }
+  $py = Get-CommandSource 'py.exe'
+  if ($py) { $candidates.Add([PSCustomObject]@{ Label = 'py launcher'; Path = $py; Arguments = @('-3', '--version'); Explicit = $false }) }
+  foreach ($pattern in @((Join-PathSafe $env:LOCALAPPDATA 'Programs\Python\Python3*\python.exe'), (Join-PathSafe $env:ProgramFiles 'Python3*\python.exe'))) {
+    if (-not $pattern) { continue }
+    Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object {
+      $candidates.Add([PSCustomObject]@{ Label = 'default install location'; Path = $_.FullName; Arguments = @('--version'); Explicit = $false })
+    }
+  }
+
+  $outcome = [PSCustomObject]@{ Found = $null; Broken = New-Object System.Collections.Generic.List[string]; StoreStub = $false; Checked = 0 }
+  $seen = @{}
+  foreach ($candidate in $candidates) {
+    $key = "$(ConvertTo-NormalizedPath $candidate.Path)|$($candidate.Arguments -join ' ')"
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    $outcome.Checked++
+
+    $res = Invoke-External $candidate.Path $candidate.Arguments 30
+    $text = "$($res.StdOut) $($res.StdErr)"
+    if ($res.ExitCode -eq 0 -and $text -match 'Python (\d+)\.(\d+)(?:\.(\d+))?') {
+      if ([int]$Matches[1] -ge 3) {
+        $outcome.Found = [PSCustomObject]@{ Version = $Matches[0]; Path = $candidate.Path; Label = $candidate.Label }
+        return $outcome
+      }
+      $outcome.Broken.Add("$($candidate.Path) is $($Matches[0]) (node-gyp needs Python 3)")
+    } elseif ($candidate.Path -like '*\WindowsApps\*') {
+      $outcome.StoreStub = $true
+    } elseif ($candidate.Explicit) {
+      $outcome.Broken.Add("$($candidate.Label)=$($candidate.Path) does not run: $(Get-FirstLine ($res.StdErr + $res.Error))")
+    }
+  }
+  return $outcome
+}
+
+function Show-BuildTooling {
+  Write-SubHeader 'Build tooling (node-gyp fallback build for native modules such as keytar)'
+  if (-not $Script:OnWindows) {
+    Add-Check 'Requirements' 'Build tooling' 'INFO' 'Windows-only check; skipped on this platform'
+    return
+  }
+
+  # keytar ships a prebuilt binary on GitHub Releases (fetched by prebuild-install);
+  # node-gyp only runs when that download fails or is disabled.
+  $buildFromSource = $false
+  if ($Script:Ctx.NpmPath) {
+    foreach ($key in @('build-from-source', 'build_from_source')) {
+      if ((Get-NpmConfigValue $key -CachedOnly) -eq 'true') { $buildFromSource = $true }
+    }
+    if ($buildFromSource) {
+      Add-Check 'Requirements' 'npm build-from-source' 'WARN' 'true: prebuilt binaries are never downloaded, every native module is compiled locally with node-gyp'
+    }
+    foreach ($key in @('keytar_binary_host', 'keytar_binary_host_mirror', 'msvs_version')) {
+      $value = Get-NpmConfigValue $key -CachedOnly
+      if ($value) { Add-Check 'Requirements' "npm $key" 'INFO' (Protect-Url $value) }
+    }
+  }
+
+  $prebuiltReason = if ($buildFromSource) { 'npm build-from-source=true disables prebuilt downloads' }
+    elseif ($Script:Ctx.GitHubReachable -eq $false) { 'GitHub Releases (github.com / objects.githubusercontent.com) is unreachable, so the prebuilt keytar binary cannot be downloaded' }
+    elseif ($null -eq $Script:Ctx.GitHubReachable) { 'GitHub Releases reachability was not checked' }
+    else { '' }
+  $buildRequired = $buildFromSource -or ($Script:Ctx.GitHubReachable -eq $false)
+  $missingStatus = if ($prebuiltReason) { 'WARN' } else { 'INFO' }
+
+  $arch = if ($Script:Ctx.NodeArch -and $VcToolsComponents.ContainsKey($Script:Ctx.NodeArch)) { $Script:Ctx.NodeArch } else { 'x64' }
+  $vcComponent = $VcToolsComponents[$arch]
+  $vs = Get-VisualStudioInstances
+  $vsReady = $null
+  if (-not $vs.Available) {
+    Add-Check 'Requirements' 'Visual Studio / Build Tools' $missingStatus "not installed (no Visual Studio Installer at $($vs.VswherePath))"
+  } elseif ($vs.Error) {
+    Add-Check 'Requirements' 'Visual Studio / Build Tools' 'WARN' $vs.Error
+  } elseif ($vs.Instances.Count -eq 0) {
+    Add-Check 'Requirements' 'Visual Studio / Build Tools' $missingStatus 'Visual Studio Installer is present, but no Visual Studio 2017+ / Build Tools instance is installed'
+  } else {
+    foreach ($inst in $vs.Instances) {
+      $ids = @($inst.packages | ForEach-Object { [string]$_.id })
+      $missing = @()
+      if ($ids -notcontains $vcComponent) { $missing += "MSVC C++ build tools for $arch ($vcComponent)" }
+      if (-not ($ids | Where-Object { $_ -match $WindowsSdkPattern })) { $missing += 'Windows 10/11 SDK' }
+      if ($inst.isComplete -eq $false) { $missing += 'instance is incomplete (repair it in Visual Studio Installer)' }
+
+      $major = 0
+      if ("$($inst.installationVersion)" -match '^(\d+)\.') { $major = [int]$Matches[1] }
+      $year = if ($VsYears.ContainsKey($major)) { $VsYears[$major] } else { "version $major" }
+      $label = "VS $year ($($inst.productId -replace '^Microsoft\.VisualStudio\.Product\.', ''))"
+      $detail = "$($inst.displayName) $($inst.installationVersion) at $($inst.installationPath)"
+      if ($missing.Count -eq 0) {
+        if (-not $vsReady) { $vsReady = $inst }
+        $note = if ($major -gt 17) { '; node-gyp bundled with older npm versions may not detect this Visual Studio version' } else { '' }
+        Add-Check 'Requirements' $label 'OK' "$detail, C++ workload and Windows SDK present$note"
+      } else {
+        Add-Check 'Requirements' $label $missingStatus "$detail; missing: $($missing -join ', ')"
+      }
+    }
+  }
+
+  $python = Find-Python
+  foreach ($broken in $python.Broken) { Add-Check 'Requirements' 'Python (configured)' 'WARN' $broken }
+  if ($python.Found) {
+    Add-Check 'Requirements' 'Python (node-gyp)' 'OK' "$($python.Found.Version) at $($python.Found.Path) (via $($python.Found.Label))"
+  } else {
+    $stub = if ($python.StoreStub) { '; python.exe in WindowsApps is the Microsoft Store installer alias, not a real Python' } else { '' }
+    Add-Check 'Requirements' 'Python (node-gyp)' $missingStatus "no working Python 3 found ($($python.Checked) candidate(s) checked)$stub"
+  }
+
+  $missingTools = @()
+  if (-not $vsReady) { $missingTools += 'Visual Studio Build Tools with the C++ workload (MSVC + Windows SDK)' }
+  if (-not $python.Found) { $missingTools += 'Python 3' }
+  $fix = "Fix: allow github.com and objects.githubusercontent.com through the proxy (or point npm config keytar_binary_host at an internal mirror), or install the build tools: $BuildToolsInstallHint$(if (-not $python.Found) { ' and Python 3 (winget install Python.Python.3.12)' })"
+
+  if ($missingTools.Count -eq 0) {
+    $Script:Ctx.BuildToolingSummary = 'node-gyp build tooling is installed'
+    Add-Check 'Requirements' 'Native build fallback (node-gyp)' 'OK' "possible: $($vsReady.displayName) $($vsReady.installationVersion), $($python.Found.Version)"
+  } elseif ($buildRequired) {
+    $Script:Ctx.BuildToolingSummary = "$prebuiltReason, and the node-gyp fallback build needs $($missingTools -join ' and ')"
+    Add-Check 'Requirements' 'Native build fallback (node-gyp)' 'FAIL' "installing $PackageName will fail on keytar: $($Script:Ctx.BuildToolingSummary). $fix"
+  } elseif ($prebuiltReason) {
+    $Script:Ctx.BuildToolingSummary = "the node-gyp fallback build needs $($missingTools -join ' and ') ($prebuiltReason)"
+    Add-Check 'Requirements' 'Native build fallback (node-gyp)' 'WARN' "not possible, missing $($missingTools -join ' and '). If the prebuilt keytar download from GitHub Releases fails, installing $PackageName fails. $fix"
+  } else {
+    $Script:Ctx.BuildToolingSummary = "the node-gyp fallback build needs $($missingTools -join ' and '), but GitHub Releases is reachable for the prebuilt binary"
+    Add-Check 'Requirements' 'Native build fallback (node-gyp)' 'INFO' "not possible (missing $($missingTools -join ' and ')); not needed while the prebuilt keytar binary can be downloaded from GitHub Releases"
   }
 }
 
@@ -1228,6 +1503,7 @@ function Show-PackageInstallations {
       try { $version = (Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json).version } catch { }
       $label = if ((ConvertTo-NormalizedPath $dir) -eq (ConvertTo-NormalizedPath $npmGlobalRoot)) { 'npm global root' } else { 'node_modules' }
       Add-Check 'Installation' "Package ($label)" 'OK' "$version at $(Split-Path $pkgJson -Parent)"
+      $Script:Ctx.PackageDirs.Add((Split-Path $pkgJson -Parent))
     }
   }
 
@@ -1504,6 +1780,7 @@ function Search-CodemieFilesystem {
     $version = ''
     try { $version = (Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json).version } catch { }
     Add-Check 'Installation' 'Found package' 'OK' "$version at $pkg"
+    $Script:Ctx.PackageDirs.Add($pkg)
   }
 
   $uniqueHits = @($hits | Select-Object -Unique)
@@ -1524,6 +1801,92 @@ function Search-CodemieFilesystem {
   return $uniqueHits
 }
 
+function Find-KeytarDir {
+  param([string]$PackageDir)
+  $nested = Join-Path (Join-Path $PackageDir 'node_modules') 'keytar'
+  $hoisted = Join-Path (Split-Path (Split-Path $PackageDir -Parent) -Parent) 'keytar'
+  foreach ($candidate in @($nested, $hoisted)) {
+    if (Test-Path -LiteralPath (Join-Path $candidate 'package.json') -ErrorAction SilentlyContinue) { return $candidate }
+  }
+  return ''
+}
+
+function Test-KeytarModule {
+  param([string]$PackageDir)
+  $fallback = 'CodeMie then stores SSO credentials in an encrypted file instead of Windows Credential Manager'
+  $keytarDir = Find-KeytarDir $PackageDir
+  if (-not $keytarDir) {
+    Add-Check 'Installation' 'keytar native module' 'WARN' "keytar is missing for $PackageDir; $fallback. Reinstall $PackageName"
+    return
+  }
+
+  $version = ''
+  try { $version = (Get-Content -LiteralPath (Join-Path $keytarDir 'package.json') -Raw | ConvertFrom-Json).version } catch { }
+  $buildDir = Join-Path $keytarDir 'build'
+  $binary = Join-Path (Join-Path $buildDir 'Release') 'keytar.node'
+  if (-not (Test-Path -LiteralPath $binary -PathType Leaf -ErrorAction SilentlyContinue)) {
+    $tooling = if ($Script:Ctx.BuildToolingSummary) { " Build tooling: $($Script:Ctx.BuildToolingSummary) (see section 1)." } else { '' }
+    Add-Check 'Installation' 'keytar native module' 'WARN' "keytar $version at $keytarDir has no build\Release\keytar.node: neither the prebuilt binary from GitHub Releases (prebuild-install) nor the node-gyp fallback build succeeded; $fallback.$tooling"
+    return
+  }
+
+  $builtLocally = (Test-Path -LiteralPath (Join-Path $buildDir 'config.gypi') -ErrorAction SilentlyContinue) -or
+    [bool](Get-ChildItem -LiteralPath $buildDir -Filter '*.vcxproj' -File -ErrorAction SilentlyContinue | Select-Object -First 1)
+  $origin = if ($builtLocally) { 'built locally by node-gyp' } else { 'prebuilt binary' }
+  if (-not $Script:Ctx.NodePath) {
+    Add-Check 'Installation' 'keytar native module' 'OK' "keytar $version, $origin, at $binary (load test skipped: node not found)"
+    return
+  }
+
+  $load = Invoke-External $Script:Ctx.NodePath @('-e', 'require(process.argv[1])', $binary) 30
+  if ($load.ExitCode -eq 0) {
+    Add-Check 'Installation' 'keytar native module' 'OK' "keytar $version, $origin, loads in node $($Script:Ctx.NodeVersion): $binary"
+  } else {
+    $errLine = @(($load.StdErr + "`n" + $load.Error) -split "`r?`n" | Where-Object { $_ -match 'Error' }) | Select-Object -First 1
+    if (-not $errLine) { $errLine = Get-FirstLine ($load.StdErr + $load.Error) }
+    Add-Check 'Installation' 'keytar native module' 'WARN' "keytar $version ($origin) at $binary does not load in node $($Script:Ctx.NodeVersion) $($Script:Ctx.NodeArch): $($errLine.Trim()); $fallback. Reinstall $PackageName with the same Node.js that runs it"
+  }
+}
+
+function Show-NpmInstallLogs {
+  if (-not $Script:Ctx.NpmPath) { return }
+  $logsDir = Get-NpmConfigValue 'logs-dir' -CachedOnly
+  if (-not $logsDir) {
+    $cache = Get-NpmConfigValue 'cache' -CachedOnly
+    if ($cache) { $logsDir = Join-Path $cache '_logs' }
+  }
+  if (-not $logsDir -or -not (Test-Path -LiteralPath $logsDir -PathType Container -ErrorAction SilentlyContinue)) {
+    Add-Check 'Installation' 'npm debug logs' 'INFO' "not found$(if ($logsDir) { " ($logsDir)" })"
+    return
+  }
+
+  $logs = @(Get-ChildItem -LiteralPath $logsDir -Filter '*-debug-*.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20)
+  $pattern = '(?i)gyp ERR!|prebuild-install (warn|err)|could not find any Visual Studio|find Python|keytar.*(fail|error)'
+  foreach ($log in $logs) {
+    $hits = @(Select-String -LiteralPath $log.FullName -Pattern $pattern -ErrorAction SilentlyContinue)
+    if ($hits.Count -eq 0) { continue }
+    Add-Check 'Installation' 'npm log: native build errors' 'WARN' "$($log.FullName) ($('{0:yyyy-MM-dd HH:mm}' -f $log.LastWriteTime)): $($hits.Count) node-gyp/prebuild-install line(s), may be from any package"
+    Write-Host "    --- first lines (secrets and e-mails masked) ---"
+    $hits | Select-Object -First 20 | ForEach-Object { Write-Host "    $(Protect-SensitiveText $_.Line.Trim())" }
+    Write-Host '    --- end ---'
+    return
+  }
+  Add-Check 'Installation' 'npm debug logs' 'OK' "no node-gyp/prebuild-install errors in the last $($logs.Count) log(s) in $logsDir"
+}
+
+function Show-NativeModules {
+  Write-SubHeader 'Native modules (keytar)'
+  $packageDirs = New-Object System.Collections.Generic.List[string]
+  foreach ($dir in $Script:Ctx.PackageDirs) {
+    if (-not ($packageDirs | Where-Object { (ConvertTo-NormalizedPath $_) -eq (ConvertTo-NormalizedPath $dir) })) { $packageDirs.Add($dir) }
+  }
+  if ($packageDirs.Count -eq 0) {
+    Add-Check 'Installation' 'keytar native module' 'INFO' "no installed $PackageName package to inspect; if 'npm install' failed on keytar, see Build tooling in section 1 and the npm log below"
+  }
+  foreach ($dir in $packageDirs) { Test-KeytarModule $dir }
+  Show-NpmInstallLogs
+}
+
 function Invoke-InstallationStateCheck {
   Write-SectionHeader '3. codemie-cli Installation State'
 
@@ -1534,6 +1897,7 @@ function Invoke-InstallationStateCheck {
   if ($executable) { $shimPackage = Show-ShimChain $executable }
 
   $Script:Ctx.PackagesFound = 0
+  $Script:Ctx.PackageDirs = New-Object System.Collections.Generic.List[string]
   Invoke-Section 'Installed packages' { Show-PackageInstallations -ResolvedCommands $resolved -ExtraPackageDirs @($shimPackage) }
   Invoke-Section 'Configuration' { Show-Configuration }
 
@@ -1546,6 +1910,7 @@ function Invoke-InstallationStateCheck {
       if (-not $executable) { $executable = Get-PreferredCodemieExecutable $hits }
     }
   }
+  Invoke-Section 'Native modules' { Show-NativeModules }
 
   if ($executable) {
     Invoke-CodemieCommands $executable
@@ -2011,6 +2376,7 @@ try {
 
   Invoke-Section 'Node/npm resolution' { Resolve-NodeAndNpm }
   Invoke-Section '1. System Requirements' { Invoke-SystemRequirementsCheck }
+  Invoke-Section '1. Build tooling' { Show-BuildTooling }
   Invoke-Section '2. Current User Rights' { Invoke-UserRightsCheck }
   Invoke-Section '3. Installation State' { Invoke-InstallationStateCheck }
 
