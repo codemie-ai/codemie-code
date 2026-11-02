@@ -3,11 +3,12 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent, ModelTimelinePoint } from '../cost/types.js';
+import type { ChangeRequestCreationEvidence, TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent, ModelTimelinePoint } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
 /** One flat record per session — the client aggregates everything from these. */
 export interface ReportSessionRecord {
+  changeRequestCreation?: ChangeRequestCreationEvidence;
   sessionId: string;
   agentName: string;
   provider: string;

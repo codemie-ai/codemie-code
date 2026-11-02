@@ -189,7 +189,15 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     try {
       // Read main session JSONL file: `messages` (keep-last, for metrics, `extractMetrics`,
       // the `codemie analytics` / cost readers) and `conversationMessages` (for the conversation sync)
-      const counted = (await readJSONL<ClaudeMessage>(filePath)).filter(isCountedTranscriptLine);
+      let counted: ClaudeMessage[];
+      let rootUnavailable = false;
+      try {
+        counted = (await readJSONL<ClaudeMessage>(filePath, { allowMissing: false })).filter(isCountedTranscriptLine);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        counted = [];
+        rootUnavailable = true;
+      }
       const messages = this.dedupeByUuid(counted);
       const conversationMessages = keepFirstAcrossCompaction(counted);
 
@@ -206,6 +214,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
           },
           messages: [],
           conversationMessages: [],
+          ...(rootUnavailable && { transcriptMeta: { rootUnavailable: true } }),
           metrics: {
             tools: {},
             toolStatus: {},
@@ -246,6 +255,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
       // CRITICAL: Discover and parse ALL sub-agent files
       const subagentFiles = await this.findSubagentFiles(filePath);
+      let transcriptPartial = false;
       const subagents: Array<{
         agentId: string;
         slug?: string;
@@ -262,7 +272,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       for (const subagentFile of subagentFiles) {
         try {
           const subagentMessages = this.dedupeByUuid(
-            (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
+            (await readJSONL<ClaudeMessage>(subagentFile.filePath, { allowMissing: false })).filter(isCountedTranscriptLine)
           );
           subagents.push({
             agentId: subagentFile.agentId,
@@ -280,6 +290,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
             `[claude-adapter] Parsed sub-agent ${subagentFile.agentId}: ${subagentMessages.length} messages`
           );
         } catch (error) {
+          transcriptPartial = true;
           logger.warn(
             `[claude-adapter] Failed to parse sub-agent file ${subagentFile.filePath}:`,
             error
@@ -300,6 +311,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         messages,  // Keep-last view for metrics, extractMetrics and the codemie analytics / cost readers
         conversationMessages,  // Read by the conversation sync
         subagents: subagents.length > 0 ? subagents : undefined, // Include sub-agents if any
+        ...(transcriptPartial && { transcriptMeta: { partial: true } }),
         metrics    // Extracted metrics for metrics processor
       };
 

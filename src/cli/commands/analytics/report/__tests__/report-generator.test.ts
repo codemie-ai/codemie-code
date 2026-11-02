@@ -19,6 +19,10 @@ describe('renderReportHtml', () => {
     const tokens = { input: 80, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 80 };
     const session = { sessionId: 'snapshot', agentName: 'claude', provider: 'native', startTime: start, duration: 1, models: [], languages: [], tools: [] };
     const cost = { sessionId: 'snapshot', tokens, costUSD: 2, perModel: [], priced: true, hadLog: true,
+      changeRequestCreation: { status: 'available', events: [
+        { type: 'pr_created', provider: 'github', host: 'github.com', repository: 'team/repo', number: 36, url: 'https://github.com/team/repo/pull/36', timestamp: '2026-10-22T10:00:01.000Z', source: 'gh_cli', toolUseId: 'gh-1', owner: 'root', raw: 'PRIVATE_BODY' },
+        { type: 'mr_created', provider: 'gitlab', host: 'gitlab.com', repository: 'team/sub/repo', number: 4, url: 'https://gitlab.com/team/sub/repo/-/merge_requests/4', timestamp: '2026-10-22T10:00:02.000Z', source: 'gitlab_mcp', toolUseId: 'gl-1', owner: 'root', raw: 'PRIVATE_BODY' },
+      ] },
       capturedAt: start + 10_000, observedStart: start, observedEnd: start + 9_000, costSource: 'native-estimate', costBasis: 'standard-api-tokens', dispatchesComplete: true,
       rootOwnTokens: tokens, rootOwnCostUSD: 2, unlinkedTokens: { ...tokens, input: 0, total: 0 }, unlinkedCostUSD: 0,
       costSeries: [{ t: start, cost: 1, tokens: 40 }, { t: start + 9_000, cost: 2, tokens: 80 }],
@@ -40,6 +44,8 @@ describe('renderReportHtml', () => {
       expect(JSON.parse(json)).toEqual(fromHtml);
       expect(json).not.toContain('PRIVATE_BODY');
       expect(html).not.toContain('PRIVATE_BODY');
+      expect(fromHtml.sessions[0].changeRequestCreation.events).toHaveLength(2);
+      expect(fromHtml.sessions[0].changeRequestCreation.events[1]).toMatchObject({ provider: 'gitlab', number: 4, timestamp: '2026-10-22T10:00:02.000Z' });
       expect(fromHtml.sessions[0].dispatches).toHaveLength(80);
       expect(fromHtml.sessions[0].agentInvocations[0].totalCalls).toBe(80);
       expect(fromHtml.sessions[0]).toMatchObject({ capturedAt: start + 10_000, durationMs: 9_000, rootOwnCostUSD: 2, costSource: 'native-estimate' });

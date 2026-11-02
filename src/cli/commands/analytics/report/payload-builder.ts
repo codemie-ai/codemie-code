@@ -5,7 +5,7 @@
  */
 
 import type { RootAnalytics, NamedInvocationStats } from '../types.js';
-import type { SessionCostIndex, CostSummary, AgentCoverage, SessionCost, DispatchEvent, TokenUsage } from '../cost/types.js';
+import type { ChangeRequestCreationEvidence, ChangeRequestCreationEvent, SessionCostIndex, CostSummary, AgentCoverage, SessionCost, DispatchEvent, TokenUsage } from '../cost/types.js';
 import { emptyUsage } from '../cost/cost-calculator.js';
 import type { ReportPayload, ReportSessionRecord, ReportMeta } from './types.js';
 import { detectSessionSource } from './session-source-detector.js';
@@ -39,6 +39,31 @@ function projectDispatch(dispatch: DispatchEvent): DispatchEvent {
   };
 }
 
+/** Recheck the bounded public contract instead of spreading internal evidence objects. */
+function projectCreation(evidence: ChangeRequestCreationEvidence): ChangeRequestCreationEvidence {
+  const events: ChangeRequestCreationEvent[] = [];
+  let partial = false;
+  for (const event of evidence.events) {
+    const strings = [event.host, event.repository, event.toolUseId, ...(event.ownerId === undefined ? [] : [event.ownerId])];
+    const github = event.provider === 'github';
+    const valid = strings.every((value) => typeof value === 'string' && value.length > 0 && value.length <= 256
+      && ![...value].some((char) => /\s/.test(char) || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
+      && (github || event.provider === 'gitlab')
+      && event.type === (github ? 'pr_created' : 'mr_created')
+      && (github ? ['gh_cli', 'github_mcp'] : ['glab_cli', 'gitlab_mcp']).includes(event.source)
+      && (event.owner === 'root' && event.ownerId === undefined || event.owner === 'subagent' && event.ownerId !== undefined)
+      && Number.isSafeInteger(event.number) && event.number > 0
+      && /^[a-z0-9.-]+(?::[0-9]+)?$/.test(event.host) && (!github || event.host === 'github.com')
+      && event.repository.split('/').length >= 2
+      && event.repository.split('/').every((part) => /^[\w.-]+$/.test(part) && part !== '.' && part !== '..')
+      && event.url === `https://${event.host}/${event.repository}/${github ? 'pull' : '-/merge_requests'}/${event.number}`
+      && typeof event.timestamp === 'string' && event.timestamp.length <= 256 && Number.isFinite(Date.parse(event.timestamp));
+    if (!valid || events.length === 100) { partial = true; continue; }
+    events.push(pickDefined(event, ['type', 'provider', 'host', 'repository', 'number', 'url', 'timestamp', 'source', 'toolUseId', 'owner', 'ownerId']));
+  }
+  return { status: partial ? 'partial' : evidence.status, events };
+}
+
 function projectSnapshot(cost: SessionCost | undefined): Partial<ReportSessionRecord> {
   if (!cost) return {};
   return {
@@ -50,6 +75,7 @@ function projectSnapshot(cost: SessionCost | undefined): Partial<ReportSessionRe
     // comment: every consumer of the payload, server side included, would otherwise have to
     // know about observedEndEstimated to avoid misreading it).
     ...(cost.observedEnd !== undefined && !cost.observedEndEstimated && { observedEnd: cost.observedEnd }),
+    ...(cost.changeRequestCreation && { changeRequestCreation: projectCreation(cost.changeRequestCreation) }),
     ...(cost.rootOwnTokens && { rootOwnTokens: projectTokens(cost.rootOwnTokens) }),
     ...(cost.unlinkedTokens && { unlinkedTokens: projectTokens(cost.unlinkedTokens) }),
   };

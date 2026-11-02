@@ -43,6 +43,20 @@ describe('generateSessionReport', () => {
     expect(res).toEqual({ written: '/tmp/out.json', sessions: 1 });
   });
 
+  it('passes creation evidence through the real shared projection for per-session reports', async () => {
+    const actual = await vi.importActual<typeof import('../payload-builder.js')>('../payload-builder.js');
+    buildPayloadMock.mockImplementationOnce(actual.buildPayload);
+    const event = { type: 'pr_created', provider: 'github', host: 'github.com', repository: 'team/repo', number: 36, url: 'https://github.com/team/repo/pull/36', timestamp: '2026-10-22T10:00:01.000Z', source: 'gh_cli', toolUseId: 'gh-1', owner: 'root' };
+    loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 's1' }] });
+    enrichCostsMock.mockResolvedValue({ index: new Map([['s1', { sessionId: 's1', tokens: {}, perModel: [], costUSD: 0, changeRequestCreation: { status: 'available', events: [{ ...event, raw: 'PRIVATE_SESSION' }] } }]]), summary: {} });
+    aggregateMock.mockReturnValue({ totalSessions: 1, projects: [{ projectPath: '/repo', branches: [{ branchName: 'main', sessions: [{ sessionId: 's1', agentName: 'claude', models: [], languages: [], tools: [] }] }] }] });
+    const { generateSessionReport } = await import('../session-report.js');
+    await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/out.json' });
+    const payload = generateReportJsonMock.mock.calls[0][0];
+    expect(payload.sessions[0].changeRequestCreation).toEqual({ status: 'available', events: [event] });
+    expect(JSON.stringify(payload)).not.toContain('PRIVATE_SESSION');
+  });
+
   it('writes nothing when the session has no data', async () => {
     loadMock.mockResolvedValue({ rawSessions: [] });
     const { generateSessionReport } = await import('../session-report.js');

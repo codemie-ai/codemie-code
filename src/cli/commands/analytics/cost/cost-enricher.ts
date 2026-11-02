@@ -9,9 +9,10 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { extractChangeRequestCreationEvidence } from './change-request-creation-extractor.js';
 import { INTERNAL_PARSED_FAMILY, type RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '@/agents/core/session/BaseSessionAdapter.js';
-import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
+import type { ChangeRequestCreationEvidence, SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown, costForUsage } from './cost-calculator.js';
@@ -250,6 +251,23 @@ function floorObservedEnd(entry: ParsedEntry, nextSiblingStart: number | undefin
   }
   const floor = entry.parsed ? maxOwnRecordTs(entry.agentName, entry.parsed, nextSiblingStart) : undefined;
   return floor === undefined ? entry.observedEnd : Math.max(entry.observedEnd, floor);
+}
+
+/** Resolve creation independently of pricing, retaining only events owned by this session. */
+function resolveCreationEvidence(entry: ParsedEntry, siblingStart: number | undefined, seen: Set<string>): ChangeRequestCreationEvidence {
+  if (!['claude', 'claude-acp', 'claude-desktop'].includes(entry.agentName.toLowerCase())) return { status: 'unsupported', events: [] };
+  if (!entry.parsed) return { status: entry.hadLog ? 'partial' : 'unavailable', events: [] };
+  try {
+    return extractChangeRequestCreationEvidence(entry.parsed, {
+      start: entry.observedStart ?? (entry.startTime > 0 ? entry.startTime : undefined),
+      end: siblingStart,
+      // Correct the Stop-hook write race using owned usage, never a cosmetic end estimate.
+      observedEnd: floorObservedEnd(entry, siblingStart),
+    }, seen);
+  } catch {
+    // Coverage communicates failure without leaking native commands/results to diagnostics.
+    return { status: 'partial', events: [] };
+  }
 }
 
 /** Phase 1: resolve + parse a session's native log. Safe to run in parallel. */
@@ -558,6 +576,7 @@ export async function enrichCosts(
   // turns into resumed/forked logs, so the same response appears in many files. Then price.
   const ordered = [...parsedEntries].sort((a, b) => a.startTime - b.startTime);
   const seen = new Set<string>();
+  const seenCreations = new Set<string>();
   const sharedFileGroups = groupSharedFileSiblings(ordered);
   const reportedObservedEnd = computeReportedObservedEnd(sharedFileGroups);
   const nextSiblingStart = computeNextSiblingStart(sharedFileGroups);
@@ -618,6 +637,7 @@ export async function enrichCosts(
       records = [];
     }
     const { cost, unpriced: u, estimated: est, local: loc } = priceUsage(entry.sessionId, entry.hadLog, usageByModel, entry.provider);
+    cost.changeRequestCreation = resolveCreationEvidence(entry, nextSiblingStart.get(entry.sessionId), seenCreations);
     if (entry.capturedAt !== undefined) cost.capturedAt = entry.capturedAt;
     if (entry.observedStart !== undefined) cost.observedStart = entry.observedStart;
     if (entry.observedEnd !== undefined) cost.observedEnd = entry.observedEnd;

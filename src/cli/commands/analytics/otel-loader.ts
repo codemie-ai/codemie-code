@@ -144,7 +144,7 @@ export function buildCostIndex(apiRequests: OtelEvent[]): {
     const sid = sessionOf(e);
     if (!sid) continue;
     if (!index.has(sid)) {
-      index.set(sid, { sessionId: sid, tokens: emptyTokens(), costUSD: 0, perModel: [], priced: false, hadLog: true });
+      index.set(sid, { changeRequestCreation: { status: 'unsupported', events: [] }, sessionId: sid, tokens: emptyTokens(), costUSD: 0, perModel: [], priced: false, hadLog: true });
       perModelMap.set(sid, new Map());
       seriesPts.set(sid, []);
       pricingFlags.set(sid, { authoritative: false, tablePriced: false });
