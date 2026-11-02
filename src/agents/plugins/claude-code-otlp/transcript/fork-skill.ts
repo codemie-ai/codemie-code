@@ -54,6 +54,8 @@ export interface ForkSkillResolution {
   slashPromptIds: Set<string>;
   /** Subagents that cannot yet be told from a skill fork; empty when `final`. */
   pendingAgentIds: Set<string>;
+  /** With `final`: the subagents left an agent only because nothing more will arrive (no proof). */
+  unprovenAgentIds: Set<string>;
 }
 
 const AGENT_ID_IN_TEXT = /"agentId":\s*"([A-Za-z0-9_-]+)"/;
@@ -188,7 +190,11 @@ const HEAD_CHUNK = 16 * 1024;
  * file with a short head is not read (or allocated) in full. `lines` newlines = the first `lines`
  * lines are complete. Never throws.
  */
-async function readHead(filePath: string, lines: number, limit: number): Promise<{ text: string; newlines: number }> {
+async function readHead(
+  filePath: string,
+  lines: number,
+  limit: number
+): Promise<{ text: string; newlines: number; total: number }> {
   let handle;
   const chunks: Buffer[] = [];
   let total = 0;
@@ -208,31 +214,62 @@ async function readHead(filePath: string, lines: number, limit: number): Promise
   } finally {
     await handle?.close();
   }
-  return { text: Buffer.concat(chunks).toString('utf-8'), newlines };
+  return { text: Buffer.concat(chunks).toString('utf-8'), newlines, total };
+}
+
+/** What the first lines of a subagent file say about its prompt. */
+export interface PromptHead {
+  promptId: string;
+  /** Nothing more can be learned from the head: found, or `PROMPT_ID_LINES` complete lines without it, or the byte limit. */
+  done: boolean;
+  /** Bytes read; the file is unchanged since when its size still equals this (an incomplete head). */
+  size: number;
+}
+
+/** The `promptId` of a subagent file from its first lines, and whether the head is final. Never throws. */
+export async function probePromptHead(filePath: string): Promise<PromptHead> {
+  const { text, newlines, total } = await readHead(filePath, PROMPT_ID_LINES, HEAD_BYTES);
+  for (const raw of text.split('\n').slice(0, PROMPT_ID_LINES)) {
+    try {
+      const id = (JSON.parse(raw) as Line).promptId;
+      if (typeof id === 'string' && id) return { promptId: id, done: true, size: total };
+    } catch {
+      // partial or malformed line — try the next one
+    }
+  }
+  return { promptId: '', done: newlines >= PROMPT_ID_LINES || total >= HEAD_BYTES, size: total };
 }
 
 /** The `promptId` of a subagent file, from its first lines (`''` when none). */
 export async function firstPromptId(filePath: string): Promise<string> {
-  try {
-    const { text } = await readHead(filePath, PROMPT_ID_LINES, HEAD_BYTES);
-    const lines = text.split('\n').slice(0, PROMPT_ID_LINES);
-    for (const raw of lines) {
-      try {
-        const id = (JSON.parse(raw) as Line).promptId;
-        if (typeof id === 'string' && id) return id;
-      } catch {
-        // partial or malformed line — try the next one
-      }
-    }
-  } catch {
-    // unreadable file
-  }
-  return '';
+  return (await probePromptHead(filePath)).promptId;
 }
 
-/** False while the subagent file is missing or has no complete line yet (reads up to the first newline). */
-async function hasContent(filePath: string): Promise<boolean> {
-  return (await readHead(filePath, 1, Number.MAX_SAFE_INTEGER)).newlines > 0;
+/** Longest first line searched for its newline; a longer partial line reads as "no complete line yet". */
+const COMPLETE_LINE_SCAN_LIMIT = 4 * 1024 * 1024;
+
+/**
+ * False while the subagent file is missing or has no complete line yet. Only a boolean is needed, so
+ * nothing is accumulated (one reused chunk) and at most {@link COMPLETE_LINE_SCAN_LIMIT} bytes are read: a
+ * longer partial first line stays undecided (the safe side — it keeps the subagent pending).
+ */
+export async function hasCompleteLine(filePath: string): Promise<boolean> {
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const chunk = Buffer.allocUnsafe(HEAD_CHUNK);
+    for (let pos = 0; pos < COMPLETE_LINE_SCAN_LIMIT; ) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(HEAD_CHUNK, COMPLETE_LINE_SCAN_LIMIT - pos), pos);
+      if (bytesRead === 0) return false;
+      if (chunk.subarray(0, bytesRead).includes(0x0a)) return true;
+      pos += bytesRead;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close();
+  }
 }
 
 export async function resolveForkSkills(
@@ -245,6 +282,7 @@ export async function resolveForkSkills(
     skillByAgentId: new Map(),
     slashPromptIds: new Set(),
     pendingAgentIds: new Set(),
+    unprovenAgentIds: new Set(),
   };
   if (files.length === 0) return result;
 
@@ -254,8 +292,9 @@ export async function resolveForkSkills(
     // yet): neither a Skill result nor a `/name` line nor a starting call can be seen, so no
     // subagent that the marker has not named can be told from a skill fork. Unproven until the
     // transcript has content, or until the session ends (`final`, then an agent).
-    if (!options.final) {
-      for (const file of files) if (!file.skillName && !file.settled) result.pendingAgentIds.add(file.agentId);
+    for (const file of files) {
+      if (file.skillName || file.settled) continue;
+      (options.final ? result.unprovenAgentIds : result.pendingAgentIds).add(file.agentId);
     }
     return result;
   }
@@ -311,7 +350,7 @@ export async function resolveForkSkills(
   const candidatesByPrompt = new Map<string, ForkCandidate[]>();
   const leavePending = (file: ForkCandidate): void => {
     // At the end of the session nothing more will arrive: an unproven fork stays an agent.
-    if (!options.final) result.pendingAgentIds.add(file.agentId);
+    (options.final ? result.unprovenAgentIds : result.pendingAgentIds).add(file.agentId);
   };
   for (const file of files) {
     // Settled ordinary agent: scope already sent, nothing to decide and nothing to read.
@@ -338,7 +377,7 @@ export async function resolveForkSkills(
     // The desktop app can flush a prompt's lines to the main transcript after the fork has stopped:
     // until the main transcript knows the subagent's prompt, neither a `/name` line nor a starting
     // call can be seen, so the absence of both proves nothing.
-    if (!file.skillName && !promptId && !(await hasContent(file.filePath))) {
+    if (!file.skillName && !promptId && !(await hasCompleteLine(file.filePath))) {
       leavePending(file);
       continue;
     }

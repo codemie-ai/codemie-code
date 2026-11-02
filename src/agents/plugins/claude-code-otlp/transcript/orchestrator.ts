@@ -70,11 +70,11 @@ import {
   type Compaction,
   type SignalLine,
 } from './session-signals.js';
-import { firstPromptId } from './fork-skill.js';
 import {
   type SubagentFile,
   buildSubagentUsageEvent,
   type SubagentSnapshot,
+  refreshHead,
   resolveSubagentSnapshot,
 } from './subagent-usage.js';
 
@@ -900,6 +900,8 @@ async function deriveOrRetain(
 ): Promise<Record<string, unknown>[]> {
   clearDeferred(state, file.agentId);
   const events = await deriveSubagentEvents(state, sessionId, file);
+  // Correlation metadata the file did not have yet is filled from its changed content (no scope guess).
+  await refreshHead(file);
   const { agentId, filePath, toolUseId, agentType, spawnDepth, description, skillName } = file;
   state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), agentId])];
   (state.deferredSubagentFiles ??= {})[agentId] = {
@@ -909,10 +911,47 @@ async function deriveOrRetain(
     spawnDepth,
     description,
     skillName,
-    settled: true,
-    promptId: file.promptId ?? (await firstPromptId(filePath)),
+    // Settled = the scope is known (proved, or already sent). A subagent left an agent only because the
+    // session ended is not: a resumed session resolves it again.
+    ...(file.unproven ? {} : { settled: true }),
+    promptId: file.promptId || undefined,
+    headDone: file.headDone,
+    headSize: file.headSize,
   };
   return events;
+}
+
+/**
+ * The candidate with the scope the registry already knows (a proved skill, or a settled agent): a
+ * later partial update — a repeated `SubagentStop` whose evidence is temporarily missing — never
+ * overwrites it.
+ */
+function withKnownScope(state: TranscriptParseState, file: SubagentFile): SubagentFile {
+  const known = state.deferredSubagentFiles?.[file.agentId];
+  if (!known || (!known.settled && !known.skillName)) return file;
+  return {
+    ...file,
+    toolUseId: file.toolUseId ?? known.toolUseId,
+    agentType: file.agentType ?? known.agentType,
+    spawnDepth: file.spawnDepth ?? known.spawnDepth,
+    description: (known.skillName ? known.description : undefined) || file.description || known.description,
+    skillName: known.skillName,
+    pending: undefined,
+    unproven: undefined,
+    settled: known.settled,
+    promptId: known.promptId,
+    headDone: known.headDone,
+    headSize: known.headSize,
+  };
+}
+
+/** Persist head facts a snapshot learned about a registered file whose offset did not move. */
+function syncHead(state: TranscriptParseState, file: SubagentFile): void {
+  const entry = state.deferredSubagentFiles?.[file.agentId];
+  if (!entry?.settled || file.pending) return;
+  entry.promptId = file.promptId || undefined;
+  entry.headDone = file.headDone;
+  entry.headSize = file.headSize;
 }
 
 /** The deferred subagents as file candidates, at the paths their `SubagentStop` reported. */
@@ -943,6 +982,7 @@ async function settleDeferredSubagents(
   for (const rawFile of pass.snapshot.files) {
     if (rawFile.pending || !state.deferredAgentIds.includes(rawFile.agentId)) continue;
     const file: SubagentFile = { ...rawFile, cwd };
+    syncHead(state, file);
     // Covered by its offset: nothing to send now, but more may still be appended - stay registered.
     if (await subagentAlreadyCovered(state, file)) continue;
     const snapshot = structuredClone(state);
@@ -1306,14 +1346,15 @@ export async function openSubagentPass(
     // A subagent that may still prove to be a skill fork sends nothing yet: the backend keeps the
     // max() of scope_kind/scope_name per request, so a wrong first scope could not be fixed later.
     let events: Record<string, unknown>[] = [];
-    if (subagentFile.pending) {
-      state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), subagentFile.agentId])];
-      const { agentId, filePath, toolUseId, agentType, spawnDepth, description } = subagentFile;
+    const incoming = withKnownScope(state, subagentFile);
+    if (incoming.pending) {
+      state.deferredAgentIds = [...new Set([...(state.deferredAgentIds ?? []), incoming.agentId])];
+      const { agentId, filePath, toolUseId, agentType, spawnDepth, description } = incoming;
       (state.deferredSubagentFiles ??= {})[agentId] = { filePath, toolUseId, agentType, spawnDepth, description };
     } else {
       // A resolved stop (also a later one of a subagent deferred before) is derived now; if its file
       // has no content yet the candidate stays deferred (with its positive evidence) until it does.
-      events = await deriveOrRetain(state, sessionId, subagentFile);
+      events = await deriveOrRetain(state, sessionId, incoming);
     }
 
     if (envCheck) {
@@ -1380,6 +1421,7 @@ export async function openSessionEndPass(
       // The sidecar carries no cwd/worktree of its own — the SessionEnd hook's cwd is the best
       // available stand-in (subagents share their parent session's cwd).
       const file: SubagentFile = { ...rawFile, cwd };
+      syncHead(state, file);
       if (await subagentAlreadyCovered(state, file)) {
         continue;
       }

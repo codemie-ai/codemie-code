@@ -87,8 +87,12 @@ export interface TranscriptParseState {
       /** Scope already established and sent with: later passes only append new usage (stat vs
        *  offset) and never resolve this subagent again. Absent in older state = unsettled. */
       settled?: boolean;
-      /** The subagent's `promptId` at settling time (for the slash-fork confirmation). */
+      /** The subagent's `promptId`, once its file shows one (for the slash-fork confirmation). */
       promptId?: string;
+      /** Its file head was read completely: no further probing. */
+      headDone?: boolean;
+      /** File size at the last incomplete head probe (probe again only after it changed). */
+      headSize?: number;
     }
   >;
 }

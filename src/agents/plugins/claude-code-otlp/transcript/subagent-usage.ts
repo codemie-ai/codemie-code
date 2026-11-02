@@ -19,10 +19,10 @@
  * and no absolute path leaves the hook process.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { extractRepository, isPathWithinDirectory } from '@/utils/paths.js';
-import { resolveForkSkills } from './fork-skill.js';
+import { probePromptHead, resolveForkSkills } from './fork-skill.js';
 import { isSyntheticModel } from './synthetic-model.js';
 import type { OpenUsageRequest } from './parse-state.js';
 import { isOutputTokensPartial } from './usage-request.js';
@@ -51,8 +51,14 @@ export interface SubagentFile {
   /** Settled by an earlier pass (from the parse-state registry): usage scope is known and is not
    *  resolved again; see `ForkCandidate.settled`. */
   settled?: boolean;
-  /** The `promptId` recorded when the subagent settled. */
+  /** The `promptId` recorded when the subagent settled ('' / absent: not in its file yet). */
   promptId?: string;
+  /** The file head was fully read (see `PromptHead.done`): it is not probed again. */
+  headDone?: boolean;
+  /** Size of the file when its (incomplete) head was last read; the head is probed again once it changed. */
+  headSize?: number;
+  /** Only at `final`: left an agent for lack of any proof, so its scope is not a known one. */
+  unproven?: boolean;
 }
 
 interface SubagentMeta {
@@ -193,6 +199,24 @@ export async function findSubagentFiles(
   return (await resolveSubagentSnapshot(mainTranscriptPath, options)).files;
 }
 
+/**
+ * A settled subagent keeps its known scope, but its correlation metadata (the `promptId` the slash
+ * confirmation needs) may not have been in its file yet. Probe the head again only while it was
+ * incomplete and the file has changed since; a head that is complete is never read again.
+ */
+export async function refreshHead(file: SubagentFile): Promise<void> {
+  if (file.promptId || file.headDone) return;
+  try {
+    if ((await stat(file.filePath)).size === file.headSize) return;
+  } catch {
+    return; // missing file: nothing new
+  }
+  const head = await probePromptHead(file.filePath);
+  file.promptId = head.promptId;
+  file.headDone = head.done;
+  file.headSize = head.size;
+}
+
 /** One resolution of the subagent set: the files and the prompts whose plain `/name` started a fork. */
 export interface SubagentSnapshot {
   files: SubagentFile[];
@@ -222,8 +246,9 @@ export async function resolveSubagentSnapshot(
     const at = files.findIndex((f) => f.agentId === extra.agentId);
     if (at >= 0) files[at] = merged;
     else files.push(merged);
+    if (merged.settled) await refreshHead(merged);
   }
-  const { skillByAgentId, pendingAgentIds, slashPromptIds } = await resolveForkSkills(
+  const { skillByAgentId, pendingAgentIds, unprovenAgentIds, slashPromptIds } = await resolveForkSkills(
     mainTranscriptPath,
     files,
     options.raw,
@@ -236,6 +261,8 @@ export async function resolveSubagentSnapshot(
       file.description ||= `/${skillName}`;
     } else if (pendingAgentIds.has(file.agentId)) {
       file.pending = true;
+    } else if (unprovenAgentIds.has(file.agentId)) {
+      file.unproven = true;
     }
   }
   return { files, slashPromptIds };
