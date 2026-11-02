@@ -145,8 +145,13 @@ function reasonToken(body: BodyRead): string | undefined {
   return typeof detail === 'string' && /^[a-z][a-z0-9_]{2,63}$/.test(detail) ? detail : undefined;
 }
 
-/** Typed outcome of a non-auth response. `hooks` = the event-hooks route (never an OTLP shape). */
-export function decodeResponse(status: number, contentType: string, body: BodyRead, hooks: boolean): SendOutcome {
+/**
+ * Typed outcome of a non-auth response. `hooks` = the event-hooks route (never an OTLP shape).
+ * `strict` = an evidence request: a 2xx whose body cannot be verified stays queued. A legacy request keeps
+ * the pre-evidence contract (any 2xx acknowledges, so an old backend/gateway answering with an empty or
+ * non-JSON body is not re-sent every tick); a body that DOES parse still yields its discard/partial reason.
+ */
+export function decodeResponse(status: number, contentType: string, body: BodyRead, hooks: boolean, strict: boolean = true): SendOutcome {
   if (status === 409) {
     const json = parseJson(body.bytes);
     return json?.['reason'] === 'stale_policy'
@@ -160,23 +165,22 @@ export function decodeResponse(status: number, contentType: string, body: BodyRe
   if (status < 200 || status >= 300) return { kind: 'failed', reason: `http_${status}` };
 
   // A 2xx whose body cannot be verified is not an acknowledgement: the range stays (at-least-once).
-  if (body.state === 'failed') return { kind: 'retry', reason: 'response_read_failed' };
-  if (body.state === 'truncated') return { kind: 'failed', reason: 'response_too_large' };
+  if (body.state === 'failed') return strict ? { kind: 'retry', reason: 'response_read_failed' } : { kind: 'ok' };
+  if (body.state === 'truncated') return strict ? { kind: 'failed', reason: 'response_too_large' } : { kind: 'ok' };
+  const unverified: SendOutcome = strict ? { kind: 'failed', reason: 'response_malformed' } : { kind: 'ok' };
 
   if (hooks) {
     const json = parseJson(body.bytes);
-    if (!json) return { kind: 'failed', reason: 'response_malformed' };
+    if (!json) return unverified;
     const { accepted, dropped, reason } = json as Record<string, unknown>;
     const countOk = (v: unknown): boolean => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 0);
-    if (!countOk(accepted) || !countOk(dropped) || (reason !== undefined && typeof reason !== 'string')) {
-      return { kind: 'failed', reason: 'response_malformed' };
-    }
+    if (!countOk(accepted) || !countOk(dropped) || (reason !== undefined && typeof reason !== 'string')) return unverified;
     const why = reasonOf(reason);
     return accepted === 0 && why ? { kind: 'discarded', reason: why, accepted } : { kind: 'ok', accepted: accepted as number | undefined };
   }
   if (body.bytes.length === 0) return { kind: 'ok' }; // a genuine empty Export*ServiceResponse
   const partial = otlpPartial(body.bytes, contentType);
-  if (partial === 'malformed') return { kind: 'failed', reason: 'response_malformed' };
+  if (partial === 'malformed') return unverified;
   if (partial && partial.rejected > 0) {
     return { kind: 'discarded', reason: partial.message ?? 'rejected', rejected: partial.rejected };
   }

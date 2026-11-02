@@ -216,6 +216,19 @@ describe('forwardSession (hooks)', () => {
     expect(areCredentialsStale()).toBe(true);
   });
 
+  it('a login-blocked backlog is suspended, not resent every tick, and starts no retention clock', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    const attempts = fetchMock.mock.calls.length; // one attempt plus the single auth retry
+    expect(attempts).toBe(2);
+
+    for (let tick = 0; tick < 3; tick++) await forwardSession('s1', true, credentials);
+    expect(fetchMock.mock.calls.length).toBe(attempts);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+    expect(noteDeliveryFailureMock).not.toHaveBeenCalled();
+  });
+
   it('treats repeated 302 login redirects as expired credentials without following them', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 302 });
     const { forwardSession } = await import('../forwarder.js');
@@ -789,6 +802,23 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     await forwardSession('s1', true, credentials);
     for (const k of evidenceKeys) expect(headersOf(0)).not.toHaveProperty(k);
     expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
+  });
+
+  it('hooks 2xx with an empty/non-JSON body: legacy acknowledges the range, an evidence request keeps it queued', async () => {
+    snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([line('s1')]), cursor: 0 });
+    fetchMock.mockImplementation(async () => new Response('', { status: 200, headers: { 'content-type': 'text/plain' } }));
+    const { forwardSession } = await import('../forwarder.js');
+
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy' });
+    await forwardSession('s1', false, credentials);
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Session-Id');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', hooksBatch([line('s1')]).byteLength);
+
+    advanceCursorMock.mockClear();
+    readStatusMock.mockResolvedValue({ sendMode: 'evidence' });
+    await forwardSession('s1', false, credentials);
+    expect(headersOf(1)).toHaveProperty('X-CodeMie-Session-Id', 's1');
+    expect(advanceCursorMock).not.toHaveBeenCalled();
   });
 
   it('evidence sends carry the frozen record values and the classification', async () => {

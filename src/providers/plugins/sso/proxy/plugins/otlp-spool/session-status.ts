@@ -58,6 +58,11 @@ export interface SessionStatus {
   /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
   lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string };
   /**
+   * The latest hook-time stamp failure (no durable evidence record, nothing spooled). Its own single slot:
+   * a stamp failure never overwrites `lastLoss` (a retention or delivery loss), and vice versa.
+   */
+  stampLoss?: StampLoss;
+  /**
    * Unacknowledged delivery per stream: the first failure of the pending range starting at `cursor`
    * (backlog `[cursor, end)` as it was then). Valid only while the stream cursor still equals `cursor`.
    */
@@ -84,6 +89,27 @@ export interface DeliveryFailure {
   attempts: number;
   /** No request for this stream before this time (bounded backoff). */
   nextAt: number;
+}
+
+/** `reason` is a bounded snake_case token from the hook (the stamp failure kind), else `stamp_invalid`. */
+export interface StampLoss {
+  reason: string;
+  at: number;
+  events: number;
+}
+
+export const MAX_STAMP_REASON = 40;
+const STAMP_REASON = /^[a-z][a-z0-9_]*$/;
+
+export function stampReasonToken(reason: unknown): string {
+  return typeof reason === 'string' && reason.length <= MAX_STAMP_REASON && STAMP_REASON.test(reason) ? reason : 'stamp_invalid';
+}
+
+function parseStampLoss(raw: unknown): StampLoss | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { reason, at, events } = raw as Record<string, unknown>;
+  if (toOffset(at) === 0) return undefined;
+  return { reason: stampReasonToken(reason), at: toOffset(at), events: Math.max(1, toOffset(events)) };
 }
 
 export interface Discard {
@@ -205,6 +231,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (holds) status.holds = holds;
   const loss = parseLoss(source['lastLoss']);
   if (loss) status.lastLoss = loss;
+  const stampLoss = parseStampLoss(source['stampLoss']);
+  if (stampLoss) status.stampLoss = stampLoss;
   const delivery = parseDelivery(source['delivery']);
   if (delivery) status.delivery = delivery;
   const discard = parseDiscard(source['lastDiscard']);

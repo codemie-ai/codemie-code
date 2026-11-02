@@ -142,7 +142,7 @@ async function send(req: SendRequest): Promise<SendOutcome> {
       if (response && isAuthFailure(response)) return { kind: 'auth-expired' };
     }
     if (!response) return { kind: 'failed', reason: 'not_sendable' };
-    const outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks');
+    const outcome = decodeResponse(response.status, response.contentType, response.body, stream === 'hooks', !!req.evidence);
     // Legacy JSON exports are independent records; retain main's payload-rejection policy.
     // Evidence requests keep 400 retryable because missing evidence headers are recoverable.
     if (!req.evidence && OTEL_JSON_STREAMS.includes(stream as OtelJsonStream) && [400, 413, 422].includes(response.status)) {

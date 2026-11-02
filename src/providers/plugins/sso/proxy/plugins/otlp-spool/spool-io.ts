@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { OTEL_STREAMS, OTEL_JSON_STREAMS, SPOOL_STREAMS, spoolRoot, streamFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
-import { createStatus, readStatus, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
+import { createStatus, readStatus, stampReasonToken, writeStatus, type HoldScope, type SessionStatus } from './session-status.js';
 import { heldRetentionMs, hooksOnlyForwardAllowed } from './spool-config.js';
 import {
   applyProjectDecision,
@@ -85,14 +85,16 @@ export async function recordLossLocked(
 
 /**
  * A hook that could not stamp dropped `events` events of this session (no durable record, so nothing
- * was spooled): make it visible as `lastLoss` instead of a warning in a hook process nobody reads.
- * Only the stamp-failure reasons the status can name; anything else is `stamp_invalid`.
+ * was spooled): make it visible as `stampLoss` instead of a warning in a hook process nobody reads.
+ * The specific bounded reason is kept; `lastLoss` (retention/delivery evidence) is never touched. The
+ * epoch exists before the status is first created, so a fresh OTLP-only session is never pre-epoch legacy.
  */
 export async function recordStampLoss(sessionId: string, reason: string, events: number, now: number = Date.now()): Promise<void> {
-  const named = reason === 'evidence_capacity' || reason === 'session_id_absent' ? reason : 'stamp_invalid';
+  const named = stampReasonToken(reason);
   await withSessionLock(sessionId, async () => {
+    await readOrCreateEpoch();
     const status = (await readStatus(sessionId)) ?? createStatus();
-    status.lastLoss = { reason: named, at: now, bytes: 0 };
+    status.stampLoss = { reason: named, at: now, events };
     await writeStatus(sessionId, status);
     logger.warn('[otlp-spool] hook events dropped: evidence record unavailable', ...sanitizeLogArgs({ sessionId, reason, events }));
   });

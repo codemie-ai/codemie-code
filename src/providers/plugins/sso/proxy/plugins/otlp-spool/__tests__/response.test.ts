@@ -28,6 +28,37 @@ describe('readBoundedBody', () => {
   });
 });
 
+describe('decodeResponse: a legacy request keeps the pre-evidence 2xx acknowledgement (strict = false)', () => {
+  it('hooks: empty, non-JSON and wrongly typed 2xx bodies acknowledge', () => {
+    for (const body of ['not-json', '[]', '{"accepted":"1"}', '{"accepted":-1}', '{"reason":5}', '']) {
+      expect(decodeResponse(200, 'text/plain', complete(body), true, false)).toEqual({ kind: 'ok' });
+    }
+  });
+
+  it('hooks: an unreadable or oversized body still acknowledges on legacy', () => {
+    expect(decodeResponse(200, 'application/json', { state: 'failed', bytes: Buffer.alloc(0) }, true, false)).toEqual({ kind: 'ok' });
+    expect(decodeResponse(200, 'application/json', { state: 'truncated', bytes: Buffer.alloc(3) }, true, false)).toEqual({ kind: 'ok' });
+  });
+
+  it('hooks: a valid structured discard reason is still recorded on legacy', () => {
+    expect(decodeResponse(200, 'application/json', complete('{"accepted":0,"dropped":2,"reason":"session_project_conflict"}'), true, false))
+      .toEqual({ kind: 'discarded', reason: 'session_project_conflict', accepted: 0 });
+  });
+
+  it('OTLP: a malformed 2xx body acknowledges on legacy; a decodable rejection is still a discard', () => {
+    expect(decodeResponse(200, PB, complete(Buffer.from([0x0a, 0x7f])), false, false)).toEqual({ kind: 'ok' });
+    expect(decodeResponse(200, 'application/json', complete('{"partialSuccess":3}'), false, false)).toEqual({ kind: 'ok' });
+    expect(decodeResponse(200, 'application/json', complete('{"partialSuccess":{"rejectedSpans":2,"errorMessage":"bad"}}'), false, false))
+      .toEqual({ kind: 'discarded', reason: 'bad', rejected: 2 });
+  });
+
+  it('non-2xx outcomes are unchanged by legacy mode', () => {
+    expect(decodeResponse(503, 'application/json', complete('{"detail":"default_project_unavailable"}'), true, false))
+      .toEqual({ kind: 'retry', reason: 'http_503', detail: 'default_project_unavailable' });
+    expect(decodeResponse(413, 'application/json', complete(''), true, false)).toEqual({ kind: 'failed', reason: 'http_413' });
+  });
+});
+
 describe('decodeResponse: unverified 2xx responses are never acknowledged', () => {
   it('hooks: malformed JSON, non-object, wrong field types', () => {
     for (const body of ['not-json', '[]', '{"accepted":"1"}', '{"accepted":-1}', '{"reason":5}', '']) {

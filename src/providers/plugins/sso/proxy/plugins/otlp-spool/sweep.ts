@@ -85,7 +85,8 @@ async function isDeletable(sessionId: string): Promise<boolean> {
 
   const activityMs = await lastActivityMs(spool);
   // Nothing on disk to clean up, except a status that only records a stamp loss: aged out like an abandoned session.
-  if (activityMs === null) return status.lastLoss ? Date.now() - status.lastLoss.at >= abandonedSessionGraceMs() : false;
+  const lossAt = Math.max(status.lastLoss?.at ?? 0, status.stampLoss?.at ?? 0);
+  if (activityMs === null) return lossAt > 0 ? Date.now() - lossAt >= abandonedSessionGraceMs() : false;
 
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;

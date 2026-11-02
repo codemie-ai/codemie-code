@@ -270,13 +270,44 @@ describe('snapshots — project gate under the lock', () => {
     });
   }
 
-  it('CR001: a stamp loss is persisted as a visible lastLoss with a named reason, without spooling anything', async () => {
+  it('CR001: a stamp loss is persisted as stampLoss with its specific reason, without spooling anything or touching lastLoss', async () => {
+    const { recordStampLoss } = await import('../spool-io.js');
+    const { readStatus, updateStatus } = await import('../session-status.js');
+    await recordStampLoss(SESSION, 'no_credentials', 3, 1_000);
+    let status = await readStatus(SESSION);
+    expect(status?.stampLoss).toEqual({ reason: 'no_credentials', at: 1_000, events: 3 });
+    expect(status?.lastLoss).toBeUndefined();
+
+    // Earlier retention/delivery evidence survives a later stamp failure.
+    await updateStatus(SESSION, (st) => {
+      st.lastLoss = { reason: 'delivery_rejected', at: 1_500, bytes: 77, detail: 'http_413' };
+    });
+    await recordStampLoss(SESSION, 'evidence_capacity', 1, 2_000);
+    status = await readStatus(SESSION);
+    expect(status?.lastLoss).toEqual({ reason: 'delivery_rejected', at: 1_500, bytes: 77, detail: 'http_413' });
+    expect(status?.stampLoss).toEqual({ reason: 'evidence_capacity', at: 2_000, events: 1 });
+  });
+
+  it('CR001b: an unsafe or oversized reason is bounded to stamp_invalid (no body/path text is kept)', async () => {
     const { recordStampLoss } = await import('../spool-io.js');
     const { readStatus } = await import('../session-status.js');
-    await recordStampLoss(SESSION, 'no_credentials', 3, 1_000);
-    expect((await readStatus(SESSION))?.lastLoss).toEqual({ reason: 'stamp_invalid', at: 1_000, bytes: 0 });
-    await recordStampLoss(SESSION, 'evidence_capacity', 1, 2_000);
-    expect((await readStatus(SESSION))?.lastLoss?.reason).toBe('evidence_capacity');
+    await recordStampLoss(SESSION, 'C:\\Users\\me\\x', 1, 1_000);
+    expect((await readStatus(SESSION))?.stampLoss?.reason).toBe('stamp_invalid');
+    await recordStampLoss(SESSION, 'a'.repeat(200), 1, 2_000);
+    expect((await readStatus(SESSION))?.stampLoss?.reason).toBe('stamp_invalid');
+  });
+
+  it('CR001c: on a fresh install the epoch exists before the first status, so the session is never pre-epoch', async () => {
+    const { readFile: read, stat } = await import('node:fs/promises');
+    const { recordStampLoss } = await import('../spool-io.js');
+    const { sessionBirthMs, isPreEpoch } = await import('../epoch.js');
+    // No epoch.json yet (fresh state root): a stamp loss is the FIRST spool write.
+    await expect(read(join(state.root, 'epoch.json'), 'utf-8')).rejects.toThrow();
+    await recordStampLoss(SESSION, 'no_owner', 1);
+    const epoch = (JSON.parse(await read(join(state.root, 'epoch.json'), 'utf-8')) as { created: number }).created;
+    const statusBirth = (await stat(join(state.root, `${SESSION}.status`))).birthtimeMs;
+    expect(epoch).toBeLessThanOrEqual(statusBirth + 1);
+    expect(isPreEpoch(await sessionBirthMs(SESSION), epoch)).toBe(false);
   });
 
   it('CR003: a limit bounds the read to a window and reports that more follows', async () => {

@@ -263,7 +263,6 @@ describe('delivery retention', () => {
     ['400', () => new Response('{"detail":"missing evidence"}', { status: 400 }), 'delivery_rejected', 'http_400'],
     ['413', () => new Response('', { status: 413 }), 'delivery_rejected', 'http_413'],
     ['422', () => new Response('', { status: 422 }), 'delivery_rejected', 'http_422'],
-    ['malformed hooks 200', () => new Response('not json', { status: 200 }), 'response_unverified', 'response_malformed'],
     ['5xx', () => new Response('', { status: 502 }), 'delivery_failed', 'http_502'],
   ])('%s stays unacknowledged until the bound, then is lost with its reason and bytes', async (_n, respond, reason, detail) => {
     const { appendSpool, forwardSession, readStatus } = await modules();
@@ -282,6 +281,22 @@ describe('delivery retention', () => {
     const status = await readStatus(SESSION);
     expect(status?.lastLoss).toMatchObject({ reason, detail, bytes: Buffer.byteLength(hookLine(1)) });
     expect(status?.cursors.hooks).toBe(Buffer.byteLength(hookLine(1)));
+  });
+
+  it('a legacy hooks 2xx the backend answers with an unparsable body is acknowledged, not retried into a loss', async () => {
+    const { appendSpool, forwardSession, readStatus } = await modules();
+    await appendSpool(SESSION, 'hooks', hookLine(1), ['A']);
+    fetchMock.mockImplementation(async () => new Response('not json', { status: 200 }));
+    await forwardSession(SESSION, true, credentials as never);
+    const status = await readStatus(SESSION);
+    expect(status?.cursors.hooks).toBe(Buffer.byteLength(hookLine(1)));
+    expect(status?.delivery).toBeUndefined();
+  });
+
+  it('an unverifiable evidence response maps to response_unverified (the reason an evidence hooks 200 would record)', async () => {
+    const { deliveryFailureOf } = await modules();
+    expect(deliveryFailureOf({ kind: 'failed', reason: 'response_malformed' })).toMatchObject({ reason: 'response_unverified', detail: 'response_malformed' });
+    expect(deliveryFailureOf({ kind: 'failed', reason: 'response_too_large' })).toMatchObject({ reason: 'response_unverified', detail: 'response_too_large' });
   });
 
   it('a network failure is recorded the same way', async () => {
