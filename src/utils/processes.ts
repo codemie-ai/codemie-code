@@ -144,9 +144,15 @@ export function signalProcess(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-/** All descendants of `pid` (not `pid` itself), deepest first, found by `pgrep -P`. POSIX only. */
-export function listDescendantPids(pid: number): number[] {
-  return listChildPids(pid).flatMap(childPid => [...listDescendantPids(childPid), childPid]);
+/** A process and the parent it had when it was listed. */
+export interface ListedProcess {
+  pid: number;
+  parentPid: number;
+}
+
+/** All descendants of `pid` (not `pid` itself) with their parents, deepest first, found by `pgrep -P`. POSIX only. */
+export function listDescendants(pid: number): ListedProcess[] {
+  return listChildPids(pid).flatMap(childPid => [...listDescendants(childPid), { pid: childPid, parentPid: pid }]);
 }
 
 /** A hung `pgrep` must not stall shutdown; past this, the node is treated as childless. */

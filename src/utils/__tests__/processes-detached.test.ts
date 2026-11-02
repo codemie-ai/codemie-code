@@ -11,7 +11,7 @@ vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), success: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const { spawnDetached, isProcessAlive, signalTree, signalProcess, listDescendantPids } = await import('../processes.js');
+const { spawnDetached, isProcessAlive, signalTree, signalProcess, listDescendants } = await import('../processes.js');
 
 describe('spawnDetached', () => {
   beforeEach(() => {
@@ -128,7 +128,7 @@ describe('signalTree', () => {
   });
 });
 
-describe('listDescendantPids and signalProcess', () => {
+describe('listDescendants and signalProcess', () => {
   let killed: string[];
 
   function pgrepFinds(children: Record<number, number[]>): void {
@@ -154,26 +154,30 @@ describe('listDescendantPids and signalProcess', () => {
     vi.restoreAllMocks();
   });
 
-  it('lists every descendant deepest first and leaves the root out', () => {
+  it('lists every descendant with its parent, deepest first, and leaves the root out', () => {
     pgrepFinds({ 100: [200], 200: [300, 301] });
 
-    expect(listDescendantPids(100)).toEqual([300, 301, 200]);
+    expect(listDescendants(100)).toEqual([
+      { pid: 300, parentPid: 200 },
+      { pid: 301, parentPid: 200 },
+      { pid: 200, parentPid: 100 },
+    ]);
   });
 
   it('lists nothing for a process without children or when pgrep times out', () => {
     pgrepFinds({});
-    expect(listDescendantPids(100)).toEqual([]);
+    expect(listDescendants(100)).toEqual([]);
 
     execFileSyncMock.mockImplementation(() => {
       throw Object.assign(new Error('spawnSync pgrep ETIMEDOUT'), { code: 'ETIMEDOUT', status: null });
     });
-    expect(listDescendantPids(100)).toEqual([]);
+    expect(listDescendants(100)).toEqual([]);
   });
 
   it('listing signals nothing', () => {
     pgrepFinds({ 100: [200] });
 
-    listDescendantPids(100);
+    listDescendants(100);
 
     expect(killed).toEqual([]);
   });

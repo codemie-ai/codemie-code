@@ -1172,8 +1172,9 @@ src/providers/plugins/sso/session/
    ├─ Forwarded to the agent process alone first (not its helpers: the agent's
    │  SessionEnd hook is one of them); the proxy keeps running. The agent's
    │  descendants are remembered; if the agent ends by the signal (a launcher such
-   │  as copilot's npm loader), those still alive get the signal and are waited
-   │  for up to 10 s, then killed
+   │  as copilot's npm loader), the tops of the subtrees still alive get the signal
+   │  (not what runs under them), are waited for up to 10 s, then their trees are
+   │  killed as they are then
    ├─ Agent exits (no exit within 10 s of the first SIGTERM / SIGHUP / SIGINT
    │  within 2 s of the previous one → the agent's process tree is killed and the
    │  exit path below finalizes, then the wrapper exits 128 + signal; any other

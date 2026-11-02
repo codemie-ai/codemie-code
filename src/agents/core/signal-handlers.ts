@@ -3,7 +3,7 @@
  * output streams.
  */
 import type { ChildProcess } from 'child_process';
-import { isProcessAlive, listDescendantPids, signalProcess, signalTree } from '../../utils/processes.js';
+import { isProcessAlive, listDescendants, signalProcess, signalTree } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -142,9 +142,10 @@ export function installWin32SignalHandlers(child: ChildProcess, displayName: str
  * An agent started through a launcher that forwards no signals (copilot's npm
  * loader) dies of the signal and leaves the real agent running. The wrapper
  * remembers the agent's descendants when it forwards a signal; if the agent then
- * ends by a signal (it did not handle it), `reapOrphans` signals those that
- * are still alive and waits up to 10 s for them before killing them. An agent that
- * handled the signal and exited itself is responsible for its own helpers.
+ * ends by a signal (it did not handle it), `reapOrphans` signals the tops of the
+ * subtrees still alive (not what runs under them, such as the real agent's
+ * SessionEnd hook), waits up to 10 s, then kills their trees as they are then. An
+ * agent that handled the signal and exited itself is responsible for its own helpers.
  *
  * Every SIGINT / SIGTERM / SIGHUP is forwarded, so a terminal Ctrl+C in cooked
  * mode reaches the agent twice (the terminal's and the forwarded one): a known
@@ -156,7 +157,8 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
   let firedFor: NodeJS.Signals | undefined;
   let lastSigintAt: number | undefined;
   let lastForwarded: NodeJS.Signals = 'SIGTERM';
-  const descendantPids = new Set<number>();
+  // Every descendant seen when a signal was forwarded, with the parent it had then.
+  const descendantParents = new Map<number, number>();
 
   const forwardSignal = (signal: NodeJS.Signals) => {
     if (childExited) {
@@ -165,8 +167,8 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
     logger.debug(`[${displayName}] got ${signal} -> forwarded`);
     lastForwarded = signal;
     if (child.pid !== undefined) {
-      for (const pid of listDescendantPids(child.pid)) {
-        descendantPids.add(pid);
+      for (const { pid, parentPid } of listDescendants(child.pid)) {
+        descendantParents.set(pid, parentPid);
       }
       signalProcess(child.pid, signal);
     }
@@ -179,6 +181,10 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
       }
     }
     signalFallbackTimer ??= setTimeout(() => {
+      // An agent that already ended by a signal is dealt with by reapOrphans; its pid may be reused by now.
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
+      }
       logger.debug(`[${displayName}] agent did not exit ${SIGNAL_FALLBACK_MS}ms after ${signal}, killing it`);
       firedFor = signal;
       signalChildTree(child, 'SIGKILL');
@@ -190,11 +196,10 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
     process.on(signal, forwardSignal);
   }
 
-  const livingOrphans = () => [...descendantPids].filter(isProcessAlive);
-  const signalOrphans = (signal: NodeJS.Signals) => {
-    for (const pid of livingOrphans()) {
-      signalProcess(pid, signal);
-    }
+  const livingOrphans = () => [...descendantParents.keys()].filter(isProcessAlive);
+  const parentGone = (pid: number) => {
+    const parentPid = descendantParents.get(pid);
+    return parentPid === undefined || !isProcessAlive(parentPid);
   };
 
   return {
@@ -212,7 +217,11 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
         return;
       }
       logger.debug(`[${displayName}] agent ended by ${exitSignal} and left processes behind -> ${lastForwarded}`);
-      signalOrphans(lastForwarded);
+      // Only the tops of the surviving subtrees: what runs under the real agent (its
+      // SessionEnd hook) must not get the signal before the agent does.
+      for (const pid of livingOrphans().filter(parentGone)) {
+        signalProcess(pid, lastForwarded);
+      }
       const deadline = Date.now() + SIGNAL_FALLBACK_MS;
       while (livingOrphans().length > 0 && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, ORPHAN_POLL_MS));
@@ -220,7 +229,10 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
       if (livingOrphans().length > 0) {
         logger.debug(`[${displayName}] leftover processes did not exit ${SIGNAL_FALLBACK_MS}ms after ${lastForwarded}, killing them`);
         firedFor ??= lastForwarded;
-        signalOrphans('SIGKILL');
+        // Their trees as they are now: a survivor may have spawned something since the snapshot.
+        for (const pid of livingOrphans()) {
+          signalTree(pid, 'SIGKILL');
+        }
       }
     },
     onChildGone: () => {
