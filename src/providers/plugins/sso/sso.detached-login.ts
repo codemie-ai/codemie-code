@@ -24,7 +24,17 @@ interface LoginLock {
   startedAt: number;
   /** Epoch millis when this lock's own sign-in succeeded, if it has (see releaseLoginLockOnSuccess). */
   succeededAt?: number;
+  /** Epoch millis when this lock's own sign-in failed, if it has (see releaseLoginLockOnFailure). */
+  failedAt?: number;
+  /** The sign-in child's failure reason, stamped with failedAt. */
+  error?: string;
 }
+
+/** How long a hook waits for a detached sign-in; stays below the 180s UserPromptSubmit hook timeout. */
+export const SSO_LOGIN_WAIT_MS = 150_000;
+const LOGIN_WAIT_POLL_MS = 1_000;
+
+export type LoginWaitResult = { status: 'succeeded' } | { status: 'failed'; error?: string } | { status: 'timeout' };
 
 function getLockPath(): string {
   return getCodemiePath('sso-login.lock');
@@ -40,6 +50,8 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
       pid: lock.pid,
       startedAt: lock.startedAt,
       ...(typeof lock.succeededAt === 'number' && { succeededAt: lock.succeededAt }),
+      ...(typeof lock.failedAt === 'number' && { failedAt: lock.failedAt }),
+      ...(typeof lock.error === 'string' && { error: lock.error }),
     };
   } catch {
     return null;
@@ -208,6 +220,56 @@ export async function releaseLoginLockOnSuccess(): Promise<void> {
 }
 
 /**
+ * Called by the detached sign-in process after a failed sign-in, so a waiting hook can report the
+ * child's error. Owner-only, like releaseLoginLockOnSuccess; acquireLock still treats the lock by
+ * its (soon dead) pid, so cooldown/replace semantics are unchanged.
+ */
+export async function releaseLoginLockOnFailure(error: string): Promise<void> {
+  try {
+    const lockPath = getLockPath();
+    const lock = await readLock(lockPath);
+    if (lock?.pid === process.pid) {
+      await writeLockAtomically(lockPath, { ...lock, failedAt: Date.now(), error });
+    }
+  } catch (err) {
+    logger.debug('[sso-detached-login] Failed to stamp lock failure:', err);
+  }
+}
+
+/**
+ * Polls the sign-in lock until the detached login succeeds, fails (stamped, lock gone, or child
+ * died without stamping) or the deadline passes. Never throws.
+ */
+export async function waitForDetachedSsoLogin(
+  opts: { timeoutMs?: number; pollMs?: number } = {}
+): Promise<LoginWaitResult> {
+  const { timeoutMs = SSO_LOGIN_WAIT_MS, pollMs = LOGIN_WAIT_POLL_MS } = opts;
+  const deadline = Date.now() + timeoutMs;
+  const lockPath = getLockPath();
+  for (;;) {
+    try {
+      const lock = await readLock(lockPath);
+      if (lock?.succeededAt !== undefined) {
+        return { status: 'succeeded' };
+      }
+      if (lock?.failedAt !== undefined) {
+        return { status: 'failed', ...(lock.error !== undefined && { error: lock.error }) };
+      }
+      // A mid-write lock reads as null briefly; only call it gone when it is not freshly modified.
+      if (lock ? !isProcessAlive(lock.pid) : !(await isRecentlyModified(lockPath))) {
+        return { status: 'failed', error: 'the sign-in process exited without completing' };
+      }
+    } catch (error) {
+      logger.debug('[sso-detached-login] Failed to poll sign-in lock:', error);
+    }
+    if (Date.now() >= deadline) {
+      return { status: 'timeout' };
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+  }
+}
+
+/**
  * Start a browser SSO sign-in in a detached process without waiting for it.
  * A lock file prevents concurrent sign-ins and enforces a cooldown after a
  * failed attempt — or after a successful one (see releaseLoginLockOnSuccess).
@@ -241,15 +303,48 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
   }
 }
 
-export function describeLogin(outcome: DetachedLoginOutcome = 'failed'): string {
+const EXPIRED_LEAD = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
+const MANUAL_RESUME = 'After login completes, re-send your prompt.';
+
+/**
+ * All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in.
+ * An undefined outcome means no browser sign-in was attempted (API key, unexpected gate error), so
+ * the expiry is not assumed and no `codemie profile login` is suggested.
+ */
+export function describeLogin(
+  outcome: DetachedLoginOutcome | undefined,
+  opts: { resume?: 'auto' | 'manual'; wait?: LoginWaitResult } = {}
+): string {
+  const { resume = 'manual', wait } = opts;
+  if (outcome === undefined && !wait) {
+    return 'CodeMie could not verify your credentials. Check your CodeMie API key or profile configuration, then re-send your prompt.';
+  }
+  if (wait?.status === 'failed') {
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}`;
+  }
+  if (wait?.status === 'succeeded') {
+    // Reached only when the post-sign-in re-check still failed, e.g. the login was for another profile/URL.
+    return `${EXPIRED_LEAD}\nThe browser sign-in finished, but this CodeMie profile is still not authenticated (the sign-in may have been for a different profile or URL).\nRun \`codemie profile login\` for this profile. ${MANUAL_RESUME}`;
+  }
+  if (wait?.status === 'timeout') {
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not finish in time.\nComplete it, or run \`codemie profile login\`. ${MANUAL_RESUME}`;
+  }
   switch (outcome) {
     case 'started':
-      return 'A browser sign-in window has been opened automatically.\nComplete the sign-in, then re-send your prompt.\nIf you closed the browser window, run `codemie profile login`.';
-    case 'in-progress':
-      return 'A browser sign-in is already in progress.\nComplete the sign-in, then re-send your prompt.\nIf you closed the browser window, run `codemie profile login`.';
+    case 'in-progress': {
+      const opened =
+        outcome === 'started'
+          ? 'A browser sign-in window has been opened automatically.'
+          : 'A browser sign-in is already in progress.';
+      const next =
+        resume === 'auto'
+          ? 'Finish signing in and your prompt will continue automatically.'
+          : `Complete the sign-in. ${MANUAL_RESUME}\nIf you closed the browser window, run \`codemie profile login\`.`;
+      return `${EXPIRED_LEAD}\n${opened}\n${next}`;
+    }
     case 'cooldown':
-      return 'The previous sign-in attempt did not complete. Run `codemie profile login`, then re-send your prompt.';
+      return `${EXPIRED_LEAD}\nThe previous sign-in attempt did not complete. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
     default:
-      return 'Could not open the browser sign-in automatically. Run `codemie profile login`, then re-send your prompt.';
+      return `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
   }
 }

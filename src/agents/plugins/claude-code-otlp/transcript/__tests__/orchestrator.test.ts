@@ -208,7 +208,7 @@ describe('openMainTranscriptPass — idempotent reparse', () => {
 });
 
 describe('openMainTranscriptPass — Stop trigger', () => {
-  it('flags API-error placeholders and excludes their synthetic model from the session summary', async () => {
+  it('omits API-error placeholders from usage events and summary api_calls', async () => {
     const sessionId = 'session-synthetic-model';
     const transcriptPath = writeTranscript('transcript-synthetic-model.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
@@ -225,10 +225,117 @@ describe('openMainTranscriptPass — Stop trigger', () => {
     const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
     const summary = events.find((event) => event.type === 'agent.session.summary');
 
-    expect(usageEvents).toHaveLength(2);
-    expect(usageEvents.find((event) => event.message_id === 'msg-2')?.is_api_error).toBe(true);
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].message_id).toBe('msg-1');
+    expect(usageEvents[0].is_api_error).toBe(false);
     expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
     expect(summary?.primary_model).toBe('claude-sonnet-4-5-20250929');
+    expect(summary?.api_calls).toBe(1);
+  });
+
+  it('keeps an already-emitted normal request counted when a matching API-error row arrives later', async () => {
+    const sessionId = 'session-late-api-error-collision';
+    const transcriptPath = writeTranscript('transcript-late-api-error-collision.jsonl', [
+      usageLine({
+        uuid: 'uuid-normal',
+        requestId: 'req-collision',
+        messageId: 'msg-normal',
+        outputTokens: 50,
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ]);
+
+    const firstEvents = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const firstUsageEvents = firstEvents.filter((event) => event.type === 'agent.usage.request');
+    expect(firstUsageEvents).toHaveLength(1);
+    expect(firstUsageEvents[0].request_id).toBe('req-collision');
+
+    appendFileSync(
+      transcriptPath,
+      `${usageLine({
+        uuid: 'uuid-api-error',
+        requestId: 'req-collision',
+        messageId: 'msg-api-error',
+        outputTokens: 0,
+        model: 'claude-sonnet-4-5-20250929',
+        isApiErrorMessage: true,
+      })}\n`
+    );
+
+    const laterEvents = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const laterUsageEvents = laterEvents.filter((event) => event.type === 'agent.usage.request');
+    const summary = laterEvents.find((event) => event.type === 'agent.session.summary');
+
+    expect(laterUsageEvents).toHaveLength(0);
+    expect(summary?.api_calls).toBe(1);
+    expect(summary?.models).toEqual(['claude-sonnet-4-5-20250929']);
+  });
+
+  it('recovers a normal request from a legacy persisted API-error key', async () => {
+    const { createParseState, saveParseState } = await import('../parse-state.js');
+    const { parseUsageLine } = await import('../usage-request.js');
+    const sessionId = 'session-legacy-api-error-key';
+    const model = 'claude-sonnet-4-5-20250929';
+    const legacyError = parseUsageLine(
+      usageLine({
+        uuid: 'uuid-legacy-error',
+        requestId: 'req-legacy',
+        messageId: 'msg-legacy-error',
+        outputTokens: 0,
+        model,
+        isApiErrorMessage: true,
+      }),
+      'main',
+      '',
+      '',
+      ''
+    );
+    if (!legacyError) {
+      throw new Error('Expected the API-error transcript row to parse as a usage request');
+    }
+
+    const legacyState = createParseState();
+    legacyState.openRequests[`req-legacy::${model}`] = legacyError;
+    await saveParseState(sessionId, legacyState);
+    const transcriptPath = writeTranscript('transcript-legacy-api-error-key.jsonl', [
+      usageLine({
+        uuid: 'uuid-legacy-normal',
+        requestId: 'req-legacy',
+        messageId: 'msg-legacy-normal',
+        outputTokens: 50,
+        model,
+      }),
+    ]);
+
+    const events = await mainEvents(sessionId, transcriptPath, 'Stop');
+    const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
+    const summary = events.find((event) => event.type === 'agent.session.summary');
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0].is_api_error).toBe(false);
+    expect(summary?.api_calls).toBe(1);
+  });
+
+  it('reports zero api_calls when the transcript contains only an API-error placeholder', async () => {
+    const sessionId = 'session-only-api-error';
+    const transcriptPath = writeTranscript('transcript-only-api-error.jsonl', [
+      usageLine({
+        uuid: 'uuid-error',
+        messageId: 'msg-error',
+        outputTokens: 0,
+        model: '<synthetic>',
+        isApiErrorMessage: true,
+      }),
+    ]);
+
+    const events = parseAll(await mainEvents(sessionId, transcriptPath, 'Stop'));
+    const usageEvents = events.filter((event) => event.type === 'agent.usage.request');
+    const summary = events.find((event) => event.type === 'agent.session.summary');
+
+    expect(usageEvents).toHaveLength(0);
+    expect(summary?.api_calls).toBe(0);
+    expect(summary?.models).toEqual([]);
+    expect(summary?.primary_model).toBe('');
   });
 
   it('returns one agent.usage.request event per distinct request plus one incremental agent.session.summary', async () => {
@@ -653,6 +760,14 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
       userLine('hello', { version: '2.1.295' }),
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
       editResult,
+      userLine([{ type: 'tool_result', tool_use_id: 't2', content: 'ok' }], {
+        toolUseResult: {
+          type: 'create',
+          structuredPatch: [],
+          originalFile: null,
+          content: 'one\ntwo\nthree\n',
+        },
+      }),
       userLine(commandText('commit')),
       userLine(commandText('plan')),
       userLine(commandText('plan')),
@@ -665,7 +780,8 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
       JSON.stringify({ type: 'ai-title', aiTitle: 'Latest title' }),
     ]);
 
-    expect(summary.lines_added).toBe(2);
+    // 2 from the Edit patch + 3 content lines of the created file.
+    expect(summary.lines_added).toBe(5);
     expect(summary.lines_removed).toBe(1);
     // 'hello' + three command lines; the tool_result-only line is not a prompt.
     expect(summary.turns).toBe(4);
@@ -1471,10 +1587,14 @@ describe('openSubagentPass — partial output_tokens (stop_reason null rows)', (
     expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
     // a later row without stop_reason must not un-finalize a request that already has one.
     expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
-    // API-error rows carry no stop_reason by nature and are not partial.
-    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
+    // API-error rows are retained in parse state but never emitted as usage requests.
+    expect(byReq).not.toHaveProperty('req_s6');
 
-    const summary = events.find((e) => e.type === 'agent.subagent.usage') as { usage: Array<Record<string, unknown>> };
+    const summary = events.find((e) => e.type === 'agent.subagent.usage') as {
+      api_calls: number;
+      usage: Array<Record<string, unknown>>;
+    };
+    expect(summary.api_calls).toBe(5);
     expect(summary.usage[0]).toMatchObject({ output_tokens: 818, output_tokens_partial: true });
   });
 });
@@ -2759,12 +2879,12 @@ describe('api-request-blob lines', () => {
     const usage = events.filter((e) => e.type === 'agent.usage.request');
     const byReq = Object.fromEntries(usage.map((e) => [e.request_id, e]));
 
-    expect(usage).toHaveLength(6);
+    expect(usage).toHaveLength(5);
     expect(byReq.req_s1).toMatchObject({ output_tokens: 3, output_tokens_partial: true });
     expect(byReq.req_s2).toMatchObject({ output_tokens: 8, output_tokens_partial: true });
     expect(byReq.req_s3).toMatchObject({ output_tokens: 300, output_tokens_partial: false });
     expect(byReq.req_s4).toMatchObject({ output_tokens: 457, output_tokens_partial: false });
     expect(byReq.req_s5).toMatchObject({ output_tokens: 50, output_tokens_partial: false });
-    expect(byReq.req_s6).toMatchObject({ is_api_error: true, output_tokens_partial: false });
+    expect(byReq).not.toHaveProperty('req_s6');
   });
 });

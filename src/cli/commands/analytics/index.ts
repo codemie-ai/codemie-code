@@ -64,6 +64,7 @@ function applyCommonOptions(command: Command): Command {
     .option('--export [format]', 'Write report: html (default), json, or both')
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
     .option('--open', 'Open the generated HTML report in the default browser')
+    .option('--redact', 'Omit prompt text (session titles) and absolute paths from the exported report, for sharing outside this machine')
     .option('--report', `Deprecated: use --export instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
     .option('--report-format <format>', `Deprecated: use --export [format] instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
     .option('--report-output <path>', `Deprecated: use -o/--output instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`);
@@ -177,6 +178,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       const { buildPayload } = await import('./report/payload-builder.js');
       const { generateReport, generateReportJson, writeReportWithFallback } = await import('./report/report-generator.js');
       const { resolveOutputTargets } = await import('./report/output-target.js');
+      const { redactPayload } = await import('./report/redact.js');
 
       // Load user email for report metadata and filename; non-fatal if config is unavailable.
       let userEmail: string | undefined;
@@ -208,7 +210,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       }
 
       const { index: costIndex, summary } = costResult;
-      const payload = buildPayload(analytics, costIndex, summary, {
+      const builtPayload = buildPayload(analytics, costIndex, summary, {
         rangeLabel: options.last ?? (options.from || options.to ? 'custom' : 'all'),
         projectFilter: options.project ?? 'all',
         generatedAt: new Date().toISOString(),
@@ -216,6 +218,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
+      const payload = options.redact ? redactPayload(builtPayload) : builtPayload;
 
       const targets = resolveOutputTargets(exportFormat, output, process.cwd(), userEmail);
       let htmlPath = targets.html;

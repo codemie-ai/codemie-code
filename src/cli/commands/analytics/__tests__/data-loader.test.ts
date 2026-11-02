@@ -219,3 +219,52 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions[0].agentSessionFile).toBeUndefined();
   });
 });
+
+describe('MetricsDataLoader.loadSessions — marker sidecars and malformed records', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-marker-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeSession(id: string, agentName: string): void {
+    writeFileSync(
+      join(dir, `${id}.json`),
+      JSON.stringify({ startTime: 1000, agentName, provider: 'ai-run-sso', workingDirectory: '/tmp/p' })
+    );
+  }
+
+  it('ignores ownership marker sidecars so an agent filter still returns valid sessions', () => {
+    writeSession('copilot-1', 'copilot-cli');
+    writeSession('claude-1', 'claude');
+    writeFileSync(join(dir, 'abc-codemie-marker.json'), JSON.stringify({ codemieSessionId: 'copilot-1' }));
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ agentName: 'copilot-cli' });
+
+    expect(sessions.map(s => s.sessionId)).toEqual(['copilot-1']);
+  });
+
+  it('skips malformed and agent-less records without hiding valid sessions', () => {
+    writeSession('copilot-1', 'copilot-cli');
+    writeFileSync(join(dir, 'broken.json'), '{not json');
+    writeFileSync(join(dir, 'noagent.json'), JSON.stringify({ startTime: 1000 }));
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ agentName: 'copilot-cli' });
+
+    expect(sessions.map(s => s.sessionId)).toEqual(['copilot-1']);
+  });
+
+  it('keeps the unfiltered behaviour for other agents', () => {
+    writeSession('claude-1', 'claude');
+    writeSession('copilot-1', 'copilot-cli');
+
+    expect(new MetricsDataLoader(dir).loadSessions({ agentName: 'claude' }).map(s => s.sessionId)).toEqual([
+      'claude-1',
+    ]);
+    expect(new MetricsDataLoader(dir).loadSessions()).toHaveLength(2);
+  });
+});

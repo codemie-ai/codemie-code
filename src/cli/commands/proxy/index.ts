@@ -2,27 +2,23 @@ import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ConfigurationError } from '../../../utils/errors.js';
-import { syncRegisteredSkills } from '../skills/setup/sync.js';
-import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
-import {
-  checkStatus,
-  readState,
-  spawnDaemon,
-  stopDaemon,
-  writeState,
-} from './daemon-manager.js';
+import { checkStatus, readState, stopDaemon, writeState } from './daemon-manager.js';
+import { launchDaemon } from './launch-daemon.js';
+import { restartProxy } from './restart.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
   DEFAULT_DAEMON_PORT,
   daemonMatchesRequest,
-  verifySsoCredentials,
   printProxyError,
   connectTargets,
   type RequestedDaemonConfig,
 } from './connect-orchestrator.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
+import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
+import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
@@ -33,13 +29,16 @@ interface ProxyStartOptions {
 
 interface UnifiedConnectOptions {
   claudeCodeOtlp?: boolean;
+  copilotChatOtlp?: boolean;
+  copilotCliOtlp?: boolean;
   claudeDesktop?: boolean;
   codexDesktop?: boolean;
   force?: boolean;
   insiders?: boolean;
   model?: string;
   profile?: string;
-  scope?: "user" | "project";
+  scope?: AllowlistScope;
+  silent?: boolean;
   verbose?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
@@ -152,28 +151,7 @@ export function createProxyCommand(): Command {
           throw new ConfigurationError(formatDaemonConflict(state));
         }
 
-        if (!config.baseUrl) {
-          throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
-        }
-
-        await verifySsoCredentials(config.baseUrl, profile, config.codeMieUrl);
-
-        const cwd = process.cwd();
-        await Promise.allSettled([
-          syncRegisteredSkills(profile, cwd),
-          syncPluginSkills(),
-        ]);
-
-        console.log('Starting proxy daemon...');
-        const daemonState = await spawnDaemon({
-          targetUrl: config.baseUrl,
-          provider: config.provider ?? 'ai-run-sso',
-          profile,
-          port: requestedPort,
-          project: config.codeMieProject,
-          syncApiUrl: config.ssoConfig?.apiUrl,
-          syncCodeMieUrl: config.codeMieUrl,
-        });
+        const daemonState = await launchDaemon(config, profile, { port: requestedPort });
 
         console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
       } catch (error) {
@@ -193,6 +171,19 @@ export function createProxyCommand(): Command {
       }
       await stopDaemon();
       console.log(chalk.green('✓ Proxy stopped'));
+    });
+
+  // ── proxy restart ───────────────────────────────────────────────────────────
+  proxy
+    .command('restart')
+    .description('Restart the background proxy daemon, preserving its identity')
+    .option('--profile <name>', 'Profile whose credentials to use (default: the running daemon\'s)')
+    .action(async (opts: { profile?: string }) => {
+      try {
+        await restartProxy(opts);
+      } catch (error) {
+        printProxyError(error, 'Failed to restart proxy');
+      }
     });
 
   // ── proxy status ─────────────────────────────────────────────────────────────
@@ -311,18 +302,26 @@ export function createProxyCommand(): Command {
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Configure Claude Code analytics hooks and OTLP settings')
+    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Configure VS Code Copilot Chat analytics (hooks-only, no OTel; Stable/default profile)')
+    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Configure native GitHub Copilot CLI analytics (hooks-only, no OTel)')
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds only the current project`,
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) tracks all projects and resets the project list; "project" adds the current project and preserves others`,
       )
       .default('user')
       .choices(['user', 'project']),
+    )
+    .option(
+      '--silent',
+      `Skip the confirmation prompt (required when non-interactive; applies to --${CLAUDE_CODE_OTLP_AGENT_NAME})`,
     )
     .action(async (opts: UnifiedConnectOptions) => {
       await connectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
+          copilotChatOtlp: Boolean(opts.copilotChatOtlp),
+          copilotCliOtlp: Boolean(opts.copilotCliOtlp),
           claudeDesktop: Boolean(opts.claudeDesktop),
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
@@ -334,6 +333,7 @@ export function createProxyCommand(): Command {
         verbose: Boolean(opts.verbose),
         model: opts.model,
         scope: opts.scope,
+        silent: Boolean(opts.silent),
       });
     });
 
@@ -342,18 +342,28 @@ export function createProxyCommand(): Command {
     .description('Remove CodeMie proxy configuration from a client')
     .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
     .option(`--${CLAUDE_CODE_OTLP_AGENT_NAME}`, 'Remove Claude Code analytics hooks, OTLP settings and project allowlist')
+    .option(`--${COPILOT_CHAT_OTLP_AGENT_NAME}`, 'Remove Copilot Chat analytics hook file, settings entry and project scope')
+    .option(`--${COPILOT_CLI_OTLP_AGENT_NAME}`, 'Remove Copilot CLI analytics hook file and project scope')
     .addOption(
       new Option(
         '--scope <scope>',
-        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
+        `Tracking scope for --${CLAUDE_CODE_OTLP_AGENT_NAME} / --${COPILOT_CHAT_OTLP_AGENT_NAME} / --${COPILOT_CLI_OTLP_AGENT_NAME}: "user" (default) removes all CodeMie wiring; "project" removes only the current project from the tracked list`,
       )
       .default('user')
       .choices(['user', 'project']),
     )
-    .action(async (opts: { claudeCodeOtlp?: boolean; codexDesktop?: boolean; scope?: 'user' | 'project' }) => {
+    .action(async (opts: {
+      claudeCodeOtlp?: boolean;
+      copilotChatOtlp?: boolean;
+      copilotCliOtlp?: boolean;
+      codexDesktop?: boolean;
+      scope?: 'user' | 'project';
+    }) => {
       await disconnectTargets({
         targets: {
           claudeCodeOtlp: Boolean(opts.claudeCodeOtlp),
+          copilotChatOtlp: Boolean(opts.copilotChatOtlp),
+          copilotCliOtlp: Boolean(opts.copilotCliOtlp),
           codexDesktop: Boolean(opts.codexDesktop),
         },
         scope: opts.scope,

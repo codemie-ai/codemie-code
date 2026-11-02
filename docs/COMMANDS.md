@@ -85,6 +85,7 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 ```bash
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
+codemie proxy restart [--profile <name>]  # Restart the daemon, keeping its port, client and key
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
@@ -1267,6 +1268,8 @@ export CODEMIE_AUTO_UPDATE=true
 codemie --version
 ```
 
+A process an agent runs as a hook (`codemie hook`, `codemie sound`) never checks for updates: it runs pending migrations silently (file log only), shows no what's-new notice, and writes its debug and status output to the log file only, so its stdout carries only its answer to the agent and its stderr only its own message on a blocking exit. The next interactive `codemie` run checks and updates.
+
 **Performance & Rate Limiting:**
 - Update checks are rate-limited to once per 24 hours by default
 - First invocation may take up to 5 seconds (network check)
@@ -1617,11 +1620,13 @@ With that configuration, the selected profile's URL is shown:
 ✓ Claude Code Analytics configured successfully
 
 Analytics Configuration:
-Profile           │ preview
-CodeMie URL       │ https://codemie-preview.lab.epam.com
-Scope             │ project
-Tracked projects  │ /path/to/control-plane
+Using profile │ preview
+CodeMie URL   │ https://codemie-preview.lab.epam.com
+Scope         │ project
+  First-time setup needs a Claude Code restart; allowlist changes apply immediately.
 ```
+
+The connect output does not list tracked projects or hook wiring details.
 
 When SSO credentials are missing, the CLI checks the selected profile's API URL and the workspace CodeMie URL, and suggests an explicit login URL for the selected profile. If the workspace URL belongs to another environment or is absent, the profile API URL's origin is used:
 
@@ -1633,12 +1638,19 @@ When the `preview` profile has `baseUrl: "https://codemie-preview.lab.epam.com/c
 
 | Command                                               | Allowlist result                                                                         |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                               |
-| `connect --claude-code-otlp --scope project`          | adds the current project root (deduplicated); run it in each project to track            |
+| `connect --claude-code-otlp` (default `--scope user`) | `[]` - every project is tracked (resets any existing list)                             |
+| `connect --claude-code-otlp --scope user`             | `[]` - every project is tracked (resets any existing list); identical to omitting `--scope` |
+| `connect --claude-code-otlp --scope project`          | explicit opt-in: adds the current project root (deduplicated), preserving any other listed projects; run it in each project to track |
 | `disconnect --claude-code-otlp --scope project`       | removes the current project root; when the list becomes empty everything is disconnected |
 | `disconnect --claude-code-otlp`                       | removes hooks, OTel variables and the allowlist                                          |
 
-`--scope user` (the default) tracks every project by clearing the project allowlist. `--scope project` adds only the current project root to the allowlist; only projects listed there are tracked.
+Omitting `--scope` selects Global, exactly like `--scope user`: the allowlist becomes `[]` and every project is tracked. If the existing allowlist lists projects, Global replaces it and expands tracking to all projects; the confirmation states that analytics are configured for all Claude Code sessions in any project. `--scope project` is an explicit opt-in: it adds the current project and keeps the other entries. If the existing allowlist is `[]` (Global), it becomes the current project only.
+
+The allowlist in `~/.claude/settings.json` is the only source of truth. An empty allowlist means Global, a non-empty one means Project, and a missing key means Claude Code analytics has never been configured. Nothing is stored in CodeMie profiles, project config, or setup state, and the scope is not remembered between commands.
+
+**Confirmation.** Before the proxy starts or `~/.claude/settings.json` is changed, `connect --claude-code-otlp` asks once. The prompt shows the profile and the CodeMie URL when configured, then one line saying what will be enabled ("Global analytics will be enabled for all your Claude Code sessions." for Global; for `--scope project`, "Analytics will be enabled for your Claude Code sessions in the project:" followed by the current project's path), and then offers **Confirm** or **Decline** in the same list style as `codemie setup`. **Decline** or Ctrl+C stop the command: the proxy is not started, `settings.json` is not written, and the existing allowlist is left untouched (a cancelled prompt is never treated as Global). An already running proxy keeps running.
+
+**`--silent` and non-interactive use.** `--silent` (a flag of `proxy connect` that applies to `--claude-code-otlp`) skips the prompt. Without `--scope` it writes Global and replaces existing project entries without asking; `--scope project --silent` adds the current project and keeps the existing entries. When no interactive terminal is available (for example CI or piped input), `connect --claude-code-otlp` without `--silent` fails with an error before the proxy starts, SSO is checked, or `settings.json` is touched; add `--silent` for unattended runs. An invalid allowlist still stops `connect` unless `--force` is passed, with or without `--silent`.
 
 A `cwd` inside any listed path is tracked (nested directories included). An invalid value stops `connect` before anything is written; fix it manually or rerun with `--force` to discard it. `--force` never edits a valid list.
 

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { format } from 'node:util';
+import { AnalyticsSourceError } from '@/utils/errors.js';
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
@@ -31,7 +33,16 @@ vi.mock('../session-project-pin.js', () => ({
   pinProjectName: pinProjectNameMock,
 }));
 vi.mock('@/utils/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), notice: vi.fn(), success: vi.fn(), status: vi.fn() },
+}));
+const readStateMock = vi.fn();
+const checkStatusMock = vi.fn();
+const spawnDaemonMock = vi.fn();
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
+  readState: readStateMock,
+  checkStatus: checkStatusMock,
+  spawnDaemon: spawnDaemonMock,
+  stopDaemon: vi.fn(),
 }));
 
 const { OtlpAgentAdapter } = await import('../OtlpAgentAdapter.js');
@@ -49,6 +60,9 @@ interface FakeInput {
 class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   readonly name = 'fake';
   tracked = true;
+  enforced = false;
+  untrackedCalls: FakeInput[] = [];
+  dropped: readonly string[] = [];
 
   protected parseHookInput(raw: string): FakeInput | null {
     const parsed = JSON.parse(raw) as Partial<FakeInput>;
@@ -59,6 +73,15 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   }
   protected async isTracked(): Promise<boolean> {
     return this.tracked;
+  }
+  protected droppedFields(): readonly string[] {
+    return this.dropped;
+  }
+  protected requiresSpoolAcceptance(): boolean {
+    return this.enforced;
+  }
+  protected async onUntrackedHook(input: FakeInput): Promise<void> {
+    this.untrackedCalls.push(input);
   }
   protected async evaluate(input: FakeInput): Promise<Decision> {
     if (input.block) {
@@ -82,6 +105,9 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
     return `${String(event['type'])}:${String(event['session_id'])}:${hash}`;
   }
 }
+
+const GH = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
+const AWS = 'AKIAIOSFODNN7EXAMPLE'; // gitleaks:allow
 
 /** A jwt-shaped access token carrying the given claims. */
 const tokenWith = (claims: Record<string, unknown>): string =>
@@ -135,6 +161,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     expect(forwardToSpool).not.toHaveBeenCalled();
   });
 
+  it('calls onUntrackedHook with the parsed input when a project is not tracked', async () => {
+    adapter.tracked = false;
+    await run({ cwd: '/untracked-repo' });
+    expect(adapter.untrackedCalls).toHaveLength(1);
+    expect(adapter.untrackedCalls[0]).toMatchObject({ cwd: '/untracked-repo' });
+  });
+
   it('ignores a payload parseHookInput rejects', async () => {
     await adapter.processOtlpEvent(JSON.stringify({ nothing: true }), deps);
     expect(ensureOtlpProxy).not.toHaveBeenCalled();
@@ -151,11 +184,70 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     expect(ensureOtlpProxy.mock.invocationCallOrder[0]).toBeLessThan(forwardToSpool.mock.invocationCallOrder[0]);
   });
 
+  it('swallows an ensureOtlpProxy failure, logs it, and still forwards the event', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    ensureOtlpProxy.mockRejectedValueOnce(new Error('Daemon failed to start within 5 seconds'));
+    await expect(run()).resolves.toBeUndefined();
+    expect(forwardToSpool).toHaveBeenCalledTimes(1);
+    expect(ensureOtlpProxy.mock.invocationCallOrder[0]).toBeLessThan(forwardToSpool.mock.invocationCallOrder[0]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('[fake] ensureOtlpProxy failed (non-blocking): Daemon failed to start within 5 seconds')
+    );
+  });
+
   it('prints the decision and forwards nothing on the block path', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await run({ block: true });
     expect(log).toHaveBeenCalledWith(JSON.stringify({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } }));
     expect(forwardToSpool).not.toHaveBeenCalled();
+  });
+
+  describe('stdout carries only the protocol answer', () => {
+    /** Every stdout write, console.log included (routed the way Node's console writes it). */
+    const captureStdout = () => {
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        process.stdout.write(`${format(...args)}\n`);
+      });
+      return write;
+    };
+
+    it('writes nothing to stdout on a non-blocking event', async () => {
+      const write = captureStdout();
+      await run();
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('writes exactly one JSON line to stdout on a blocking event', async () => {
+      const write = captureStdout();
+      await run({ block: true });
+      expect(write).toHaveBeenCalledTimes(1);
+      const out = String(write.mock.calls[0][0]);
+      expect(out.endsWith('\n')).toBe(true);
+      expect(out.trimEnd().split('\n')).toHaveLength(1);
+      expect(JSON.parse(out)).toEqual({ decision: 'block', reason: 'nope', hookSpecificOutput: { x: 1 } });
+    });
+
+    it('writes exactly one JSON line to stdout when the blocking event cold-starts the daemon', async () => {
+      configLoadMock.mockResolvedValue({ name: 'p', baseUrl: 'https://x.example.com/api', codeMieProject: 'proj-1' });
+      readStateMock.mockResolvedValue(null);
+      checkStatusMock.mockResolvedValue({ running: false, state: null });
+      spawnDaemonMock.mockResolvedValue({ pid: process.pid, port: 4001, url: 'http://127.0.0.1:4001', startedAt: new Date().toISOString() });
+      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/connect-orchestrator.js');
+      const write = captureStdout();
+
+      await adapter.processOtlpEvent(
+        JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], block: true }),
+        { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
+      );
+
+      expect(spawnDaemonMock).toHaveBeenCalledTimes(1);
+      expect(write).toHaveBeenCalledTimes(1);
+      const out = String(write.mock.calls[0][0]);
+      expect(out.trimEnd().split('\n')).toHaveLength(1);
+      expect(JSON.parse(out)).toMatchObject({ decision: 'block' });
+    });
   });
 
   it('merges the four common fields and agent fields into every record', async () => {
@@ -405,11 +497,11 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
           'Cowork',
         ],
         ['/', 'unknown'],
-      ])('stamps %s as %s on the event and raw', async (cwd, expected) => {
+      ])('stamps %s as %s on the event', async (cwd, expected) => {
         await run({ cwd });
         const event = forwarded()[0];
         expect(event['cwd']).toBe(expected);
-        expect((event['raw'] as Record<string, unknown>)['cwd']).toBe(expected);
+        expect(event).not.toHaveProperty('raw');
         expect(String(event['cwd'])).not.toMatch(/^([/\\]|[A-Za-z]:)/);
       });
 
@@ -445,13 +537,13 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwarded().map((r) => r['type'])).toEqual(['fake.start', 'explicit.type', 'fake.event']);
     });
 
-    it('truncates prompt and tool fields and derives prompt_body', async () => {
+    it('truncates prompt and tool fields and derives prompt_body, masking a secret that straddles the cut first', async () => {
       await run({
         payload: [{
           prompt: 'p'.repeat(500),
           tool_input: { text: 'x'.repeat(500) },
-          tool_response: 'r'.repeat(500),
-          error: 'e'.repeat(500),
+          tool_response: `${'r'.repeat(280)} ${GH} ${'r'.repeat(300)}`,
+          error: `${'e'.repeat(285)} ${AWS} ${'e'.repeat(300)}`,
         }],
       });
       const record = forwarded()[0];
@@ -461,6 +553,28 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(String(record['tool_input']).startsWith('{"text":"x')).toBe(true);
       expect(record['tool_response']).toHaveLength(300);
       expect(record['error']).toHaveLength(300);
+      expect(String(record['tool_response'])).toContain('[REDACTED]');
+      expect(String(record['error'])).toContain('[REDACTED]');
+      expect(JSON.stringify(record)).not.toContain('ghp_');
+      expect(JSON.stringify(record)).not.toContain('AKIA');
+    });
+
+    it('does not leave a lone high surrogate when the cut falls inside an emoji', async () => {
+      await run({
+        payload: [{
+          prompt: `${'p'.repeat(199)}😀tail`,
+          tool_input: `${'t'.repeat(299)}😀tail`,
+        }],
+      });
+      const record = forwarded()[0];
+      expect(record['prompt']).toBe('p'.repeat(199));
+      expect(record['prompt_body']).toBe('p'.repeat(199));
+      expect(record['tool_input']).toBe('t'.repeat(299));
+    });
+
+    it('keeps a whole emoji that ends exactly at the cut', async () => {
+      await run({ payload: [{ prompt: `${'p'.repeat(198)}😀tail` }] });
+      expect(forwarded()[0]['prompt']).toBe(`${'p'.repeat(198)}😀`);
     });
 
     it('normalizes effort objects to their level and omits malformed values', async () => {
@@ -473,9 +587,9 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
       const [valid, malformed] = forwarded();
       expect(valid['effort']).toBe('high');
-      expect((valid['raw'] as Record<string, unknown>)['effort']).toBe('high');
+      expect(valid).not.toHaveProperty('raw');
       expect(malformed).not.toHaveProperty('effort');
-      expect(malformed).not.toHaveProperty('raw.effort');
+      expect(malformed).not.toHaveProperty('raw');
     });
 
     it('does not add truncated fields to events that lack them, and prompt_body is empty', async () => {
@@ -486,24 +600,82 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(record['prompt_body']).toBe('');
     });
 
-    it('drops a nested raw from the event so it cannot bypass the limits', async () => {
-      await run({ payload: [{ raw: { huge: 'x'.repeat(1000) }, a: 1 }] });
-      const raw = forwarded()[0]['raw'] as Record<string, unknown>;
-      expect(raw).not.toHaveProperty('raw');
+    it('drops an incoming raw field so it cannot bypass the limits, and any field a subclass lists', async () => {
+      await run({ payload: [{ raw: { huge: 'x'.repeat(1000) }, message: 'm', a: 1 }] });
+      expect(forwarded()[0]).not.toHaveProperty('raw');
       expect(JSON.stringify(forwarded()[0])).not.toContain('huge');
+      // nothing else is dropped by default
+      expect(forwarded()[0]['message']).toBe('m');
+
+      forwardToSpool.mockClear();
+      adapter.dropped = ['last_assistant_message', 'message'];
+      await run({ payload: [{ last_assistant_message: 'long', message: 'm', kept: 'k' }] });
+      const record = forwarded()[0];
+      expect(record).not.toHaveProperty('last_assistant_message');
+      expect(record).not.toHaveProperty('message');
+      expect(record['kept']).toBe('k');
     });
 
-    it('mirrors the full enriched event, context and event_id included, in raw', async () => {
-      await run({ payload: [{ session_id: 's1', prompt: 'hi' }] });
-      const record = forwarded()[0];
-      const { raw, ...outer } = record;
-      expect(raw).toEqual(outer);
-      expect(raw).toMatchObject({
+    it('emits the enriched fields at the top level and never a raw mirror, with every free-text field masked', async () => {
+      await run({
+        payload: [
+          {
+            session_id: 's1',
+            prompt: `hi ${GH}`,
+            tool_input: { command: `export GITHUB_TOKEN=${GH}`, password: 'plainvalue', user: 'bob' },
+            tool_response: `found ${AWS} in output`,
+            error: 'failed: PASSWORD=hunter2xyz', // gitleaks:allow
+            description: `uses ${GH}`,
+            future_field: `value ${AWS}`,
+          },
+          { tool_response: { agentId: 'a1b2c3d4', status: 'completed' } },
+        ],
+      });
+      const [record, agentRecord] = forwarded();
+      expect(record).not.toHaveProperty('raw');
+      expect(record).toMatchObject({
         event_id: record['event_id'],
         user_email: 'dev@example.com',
         codemie_project_name: 'proj-1',
         platform: 'fake-platform',
         schema_version: 2,
+        prompt: 'hi [REDACTED]',
+        prompt_body: 'hi [REDACTED]',
+      });
+      const serialised = JSON.stringify(record);
+      for (const secret of [GH, AWS, 'hunter2xyz', 'plainvalue']) {
+        expect(serialised).not.toContain(secret);
+      }
+      for (const field of ['tool_input', 'tool_response', 'error', 'description', 'future_field']) {
+        expect(String(record[field])).toContain('[REDACTED]');
+      }
+      expect(String(record['tool_input'])).toContain('bob');
+      // an "agentId" inside a tool_response is not a secret
+      expect(String(agentRecord['tool_response'])).toContain('"agentId":"a1b2c3d4"');
+    });
+
+    it('leaves a secret-free event and the skip-list identifier fields exactly as they were, apart from raw', async () => {
+      const toolInput = { command: 'ls -la', n: 3 };
+      const identifiers = {
+        file_path: `/work/${GH}.txt`, skill_name: 'my-skill', subagent_type: 'Explore',
+        fork_agent_id: 'fork-1', hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'toolu_01',
+        agent_id: 'a1b2c3', agent_type: 'general', agent_name: 'worker', notification_type: 'idle', error_type: 'rate_limit',
+      };
+      await run({
+        payload: [{
+          session_id: 's1', prompt: 'list files', tool_input: toolInput, tool_response: 'ok',
+          error: 'none', description: 'd', extra: 'plain', ...identifiers,
+        }],
+      });
+      expect(forwarded()[0]).toMatchObject({
+        ...identifiers,
+        prompt: 'list files',
+        prompt_body: 'list files',
+        tool_input: JSON.stringify(toolInput),
+        tool_response: 'ok',
+        error: 'none',
+        description: 'd',
+        extra: 'plain',
       });
     });
 
@@ -608,6 +780,75 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       expect(forwardToSpool).not.toHaveBeenCalled();
       expect(detectGitBranchMock).not.toHaveBeenCalled();
       expect(finalize).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('fail-closed enforcement (requiresSpoolAcceptance)', () => {
+    it('does not throw when the spool rejects a non-enforced event', async () => {
+      adapter.enforced = false;
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('throws AnalyticsSourceError when an enforced event is rejected by the spool, and the default onHookError rethrows it', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).rejects.toThrow(AnalyticsSourceError);
+    });
+
+    it('calls finalize(false) before the fail-closed throw propagates', async () => {
+      adapter.enforced = true;
+      const finalize = vi.fn(async () => {});
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        finalize,
+      });
+      forwardToSpool.mockResolvedValue(false);
+      await expect(run()).rejects.toThrow(AnalyticsSourceError);
+      expect(finalize).toHaveBeenCalledWith(false);
+    });
+
+    it('does not throw when an enforced event is accepted by the spool', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(true);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('honors a successful retry for an enforced event, without throwing', async () => {
+      adapter.enforced = true;
+      vi.spyOn(adapter as any, 'evaluate').mockResolvedValue({
+        decision: 'forward',
+        payload: [{ a: 1 }],
+        retryOnce: true,
+      });
+      forwardToSpool.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      await expect(run()).resolves.toBeUndefined();
+      expect(forwardToSpool).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('onHookError override', () => {
+    it('is invoked with the thrown error and the parsed hook input', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await run({ cwd: '/repo' });
+      expect(onHookError).toHaveBeenCalledWith(expect.any(AnalyticsSourceError), expect.objectContaining({ cwd: '/repo' }));
+    });
+
+    it('swallows the error and resolves when overridden to not rethrow', async () => {
+      adapter.enforced = true;
+      forwardToSpool.mockResolvedValue(false);
+      vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await expect(run()).resolves.toBeUndefined();
+    });
+
+    it('is not invoked when ensureOtlpProxy throws: a daemon-start failure is non-blocking', async () => {
+      ensureOtlpProxy.mockRejectedValueOnce(new Error('daemon start failed'));
+      const onHookError = vi.spyOn(adapter as any, 'onHookError').mockResolvedValue(undefined);
+      await run();
+      expect(onHookError).not.toHaveBeenCalled();
     });
   });
 });

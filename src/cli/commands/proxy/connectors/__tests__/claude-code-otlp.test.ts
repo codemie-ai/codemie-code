@@ -12,6 +12,8 @@ import {
   CODEMIE_ENV_KEYS,
   CODEMIE_HOOK_TIMEOUT_SECONDS,
   CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS,
+  CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE,
+  CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
@@ -67,7 +69,7 @@ function buildExpectedEnv(state: { url: string; gatewayKey: string }) {
     CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
     OTEL_EXPORTER_OTLP_ENDPOINT: `${state.url}/v1/analytics/otlp`,
     OTEL_EXPORTER_OTLP_HEADERS: `Authorization=Bearer ${state.gatewayKey}`,
-    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
     OTEL_LOGS_EXPORTER: 'otlp',
     OTEL_METRICS_EXPORTER: 'otlp',
     OTEL_TRACES_EXPORTER: 'otlp',
@@ -85,8 +87,13 @@ function codemieHookGroup(eventName: string = '') {
       {
         type: 'command',
         command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-        timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+        timeout: isPostCompact
+          ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+          : eventName === 'UserPromptSubmit'
+            ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+            : CODEMIE_HOOK_TIMEOUT_SECONDS,
         ...(isPostCompact ? { async: true } : {}),
+        ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
       },
     ],
   };
@@ -121,7 +128,7 @@ describe('claude-code-otlp connector', () => {
 
   describe('writeClaudeCodeOtlpConfig', () => {
     describe('happy paths', () => {
-      it('creates settings.json with hooks and env when none exists (default scope = home)', async () => {
+      it('creates settings.json and defaults a fresh connection to Global', async () => {
         const result = await writeClaudeCodeOtlpConfig();
 
         const expectedPath = join(homeDir, '.claude', 'settings.json');
@@ -139,11 +146,81 @@ describe('claude-code-otlp connector', () => {
         expect(existsSync(expectedPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
 
         const settings = await readJson(expectedPath);
-        expect(settings.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(settings.env).toEqual({
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
 
         for (const event of HOOK_EVENTS) {
           expect(settings.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
+      });
+
+      it('adds the current project with an explicit project scope without removing existing allowed projects', async () => {
+        const priorProjects = [join(homeDir, 'project-a'), join(homeDir, 'project-b')];
+        await Promise.all(priorProjects.map((path) => mkdir(path, { recursive: true })));
+        const canonicalPriorProjects = await Promise.all(priorProjects.map((path) => realpath(path)));
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({
+            env: {
+              [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify(canonicalPriorProjects),
+            },
+          })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const canonicalRoot = await realpath(projectDir);
+
+        expect(result.allowlist).toEqual([...canonicalPriorProjects, canonicalRoot]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(
+          JSON.stringify([...canonicalPriorProjects, canonicalRoot])
+        );
+      });
+
+      it('replaces existing project entries with a Global allowlist when scope is omitted', async () => {
+        const priorProject = join(homeDir, 'project-a');
+        await mkdir(priorProject, { recursive: true });
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({
+            env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: JSON.stringify([await realpath(priorProject)]) },
+          })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.allowlist).toEqual([]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
+      });
+
+      it('writes a Global allowlist when scope is omitted on a fresh install', async () => {
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.allowlist).toEqual([]);
+        expect(
+          (await readJson(join(homeDir, '.claude', 'settings.json'))).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]
+        ).toBe('[]');
+      });
+
+      it('narrows an explicitly Global allowlist to only the current project with scope "project"', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' } })
+        );
+
+        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+
+        expect(result.allowlist).toEqual([await realpath(projectDir)]);
+        expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(
+          JSON.stringify([await realpath(projectDir)])
+        );
       });
 
       it('writes every hook entry without an async field, except PostCompact, so Claude Code runs the rest synchronously', async () => {
@@ -153,8 +230,18 @@ describe('claude-code-otlp connector', () => {
         for (const event of HOOK_EVENTS) {
           if (event === 'PostCompact') continue;
           expect(settings.hooks[event][0].hooks[0].async).toBeUndefined();
-          expect(settings.hooks[event][0].hooks[0].timeout).toBe(CODEMIE_HOOK_TIMEOUT_SECONDS);
+          expect(settings.hooks[event][0].hooks[0].timeout).toBe(
+            event === 'UserPromptSubmit' ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS
+          );
         }
+      });
+
+      it('gives UserPromptSubmit a 180s timeout so the SSO sign-in wait finishes first', async () => {
+        await writeClaudeCodeOtlpConfig();
+
+        const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(180);
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].statusMessage).toContain('continue automatically');
       });
 
       it('writes PostCompact as async with the longer timeout, so it never blocks Claude Code or the user\'s turn', async () => {
@@ -197,6 +284,9 @@ describe('claude-code-otlp connector', () => {
 
         const forced = await writeClaudeCodeOtlpConfig({ force: true });
         expect(forced.allowlist).toEqual([]);
+
+        const forcedProject = await writeClaudeCodeOtlpConfig({ force: true, scope: 'project' });
+        expect(forcedProject.allowlist).toEqual([await realpath(projectDir)]);
       });
 
       it('writes to home dir when scope is "user"', async () => {
@@ -407,7 +497,11 @@ describe('claude-code-otlp connector', () => {
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual({ KEEP_ME: 'yes', ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(merged.env).toEqual({
+          KEEP_ME: 'yes',
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
       });
 
       it('does not require force when existing env values already match the desired codemie values', async () => {
@@ -418,6 +512,21 @@ describe('claude-code-otlp connector', () => {
         const result = await writeClaudeCodeOtlpConfig();
 
         expect(result.written).toBe(true);
+      });
+
+      it('(CR-003) does not require force when OTEL_EXPORTER_OTLP_PROTOCOL still holds the pre-upgrade http/protobuf value, and migrates it to http/json', async () => {
+        const settingsPath = join(homeDir, '.claude', 'settings.json');
+        await mkdir(join(homeDir, '.claude'), { recursive: true });
+        await writeFile(
+          settingsPath,
+          JSON.stringify({ env: { OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' } }, null, 2)
+        );
+
+        const result = await writeClaudeCodeOtlpConfig();
+
+        expect(result.written).toBe(true);
+        const merged = await readJson(settingsPath);
+        expect(merged.env.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/json');
       });
 
       it('overwrites a malformed (non-array) existing hooks event value when force is true', async () => {
@@ -483,7 +592,10 @@ describe('claude-code-otlp connector', () => {
         expect(await readRaw(result.backupPath!)).toBe('');
 
         const merged = await readJson(settingsPath);
-        expect(merged.env).toEqual({ ...buildExpectedEnv(mockState), [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' });
+        expect(merged.env).toEqual({
+          ...buildExpectedEnv(mockState),
+          [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]',
+        });
         for (const event of HOOK_EVENTS) {
           expect(merged.hooks[event]).toEqual([codemieHookGroup(event)]);
         }
@@ -1175,6 +1287,23 @@ describe('claude-code-otlp connector', () => {
         const result = await removeClaudeCodeOtlpConfig();
 
         expect(result).toEqual({ mode: "full", removed: true, path: settingsPath });
+        const final = await readJson(settingsPath);
+        expect(final.env).toEqual({ FOO: 'bar' });
+        expect(final.theme).toBe('dark');
+      });
+
+      it('(CR-003) strips a pre-upgrade http/protobuf OTEL_EXPORTER_OTLP_PROTOCOL value on disconnect', async () => {
+        const settingsPath = await seedSettings(
+          JSON.stringify({
+            theme: 'dark',
+            env: { FOO: 'bar', OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' },
+            hooks: { Stop: [codemieHookGroup()] },
+          })
+        );
+
+        const result = await removeClaudeCodeOtlpConfig();
+
+        expect(result).toEqual({ mode: 'full', removed: true, path: settingsPath });
         const final = await readJson(settingsPath);
         expect(final.env).toEqual({ FOO: 'bar' });
         expect(final.theme).toBe('dark');

@@ -16,6 +16,7 @@ import { readState } from '../daemon-manager.js';
 import { writeAtomically } from './vscode.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import {
+  type AllowlistScope,
   CODEMIE_ANALYTICS_PROJECT_FILTER_ENV,
   addProjectPath,
   canonicalizePath,
@@ -26,7 +27,7 @@ import {
 
 interface WriteClaudeCodeOtlpOptions {
   force?: boolean;
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface WriteClaudeCodeOtlpResult {
@@ -40,7 +41,7 @@ interface WriteClaudeCodeOtlpResult {
 }
 
 interface RemoveClaudeCodeOtlpOptions {
-  scope?: 'user' | 'project';
+  scope?: AllowlistScope;
 }
 
 interface RemoveClaudeCodeOtlpResult {
@@ -103,12 +104,28 @@ type FixedCodemieEnvKey = Exclude<
 const CODEMIE_ENV_FIXED_VALUES: Record<FixedCodemieEnvKey, string> = {
   CLAUDE_CODE_ENABLE_TELEMETRY: '1',
   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
-  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
   OTEL_LOGS_EXPORTER: 'otlp',
   OTEL_METRICS_EXPORTER: 'otlp',
   OTEL_TRACES_EXPORTER: 'otlp',
   OTEL_LOG_TOOL_DETAILS: '1',
 };
+
+/**
+ * Values a PRIOR CodeMie version wrote for a fixed key whose default has since changed —
+ * kept here so `isCodemieOwnedEnvValue` (and hence the conflict check and disconnect's
+ * strip) keeps recognizing them as codemie's own, letting a reconnect migrate the value
+ * to today's default with no `--force`, and a disconnect still clean it up.
+ */
+const CODEMIE_ENV_HISTORICAL_VALUES: Partial<Record<FixedCodemieEnvKey, readonly string[]>> = {
+  OTEL_EXPORTER_OTLP_PROTOCOL: ['http/protobuf'],
+};
+
+function isHistoricalCodemieValue(key: string, value: string): boolean {
+  return (
+    (CODEMIE_ENV_HISTORICAL_VALUES as Partial<Record<string, readonly string[]>>)[key]?.includes(value) ?? false
+  );
+}
 
 /**
  * True if `value` is (still) codemie's own value for `key`, without a live
@@ -142,7 +159,7 @@ function isCodemieOwnedEnvValue(
     const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
     return typeof endpoint === 'string' && endpoint.endsWith('/v1/analytics/otlp');
   }
-  return CODEMIE_ENV_FIXED_VALUES[key] === value;
+  return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
 /**
@@ -233,11 +250,24 @@ export const CODEMIE_HOOK_TIMEOUT_SECONDS = 30;
  * `compact_boundary` line (`POST_COMPACT_WAIT_BUDGET_MS`). `async` keeps Claude Code — and the
  * user's own turn — from ever waiting on that; the larger `timeout` here is what keeps Claude
  * Code itself from killing the subprocess before that wait, plus the lock-held merge/send/commit
- * afterward, can finish. Every other event keeps the default `CODEMIE_HOOK_TIMEOUT_SECONDS`
- * (synchronous — e.g. `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for
- * its block decision, so it can never be async).
+ * afterward, can finish. Every other event is synchronous and keeps the default
+ * `CODEMIE_HOOK_TIMEOUT_SECONDS`, except `UserPromptSubmit` (see below).
  */
 export const CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS = 90;
+
+/**
+ * `UserPromptSubmit`'s SSO re-auth gate depends on Claude Code waiting for its decision, so it is
+ * never async, and it may hold the prompt for up to `SSO_LOGIN_WAIT_MS` (150s) while a browser
+ * sign-in completes. This timeout must stay above that wait: the hook must never reach it.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS = 180;
+
+/**
+ * Claude Code shows exit-0 hook stderr only in verbose mode, so the "continue automatically" notice
+ * goes in the spinner text it displays while the hook runs.
+ */
+export const CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE =
+  'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically';
 
 async function readSettingsFile(settingsPath: string): Promise<ClaudeSettings> {
   if (!existsSync(settingsPath)) {
@@ -461,9 +491,15 @@ export async function writeClaudeCodeOtlpConfig(
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
-    if (currentVal !== undefined && currentVal !== desiredVal) {
-      envConflicts.push(key);
+    if (currentVal === undefined || currentVal === desiredVal) {
+      continue;
     }
+    // A prior CodeMie version's own value for this key — migrated to today's default by
+    // this same write below, not a conflict requiring --force.
+    if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    envConflicts.push(key);
   }
 
   // A non-array value under ANY existing hooks event key (not just the ones we
@@ -499,8 +535,9 @@ export async function writeClaudeCodeOtlpConfig(
     );
   }
 
+  const scope = opts.scope ?? 'user';
   let allowlist: string[] = [];
-  if (opts.scope === 'project') {
+  if (scope === 'project') {
     const current = existingAllowlist.kind === 'valid' ? existingAllowlist.paths : [];
     allowlist = await addProjectPath(current, resolveProjectRoot());
   }
@@ -575,14 +612,19 @@ export async function writeClaudeCodeOtlpConfig(
   }
 
   // --- Merge hooks block ---
-  // `PostCompact` alone is async with a longer timeout — see `CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS`.
+  // `PostCompact` alone is async with a longer timeout; `UserPromptSubmit` gets the SSO-wait timeout.
   const buildCodemieEntry = (eventName: string): HookGroup => {
     const isPostCompact = eventName === 'PostCompact';
     const hook: HookEntry = {
       type: 'command',
       command: `codemie ${CODEMIE_COMMAND_MARKER}`,
-      timeout: isPostCompact ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS : CODEMIE_HOOK_TIMEOUT_SECONDS,
+      timeout: isPostCompact
+        ? CODEMIE_POST_COMPACT_HOOK_TIMEOUT_SECONDS
+        : eventName === 'UserPromptSubmit'
+          ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
+          : CODEMIE_HOOK_TIMEOUT_SECONDS,
       ...(isPostCompact ? { async: true } : {}),
+      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };

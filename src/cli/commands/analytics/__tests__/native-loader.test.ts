@@ -212,6 +212,140 @@ describe('loadNativeSessions', () => {
   });
 });
 
+describe('loadNativeSessions — sessionId short-circuit', () => {
+  it('parses only the descriptor matching filter.sessionId, skipping non-matching non-Pi descriptors', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'codex', descriptor: { sessionId: 'other-codex', filePath: '/logs/other.jsonl', createdAt: 1, agentName: 'codex' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledWith('claude', '/logs/target.jsonl', 'target');
+    expect(results).toHaveLength(1);
+  });
+
+  it('never parses an unrelated Pi descriptor when the requested session is not Pi-family (CR-002: Pi volume must not OOM a Claude/Codex session report)', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'pi', descriptor: { sessionId: 'other-pi', filePath: '/logs/other-pi.jsonl', createdAt: 1, agentName: 'pi' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(parse).toHaveBeenCalledWith('claude', '/logs/target.jsonl', 'target');
+    expect(results.map((s) => s.sessionId)).toEqual(['target']);
+  });
+
+  it('returns an empty array and calls parse zero times when no descriptor matches filter.sessionId', async () => {
+    const parse = vi.fn(async () => null);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'unrelated', filePath: '/logs/unrelated.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    const results = await loadNativeSessions({ sessionId: 'nonexistent' }, deps);
+
+    expect(parse).not.toHaveBeenCalled();
+    expect(results).toEqual([]);
+  });
+
+  it('parses every discovered descriptor when filter.sessionId is absent (no regression)', async () => {
+    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
+      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
+    );
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        { agentName: 'claude', descriptor: { sessionId: 'a', filePath: '/logs/a.jsonl', createdAt: 1, agentName: 'claude' } },
+        { agentName: 'claude', descriptor: { sessionId: 'b', filePath: '/logs/b.jsonl', createdAt: 1, agentName: 'claude' } },
+      ],
+      parse,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions(undefined, deps);
+
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('loadNativeSessions — windowDays', () => {
+  it('passes 3650 (effectively all time) to discover when filter has no fromDate, even when sessionId is set (CR-003: a sessionId-scoped request must still be able to discover a session older than any adapter default — the memory fix is the scoped parse short-circuit, not a narrower discovery window)', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions({ sessionId: 'target' }, deps);
+
+    expect(discover).toHaveBeenCalledWith(3650);
+  });
+
+  it('passes 3650 to discover for a broad (no filter) listing, preserving the pre-existing "effectively all history" default for unscoped analytics reports', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+
+    await loadNativeSessions(undefined, deps);
+
+    expect(discover).toHaveBeenCalledWith(3650);
+  });
+
+  it('still derives a day count from filter.fromDate when it is set', async () => {
+    const discover = vi.fn(async () => []);
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set<string>(),
+      discover,
+      parse: async () => null,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => true,
+    };
+    const fromDate = new Date(Date.now() - 5 * 86_400_000);
+
+    await loadNativeSessions({ fromDate }, deps);
+
+    const calledWith = discover.mock.calls[0]?.[0] as number;
+    expect(calledWith).toBeGreaterThanOrEqual(5);
+    expect(calledWith).toBeLessThanOrEqual(7);
+  });
+});
+
 describe('synthesizeRawSession — descendant activity envelope', () => {
   it('extends the root end time to descendant activity after the root finishes', () => {
     const raw = synthesizeRawSession('claude', descriptor, {

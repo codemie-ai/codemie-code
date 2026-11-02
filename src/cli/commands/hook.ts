@@ -7,7 +7,7 @@ import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSu
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import { ensureOtlpProxy } from './proxy/connect-orchestrator.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
-import { ensureCodeMieSsoAuth, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
 /**
@@ -99,6 +99,24 @@ async function readStdin(): Promise<string> {
 }
 
 /**
+ * Stamps `--event <name>` onto the parsed JSON body as `codemieEventName`, for hosts whose
+ * native hook payload carries no event-name field (e.g. Copilot CLI's camelCase events). Falls
+ * back to the raw, unmodified input on a parse failure, so `OtlpAgentAdapter.processOtlpEvent`'s
+ * own `JSON.parse` — not this helper — is what surfaces a malformed-input error.
+ */
+export function injectEventName(raw: string, eventName: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return raw;
+    }
+    return JSON.stringify({ ...(parsed as Record<string, unknown>), codemieEventName: eventName });
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Helper function to get configuration value from config object or environment variable
  * @param envKey - Environment variable key (e.g., 'CODEMIE_AGENT')
  * @param config - Optional config object
@@ -145,11 +163,11 @@ function initializeLoggerContext(): string {
   if (!agentName) {
     // Debug: log which CODEMIE_* variables are present — NAMES ONLY. Values can
     // carry credentials (CODEMIE_API_KEY, CODEMIE_OPENAI_API_KEY, profile config)
-    // and stderr is surfaced by agent UIs and transcripts.
+    // and the log file is attached to bug reports and support requests.
     const codemieEnvVars = Object.keys(process.env)
       .filter(key => key.startsWith('CODEMIE_'))
       .join(', ');
-    console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
+    logger.debug(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
     throw new Error('CODEMIE_AGENT environment variable is required');
   }
 
@@ -558,6 +576,10 @@ async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, c
  * disappear from metrics. The marker is cleared by `codemie profile login`
  * and by any successful metrics send.
  */
+// Agents whose prompt hook can hold the prompt while a sign-in completes. Kimi's 5s hook budget
+// and OpenCode's ignored block cannot wait; programmatic (VSCode) mode never waits.
+const AUTH_WAIT_AGENTS = new Set(['claude', 'gemini']);
+
 async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<void> {
   try {
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
@@ -582,15 +604,17 @@ async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<
       env: config?.env,
     };
 
-    const authResult = await ensureCodeMieSsoAuth(authInput);
+    const canWait = !config && AUTH_WAIT_AGENTS.has(getConfigValue('CODEMIE_AGENT', config) ?? '');
+    const authResult = canWait
+      ? await ensureCodeMieSsoAuthOrWait(authInput, { onWaitStart: (m) => console.error(m) })
+      : await ensureCodeMieSsoAuth(authInput);
     if (authResult.ok) {
       return;
     }
 
     const message = [
-      'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
       `Reason: ${authResult.reason}.`,
-      describeLogin(authResult.loginOutcome),
+      describeLogin(authResult.loginOutcome, { wait: authResult.waitResult }),
     ].join('\n');
 
     logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${authResult.reason}`);
@@ -1498,7 +1522,8 @@ export function createHookCommand(): Command {
   return new Command('hook')
     .description('Unified hook event handler (called by agent plugins)')
     .option('--agent <name>', 'Agent name for hook attribution')
-    .action(async (opts: { agent?: string }) => {
+    .option('--event <name>', 'Event name for hosts whose hook payload carries none (e.g. Copilot CLI)')
+    .action(async (opts: { agent?: string; event?: string }) => {
       const hookStartTime = Date.now();
       let event: BaseHookEvent | null = null;
 
@@ -1538,7 +1563,8 @@ export function createHookCommand(): Command {
 
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
-          await analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+          const otlpInput = opts.event ? injectEventName(input, opts.event) : input;
+          await analyticsAgent.processOtlpEvent(otlpInput, { ensureOtlpProxy, forwardOtlpEventsToSpool });
           await logger.close();
           process.exitCode = 0;
           return;

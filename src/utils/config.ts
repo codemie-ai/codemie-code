@@ -20,6 +20,7 @@ import {
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 import { ConfigurationError } from './errors.js';
+import { logger } from './logger.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
@@ -183,7 +184,7 @@ export class ConfigLoader {
       }
 
       if (filtered.length > 0 && config.debug) {
-        console.log(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
+        logger.status(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
       }
 
       Object.assign(config, this.removeUndefined(filteredEnvConfig));

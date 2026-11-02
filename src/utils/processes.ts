@@ -5,7 +5,7 @@
  * Built on top of the foundational exec utility.
  */
 
-import { exec as childProcessExec, spawn } from 'node:child_process';
+import { exec as childProcessExec, execFileSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import os from 'node:os';
 import { logger } from './logger.js';
@@ -31,7 +31,8 @@ export async function commandExists(command: string): Promise<boolean> {
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    const result = await exec(whichCommand, [command]);
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
     return result.code === 0;
   } catch {
     return false;
@@ -50,7 +51,8 @@ export async function getCommandPath(command: string): Promise<string | null> {
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
     const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    const result = await exec(whichCommand, [command]);
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const result = await exec(whichCommand, [isWindows ? `$PATH:${command}` : command]);
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one
@@ -116,6 +118,42 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Send `signal` to the descendants of `pid` (deepest first, found by `pgrep -P`),
+ * then to `pid` itself. POSIX only. A process already gone is skipped; any other
+ * failure is logged at debug and never thrown.
+ */
+export function signalTree(pid: number, signal: NodeJS.Signals): void {
+  for (const childPid of listChildPids(pid)) {
+    signalTree(childPid, signal);
+  }
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+      logger.debug(`[signalTree] kill ${signal} ${pid} failed:`, error);
+    }
+  }
+}
+
+/** A hung `pgrep` must not stall shutdown; past this, the node is treated as childless. */
+const PGREP_TIMEOUT_MS = 1000;
+
+function listChildPids(pid: number): number[] {
+  try {
+    return execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: PGREP_TIMEOUT_MS })
+      .split('\n')
+      .map(Number)
+      .filter(childPid => childPid > 0);
+  } catch (error) {
+    // pgrep exits 1 when the process has no children.
+    if ((error as { status?: number }).status !== 1) {
+      logger.debug(`[signalTree] pgrep -P ${pid} failed:`, error);
+    }
+    return [];
   }
 }
 

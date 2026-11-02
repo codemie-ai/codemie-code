@@ -4,7 +4,6 @@
 
 | Service | Purpose | Auth Method | Config Key |
 |---------|---------|-------------|------------|
-| LangGraph | Agent state machine orchestration | N/A | Framework |
 | LangChain | LLM abstractions & tool calling | N/A | Framework |
 | OpenAI | GPT models | API Key | `OPENAI_API_KEY` |
 | Anthropic Claude | Claude models | API Key | `ANTHROPIC_API_KEY` |
@@ -19,24 +18,9 @@
 
 ---
 
-## LangGraph Integration
-
-LangGraph drives agent orchestration as a typed state machine; every node is a processing function and every edge (including conditional) is explicit routing logic.
-
-| Concept | Role |
-|---------|------|
-| `StateGraph` | Manages agent state transitions |
-| Node | Processing function (process / execute / validate) |
-| Edge / Conditional Edge | Static or dynamic control flow |
-| `workflow.compile()` | Produces the executable agent |
-
-`file:src/agents/codemie-code/agent.ts:50-80`
-
----
-
 ## LangChain Integration
 
-Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they provide streaming, tool calling, and retries out of the box.
+Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they provide streaming, tool calling, and retries out of the box. In the current codebase, LangChain is used for LLM-facing integrations such as prompt-driven hooks, not for a LangGraph state-machine agent runtime.
 
 | Do | Don't |
 |----|-------|
@@ -44,6 +28,7 @@ Use LangChain's `BaseChatModel` abstractions rather than raw HTTP calls; they pr
 | Stream via `llm.stream(messages)` | Buffer entire response before yield |
 
 `file:src/providers/plugins/openai/openai.provider.ts:30-50`
+`file:src/hooks/prompt-executor.ts:1-80`
 
 ---
 

@@ -251,6 +251,15 @@ The JSON output deliberately ends in `.report.json` rather than `.json` so a dir
 
 **`--open`** opens the generated HTML report in the default browser. With no `--export` given, `--open` implies `--export html`. `--open --export json` has no HTML to open, so it prints a "no HTML produced" notice instead.
 
+**`--redact`** strips content that identifies what you were working on, for reports that leave your machine (shared folders, BI tools, webhooks). In the exported `ReportPayload` (HTML and JSON alike) it:
+
+- blanks each session's `title` — otherwise the full first user prompt, which can contain code, URLs, or secrets;
+- reduces `project` from the absolute path (which usually contains your OS user name) to its last path segment;
+- removes `agentSessionFile` (the absolute native log path) — `hadLog` still says whether a log was found;
+- replaces a `--project` filter value in `meta.projectFilter` with `<redacted>`.
+
+All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta.userEmail` and `branch` are kept; branch names can still hint at a ticket or topic. It affects only the exported file — terminal output and local session data are untouched.
+
 **Report metadata and your email.** Reports embed the reporting user's email plus the period covered. The address is read from your CodeMie config; if it is missing and you're on an interactive terminal, report generation warns and prompts for it once, then saves it for future runs. Declining the prompt cancels report generation. The `<email-slug>` segment is dropped from the filenames when no email is available.
 
 ---
@@ -332,6 +341,7 @@ Export flags:
   -o, --output <path>        Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})
   --open                     Open the generated HTML report in the default browser
                               (implies --export html when --export is not given)
+  --redact                   Omit prompt text and absolute paths from the exported report
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m

@@ -22,6 +22,9 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
         logs: '.otel_logs.bin',
         metrics: '.otel_metrics.bin',
         traces: '.otel_traces.bin',
+        logsJson: '.otel_logs.ndjson',
+        metricsJson: '.otel_metrics.ndjson',
+        tracesJson: '.otel_traces.ndjson',
       };
       return pathJoin(state.root, sessionId + ext[stream]);
     },
@@ -83,7 +86,24 @@ describe('processSessionTick (OTEL-only invariant)', () => {
     ).resolves.toBeUndefined();
 
     const status = await readStatusRaw();
-    expect(status.cursors).toEqual({ hooks: 0, logs: 5, metrics: 0, traces: 3 });
+    expect(status.cursors).toEqual({
+      hooks: 0, logs: 5, metrics: 0, traces: 3, logsJson: 0, metricsJson: 0, tracesJson: 0,
+    });
+    expect(forwardSession).not.toHaveBeenCalled();
+  });
+
+  it('also drains a JSON OTEL stream cursor past the wait limit', async () => {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    const { forwardSession } = await import('../forwarder.js');
+    const { processSessionTick } = await import('../tick-processor.js');
+    const jsonRecord = `${JSON.stringify({ a: 1 })}\n`;
+    await seed({ [`${SESSION}.otel_logs.ndjson`]: jsonRecord });
+    await writeStatus(SESSION, { ...createStatus(), waitTicks: await limit() });
+
+    await processSessionTick(SESSION, credentials);
+
+    const status = await readStatusRaw();
+    expect(status.cursors.logsJson).toBe(Buffer.byteLength(jsonRecord));
     expect(forwardSession).not.toHaveBeenCalled();
   });
 
@@ -187,7 +207,9 @@ describe('processSessionTick (project gate)', () => {
     const { readStatus } = await import('../session-status.js');
     const status = await readStatus(SESSION);
     expect(status?.projectConflict).toEqual(['A', 'B']);
-    expect(status?.cursors).toEqual({ hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0 });
+    expect(status?.cursors).toEqual({
+      hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
+    });
     expect(status?.waitTicks).toBe(0);
     await expectNothingSent();
   });
@@ -268,7 +290,9 @@ describe('processSessionTick (project gate)', () => {
       expect(forwardSession).toHaveBeenCalledWith(SESSION, true, credentials);
       const status = await readStatusRaw();
       expect(status.waitTicks).toBe(0);
-      expect(status.cursors).toEqual({ hooks: 0, logs: 3, metrics: 0, traces: 0 });
+      expect(status.cursors).toEqual({
+        hooks: 0, logs: 3, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
+      });
     });
 
     it('with OTLP_ALLOW_HOOKS_ONLY_FORWARD=false discards the sealed session entirely and forwards nothing', async () => {
@@ -278,7 +302,9 @@ describe('processSessionTick (project gate)', () => {
 
       await processSessionTick(SESSION, credentials);
 
-      expect((await readStatusRaw()).cursors).toEqual({ hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0 });
+      expect((await readStatusRaw()).cursors).toEqual({
+        hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
+      });
       await expectNothingSent();
     });
 

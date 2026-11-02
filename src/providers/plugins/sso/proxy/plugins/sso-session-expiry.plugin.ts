@@ -109,7 +109,7 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
 
     const body = Buffer.from(JSON.stringify({
       type: 'error',
-      error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome)}` },
+      error: { type: 'authentication_error', message: `${EXPIRY_LEAD_IN} ${describeLogin(outcome ?? 'failed')}` },
     }), 'utf-8');
     const synthetic = tools.fromBuffer(response, body);
     synthetic.statusCode = 401;

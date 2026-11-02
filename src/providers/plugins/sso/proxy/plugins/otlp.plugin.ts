@@ -3,13 +3,16 @@ import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext, ProxyConfig } from '../proxy-types.js';
 import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { listSessionIds } from './otlp-spool/spool-paths.js';
+import { maskOtlpJson } from './otlp-json-masking.js';
+import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
+import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { areCredentialsStale, clearCredentialsStale, resolveFreshCredentials } from './otlp-spool/auth-state.js';
 
@@ -78,10 +81,18 @@ class OtlpInterceptor implements ProxyInterceptor {
     this.sweepHandle = undefined;
 
     // Bounded final flush: better delivery latency, but shutdown must never hang.
-    await Promise.race([
-      this.tick().catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
-    ]);
+    // The cap timer is cleared once the flush settles so it never holds the exit.
+    let flushTimeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.tick().catch(() => undefined),
+        new Promise((resolve) => {
+          flushTimeout = setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(flushTimeout);
+    }
   }
 
   /** Serialize ticks: a slow backlog drain must not stack up concurrent passes. */
@@ -237,6 +248,9 @@ class OtlpInterceptor implements ProxyInterceptor {
         logger.debug('[otlp-ingest] hooks: no session_id in hookEvent, discarding');
         continue;
       }
+      if (!isSafeSessionId(eventSessionId)) {
+        return sendError(res, 400, 'invalid_request_error', 'Invalid session_id');
+      }
       if (!sessionId) {
         sessionId = eventSessionId;
       } else if (sessionId !== eventSessionId) {
@@ -263,6 +277,13 @@ class OtlpInterceptor implements ProxyInterceptor {
       return sendError(res, 500, 'api_error', 'Failed to persist hooks batch');
     }
 
+    // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
+    try {
+      scheduleCopilotUsageEnrichment(batch.agentName, batch.hookEvents as Record<string, unknown>[]);
+    } catch (err) {
+      logger.warn('[otlp-ingest] copilot usage scheduling failed', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
+    }
+
     res.statusCode = 202;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ accepted: true }));
@@ -285,8 +306,63 @@ class OtlpInterceptor implements ProxyInterceptor {
       return true;
     }
 
-    const bytes = ctx.requestBody;
+    const contentType = (ctx.headers['content-type'] ?? '').toLowerCase();
+    if (contentType.startsWith('application/json')) {
+      return this.handleOtlpJson(ctx.requestBody, res, signal);
+    }
+    return this.handleOtlpBinary(ctx.requestBody, res, signal);
+  }
 
+  /** `application/json` OTLP: parsed, masked, and NDJSON-spooled into the signal's `*Json` stream. */
+  private async handleOtlpJson(
+    body: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
+    const text = body.toString('utf8');
+    const jsonMatch = UUID_V4_RE.exec(text);
+    const sessionId = jsonMatch ? jsonMatch[0] : '';
+
+    if (!sessionId) {
+      // No session id found: same as the byte-blind path's no-session-id case —
+      // log and 200, nothing spooled. Never falls through to the byte-blind branch:
+      // these bytes are JSON, not protobuf, so re-parsing them there would be wrong.
+      logger.debug(
+        '[otlp-ingest] no session id in JSON payload, dropping',
+        ...sanitizeLogArgs({ signal, bytes: body.length })
+      );
+      res.statusCode = 200;
+      res.end();
+      return true;
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      const masked = maskOtlpJson(parsed);
+      const line = JSON.stringify(masked);
+      await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
+    } catch (err) {
+      // Masking is the guarantee this path exists for: a parse/mask/spool failure drops
+      // the record (logged) rather than falling through to spool the original bytes
+      // unmasked through the byte-blind branch below.
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        `[otlp-ingest] ${signal} JSON parse/mask/spool failure, dropping record`,
+        ...sanitizeLogArgs({ sessionId, err: msg })
+      );
+    }
+
+    res.statusCode = 200;
+    res.end();
+    return true;
+  }
+
+  /** Anything else (protobuf, or no Content-Type): byte-blind, unmasked, unchanged. */
+  private async handleOtlpBinary(
+    bytes: Buffer,
+    res: ServerResponse,
+    signal: 'logs' | 'metrics' | 'traces'
+  ): Promise<true> {
     // Extract session ID via UUID v4 regex on latin1-decoded bytes
     const latin1Str = Buffer.from(bytes).toString('latin1');
     const match = UUID_V4_RE.exec(latin1Str);

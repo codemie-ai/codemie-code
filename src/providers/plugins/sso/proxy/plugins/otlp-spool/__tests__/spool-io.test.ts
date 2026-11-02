@@ -37,6 +37,9 @@ vi.mock('../spool-paths.js', async (importOriginal) => {
         logs: '.otel_logs.bin',
         metrics: '.otel_metrics.bin',
         traces: '.otel_traces.bin',
+        logsJson: '.otel_logs.ndjson',
+        metricsJson: '.otel_metrics.ndjson',
+        tracesJson: '.otel_traces.ndjson',
       };
       return pathJoin(state.root, sessionId + ext[stream]);
     },
@@ -222,7 +225,9 @@ describe('appendSpool — project binding', () => {
     await appendSpool(SESSION, 'logs', Buffer.from('abc'));
 
     const status = await readStatus(SESSION);
-    expect(status?.cursors).toEqual({ hooks: 0, logs: 0, metrics: 0, traces: 0 });
+    expect(status?.cursors).toEqual({
+      hooks: 0, logs: 0, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
+    });
     expect(status?.projectScanned).toBeUndefined();
   });
 });
@@ -235,11 +240,21 @@ describe('snapshots — project gate under the lock', () => {
     await rm(state.root, { recursive: true, force: true });
   });
 
+  // Distinct sizes per stream, so a cursor parked at the wrong stream's EOF cannot pass.
+  const JSON_SEED = {
+    logsJson: '{"x":1}\n',
+    metricsJson: '{"x":1}\n{"x":2}\n',
+    tracesJson: '{"x":1}\n{"x":2}\n{"x":3}\n',
+  } as const;
+
   async function seedOtel(): Promise<void> {
     const { appendSpool } = await import('../spool-io.js');
     await appendSpool(SESSION, 'logs', Buffer.from('L'));
     await appendSpool(SESSION, 'metrics', Buffer.from('MM'));
     await appendSpool(SESSION, 'traces', Buffer.from('TTT'));
+    await appendSpool(SESSION, 'logsJson', JSON_SEED.logsJson);
+    await appendSpool(SESSION, 'metricsJson', JSON_SEED.metricsJson);
+    await appendSpool(SESSION, 'tracesJson', JSON_SEED.tracesJson);
   }
 
   async function expectAllCursorsAtEof(hooksSize: number): Promise<void> {
@@ -249,6 +264,9 @@ describe('snapshots — project gate under the lock', () => {
       logs: 1,
       metrics: 2,
       traces: 3,
+      logsJson: Buffer.byteLength(JSON_SEED.logsJson),
+      metricsJson: Buffer.byteLength(JSON_SEED.metricsJson),
+      tracesJson: Buffer.byteLength(JSON_SEED.tracesJson),
     });
   }
 
@@ -326,6 +344,26 @@ describe('snapshots — project gate under the lock', () => {
     expect(await snapshotPendingBytes(SESSION, 'traces')).toBeNull();
   });
 
+  it('nulls all three masked-JSON snapshots after a late conflict and parks their cursors at EOF', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+    await seedOtel();
+    await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toBeNull();
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'metricsJson')).toBeNull();
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'tracesJson')).toBeNull();
+    const { readStatus } = await import('../session-status.js');
+    expect((await readStatus(SESSION))?.cursors).toMatchObject({
+      logs: 1,
+      metrics: 2,
+      traces: 3,
+      logsJson: Buffer.byteLength(JSON_SEED.logsJson),
+      metricsJson: Buffer.byteLength(JSON_SEED.metricsJson),
+      tracesJson: Buffer.byteLength(JSON_SEED.tracesJson),
+    });
+  });
+
   it('isSendAllowed is true for the snapshotted range while bound and false after a conflict without a seal', async () => {
     const { appendSpool, isSendAllowed } = await import('../spool-io.js');
     const range = { cursor: 0, end: 1, filtered: false };
@@ -343,6 +381,96 @@ describe('snapshots — project gate under the lock', () => {
     await appendSpool(SESSION, 'hooks', hookLine('B') + hookLine('C'), ['B', 'C']);
     expect(await isSendAllowed(SESSION, 'hooks', 'B', range)).toBe(false);
     expect(await isSendAllowed(SESSION, 'hooks', 'C', range)).toBe(false);
+  });
+});
+
+describe('snapshotPendingNdjsonRecords — masked-JSON OTEL streams', () => {
+  beforeEach(async () => {
+    state.root = await mkdtemp(join(tmpdir(), 'otlp-spool-ndjson-'));
+  });
+  afterEach(async () => {
+    await rm(state.root, { recursive: true, force: true });
+  });
+
+  async function bindToA(): Promise<void> {
+    const { appendSpool } = await import('../spool-io.js');
+    await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']);
+  }
+
+  it('returns only the complete records of a bound session and cuts the half-written tail', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    await bindToA();
+    await appendSpool(SESSION, 'logsJson', '{"a":1}\n{"b":');
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toEqual({
+      project: 'A',
+      cursor: 0,
+      records: ['{"a":1}'],
+      byteLength: 8,
+    });
+  });
+
+  it('returns null without touching the cursor while no record is complete yet', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    await bindToA();
+    await appendSpool(SESSION, 'logsJson', '{"b":');
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toBeNull();
+    expect((await readStatus(SESSION))?.cursors.logsJson).toBe(0);
+  });
+
+  it('resumes from the acknowledged cursor and picks up the tail once its newline lands', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    const { advanceCursor } = await import('../session-status.js');
+    await bindToA();
+    await appendSpool(SESSION, 'logsJson', '{"a":1}\n{"b":');
+    const first = await snapshotPendingNdjsonRecords(SESSION, 'logsJson');
+    await advanceCursor(SESSION, 'logsJson', (first?.cursor ?? 0) + (first?.byteLength ?? 0));
+
+    await appendSpool(SESSION, 'logsJson', '2}\n{"c":3}\n');
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toEqual({
+      project: 'A',
+      cursor: 8,
+      records: ['{"b":2}', '{"c":3}'],
+      byteLength: 16,
+    });
+  });
+
+  it('counts blank lines in byteLength but never returns them as records', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    await bindToA();
+    await appendSpool(SESSION, 'metricsJson', '{"a":1}\n\n');
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'metricsJson')).toMatchObject({
+      records: ['{"a":1}'],
+      byteLength: 9,
+    });
+  });
+
+  it('keeps each JSON stream on its own file and cursor', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    await bindToA();
+    await appendSpool(SESSION, 'logsJson', '{"l":1}\n');
+    await appendSpool(SESSION, 'tracesJson', '{"t":1}\n{"t":2}\n');
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toMatchObject({ records: ['{"l":1}'] });
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'tracesJson')).toMatchObject({
+      records: ['{"t":1}', '{"t":2}'],
+    });
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'metricsJson')).toBeNull();
+  });
+
+  it('returns null for a conflicted session and parks the JSON cursor at EOF', async () => {
+    const { appendSpool, snapshotPendingNdjsonRecords } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    const records = '{"a":1}\n{"b":2}\n';
+    await appendSpool(SESSION, 'hooks', hookLine('A') + hookLine('B'), ['A', 'B']);
+    await appendSpool(SESSION, 'logsJson', records);
+
+    expect(await snapshotPendingNdjsonRecords(SESSION, 'logsJson')).toBeNull();
+    expect((await readStatus(SESSION))?.cursors.logsJson).toBe(Buffer.byteLength(records));
   });
 });
 
