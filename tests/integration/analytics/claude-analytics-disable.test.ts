@@ -8,27 +8,26 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, relative, resolve } from 'path';
+import { join, resolve } from 'path';
+import {
+  describeRun,
+  expectExit,
+  realDir,
+  runIsolatedCli,
+  snapshotDir,
+  type IsolatedRunOptions,
+  type IsolatedRunResult,
+} from '../../helpers/isolated-cli.js';
 
 const ROOT = resolve('.');
-const BIN = resolve('./bin/codemie.js');
 const DIST_ENTRY = resolve('./dist/utils/logger.js');
 const SRC_DIR = resolve('./src');
 
-// Each test spawns several CLI processes, so it can outlive the `cli` project's 30s default.
+// Each test chains several CLI processes, so it can outlive the `cli` project's 30s default.
 const TEST_TIMEOUT_MS = 120_000;
-const SPAWN_TIMEOUT_MS = 25_000;
 const BUILD_TIMEOUT_MS = 300_000;
-
-interface RunResult {
-  stdout: string;
-  stderr: string;
-  status: number | null;
-  signal: NodeJS.Signals | null;
-  error?: string;
-}
 
 interface StatusJson {
   hooksInstalled: boolean;
@@ -39,102 +38,24 @@ interface StatusJson {
 }
 
 let sandbox: string;
+let templateHome: string;
 let codemieHome: string;
 let userHome: string;
 
-function realDir(path: string): string {
-  mkdirSync(path, { recursive: true });
-  return realpathSync.native(path);
-}
-
+/** Mirrors `comparable()` in src/agents/core/project-allowlist.ts: case-insensitive on win32 and darwin. */
 function norm(path: string): string {
   const normalized = resolve(path);
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  return process.platform === 'win32' || process.platform === 'darwin' ? normalized.toLowerCase() : normalized;
 }
 
-/** Drops developer/CI settings that would change the profile, proxy or analytics path of the child. */
-function isolatedEnv(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!/^(CODEMIE_|CLAUDE_|ANTHROPIC_|OTEL_)/i.test(key)) env[key] = value;
-  }
-  return env;
-}
-
-function runCli(args: string[], options: { cwd?: string; input?: string; env?: Record<string, string> } = {}): RunResult {
-  const result = spawnSync(process.execPath, [BIN, ...args], {
-    cwd: options.cwd ?? sandbox,
-    input: options.input ?? '',
-    encoding: 'utf-8',
-    timeout: SPAWN_TIMEOUT_MS,
-    env: {
-      ...isolatedEnv(),
-      NO_COLOR: '1',
-      FORCE_COLOR: '0',
-      CODEMIE_HOME: codemieHome,
-      HOME: userHome,
-      USERPROFILE: userHome,
-      ...options.env,
-    },
-  });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status,
-    signal: result.signal,
-    error: result.error?.message,
-  };
-}
-
-/** Assertion message that keeps a timeout or spawn error from looking like an empty run. */
-function describeRun(result: RunResult): string {
-  return JSON.stringify({ ...result, stdout: result.stdout.slice(0, 500), stderr: result.stderr.slice(0, 500) });
-}
-
-function expectExit(result: RunResult, code: number): void {
-  expect(result.error, describeRun(result)).toBeUndefined();
-  expect(result.status, describeRun(result)).toBe(code);
+function runCli(args: string[], options: IsolatedRunOptions = {}): IsolatedRunResult {
+  return runIsolatedCli({ codemieHome, userHome }, args, { ...options, cwd: options.cwd ?? sandbox });
 }
 
 function status(cwd: string): StatusJson {
   const result = runCli(['proxy', 'analytics', 'status', '--json'], { cwd });
   expectExit(result, 0);
   return JSON.parse(result.stdout) as StatusJson;
-}
-
-/** Every file and directory under `dir`, relative and sorted; `skip` prunes whole subtrees. */
-function snapshot(dir: string, skip: (relPath: string) => boolean = () => false): string[] {
-  const entries: string[] = [];
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const full = join(current, entry.name);
-      const rel = relative(dir, full).split('\\').join('/');
-      if (skip(rel)) continue;
-      entries.push(rel);
-      if (entry.isDirectory()) walk(full);
-    }
-  };
-  walk(dir);
-  return entries.sort();
-}
-
-/** Debug log text written by hook runs; the observable of the gate decision. */
-function readDebugLog(): string {
-  const logsDir = join(codemieHome, 'logs');
-  if (!existsSync(logsDir)) return '';
-  return readdirSync(logsDir)
-    .filter((f) => f.startsWith('debug-'))
-    .map((f) => readFileSync(join(logsDir, f), 'utf-8'))
-    .join('\n');
-}
-
-/** The log entry that starts at `marker`, up to the next timestamped entry. */
-function logEntryAfter(logText: string, marker: string): string {
-  const markerAt = logText.indexOf(marker);
-  if (markerAt < 0) return '';
-  const afterMarker = logText.slice(markerAt);
-  const entryEnd = afterMarker.search(/\n\[\d{4}-\d{2}-\d{2}T/);
-  return entryEnd === -1 ? afterMarker : afterMarker.slice(0, entryEnd);
 }
 
 /** Newest modification time of any source file under `dir`. */
@@ -179,16 +100,37 @@ function installHooks(trackedProjects?: string[]): void {
   );
 }
 
-/** One prompt hook for `project`; returns the gate decision logged for that run only. */
-function runPromptHook(project: string, sessionId: string): { run: RunResult; gate: string; ignored: boolean } {
-  rmSync(join(codemieHome, 'logs'), { recursive: true, force: true });
+/** Logs are written by every run, tracked or not, so they say nothing about forwarding. */
+const skipLogs = (rel: string): boolean => rel === 'logs' || rel.startsWith('logs/');
+
+/**
+ * Written by the hook only after the analytics gate let the event through (it resolves the
+ * client version for the event it is about to forward). A silenced hook never reaches it.
+ */
+function forwardingMarker(): string {
+  return join(codemieHome, 'cache', 'claude-code-client-version.json');
+}
+
+/**
+ * Runs one prompt hook. `forwarded`: the event got past the gate. `wroteState`: the run left
+ * anything behind in either home (spool, session, daemon or proxy files). A silenced hook must
+ * do neither; a tracked one must forward.
+ */
+function runPromptHook(
+  project: string,
+  sessionId: string
+): { run: IsolatedRunResult; forwarded: boolean; wroteState: boolean } {
+  rmSync(forwardingMarker(), { force: true });
+  const homeBefore = snapshotDir(codemieHome, skipLogs);
+  const userBefore = snapshotDir(userHome);
   const run = runCli(['hook', '--agent', 'claude-code-otlp'], {
     cwd: project,
-    input: JSON.stringify({ session_id: sessionId, cwd: project, hook_event_name: 'UserPromptSubmit', prompt: 'hello' }),
-    env: { CODEMIE_DEBUG: 'true' },
+    input: JSON.stringify({ session_id: sessionId, cwd: project, hook_event_name: 'UserPromptSubmit', prompt: `prompt for ${sessionId}` }),
   });
-  const log = readDebugLog();
-  return { run, gate: logEntryAfter(log, 'analytics gate decision'), ignored: log.includes('ignoring hook event') };
+  const wroteState =
+    JSON.stringify(snapshotDir(codemieHome, skipLogs)) !== JSON.stringify(homeBefore) ||
+    JSON.stringify(snapshotDir(userHome)) !== JSON.stringify(userBefore);
+  return { run, forwarded: existsSync(forwardingMarker()), wroteState };
 }
 
 describe('Claude Code analytics opt-out', () => {
@@ -199,6 +141,18 @@ describe('Claude Code analytics opt-out', () => {
       if (build.status !== 0) throw new Error(`npm run build failed:\n${build.stdout}\n${build.stderr}`);
     }
     sandbox = realDir(mkdtempSync(join(tmpdir(), 'codemie-analytics-')));
+
+    // Known product defect tracked in EPMCDME-16716, outside this story: the first CLI run in
+    // an empty CODEMIE_HOME prints the one-time migration banner on stdout, ahead of any
+    // `--json` payload. Prime one home here and copy it per test, so assertions read clean
+    // output without paying the migration run in every test.
+    templateHome = realDir(join(sandbox, 'template-home'));
+    const primed = runIsolatedCli(
+      { codemieHome: templateHome, userHome: realDir(join(sandbox, 'template-user')) },
+      ['proxy', 'analytics', 'status'],
+      { cwd: sandbox }
+    );
+    expectExit(primed, 0);
   }, BUILD_TIMEOUT_MS);
 
   afterAll(() => {
@@ -207,19 +161,16 @@ describe('Claude Code analytics opt-out', () => {
 
   // Fresh home per test: no state leaks between scenarios.
   function freshHome(name: string): void {
-    codemieHome = realDir(join(sandbox, name, 'codemie-home'));
+    codemieHome = join(sandbox, name, 'codemie-home');
+    cpSync(templateHome, codemieHome, { recursive: true });
     userHome = realDir(join(sandbox, name, 'user-home'));
-    // Known product defect tracked in EPMCDME-16716, outside this story: the first CLI run in
-    // an empty CODEMIE_HOME prints the one-time migration banner on stdout, ahead of any
-    // `--json` payload. Prime the home once so the assertions below read clean output.
-    expectExit(runCli(['proxy', 'analytics', 'status']), 0);
   }
 
   // @case allow-users-to-disable-analytics_TC_001
-  it('should disable, report disabled in status, ignore a repeat disable, and resume on enable', () => {
-    freshHome('tc001');
+  it('should disable and report disabled in status', () => {
+    freshHome('tc001-disable');
     installHooks();
-    const project = realDir(join(sandbox, 'tc001', 'project'));
+    const project = realDir(join(sandbox, 'tc001-disable', 'project'));
 
     const disable = runCli(['proxy', 'analytics', 'disable'], { cwd: project });
     expectExit(disable, 0);
@@ -230,6 +181,15 @@ describe('Claude Code analytics opt-out', () => {
     expect(disabled.enabled).toBe(false);
     expect(disabled.current.tracked).toBe(false);
     expect(disabled.current.reason).toBe('disabled');
+  }, TEST_TIMEOUT_MS);
+
+  // @case allow-users-to-disable-analytics_TC_001
+  it('should ignore a repeat disable and resume on enable', () => {
+    freshHome('tc001-enable');
+    installHooks();
+    const project = realDir(join(sandbox, 'tc001-enable', 'project'));
+
+    expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: project }), 0);
 
     const repeat = runCli(['proxy', 'analytics', 'disable'], { cwd: project });
     expectExit(repeat, 0);
@@ -255,6 +215,36 @@ describe('Claude Code analytics opt-out', () => {
     expectExit(result, 1);
     expect(result.stderr).toContain('Choose one connector at a time');
     expect(existsSync(prefsPath())).toBe(false);
+  }, TEST_TIMEOUT_MS);
+
+  // @case allow-users-to-disable-analytics_TC_002
+  it('should stop and resume all analytics under the Project scope allowlist', () => {
+    freshHome('tc002-project');
+    const tracked = realDir(join(sandbox, 'tc002-project', 'tracked'));
+    const outside = realDir(join(sandbox, 'tc002-project', 'outside'));
+    installHooks([tracked]);
+
+    expect(status(tracked).current.reason).toBe('tracked');
+    // A project outside the allowlist sends nothing, with or without the opt-out.
+    expect(status(outside).current.tracked).toBe(false);
+    expect(status(outside).current.reason).toBe('not-in-allowlist');
+
+    expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: tracked }), 0);
+    const disabled = status(tracked);
+    expect(disabled.current.tracked).toBe(false);
+    expect(disabled.current.reason).toBe('disabled');
+    const silenced = runPromptHook(tracked, 'sess-project-disabled');
+    expectExit(silenced.run, 0);
+    expect(silenced.forwarded).toBe(false);
+    expect(silenced.wroteState).toBe(false);
+
+    expectExit(runCli(['proxy', 'analytics', 'enable'], { cwd: tracked }), 0);
+    expect(status(tracked).current.reason).toBe('tracked');
+    const resumed = runPromptHook(tracked, 'sess-project-enabled');
+    expect(resumed.run.error, describeRun(resumed.run)).toBeUndefined();
+    expect(resumed.forwarded).toBe(true);
+    // The allowlist stays untouched by disable and enable.
+    expect(status(outside).current.reason).toBe('not-in-allowlist');
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_003
@@ -288,36 +278,6 @@ describe('Claude Code analytics opt-out', () => {
     expect(restored.current.reason).toBe('tracked');
   }, TEST_TIMEOUT_MS);
 
-  // @case allow-users-to-disable-analytics_TC_002
-  it('should stop and resume all analytics under the Project scope allowlist', () => {
-    freshHome('tc002-project');
-    const tracked = realDir(join(sandbox, 'tc002-project', 'tracked'));
-    const outside = realDir(join(sandbox, 'tc002-project', 'outside'));
-    installHooks([tracked]);
-
-    expect(status(tracked).current.reason).toBe('tracked');
-    // A project outside the allowlist sends nothing, with or without the opt-out.
-    expect(status(outside).current.tracked).toBe(false);
-    expect(status(outside).current.reason).toBe('not-in-allowlist');
-
-    expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: tracked }), 0);
-    const disabled = status(tracked);
-    expect(disabled.current.tracked).toBe(false);
-    expect(disabled.current.reason).toBe('disabled');
-    const silenced = runPromptHook(tracked, 'sess-project-disabled');
-    expectExit(silenced.run, 0);
-    expect(silenced.gate).toContain('disabled');
-    expect(silenced.ignored).toBe(true);
-
-    expectExit(runCli(['proxy', 'analytics', 'enable'], { cwd: tracked }), 0);
-    expect(status(tracked).current.reason).toBe('tracked');
-    const resumed = runPromptHook(tracked, 'sess-project-enabled');
-    expect(resumed.gate).toContain('tracked');
-    expect(resumed.ignored).toBe(false);
-    // The allowlist stays untouched by disable and enable.
-    expect(status(outside).current.reason).toBe('not-in-allowlist');
-  }, TEST_TIMEOUT_MS);
-
   // @case allow-users-to-disable-analytics_TC_003
   it('should exclude one allowlisted project under the Project scope while the other keeps sending', () => {
     freshHome('tc003-project');
@@ -329,24 +289,28 @@ describe('Claude Code analytics opt-out', () => {
     expectExit(runCli(['proxy', 'analytics', 'exclude', projectA], { cwd: projectB }), 0);
     expect(readPrefs().enabled).toBe(true);
 
+    expect(status(projectA).current.reason).toBe('project-excluded');
+    expect(status(projectB).current.reason).toBe('tracked');
+    expect(status(outside).current.reason).toBe('not-in-allowlist');
+
     const excluded = runPromptHook(projectA, 'sess-project-a');
     expectExit(excluded.run, 0);
-    expect(excluded.gate).toContain('project-excluded');
-    expect(excluded.ignored).toBe(true);
+    expect(excluded.forwarded).toBe(false);
+    expect(excluded.wroteState).toBe(false);
 
     const sibling = runPromptHook(projectB, 'sess-project-b');
-    expect(sibling.gate).toContain('tracked');
-    expect(sibling.ignored).toBe(false);
+    expect(sibling.run.error, describeRun(sibling.run)).toBeUndefined();
+    expect(sibling.forwarded).toBe(true);
 
     const unlisted = runPromptHook(outside, 'sess-project-outside');
-    expect(unlisted.gate).toContain('not-in-allowlist');
-    expect(unlisted.ignored).toBe(true);
+    expectExit(unlisted.run, 0);
+    expect(unlisted.forwarded).toBe(false);
+    expect(unlisted.wroteState).toBe(false);
 
     expectExit(runCli(['proxy', 'analytics', 'include', projectA], { cwd: projectB }), 0);
     expect(status(projectA).current.reason).toBe('tracked');
     const resumed = runPromptHook(projectA, 'sess-project-a-again');
-    expect(resumed.gate).toContain('tracked');
-    expect(resumed.ignored).toBe(false);
+    expect(resumed.forwarded).toBe(true);
   }, TEST_TIMEOUT_MS);
 
   // @case allow-users-to-disable-analytics_TC_004
@@ -379,42 +343,22 @@ describe('Claude Code analytics opt-out', () => {
     freshHome('tc005');
     installHooks();
     const project = realDir(join(sandbox, 'tc005', 'project'));
-    const payload = JSON.stringify({
-      session_id: 'sess-hook-001',
-      cwd: project,
-      hook_event_name: 'UserPromptSubmit',
-      prompt: 'hello',
-    });
-    const runHook = (): RunResult =>
-      runCli(['hook', '--agent', 'claude-code-otlp'], { cwd: project, input: payload, env: { CODEMIE_DEBUG: 'true' } });
 
-    // Positive control: with analytics enabled the same payload passes the gate and is not
-    // dropped, so the disabled run below cannot be a crash, a rejected payload or a no-op.
-    const tracked = runHook();
-    expect(tracked.error, describeRun(tracked)).toBeUndefined();
-    const trackedLog = readDebugLog();
-    expect(logEntryAfter(trackedLog, 'analytics gate decision'), describeRun(tracked)).toContain('tracked');
-    expect(trackedLog).not.toContain('ignoring hook event');
+    // Positive control: with analytics enabled the same payload leaves state behind, so the
+    // disabled run below cannot be a crash, a rejected payload or a no-op.
+    const tracked = runPromptHook(project, 'sess-hook-001');
+    expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined();
+    expect(tracked.forwarded).toBe(true);
 
     expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: project }), 0);
-    rmSync(join(codemieHome, 'logs'), { recursive: true, force: true });
+    expect(status(project).current.reason).toBe('disabled');
 
-    // Logs are the one expected write of a silenced hook, so they are left out of the diff.
-    const skipLogs = (rel: string): boolean => rel === 'logs' || rel.startsWith('logs/');
-    const homeBefore = snapshot(codemieHome, skipLogs);
-    const userBefore = snapshot(userHome);
-
-    const hook = runHook();
-    expectExit(hook, 0);
+    const hook = runPromptHook(project, 'sess-hook-001');
+    expectExit(hook.run, 0);
     // A tracked prompt hook may emit a decision on stdout; a silenced one prints nothing.
-    expect(hook.stdout.trim()).toBe('');
-
-    const logText = readDebugLog();
-    expect(logEntryAfter(logText, 'analytics gate decision')).toContain('disabled');
-    expect(logText).toContain('ignoring hook event');
-
+    expect(hook.run.stdout.trim()).toBe('');
     // No spool, session, daemon or proxy state anywhere under either home.
-    expect(snapshot(codemieHome, skipLogs)).toEqual(homeBefore);
-    expect(snapshot(userHome)).toEqual(userBefore);
+    expect(hook.forwarded).toBe(false);
+    expect(hook.wroteState).toBe(false);
   }, TEST_TIMEOUT_MS);
 });
