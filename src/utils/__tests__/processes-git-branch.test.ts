@@ -1,12 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { devNull, tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { detectGitBranch } from '../processes.js';
 
 // Real git, no mocks: the bug (EPMCDME-16530) is in how git itself answers for an unborn HEAD.
 const dirs: string[] = [];
+
+// An empty file, not os.devNull: git cannot open Windows' `\\.\nul` as a config path.
+let emptyGitConfig = '';
 
 // Git hooks (e.g. lint-staged under pre-commit) export GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, ...
 // which would redirect these temp-dir repositories at the outer repository. The developer's own
@@ -16,7 +19,7 @@ function scrubbedEnv(): NodeJS.ProcessEnv {
   for (const key of Object.keys(env)) {
     if (key.startsWith('GIT_')) delete env[key];
   }
-  env.GIT_CONFIG_GLOBAL = devNull;
+  env.GIT_CONFIG_GLOBAL = emptyGitConfig;
   env.GIT_CONFIG_NOSYSTEM = '1';
   return env;
 }
@@ -53,7 +56,9 @@ async function repo(init: (cwd: string) => void = () => {}): Promise<string> {
 describe('detectGitBranch (real git)', () => {
   const savedGitEnv: Record<string, string | undefined> = {};
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    emptyGitConfig = join(await tempDir(), 'empty-gitconfig');
+    await writeFile(emptyGitConfig, '');
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('GIT_')) {
         savedGitEnv[key] = process.env[key];
