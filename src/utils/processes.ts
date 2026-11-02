@@ -624,17 +624,25 @@ export async function detectGitBranch(cwd: string): Promise<string | undefined> 
       ? ref.slice(LOCAL_BRANCH_REF_PREFIX.length)
       : '';
     if (!branch) {
-      logger.debug('[GitUtils] HEAD does not point at a local branch');
+      logger.debug(
+        `[GitUtils] HEAD does not point at a local branch in ${cwd} (symbolic-ref output: "${ref}"); reporting no branch`
+      );
       return undefined;
     }
 
-    logger.debug(`[GitUtils] Detected git branch: ${branch}`);
+    logger.debug(`[GitUtils] Detected git branch in ${cwd}: ${branch} (ref: ${ref})`);
     return branch;
   } catch (error) {
-    if ((error as { code?: unknown }).code === 1) {
-      logger.debug('[GitUtils] Detached HEAD state detected');
+    const exitCode = (error as { code?: unknown }).code;
+    if (exitCode === 1) {
+      logger.debug(
+        `[GitUtils] Detached HEAD in ${cwd} (git symbolic-ref -q HEAD exited 1); reporting no branch`
+      );
     } else {
-      logger.debug('[GitUtils] Failed to detect git branch:', error);
+      logger.debug(
+        `[GitUtils] Failed to detect git branch in ${cwd} (git symbolic-ref -q HEAD, exit code: ${String(exitCode)}):`,
+        error
+      );
     }
     return undefined;
   }
