@@ -4,9 +4,10 @@
  * Real components: the proxy's OTLP ingest (`OtlpPlugin`, JSON path), the hook adapter base class
  * (`OtlpAgentAdapter`), the hook client (`forwardOtlpEventsToSpool`), the on-disk spool and the
  * real forwarder (`forwardSession`), and git branch/remote detection against a real temporary
- * repository whose `origin` URL embeds a token. Faked: `fetch` (it records what would reach the
- * backend and what the hook client sends to the local daemon, and routes the latter into the real
- * ingest), the daemon state read and the credential lookup. The spool lives in an isolated CODEMIE_HOME.
+ * repository whose `origin` URL embeds a token. Faked, as the external boundaries: `fetch` (it records
+ * what would reach the backend and what the hook client sends to the local daemon, and routes the
+ * latter into the real ingest), the daemon state read (no daemon process runs) and the hook
+ * credential lookup (no SSO login exists). The spool lives in an isolated CODEMIE_HOME.
  *
  * Scope: http/json only. Protobuf OTLP is byte-blind and unmasked by design, so it is not covered.
  */
@@ -30,16 +31,6 @@ vi.mock('../../src/cli/commands/proxy/daemon-manager.js', async () => ({
 vi.mock('../../src/agents/core/hook-credentials.js', () => ({
   resolveHookCredentials: vi.fn(async () => null),
 }));
-vi.mock('../../src/agents/core/identity-resolver.js', async () => ({
-  ...(await vi.importActual<typeof import('../../src/agents/core/identity-resolver.js')>(
-    '../../src/agents/core/identity-resolver.js'
-  )),
-  resolveIdentity: vi.fn(async () => ({ developerName: 'dev@example.com', identitySource: 'jwt' })),
-}));
-vi.mock('../../src/utils/cli-updater.js', async () => ({
-  ...(await vi.importActual<typeof import('../../src/utils/cli-updater.js')>('../../src/utils/cli-updater.js')),
-  getCurrentCliVersion: vi.fn(async () => '1.0.0'),
-}));
 
 import { OtlpAgentAdapter, type ForwardDecision, type OtlpHookContext } from '../../src/agents/core/OtlpAgentAdapter.js';
 import { forwardOtlpEventsToSpool } from '../../src/agents/plugins/utils.js';
@@ -53,7 +44,11 @@ import type { ProxyHTTPClient } from '../../src/providers/plugins/sso/proxy/prox
 const FAKE_GITHUB_TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'; // gitleaks:allow
 const FAKE_OPENAI_KEY = 'sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD'; // gitleaks:allow
 const FAKE_REMOTE_TOKEN = 'ghp_remotetokenabcdefghijklmnopqrstuvw01'; // gitleaks:allow
-const SECRETS = [FAKE_GITHUB_TOKEN, FAKE_OPENAI_KEY, FAKE_REMOTE_TOKEN];
+// Values under secret-named keys that match no secret pattern, so only key-name redaction can catch
+// them. The quote, slash, plus and equals sign make their JSON-escaped and URL-encoded spellings differ.
+const KEY_NAMED_OTLP_VALUE = 'otlp plain/value+no=pattern "quoted"';
+const KEY_NAMED_HOOK_VALUE = 'hook plain/value+no=pattern "quoted"';
+const SECRETS = [FAKE_GITHUB_TOKEN, FAKE_OPENAI_KEY, FAKE_REMOTE_TOKEN, KEY_NAMED_OTLP_VALUE, KEY_NAMED_HOOK_VALUE];
 const REDACTED = '[REDACTED]';
 
 // Non-secret field carried by every payload, proving no body was emptied to pass.
@@ -80,6 +75,11 @@ interface CapturedRequest {
   url: string;
   contentType: string;
   project: string | undefined;
+  body: string;
+}
+
+interface DaemonRequest {
+  url: string;
   body: string;
 }
 
@@ -118,40 +118,16 @@ interface RecordedResponse {
   body: () => Buffer;
 }
 
-/** A `ServerResponse` stand-in covering the whole write API, so a change in how the handler answers does not break the harness. */
+/** A `ServerResponse` stand-in with what the ingest handlers use: `statusCode`, `setHeader` and `end`. */
 function fakeServerResponse(): RecordedResponse {
-  const headers = new Map<string, number | string | readonly string[]>();
   const chunks: Buffer[] = [];
   let ended = false;
-  const toBuffer = (chunk: unknown): Buffer => (Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   const res = {
     statusCode: 0,
-    get headersSent(): boolean {
-      return ended;
-    },
-    get writableEnded(): boolean {
-      return ended;
-    },
-    setHeader(name: string, value: number | string | readonly string[]) {
-      headers.set(name.toLowerCase(), value);
-      return res;
-    },
-    getHeader: (name: string) => headers.get(name.toLowerCase()),
-    removeHeader: (name: string) => headers.delete(name.toLowerCase()),
-    writeHead(status: number, extra?: Record<string, number | string | readonly string[]>) {
-      res.statusCode = status;
-      for (const [name, value] of Object.entries(extra ?? {})) {
-        headers.set(name.toLowerCase(), value);
-      }
-      return res;
-    },
-    write(chunk: unknown) {
-      chunks.push(toBuffer(chunk));
-      return true;
-    },
-    end(chunk?: unknown) {
-      if (chunk !== undefined && typeof chunk !== 'function') {
-        chunks.push(toBuffer(chunk));
+    setHeader: () => res,
+    end(chunk?: string | Buffer) {
+      if (chunk !== undefined) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
       ended = true;
       return res;
@@ -165,7 +141,23 @@ function fakeServerResponse(): RecordedResponse {
   };
 }
 
-/** Every key and string inside the JSON document(s) of a body (a JSON object or NDJSON), decoded. */
+/** The parsed value of a string holding a JSON object or array, else undefined. */
+function parseJsonContainer(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every key and string inside the JSON document(s) of a body (a JSON object or NDJSON), decoded. A string
+ * that itself holds a JSON object or array (the spooled `hookEvent`, a hook's `tool_input`) is decoded too.
+ */
 function decodedStrings(body: string): string[] {
   const documents = body
     .split('\n')
@@ -175,6 +167,10 @@ function decodedStrings(body: string): string[] {
   const walk = (node: unknown): void => {
     if (typeof node === 'string') {
       out.push(node);
+      const nested = parseJsonContainer(node);
+      if (nested !== undefined) {
+        walk(nested);
+      }
     } else if (Array.isArray(node)) {
       node.forEach(walk);
     } else if (typeof node === 'object' && node !== null) {
@@ -188,22 +184,22 @@ function decodedStrings(body: string): string[] {
   return out;
 }
 
-/** Raw, JSON-escaped, \\u-escaped and URL-encoded spellings of a secret. */
+/** Raw, JSON-escaped, \\u-escaped and URL-encoded spellings of a secret (the key-named values make each one distinct). */
 function secretSpellings(secret: string): string[] {
   const unicodeEscaped = [...secret].map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
   return [secret, JSON.stringify(secret).slice(1, -1), unicodeEscaped, encodeURIComponent(secret)];
 }
 
-/** No secret in the raw bytes under any common spelling, nor in any decoded JSON string. */
+/**
+ * No secret under any common spelling, neither in the raw bytes nor in any decoded JSON string. The
+ * decoded strings matter for JSON nested in a string (a hook's `tool_input`), escaped once more.
+ */
 function expectNoSecret(body: string, label: string): void {
-  for (const secret of SECRETS) {
-    for (const spelling of secretSpellings(secret)) {
-      expect(body, `${label} leaked a raw secret`).not.toContain(spelling);
-    }
-  }
-  for (const value of decodedStrings(body)) {
+  for (const text of [body, ...decodedStrings(body)]) {
     for (const secret of SECRETS) {
-      expect(value, `${label} leaked a raw secret after JSON decoding`).not.toContain(secret);
+      for (const spelling of secretSpellings(secret)) {
+        expect(text, `${label} leaked a raw secret`).not.toContain(spelling);
+      }
     }
   }
 }
@@ -225,7 +221,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
   setupTestIsolation();
 
   const backendRequests: CapturedRequest[] = [];
-  const daemonRequests: CapturedRequest[] = [];
+  const daemonRequests: DaemonRequest[] = [];
   /** Spool content right after ingest, before the forwarder may advance cursors or clean up. */
   const spoolSnapshot = new Map<SpoolStream, string>();
   const originalProject = process.env.CODEMIE_PROJECT;
@@ -246,6 +242,9 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
       requestStartTime: 0,
       metadata: { gatewayKeyValidated: headers.get('authorization') === `Bearer ${GATEWAY_KEY}` },
     } as ProxyContext;
+    if (!interceptor.handleRequest) {
+      throw new Error('OtlpPlugin interceptor has no handleRequest');
+    }
     await interceptor.handleRequest(ctx, {} as IncomingMessage, recorded.res, {} as ProxyHTTPClient);
     if (!recorded.ended() || recorded.status() === 0) {
       throw new Error(`ingest of ${path} did not answer (status ${recorded.status()}, ended: ${recorded.ended()})`);
@@ -258,6 +257,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     const attributes = [
       { key: 'marker', value: { stringValue: VISIBLE_MARKER } },
       { key: 'tool_input', value: { stringValue: `git push https://x:${FAKE_GITHUB_TOKEN}@github.com/org/repo` } },
+      { key: 'api_key', value: { stringValue: KEY_NAMED_OTLP_VALUE } },
     ];
     const resource = { attributes: [{ key: 'session.id', value: { stringValue: SESSION_ID } }] };
     if (signal === 'logs') {
@@ -298,12 +298,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
       const headers = new Headers(init?.headers);
       const body = String(init?.body ?? '');
       if (url.startsWith(PROXY_URL)) {
-        daemonRequests.push({
-          url,
-          contentType: headers.get('content-type') ?? '',
-          project: headers.get('x-codemie-project') ?? undefined,
-          body,
-        });
+        daemonRequests.push({ url, body });
         return ingestLocally(url.slice(PROXY_URL.length), headers, body);
       }
       backendRequests.push({
@@ -320,7 +315,10 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
       session_id: SESSION_ID,
       prompt: `deploy using ${FAKE_GITHUB_TOKEN} please`,
       tool_name: 'Bash',
-      tool_input: { command: `curl -H "Authorization: Bearer ${FAKE_OPENAI_KEY}" https://api.example.test` },
+      tool_input: {
+        command: `curl -H "Authorization: Bearer ${FAKE_OPENAI_KEY}" https://api.example.test`,
+        api_key: KEY_NAMED_HOOK_VALUE,
+      },
       tool_response: `OPENAI_API_KEY=${FAKE_OPENAI_KEY}`,
       error: `rejected token ${FAKE_GITHUB_TOKEN}`,
       description: VISIBLE_MARKER,
@@ -374,7 +372,6 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     expect(backendRequests).toHaveLength(4);
   });
 
-  // @case secrets-forwarded-hook-payloads-unmasked_TC_007
   it('sends no raw secret to the backend in any stream, and every body still carries the non-secret field', () => {
     expect(backendRequests.length).toBeGreaterThan(0);
     for (const request of backendRequests) {
@@ -393,6 +390,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     for (const field of ['prompt', 'tool_input', 'tool_response', 'error']) {
       expectFieldRedacted(hookEvents[0][field], `daemon hop ${field}`);
     }
+    expect(JSON.parse(String(hookEvents[0].tool_input)).api_key, 'daemon hop tool_input.api_key').toBe(REDACTED);
   });
 
   it('replaces the secrets in the forwarded hook event with the redaction marker', () => {
@@ -404,6 +402,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     for (const field of ['prompt', 'prompt_body', 'tool_input', 'tool_response', 'error']) {
       expectFieldRedacted(event[field], `hook event ${field}`);
     }
+    expect(JSON.parse(event.tool_input).api_key, 'hook event tool_input.api_key').toBe(REDACTED);
   });
 
   it('forwards the real git remote and branch without the credentials embedded in the remote URL', () => {
@@ -419,6 +418,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     const logRecord = resourceLogs[0].scopeLogs[0].logRecords[0];
     expectFieldRedacted(logRecord.body.stringValue, 'log body');
     expectFieldRedacted(attributeValue(logRecord.attributes, 'tool_input'), 'log tool_input');
+    expect(attributeValue(logRecord.attributes, 'api_key'), 'log api_key').toBe(REDACTED);
     expect(attributeValue(logRecord.attributes, 'marker')).toBe(VISIBLE_MARKER);
   });
 
@@ -429,6 +429,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     const span = resourceSpans[0].scopeSpans[0].spans[0];
     expectFieldRedacted(span.name, 'span name');
     expectFieldRedacted(attributeValue(span.attributes, 'tool_input'), 'span tool_input');
+    expect(attributeValue(span.attributes, 'api_key'), 'span api_key').toBe(REDACTED);
     expect(attributeValue(span.attributes, 'marker')).toBe(VISIBLE_MARKER);
   });
 
@@ -441,6 +442,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     const metric = resourceMetrics[0].scopeMetrics[0].metrics[0];
     expectFieldRedacted(metric.description, 'metric description');
     expectFieldRedacted(attributeValue(metric.sum.dataPoints[0].attributes, 'tool_input'), 'metric tool_input');
+    expect(attributeValue(metric.sum.dataPoints[0].attributes, 'api_key'), 'metric api_key').toBe(REDACTED);
     expect(attributeValue(metric.sum.dataPoints[0].attributes, 'marker')).toBe(VISIBLE_MARKER);
   });
 
