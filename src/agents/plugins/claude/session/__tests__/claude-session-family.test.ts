@@ -78,6 +78,7 @@ describe('ClaudeSessionAdapter family evidence', () => {
         requestShape: 'background', requestNonInteractive: false,
       }),
     ]));
+    expect(parsed.subagentsIncomplete).toBeUndefined();
   });
 
   it('keeps readable usage and protocol rows when sibling metadata or transcript is damaged', async () => {
@@ -115,12 +116,45 @@ describe('ClaudeSessionAdapter family evidence', () => {
     const readable = parsed.subagents?.find(subagent => subagent.agentId === 'readable');
 
     expect(parsed.subagents?.map(subagent => subagent.agentId).sort()).toEqual(['no-meta', 'readable']);
+    expect(parsed.subagentsIncomplete).toBe(true);
     expect(readable?.messages).toHaveLength(2);
     expect(readable?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.objectContaining({ usage: { input_tokens: 13, output_tokens: 8 } }) }),
       expect.objectContaining({ type: 'system', subtype: 'task-notification', taskId: 'child-task', status: 'completed' }),
     ]));
   });
+  it('marks sub-agents incomplete when the subagents directory cannot be listed', async () => {
+    const sessionId = 'unlistable-family';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await mkdir(join(tempDir, sessionId), { recursive: true });
+    await writeFile(join(tempDir, sessionId, 'subagents'), 'not a directory');
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T11:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBe(true);
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
+  it('leaves sub-agents complete when the subagents directory is absent', async () => {
+    const sessionId = 'no-subagents';
+    const sessionFile = join(tempDir, `${sessionId}.jsonl`);
+    await writeFile(sessionFile, jsonl([{
+      type: 'user', uuid: 'root-1', sessionId, timestamp: '2026-09-15T12:00:00.000Z',
+      message: { role: 'user', content: '[sanitized]' },
+    }]));
+
+    const parsed = await adapter.parseSessionFile(sessionFile, sessionId);
+
+    expect(parsed.subagentsIncomplete).toBeUndefined();
+    expect(parsed.subagents).toBeUndefined();
+    expect(parsed.messages).toHaveLength(1);
+  });
+
   it('excludes api-request-blob lines from a subagent transcript', async () => {
     const sessionId = 'blob-family';
     const sessionFile = join(tempDir, `${sessionId}.jsonl`);

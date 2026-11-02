@@ -303,4 +303,33 @@ describe('Metrics Post-Processing Integration', () => {
     // git-remote value must win over extractRepository('/Users/test/some-other-path') = 'test/some-other-path'
     expect(metrics[0].attributes.repository).toBe('codemie-ai/codemie-code');
   });
+
+  it('selects llm_model: own models, then the branch fallback, then session.model', () => {
+    const delta = (models?: string[]): MetricDelta => ({
+      recordId: 'u-1:prompts',
+      sessionId: 'test-session-id',
+      agentSessionId: 'agent-session-1',
+      timestamp: Date.now(),
+      gitBranch: 'main',
+      userPrompts: [{count: 1, text: 'hello'}],
+      ...(models && {models}),
+      syncStatus: 'pending',
+      syncAttempts: 0
+    });
+    const llmModel = (
+      deltas: MetricDelta[],
+      session: MetricsSession,
+      fallbackModelByBranch?: (branch: string) => string | undefined
+    ) =>
+      aggregateDeltas(deltas, session, '1.0.0', 'codemie-claude', {fallbackModelByBranch})[0]
+        .attributes.llm_model;
+    const mainFallback = (branch: string) => (branch === 'main' ? 'm-z' : undefined);
+
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'})).toBe('m-x');
+    expect(llmModel([delta()], mockSession)).toBe('unknown');
+    expect(llmModel([delta(['m-y'])], {...mockSession, model: 'm-x'})).toBe('m-y');
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'}, mainFallback)).toBe('m-z');
+    expect(llmModel([delta(['m-y'])], {...mockSession, model: 'm-x'}, mainFallback)).toBe('m-y');
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'}, () => undefined)).toBe('m-x');
+  });
 });

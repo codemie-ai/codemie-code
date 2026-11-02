@@ -424,6 +424,27 @@ describe('DesktopTelemetryRuntime', () => {
       expect(restartedAdapter.applyBaseline).toHaveBeenCalledOnce();
       expect(sentDeltas).toEqual([{ externalSessionId: 'ext-old', historyIndices: [4] }]);
     });
+
+    it('keeps a pending baseline while a subagent transcript of the parsed session is unreadable', async () => {
+      openDesktopChat('ext-old', 4, T0 - 3_600_000);
+      const adapter = createAdapter();
+      vi.mocked(adapter.parseSession).mockImplementation(async (discovered, sessionId) => ({
+        sessionId,
+        agentName: 'claude-desktop',
+        metadata: { externalSessionId: discovered.externalSessionId },
+        messages: [],
+        subagentsIncomplete: true
+      }) as never);
+      // The real baseline keeps its marker on an incomplete parse.
+      vi.mocked(adapter.applyBaseline!).mockResolvedValue(undefined);
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+      const discovered = desktopSessions.get('ext-old')!;
+      const session = await (runtime as any).ensureSession(discovered);
+
+      await (runtime as any).processSession(session, discovered);
+
+      expect(session.runtimeCheckpoint.baselineCutoffMs).toBe(T0);
+    });
   });
 
   describe('transcript fingerprint', () => {
