@@ -289,6 +289,24 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     expect(forwarded()[0]).toMatchObject({ story_id: 'MK-3', story_source: 'marker' });
   });
 
+  it('resolves no story for a UUID prompt on a ticket-less branch', async () => {
+    detectGitBranchMock.mockResolvedValue('main');
+    await run({ prompt: 'look at session 38a8bb8d-39d4-49b2-a43e-20c8e1f66c87' });
+    expect(forwarded()[0]).toMatchObject({ story_id: '', story_source: '' });
+  });
+
+  it('resolves a real key from the prompt as a mention story', async () => {
+    detectGitBranchMock.mockResolvedValue('main');
+    await run({ prompt: 'check EPMCDME-15301 please' });
+    expect(forwarded()[0]).toMatchObject({ story_id: 'EPMCDME-15301', story_source: 'mention' });
+  });
+
+  it('prefers the upper-case key over lower-case noise in the mention tier', async () => {
+    detectGitBranchMock.mockResolvedValue('main');
+    await run({ prompt: 'use node-20 for EPMCDME-15301' });
+    expect(forwarded()[0]).toMatchObject({ story_id: 'EPMCDME-15301', story_source: 'mention' });
+  });
+
   it('falls back to the branch story when there is no prompt', async () => {
     detectGitBranchMock.mockResolvedValue('feature/BR-2');
     await run();

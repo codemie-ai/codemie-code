@@ -247,7 +247,7 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
   await accumulateActiveDuration(sessionId);
 
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
-  await performIncrementalSync(event, 'SessionEnd', sessionId, config);
+  await performIncrementalSync(event, 'SessionEnd', sessionId, config, { finalPass: true });
 
   // 2. Update session status (moved before network sync: marking the session
   //    completed must not depend on the API sync surviving teardown)
@@ -350,8 +350,15 @@ async function handlePermissionRequest(event: BaseHookEvent, _rawInput?: string)
  * @param hookName - Name of the hook for logging (e.g., "Stop", "UserPromptSubmit")
  * @param sessionId - The CodeMie session ID to use for this extraction
  * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @param options.finalPass - Set only by SessionEnd: the session's last processing pass
  */
-async function performIncrementalSync(event: BaseHookEvent, hookName: string, sessionId: string, config?: HookProcessingConfig): Promise<void> {
+async function performIncrementalSync(
+  event: BaseHookEvent,
+  hookName: string,
+  sessionId: string,
+  config?: HookProcessingConfig,
+  { finalPass = false }: { finalPass?: boolean } = {}
+): Promise<void> {
   logger.debug(`[hook:${hookName}] Event received: ${JSON.stringify(event)}`);
   logger.info(`[hook:${hookName}] Starting session processing (agent_session=${event.session_id})`);
 
@@ -403,6 +410,9 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
     }
 
     const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
+    if (finalPass) {
+      context.finalPass = true;
+    }
 
     // Process every transcript file. Per-file entry deduplication inside the
     // adapter prevents forked/copied history from being double-counted.
@@ -907,12 +917,13 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         : undefined;
 
     // Create session record with correlation already matched
+    const startTime = Date.now();
     const session = {
       sessionId,
       agentName,
       provider,
       ...(project && { project }),
-      startTime: Date.now(),
+      startTime,
       workingDirectory,
       ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
@@ -924,7 +935,17 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         agentSessionId: event.session_id,
         agentSessionFile: event.transcript_path,
         retryCount: 0
-      }
+      },
+      // A resumed Claude transcript already holds earlier records: the first processing run
+      // treats everything before this record's start as already sent.
+      ...((agentName === 'claude' || agentName === 'claude-acp') && event.session_id && event.transcript_path && {
+        runtimeCheckpoint: {
+          externalSessionId: event.session_id,
+          transcriptPath: event.transcript_path,
+          lastDiscoveredAt: startTime,
+          baselineCutoffMs: startTime
+        }
+      })
     };
 
     // Save session

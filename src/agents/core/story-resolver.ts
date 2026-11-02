@@ -68,16 +68,17 @@ export async function resolveExplicitStory(
 }
 
 /**
- * Branch story-id tier: the first `TICKET_RE` match found anywhere in the
- * branch name, upper-cased. Returns `null` when the branch carries no
- * ticket-shaped substring.
+ * Branch story-id tier: the first ticket-shaped match in the branch name,
+ * upper-cased (`source: 'branch'`: UUID shapes are dropped, the prompt-only
+ * prefix list is not; see `extractTicketMentions`). Returns `null` when the
+ * branch carries no such substring.
  */
 export function resolveBranchStory(branch: string): BranchStoryResult | null {
   if (!branch) {
     return null;
   }
 
-  const [storyId] = extractTicketMentions(branch, 1);
+  const [storyId] = extractTicketMentions(branch, 1, { source: 'branch' });
   return storyId ? { storyId, storySource: 'branch' } : null;
 }
 
@@ -97,18 +98,19 @@ export function resolveMarkerStory(promptText: string): MarkerStoryResult | null
 }
 
 /**
- * Mention story-id tier: the first bare `TICKET_RE` match found anywhere in
- * prompt text, upper-cased. This is the lowest-priority tier — it only
- * applies when no explicit/marker/branch tier already resolved a story.
- * Returns `null` when no ticket-shaped substring exists (including an
- * empty/falsy `promptText`).
+ * Mention story-id tier: the first surviving ticket-shaped match in prompt
+ * text, upper-cased, preferring an upper-case key (`preferUpperCase`); the
+ * filtering rules are defined once in `extractTicketMentions`. This is the
+ * lowest-priority tier — it only applies when no explicit/marker/branch tier
+ * already resolved a story. Returns `null` when no candidate survives
+ * (including an empty/falsy `promptText`).
  */
 export function resolveMentionStory(promptText: string): MentionStoryResult | null {
   if (!promptText) {
     return null;
   }
 
-  const [storyId] = extractTicketMentions(promptText, 1);
+  const [storyId] = extractTicketMentions(promptText, 1, { preferUpperCase: true });
   return storyId ? { storyId, storySource: 'mention' } : null;
 }
 

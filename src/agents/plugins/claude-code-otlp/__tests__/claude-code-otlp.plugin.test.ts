@@ -5,6 +5,23 @@ vi.mock('../claude-code-otlp.allowlist.js', () => ({
   isProjectTracked: vi.fn(),
   readPromptHookTimeoutSeconds: vi.fn(async () => undefined),
 }));
+const readClaudeAnalyticsPreferencesMock = vi.fn(async () => ({
+  kind: 'ok' as const,
+  value: { version: 1 as const, enabled: true, excludedProjects: [] },
+}));
+vi.mock('../claude-code-otlp.preferences.js', () => ({
+  readClaudeAnalyticsPreferences: readClaudeAnalyticsPreferencesMock,
+  isProjectExcluded: vi.fn(async () => false),
+}));
+// File-level, not per-describe: `vi.clearAllMocks()` in each describe's own beforeEach clears call
+// history but not a mock's last-set resolved value, so a test overriding this must not leak its
+// override into every later test in the file.
+beforeEach(() => {
+  readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+    kind: 'ok',
+    value: { version: 1, enabled: true, excludedProjects: [] },
+  });
+});
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
@@ -164,6 +181,18 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     expect(vi.mocked(ensureOtlpProxy).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(forwardOtlpEventsToSpool).mock.invocationCallOrder[0]
     );
+  });
+
+  it('does nothing when analytics are disabled via preferences, even if the allowlist tracks the project', async () => {
+    vi.mocked(isProjectTracked).mockResolvedValue(true);
+    readClaudeAnalyticsPreferencesMock.mockResolvedValue({
+      kind: 'ok',
+      value: { version: 1, enabled: false, excludedProjects: [] },
+    });
+    await plugin.processOtlpEvent(event('UserPromptSubmit'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(ensureCodeMieSsoAuthOrWait).not.toHaveBeenCalled();
+    expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
   });
 });
 
@@ -1525,6 +1554,15 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     const [forwarded] = forwardedEvents();
     expect(forwarded['prompt_length']).toBe(500);
     expect(String(forwarded['prompt_body'])).toHaveLength(200);
+  });
+
+  it('keeps UUID fragments and non-ticket tokens out of ticket_mentions', async () => {
+    await plugin.processOtlpEvent(
+      promptEvent('see 38a8bb8d-39d4-49b2-a43e-20c8e1f66c87 and SHA-256 then EPMCDME-15301'),
+      { ensureOtlpProxy, forwardOtlpEventsToSpool }
+    );
+
+    expect(forwardedEvents()[0]['ticket_mentions']).toEqual(['EPMCDME-15301']);
   });
 
   it('finds a ticket mention that sits beyond the 200-char cut', async () => {

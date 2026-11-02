@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16530_unborn-head-branch",
+  "head": "00abe69dd995d07254e99cd82141c5399f906abc",
+  "runner": "npm",
+  "started_at": "2026-11-02T14:56:22Z",
+  "completed_at": "2026-11-02T14:58:35Z",
+  "status": "PARTIAL",
+  "drift_detected": false,
+  "supersedes": "84baa5927bdadbea9fda6357b23f377066c4bcde",
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 50000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "415 files, 6863 tests passed. Run with CODEMIE_* env vars unset (ambient CODEMIE_* variables leak into unrelated env-sensitive tests). Included processes-git-branch.test.ts: 8 real-git tests."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 62000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "38 files passed, 1 skipped; 300 tests passed, 10 skipped. Run with CODEMIE_* env vars unset."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "command": "npm run validate:secrets",
+      "notes": "Not run as a standalone gate: the script scans staged changes only, and nothing was staged for this run. The pre-commit hook ran it on each fix commit's staged diff (gitleaks: no leaks found). The CI secrets-detection job is still owed for the full range."
+    }
+  ],
+  "failures": {}
+}

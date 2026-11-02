@@ -52,6 +52,9 @@ export interface ParsedSession {
     requestNonInteractive?: boolean;
   }>;
 
+  /** A sub-agent transcript could not be read, so `subagents` lacks it; absent = every one was read. */
+  subagentsIncomplete?: boolean;
+
   /**
    * Provenance of this session's token usage, for agents whose transcripts cannot always
    * carry a complete rollup. Lets the cost enricher distinguish "cost is genuinely zero"
