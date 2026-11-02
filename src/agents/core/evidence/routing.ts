@@ -63,7 +63,16 @@ function isLoopback(url: string | undefined): boolean {
   }
 }
 
-const truthy = (v: string | undefined): boolean => v === '1' || v?.toLowerCase() === 'true';
+/**
+ * One rule for the cloud-provider flags, used by both routing functions. Explicit off values are off;
+ * the spellings Claude Code accepts as true are on; anything else is unknown, which is never read as off.
+ */
+const OFF = ['', '0', 'false', 'no', 'off'];
+const ON = ['1', 'true', 'yes', 'on'];
+function flagState(v: string | undefined): 'off' | 'on' | 'unknown' {
+  const t = (v ?? '').trim().toLowerCase();
+  return OFF.includes(t) ? 'off' : ON.includes(t) ? 'on' : 'unknown';
+}
 
 const ENDPOINT_KEYS = [
   'CLAUDE_CODE_USE_BEDROCK',
@@ -107,7 +116,7 @@ function underBase(candidate: string | undefined, base: string | undefined): boo
 
 const CLOUD_FLAGS = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
 /** Conservative: anything but an explicit off value counts as set, so an unfamiliar spelling never reads as OAuth. */
-const flagSet = (v: string | undefined): boolean => !!v && !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase());
+const flagSet = (v: string | undefined): boolean => flagState(v) !== 'off';
 /** Credentials that make Claude authenticate with something other than the saved OAuth login. Only presence is read. */
 const CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_FOUNDRY_API_KEY', 'AWS_BEARER_TOKEN_BEDROCK',
@@ -137,10 +146,13 @@ export function routedViaCodemie(input: RoutingInput): RoutingResult {
   // Claude Code's own resolution (session-env-fields.ts): the Bedrock/Vertex flags select a cloud provider
   // on its default endpoint unless a provider base URL overrides it; otherwise ANTHROPIC_BASE_URL, empty =
   // api.anthropic.com.
-  const cloud = truthy(get('CLAUDE_CODE_USE_BEDROCK')) || truthy(get('CLAUDE_CODE_USE_VERTEX'));
+  const flags = CLOUD_FLAGS.map((name) => flagState(get(name)));
+  // An unfamiliar spelling cannot be resolved to a route either way: nothing is provable.
+  if (flags.includes('unknown')) return UNPROVEN;
+  const cloud = flagState(get('CLAUDE_CODE_USE_BEDROCK')) === 'on' || flagState(get('CLAUDE_CODE_USE_VERTEX')) === 'on';
   const endpoint = cloud ? get('ANTHROPIC_BEDROCK_BASE_URL') || get('ANTHROPIC_VERTEX_BASE_URL') : get('ANTHROPIC_BASE_URL');
   // Foundry is a cloud provider this module cannot resolve an endpoint for: nothing is provable.
-  if (truthy(get('CLAUDE_CODE_USE_FOUNDRY'))) return UNPROVEN;
+  if (flagState(get('CLAUDE_CODE_USE_FOUNDRY')) === 'on') return UNPROVEN;
   const endpointId = identity(endpoint);
   // Positively direct: the executor's default endpoint or explicit first-party Anthropic. A foreign override is not.
   const direct = !endpoint || (!cloud && endpointId === identity(ANTHROPIC_DIRECT));

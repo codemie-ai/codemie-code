@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BaseAgentAdapter } from '../../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../../types.js';
-import { launchMode, routedViaCodemie, type RoutingInput } from '../routing.js';
+import { launchMode, oauthAccountPays, routedViaCodemie, type RoutingInput } from '../routing.js';
 
 vi.mock('../../../../providers/core/registry.js', () => {
   const providers: Record<string, { authType: string }> = {
@@ -170,6 +170,54 @@ describe('routedViaCodemie - native', () => {
     const unproven = { routed: false, routing_proof: 'unproven' };
     expect(routedViaCodemie({ env: { CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_BEDROCK_BASE_URL: 'https://x.example.net' }, codemieProvider: false })).toEqual(unproven);
     expect(routedViaCodemie({ env: { ANTHROPIC_BASE_URL: 'https://x.example.net' }, codemieProvider: false })).toEqual(unproven);
+  });
+  describe('cloud flags share one rule with oauthAccountPays (review: yes/on/unfamiliar/off)', () => {
+    const viaGateway = { codemieProvider: true, profileBaseUrl: GATEWAY } as const;
+    const flags = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'] as const;
+    const placements = [
+      ['process env', (k: string, v: string) => ({ env: { [k]: v, ANTHROPIC_BASE_URL: GATEWAY } })],
+      ['settings env', (k: string, v: string) => ({ env: { ANTHROPIC_BASE_URL: GATEWAY }, settingsEnv: { [k]: v } })],
+    ] as const;
+
+    it.each(flags.flatMap((f) => ['yes', 'on', 'YES', ' On ', '1', 'true'].map((v) => [f, v])))(
+      '%s=%j selects the cloud provider: a gateway base URL is not the executor endpoint, org withheld',
+      (flag, value) => {
+        for (const [, build] of placements) {
+          const input = { ...build(flag, value), ...viaGateway };
+          expect(routedViaCodemie(input)).toEqual({ routed: false, routing_proof: 'proven' });
+          expect(oauthAccountPays(input)).toBe(false);
+        }
+      }
+    );
+
+    it.each(flags.flatMap((f) => ['banana', '2', 'enabled'].map((v) => [f, v])))(
+      '%s=%j (unfamiliar) is unproven and withholds the organization',
+      (flag, value) => {
+        for (const [, build] of placements) {
+          const input = { ...build(flag, value), ...viaGateway };
+          expect(routedViaCodemie(input)).toEqual({ routed: false, routing_proof: 'unproven' });
+          expect(oauthAccountPays(input)).toBe(false);
+        }
+      }
+    );
+
+    it.each(flags.flatMap((f) => ['0', 'false', 'no', 'off', 'OFF', ''].map((v) => [f, v])))(
+      '%s=%j is explicitly off: it behaves as unset and CodeMie routing is still provable',
+      (flag, value) => {
+        for (const [, build] of placements) {
+          const input = { ...build(flag, value), ...viaGateway };
+          expect(routedViaCodemie(input)).toEqual({ routed: true, routing_proof: 'proven' });
+        }
+      }
+    );
+
+    it.each(['1', 'true', 'yes', 'on', 'banana'])('Foundry %j is never provable', (value) => {
+      for (const [, build] of placements) {
+        const input = { ...build('CLAUDE_CODE_USE_FOUNDRY', value), ...viaGateway };
+        expect(routedViaCodemie(input)).toEqual({ routed: false, routing_proof: 'unproven' });
+        expect(oauthAccountPays(input)).toBe(false);
+      }
+    });
   });
   it('endpoint equal to profile URL but non-CodeMie provider => unproven', () => {
     const r = routedViaCodemie({ env: { ANTHROPIC_BASE_URL: GATEWAY }, codemieProvider: false, profileBaseUrl });

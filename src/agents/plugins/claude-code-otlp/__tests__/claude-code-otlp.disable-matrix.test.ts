@@ -65,6 +65,8 @@ vi.mock('../transcript/subagent-usage.js', () => ({
   subagentFilePath: vi.fn((transcriptPath: string, agentId: string) => `${transcriptPath}:${agentId}`),
 }));
 vi.mock('../event-fields/session-env-fields.js', () => ({
+  // The organization reader (claude-org.ts) shares this helper; no Claude account file exists in the temp home.
+  readJsonFile: vi.fn(async () => null),
   resolveSessionEnvFields: vi.fn(async () => ({
     provider: 'anthropic',
     api_host: 'api.anthropic.com',
