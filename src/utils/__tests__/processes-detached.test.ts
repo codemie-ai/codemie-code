@@ -11,7 +11,7 @@ vi.mock('../logger.js', () => ({
   logger: { info: vi.fn(), success: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const { spawnDetached, isProcessAlive, signalTree } = await import('../processes.js');
+const { spawnDetached, isProcessAlive, signalTree, signalProcess, listDescendantPids } = await import('../processes.js');
 
 describe('spawnDetached', () => {
   beforeEach(() => {
@@ -125,5 +125,73 @@ describe('signalTree', () => {
     expect(() => signalTree(100, 'SIGTERM')).not.toThrow();
 
     expect(killed).toEqual(['100:SIGTERM']);
+  });
+});
+
+describe('listDescendantPids and signalProcess', () => {
+  let killed: string[];
+
+  function pgrepFinds(children: Record<number, number[]>): void {
+    execFileSyncMock.mockImplementation((_command: string, args: string[]) => {
+      const found = children[Number(args[1])];
+      if (!found) {
+        throw Object.assign(new Error('pgrep: no match'), { status: 1 });
+      }
+      return found.map((pid) => `${pid}\n`).join('');
+    });
+  }
+
+  beforeEach(() => {
+    killed = [];
+    execFileSyncMock.mockReset();
+    vi.spyOn(process, 'kill').mockImplementation((pid: number, signal?: string | number) => {
+      killed.push(`${pid}:${signal}`);
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('lists every descendant deepest first and leaves the root out', () => {
+    pgrepFinds({ 100: [200], 200: [300, 301] });
+
+    expect(listDescendantPids(100)).toEqual([300, 301, 200]);
+  });
+
+  it('lists nothing for a process without children or when pgrep times out', () => {
+    pgrepFinds({});
+    expect(listDescendantPids(100)).toEqual([]);
+
+    execFileSyncMock.mockImplementation(() => {
+      throw Object.assign(new Error('spawnSync pgrep ETIMEDOUT'), { code: 'ETIMEDOUT', status: null });
+    });
+    expect(listDescendantPids(100)).toEqual([]);
+  });
+
+  it('listing signals nothing', () => {
+    pgrepFinds({ 100: [200] });
+
+    listDescendantPids(100);
+
+    expect(killed).toEqual([]);
+  });
+
+  it('signalProcess signals one process and never its children', () => {
+    pgrepFinds({ 100: [200] });
+
+    signalProcess(100, 'SIGTERM');
+
+    expect(killed).toEqual(['100:SIGTERM']);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('signalProcess skips a process that is already gone and never throws', () => {
+    vi.mocked(process.kill).mockImplementation(() => {
+      throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+    });
+
+    expect(() => signalProcess(100, 'SIGTERM')).not.toThrow();
   });
 });

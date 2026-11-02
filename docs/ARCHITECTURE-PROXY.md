@@ -1169,8 +1169,11 @@ src/providers/plugins/sso/session/
 1. User exits agent (Ctrl+C or normal exit), or sends SIGTERM/SIGINT to the daemon
 
    CLI wrapper (POSIX): SIGINT / SIGTERM / SIGHUP
-   ├─ Forwarded to the agent's process tree first (descendants deepest first,
-   │  then the agent); the proxy keeps running
+   ├─ Forwarded to the agent process alone first (not its helpers: the agent's
+   │  SessionEnd hook is one of them); the proxy keeps running. The agent's
+   │  descendants are remembered; if the agent ends by the signal (a launcher such
+   │  as copilot's npm loader), those still alive get the signal and are waited
+   │  for up to 10 s, then killed
    ├─ Agent exits (no exit within 10 s of the first SIGTERM / SIGHUP / SIGINT
    │  within 2 s of the previous one → the agent's process tree is killed and the
    │  exit path below finalizes, then the wrapper exits 128 + signal; any other

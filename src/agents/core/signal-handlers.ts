@@ -3,7 +3,7 @@
  * output streams.
  */
 import type { ChildProcess } from 'child_process';
-import { signalTree } from '../../utils/processes.js';
+import { isProcessAlive, listDescendantPids, signalProcess, signalTree } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -18,9 +18,18 @@ const SIGNAL_FALLBACK_MS = 10_000;
 /** Double Ctrl+C is the agents' exit convention; a later SIGINT is a new turn interrupt. */
 const SIGINT_REPEAT_WINDOW_MS = 2_000;
 
+/** How often the wrapper checks whether the agent's leftover processes are gone. */
+const ORPHAN_POLL_MS = 100;
+
 export interface SignalHandlers {
   removeSignalHandlers: () => void;
   removeInterruptHandlers: () => void;
+  /**
+   * Called first in the child-exit path, with the signal that ended the agent (null
+   * when it exited by itself). Resolves once the processes the agent left behind
+   * are gone.
+   */
+  reapOrphans: (exitSignal: NodeJS.Signals | null) => Promise<void>;
   onChildGone: () => void;
   fallbackSignal: () => NodeJS.Signals | undefined;
 }
@@ -111,15 +120,17 @@ export function installWin32SignalHandlers(child: ChildProcess, displayName: str
       process.off('SIGHUP', sighupHandler);
     },
     removeInterruptHandlers,
+    reapOrphans: async () => undefined,
     onChildGone: () => undefined,
     fallbackSignal: () => undefined,
   };
 }
 
 /**
- * The agent's process tree gets the signal first and the proxy stays up, so
- * the agent's own session-end traffic still reaches it; the child-exit path
- * then finishes the session as on a normal exit. Once that path runs,
+ * The agent gets the signal first, alone, and the proxy stays up: the agent runs
+ * its own session end (hooks included) and its own helper processes, which the
+ * signal must not reach, since the session-end hook is one of them. The child-exit
+ * path then finishes the session as on a normal exit. Once that path runs,
  * SIGINT / SIGTERM take their default action (a hung finalization can still
  * be stopped) and a late SIGHUP is ignored. The first of a SIGTERM, a SIGHUP or
  * a SIGINT within 2 s of the previous one the wrapper receives arms the fallback;
@@ -127,6 +138,13 @@ export function installWin32SignalHandlers(child: ChildProcess, displayName: str
  * keep running with the proxy, while a SIGINT within 2 s of the previous one is an
  * exit request whose wait stays bounded. After 10 s the fallback kills the agent's
  * tree and the child-exit path finalizes.
+ *
+ * An agent started through a launcher that forwards no signals (copilot's npm
+ * loader) dies of the signal and leaves the real agent running. The wrapper
+ * remembers the agent's descendants when it forwards a signal; if the agent then
+ * ends by a signal (it did not handle it), `reapOrphans` signals those that
+ * are still alive and waits up to 10 s for them before killing them. An agent that
+ * handled the signal and exited itself is responsible for its own helpers.
  *
  * Every SIGINT / SIGTERM / SIGHUP is forwarded, so a terminal Ctrl+C in cooked
  * mode reaches the agent twice (the terminal's and the forwarded one): a known
@@ -137,13 +155,21 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
   let signalFallbackTimer: NodeJS.Timeout | undefined;
   let firedFor: NodeJS.Signals | undefined;
   let lastSigintAt: number | undefined;
+  let lastForwarded: NodeJS.Signals = 'SIGTERM';
+  const descendantPids = new Set<number>();
 
   const forwardSignal = (signal: NodeJS.Signals) => {
     if (childExited) {
       return;
     }
     logger.debug(`[${displayName}] got ${signal} -> forwarded`);
-    signalChildTree(child, signal);
+    lastForwarded = signal;
+    if (child.pid !== undefined) {
+      for (const pid of listDescendantPids(child.pid)) {
+        descendantPids.add(pid);
+      }
+      signalProcess(child.pid, signal);
+    }
     if (signal === 'SIGINT') {
       const now = Date.now();
       const repeated = lastSigintAt !== undefined && now - lastSigintAt <= SIGINT_REPEAT_WINDOW_MS;
@@ -164,6 +190,13 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
     process.on(signal, forwardSignal);
   }
 
+  const livingOrphans = () => [...descendantPids].filter(isProcessAlive);
+  const signalOrphans = (signal: NodeJS.Signals) => {
+    for (const pid of livingOrphans()) {
+      signalProcess(pid, signal);
+    }
+  };
+
   return {
     removeSignalHandlers: () => {
       for (const signal of forwardedSignals) {
@@ -173,6 +206,22 @@ export function installPosixSignalHandlers(child: ChildProcess, displayName: str
     removeInterruptHandlers: () => {
       process.off('SIGINT', forwardSignal);
       process.off('SIGTERM', forwardSignal);
+    },
+    reapOrphans: async (exitSignal) => {
+      if (!exitSignal || livingOrphans().length === 0) {
+        return;
+      }
+      logger.debug(`[${displayName}] agent ended by ${exitSignal} and left processes behind -> ${lastForwarded}`);
+      signalOrphans(lastForwarded);
+      const deadline = Date.now() + SIGNAL_FALLBACK_MS;
+      while (livingOrphans().length > 0 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, ORPHAN_POLL_MS));
+      }
+      if (livingOrphans().length > 0) {
+        logger.debug(`[${displayName}] leftover processes did not exit ${SIGNAL_FALLBACK_MS}ms after ${lastForwarded}, killing them`);
+        firedFor ??= lastForwarded;
+        signalOrphans('SIGKILL');
+      }
     },
     onChildGone: () => {
       childExited = true;

@@ -867,7 +867,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         windowsHide: isWindows // Hide console window on Windows
       });
 
-      const { removeSignalHandlers, removeInterruptHandlers, onChildGone, fallbackSignal } =
+      const { removeSignalHandlers, removeInterruptHandlers, reapOrphans, onChildGone, fallbackSignal } =
         this.installSignalHandlers(child, isWindows);
 
       return new Promise((resolve, reject) => {
@@ -887,6 +887,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
         child.on('exit', async (code, signal) => {
           try {
+            // Before onChildGone: the fallback timer and the signal handlers must
+            // outlive the wait for what a launcher left behind.
+            await reapOrphans(signal);
             onChildGone();
             // POSIX keeps only its SIGHUP handler until this path ends, so a
             // closing terminal does not kill the wrapper mid-finalization.

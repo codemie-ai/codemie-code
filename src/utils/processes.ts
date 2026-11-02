@@ -130,6 +130,11 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
   for (const childPid of listChildPids(pid)) {
     signalTree(childPid, signal);
   }
+  signalProcess(pid, signal);
+}
+
+/** Send `signal` to one process. A process already gone is skipped; any other failure is logged at debug and never thrown. */
+export function signalProcess(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(pid, signal);
   } catch (error) {
@@ -137,6 +142,11 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
       logger.debug(`[signalTree] kill ${signal} ${pid} failed:`, error);
     }
   }
+}
+
+/** All descendants of `pid` (not `pid` itself), deepest first, found by `pgrep -P`. POSIX only. */
+export function listDescendantPids(pid: number): number[] {
+  return listChildPids(pid).flatMap(childPid => [...listDescendantPids(childPid), childPid]);
 }
 
 /** A hung `pgrep` must not stall shutdown; past this, the node is treated as childless. */
