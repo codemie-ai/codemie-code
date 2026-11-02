@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { detectGitBranch } from '../processes.js';
@@ -9,20 +9,29 @@ import { detectGitBranch } from '../processes.js';
 const dirs: string[] = [];
 
 // Git hooks (e.g. lint-staged under pre-commit) export GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, ...
-// which would redirect these temp-dir repositories at the outer repository.
+// which would redirect these temp-dir repositories at the outer repository. The developer's own
+// global/system git config is also ignored so settings such as tag.gpgSign cannot leak in.
 function scrubbedEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith('GIT_')) delete env[key];
   }
+  env.GIT_CONFIG_GLOBAL = devNull;
+  env.GIT_CONFIG_NOSYSTEM = '1';
   return env;
 }
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync(
     'git',
-    ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
-    { cwd, stdio: 'pipe', env: scrubbedEnv() }
+    [
+      '-c', 'user.email=t@t',
+      '-c', 'user.name=t',
+      '-c', 'commit.gpgsign=false',
+      '-c', 'tag.gpgSign=false',
+      ...args,
+    ],
+    { cwd, stdio: 'pipe', env: scrubbedEnv(), timeout: 10_000 }
   )
     .toString()
     .trim();
@@ -57,7 +66,7 @@ describe('detectGitBranch (real git)', () => {
     for (const [key, value] of Object.entries(savedGitEnv)) {
       if (value !== undefined) process.env[key] = value;
     }
-    await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+    await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })));
   });
 
   it('returns the branch of a repository without commits (unborn HEAD)', async () => {
