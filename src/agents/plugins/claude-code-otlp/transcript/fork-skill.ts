@@ -28,7 +28,16 @@
  */
 
 import { open, readFile } from 'node:fs/promises';
-import { EvidenceCache, emptyEvidence, evidenceStillValid, readRange, sealEvidence } from './evidence-index.js';
+import {
+  EvidenceCache,
+  MAX_INDEXED_KEYS,
+  emptyEvidence,
+  evidenceStillValid,
+  identityOf,
+  isValidEntry,
+  readRange,
+  sealEvidence,
+} from './evidence-index.js';
 import { plainSlashCommandName } from '../../claude/session/claude-named-invocations.js';
 
 /** The slice of a discovered subagent file this module needs. */
@@ -209,9 +218,10 @@ async function scanSubagentFile(file: ForkCandidate, scan: Scan, cache?: Evidenc
 async function scanIndexed(filePath: string, start: string, scan: Scan, cache: EvidenceCache): Promise<void> {
   const handle = await open(filePath, 'r');
   try {
-    const { size } = await handle.stat();
+    const now = identityOf(await handle.stat({ bigint: true }));
+    const size = now.size;
     let ev = await cache.get(filePath);
-    if (ev && (ev.start !== start || !(await evidenceStillValid(handle, ev, size)))) ev = undefined;
+    if (ev && (!isValidEntry(ev) || ev.start !== start || !(await evidenceStillValid(handle, ev, now)))) ev = undefined;
     const base = ev ?? emptyEvidence(start);
     const previousOffset = base.offset;
     const region = size > previousOffset ? await readRange(handle, previousOffset, size - previousOffset) : Buffer.alloc(0);
@@ -221,26 +231,47 @@ async function scanIndexed(filePath: string, start: string, scan: Scan, cache: E
     if (complete.length > 0) {
       const delta = newScan();
       base.prompt = scanTranscript(complete.toString('utf-8'), delta, false, base.prompt);
+      const others = new Set(base.others);
       for (const [id, name] of delta.toolNameById) {
-        if (!INDEXED_TOOLS.has(name)) continue;
-        const skill = delta.skillByToolUseId.get(id);
-        base.calls[id] = { n: name, p: delta.promptByToolUseId.get(id) ?? '', ...(skill ? { s: skill } : {}) };
+        if (id === '__proto__') throw new Error('unsupported tool id');
+        if (INDEXED_TOOLS.has(name)) {
+          const skill = delta.skillByToolUseId.get(id);
+          base.calls[id] = { n: name, p: delta.promptByToolUseId.get(id) ?? '', ...(skill ? { s: skill } : {}) };
+        } else {
+          others.add(id);
+        }
       }
+      base.others = [...others];
+      // A result is kept unless its call is known to be another tool's in this file: the full scan joins
+      // calls and results across all sources, so a result whose call is elsewhere (or not seen yet) stays.
       for (const [id, agentId] of delta.resultAgentIdByToolUseId) {
-        if (!Object.hasOwn(base.calls, id)) continue;
+        if (id === '__proto__') throw new Error('unsupported tool id');
+        if (others.has(id) && !Object.hasOwn(base.calls, id)) continue;
         base.results[id] = { a: agentId, ...(delta.failedToolUseIds.has(id) || base.results[id]?.e ? { e: 1 as const } : {}) };
+      }
+      if (Object.keys(base.calls).length + Object.keys(base.results).length + base.others.length > MAX_INDEXED_KEYS) {
+        cache.drop(filePath);
+        throw new Error('index too large');
       }
       base.offset += complete.length;
       await sealEvidence(handle, base, complete, previousOffset);
-      cache.set(filePath, base);
-    } else if (!ev && base.offset === 0) {
-      cache.drop(filePath); // nothing indexable (empty / only a partial line): keep no stale entry
+      base.id = now.id;
+      base.size0 = now.size;
+      base.mtimeNs = now.mtimeNs;
+      // A file that changed while it was read is used for this pass but not remembered.
+      const after = identityOf(await handle.stat({ bigint: true }));
+      if (after.id === now.id && after.size === now.size && after.mtimeNs === now.mtimeNs) cache.set(filePath, base);
+      else cache.drop(filePath);
+    } else if (!ev) {
+      cache.drop(filePath); // nothing indexable (empty / only a partial line) or an entry that no longer applies
     }
     for (const [id, call] of Object.entries(base.calls)) {
       scan.toolNameById.set(id, call.n);
       scan.promptByToolUseId.set(id, call.p);
       if (call.s) scan.skillByToolUseId.set(id, call.s);
     }
+    // A tool_use of another tool only has to be "seen" (a `.meta.json` tool id is checked against it).
+    for (const id of base.others) if (!scan.toolNameById.has(id)) scan.toolNameById.set(id, '');
     for (const [id, result] of Object.entries(base.results)) {
       scan.resultAgentIdByToolUseId.set(id, result.a);
       if (result.e) scan.failedToolUseIds.add(id);

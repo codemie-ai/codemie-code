@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { appendFileSync, mkdtempSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, truncateSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -146,5 +146,125 @@ describe('evidence index == full read', () => {
     writeFileSync(filePath, lines(user('p1'), call('tu', 'Skill', { skill: 's' }), result('tu', 'c')));
     await same(files);
     expect(await cache.get(filePath)).toBeDefined();
+  });
+});
+
+describe('evidence index: source identity and index shape', () => {
+  // A parent whose middle holds the call that decides the child; head (1 KiB) and tail (256 B) stay the same.
+  const filler = (n: number): string[] =>
+    Array.from({ length: n }, (_, i) => j({ type: 'assistant', n: String(i).padStart(4, '0'), message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(150) }] } }));
+  const parentBody = (middleName: string, middleExtra: unknown): string =>
+    lines(user('p1'), ...filler(20), call('tu-mid', middleName, middleExtra), result('tu-mid', 'kid'), ...filler(20));
+  const files = (parentPath: string, kidPath: string): ForkCandidate[] => [
+    { agentId: 'parent', filePath: parentPath },
+    { agentId: 'kid', filePath: kidPath, toolUseId: 'tu-mid' },
+  ];
+
+  it('atomic replacement by rename with the same length, head and tail is not mistaken for the old file', async () => {
+    writeFileSync(main(), lines(user('p1', '/x')));
+    const parentPath = join(dir, 'agent-parent.jsonl');
+    const kidPath = join(dir, 'agent-kid.jsonl');
+    writeFileSync(kidPath, lines(user('p2'), filler(1)[0]));
+    // "Agent" (5) vs "Skill" (5): identical length; the Skill variant names the child's skill.
+    writeFileSync(parentPath, parentBody('Agent', { skilx: 'inner' }));
+    const before = await same(files(parentPath, kidPath));
+    expect(JSON.stringify(before)).not.toContain('"inner"');
+    const replacement = join(dir, 'replacement.tmp');
+    writeFileSync(replacement, parentBody('Skill', { skill: 'inner' }));
+    expect(statSync(replacement).size).toBe(statSync(parentPath).size);
+    renameSync(replacement, parentPath);
+    expect(JSON.stringify(await same(files(parentPath, kidPath)))).toContain('"kid","inner"');
+  });
+
+  it('a same-size in-place rewrite (newer mtime) is not mistaken for the old content', async () => {
+    writeFileSync(main(), lines(user('p1', '/x')));
+    const parentPath = join(dir, 'agent-parent.jsonl');
+    const kidPath = join(dir, 'agent-kid.jsonl');
+    writeFileSync(kidPath, lines(user('p2'), filler(1)[0]));
+    writeFileSync(parentPath, parentBody('Agent', { skilx: 'inner' }));
+    await same(files(parentPath, kidPath));
+    writeFileSync(parentPath, parentBody('Skill', { skill: 'inner' })); // same inode, same size
+    const later = new Date(Date.now() + 5000);
+    utimesSync(parentPath, later, later);
+    expect(JSON.stringify(await same(files(parentPath, kidPath)))).toContain('"kid","inner"');
+  });
+
+  it('truncate and regrow in place with a different head is re-read; a true append keeps the index', async () => {
+    writeFileSync(main(), lines(user('p1', '/x')));
+    const parentPath = join(dir, 'agent-parent.jsonl');
+    const kidPath = join(dir, 'agent-kid.jsonl');
+    writeFileSync(kidPath, lines(user('p2'), filler(1)[0]));
+    writeFileSync(parentPath, parentBody('Agent', { skilx: 'inner' }));
+    await same(files(parentPath, kidPath));
+    truncateSync(parentPath, 0);
+    writeFileSync(parentPath, lines(user('p1'), ...filler(60), call('tu-mid', 'Skill', { skill: 'inner' }), result('tu-mid', 'kid')));
+    expect(JSON.stringify(await same(files(parentPath, kidPath)))).toContain('"kid","inner"');
+    // a true append: the same file grows; the new result is picked up from the old boundary
+    appendFileSync(parentPath, lines(call('tu-more', 'Skill', { skill: 'more' }), result('tu-more', 'kid2')));
+    const grown = await same([...files(parentPath, kidPath), { agentId: 'kid2', filePath: kidPath }]);
+    expect(JSON.stringify(grown)).toContain('"kid2","more"');
+  });
+
+  it('a call of another tool stays "seen" through the index (known-other id vs unseen id), also via the production snapshot', async () => {
+    const { resolveSubagentSnapshot } = await import('../subagent-usage.js');
+    const sid = 'sess-seen-other';
+    const mainPath = join(dir, `${sid}.jsonl`);
+    const subDir = join(dir, sid, 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(mainPath, lines(user('p1', '/x')));
+    writeFileSync(join(subDir, 'agent-parent.jsonl'), lines(user('p1'), call('tu-bash', 'Bash', { command: 'ls' }), result('tu-bash', '')));
+    writeFileSync(join(subDir, 'agent-seen.jsonl'), lines(user('p2')));
+    writeFileSync(join(subDir, 'agent-seen.meta.json'), JSON.stringify({ toolUseId: 'tu-bash' }));
+    writeFileSync(join(subDir, 'agent-unseen.jsonl'), lines(user('p3')));
+    writeFileSync(join(subDir, 'agent-unseen.meta.json'), JSON.stringify({ toolUseId: 'tu-never' }));
+    const pendingOf = async (): Promise<string[]> =>
+      (await resolveSubagentSnapshot(mainPath)).files.filter((f) => f.pending).map((f) => f.agentId).sort();
+    const cold = await pendingOf(); // builds the index
+    const warm = await pendingOf(); // reads it
+    expect(warm).toEqual(cold);
+    expect(cold).toEqual(['unseen']); // a seen Bash id is known-other, an unseen id stays pending
+  });
+
+  it('results held in another source, or seen before their call or in an earlier chunk, equal the full read', async () => {
+    writeFileSync(main(), lines(user('p1', '/x')));
+    const aPath = join(dir, 'agent-a.jsonl'); // holds only the RESULT naming kid
+    const bPath = join(dir, 'agent-b.jsonl'); // holds only the CALL
+    const kidPath = join(dir, 'agent-kid.jsonl');
+    writeFileSync(kidPath, lines(user('p2')));
+    writeFileSync(aPath, lines(user('p1'), result('tu-x', 'kid')));
+    writeFileSync(bPath, lines(user('p1'), call('tu-x', 'Skill', { skill: 'split' })));
+    const all: ForkCandidate[] = [
+      { agentId: 'a', filePath: aPath },
+      { agentId: 'b', filePath: bPath },
+      { agentId: 'kid', filePath: kidPath },
+    ];
+    expect(JSON.stringify(await same(all))).toContain('"kid","split"');
+    // result first, call in a later chunk of the same file
+    writeFileSync(aPath, lines(user('p1'), result('tu-y', 'kid2')));
+    await same(all);
+    appendFileSync(aPath, lines(call('tu-y', 'Skill', { skill: 'later' })));
+    await same([...all, { agentId: 'kid2', filePath: kidPath }]);
+  });
+
+  it('a malformed, oversized or foreign entry is ignored; an unwritable cache location is only slower', async () => {
+    writeFileSync(main(), lines(user('p1', '/x')));
+    const filePath = join(dir, 'agent-a.jsonl');
+    writeFileSync(filePath, lines(user('p1'), call('tu', 'Skill', { skill: 's' }), result('tu', 'c')));
+    const files: ForkCandidate[] = [{ agentId: 'c', filePath }];
+    const bogus = (entry: unknown): void =>
+      writeFileSync(join(dir, 'evidence.json'), JSON.stringify({ v: 1, files: { [filePath]: entry } }));
+    for (const entry of [
+      'text',
+      { offset: 5 },
+      { id: 'x', size0: 9, mtimeNs: '1', offset: 99, headLen: 0, headHash: '', tailHash: '', start: 'p1', prompt: 'p1', calls: {}, results: {}, others: [] },
+      { id: 'x', size0: 9, mtimeNs: '1', offset: 1, headLen: 0, headHash: '', tailHash: '', start: 'p1', prompt: 'p1', calls: 'no', results: {}, others: [] },
+      { id: 'x', size0: 9, mtimeNs: '1', offset: 1, headLen: 0, headHash: '', tailHash: '', start: 'p1', prompt: 'p1', calls: {}, results: {}, others: [1] },
+    ]) {
+      cache = new EvidenceCache(join(dir, 'evidence.json'));
+      bogus(entry);
+      await same(files);
+    }
+    cache = new EvidenceCache(join(dir, 'main.jsonl', 'cannot', 'be', 'a', 'dir.json')); // parent is a file
+    await same(files);
   });
 });

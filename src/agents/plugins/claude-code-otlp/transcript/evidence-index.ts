@@ -8,17 +8,26 @@
  * lets an unchanged source file be validated with ~1 KiB of reads and a changed one be read only from
  * its last complete-line boundary.
  *
- * Acceptance: an entry is used only when the file still has at least `offset` bytes, the hash of its
- * first bytes and of the bytes just before `offset` are unchanged, and it was built from the same
- * starting prompt. Anything else (truncated, replaced, missing, unreadable, different start prompt,
- * malformed cache) is a plain full read; the index never carries "absence": it holds only evidence
- * that was seen, and absence is always derived from the whole set. The file is a cache, never state
- * the analytics depend on: written atomically without a lock (each entry validates itself, so a lost
- * update only costs a re-read).
+ * Acceptance contract (append-only, stated, not proven by hashes): an entry is used only when
+ *  - the file is the same file: device, inode and creation time are those recorded (an atomic
+ *    replacement by rename, or delete + create, is a different file);
+ *  - it did not shrink: size >= the size recorded when the entry was built, and when the size is
+ *    exactly that size the modification time is unchanged too (an in-place rewrite without growth);
+ *  - it was built from the same starting prompt, and the hashes of the first 1 KiB and of the 256
+ *    bytes before the indexed offset still match (a tripwire for rewrites, NOT proof that the middle of a
+ *    grown file is unchanged: a same-inode in-place rewrite of old bytes followed by growth cannot be
+ *    detected without reading the whole file, and transcripts are append-only);
+ *  - its shape is valid (types, bounds).
+ * Anything else (replaced, truncated, missing, unreadable, different start prompt, malformed or oversized
+ * cache) is a plain full read. A file that changed while it was being read is not indexed. The index
+ * never carries "absence": it holds only evidence that was seen, and absence is always derived from the
+ * whole set. The file is a cache, never state the analytics depend on: written atomically without a
+ * lock (each entry validates itself, so a lost update only costs a re-read).
  */
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -27,7 +36,15 @@ const FORMAT = 1;
 const HEAD_HASH_BYTES = 1024;
 const TAIL_HASH_BYTES = 256;
 
+/** Most keys (calls + results + other tool ids) one file's entry may hold; beyond it the file is read in full. */
+export const MAX_INDEXED_KEYS = 50_000;
+
 export interface FileEvidence {
+  /** `dev:ino:birthtime` of the file the entry was built from. */
+  id: string;
+  /** Size of the file when the entry was last extended, and its modification time then. */
+  size0: number;
+  mtimeNs: string;
   /** Byte offset just after the last complete line that was indexed. */
   offset: number;
   headLen: number;
@@ -38,7 +55,49 @@ export interface FileEvidence {
   /** The prompt in force at `offset` (carried across appends). */
   prompt: string;
   calls: Record<string, { n: string; p: string; s?: string }>;
+  /** Observed results by tool id (any id whose call is not known to be another tool's in this file). */
   results: Record<string, { a: string; e?: 1 }>;
+  /** Ids of calls of every other tool: a `.meta.json` tool id is "seen" if any tool_use has it. */
+  others: string[];
+}
+
+export interface Identity {
+  id: string;
+  size: number;
+  mtimeNs: string;
+}
+
+export function identityOf(st: BigIntStats): Identity {
+  return { id: `${st.dev}:${st.ino}:${st.birthtimeNs}`, size: Number(st.size), mtimeNs: String(st.mtimeNs) };
+}
+
+const isStr = (v: unknown): v is string => typeof v === 'string';
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/** Shape and bounds of an entry read from disk; anything doubtful is treated as absent. */
+export function isValidEntry(e: unknown): e is FileEvidence {
+  if (!e || typeof e !== 'object') return false;
+  const v = e as Record<string, unknown>;
+  if (!isStr(v.id) || !isCount(v.size0) || !isStr(v.mtimeNs) || !isCount(v.offset) || v.offset > v.size0) return false;
+  if (!isCount(v.headLen) || v.headLen > HEAD_HASH_BYTES || !isStr(v.headHash) || !isStr(v.tailHash)) return false;
+  if (!isStr(v.start) || !isStr(v.prompt)) return false;
+  const { calls, results, others } = v;
+  if (!calls || typeof calls !== 'object' || Array.isArray(calls)) return false;
+  if (!results || typeof results !== 'object' || Array.isArray(results)) return false;
+  if (!Array.isArray(others) || !others.every(isStr)) return false;
+  const callKeys = Object.keys(calls);
+  const resultKeys = Object.keys(results);
+  if (callKeys.length + resultKeys.length + others.length > MAX_INDEXED_KEYS) return false;
+  if (callKeys.includes('__proto__') || resultKeys.includes('__proto__')) return false;
+  for (const c of Object.values(calls)) {
+    const call = c as Record<string, unknown> | null;
+    if (!call || !isStr(call.n) || !isStr(call.p) || (call.s !== undefined && !isStr(call.s))) return false;
+  }
+  for (const r of Object.values(results)) {
+    const res = r as Record<string, unknown> | null;
+    if (!res || !isStr(res.a) || (res.e !== undefined && res.e !== 1)) return false;
+  }
+  return true;
 }
 
 export class EvidenceCache {
@@ -111,13 +170,14 @@ export async function readRange(handle: FileHandle, position: number, length: nu
 }
 
 export function emptyEvidence(start: string): FileEvidence {
-  return { offset: 0, headLen: 0, headHash: '', tailHash: '', start, prompt: start, calls: {}, results: {} };
+  return { id: '', size0: 0, mtimeNs: '', offset: 0, headLen: 0, headHash: '', tailHash: '', start, prompt: start, calls: {}, results: {}, others: [] };
 }
 
-/** Whether `evidence` still describes the first `evidence.offset` bytes of the open file. */
-export async function evidenceStillValid(handle: FileHandle, evidence: FileEvidence, size: number): Promise<boolean> {
+/** Whether `evidence` may be extended for the open file whose current identity is `now` (contract above). */
+export async function evidenceStillValid(handle: FileHandle, evidence: FileEvidence, now: Identity): Promise<boolean> {
   if (evidence.offset === 0) return true;
-  if (size < evidence.offset) return false;
+  if (evidence.id !== now.id || now.size < evidence.size0) return false;
+  if (now.size === evidence.size0 && now.mtimeNs !== evidence.mtimeNs) return false;
   const head = await readRange(handle, 0, evidence.headLen);
   if (head.length !== evidence.headLen || sha(head) !== evidence.headHash) return false;
   const tailLen = Math.min(TAIL_HASH_BYTES, evidence.offset);
