@@ -598,30 +598,44 @@ export async function resolveRepositoryName(workingDirectory: string): Promise<s
   return (await detectGitRemoteRepo(workingDirectory)) ?? extractRepository(workingDirectory);
 }
 
+const LOCAL_BRANCH_REF_PREFIX = 'refs/heads/';
+
 /**
  * Detect current git branch from working directory
  *
- * Uses `git symbolic-ref` rather than `git rev-parse --abbrev-ref HEAD`: it also resolves an
- * unborn HEAD (repository without commits), where rev-parse fails, and it exits non-zero on a
- * detached HEAD, which is reported as no branch.
+ * Uses `git symbolic-ref -q HEAD` rather than `git rev-parse --abbrev-ref HEAD`: it also resolves
+ * an unborn HEAD (repository without commits), where rev-parse fails, and it exits 1 on a
+ * detached HEAD, which is reported as no branch. The full ref is read and `refs/heads/` stripped
+ * here because `--short` returns `heads/<name>` when a tag shares the branch name.
  *
  * @param cwd - Working directory path
  * @returns Git branch name, or undefined when not in a git repo or HEAD is detached
  */
 export async function detectGitBranch(cwd: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync('git symbolic-ref --short -q HEAD', {
+    const { stdout } = await execAsync('git symbolic-ref -q HEAD', {
       cwd,
       timeout: 5000,
       windowsHide: true,
     });
 
-    const branch = stdout.trim();
+    const ref = stdout.trim();
+    const branch = ref.startsWith(LOCAL_BRANCH_REF_PREFIX)
+      ? ref.slice(LOCAL_BRANCH_REF_PREFIX.length)
+      : '';
+    if (!branch) {
+      logger.debug('[GitUtils] HEAD does not point at a local branch');
+      return undefined;
+    }
+
     logger.debug(`[GitUtils] Detected git branch: ${branch}`);
-    return branch || undefined;
+    return branch;
   } catch (error) {
-    // Not a git repo, detached HEAD (exit 1), or git command failed
-    logger.debug('[GitUtils] No git branch detected:', error);
+    if ((error as { code?: unknown }).code === 1) {
+      logger.debug('[GitUtils] Detached HEAD state detected');
+    } else {
+      logger.debug('[GitUtils] Failed to detect git branch:', error);
+    }
     return undefined;
   }
 }

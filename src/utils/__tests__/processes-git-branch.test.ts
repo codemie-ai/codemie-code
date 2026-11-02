@@ -81,6 +81,23 @@ describe('detectGitBranch (real git)', () => {
     expect(await detectGitBranch(join(cwd, 'a', 'b'))).toBe('main');
   });
 
+  it('returns the plain branch name when a tag shares the branch name', async () => {
+    const cwd = await repo((c) => {
+      git(c, 'commit', '-q', '--allow-empty', '-m', 'init');
+      git(c, 'tag', 'main');
+    });
+    expect(await detectGitBranch(cwd)).toBe('main');
+  });
+
+  it('returns the plain branch name for an unborn branch when a tag shares its name', async () => {
+    const cwd = await repo((c) => {
+      git(c, 'commit', '-q', '--allow-empty', '-m', 'init');
+      git(c, 'tag', 'feature/x');
+      git(c, 'checkout', '-q', '--orphan', 'feature/x');
+    });
+    expect(await detectGitBranch(cwd)).toBe('feature/x');
+  });
+
   it('returns undefined for a detached HEAD', async () => {
     const cwd = await repo((c) => {
       git(c, 'commit', '-q', '--allow-empty', '-m', 'init');
