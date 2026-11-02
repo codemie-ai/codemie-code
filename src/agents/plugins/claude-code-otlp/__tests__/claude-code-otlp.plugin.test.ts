@@ -104,7 +104,6 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
-import { ConfigLoader } from '@/utils/config.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
 
@@ -1700,16 +1699,12 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
       baseUrl: 'https://prod.example/code-assistant-api',
     };
     vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
-    // What a cwd-based lookup in a subfolder would return: the global Preview profile.
-    vi.mocked(ConfigLoader.load).mockResolvedValueOnce({
-      provider: 'ai-run-sso',
-      codeMieUrl: 'https://preview.example',
-      baseUrl: 'https://preview.example/code-assistant-api',
-    } as never);
 
     await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledWith(sessionProfile, expect.anything());
+    // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
+    expect(resolveHookAuthProfile).toHaveBeenCalledWith();
   });
 
   it('emits no event when the SSO gate blocks the prompt', async () => {

@@ -14,7 +14,6 @@ vi.mock('@/utils/logger.js', () => ({
 
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
-import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
@@ -155,18 +154,14 @@ describe('CopilotCliOtlpPlugin block-output shapes', () => {
       baseUrl: 'https://prod.example/code-assistant-api',
     };
     vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
-    // What a cwd-based lookup in a subfolder would return: the global Preview profile.
-    vi.mocked(ConfigLoader.load).mockResolvedValueOnce({
-      provider: 'ai-run-sso',
-      codeMieUrl: 'https://preview.example',
-      baseUrl: 'https://preview.example/code-assistant-api',
-    } as never);
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await plugin.processOtlpEvent(hookInput({ codemieEventName: 'preToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(ensureCodeMieSsoAuth).toHaveBeenCalledWith(sessionProfile);
+    // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
+    expect(resolveHookAuthProfile).toHaveBeenCalledWith();
     logSpy.mockRestore();
   });
 

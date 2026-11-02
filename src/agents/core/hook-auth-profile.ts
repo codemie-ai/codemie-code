@@ -37,8 +37,9 @@ function readLaunchProfile(env: NodeJS.ProcessEnv): HookAuthProfile | undefined 
       return undefined;
     }
     return { provider, baseUrl, ssoUrl: asString(parsed?.codeMieUrl) ?? baseUrl };
-  } catch (error) {
-    logger.debug(`[hook-auth-profile] ignoring malformed CODEMIE_PROFILE_CONFIG: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    // Fixed message on purpose: a JSON.parse error quotes part of the input, and this config can carry credentials.
+    logger.debug('[hook-auth-profile] ignoring malformed CODEMIE_PROFILE_CONFIG');
     return undefined;
   }
 }
@@ -52,7 +53,7 @@ function readLaunchProfile(env: NodeJS.ProcessEnv): HookAuthProfile | undefined 
  * blocks the prompt and opens that environment's login (EPMCDME-16308). So:
  *
  * 1. The launch profile in `CODEMIE_PROFILE_CONFIG` wins: it is what the session actually runs with.
- *    `CODEMIE_BASE_URL` is never read, the proxy rewrites it to a loopback URL.
+ *    This path never reads `CODEMIE_BASE_URL` (the proxy rewrites it to a loopback URL).
  * 2. Without it (agent started outside `codemie-<agent>`), load the config from the nearest ancestor
  *    of the project dir (`CLAUDE_PROJECT_DIR`, else `cwd`) that has a local `.codemie` config.
  *

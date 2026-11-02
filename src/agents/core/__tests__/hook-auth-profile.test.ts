@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ConfigLoader } from '@/utils/config.js';
 import * as paths from '@/utils/paths.js';
+import { logger } from '@/utils/logger.js';
 import { resolveHookAuthProfile } from '../hook-auth-profile.js';
 
 const PROD_BASE_URL = 'https://prod.example/code-assistant-api';
@@ -101,6 +102,16 @@ describe('resolveHookAuthProfile', () => {
       const profile = await resolveHookAuthProfile({ CODEMIE_PROFILE_CONFIG: '{not json' }, nestedDir);
 
       expect(profile.baseUrl).toBe(PROD_BASE_URL);
+    });
+
+    it('does not log any part of a malformed CODEMIE_PROFILE_CONFIG', async () => {
+      // V8's JSON.parse error quotes the start of the offending input ("sk-secret-"...); the config can carry credentials.
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+      await resolveHookAuthProfile({ CODEMIE_PROFILE_CONFIG: 'sk-secret-123 not json' }, nestedDir);
+
+      expect(debug).toHaveBeenCalled();
+      expect(JSON.stringify(debug.mock.calls)).not.toContain('sk-secret');
     });
 
     it('falls back to config resolution when CODEMIE_PROFILE_CONFIG has no provider or baseUrl', async () => {
