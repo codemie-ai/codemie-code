@@ -4,7 +4,7 @@
 
 **Goal:** Prove the already-committed fix (3a357dd7, branch `EPMCDME-16530_unborn-head-branch`) is green and produce the PR title/body artifacts.
 
-**Architecture:** No new implementation. The fix changes `detectGitBranch()` in `src/utils/processes.ts` to `git symbolic-ref --short -q HEAD`. Source of truth: `docs/superpowers/plans/2026-10-30-epmcdme-16530-cli-unborn-head-branch.md`. The backend companion (`codemie` repo, commit 6f8b552c6) is out of this repo's diff.
+**Architecture:** No new implementation. The fix changes `detectGitBranch()` in `src/utils/processes.ts` to `git symbolic-ref -q HEAD` and strips `refs/heads/` itself (`--short` was dropped in d58ccc88: it returns `heads/<name>` when a tag shares the branch name). Source of truth: `docs/superpowers/plans/2026-10-30-epmcdme-16530-cli-unborn-head-branch.md`. The backend companion (`codemie` repo, commit 6f8b552c6) is out of this repo's diff.
 
 **Tech Stack:** TypeScript (ES modules), Node.js >= 20, Vitest, git CLI.
 
@@ -38,7 +38,7 @@ Test-first: no — change already committed with its tests
 
 Test-first: no — change already committed with its tests
 
-- [ ] **Step 1:** Run `npx vitest run src/utils/__tests__/processes-git-branch.test.ts src/utils/__tests__/processes-git.test.ts src/utils/__tests__/processes.test.ts --reporter=verbose`. Expected: all PASS (6 real-git tests including unborn HEAD, detached HEAD, non-repo).
+- [ ] **Step 1:** Run `npx vitest run src/utils/__tests__/processes-git-branch.test.ts src/utils/__tests__/processes-git.test.ts src/utils/__tests__/processes.test.ts --reporter=verbose`. Expected: all PASS (8 real-git tests including unborn HEAD, detached HEAD, non-repo, and a tag sharing the branch name).
 - [ ] **Step 2:** Run the repro: `npx vitest run --config docs/superpowers/tasks/2026-10-29-epmcdme-16530/repro/vitest.config.ts docs/superpowers/tasks/2026-10-29-epmcdme-16530/repro/branch-detection.repro.test.ts --reporter=verbose`. Expected: 4 passed.
 - [ ] **Step 3:** Run the consumer suites listed in Task 1 Step 6 of the CLI plan (BaseAgentAdapter, OtlpAgentAdapter, claude-code-otlp plugin, Pi incremental-sync, DesktopRepositoryResolver, DesktopTelemetryRuntime, `src/providers/plugins/sso/proxy/plugins/__tests__`). Expected: all PASS except `pi.incremental-sync.test.ts`.
 - [ ] **Step 4:** If `pi.incremental-sync.test.ts` fails, reproduce on a clean `origin/main` checkout (use a temporary `git worktree` outside the repo; remove it afterwards) and record that it fails identically.

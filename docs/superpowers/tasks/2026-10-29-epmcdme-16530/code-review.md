@@ -2,6 +2,7 @@
 schema: sdlc-factory/code-review@1
 decision: request-changes
 reviewed_head: 84baa5927bdadbea9fda6357b23f377066c4bcde
+superseded_note: record of the 84baa59 review only; see "Status since the reviewed head" for the code that merges
 ---
 
 # Code review — 2026-10-29-epmcdme-16530
@@ -40,3 +41,17 @@ Acceptance skipped (no spec), so confidence is low; the change itself is sound b
 ## Coverage
 
 Standards: commit-format pass · code-quality pass · security partial
+
+## Status since the reviewed head
+
+This file records the review of `84baa59` and is kept as history. It does not describe the code that merges: that code no longer uses `git symbolic-ref --short`, and `processes-git-branch.test.ts` now has 8 tests, not 6. No new review verdict has been issued for the later commits.
+
+| Item | State at 84baa59 | Later state |
+|---|---|---|
+| CR-001 (test helper inherits `GIT_*`) | open, fixed by 84baa592 | fixed; approval in `decisions.jsonl` (2026-10-30T14:30:09Z) covers 84baa592 only |
+| CR-002 (CRITICAL sign-off for the `X-CodeMie-Branch` derivation) | open | still open: PR-process item, needs security-review sign-off on the current derivation |
+| Pre-existing: tag named like the branch yields `heads/<name>` | deferred as pre-existing | fixed in d58ccc88: `git symbolic-ref -q HEAD`, `refs/heads/` stripped in code (also rejects a HEAD outside `refs/heads/`) |
+| Debug logs without detail (PR review) | not raised | fixed in 65cf652f: cwd, ref, exit code and error in every `detectGitBranch` log |
+| Test helper ignores tag signing and the developer's git config (PR review) | not raised | fixed in 00abe69d: `tag.gpgSign=false`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM`, timeout, `rm` retries |
+
+The `request-changes` decision above is the unresolved first one; the approve entry in `decisions.jsonl` is the later human decision for 84baa592. Gates for the current head `00abe69d` are in `gate-run.json` (secrets gate skipped, so its status is PARTIAL).
