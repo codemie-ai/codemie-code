@@ -218,10 +218,16 @@ describe('project gate — ingest vs forwarding', () => {
       await appendSpool(SESSION, 'hooks', hookLine('B'), ['B']);
       fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
 
-      await forwardSession(SESSION, true, credentials as never);
-      expect((await readStatus(SESSION))?.cursors.hooks).toBe(0);
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        await forwardSession(SESSION, true, credentials as never);
+        expect((await readStatus(SESSION))?.cursors.hooks).toBe(0);
 
-      await forwardSession(SESSION, true, credentials as never);
+        vi.setSystemTime(Date.now() + 3 * 60_000); // past the bounded backoff of the failed range
+        await forwardSession(SESSION, true, credentials as never);
+      } finally {
+        vi.useRealTimers();
+      }
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
       expect((await readStatus(SESSION))?.cursors.hooks).toBe(Buffer.byteLength(hookLine('A'))); // the sealed prefix only

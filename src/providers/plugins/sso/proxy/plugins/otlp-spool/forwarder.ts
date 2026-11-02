@@ -19,6 +19,7 @@ import {
   type Discard,
 } from './session-status.js';
 import { OtlpHookSpoolData } from '../otlp.plugin.js';
+import { deliveryGate, recordUnacknowledged } from './delivery-state.js';
 import {
   isSendAllowed,
   noteStreamHold,
@@ -150,8 +151,9 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     return outcome;
   };
 
+  let outcome: SendOutcome;
   try {
-    let outcome = await exchange();
+    outcome = await exchange();
     if (outcome.kind === 'stale' && req.evidence && (await reclassify(req.evidence))) {
       outcome = await exchange();
     }
@@ -164,15 +166,16 @@ async function send(req: SendRequest): Promise<SendOutcome> {
     } else if (outcome.kind !== 'ok') {
       logger.debug('[otlp-forwarder] not acknowledged', ...sanitizeLogArgs({ sessionId, stream, ...outcome }));
     }
-    return outcome;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.debug(
       '[otlp-forwarder] request error',
       ...sanitizeLogArgs({ sessionId, stream, err: msg })
     );
-    return { kind: 'retry', reason: 'request_error' };
+    outcome = { kind: 'retry', reason: 'request_error' };
   }
+  await recordUnacknowledged(sessionId, stream, outcome, req.range);
+  return outcome;
 }
 
 const acknowledged = (o: SendOutcome): boolean => o.kind === 'ok' || o.kind === 'discarded';
@@ -275,6 +278,7 @@ async function forwardHooks(
   credentials: SSOCredentials | JWTCredentials,
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
+  if ((await deliveryGate(sessionId, 'hooks')) === 'wait') return 'idle';
   const batch = await snapshotPendingHookRecords(sessionId);
   if (!batch) {
     return 'idle';
@@ -345,6 +349,7 @@ async function forwardOtelStream(
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
   let last: SendOutcome | 'idle' = 'idle';
+  if ((await deliveryGate(sessionId, stream)) === 'wait') return last;
   for (let window = 0; window < (evidence ? MAX_OTEL_WINDOWS : 1); window++) {
     const pending = await snapshotPendingBytes(sessionId, stream, evidence ? MAX_SNAPSHOT_BYTES : undefined);
     if (!pending) return last;
@@ -382,6 +387,7 @@ async function forwardOtelJsonStream(
   credentials: SSOCredentials | JWTCredentials,
   evidence?: EvidenceContext
 ): Promise<SendOutcome | 'idle'> {
+  if ((await deliveryGate(sessionId, stream)) === 'wait') return 'idle';
   const batch = await snapshotPendingNdjsonRecords(sessionId, stream);
   if (!batch) {
     return 'idle';

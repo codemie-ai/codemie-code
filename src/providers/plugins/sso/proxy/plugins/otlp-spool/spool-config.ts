@@ -49,6 +49,19 @@ export function heldRetentionMs(): number {
   return envMinutesMs('OTLP_HELD_RETENTION_MINUTES', 24 * 60);
 }
 
+/** Longest wait between attempts for a stream whose delivery keeps failing. */
+const MAX_DELIVERY_BACKOFF_MS = 30 * 60_000;
+
+/**
+ * Bounded exponential backoff after the `attempts`-th consecutive unacknowledged delivery of a range:
+ * one send interval, doubling, capped at 30 minutes and at the retention bound. The retention bound
+ * itself (`heldRetentionMs`) is the total age; this only spaces the attempts inside it.
+ */
+export function deliveryBackoffMs(attempts: number): number {
+  const delay = sendIntervalMs() * 2 ** Math.min(Math.max(attempts, 1) - 1, 20);
+  return Math.min(delay, MAX_DELIVERY_BACKOFF_MS, heldRetentionMs());
+}
+
 /** How often pending spool bytes are forwarded. */
 export function sendIntervalMs(): number {
   return envMinutesMs('OTLP_SEND_INTERVAL_MINUTES', 2);

@@ -11,6 +11,8 @@ export type SendKind = 'ok' | 'discarded' | 'stale' | 'retry' | 'failed' | 'auth
 export interface SendOutcome {
   kind: SendKind;
   reason?: string;
+  /** 503 only: the backend's named refusal token (e.g. `default_project_unavailable`). */
+  detail?: string;
   accepted?: number;
   /** OTLP: records the backend rejected (final; the range is still acknowledged). */
   rejected?: number;
@@ -133,6 +135,16 @@ function otlpPartial(body: Buffer, contentType: string): Partial | null | 'malfo
   return { rejected: rejected ?? 0, message: message ? reasonOf(message.toString('utf-8')) : undefined };
 }
 
+/**
+ * The backend names a retryable refusal in the 503 `detail` (e.g. `default_project_unavailable`: no usable
+ * destination). Only a bare snake_case token is kept; free text is never copied into status or logs.
+ */
+function reasonToken(body: BodyRead): string | undefined {
+  if (body.state !== 'complete') return undefined;
+  const detail = parseJson(body.bytes)?.['detail'];
+  return typeof detail === 'string' && /^[a-z][a-z0-9_]{2,63}$/.test(detail) ? detail : undefined;
+}
+
 /** Typed outcome of a non-auth response. `hooks` = the event-hooks route (never an OTLP shape). */
 export function decodeResponse(status: number, contentType: string, body: BodyRead, hooks: boolean): SendOutcome {
   if (status === 409) {
@@ -141,7 +153,10 @@ export function decodeResponse(status: number, contentType: string, body: BodyRe
       ? { kind: 'stale', reason: 'stale_policy', policyVersion: reasonOf(json['policy_version']) }
       : { kind: 'failed', reason: 'http_409' };
   }
-  if (status >= 500) return { kind: 'retry', reason: `http_${status}` };
+  if (status >= 500) {
+    const detail = status === 503 ? reasonToken(body) : undefined;
+    return { kind: 'retry', reason: `http_${status}`, ...(detail ? { detail } : {}) };
+  }
   if (status < 200 || status >= 300) return { kind: 'failed', reason: `http_${status}` };
 
   // A 2xx whose body cannot be verified is not an acknowledgement: the range stays (at-least-once).

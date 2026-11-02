@@ -2,11 +2,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { SPOOL_STREAMS, spoolRoot, statusFile, type SpoolStream } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import {
+  DELIVERY_LOSS_REASONS,
   HOLD_REASONS,
   isSendableProjectName,
   LOSS_REASONS,
   MAX_CONFLICT_NAMES,
   parseProjectSeal,
+  type DeliveryLossReason,
   type Hold,
   type HoldReason,
   type LossReason,
@@ -54,7 +56,12 @@ export interface SessionStatus {
    */
   holds?: Partial<Record<HoldScope, Hold>>;
   /** The latest recorded loss: a hold that reached the retention bound and dropped its backlog. */
-  lastLoss?: { reason: LossReason; at: number; bytes: number };
+  lastLoss?: { reason: LossReason; at: number; bytes: number; detail?: string };
+  /**
+   * Unacknowledged delivery per stream: the first failure of the pending range starting at `cursor`
+   * (backlog `[cursor, end)` as it was then). Valid only while the stream cursor still equals `cursor`.
+   */
+  delivery?: Partial<Record<SpoolStream, DeliveryFailure>>;
   /**
    * The latest final backend discard/rejection (e.g. `session_project_conflict`): acknowledged and
    * advanced, never an accepted send, so it stays visible here (AC18). Reason capped at 200 chars.
@@ -64,6 +71,19 @@ export interface SessionStatus {
   sendMode?: 'evidence' | 'legacy';
   /** A hook line of this session carried the `evidence_v` envelope marker. Sticky. */
   evidenceMarked?: true;
+}
+
+export interface DeliveryFailure {
+  reason: DeliveryLossReason;
+  /** Backend/transport cause (capped), e.g. `http_413` or `default_project_unavailable`; never a body. */
+  detail?: string;
+  /** First failure of this range; kept across reason changes and restarts, so the retention bound is total. */
+  since: number;
+  cursor: number;
+  end: number;
+  attempts: number;
+  /** No request for this stream before this time (bounded backoff). */
+  nextAt: number;
 }
 
 export interface Discard {
@@ -93,7 +113,38 @@ function parseLoss(raw: unknown): SessionStatus['lastLoss'] {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const { reason, at, bytes } = raw as Record<string, unknown>;
   if (!(LOSS_REASONS as readonly unknown[]).includes(reason) || toOffset(at) === 0) return undefined;
-  return { reason: reason as LossReason, at: toOffset(at), bytes: toOffset(bytes) };
+  const detail = (raw as Record<string, unknown>)['detail'];
+  return {
+    reason: reason as LossReason,
+    at: toOffset(at),
+    bytes: toOffset(bytes),
+    ...(typeof detail === 'string' && detail ? { detail: detail.slice(0, MAX_DETAIL) } : {}),
+  };
+}
+
+const MAX_DETAIL = 200;
+
+function parseDelivery(raw: unknown): SessionStatus['delivery'] {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const out: Partial<Record<SpoolStream, DeliveryFailure>> = {};
+  for (const stream of SPOOL_STREAMS) {
+    const rec = (raw as Record<string, unknown>)[stream] as Record<string, unknown> | undefined;
+    const since = toOffset(rec?.['since']);
+    const end = toOffset(rec?.['end']);
+    const cursor = toOffset(rec?.['cursor']);
+    if (since === 0 || end <= cursor || !(DELIVERY_LOSS_REASONS as readonly unknown[]).includes(rec?.['reason'])) continue;
+    const detail = rec!['detail'];
+    out[stream] = {
+      reason: rec!['reason'] as DeliveryLossReason,
+      ...(typeof detail === 'string' && detail ? { detail: detail.slice(0, MAX_DETAIL) } : {}),
+      since,
+      cursor,
+      end,
+      attempts: Math.max(1, toOffset(rec!['attempts'])),
+      nextAt: toOffset(rec!['nextAt']),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseDiscard(raw: unknown): Discard | undefined {
@@ -154,6 +205,8 @@ function normalizeStatus(raw: unknown): SessionStatus {
   if (holds) status.holds = holds;
   const loss = parseLoss(source['lastLoss']);
   if (loss) status.lastLoss = loss;
+  const delivery = parseDelivery(source['delivery']);
+  if (delivery) status.delivery = delivery;
   const discard = parseDiscard(source['lastDiscard']);
   if (discard) status.lastDiscard = discard;
   if (source['sendMode'] === 'evidence' || source['sendMode'] === 'legacy') status.sendMode = source['sendMode'];
@@ -210,6 +263,17 @@ export async function advanceCursor(
 ): Promise<void> {
   await updateStatus(sessionId, (status) => {
     status.cursors[stream] = Math.max(status.cursors[stream], nextOffset);
+    // A partial acknowledgement trims the failing range to what is still unacknowledged; its first-failure
+    // time and `end` stay, so the old remainder keeps its deadline. Only reaching `end` ends the range.
+    const failing = status.delivery?.[stream];
+    if (failing && status.cursors[stream] > failing.cursor) {
+      if (status.cursors[stream] >= failing.end) {
+        delete status.delivery![stream];
+        if (Object.keys(status.delivery!).length === 0) delete status.delivery;
+      } else {
+        failing.cursor = status.cursors[stream];
+      }
+    }
     if (discard) status.lastDiscard = { ...discard, reason: discard.reason.slice(0, 200) };
   });
 }

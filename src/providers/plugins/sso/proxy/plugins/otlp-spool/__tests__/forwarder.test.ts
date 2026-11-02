@@ -10,6 +10,8 @@ const readStateMock = vi.fn();
 const fetchMock = vi.fn();
 const readStatusMock = vi.fn();
 const noteStreamHoldMock = vi.fn();
+const deliveryGateMock = vi.fn(async () => 'go');
+const noteDeliveryFailureMock = vi.fn(async () => 'noted');
 const forwarderIdentityMock = vi.fn();
 const readRecordMock = vi.fn();
 const getPolicyStateMock = vi.fn();
@@ -24,6 +26,18 @@ vi.mock('../spool-io.js', () => ({
   noteStreamHold: noteStreamHoldMock,
   forwarderIdentity: forwarderIdentityMock,
 }));
+// The failure mapping is real; only the persisted clock behind it is a spy (its own tests: delivery-retention).
+vi.mock('../delivery-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../delivery-state.js')>();
+  return {
+    ...actual,
+    deliveryGate: deliveryGateMock,
+    recordUnacknowledged: async (sessionId: string, stream: string, outcome: never, range: unknown) => {
+      const failure = actual.deliveryFailureOf(outcome);
+      if (failure) await noteDeliveryFailureMock(sessionId, stream, failure, range);
+    },
+  };
+});
 vi.mock('../session-status.js', () => ({
   advanceCursor: advanceCursorMock,
   markSessionEnded: markSessionEndedMock,
@@ -724,6 +738,34 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(fetchMock.mock.calls[0][1].body).toBe(recordJson);
     if (status === 200) expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', 4 + Buffer.byteLength(recordJson) + 1);
     else expect(advanceCursorMock).not.toHaveBeenCalled();
+    // An unacknowledged request starts the range's retention clock, keyed by the range start; an ack does not.
+    if (status === 200) expect(noteDeliveryFailureMock).not.toHaveBeenCalled();
+    else expect(noteDeliveryFailureMock).toHaveBeenCalledWith('s1', 'logsJson', status === 400
+      ? { reason: 'delivery_rejected', detail: 'http_400' }
+      : { reason: 'delivery_failed', detail: 'http_503' }, { cursor: 4, end: 4 + Buffer.byteLength(recordJson) + 1, filtered: false });
+  });
+
+  it('a stream in backoff sends nothing; auth failures and local non-attempts are not delivery failures', async () => {
+    deliveryGateMock.mockResolvedValueOnce('wait');
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockImplementation(async () => json({}, 401));
+    await forwardSession('s1', true, credentials);
+    isSendAllowedMock.mockResolvedValue(false);
+    await forwardSession('s1', true, credentials);
+    expect(noteDeliveryFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('a 503 naming its refusal is a destination failure; a malformed 200 is an unverified response', async () => {
+    const { forwardSession } = await import('../forwarder.js');
+    fetchMock.mockImplementationOnce(async () => json({ detail: 'default_project_unavailable' }, 503));
+    await forwardSession('s1', true, credentials);
+    fetchMock.mockImplementationOnce(async () => new Response('nope', { status: 200 }));
+    await forwardSession('s1', true, credentials);
+    expect(noteDeliveryFailureMock).toHaveBeenNthCalledWith(1, 's1', 'hooks', { reason: 'destination_unavailable', detail: 'default_project_unavailable' }, expect.objectContaining({ cursor: expect.any(Number) }));
+    expect(noteDeliveryFailureMock).toHaveBeenNthCalledWith(2, 's1', 'hooks', { reason: 'response_unverified', detail: 'response_malformed' }, expect.objectContaining({ cursor: expect.any(Number) }));
   });
 
   it('holds a JSON evidence record with a mismatching session before sending', async () => {

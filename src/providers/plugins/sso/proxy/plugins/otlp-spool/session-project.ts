@@ -20,11 +20,25 @@ export const HOLD_REASONS = [
 ] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
 
+/**
+ * Why a range stayed unacknowledged until the retention bound: the backend refused the payload or its
+ * evidence (400/413/422), no destination was usable (503 with a named reason), a response could not be
+ * verified, or the request/service failed. Not holds: delivery is retried with backoff meanwhile.
+ */
+export const DELIVERY_LOSS_REASONS = [
+  'delivery_rejected',
+  'destination_unavailable',
+  'response_unverified',
+  'delivery_failed',
+] as const;
+export type DeliveryLossReason = (typeof DELIVERY_LOSS_REASONS)[number];
+
 /** A loss keeps its hold reason, except an expired `stamp_pending`, which is `no_evidence_timeout`. */
-export type LossReason = Exclude<HoldReason, 'stamp_pending'> | 'no_evidence_timeout';
+export type LossReason = Exclude<HoldReason, 'stamp_pending'> | 'no_evidence_timeout' | DeliveryLossReason;
 export const LOSS_REASONS: readonly LossReason[] = [
   ...HOLD_REASONS.filter((reason): reason is Exclude<HoldReason, 'stamp_pending'> => reason !== 'stamp_pending'),
   'no_evidence_timeout',
+  ...DELIVERY_LOSS_REASONS,
 ];
 
 export interface Hold {
