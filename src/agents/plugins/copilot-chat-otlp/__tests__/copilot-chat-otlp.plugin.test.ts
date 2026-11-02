@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null), hasLocalConfig: vi.fn(async () => false) },
 }));
@@ -17,6 +18,7 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import {
@@ -121,6 +123,28 @@ describe('CopilotChatOtlpPlugin', () => {
     });
   });
 
+  it('checks SSO against the session profile, not the config resolved from the current directory', async () => {
+    const sessionProfile = {
+      provider: 'ai-run-sso',
+      ssoUrl: 'https://prod.example',
+      baseUrl: 'https://prod.example/code-assistant-api',
+    };
+    vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
+    // What a cwd-based lookup in a subfolder would return: the global Preview profile.
+    vi.mocked(ConfigLoader.load).mockResolvedValueOnce({
+      provider: 'ai-run-sso',
+      codeMieUrl: 'https://preview.example',
+      baseUrl: 'https://preview.example/code-assistant-api',
+    } as never);
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuth).toHaveBeenCalledWith(sessionProfile);
+    logSpy.mockRestore();
+  });
+
   it('forwards normally (no block) when SSO auth succeeds', async () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -132,7 +156,7 @@ describe('CopilotChatOtlpPlugin', () => {
   });
 
   it('emits a permissionDecision:deny shape for PreToolUse on internal error (not an auth-failure message)', async () => {
-    vi.mocked(ConfigLoader.load).mockRejectedValueOnce(new Error('disk full'));
+    vi.mocked(resolveHookAuthProfile).mockRejectedValueOnce(new Error('disk full'));
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
