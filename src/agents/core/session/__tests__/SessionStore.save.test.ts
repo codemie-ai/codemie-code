@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '../types.js';
@@ -12,7 +12,7 @@ import { PathSecurityError } from '../../../../utils/errors.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rename: vi.fn(actual.rename), writeFile: vi.fn(actual.writeFile) };
+  return { ...actual, readFile: vi.fn(actual.readFile), rename: vi.fn(actual.rename), writeFile: vi.fn(actual.writeFile) };
 });
 
 const SESSION_ID = 'b2c3d4e5-0000-4000-8000-000000000002';
@@ -204,6 +204,164 @@ describe('SessionStore.saveSession', () => {
 
     expect(JSON.parse(readFileSync(livePath(), 'utf-8')).reason).toBe('exit');
     expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).reason).toBe('older');
+  });
+
+  const generationB = () => makeSession({
+    startTime: 1_790_000_900_000,
+    correlation: { status: 'matched', agentSessionId: 'native-2', retryCount: 0 },
+  });
+
+  /** Generation B of the same start as A: told apart by its real native id alone. */
+  const sameStartB = () => makeSession({ correlation: { status: 'matched', agentSessionId: 'native-2', retryCount: 0 } });
+
+  it.each([
+    ['another start', generationB],
+    ['the same start and another native id', sameStartB],
+  ])('drops an active copy of generation A saved over the live {id}.json of generation B (%s): the live file byte-identical, logged', async (_label, makeB) => {
+    const b = makeB();
+    const liveB = JSON.stringify(b);
+    writeFileSync(livePath(), liveB);
+    const { logger } = await import('../../../../utils/logger.js');
+    const info = vi.spyOn(logger, 'info');
+    const { SessionStore } = await import('../SessionStore.js');
+
+    try {
+      await new SessionStore().saveSession(makeSession({ activityStartedAt: 1_790_000_950_000 }));
+
+      expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
+      expect(info.mock.calls.some(([line]) => String(line).includes(`startTime ${b.startTime}, this copy's 1790000000000`))).toBe(true);
+    } finally {
+      info.mockRestore();
+    }
+    expect(readdirSync(sessionsDir)).toEqual([`${SESSION_ID}.json`]);
+  });
+
+  it.each([
+    ['another start', `completed_${SESSION_ID}-native-1.json`, generationB],
+    ['another start', `completed_${SESSION_ID}.json`, generationB],
+    ['the same start and another native id', `completed_${SESSION_ID}-native-1.json`, sameStartB],
+  ])('merges a completed copy of generation A saved over the live {id}.json of generation B (%s) into A\'s set %s, keeping its delivery marks and larger attempts; live B untouched', async (_label, setName, makeB) => {
+    const liveB = JSON.stringify(makeB());
+    writeFileSync(livePath(), liveB);
+    const setA = join(sessionsDir, setName);
+    writeFileSync(setA, JSON.stringify(makeSession({
+      status: 'completed', reason: 'exit', endTime: 1_790_000_100_000,
+      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryAttempts: 3,
+    })));
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000, deliveryAttempts: 1 }));
+
+    expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
+    expect(JSON.parse(readFileSync(setA, 'utf-8'))).toMatchObject({
+      status: 'completed', reason: 'late', startTime: 1_790_000_000_000,
+      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryAttempts: 3,
+    });
+    expect(readdirSync(sessionsDir).sort()).toEqual([`${SESSION_ID}.json`, setName].sort());
+  });
+
+  it('merges a completed copy into the set of its own start among two sets of one native id; the other set byte-identical', async () => {
+    writeFileSync(livePath(), JSON.stringify(generationB()));
+    const firstRun = join(sessionsDir, `completed_${SESSION_ID}-native-1.json`);
+    const secondRun = join(sessionsDir, `completed_${SESSION_ID}-native-1-2.json`);
+    const firstBytes = JSON.stringify(makeSession({ status: 'completed', reason: 'exit', endTime: 1_790_000_100_000 }));
+    writeFileSync(firstRun, firstBytes);
+    writeFileSync(secondRun, JSON.stringify(makeSession({
+      status: 'completed', reason: 'exit', startTime: 1_790_000_500_000, endTime: 1_790_000_600_000, endMetricSentAt: 1_790_000_600_500,
+    })));
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', startTime: 1_790_000_500_000, endTime: 1_790_000_600_000 }));
+
+    expect(readFileSync(firstRun, 'utf-8')).toBe(firstBytes);
+    expect(JSON.parse(readFileSync(secondRun, 'utf-8'))).toMatchObject({ reason: 'late', startTime: 1_790_000_500_000, endMetricSentAt: 1_790_000_600_500 });
+  });
+
+  it('drops a completed copy of a generation with no moved-aside set: nothing written, logged', async () => {
+    const liveB = JSON.stringify(generationB());
+    writeFileSync(livePath(), liveB);
+    const { logger } = await import('../../../../utils/logger.js');
+    const info = vi.spyOn(logger, 'info');
+    const { SessionStore } = await import('../SessionStore.js');
+
+    try {
+      await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000 }));
+
+      expect(info.mock.calls.some(([line]) => String(line).includes('no set of this one was moved aside'))).toBe(true);
+    } finally {
+      info.mockRestore();
+    }
+    expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
+    expect(readdirSync(sessionsDir)).toEqual([`${SESSION_ID}.json`]);
+  });
+
+  it('merges a completed copy into its set moved to its generation name between the read and the write', async () => {
+    const liveB = JSON.stringify(generationB());
+    writeFileSync(livePath(), liveB);
+    const movedSet = join(sessionsDir, `completed_${SESSION_ID}-native-1.json`);
+    writeFileSync(completedPath(), JSON.stringify(makeSession({ status: 'completed', reason: 'exit', endTime: 1_790_000_100_000, endMetricSentAt: 1_790_000_100_500 })));
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(readFile).mockImplementation((async (path: string, options: BufferEncoding) => {
+      const content = await actual.readFile(path, options);
+      if (path === completedPath()) renameSync(completedPath(), movedSet);
+      return content;
+    }) as typeof readFile);
+    const { SessionStore } = await import('../SessionStore.js');
+
+    try {
+      await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000 }));
+    } finally {
+      vi.mocked(readFile).mockImplementation(actual.readFile);
+    }
+
+    expect(JSON.parse(readFileSync(movedSet, 'utf-8'))).toMatchObject({ status: 'completed', reason: 'late', endMetricSentAt: 1_790_000_100_500 });
+    expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
+    expect(readdirSync(sessionsDir).sort()).toEqual([`${SESSION_ID}.json`, `completed_${SESSION_ID}-native-1.json`].sort());
+  });
+
+  it('drops a completed copy whose set is gone for good between its read and the merge: nothing written, logged', async () => {
+    const liveB = JSON.stringify(generationB());
+    writeFileSync(livePath(), liveB);
+    const setA = join(sessionsDir, `completed_${SESSION_ID}-native-1.json`);
+    writeFileSync(setA, JSON.stringify(makeSession({ status: 'completed', reason: 'exit', endTime: 1_790_000_100_000 })));
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(readFile).mockImplementation((async (path: string, options: BufferEncoding) => {
+      const content = await actual.readFile(path, options);
+      if (path === setA) rmSync(setA);
+      return content;
+    }) as typeof readFile);
+    const { logger } = await import('../../../../utils/logger.js');
+    const info = vi.spyOn(logger, 'info');
+    const { SessionStore } = await import('../SessionStore.js');
+
+    try {
+      await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000 }));
+
+      expect(info.mock.calls.some(([line]) => String(line).includes('no set of this one was moved aside'))).toBe(true);
+    } finally {
+      info.mockRestore();
+      vi.mocked(readFile).mockImplementation(actual.readFile);
+    }
+    expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
+    expect(readdirSync(sessionsDir)).toEqual([`${SESSION_ID}.json`]);
+  });
+
+  it.each([SESSION_ID, 'unknown'])('writes over a live placeholder {id}.json (agent session id %s) of the same start a copy carrying the native id', async (placeholder) => {
+    writeFileSync(livePath(), JSON.stringify(makeSession({ correlation: { status: 'pending', agentSessionId: placeholder, retryCount: 0 } })));
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ activityStartedAt: 1_790_000_050_000 }));
+
+    expect(JSON.parse(readFileSync(livePath(), 'utf-8'))).toMatchObject({ correlation: { agentSessionId: 'native-1' }, activityStartedAt: 1_790_000_050_000 });
+  });
+
+  it('writes over a live {id}.json of another start that is active with an end (no valid live generation)', async () => {
+    writeFileSync(livePath(), JSON.stringify({ ...generationB(), endTime: 1_790_000_950_000 }));
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ activityStartedAt: 1_790_000_050_000 }));
+
+    expect(JSON.parse(readFileSync(livePath(), 'utf-8'))).toMatchObject({ startTime: 1_790_000_000_000, activityStartedAt: 1_790_000_050_000 });
   });
 
   it('leaves no temp file behind after a save', async () => {

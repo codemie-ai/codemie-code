@@ -1,4 +1,4 @@
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { appendFile, readFile, rename, unlink } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { logger } from '@/utils/logger.js';
@@ -13,15 +13,55 @@ function sessionSetFiles(sessionsDir: string, name: string): { json: string; met
   };
 }
 
-/** The generation of a record file: its agent session id, else its start time; undefined when unreadable. */
+/** The generation of a record, safe in a file name: its agent session id, else its start time. */
+export function recordGeneration(record: { startTime?: number; correlation?: { agentSessionId?: string } }): string | undefined {
+  const agentSessionId = record.correlation?.agentSessionId;
+  const generation = agentSessionId && agentSessionId !== 'unknown'
+    ? agentSessionId
+    : record.startTime !== undefined ? String(record.startTime) : undefined;
+  return generation?.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+/**
+ * The record files of a generation: `completed_<id>-<generation>.json`, `completed_<id>-<generation>-<n>.json`,
+ * and `completed_<id>.json` when its record is of that generation (a finalizer's plain rename; unreadable → not included).
+ */
+export function generationSetFiles(sessionId: string, generation: string): string[] {
+  const sessionsDir = dirname(getSessionPath(sessionId));
+  const base = `completed_${sessionId}-${generation}`;
+  let names: string[];
+  try {
+    names = readdirSync(sessionsDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  const files = names
+    .filter((name) => name === `${base}.json` || (name.startsWith(`${base}-`) && /^\d+\.json$/.test(name.slice(base.length + 1))))
+    .map((name) => join(sessionsDir, name));
+  const plain = join(sessionsDir, `completed_${sessionId}.json`);
+  if (names.includes(basename(plain)) && readGenerationSync(plain) === generation) files.push(plain);
+  return files;
+}
+
+function readGenerationSync(jsonPath: string): string | undefined {
+  try {
+    return recordGeneration(JSON.parse(readFileSync(jsonPath, 'utf-8')) as Parameters<typeof recordGeneration>[0]);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the generation of a native session was already closed under the id: a record file of its generation exists. */
+export function isClosedGeneration(sessionId: string, nativeSessionId: string): boolean {
+  const generation = recordGeneration({ correlation: { agentSessionId: nativeSessionId } });
+  return generation !== undefined && generationSetFiles(sessionId, generation).length > 0;
+}
+
+/** The generation of a record file; undefined when unreadable. */
 async function readGeneration(jsonPath: string): Promise<string | undefined> {
   try {
-    const record = JSON.parse(await readFile(jsonPath, 'utf-8')) as { startTime?: number; correlation?: { agentSessionId?: string } };
-    const agentSessionId = record.correlation?.agentSessionId;
-    const generation = agentSessionId && agentSessionId !== 'unknown'
-      ? agentSessionId
-      : record.startTime !== undefined ? String(record.startTime) : undefined;
-    return generation?.replace(/[^A-Za-z0-9._-]/g, '_');
+    return recordGeneration(JSON.parse(await readFile(jsonPath, 'utf-8')) as Parameters<typeof recordGeneration>[0]);
   } catch {
     return undefined;
   }

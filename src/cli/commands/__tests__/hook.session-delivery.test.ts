@@ -6,9 +6,9 @@
  * is stubbed; records and transcripts are real files under a per-test CODEMIE_HOME.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'fs';
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { Readable } from 'node:stream';
 import { rename, writeFile } from 'fs/promises';
 import type { Session } from '../../../agents/core/session/types.js';
@@ -97,6 +97,11 @@ function writeRecord(session: Session, prefix = ''): void {
   writeFileSync(join(sessionsDir, `${prefix}${session.sessionId}.json`), JSON.stringify(session));
 }
 
+/** Forgets the log lines earlier tests left on the logger mock. */
+function clearLogs(): void {
+  for (const level of ['debug', 'info', 'warn', 'error'] as const) vi.mocked(logger[level]).mockClear();
+}
+
 function readRecord(sessionId: string, prefix = ''): Session {
   return JSON.parse(readFileSync(join(sessionsDir, `${prefix}${sessionId}.json`), 'utf-8')) as Session;
 }
@@ -148,9 +153,27 @@ function writeDeltas(sessionId: string, deltas: Array<{ timestamp: number; syncS
   writeFileSync(join(sessionsDir, `${prefix}${sessionId}_metrics.jsonl`), `${lines.join('\n')}\n`);
 }
 
-function readDeltas(sessionId: string, prefix = ''): Array<{ syncStatus: string; timestamp: number | string }> {
+function readDeltas(sessionId: string, prefix = ''): Array<{ recordId: string; syncStatus: string; timestamp: number | string }> {
   const path = join(sessionsDir, `${prefix}${sessionId}_metrics.jsonl`);
   return readFileSync(path, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/**
+ * Fails the first `statusWrites` writes of `{id}.json` carrying `"status": "completed"` (a close's status write: logged,
+ * the record stays active); every later write and move is real.
+ */
+async function failCloses(session: Session, statusWrites: number): Promise<{ statusWrites: number }> {
+  const livePath = join(sessionsDir, `${session.sessionId}.json`);
+  const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+  const seen = { statusWrites: 0 };
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    if (seen.statusWrites < statusWrites && String(to) === livePath && (await actual.readFile(from, 'utf-8')).includes('"status": "completed"')) {
+      seen.statusWrites += 1;
+      throw new Error('EIO: status write');
+    }
+    return actual.rename(from, to);
+  });
+  return seen;
 }
 
 function config(session: Session, extra: Record<string, unknown> = {}) {
@@ -515,7 +538,7 @@ describe('delivery: the end metric marker, the pending lines and the rename', ()
     const current = baseRecord({ sessionId: id, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-bravo' } });
     writeRecord(current);
 
-    await processEvent({ ...syntheticEnd(), reason: 'exit', endTimeFromActivity: undefined }, config(current));
+    await processEvent({ ...syntheticEnd(), session_id: 'gen-bravo', reason: 'exit', endTimeFromActivity: undefined }, config(current));
 
     expect(readRecord(id, 'completed_').correlation.agentSessionId).toBe('gen-bravo');
     expect(JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-alpha.json`), 'utf-8')).correlation.agentSessionId).toBe('gen-alpha');
@@ -837,7 +860,8 @@ describe('SessionEnd inside the agent hook process', () => {
   });
 
   it('a /clear meets the reconcile lock another live process holds: no ps spawned, the previous generation left in place', async () => {
-    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-locked' } });
+    const oldTranscript = join(home, 'gen-locked.jsonl');
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-locked', agentSessionFile: oldTranscript } });
     writeRecord(session);
     const { processStartedAt } = await import('../../../utils/processes.js');
     writeFileSync(join(sessionsDir, `${session.sessionId}.reconcile.lock`), JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
@@ -856,7 +880,291 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(vi.mocked(exec).mock.calls.filter(([command]) => command === 'ps')).toEqual([]);
     expect(readdirSync(sessionsDir).filter((name) => name.includes('gen-locked'))).toEqual([]);
     expect(readRecord(session.sessionId).startTime).toBe(session.startTime);
-    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('locked by another process; left in place'))).toBe(true);
+    expect(readRecord(session.sessionId).correlation).toMatchObject({ agentSessionId: 'gen-locked', agentSessionFile: oldTranscript });
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(
+      `${session.sessionId}.reconcile.lock is still held; the previous generation (active) of ${session.sessionId} left in place, the fresh record is not written`
+    ))).toBe(true);
+  });
+
+  /** An event of generation B (native id `claude-native-next`) over the transcript at `transcript`. */
+  function eventOfB(name: string, transcript: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { hook_event_name: name, session_id: 'claude-native-next', transcript_path: transcript, permission_mode: 'default', cwd: home, ...extra };
+  }
+
+  it('generation A\'s SessionEnd holds the lock 12 s while its line waits on the server: B\'s /clear start gives up at 10 s; B\'s Stop then writes a fresh record of its own, B\'s SessionEnd delivers it; no sidecar of A overwritten', async () => {
+    const a = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    const id = a.sessionId;
+    writeRecord(a);
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND }]);
+    const lockPath = join(sessionsDir, `${id}.reconcile.lock`);
+    // The server answers A's metric line 12 s after it arrives; every other request at once
+    let lineHeld = false;
+    vi.mocked(globalThis.fetch).mockImplementation(async (url, init) => {
+      urls.push(String(url));
+      const metric = JSON.parse(String((init as RequestInit).body)) as Captured;
+      requests.push(metric);
+      if (!lineHeld && metric.name !== 'codemie_cli_session_total') {
+        lineHeld = true;
+        await new Promise((resolve) => setTimeout(resolve, 12 * SECOND));
+      }
+      return ok();
+    });
+    const budget = { CODEMIE_SESSION_END_SYNC_BUDGET_MS: '20000' };
+
+    const realSetTimeout = setTimeout;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    let startGaveUpAfter: number | undefined;
+    try {
+      const t0 = Date.now();
+      let endADone = false;
+      const endA = runHook({ ...syntheticEnd(), session_id: 'gen-a', reason: 'exit', endTimeFromActivity: undefined }, a, budget)
+        .then(() => { endADone = true; });
+      for (let i = 0; i < 5000 && !existsSync(lockPath); i++) {
+        await new Promise((resolve) => realSetTimeout(resolve, 1));
+      }
+      expect(existsSync(lockPath)).toBe(true);
+      const startB = runHook(eventOfB('SessionStart', join(home, 'b-start.jsonl'), { source: 'clear' }), a, budget)
+        .then(() => { startGaveUpAfter = Date.now() - t0; });
+      while ((!endADone || startGaveUpAfter === undefined) && Date.now() - t0 < 30 * SECOND) {
+        await vi.advanceTimersByTimeAsync(25);
+        await new Promise((resolve) => realSetTimeout(resolve, 1));
+      }
+      await Promise.all([endA, startB]);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(startGaveUpAfter).toBeGreaterThanOrEqual(10 * SECOND);
+    expect(startGaveUpAfter).toBeLessThan(12 * SECOND);
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);
+    const aRecordBytes = readFileSync(join(sessionsDir, `completed_${id}.json`), 'utf-8');
+    const aMetricsBytes = readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8');
+    const aEnd = (JSON.parse(aRecordBytes) as Session).endTime!;
+    const transcript = writeTranscript([aEnd + SECOND, aEnd + 2 * SECOND].map((t) => new Date(t).toISOString()));
+    const bLines = [`msg-${idCounter}-1`];
+
+    await runHook(eventOfB('Stop', transcript), a, budget);
+
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(true);
+    const fresh = readRecord(id);
+    expect(fresh.correlation).toMatchObject({ agentSessionId: 'claude-native-next', agentSessionFile: transcript });
+    expect(fresh.startTime).toBe(aEnd);
+    expect(readDeltas(id).map((d) => d.recordId)).toEqual(bLines);
+    expect(readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8')).toBe(aMetricsBytes);
+    expect(readFileSync(join(sessionsDir, `completed_${id}.json`), 'utf-8')).toBe(aRecordBytes);
+
+    await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a, budget);
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-a', 'claude-native-next']);
+    expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')).toBe(aRecordBytes);
+    expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a_metrics.jsonl`), 'utf-8')).toBe(aMetricsBytes);
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'claude-native-next' } });
+    expect(readDeltas(id, 'completed_').map((d) => d.recordId)).toEqual(bLines);
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);
+  });
+
+  it('generation B\'s SessionEnd over generation A\'s completed_ record only: a fresh record of B finalized with B\'s transcript and delivered under B\'s native id; A\'s set only moved to its generation name', async () => {
+    const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    const id = a.sessionId;
+    writeRecord(a, 'completed_');
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
+    const aRecordBytes = readFileSync(join(sessionsDir, `completed_${id}.json`), 'utf-8');
+    const aMetricsBytes = readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8');
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+    const bLines = [`msg-${idCounter}-1`];
+
+    await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['claude-native-next']);
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
+    expect(readDeltas(id, 'completed_').map((d) => d.recordId)).toEqual(bLines);
+    expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')).toBe(aRecordBytes);
+    expect(readFileSync(join(sessionsDir, `completed_${id}-gen-a_metrics.jsonl`), 'utf-8')).toBe(aMetricsBytes);
+  });
+
+  it('generation B\'s SessionEnd over generation A\'s live active record (A\'s finalizer never came, the lock free): A closed over its own transcript, its end metric and lines sent under A\'s id, moved aside; B\'s fresh record finalized and delivered with B\'s transcript', async () => {
+    clearLogs();
+    const aTranscript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:11:00Z', '2026-10-01T10:12:00Z', '2026-10-01T10:13:00Z']);
+    const aLines = [`msg-${idCounter}-1`, `msg-${idCounter}-3`];
+    const a = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a', agentSessionFile: aTranscript } });
+    const id = a.sessionId;
+    writeRecord(a);
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+    const bLines = [`msg-${idCounter}-1`];
+
+    await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-a', 'claude-native-next']);
+    expect(JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8'))).toMatchObject({
+      status: 'completed', endTime: Date.parse('2026-10-01T10:13:00Z'), correlation: { agentSessionId: 'gen-a' },
+    });
+    expect(readDeltas(`${id}-gen-a`, 'completed_').map((d) => [d.recordId, d.syncStatus])).toEqual(aLines.map((line) => [line, 'synced']));
+    expect(readRecord(id, 'completed_')).toMatchObject({
+      status: 'completed', startTime: Date.parse('2026-10-01T10:13:00Z'), correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript },
+    });
+    expect(readDeltas(id, 'completed_').map((d) => [d.recordId, d.syncStatus])).toEqual(bLines.map((line) => [line, 'synced']));
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
+  });
+
+  it('two hook processes of B at once over A\'s live active record: the first closes A and writes B\'s record under the same lock hold; the second, its lock attempt landing after that, finds B\'s own record under the lock and closes nothing', async () => {
+    clearLogs();
+    const aTranscript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:13:00Z']);
+    const a = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a', agentSessionFile: aTranscript } });
+    const id = a.sessionId;
+    writeRecord(a);
+    const transcript = writeTranscript([Date.now() - 4 * SECOND, Date.now() - 3 * SECOND].map((t) => new Date(t).toISOString()));
+    const firstLine = `msg-${idCounter}-1`;
+    const lockPath = join(sessionsDir, `${id}.reconcile.lock`);
+    const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    const gate = { secondAtLock: false, firstDone: false, bStartTime: undefined as number | undefined };
+    const until = (condition: () => boolean) => vi.waitFor(() => expect(condition()).toBe(true), { timeout: 20 * SECOND, interval: 5 });
+    // The second process's lock attempt is let through only once the first process has finished
+    let lockWrites = 0;
+    vi.mocked(writeFile).mockImplementation(async (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]) === lockPath && ++lockWrites === 2) {
+        gate.secondAtLock = true;
+        await until(() => gate.firstDone);
+        gate.bStartTime = readRecord(id).startTime;
+        appendFileSync(transcript, `${[
+          { type: 'user', uuid: 'msg-late-0', sessionId: 'claude-native-1', timestamp: new Date(Date.now() - 2 * SECOND).toISOString(), message: { role: 'user', content: 'late prompt' } },
+          { type: 'assistant', uuid: 'msg-late-1', sessionId: 'claude-native-1', timestamp: new Date(Date.now() - SECOND).toISOString(), message: { role: 'assistant', id: 'api-late-1', content: [{ type: 'text', text: 'late reply' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+        ].map((line) => JSON.stringify(line)).join('\n')}\n`);
+      }
+      return actual.writeFile(...args);
+    });
+    // The server answers once the second process has read A's record and reached the lock: A stays live until then
+    vi.mocked(globalThis.fetch).mockImplementation(async (url, init) => {
+      urls.push(String(url));
+      requests.push(JSON.parse(String((init as RequestInit).body)) as Captured);
+      await until(() => gate.secondAtLock);
+      return ok();
+    });
+
+    // Each save of B's record over a {id}.json that is not yet B's, and whether the reconcile lock was held at it
+    const livePath = join(sessionsDir, `${id}.json`);
+    const freshSavesOfB: string[] = [];
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      const holdsB = (raw: string) => (JSON.parse(raw) as Session).correlation.agentSessionId === 'claude-native-next';
+      if (String(to) === livePath && holdsB(await actual.readFile(from, 'utf-8')) && !(existsSync(livePath) && holdsB(readFileSync(livePath, 'utf-8')))) {
+        freshSavesOfB.push(existsSync(lockPath) ? 'under the lock' : 'outside the lock');
+      }
+      return actual.rename(from, to);
+    });
+
+    try {
+      const first = runHook(eventOfB('SubagentStop', transcript, { agent_id: 'sub-1', agent_transcript_path: '', stop_hook_active: false }), a)
+        .then(() => { gate.firstDone = true; });
+      await until(() => existsSync(lockPath));
+      const second = runHook(eventOfB('Stop', transcript), a);
+      await Promise.all([first, second]);
+    } finally {
+      vi.mocked(writeFile).mockImplementation(actual.writeFile);
+    }
+
+    expect(freshSavesOfB).toEqual(['under the lock']);
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-a']);
+    expect(readdirSync(sessionsDir).filter((name) => name.startsWith(`completed_${id}`) && name.endsWith('.json'))).toEqual([`completed_${id}-gen-a.json`]);
+    expect(readRecord(id)).toMatchObject({ status: 'active', startTime: Date.parse('2026-10-01T10:13:00Z'), correlation: { agentSessionId: 'claude-native-next' } });
+    expect(gate.bStartTime).toBe(Date.parse('2026-10-01T10:13:00Z'));
+    expect(readDeltas(id).map((d) => d.recordId)).toEqual([firstLine, 'msg-late-1']);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes(`${id}.json already holds the record of claude-native-next; nothing closed`))).toBe(true);
+  });
+
+  it.each([
+    ['not a number', 'x'],
+    ['in the future', Date.parse('2099-01-01T00:00:00Z')],
+    ['in the past', Date.parse('2026-10-01T09:00:00Z')],
+  ])('a SessionStart payload carrying a startTime (%s) starts now', async (_label, startTime) => {
+    const session = baseRecord();
+    const before = Date.now();
+
+    await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-1', transcript_path: join(home, 'start.jsonl'), permission_mode: 'default', cwd: home, source: 'startup', startTime }, session);
+
+    const { startTime: recorded } = readRecord(session.sessionId);
+    expect(recorded).toEqual(expect.any(Number));
+    expect(recorded).toBeGreaterThanOrEqual(before);
+    expect(recorded).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered (the server answers now): A\'s end metric and line delivered under A\'s id, moved aside under its generation name; B finalized', async () => {
+    const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    const id = a.sessionId;
+    writeRecord(a);
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND }]);
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+
+    await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-a', 'claude-native-next']);
+    const movedA = JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')) as Session;
+    expect(movedA.endMetricSentAt).toEqual(expect.any(Number));
+    expect(movedA.droppedAt).toBeUndefined();
+    expect(readDeltas(`${id}-gen-a`, 'completed_').map((d) => [d.recordId, d.syncStatus])).toEqual([[`rec-${id}-0`, 'synced']]);
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: a.endTime, correlation: { agentSessionId: 'claude-native-next' } });
+  });
+
+  it('generation B\'s SessionEnd over generation A\'s live completed record left undelivered, the server down (503): A moved aside marked dropped', async () => {
+    const a = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    const id = a.sessionId;
+    writeRecord(a);
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND }]);
+    respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+
+    await runHook(eventOfB('SessionEnd', transcript, { reason: 'exit' }), a);
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toContain('gen-a');
+    const movedA = JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8')) as Session;
+    expect(movedA.endMetricSentAt).toBeUndefined();
+    expect(movedA.droppedAt).toEqual(expect.any(Number));
+    expect(readRecord(id)).toMatchObject({ status: 'completed', correlation: { agentSessionId: 'claude-native-next' } });
+  });
+
+  /** B's live record with its sidecars, and A's closed set under `completed_<id><aSuffix>.json` (its generation name by default). */
+  function closedAUnderLiveB(aSuffix = '-gen-a'): { b: Session; aTranscript: string; bytes: () => string[] } {
+    const aTranscript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:11:00Z']);
+    const b = baseRecord({
+      startTime: Date.parse('2026-10-01T10:20:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-next', agentSessionFile: join(home, 'b.jsonl') },
+    });
+    const id = b.sessionId;
+    writeRecord(b);
+    writeDeltas(id, [{ timestamp: b.startTime + SECOND }]);
+    writeFileSync(join(sessionsDir, `${id}_conversation.jsonl`), '{}\n');
+    const a = baseRecord({ sessionId: id, status: 'completed', endTime: Date.parse('2026-10-01T10:11:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:11:01Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a', agentSessionFile: aTranscript } });
+    writeFileSync(join(sessionsDir, `completed_${id}${aSuffix}.json`), JSON.stringify(a));
+    // The session's own files; the transcript ownership marker the router stamps on any Stop is not a record
+    const bytes = () => readdirSync(sessionsDir).filter((name) => name.includes(id)).sort().map((name) => `${name}:${readFileSync(join(sessionsDir, name), 'utf-8')}`);
+    return { b, aTranscript, bytes };
+  }
+
+  it('a late SessionEnd of generation A, already closed and moved aside, over B\'s live record: nothing written, nothing sent, logged', async () => {
+    clearLogs();
+    const { b, aTranscript, bytes } = closedAUnderLiveB();
+    const before = bytes();
+
+    await runHook({ hook_event_name: 'SessionEnd', session_id: 'gen-a', transcript_path: aTranscript, permission_mode: 'default', cwd: home, reason: 'exit' }, b);
+
+    expect(bytes()).toEqual(before);
+    expect(requests).toEqual([]);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes(`gen-a is a closed generation of ${b.sessionId}`))).toBe(true);
+  });
+
+  it.each([
+    ['moved aside under its generation name', '-gen-a'],
+    ['renamed plainly by its finalizer', ''],
+  ])('a late Stop of generation A, already closed and %s, over B\'s live record: nothing written, nothing sent, logged', async (_where, aSuffix) => {
+    clearLogs();
+    const { b, aTranscript, bytes } = closedAUnderLiveB(aSuffix);
+    const before = bytes();
+
+    await runHook({ hook_event_name: 'Stop', session_id: 'gen-a', transcript_path: aTranscript, permission_mode: 'default', cwd: home }, b);
+
+    expect(bytes()).toEqual(before);
+    expect(requests).toEqual([]);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes(`gen-a is a closed generation of ${b.sessionId}`))).toBe(true);
   });
 
   it('the hook\'s sync meets a sync lock another live process holds: no ps spawned, the line kept pending', async () => {
@@ -1197,6 +1505,57 @@ describe('SessionEnd inside the agent hook process', () => {
     expect(readAuthMarker()).toBeUndefined();
   });
 
+  it('a /clear over a live active generation whose close fails its status write: that generation is closed locally before it moves, a fresh record its own', async () => {
+    clearLogs();
+    const lastDelta = Date.parse('2026-10-01T10:40:00Z');
+    const a = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-status-fail', agentSessionFile: join(home, 'gen-status-fail.jsonl') } });
+    writeRecord(a);
+    writeDeltas(a.sessionId, [{ timestamp: a.startTime + SECOND }, { timestamp: lastDelta }]);
+    respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    const seen = await failCloses(a, 1);
+
+    await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-next', transcript_path: join(home, 'next.jsonl'), permission_mode: 'default', cwd: home, source: 'clear' }, a);
+
+    expect(seen.statusWrites).toBe(1);
+    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail.json`), 'utf-8')) as Session;
+    expect(moved).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, droppedAt: expect.any(Number) });
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('marked dropped'))).toHaveLength(1);
+    expect(readRecord(a.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+  });
+
+  it('a SessionEnd whose status write fails while the server accepts the delivery: the end metric is sent, the record stays live and active with its mark, not renamed', async () => {
+    const session = baseRecord();
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    const seen = await failCloses(session, 1);
+
+    await runHook({ ...syntheticEnd(), endTimeFromActivity: undefined, reason: 'exit' }, session);
+
+    expect(seen.statusWrites).toBe(1);
+    expect(endMetrics()).toHaveLength(1);
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}.json`))).toBe(false);
+    expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', endMetricSentAt: expect.any(Number) });
+  });
+
+  it('a /clear over a live active generation whose close fails its status write while the server accepts the delivery: closed locally at its last delta, moved aside, a fresh record its own', async () => {
+    clearLogs();
+    const lastDelta = Date.parse('2026-10-01T10:40:00Z');
+    const a = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-status-fail-sent', agentSessionFile: join(home, 'gen-status-fail-sent.jsonl') } });
+    writeRecord(a);
+    writeDeltas(a.sessionId, [{ timestamp: a.startTime + SECOND }, { timestamp: lastDelta }]);
+    const seen = await failCloses(a, 1);
+
+    await runHook({ hook_event_name: 'SessionStart', session_id: 'claude-native-next', transcript_path: join(home, 'next.jsonl'), permission_mode: 'default', cwd: home, source: 'clear' }, a);
+
+    expect(seen.statusWrites).toBe(1);
+    expect(endMetrics()).toHaveLength(1);
+    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${a.sessionId}-gen-status-fail-sent.json`), 'utf-8')) as Session;
+    expect(moved).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: lastDelta, endMetricSentAt: expect.any(Number) });
+    expect(existsSync(join(sessionsDir, `completed_${a.sessionId}.json`))).toBe(false);
+    expect(readRecord(a.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+  });
+
   describe('a live wrapper (CODEMIE_WRAPPER_PID) on a normal exit', () => {
     const liveWrapper = { CODEMIE_WRAPPER_PID: String(process.pid) };
     const DEAD_WRAPPER_PID = '999999';
@@ -1299,7 +1658,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     };
   }
 
-  it('an active generation gets its synthetic end over its own transcript, moves aside, and a fresh record starts', async () => {
+  it('an active generation gets its synthetic end over its own transcript, moves aside, and a fresh record starts at the /clear', async () => {
     const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
     const session = baseRecord({
       correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-one', agentSessionFile: transcript },
@@ -1316,6 +1675,37 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(fresh.status).toBe('active');
     expect(fresh.startTime).toBeGreaterThanOrEqual(before);
     expect(fresh.correlation.agentSessionId).toBe('claude-native-next');
+  });
+
+  it('an active generation\'s close and the fresh record are written under one hold of the reconcile lock: A\'s end, its moves and B\'s one fresh save all land while the lock exists', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-held-once', agentSessionFile: transcript } });
+    const id = session.sessionId;
+    writeRecord(session);
+    const lockPath = join(sessionsDir, `${id}.reconcile.lock`);
+    const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    // Every rename onto the live record or a completed_ file of the id: the file, the generation a live record holds, whether the lock exists
+    const writes: string[] = [];
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      const name = basename(String(to));
+      if (name === `${id}.json`) {
+        const generation = (JSON.parse(await actual.readFile(from, 'utf-8')) as Session).correlation.agentSessionId;
+        writes.push(`${name} ${generation} ${existsSync(lockPath) ? 'locked' : 'unlocked'}`);
+      } else if (name.startsWith(`completed_${id}`)) {
+        writes.push(`${name} ${existsSync(lockPath) ? 'locked' : 'unlocked'}`);
+      }
+      return actual.rename(from, to);
+    });
+    const before = Date.now();
+
+    await processEvent(clearStart(), config(session));
+
+    expect(writes.filter((write) => write.endsWith(' unlocked'))).toEqual([]);
+    expect(writes).toContain(`${id}.json gen-held-once locked`);
+    expect(writes).toContain(`completed_${id}-gen-held-once.json locked`);
+    expect(writes.filter((write) => write.includes('claude-native-next'))).toEqual([`${id}.json claude-native-next locked`]);
+    expect(readRecord(id)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+    expect(readRecord(id).startTime).toBeGreaterThanOrEqual(before);
   });
 
   it('two /clear cycles on one id keep three sets, each with only its own lines, each closed generation delivered once', async () => {
@@ -1363,18 +1753,27 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(readRecord(session.sessionId).status).toBe('active');
   });
 
-  it('a completed_ generation is only moved', async () => {
+  it('a completed_ generation is closed already: left as it is, the fresh record written beside it', async () => {
     const session = baseRecord({ status: 'completed', endMetricSentAt: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-three' } });
     writeRecord(session, 'completed_');
+    const completedBytes = readFileSync(join(sessionsDir, `completed_${session.sessionId}.json`), 'utf-8');
 
     await processEvent(clearStart(), config(session));
 
     expect(endMetrics()).toHaveLength(0);
-    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-three.json`))).toBe(true);
-    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}.json`))).toBe(false);
+    expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-three.json`))).toBe(false);
+    expect(readFileSync(join(sessionsDir, `completed_${session.sessionId}.json`), 'utf-8')).toBe(completedBytes);
+    expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
   });
 
+  /** The live record of the next generation over a `completed_` set, renamed: the set is moved to its generation name first. */
+  async function renameOverCompleted(session: Session): Promise<void> {
+    writeRecord(baseRecord({ sessionId: session.sessionId, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-next' } }));
+    await renameSessionFiles(session.sessionId);
+  }
+
   it('a move whose 2nd rename fails puts the 1st file back: the set stays under its names, the error logged', async () => {
+    clearLogs();
     const session = baseRecord({ status: 'completed', endMetricSentAt: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-stuck-move' } });
     writeRecord(session, 'completed_');
     writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
@@ -1382,14 +1781,81 @@ describe('SessionStart source=clear closes the previous generation', () => {
     // A directory under the conversation target name: renaming a file onto it fails
     mkdirSync(join(sessionsDir, `completed_${session.sessionId}-gen-stuck-move_conversation.jsonl`, 'occupied'), { recursive: true });
 
-    await processEvent(clearStart(), config(session));
+    await renameOverCompleted(session);
 
     for (const suffix of ['.json', '_metrics.jsonl', '_conversation.jsonl']) {
       expect(existsSync(join(sessionsDir, `completed_${session.sessionId}${suffix}`))).toBe(true);
     }
     expect(existsSync(join(sessionsDir, `completed_${session.sessionId}-gen-stuck-move.json`))).toBe(false);
     expect(readRecord(session.sessionId, 'completed_').correlation.agentSessionId).toBe('gen-stuck-move');
-    expect(vi.mocked(logger.error).mock.calls.some(([line]) => String(line).includes('failed to close the previous generation'))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
+  });
+
+  it('an active generation the full close leaves unclosed is closed locally (its dropped mark from that close), moved aside; a fresh record its own, starting at the /clear', async () => {
+    clearLogs();
+    const lastDelta = Date.parse('2026-10-01T10:40:00Z');
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-unclosed', agentSessionFile: join(home, 'gen-unclosed.jsonl') },
+    });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }, { timestamp: lastDelta }]);
+    respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    // The full close's status write fails
+    const seen = await failCloses(session, 1);
+    const before = Date.now();
+
+    await processEvent(clearStart(), config(session));
+
+    const fresh = readRecord(session.sessionId);
+    expect(fresh.status).toBe('active');
+    expect(fresh.startTime).toBeGreaterThanOrEqual(before);
+    expect(fresh.correlation).toMatchObject({ agentSessionId: 'claude-native-next', agentSessionFile: join(home, 'next-transcript.jsonl') });
+    expect(seen.statusWrites).toBe(1);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity, not flushed here'))).toBe(true);
+    const old = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed.json`), 'utf-8')) as Session;
+    expect(old.status).toBe('completed');
+    expect(old.endTime).toBe(lastDelta);
+    expect(old.droppedAt).toEqual(expect.any(Number));
+    const oldLines = readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-unclosed_metrics.jsonl`), 'utf-8').trim().split('\n');
+    expect(oldLines.map((l) => JSON.parse(l).recordId)).toEqual([`rec-${session.sessionId}-0`, `rec-${session.sessionId}-1`]);
+    expect(existsSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`))).toBe(false);
+  });
+
+  it('an active generation of another CodeMie host the full close leaves unclosed is closed locally and moved aside, not marked dropped; a fresh record its own', async () => {
+    clearLogs();
+    const session = baseRecord({
+      codemieUrl: 'https://other.example.com',
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-other-unclosed', agentSessionFile: join(home, 'gen-other-unclosed.jsonl') },
+    });
+    writeRecord(session);
+    writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND }]);
+    await failCloses(session, 1);
+
+    await processEvent(clearStart(), config(session));
+
+    expect(readRecord(session.sessionId).correlation.agentSessionId).toBe('claude-native-next');
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('closed locally at its last recorded activity'))).toBe(true);
+    const old = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-other-unclosed.json`), 'utf-8')) as Session;
+    expect(old.status).toBe('completed');
+    expect(old.droppedAt).toBeUndefined();
+  });
+
+  it('an active generation whose local close cannot save stays active in place: no fresh record, the error logged', async () => {
+    clearLogs();
+    const session = baseRecord({
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-unsaved', agentSessionFile: join(home, 'gen-unsaved.jsonl') },
+    });
+    writeRecord(session);
+    respond = () => new Response(JSON.stringify({ message: 'unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    // The full close's status write and both local closes fail
+    await failCloses(session, 3);
+
+    await processEvent(clearStart(), config(session));
+
+    expect(readRecord(session.sessionId)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'gen-unsaved' } });
+    expect(readdirSync(sessionsDir).some((n) => n.startsWith(`completed_${session.sessionId}`))).toBe(false);
+    expect(vi.mocked(logger.error).mock.calls.some(([line]) => String(line).includes('could not be closed locally; the fresh record is not written'))).toBe(true);
   });
 
   it('a completed {id}.json the close could not move stays as it is: no fresh record over it, the error logged', async () => {
@@ -1429,7 +1895,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
       return actualRename(from, to);
     });
 
-    const closing = processEvent(clearStart(), config(session));
+    const closing = renameOverCompleted(session);
     await vi.waitFor(() => expect(moves).toBe(2));
 
     expect(existsSync(join(sessionsDir, `completed_${session.sessionId}.json`))).toBe(true);
@@ -1445,7 +1911,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
     const movedMetrics = join(sessionsDir, `completed_${session.sessionId}-gen-resumed_metrics.jsonl`);
     writeFileSync(movedMetrics, '{"recordId":"moved-before-the-kill"}\n');
 
-    await processEvent(clearStart(), config(session));
+    await renameOverCompleted(session);
 
     const lines = readFileSync(movedMetrics, 'utf-8').trim().split('\n').map((line) => JSON.parse(line).recordId);
     expect(lines).toEqual(['moved-before-the-kill', `rec-${session.sessionId}-0`]);
@@ -1454,6 +1920,7 @@ describe('SessionStart source=clear closes the previous generation', () => {
   });
 
   it('a resumed move whose .json rename fails leaves the appended sidecar in place with both parts', async () => {
+    clearLogs();
     const session = baseRecord({ status: 'completed', endMetricSentAt: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-append-undo' } });
     writeRecord(session, 'completed_');
     writeDeltas(session.sessionId, [{ timestamp: session.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
@@ -1465,14 +1932,14 @@ describe('SessionStart source=clear closes the previous generation', () => {
       return actualRename(from, to);
     });
 
-    await processEvent(clearStart(), config(session));
+    await renameOverCompleted(session);
 
     expect(existsSync(join(sessionsDir, `completed_${session.sessionId}_metrics.jsonl`))).toBe(false);
     expect(existsSync(movedMetrics)).toBe(true);
     const lines = readFileSync(movedMetrics, 'utf-8').trim().split('\n').map((line) => JSON.parse(line).recordId);
     expect(lines).toEqual(['moved-before-the-kill', `rec-${session.sessionId}-0`]);
     expect(existsSync(join(sessionsDir, `completed_${session.sessionId}.json`))).toBe(true);
-    expect(vi.mocked(logger.error).mock.calls.some(([line]) => String(line).includes('failed to close the previous generation'))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('Failed to move the previous generation aside'))).toBe(true);
   });
 
   it('a delivery slower than the 2 s budget is cut, the generation moved anyway and logged', async () => {
@@ -1590,24 +2057,42 @@ describe('SessionStart source=clear closes the previous generation', () => {
 
     const waitedMs = await clearAgainstHeldLock(session, undefined);
 
-    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes('locked by another process; left in place'))).toBe(true);
-    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(`${session.sessionId}.reconcile.lock is still held`))).toBe(true);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(
+      `${session.sessionId}.reconcile.lock is still held; the previous generation (completed) of ${session.sessionId} left in place, the fresh record is not written`
+    ))).toBe(true);
     expect(endMetrics()).toHaveLength(0);
     expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(previousBytes);
     expect(readdirSync(sessionsDir).some((n) => n.startsWith(`completed_${session.sessionId}-`))).toBe(false);
-    // The close's wait and the fresh record's guard share one 10 s budget
+    // One 10 s wait covers the close and the fresh record
+    expect(waitedMs).toBeGreaterThanOrEqual(10 * SECOND);
+    expect(waitedMs).toBeLessThan(15 * SECOND);
+  });
+
+  it('an active generation under a lock held throughout is left byte-identical: no re-entry, no fresh record', async () => {
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-active-stuck', agentSessionFile: join(home, 'gen-active-stuck.jsonl') } });
+    writeRecord(session);
+    const previousBytes = readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8');
+
+    const waitedMs = await clearAgainstHeldLock(session, undefined);
+
+    expect(readFileSync(join(sessionsDir, `${session.sessionId}.json`), 'utf-8')).toBe(previousBytes);
+    expect(readdirSync(sessionsDir).some((n) => n.startsWith(`completed_${session.sessionId}`))).toBe(false);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
+    expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(
+      `${session.sessionId}.reconcile.lock is still held; the previous generation (active) of ${session.sessionId} left in place`
+    ))).toBe(true);
     expect(waitedMs).toBeGreaterThanOrEqual(10 * SECOND);
     expect(waitedMs).toBeLessThan(15 * SECOND);
   });
 
   it('a lock released 8 s into the SessionStart\'s 10 s budget: the holder\'s last write goes with the generation moved aside, a fresh record its own', async () => {
-    const session = baseRecord({ status: 'completed', endTime: Date.now(), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-stuck' } });
+    const session = baseRecord({ status: 'completed', endTime: Date.now() - 60 * SECOND, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-stuck' } });
     writeRecord(session);
-    const before = Date.now();
     // The holder stamps the record by id under the lock (as markEndMetric does), then lets go
     const holderMark = 1_700_000_000_000;
     const holderWrite = () => writeRecord({ ...readRecord(session.sessionId), endMetricSentAt: holderMark });
     vi.mocked(logger.warn).mockClear();
+    const before = Date.now();
 
     await clearAgainstHeldLock(session, 8 * SECOND, holderWrite);
 
@@ -1670,14 +2155,234 @@ describe('SessionStart source=clear closes the previous generation', () => {
     expect(requests.map((r) => [r.name, r.attributes.status])).toEqual([['codemie_cli_session_total', 'started']]);
   });
 
-  it.each(['startup', 'resume', 'compact'])('source=%s over a live record of the same id re-enters it, nothing moved', async (source) => {
+  it('source=resume with a new session_id over an active generation closes it over its own transcript, moves it aside, and a fresh record starts at the /resume', async () => {
+    const transcript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:12:00Z']);
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-resumed-over', agentSessionFile: transcript } });
+    writeRecord(session);
+    const before = Date.now();
+
+    await processEvent({ ...clearStart(), source: 'resume' }, config(session));
+
+    const movedPath = join(sessionsDir, `completed_${session.sessionId}-gen-resumed-over.json`);
+    expect(existsSync(movedPath)).toBe(true);
+    const moved = JSON.parse(readFileSync(movedPath, 'utf-8')) as Session;
+    expect(moved).toMatchObject({ status: 'completed', endTime: Date.parse('2026-10-01T10:12:00Z'), reason: 'interrupted' });
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-resumed-over']);
+    const fresh = readRecord(session.sessionId);
+    expect(fresh).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+    expect(fresh.startTime).toBeGreaterThanOrEqual(before);
+  });
+
+  it('source=resume back to generation A, already closed and moved aside, over B\'s live record: B closed over its own transcript and moved aside, a fresh record of A\'s second stretch takes A\'s later Stop and SessionEnd; A\'s first set untouched', async () => {
+    const bTranscript = writeTranscript(['2026-10-01T10:20:00Z', '2026-10-01T10:22:00Z']);
+    const b = baseRecord({
+      startTime: Date.parse('2026-10-01T10:20:00Z'),
+      correlation: { status: 'matched', retryCount: 0, agentSessionId: 'claude-native-next', agentSessionFile: bTranscript },
+    });
+    const id = b.sessionId;
+    writeRecord(b);
+    const a = baseRecord({ sessionId: id, status: 'completed', endTime: Date.parse('2026-10-01T10:11:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:11:01Z'), correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' } });
+    writeRecord(a, 'completed_');
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
+    for (const suffix of ['.json', '_metrics.jsonl']) {
+      renameSync(join(sessionsDir, `completed_${id}${suffix}`), join(sessionsDir, `completed_${id}-gen-a${suffix}`));
+    }
+    const aSetBytes = () => [`completed_${id}-gen-a.json`, `completed_${id}-gen-a_metrics.jsonl`].map((name) => readFileSync(join(sessionsDir, name), 'utf-8'));
+    const aSetBefore = aSetBytes();
+    const before = Date.now();
+
+    await processEvent({ ...clearStart(), source: 'resume', session_id: 'gen-a' }, config(b));
+
+    expect(existsSync(join(sessionsDir, `completed_${id}-claude-native-next.json`))).toBe(true);
+    const movedB = readRecord(`${id}-claude-native-next`, 'completed_');
+    expect(movedB).toMatchObject({ status: 'completed', endTime: Date.parse('2026-10-01T10:22:00Z'), correlation: { agentSessionId: 'claude-native-next' } });
+    const fresh = readRecord(id);
+    expect(fresh).toMatchObject({ status: 'active', correlation: { agentSessionId: 'gen-a' } });
+    expect(fresh.startTime).toBeGreaterThanOrEqual(before);
+    expect(aSetBytes()).toEqual(aSetBefore);
+
+    const aTranscript = writeTranscript([fresh.startTime + SECOND, fresh.startTime + 2 * SECOND].map((t) => new Date(t).toISOString()));
+    const aLines = [`msg-${idCounter}-1`];
+    await processEvent({ hook_event_name: 'Stop', session_id: 'gen-a', transcript_path: aTranscript, permission_mode: 'default', cwd: home }, config(b));
+
+    expect(readRecord(id)).toMatchObject({ startTime: fresh.startTime, correlation: { agentSessionId: 'gen-a' } });
+    expect(readDeltas(id).map((d) => d.recordId)).toEqual(aLines);
+
+    await processEvent({ hook_event_name: 'SessionEnd', session_id: 'gen-a', transcript_path: aTranscript, permission_mode: 'default', cwd: home, reason: 'exit' }, config(b));
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['claude-native-next', 'gen-a']);
+    expect(aSetBytes()).toEqual(aSetBefore);
+    expect(readdirSync(sessionsDir).filter((name) => name.startsWith(`completed_${id}`) && name.endsWith('.json')).sort()).toEqual([
+      `completed_${id}-claude-native-next.json`, `completed_${id}-gen-a.json`, `completed_${id}.json`,
+    ]);
+    expect(readRecord(id, 'completed_')).toMatchObject({ status: 'completed', startTime: fresh.startTime, correlation: { agentSessionId: 'gen-a' } });
+    expect(readDeltas(id, 'completed_').map((d) => d.recordId)).toEqual(aLines);
+  });
+
+  it('an active generation under a lock let go right after the SessionStart\'s first try: fully closed under the lock its wait then takes (end metric sent, moved aside, not marked dropped); the fresh record, written under that same hold, starts at the /clear, not at the idle generation\'s last activity', async () => {
+    const aTranscript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:13:00Z']);
+    const session = baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-late-free', agentSessionFile: aTranscript } });
+    writeRecord(session);
+    const lockPath = join(sessionsDir, `${session.sessionId}.reconcile.lock`);
+    const { processStartedAt } = await import('../../../utils/processes.js');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
+    const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    // The holder lets go right after the start's first lock attempt has met it
+    let firstTry = true;
+    const before = Date.now();
+    vi.mocked(writeFile).mockImplementation(async (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]) !== lockPath || !firstTry) return actual.writeFile(...args);
+      firstTry = false;
+      try {
+        return await actual.writeFile(...args);
+      } finally {
+        rmSync(lockPath);
+      }
+    });
+
+    try {
+      await onFakeClock(() => processEvent(clearStart(), config(session)));
+    } finally {
+      vi.mocked(writeFile).mockImplementation(actual.writeFile);
+    }
+
+    expect(endMetrics().map((m) => m.attributes.session_id)).toEqual(['gen-late-free']);
+    const moved = JSON.parse(readFileSync(join(sessionsDir, `completed_${session.sessionId}-gen-late-free.json`), 'utf-8')) as Session;
+    expect(moved).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: Date.parse('2026-10-01T10:13:00Z') });
+    expect(moved.endMetricSentAt).toBeTypeOf('number');
+    expect(moved.droppedAt).toBeUndefined();
+    const fresh = readRecord(session.sessionId);
+    expect(fresh).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+    expect(fresh.startTime).toBeGreaterThanOrEqual(before);
+  });
+
+  it.each(['startup', 'resume', 'compact'])('source=%s with the record\'s own session_id over a live record of the same id re-enters it, nothing moved', async (source) => {
     const session = baseRecord();
     writeRecord(session);
 
-    await processEvent({ ...clearStart(), source }, config(session));
+    await processEvent({ ...clearStart(), source, session_id: 'claude-native-1' }, config(session));
 
     expect(readRecord(session.sessionId).startTime).toBe(session.startTime);
     expect(readdirSync(sessionsDir).some((n) => n.startsWith(`completed_${session.sessionId}-`))).toBe(false);
+  });
+});
+
+describe('a later event of generation B over generation A\'s record establishes B\'s own record', () => {
+  /** An event of generation B (native id `claude-native-next`), in process. */
+  function eventOfB(name: string, transcript: string, extra: Record<string, unknown> = {}) {
+    return { hook_event_name: name, session_id: 'claude-native-next', transcript_path: transcript, permission_mode: 'default', cwd: home, ...extra };
+  }
+
+  function generationA(overrides: Partial<Session> = {}): Session {
+    return baseRecord({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a' }, ...overrides });
+  }
+
+  it.each(['matched', 'pending'] as const)('Stop of B over A\'s live completed record (correlation %s; delivered, not renamed): A moved aside under its generation name, a fresh record of B starting at A\'s end holds B\'s lines', async (correlationStatus) => {
+    const a = generationA({
+      status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z'),
+      correlation: { status: correlationStatus, retryCount: 0, agentSessionId: 'gen-a' },
+    });
+    const id = a.sessionId;
+    writeRecord(a);
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND, syncStatus: 'synced' }]);
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+    const bLines = [`msg-${idCounter}-1`];
+
+    await processEvent(eventOfB('Stop', transcript), config(a));
+
+    expect(existsSync(join(sessionsDir, `completed_${id}-gen-a.json`))).toBe(true);
+    expect(existsSync(join(sessionsDir, `completed_${id}_metrics.jsonl`))).toBe(false);
+    expect(readDeltas(`${id}-gen-a`, 'completed_').map((d) => d.recordId)).toEqual([`rec-${id}-0`]);
+    expect(readRecord(id)).toMatchObject({ status: 'active', startTime: Date.parse('2026-10-01T10:30:00Z'), correlation: { agentSessionId: 'claude-native-next', agentSessionFile: transcript } });
+    expect(readDeltas(id).map((d) => d.recordId)).toEqual(bLines);
+  });
+
+  it('Stop of B over A\'s live active record whose lock is held throughout is deferred at once (the lock tried, never waited for): nothing written, one warn; the next Stop of B once the lock is free closes A and syncs B\'s whole transcript into a fresh record', async () => {
+    clearLogs();
+    const a = generationA();
+    const id = a.sessionId;
+    writeRecord(a);
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND }]);
+    const recordBefore = readFileSync(join(sessionsDir, `${id}.json`), 'utf-8');
+    const deltasBefore = readFileSync(join(sessionsDir, `${id}_metrics.jsonl`), 'utf-8');
+    const lockPath = join(sessionsDir, `${id}.reconcile.lock`);
+    const { processStartedAt } = await import('../../../utils/processes.js');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
+    const transcript = writeTranscript([-4, -3, -2, -1].map((s) => new Date(Date.now() + s * SECOND).toISOString()));
+    const bLines = [`msg-${idCounter}-1`, `msg-${idCounter}-3`];
+
+    const stopStartedAt = Date.now();
+    await processEvent(eventOfB('Stop', transcript), config(a));
+
+    expect(Date.now() - stopStartedAt).toBeLessThan(2 * SECOND);
+    expect(readFileSync(join(sessionsDir, `${id}.json`), 'utf-8')).toBe(recordBefore);
+    expect(readFileSync(join(sessionsDir, `${id}_metrics.jsonl`), 'utf-8')).toBe(deltasBefore);
+    expect(vi.mocked(logger.warn).mock.calls.filter(([line]) => String(line).includes('the event is deferred') && String(line).includes(lockPath))).toHaveLength(1);
+    expect(vi.mocked(logger.info).mock.calls.some(([line]) => String(line).includes('Session re-entered'))).toBe(false);
+
+    rmSync(lockPath);
+    await processEvent(eventOfB('Stop', transcript), config(a));
+
+    expect(existsSync(join(sessionsDir, `completed_${id}-gen-a.json`))).toBe(true);
+    expect(readRecord(id)).toMatchObject({ status: 'active', correlation: { agentSessionId: 'claude-native-next' } });
+    expect(readDeltas(id).map((d) => d.recordId)).toEqual(bLines);
+  });
+
+  it('Stop of B over A\'s live idle active record (no delta, no activity mark): A closed at its last transcript record, B\'s fresh record starts there', async () => {
+    const aTranscript = writeTranscript(['2026-10-01T10:10:00Z', '2026-10-01T10:13:00Z']);
+    const a = generationA({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'gen-a', agentSessionFile: aTranscript } });
+    const id = a.sessionId;
+    writeRecord(a);
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+
+    await processEvent(eventOfB('Stop', transcript), config(a));
+
+    expect(JSON.parse(readFileSync(join(sessionsDir, `completed_${id}-gen-a.json`), 'utf-8'))).toMatchObject({ endTime: Date.parse('2026-10-01T10:13:00Z') });
+    expect(readRecord(id)).toMatchObject({ status: 'active', startTime: Date.parse('2026-10-01T10:13:00Z'), correlation: { agentSessionId: 'claude-native-next' } });
+  });
+
+  it.each(['live', 'completed_'] as const)('UserPromptSubmit of B over A\'s %s record writes no activityStartedAt anywhere; the auth gate still runs', async (where) => {
+    const a = generationA(where === 'live' ? {} : { status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
+    writeRecord(a, where === 'live' ? '' : 'completed_');
+    const prompt = eventOfB('UserPromptSubmit', join(home, 'b-transcript.jsonl'));
+    const withKey = config(a, { apiKey: 'test-key' });
+    const { markAnalyticsAuthInvalid } = await import('@/utils/analytics-auth-status.js');
+    await markAnalyticsAuthInvalid('rejected in test', API);
+
+    await expect(processEvent(prompt, withKey)).rejects.toThrow('rejected the stored credentials');
+    await clearAnalyticsAuthStatus();
+    await processEvent(prompt, withKey);
+
+    const records = readdirSync(sessionsDir).filter((n) => n.endsWith('.json'));
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.filter((n) => JSON.parse(readFileSync(join(sessionsDir, n), 'utf-8')).activityStartedAt !== undefined)).toEqual([]);
+  });
+
+  it('SubagentStop of B over A\'s completed_ record only: deferred while the lock is held, nothing written; once it is free a fresh record of B, A\'s completed_ set unchanged', async () => {
+    const a = generationA({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z'), endMetricSentAt: Date.parse('2026-10-01T10:30:01Z') });
+    const id = a.sessionId;
+    writeRecord(a, 'completed_');
+    writeDeltas(id, [{ timestamp: a.startTime + SECOND, syncStatus: 'synced' }], 'completed_');
+    const aRecordBytes = readFileSync(join(sessionsDir, `completed_${id}.json`), 'utf-8');
+    const aMetricsBytes = readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8');
+    const transcript = writeTranscript([Date.now() - 2 * SECOND, Date.now() - SECOND].map((t) => new Date(t).toISOString()));
+    const subagentStop = eventOfB('SubagentStop', transcript, { agent_id: 'sub-1', agent_transcript_path: '', stop_hook_active: false });
+    const lockPath = join(sessionsDir, `${id}.reconcile.lock`);
+    const { processStartedAt } = await import('../../../utils/processes.js');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
+    const filesBefore = readdirSync(sessionsDir).sort();
+
+    await processEvent(subagentStop, config(a));
+
+    expect(readdirSync(sessionsDir).sort()).toEqual(filesBefore);
+    rmSync(lockPath);
+    await processEvent(subagentStop, config(a));
+
+    expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(true);
+    expect(readRecord(id).startTime).toBe(a.endTime);
+    expect(readRecord(id).correlation.agentSessionId).toBe('claude-native-next');
+    expect(readFileSync(join(sessionsDir, `completed_${id}.json`), 'utf-8')).toBe(aRecordBytes);
+    expect(readFileSync(join(sessionsDir, `completed_${id}_metrics.jsonl`), 'utf-8')).toBe(aMetricsBytes);
   });
 });
 

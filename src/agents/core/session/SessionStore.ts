@@ -11,6 +11,7 @@ import { existsSync } from 'fs';
 import { dirname, basename, join } from 'path';
 import type { Session } from './types.js';
 import { getSessionPath } from './session-config.js';
+import { generationSetFiles, recordGeneration } from './session-generation.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { createErrorContext, formatErrorForLog, PathSecurityError } from '../../../utils/errors.js';
@@ -52,6 +53,12 @@ function mergeCompleted(saving: Session, other: Session): Session {
   };
 }
 
+/** The record's native session id when it names one: set, not `'unknown'`, not the record's own CodeMie id (a placeholder). */
+function realNativeId(record: Session): string | undefined {
+  const id = record.correlation?.agentSessionId;
+  return id && id !== 'unknown' && id !== record.sessionId ? id : undefined;
+}
+
 function sameGeneration(a: Session, b: Session): boolean {
   return a.startTime === b.startTime && a.correlation?.agentSessionId === b.correlation?.agentSessionId;
 }
@@ -68,7 +75,11 @@ export class SessionStore {
    * rename lands while an `active` copy is being written. A `completed` copy written to
    * `{sessionId}.json` while its generation is renamed to `completed_` is merged into that
    * `completed_` file (its fields, plus the delivery marks and larger attempt counters the
-   * other process saved there) and `{sessionId}.json` is removed.
+   * other process saved there) and `{sessionId}.json` is removed. A live `{sessionId}.json` of
+   * another generation (another start time or real native id; `completed`, or `active` with no end) is not written
+   * over (a read-then-write window of microseconds remains; the reconcile lock, which `saveSession` does not take,
+   * would close it): a `completed` copy is merged into the moved-aside set of its own generation, any other copy
+   * is dropped.
    */
   async saveSession(session: Session): Promise<void> {
     if (/[/\\]/.test(session.sessionId)) {
@@ -77,6 +88,9 @@ export class SessionStore {
     const livePath = getSessionPath(session.sessionId);
     const completedPath = join(dirname(livePath), `completed_${basename(livePath)}`);
     const renamed = !existsSync(livePath) && existsSync(completedPath);
+    if (!renamed && (await this.keptOffOtherGeneration(livePath, session))) {
+      return;
+    }
     if (renamed && session.status !== 'completed' && (await this.isCompletedGeneration(completedPath, session))) {
       logger.info(`[SessionStore] Not recreating ${session.sessionId}.json: its generation is already completed`);
       return;
@@ -125,6 +139,76 @@ export class SessionStore {
     }
   }
 
+  /**
+   * A live `{id}.json` of another generation (another start time, or another real native session id
+   * on both; a placeholder id is no generation) is never written over: a stale
+   * `completed` copy is merged into its own generation's set, a stale `active` one is dropped. True
+   * when the copy was handled so; false when `{id}.json` is absent, unreadable, of this generation,
+   * or no valid live record (`active` with an end: the fresh build repairs it by writing over).
+   */
+  private async keptOffOtherGeneration(livePath: string, session: Session): Promise<boolean> {
+    const raw = await readIfExists(livePath);
+    if (raw === undefined) return false;
+    let live: Session;
+    try {
+      live = JSON.parse(raw) as Session;
+    } catch {
+      return false;
+    }
+    const liveNative = realNativeId(live);
+    const copyNative = realNativeId(session);
+    const otherNative = liveNative !== undefined && copyNative !== undefined && liveNative !== copyNative;
+    if (live.startTime === session.startTime && !otherNative) return false;
+    if (live.status !== 'completed' && !(live.status === 'active' && live.endTime === undefined)) return false;
+    if (session.status === 'completed') {
+      await this.mergeIntoGenerationSet(session, live);
+      return true;
+    }
+    logger.info(
+      `[SessionStore] Not saving ${session.sessionId}.json: it holds another generation ` +
+      `(startTime ${live.startTime}, this copy's ${session.startTime})`
+    );
+    return true;
+  }
+
+  /**
+   * Merges a stale `completed` copy into the moved-aside set of its generation (same start time and
+   * agent session id, among the generation's record files `completed_<id>-<generation>*.json` and a plain
+   * `completed_<id>.json` of it), keeping the delivery marks and the
+   * larger attempt counters already there. No such set: the copy has no home and is dropped.
+   */
+  private async mergeIntoGenerationSet(session: Session, live: Session): Promise<void> {
+    const generation = recordGeneration(session);
+    // A set renamed since its read (to its generation name) is followed by listing the files once more
+    for (let pass = 0; pass < 2 && generation !== undefined; pass++) {
+      let moved = false;
+      for (const path of generationSetFiles(session.sessionId, generation)) {
+        let other: Session;
+        try {
+          other = JSON.parse(await readFile(path, 'utf-8')) as Session;
+        } catch (error) {
+          logger.warn(`[SessionStore] Unreadable ${basename(path)}; not merging the completed copy of ${session.sessionId} into it`, error);
+          continue;
+        }
+        if (sameGeneration(other, session)) {
+          // ponytail: a set renamed away since the read is not recreated, but a rename landing between
+          // this check and the write still is, and one landing between the listing and the read is logged
+          // as unreadable and not followed; holding the reconcile lock would close both windows
+          moved = !existsSync(path);
+          if (moved) break;
+          await writeAtomic(path, mergeCompleted(session, other));
+          logger.info(`[SessionStore] Merged a completed copy into ${basename(path)}: ${session.sessionId}.json holds another generation (startTime ${live.startTime})`);
+          return;
+        }
+      }
+      if (!moved) break;
+    }
+    logger.info(
+      `[SessionStore] Not saving a completed copy of ${session.sessionId} (startTime ${session.startTime}): ` +
+      `${session.sessionId}.json holds another generation (startTime ${live.startTime}) and no set of this one was moved aside`
+    );
+  }
+
   private async isCompletedGeneration(completedPath: string, session: Session): Promise<boolean> {
     let completed: Session;
     try {
@@ -136,7 +220,7 @@ export class SessionStore {
     return sameGeneration(completed, session);
   }
 
-  /** A newer generation (a `/clear` start) may have written `{id}.json` since this save; that record stays. */
+  /** A newer generation's start may have written `{id}.json` since this save; that record stays. */
   private async removeIfSameGeneration(livePath: string, session: Session): Promise<void> {
     let live: Session;
     try {

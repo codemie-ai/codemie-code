@@ -50,7 +50,7 @@ export async function deliverSessionRecord(
     if (syncApplies(config)) await markDroppedIfUndelivered(sessionId);
     await renameSessionFiles(sessionId);
   } else {
-    logger.info(`[hook:SessionEnd] Session ${sessionId} is not fully delivered yet; kept as ${sessionId}.json for a later run`);
+    logger.info(`[hook:SessionEnd] Session ${sessionId} is not completed or not fully delivered yet; kept as ${sessionId}.json for a later run`);
   }
 }
 
@@ -79,14 +79,16 @@ export function nativeSessionId(record: { sessionId: string; correlation?: { age
 }
 
 /**
- * Delivery is done when the end metric is sent or does not apply, and — for a matched
- * record whose sync applies — no metric line is pending / retryable and no conversation
- * payload is waiting.
+ * Delivery is done when the record is `completed` (a close whose status write failed stays live
+ * for the stranded path), the end metric is sent or does not apply, and — for a matched record
+ * whose sync applies — no metric line is pending / retryable and no conversation payload is waiting.
  */
 async function isDeliveryDone(sessionId: string, config?: HookProcessingConfig): Promise<boolean> {
   const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
   const record = await new SessionStore().loadSession(sessionId);
   if (!record) return false;
+  // A record whose close did not complete stays live for the stranded path
+  if (record.status !== 'completed') return false;
   if (record.endMetricSentAt === undefined && record.endMetricSkipped === undefined) return false;
   // An unmatched record has no transcript data to sync: not applicable, never a failed delivery
   if (record.correlation?.status !== 'matched' || !syncApplies(config)) return true;

@@ -119,6 +119,12 @@ export async function maxDeltaTimestamp(sessionId: string): Promise<number | und
   }));
 }
 
+/** A record's last recorded activity: the latest of its start, `activityStartedAt` and latest delta, finite values only. */
+export async function lastRecordedActivityAt(record: Session): Promise<number> {
+  const times = [record.startTime, record.activityStartedAt ?? 0, (await maxDeltaTimestamp(record.sessionId)) ?? 0];
+  return Math.max(...times.filter((time) => Number.isFinite(time)));
+}
+
 /**
  * Whether a closed record still holds data it was to send: an end metric neither sent nor skipped,
  * or — for a matched record — a metric line not synced or a conversation payload neither sent nor
@@ -327,8 +333,7 @@ interface AttemptOptions {
 async function closeExhaustedLocally(sessionId: string, error: unknown, pipeline: HookPipeline, deliver: boolean): Promise<void> {
   const current = await readLiveRecord(sessionId);
   if (!current) throw error;
-  const times = [current.startTime, current.activityStartedAt ?? 0, (await maxDeltaTimestamp(sessionId)) ?? 0];
-  const endTime = Math.max(...times.filter((time) => Number.isFinite(time)));
+  const endTime = await lastRecordedActivityAt(current);
   await new SessionStore().saveSession({ ...current, status: 'completed', reason: 'interrupted', endTime });
   // A record this launch was not to deliver (another host, no send path, legacy) is never marked
   if (deliver) await markDroppedIfUndelivered(sessionId);
