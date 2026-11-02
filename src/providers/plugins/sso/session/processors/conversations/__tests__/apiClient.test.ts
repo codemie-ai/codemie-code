@@ -8,17 +8,18 @@ import { createApiClient } from '../apiClient.js';
 import { SyncStoppedError } from '@/agents/core/session/BaseProcessor.js';
 
 const fetchMock = vi.fn();
+const jsonHeaders = new Headers({ 'content-type': 'application/json' });
 
 function refused(): Error {
   return Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
 }
 
 function okResponse(body: unknown) {
-  return { ok: true, status: 200, statusText: 'OK', json: () => Promise.resolve(body), text: () => Promise.resolve(JSON.stringify(body)) };
+  return { ok: true, status: 200, statusText: 'OK', headers: jsonHeaders, json: () => Promise.resolve(body), text: () => Promise.resolve(JSON.stringify(body)) };
 }
 
 function failingBodyResponse() {
-  return { ok: false, status: 500, statusText: 'Internal Server Error', text: () => Promise.reject(new Error('socket hang up')) };
+  return { ok: false, status: 500, statusText: 'Internal Server Error', headers: jsonHeaders, text: () => Promise.reject(new Error('socket hang up')) };
 }
 
 describe('ConversationApiClient request timers', () => {
@@ -63,6 +64,7 @@ describe('ConversationApiClient request timers', () => {
         ok: false,
         status: 403,
         statusText: 'Forbidden',
+        headers: jsonHeaders,
         text: () => Promise.resolve('{"error":{"message":"Project access denied","details":"user is not a member"}}'),
       };
       // A retry would get the ok response below.
@@ -127,7 +129,7 @@ describe('ConversationApiClient request timers', () => {
 
   describe('retries and caller bounds', () => {
     function unavailable() {
-      return { ok: false, status: 503, statusText: 'Service Unavailable', text: () => Promise.resolve('{"message":"down"}') };
+      return { ok: false, status: 503, statusText: 'Service Unavailable', headers: jsonHeaders, text: () => Promise.resolve('{"message":"down"}') };
     }
 
     /** A fetch that answers after 3 s unless its signal aborts first, as the real fetch does. */

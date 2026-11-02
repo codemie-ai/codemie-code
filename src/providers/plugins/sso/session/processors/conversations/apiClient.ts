@@ -21,6 +21,16 @@ import {
 } from './constants.js';
 import { SyncStoppedError, type SyncBounds } from '@/agents/core/session/BaseProcessor.js';
 import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import { clearAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
+
+/**
+ * A 2xx HTML page where JSON was expected: fetch follows the redirect of an expired session, so the SSO login page
+ * lands as a 2xx. An HTML 4xx / 5xx is a proxy's or WAF's own error page (413, a 403 block page, a 502), a failure
+ * counted by its status, not rejected credentials.
+ */
+function isLoginPage(response: Response): boolean {
+  return response.headers.get('content-type')?.includes('text/html') === true && response.ok;
+}
 
 /**
  * Conversation API Client interface
@@ -68,6 +78,12 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
    */
   function isNonRetryableError(statusCode: number): boolean {
     return NON_RETRYABLE_HTTP_CODES.includes(statusCode as any);
+  }
+
+  /** The server rejected the credentials: the attempt is not counted and analytics auth waits for a re-login. */
+  async function rejectCredentials(signal: AbortSignal | undefined, reason: string): Promise<void> {
+    noteAuthFailure(signal);
+    await markAnalyticsAuthInvalid(reason, apiConfig.baseUrl);
   }
 
   // Public interface
@@ -145,12 +161,19 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               body: JSON.stringify(payload),
               signal: request.signal
             });
-            body = response.ok ? await response.json() : await response.text();
+            body = response.ok && !isLoginPage(response) ? await response.json() : await response.text();
           } catch (error) {
             const stopReason = request.stopReason();
             throw stopReason ? new SyncStoppedError(stopReason) : error;
           } finally {
             request.dispose();
+          }
+
+          if (isLoginPage(response)) {
+            const message = `API answered ${response.status} with an HTML page (an SSO login page) instead of JSON`;
+            await rejectCredentials(bounds.abortSignal, message);
+            logger.error(`[ConversationApiClient] ${message}`);
+            return { success: false, message };
           }
 
           if (!response.ok) {
@@ -169,8 +192,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             const apiDetails = errorData?.error?.details
               || errorData?.details;
             const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
-            if (response.status === 401 || response.status === 403) {
-              noteAuthFailure(bounds.abortSignal);
+            if (response.status === 401) {
+              await rejectCredentials(bounds.abortSignal, message);
             }
 
             // Check for non-retryable errors
@@ -199,6 +222,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             totalMessages: data.total_messages,
             created: data.created
           });
+          // Server accepted our credentials — clear any stale invalid-auth marker
+          await clearAnalyticsAuthStatus();
 
           if (llmModel?.trim()) {
             const metadataResult = await updateConversationMetadata(conversationId, {

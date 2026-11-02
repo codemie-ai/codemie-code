@@ -37,7 +37,7 @@ interface MetricsRequestError extends Error {
   statusCode?: number;
   response?: unknown;
   responseText?: string;
-  /** True when the server rejected the provided credentials (401/403 or an HTML SSO login page) */
+  /** True when the server rejected the provided credentials (401 or an HTML SSO login page) */
   isAuthFailure?: boolean;
 }
 
@@ -94,7 +94,7 @@ class MetricsApiClient {
         const errorName = error instanceof Error ? error.name : 'Unknown';
         const statusCode = (error as MetricsRequestError).statusCode;
 
-        // Record credential rejections (401/403 or HTML SSO login page) so the
+        // Record credential rejections (401 or an HTML SSO login page) so the
         // hook auth gate can prompt the user to re-authenticate
         if ((error as MetricsRequestError).isAuthFailure) {
           noteAuthFailure(this.bounds.abortSignal);
@@ -197,7 +197,7 @@ class MetricsApiClient {
           const error = new Error(errorMessage) as MetricsRequestError;
           error.statusCode = response.status;
           error.response = data;
-          error.isAuthFailure = response.status === 401 || response.status === 403;
+          error.isAuthFailure = response.status === 401;
           throw error;
         }
 
@@ -205,7 +205,7 @@ class MetricsApiClient {
         const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
-        error.isAuthFailure = response.status === 401 || response.status === 403;
+        error.isAuthFailure = response.status === 401;
         throw error;
       }
 
@@ -265,9 +265,11 @@ function parseMetricsResponse(
     ) as MetricsRequestError;
     error.statusCode = statusCode;
     error.responseText = excerpt;
-    // An HTML page instead of JSON means the request was redirected to the SSO
-    // login page (e.g. Keycloak answers HTTP 200 + login HTML for expired cookies)
-    error.isAuthFailure = Boolean(contentType?.includes('text/html'));
+    // fetch follows the redirect of expired cookies, so the SSO login page lands as a 2xx HTML page
+    // (Keycloak answers HTTP 200 + login HTML); an HTML 4xx / 5xx is a proxy's or WAF's own error page
+    // (413, a 403 block page, a 502), a failure counted by its status, not rejected credentials
+    const isHtml = Boolean(contentType?.includes('text/html'));
+    error.isAuthFailure = statusCode === 401 || (isHtml && statusCode >= 200 && statusCode < 300);
     throw error;
   }
 }

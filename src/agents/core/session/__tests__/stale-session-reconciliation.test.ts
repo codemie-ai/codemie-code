@@ -19,7 +19,7 @@ import { logger } from '@/utils/logger.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
-  return { ...actual, readFile: vi.fn(actual.readFile), stat: vi.fn(actual.stat), writeFile: vi.fn(actual.writeFile) };
+  return { ...actual, appendFile: vi.fn(actual.appendFile), readFile: vi.fn(actual.readFile), stat: vi.fn(actual.stat), writeFile: vi.fn(actual.writeFile) };
 });
 
 vi.mock('@/utils/logger.js', () => ({
@@ -568,6 +568,51 @@ describe('a failed flush through the real hook pipeline', () => {
     return path;
   }
 
+  /** A claude transcript with one counted turn. */
+  function oneTurnTranscript(name: string): string {
+    const path = join(home, name);
+    const at = new Date(Date.now() - HOUR / 2).toISOString();
+    writeFileSync(path, `${[
+      { type: 'user', uuid: 'u-1', sessionId: 'native-u', timestamp: at, message: { role: 'user', content: 'hi' } },
+      {
+        type: 'assistant', uuid: 'a-1', sessionId: 'native-u', timestamp: at,
+        message: { id: 'msg-a-1', role: 'assistant', content: [{ type: 'text', text: 'hello' }], usage: { input_tokens: 1, output_tokens: 1 } },
+      },
+    ].map((line) => JSON.stringify(line)).join('\n')}\n`);
+    return path;
+  }
+
+  /** A claude transcript with one counted turn whose delta write fails: the disk is full, so the flush fails. */
+  async function transcriptWithFailingDeltaWrite(): Promise<string> {
+    const path = oneTurnTranscript('failing-write.jsonl');
+    const actualAppendFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).appendFile;
+    vi.mocked(fsPromises.appendFile).mockImplementation((async (file: string, data: string, options: unknown) => {
+      if (String(file).endsWith('_metrics.jsonl')) {
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      }
+      return actualAppendFile(file, data, options as Parameters<typeof actualAppendFile>[2]);
+    }) as typeof fsPromises.appendFile);
+    return path;
+  }
+
+  /**
+   * A claude transcript with one counted turn whose delta write takes 11 s of the fake clock and then lands:
+   * the flush succeeds past the attempt's 10 s deadline. The caller fakes `Date`.
+   */
+  async function transcriptWithSlowDeltaWrite(): Promise<string> {
+    const path = oneTurnTranscript('slow-write.jsonl');
+    const actualAppendFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).appendFile;
+    vi.mocked(fsPromises.appendFile).mockImplementation((async (file: string, data: string, options: unknown) => {
+      if (String(file).endsWith('_metrics.jsonl')) vi.setSystemTime(Date.now() + 11_000);
+      return actualAppendFile(file, data, options as Parameters<typeof actualAppendFile>[2]);
+    }) as typeof fsPromises.appendFile);
+    return path;
+  }
+
+  afterEach(async () => {
+    vi.mocked(fsPromises.appendFile).mockImplementation((await vi.importActual<typeof import('fs/promises')>('fs/promises')).appendFile);
+  });
+
   /** Runs `work` with every request recorded and answered 200; returns the requested URLs. */
   async function recordingRequests(work: () => Promise<void>): Promise<string[]> {
     const urls: string[] = [];
@@ -583,8 +628,8 @@ describe('a failed flush through the real hook pipeline', () => {
     return urls;
   }
 
-  it('a stranded record whose transcript does not parse stays active with its attempt spent: nothing sent, not renamed', async () => {
-    const stranded = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: unparseableTranscript() } });
+  it('a stranded record whose flush fails stays active with its attempt spent: nothing sent, not renamed', async () => {
+    const stranded = record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: await transcriptWithFailingDeltaWrite() } });
     save(stranded);
 
     const urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
@@ -594,28 +639,26 @@ describe('a failed flush through the real hook pipeline', () => {
     expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
-  it('a stranded record whose failing flush runs past the attempt deadline, nothing sent, is counted', async () => {
-    const transcript = unparseableTranscript();
+  it('a stranded record whose slow flush runs past the attempt deadline, nothing sent, is counted', async () => {
+    const transcript = await transcriptWithSlowDeltaWrite();
     const stranded = record({ finalizeAttempts: 1, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u', agentSessionFile: transcript } });
     save(stranded);
-    // The clock passes the attempt's 10 s deadline while the flush reads the transcript
+    // The clock passes the attempt's 10 s deadline at the delta write; the flush still succeeds
     vi.useFakeTimers({ toFake: ['Date'] });
-    const actualReadFile = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).readFile;
-    vi.mocked(fsPromises.readFile).mockImplementation((async (path: string, options: unknown) => {
-      if (String(path) === transcript) vi.setSystemTime(Date.now() + 11_000);
-      return actualReadFile(path, options as Parameters<typeof actualReadFile>[1]);
-    }) as typeof fsPromises.readFile);
 
     let urls: string[];
     try {
       urls = await recordingRequests(() => reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: { processEvent } }).done);
     } finally {
-      vi.mocked(fsPromises.readFile).mockImplementation(actualReadFile);
       vi.useRealTimers();
     }
 
     expect(urls).toEqual([]);
-    expect(load(stranded.sessionId)).toMatchObject({ status: 'active', finalizeAttempts: 2 });
+    const counted = load(stranded.sessionId);
+    expect(counted).toMatchObject({ status: 'completed', finalizeAttempts: 2 });
+    expect(counted.endTime).toBeTypeOf('number');
+    expect(counted.droppedAt).toBeUndefined();
+    expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
   });
 
   it('at its 4th start, a finalize without the flush whose status write fails is closed locally at its last delta, nothing sent', async () => {
@@ -655,7 +698,7 @@ describe('a failed flush through the real hook pipeline', () => {
     expect(closed.droppedAt).toBeTypeOf('number');
   });
 
-  it('a hook process (no config) meeting the same unparseable transcript returns normally and still ends the record', async () => {
+  it('a hook process (no config) whose flush fails logs the failure, returns normally and still ends the record', async () => {
     const session = record({ ownerPid: undefined, ownerStartedAt: undefined, correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-u' } });
     save(session);
     const envBefore = { ...process.env };
@@ -663,11 +706,12 @@ describe('a failed flush through the real hook pipeline', () => {
       if (key.startsWith('CODEMIE_') && key !== 'CODEMIE_HOME') delete process.env[key];
     }
     Object.assign(process.env, { CODEMIE_AGENT: 'claude', CODEMIE_SESSION_ID: session.sessionId, CODEMIE_PROVIDER: 'ai-run-sso' });
+    vi.mocked(logger.warn).mockClear();
     try {
       await expect(processEvent({
         hook_event_name: 'SessionEnd',
         session_id: 'native-u',
-        transcript_path: unparseableTranscript(),
+        transcript_path: await transcriptWithFailingDeltaWrite(),
         permission_mode: 'default',
         cwd: '/repo',
         reason: 'exit',
@@ -679,7 +723,9 @@ describe('a failed flush through the real hook pipeline', () => {
       Object.assign(process.env, envBefore);
     }
 
-    expect(load(session.sessionId, 'completed_')).toMatchObject({ status: 'completed', reason: 'exit' });
+    expect(logger.warn).toHaveBeenCalledWith('[hook:SessionEnd] Session processing had failures: metrics');
+    // Ended, but kept under its own name: the conversation the flush did write waits for delivery
+    expect(load(session.sessionId)).toMatchObject({ status: 'completed', reason: 'exit' });
   });
 });
 

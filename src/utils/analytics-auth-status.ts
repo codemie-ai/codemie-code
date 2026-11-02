@@ -10,10 +10,11 @@
  * silently disappear from analytics.
  *
  * Writers:
- * - MetricsApiClient marks the status invalid when the server rejects the
- *   provided credentials (401/403 or an HTML login page response).
- * - MetricsApiClient and the SSO login flow clear the marker when auth is
- *   known to work again.
+ * - MetricsApiClient and the conversations API client mark the status invalid
+ *   when the server rejects the provided credentials (401 or an HTML login
+ *   page response).
+ * - MetricsApiClient, the conversations API client and the SSO login flow
+ *   clear the marker when auth is known to work again.
  *
  * Readers:
  * - The unified `codemie hook` UserPromptSubmit gate blocks the prompt when

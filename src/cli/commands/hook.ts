@@ -200,18 +200,16 @@ function initializeLoggerContext(): string {
  * Creates session correlation document using hook data
  */
 async function handleSessionStart(event: SessionStartEvent, _rawInput: string, sessionId: string, config: HookProcessingConfig | undefined, endOptions: SessionEndOptions): Promise<void> {
-  // One lock-wait budget for the whole SessionStart: the close and the fresh record's guard share it
+  // One lock-wait budget for the whole SessionStart: the close's and the fresh record's lock waits share it;
+  // the close's delivery is bounded by its own budget once the lock is held
   const { PID_LOCK_WAIT_BUDGET_MS } = await import('../../utils/pid-lock.js');
-  const startOptions: SessionEndOptions = {
-    ...endOptions,
-    deadlineMs: Math.min(Date.now() + PID_LOCK_WAIT_BUDGET_MS, endOptions.deadlineMs ?? Infinity),
-  };
+  const lockDeadlineMs = Math.min(Date.now() + PID_LOCK_WAIT_BUDGET_MS, endOptions.deadlineMs ?? Infinity);
   // `/clear` starts a new generation under the same id: close the previous one first
   if (event.source === 'clear') {
-    await closeClearedGeneration(sessionId, config, startOptions);
+    await closeClearedGeneration(sessionId, config, endOptions, lockDeadlineMs);
   }
   // Create session record with correlation information
-  await createSessionRecordOverUnclosed(event, sessionId, config, startOptions);
+  await createSessionRecordOverUnclosed(event, sessionId, config, endOptions, lockDeadlineMs);
   // Send session start metrics when CodeMie analytics auth is configured
   await sendSessionStartMetrics(event, sessionId, event.session_id, config);
   // Sync CodeMie skills to Claude Code (.claude/skills/)
@@ -964,14 +962,15 @@ async function createSessionRecordOverUnclosed(
   event: SessionStartEvent,
   sessionId: string,
   config: HookProcessingConfig | undefined,
-  options: SessionEndOptions
+  options: SessionEndOptions,
+  lockDeadlineMs: number
 ): Promise<void> {
   try {
     if ((await readLiveRecord(sessionId))?.status !== 'completed') {
       await createSessionRecord(event, sessionId, config);
       return;
     }
-    const lock = await waitReconcileLock(sessionId, options);
+    const lock = await waitReconcileLock(sessionId, options, lockDeadlineMs);
     if (!lock) {
       logger.warn(`[hook:SessionStart] /clear: ${reconcileLockPath(sessionId)} is still held; the previous generation of ${sessionId} left in place, the fresh record is not written`);
       return;
@@ -1212,12 +1211,12 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string, en
   }
 }
 
-/** The session's reconcile lock, waited for up to the lock helper's 10 s budget, the deadline or the abort. */
-async function waitReconcileLock(sessionId: string, options: SessionEndOptions): Promise<PidLock | null> {
+/** The session's reconcile lock, waited for up to the lock helper's 10 s budget, `deadlineMs` or the abort. */
+async function waitReconcileLock(sessionId: string, options: SessionEndOptions, deadlineMs: number): Promise<PidLock | null> {
   const { acquirePidLock } = await import('../../utils/pid-lock.js');
   return acquirePidLock(reconcileLockPath(sessionId), {
     mode: 'wait',
-    deadlineMs: options.deadlineMs,
+    deadlineMs,
     signal: options.abortSignal,
     pidOnlyLiveness: options.hookProcess === true,
   });
@@ -1235,9 +1234,14 @@ async function waitReconcileLock(sessionId: string, options: SessionEndOptions):
  *
  * ponytail: a generation whose delivery does not finish inside the budget leaves the queue (local only)
  */
-async function closeClearedGeneration(sessionId: string, config: HookProcessingConfig | undefined, options: SessionEndOptions): Promise<void> {
+async function closeClearedGeneration(
+  sessionId: string,
+  config: HookProcessingConfig | undefined,
+  options: SessionEndOptions,
+  lockDeadlineMs: number
+): Promise<void> {
   try {
-    const lock = await waitReconcileLock(sessionId, options);
+    const lock = await waitReconcileLock(sessionId, options, lockDeadlineMs);
     if (!lock) {
       logger.warn(`[hook:SessionStart] /clear: the previous generation of ${sessionId} is locked by another process; left in place`);
       return;

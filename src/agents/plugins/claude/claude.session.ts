@@ -14,7 +14,7 @@ import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/sess
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
 import type { AgentMetadata } from '../../core/types.js';
-import { readJSONL } from '../../core/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
@@ -193,7 +193,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     try {
       // Read main session JSONL file: `messages` (keep-last, for metrics, `extractMetrics`,
       // the `codemie analytics` / cost readers) and `conversationMessages` (for the conversation sync)
-      const counted = (await readJSONL<ClaudeMessage>(filePath)).filter(isCountedTranscriptLine);
+      const counted = (await readJSONLTolerant<ClaudeMessage>(filePath, '[Claude]')).filter(isCountedTranscriptLine);
       const messages = this.dedupeByUuid(counted);
       const conversationMessages = keepFirstAcrossCompaction(counted);
 
@@ -268,7 +268,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       for (const subagentFile of subagentFiles ?? []) {
         try {
           const subagentMessages = this.dedupeByUuid(
-            (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
+            (await readJSONLTolerant<ClaudeMessage>(subagentFile.filePath, '[Claude]')).filter(isCountedTranscriptLine)
           );
           subagents.push({
             agentId: subagentFile.agentId,

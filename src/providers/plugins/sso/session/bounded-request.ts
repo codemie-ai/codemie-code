@@ -57,7 +57,7 @@ export function sendWasAttempted(signal: AbortSignal): boolean {
 const signalsRejected = new WeakSet<AbortSignal>();
 
 /**
- * Records that the server rejected the credentials of a request under `signal` (401 / 403, or an
+ * Records that the server rejected the credentials of a request under `signal` (401, or an HTML
  * SSO login page): the caller that owns the signal does not count it as a delivery attempt.
  */
 export function noteAuthFailure(signal: AbortSignal | undefined): void {

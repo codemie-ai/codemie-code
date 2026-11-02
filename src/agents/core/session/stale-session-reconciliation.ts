@@ -191,10 +191,7 @@ interface Launch {
   hasCredentials(record: Session): Promise<boolean>;
 }
 
-/**
- * The answer depends only on this launch's URL and the record's provider, so a pass reuses it. A
- * lookup that fails is no credentials: the records wait, the pass goes on.
- */
+/** The answer depends only on this launch's URL and the record's provider, so a pass reuses it. */
 function launchOf(env: NodeJS.ProcessEnv): Launch {
   const answers = new Map<string | undefined, Promise<boolean>>();
   return {
@@ -202,11 +199,7 @@ function launchOf(env: NodeJS.ProcessEnv): Launch {
     hasCredentials(record) {
       let answer = answers.get(record.provider);
       if (!answer) {
-        answer = hasCredentials(record, env).catch((error: unknown) => {
-          const msg = error instanceof Error ? error.message : String(error);
-          logger.warn(`[reconcile] Credential lookup for provider ${record.provider} failed; counted as no credentials: ${msg}`);
-          return false;
-        });
+        answer = hasCredentials(record, env);
         answers.set(record.provider, answer);
       }
       return answer;
