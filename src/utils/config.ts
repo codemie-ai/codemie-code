@@ -272,8 +272,13 @@ export class ConfigLoader {
   ): Promise<{ workspace: WorkspaceConfig; projectOrigin: 'linked_folder' | 'profile' | 'none' }> {
     const workspace = await this.resolveWorkspace(workingDir);
     const localProject = (await this.loadLocalMultiProviderConfig(workingDir)).workspace?.codeMieProject;
+    // `preferLinkedProject` is the native hook: with no genuine local link, a project that comes only from
+    // the global scope (global profile, or the global workspace a local profile falls back to) is not
+    // an authoritative source, so the backend falls through to repository/default routing.
+    const globalOnly: 'profile' | 'none' = preferLinkedProject ? 'none' : 'profile';
     if (isLocalProfile) {
-      return { workspace, projectOrigin: workspace.codeMieProject ? 'linked_folder' : 'none' };
+      if (!workspace.codeMieProject) return { workspace, projectOrigin: 'none' };
+      return { workspace, projectOrigin: localProject ? 'linked_folder' : globalOnly };
     }
 
     const globalWorkspace: WorkspaceConfig = (await this.loadMultiProviderConfig()).workspace ?? {};
@@ -291,7 +296,7 @@ export class ConfigLoader {
     }
     return {
       workspace: result as WorkspaceConfig,
-      projectOrigin: result.codeMieProject ? 'profile' : 'none'
+      projectOrigin: result.codeMieProject ? globalOnly : 'none'
     };
   }
 

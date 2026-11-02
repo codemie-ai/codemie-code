@@ -820,6 +820,29 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('profile');
       });
 
+      it('native opt-in with no genuine link: a global-scope project is no source (none); managed keeps profile', async () => {
+        await setup('global-proj');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, true)).toBe('none');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, false, false)).toBe('profile');
+      });
+
+      it('a local profile without a local workspace only inherits the global project: not a link when native', async () => {
+        await setup('global-proj');
+        await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
+        expect(await ConfigLoader.isLocalProfile(workingDir, 'g')).toBe(true);
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, true)).toBe('none');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, false)).toBe('profile');
+      });
+
+      it('a local profile beside a local workspace project is a linked folder in both modes', async () => {
+        await setup('global-proj', 'linked-proj');
+        await writeLocal('g', { g: { name: 'g', provider: 'ai-run-sso', model: 'm' } });
+        const raw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+        await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ ...raw, workspace: { codeMieProject: 'linked-proj' } }));
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, true)).toBe('linked_folder');
+        expect(await ConfigLoader.resolveProjectOrigin(workingDir, true, false)).toBe('linked_folder');
+      });
+
       it('no project anywhere: none', async () => {
         await setup();
         expect(await ConfigLoader.resolveProjectOrigin(workingDir, false)).toBe('none');
