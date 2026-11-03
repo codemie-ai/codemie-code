@@ -2,10 +2,12 @@ import {
   getAnalyticsPlatformSource,
   getPlatformUrl,
   getStoredAnalyticsCredentials,
+  type PlatformUrlSource,
 } from '@/providers/core/codemie-auth-helpers.js';
-import { getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
+import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, type AnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import {
   describeLogin,
+  getLastSignInAt,
   SSO_LOGIN_WAIT_MS,
   startDetachedSsoLogin,
   waitForDetachedSsoLogin,
@@ -60,6 +62,46 @@ export function markerAppliesToProfile(marker: AnalyticsAuthStatus, candidateUrl
   return known.some((u) => normalizeUrlForKey(u) === normalizedMarkerUrl);
 }
 
+async function readSignInStamp(source: PlatformUrlSource): Promise<number | null> {
+  try {
+    return await getLastSignInAt(source);
+  } catch (error) {
+    logger.debug('[sso-auth-gate] Failed to read the last sign-in time:', error);
+    return null;
+  }
+}
+
+function isOlderThan(marker: AnalyticsAuthStatus, signedInAt: number | null): boolean {
+  return signedInAt !== null && Number.isFinite(marker.detectedAt) && marker.detectedAt < signedInAt;
+}
+
+/**
+ * A marker detected before the latest completed sign-in describes credentials that sign-in has
+ * since replaced, so it is cleared instead of blocking the prompt and opening another browser.
+ * Both the marker and the sign-in time are re-read right before the clear: a marker written in
+ * between (a genuine rejection after the sign-in) is kept and returned. Returns the marker that
+ * still applies, or null when none does.
+ */
+async function dropMarkerOlderThanSignIn(
+  marker: AnalyticsAuthStatus,
+  source: PlatformUrlSource,
+  candidateUrls: Array<string | undefined>
+): Promise<AnalyticsAuthStatus | null> {
+  if (!isOlderThan(marker, await readSignInStamp(source))) {
+    return marker;
+  }
+  const current = await getAnalyticsAuthStatus();
+  if (!current || !markerAppliesToProfile(current, candidateUrls)) {
+    return null;
+  }
+  if (!isOlderThan(current, await readSignInStamp(source))) {
+    return current;
+  }
+  await clearAnalyticsAuthStatus();
+  logger.debug('[sso-auth-gate] Cleared an auth-status marker older than the last sign-in');
+  return null;
+}
+
 /**
  * Cheap, local-only CodeMie SSO auth check.
  * Deliberately excludes the live network probe that
@@ -100,9 +142,11 @@ export async function ensureCodeMieSsoAuth(input: AuthGateInput): Promise<AuthGa
     }
 
     const rawAuthStatus = await getAnalyticsAuthStatus();
-    const authStatus = rawAuthStatus && markerAppliesToProfile(rawAuthStatus, [input.baseUrl, input.syncApiUrl, loginUrl])
-      ? rawAuthStatus
-      : null;
+    const candidateUrls = [input.baseUrl, input.syncApiUrl, loginUrl];
+    let authStatus = rawAuthStatus && markerAppliesToProfile(rawAuthStatus, candidateUrls) ? rawAuthStatus : null;
+    if (authStatus && hasValidAuth && !input.apiKey) {
+      authStatus = await dropMarkerOlderThanSignIn(authStatus, source, candidateUrls);
+    }
 
     if (hasValidAuth && !authStatus) {
       return { ok: true };

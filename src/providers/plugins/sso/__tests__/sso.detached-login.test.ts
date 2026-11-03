@@ -29,6 +29,7 @@ import {
   releaseLoginLockOnFailure,
   waitForDetachedSsoLogin,
   describeLogin,
+  getLastSignInAt,
 } from '../sso.detached-login.js';
 
 const URL_ = 'https://codemie.example.com';
@@ -99,8 +100,22 @@ describe('startDetachedSsoLogin', () => {
     vi.mocked(isProcessAlive).mockReturnValue(false);
     await writeLock({ pid: 1, startedAt: Date.now() - 60_000, succeededAt: Date.now() - 5_000 });
 
-    expect(await startDetachedSsoLogin(URL_)).toBe('cooldown');
+    expect(await startDetachedSsoLogin(URL_)).toBe('signed-in-recently');
     expect(spawnDetached).not.toHaveBeenCalled();
+  });
+
+  it('does not report a successful sign-in as incomplete or send the user to `codemie profile login` during the post-success cooldown (EPMCDME-16568)', async () => {
+    // `codemie profile login` signs in in-process without the lock, so following that advice
+    // right after a successful sign-in opens yet another browser window.
+    vi.mocked(isProcessAlive).mockReturnValue(false);
+    await writeLock({ pid: 1, startedAt: Date.now() - 3_000, succeededAt: Date.now() - 1_000 });
+
+    const text = describeLogin(await startDetachedSsoLogin(URL_));
+
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(text).not.toContain('did not complete');
+    expect(text).not.toContain('codemie profile login');
+    expect(text).toContain('re-send your prompt');
   });
 
   it('starts a new sign-in once the post-success cooldown has elapsed', async () => {
@@ -227,6 +242,14 @@ describe('describeLogin', () => {
     expect(describeLogin('cooldown')).toContain('codemie profile login');
   });
 
+  it('describes a recent sign-in as finished, asks to re-send, and names the cooldown seconds', () => {
+    const text = describeLogin('signed-in-recently');
+    expect(text).toContain('re-send your prompt');
+    expect(text).toContain('wait about 30 seconds');
+    expect(text).not.toContain('did not complete');
+    expect(text).not.toContain('codemie profile login');
+  });
+
   it('describes a failure', () => {
     expect(describeLogin('failed')).toContain('Could not open the browser sign-in');
   });
@@ -345,5 +368,43 @@ describe('describeLogin variants', () => {
 
   it('timed-out wait tells the user to re-send', () => {
     expect(describeLogin('started', { wait: { status: 'timeout' } })).toContain('re-send your prompt');
+  });
+});
+
+describe('getLastSignInAt', () => {
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'sso-lock-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('returns the succeededAt of the lock', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, succeededAt: 5_000 });
+
+    expect(await getLastSignInAt(URL_)).toBe(5_000);
+  });
+
+  it('returns null when there is no lock', async () => {
+    expect(await getLastSignInAt(URL_)).toBeNull();
+  });
+
+  it('returns null while a newer attempt holds the lock without succeededAt', async () => {
+    await writeLock({ pid: 1, startedAt: Date.now() });
+
+    expect(await getLastSignInAt(URL_)).toBeNull();
+  });
+
+  it('returns null for a failed lock', async () => {
+    await writeLock({ pid: 1, startedAt: 1_000, failedAt: 2_000, error: 'boom' });
+
+    expect(await getLastSignInAt(URL_)).toBeNull();
+  });
+
+  it('returns null for a corrupt lock', async () => {
+    await writeLock('{not json');
+
+    expect(await getLastSignInAt(URL_)).toBeNull();
   });
 });

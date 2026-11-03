@@ -5,8 +5,9 @@ import { basename, dirname, join } from 'node:path';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
 import { isProcessAlive, spawnDetached } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
+import type { PlatformUrlSource } from '@/providers/core/codemie-auth-helpers.js';
 
-export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'failed';
+export type DetachedLoginOutcome = 'started' | 'in-progress' | 'cooldown' | 'signed-in-recently' | 'failed';
 
 const LOCK_MAX_AGE_MS = 150_000;
 const COOLDOWN_MS = 30_000;
@@ -53,6 +54,18 @@ async function readLock(lockPath: string): Promise<LoginLock | null> {
       ...(typeof lock.failedAt === 'number' && { failedAt: lock.failedAt }),
       ...(typeof lock.error === 'string' && { error: lock.error }),
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `succeededAt` of the lock record as it stands; null while a newer attempt holds the lock or
+ * after it failed. The lock is global, so `source` does not select anything.
+ */
+export async function getLastSignInAt(_source: PlatformUrlSource): Promise<number | null> {
+  try {
+    return (await readLock(getLockPath()))?.succeededAt ?? null;
   } catch {
     return null;
   }
@@ -172,7 +185,7 @@ async function acquireLock(lockPath: string): Promise<DetachedLoginOutcome | nul
       // 30s post-success cooldown to as long as 150s (caught by blind review). Damp repeated
       // sign-ins for a short cooldown after the most recent success instead (PR #655 review).
       if (Date.now() - existing.succeededAt < COOLDOWN_MS) {
-        return 'cooldown';
+        return 'signed-in-recently';
       }
       // Cooldown elapsed: fall through to the stale/corrupt replace path below.
     } else if (existing) {
@@ -344,7 +357,16 @@ export function describeLogin(
     }
     case 'cooldown':
       return `${EXPIRED_LEAD}\nThe previous sign-in attempt did not complete. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
-    default:
+    case 'signed-in-recently':
+      return `A sign-in finished moments ago; re-send your prompt. If it is rejected again, wait about ${Math.round(COOLDOWN_MS / 1000)} seconds and re-send: a new sign-in then opens automatically.`;
+    case 'failed':
+    case undefined:
       return `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
+    default:
+      return assertNever(outcome);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled login outcome: ${String(value)}`);
 }

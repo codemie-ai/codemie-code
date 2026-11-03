@@ -197,7 +197,8 @@ export class MetricsSyncProcessor implements SessionProcessor {
         clientType,
         dryRun: context.dryRun,
         deadlineMs: context.syncDeadlineMs,
-        abortSignal: context.abortSignal
+        abortSignal: context.abortSignal,
+        credentialsSuperseded: context.credentialsSuperseded
       });
 
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)

@@ -32,6 +32,7 @@ import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
 import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
+import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
@@ -62,7 +63,8 @@ class MetricsApiClient {
       retryAttempts: config.retryAttempts ?? 3,
       retryDelays: config.retryDelays || [1000, 2000, 5000],
       version: config.version || process.env.CODEMIE_CLI_VERSION || 'unknown',
-      clientType: config.clientType || 'codemie-cli'
+      clientType: config.clientType || 'codemie-cli',
+      credentialsSuperseded: config.credentialsSuperseded || (async () => false)
     };
     this.bounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
   }
@@ -98,10 +100,14 @@ class MetricsApiClient {
         // hook auth gate can prompt the user to re-authenticate
         if ((error as MetricsRequestError).isAuthFailure) {
           noteAuthFailure(this.bounds.abortSignal);
-          await markAnalyticsAuthInvalid(
-            statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
-            this.config.baseUrl
-          );
+          if (await this.wasSuperseded()) {
+            logger.debug('[MetricsApiClient] Credentials were replaced by a newer sign-in; not marking analytics auth invalid');
+          } else {
+            await markAnalyticsAuthInvalid(
+              statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
+              this.config.baseUrl
+            );
+          }
         }
 
         if (!this.isRetryable(error as Error)) {
@@ -114,6 +120,17 @@ class MetricsApiClient {
     }
 
     throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`);
+  }
+
+  /** True when a newer sign-in replaced the cookies this client sent; never throws. */
+  private async wasSuperseded(): Promise<boolean> {
+    if (this.config.apiKey || !this.config.cookies) return false;
+    try {
+      return await this.config.credentialsSuperseded(this.config.cookies);
+    } catch (error) {
+      logger.debug('[MetricsApiClient] Superseded-credentials check failed', error);
+      return false;
+    }
   }
 
   private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
@@ -313,6 +330,7 @@ export interface MetricsSenderOptions {
   deadlineMs?: number;
   /** Aborts the request in flight and the backoff (see MetricsApiConfig.abortSignal) */
   abortSignal?: AbortSignal;
+  credentialsSuperseded?: CredentialsSupersededCheck;
 }
 
 /**
@@ -348,7 +366,8 @@ export class MetricsSender {
       version: options.version,
       clientType: options.clientType,
       deadlineMs: options.deadlineMs,
-      abortSignal: options.abortSignal
+      abortSignal: options.abortSignal,
+      credentialsSuperseded: options.credentialsSuperseded
     };
 
     this.client = new MetricsApiClient(config);

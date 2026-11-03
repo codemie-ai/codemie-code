@@ -28,13 +28,7 @@ import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
 import { CredentialRefresher } from './credential-refresh.js';
-
-/** `key=value; key=value` cookie header from a cookie map — same shape every caller here needs. */
-function buildCookieHeader(cookies: Record<string, string>): string {
-  return Object.entries(cookies)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
-}
+import { buildCookieHeader, sentCredentialsSuperseded } from '../../session/cookie-auth.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -179,6 +173,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       apiBaseUrl: this.isLocalDev ? devApiUrl! : this.resolveSyncApiBaseUrl(),
       cookies: cookieHeader,
       apiKey: this.isLocalDev ? devApiKey : undefined,
+      credentialsSuperseded: this.isLocalDev
+        ? undefined
+        : (sent: string) => sentCredentialsSuperseded(sent, this.credentials),
       clientType,
       version,
       dryRun

@@ -41,9 +41,34 @@ import { ProxyContext } from '../proxy-types.js';
 import { markAnalyticsAuthInvalid } from '../../../../../utils/analytics-auth-status.js';
 import { logger } from '../../../../../utils/logger.js';
 import { startDetachedSsoLogin, describeLogin, DetachedLoginOutcome } from '../../sso.detached-login.js';
+import { sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import type { CredentialRefresher } from './credential-refresh.js';
+import type { SSOCredentials } from '../../../../core/types.js';
 
 const OAUTH2_START_MARKER = '/oauth2/start';
 const EXPIRY_LEAD_IN = 'CodeMie SSO session expired.';
+const RENEWED_MESSAGE =
+  'CodeMie SSO session was just renewed; this request used the previous credentials. Please re-send your prompt.';
+
+/**
+ * Anthropic-shaped 401. The body must later become per-client (Codex expects an OpenAI-shaped
+ * error), as the known gap above says.
+ */
+function syntheticUnauthorized(
+  response: IncomingMessage,
+  tools: UpstreamResponseTools,
+  message: string
+): IncomingMessage {
+  const body = Buffer.from(JSON.stringify({
+    type: 'error',
+    error: { type: 'authentication_error', message },
+  }), 'utf-8');
+  const synthetic = tools.fromBuffer(response, body);
+  synthetic.statusCode = 401;
+  synthetic.statusMessage = 'Unauthorized';
+  synthetic.headers = { 'content-type': 'application/json', 'content-length': String(body.length) };
+  return synthetic;
+}
 
 export class SSOSessionExpiryPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-session-expiry';
@@ -64,17 +89,23 @@ export class SSOSessionExpiryPlugin implements ProxyPlugin {
     if (!context.credentials || !('cookies' in context.credentials)) {
       return { name: 'sso-session-expiry' }; // no onUpstreamResponse hook: JWT profiles unaffected
     }
-    return new SSOSessionExpiryInterceptor(context.config.targetApiUrl);
+    return new SSOSessionExpiryInterceptor(
+      context.config.targetApiUrl,
+      context.credentialRefresher as CredentialRefresher<SSOCredentials> | undefined
+    );
   }
 }
 
 class SSOSessionExpiryInterceptor implements ProxyInterceptor {
   name = 'sso-session-expiry';
 
-  constructor(private readonly targetApiUrl: string) {}
+  constructor(
+    private readonly targetApiUrl: string,
+    private readonly credentialRefresher?: CredentialRefresher<SSOCredentials>
+  ) {}
 
   async onUpstreamResponse(
-    _context: ProxyContext,
+    context: ProxyContext,
     response: IncomingMessage,
     tools: UpstreamResponseTools
   ): Promise<IncomingMessage> {
@@ -84,6 +115,16 @@ class SSOSessionExpiryInterceptor implements ProxyInterceptor {
       typeof location === 'string' &&
       location.includes(OAUTH2_START_MARKER);
     if (!isOauthRedirect) return response;
+
+    if (await sentCredentialsSuperseded(context.headers['cookie'], this.credentialRefresher)) {
+      logger.debug(`[${this.name}] request carried superseded credentials; not treating the redirect as an expiry`);
+      try {
+        await tools.readBody(response); // keep-alive socket: the 302 body must be consumed
+      } catch (error) {
+        logger.debug(`[${this.name}] draining the redirect body failed`, error);
+      }
+      return syntheticUnauthorized(response, tools, RENEWED_MESSAGE);
+    }
 
     let outcome: DetachedLoginOutcome | undefined;
     let failedStep: string | undefined;

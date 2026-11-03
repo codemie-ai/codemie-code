@@ -25,6 +25,8 @@ import { getStoredPlatformCredentials } from '../../../../core/codemie-auth-help
 import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getAnalyticsAuthStatus } from '../../../../../utils/analytics-auth-status.js';
+import { getLastSignInAt } from '../../sso.detached-login.js';
+import { readWithDeadline } from '../../session/cookie-auth.js';
 
 /** Minimum time between stored-credential re-reads — see the class doc comment for why a flat
  * time window rather than gating on the credential's own `expiresAt`. */
@@ -40,9 +42,23 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   private current: T;
   private lastRefreshedAt = 0;
   private sawAuthInvalid = false;
+  /** Last lock `succeededAt` a successful read was made for; a different non-null value means a newer sign-in. */
+  private lastActedStamp: number | null = null;
+  /** Start time of the latest read that came back without usable credentials. */
+  private lastFailedReadAt = Number.NEGATIVE_INFINITY;
+  private readsStarted = 0;
+  private lastAssignedRead = 0;
+  /** A read `refresh()` started because of a sign-in signal; concurrent `refresh()` calls join it. */
+  private bypassRead: Promise<T> | null = null;
+  /** The sign-in stamp `bypassRead` was started under. */
+  private bypassStamp: number | null = null;
+  /** A read started by `refreshNow()`; only other `refreshNow()` calls join it. */
+  private refreshNowRead: Promise<T | null> | null = null;
+  private readonly readStore: () => Promise<T | null>;
 
   constructor(initialCredentials: T, private readonly params: CredentialRefreshParams) {
     this.current = initialCredentials;
+    this.readStore = readWithDeadline(() => this.readStoredCredentials());
   }
 
   /** Last known-good credentials — the daemon-startup snapshot until the first successful refresh. */
@@ -65,54 +81,153 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    *
    * The flat TTL alone is NOT enough to guarantee the next call re-reads: the window is counted
    * from the last read, not from when a re-login finishes, so a login that completes partway
-   * through the window still leaves stale cookies in `current` for whatever is left of it. To
-   * close that gap, every call also cheaply checks the shared analytics-auth-status marker
-   * (`markAnalyticsAuthInvalid`/`clearAnalyticsAuthStatus`, written across processes by
-   * `sso-session-expiry.plugin.ts` and the login flow in `sso.auth.ts`): once that marker is seen
-   * invalid and then clears, the credential store only changes at that same moment (a successful
-   * login is the only thing that clears it), so the very next call here bypasses the throttle and
-   * re-reads unconditionally, picking up the fresh cookies without waiting out the rest of the TTL.
+   * through the window still leaves stale cookies in `current` for whatever is left of it. Two
+   * signals bypass the throttle so the very next call re-reads:
+   * - the sign-in lock's `succeededAt` stamp differs from the one last acted on: covers the
+   *   detached sign-in, which can mark, sign in and clear the marker entirely between two calls.
+   *   Compared by identity, not against `lastRefreshedAt`, so a stepped-back clock cannot turn
+   *   every call into a store read;
+   * - the shared analytics-auth-status marker was seen invalid and then cleared: covers sign-ins
+   *   that clear the marker without stamping the lock (`codemie profile login`, the launch-time
+   *   re-auth, an accepted metrics send).
+   *
+   * `lastRefreshedAt` is set when a read starts, so a failing store costs at most one read per
+   * window. The stamp is remembered only after a read that returned credentials: a failed, empty or
+   * timed-out read leaves the sign-in signal unspent, and the stamp bypass is allowed again once a
+   * window has passed since that attempt (the plain throttled path then reads and commits the stamp
+   * on success). Calls arriving while a bypass read is pending await it (after a sign-in a resumed
+   * agent often sends several requests at once, and each old-cookie request would be rejected
+   * again); calls arriving during a plain throttle read get the snapshot at once.
    */
   async refresh(): Promise<T> {
     if (!('cookies' in this.current)) {
       return this.current; // JWT — static, nothing to refresh
     }
 
-    const forceRefresh = await this.consumeAuthRecoveryEdge();
-    if (!forceRefresh && Date.now() - this.lastRefreshedAt < CREDENTIAL_REFRESH_INTERVAL_MS) {
+    const markerInvalid = await this.readMarkerInvalid();
+    const stamp = await getLastSignInAt(this.params);
+
+    // From here to publishing the pending read there is no await, so two calls can never both
+    // start a bypass read or let one slip past the other.
+    const markerEdge = this.consumeAuthRecoveryEdge(markerInvalid);
+    const stampChanged =
+      stamp !== null &&
+      stamp !== this.lastActedStamp &&
+      Date.now() - this.lastFailedReadAt >= CREDENTIAL_REFRESH_INTERVAL_MS;
+    if (!markerEdge && stampChanged && this.bypassRead && this.bypassStamp === stamp) {
+      return this.bypassRead;
+    }
+    if (markerEdge || stampChanged) {
+      this.lastRefreshedAt = Date.now();
+      const pending = this.readAndAssign(stamp)
+        .then(() => this.current)
+        .finally(() => {
+          if (this.bypassRead === pending) {
+            this.bypassRead = null;
+            this.bypassStamp = null;
+          }
+        });
+      this.bypassRead = pending;
+      this.bypassStamp = stamp;
+      return pending;
+    }
+    if (this.bypassRead) {
+      return this.bypassRead;
+    }
+    if (Date.now() - this.lastRefreshedAt < CREDENTIAL_REFRESH_INTERVAL_MS) {
       return this.current;
     }
     this.lastRefreshedAt = Date.now();
+    await this.readAndAssign(stamp);
+    return this.current;
+  }
+
+  /**
+   * Re-reads the store now, ignoring the throttle, and returns what it holds (also adopted as the
+   * snapshot), or null when the read failed, timed out or came back empty. Never joins a
+   * `refresh()` read: a throttle read begun before a sign-in would hand back the old snapshot.
+   */
+  refreshNow(): Promise<T | null> {
+    if (!('cookies' in this.current)) {
+      return Promise.resolve(null);
+    }
+    if (this.refreshNowRead) {
+      return this.refreshNowRead;
+    }
+    const pending = (async (): Promise<T | null> => {
+      const stamp = await getLastSignInAt(this.params);
+      const fresh = await this.readAndAssign(stamp);
+      if (fresh) {
+        this.lastRefreshedAt = Date.now();
+      }
+      return fresh;
+    })().finally(() => {
+      if (this.refreshNowRead === pending) {
+        this.refreshNowRead = null;
+      }
+    });
+    this.refreshNowRead = pending;
+    return pending;
+  }
+
+  /**
+   * One store read under the deadline. Reads are numbered at start; a read adopts its result only
+   * if no later-started read has adopted one already, so a slow older read never overwrites a newer
+   * snapshot, and only then does the sign-in stamp it was started under count as handled. Empty,
+   * failed and timed-out reads keep the last known-good credentials and leave the stamp unspent.
+   */
+  private async readAndAssign(stamp: number | null): Promise<T | null> {
+    const readNumber = ++this.readsStarted;
+    const startedAt = Date.now();
+    const fresh = await this.readStore();
+    if (!fresh) {
+      this.lastFailedReadAt = Math.max(this.lastFailedReadAt, startedAt);
+    } else if (readNumber > this.lastAssignedRead) {
+      this.lastAssignedRead = readNumber;
+      this.current = fresh;
+      if (stamp !== null) {
+        this.lastActedStamp = stamp;
+      }
+    }
+    return fresh;
+  }
+
+  private async readStoredCredentials(): Promise<T | null> {
     try {
       const stored = await getStoredPlatformCredentials(this.params);
-      if (stored?.credentials) {
-        this.current = stored.credentials as T;
-      }
-      // No fresher credentials found yet: keep using the last known-good ones.
+      return (stored?.credentials as T | undefined) ?? null;
     } catch (error) {
       logger.debug('[credential-refresh] Failed to re-read stored SSO credentials; using the last known-good snapshot', error);
+      return null;
     }
-    return this.current;
+  }
+
+  /** Whether the analytics-auth-status marker is invalid; null when it could not be read. */
+  private async readMarkerInvalid(): Promise<boolean | null> {
+    try {
+      return (await getAnalyticsAuthStatus()) !== null;
+    } catch (error) {
+      logger.debug('[credential-refresh] Failed to read analytics-auth-status marker; keeping the throttled refresh path', error);
+      return null;
+    }
   }
 
   /**
    * Returns true exactly once, on the first call after the analytics-auth-status marker
    * transitions from invalid to cleared — the signal that a re-login just stored fresh
-   * credentials. Best-effort: a failed status read never blocks the normal throttled path.
+   * credentials. An unreadable marker never blocks the normal throttled path.
    */
-  private async consumeAuthRecoveryEdge(): Promise<boolean> {
-    try {
-      const invalid = (await getAnalyticsAuthStatus()) !== null;
-      if (invalid) {
-        this.sawAuthInvalid = true;
-        return false;
-      }
-      if (this.sawAuthInvalid) {
-        this.sawAuthInvalid = false;
-        return true;
-      }
-    } catch (error) {
-      logger.debug('[credential-refresh] Failed to read analytics-auth-status marker; keeping the throttled refresh path', error);
+  private consumeAuthRecoveryEdge(markerInvalid: boolean | null): boolean {
+    if (markerInvalid === null) {
+      return false;
+    }
+    if (markerInvalid) {
+      this.sawAuthInvalid = true;
+      return false;
+    }
+    if (this.sawAuthInvalid) {
+      this.sawAuthInvalid = false;
+      return true;
     }
     return false;
   }

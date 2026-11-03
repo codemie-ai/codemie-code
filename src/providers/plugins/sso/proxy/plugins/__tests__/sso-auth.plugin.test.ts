@@ -9,6 +9,9 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
+  getLastSignInAt: vi.fn().mockResolvedValue(null),
+}));
 
 import { SSOAuthPlugin } from '../sso-auth.plugin.js';
 import { getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
