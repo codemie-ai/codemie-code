@@ -16,6 +16,7 @@ import type { HookProcessingConfig } from '@/cli/commands/hook.js';
 import { boundedRequest, noteSendAttempt } from '@/providers/plugins/sso/session/bounded-request.js';
 import { processStartedAt } from '@/utils/processes.js';
 import { logger } from '@/utils/logger.js';
+import { onFakeClock } from '../../../../../tests/helpers/fake-clock.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
@@ -447,6 +448,28 @@ describe('reconcileOtherSessions', () => {
     });
   });
 
+  it('a close past its 3rd attempt whose pass was abandoned renames nothing: a warn names the record still live, no "closed locally" line', async () => {
+    const stranded = record({ finalizeAttempts: 3 });
+    save(stranded);
+    let pass: ReturnType<typeof reconcileOtherSessions> | undefined;
+    const hook = pipeline({
+      processEvent: async () => {
+        void pass!.abandon();
+        throw new Error('metrics file unwritable');
+      },
+    });
+    vi.mocked(logger.warn).mockClear();
+
+    pass = reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook });
+    await pass.done;
+
+    expect(existsSync(join(sessionsDir, `${stranded.sessionId}.json`))).toBe(true);
+    expect(existsSync(join(sessionsDir, `completed_${stranded.sessionId}.json`))).toBe(false);
+    const warns = vi.mocked(logger.warn).mock.calls.map(([line]) => String(line));
+    expect(warns.filter((line) => line.includes('closed locally'))).toEqual([]);
+    expect(warns).toContainEqual(expect.stringMatching(new RegExp(`${stranded.sessionId}.*still live`)));
+  });
+
   it('a finalize failing past its 3rd attempt marks a record of this host dropped; one of another host closed locally by design is not', async () => {
     const own = record({ finalizeAttempts: 3 });
     const foreign = record({ finalizeAttempts: 3, codemieUrl: 'https://other.example.com' });
@@ -574,6 +597,79 @@ describe('reconcileOtherSessions', () => {
 
     const read = vi.mocked(fsPromises.readFile).mock.calls.map(([path]) => String(path));
     expect(read.filter((path) => path.startsWith(sessionsDir))).toEqual([]);
+  });
+});
+
+describe('a close whose rename meets a held metrics lock stops at the attempt deadline, the set still live', () => {
+
+  /** The record's set with a metrics file whose lock a live writer (this test's parent) holds throughout. */
+  function saveWithHeldMetricsLock(session: Session): void {
+    save(session);
+    writeFileSync(join(sessionsDir, `${session.sessionId}_metrics.jsonl`), '');
+    writeFileSync(join(sessionsDir, `${session.sessionId}.metrics.lock`), JSON.stringify({ pid: process.ppid }));
+  }
+
+  function expectStillLive(sessionId: string): void {
+    expect(existsSync(join(sessionsDir, `${sessionId}.json`))).toBe(true);
+    expect(existsSync(join(sessionsDir, `${sessionId}_metrics.jsonl`))).toBe(true);
+    expect(readdirSync(sessionsDir).filter((name) => name.startsWith(`completed_${sessionId}`))).toEqual([]);
+  }
+
+  /** The fake time the pass took from the attempt's flush to its end; the flush spends 9.7 s of the attempt's 10 s. */
+  async function passTimeAfterSlowFlush(flush: () => Promise<void>): Promise<number> {
+    let flushedAt = 0;
+    let doneAt = 0;
+    const hook = pipeline({
+      processEvent: async () => {
+        flushedAt = Date.now();
+        vi.setSystemTime(Date.now() + 9_700);
+        await flush();
+      },
+    });
+    await onFakeClock(async () => {
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+      doneAt = Date.now();
+    });
+    return doneAt - flushedAt;
+  }
+
+  it('past its 3rd attempt (closed locally): returns at the deadline', async () => {
+    const exhausted = record({ finalizeAttempts: 3 });
+    saveWithHeldMetricsLock(exhausted);
+
+    const spent = await passTimeAfterSlowFlush(async () => { throw new Error('metrics file unwritable'); });
+
+    expect(spent).toBeGreaterThanOrEqual(9_700);
+    expect(spent).toBeLessThan(10_500);
+    expectStillLive(exhausted.sessionId);
+  });
+
+  it('a legacy record: returns at the deadline', async () => {
+    const legacy = record({ ownerPid: undefined, ownerStartedAt: undefined, startTime: Date.now() - 73 * HOUR });
+    saveWithHeldMetricsLock(legacy);
+
+    const spent = await passTimeAfterSlowFlush(async () => {});
+
+    expect(spent).toBeGreaterThanOrEqual(9_700);
+    expect(spent).toBeLessThan(10_500);
+    expectStillLive(legacy.sessionId);
+  });
+
+  it('an unqueued record (no CodeMie host): returns at the deadline', async () => {
+    // No flush to spend the attempt: its 10 s deadline and the lock's own 10 s wait coincide here
+    const unqueued = record({ status: 'completed', codemieUrl: undefined });
+    saveWithHeldMetricsLock(unqueued);
+    let startedAt = 0;
+    let doneAt = 0;
+
+    await onFakeClock(async () => {
+      startedAt = Date.now();
+      await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: pipeline() }).done;
+      doneAt = Date.now();
+    });
+
+    expect(doneAt - startedAt).toBeLessThan(10_500);
+    expectStillLive(unqueued.sessionId);
   });
 });
 

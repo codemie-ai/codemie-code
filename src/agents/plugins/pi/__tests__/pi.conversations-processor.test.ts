@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
@@ -36,6 +36,8 @@ beforeEach(() => {
   originalCodemieHome = process.env.CODEMIE_HOME;
   process.env.CODEMIE_HOME = codemieHome;
   mkdirSync(join(codemieHome, 'sessions'), { recursive: true });
+  // The live record: a conversation file is created only while it exists
+  writeFileSync(join(codemieHome, 'sessions', `${SESSION_ID}.json`), JSON.stringify({ sessionId: SESSION_ID, startTime: 0 }));
   lastEntryId = null;
   upsertConversation.mockReset();
   upsertConversation.mockResolvedValue({ success: true, message: 'ok', new_messages: 1, total_messages: 1 });
@@ -577,6 +579,29 @@ describe('PiConversationsProcessor', () => {
     expect(readPayloads()).toHaveLength(1);
   });
 
+  it('does not report a dropped write as queued, so the next pass writes it', async () => {
+    const processor = await createProcessor();
+    const entries = [
+      userEntry('first question'),
+      assistantEntry([{ type: 'text', text: 'first answer' }]),
+    ];
+    const record = join(codemieHome, 'sessions', `${SESSION_ID}.json`);
+    const hidden = join(codemieHome, 'sessions', `completed_${SESSION_ID}.json`);
+
+    // A SessionEnd rename in flight: the live record is gone, so the conversation write is dropped
+    renameSync(record, hidden);
+    const dropped = await processor.process(buildSession(entries), buildContext());
+    expect(dropped.success).toBe(true);
+    expect(dropped.metadata?.recordsProcessed).toBe(0);
+    expect(dropped.metadata?.syncUpdates).toBeUndefined();
+    expect(readPayloads()).toHaveLength(0);
+
+    renameSync(hidden, record);
+    const retried = await processor.process(buildSession(entries), buildContext());
+    expect(retried.metadata?.syncUpdates).toBeDefined();
+    expect(readPayloads()).toHaveLength(1);
+  });
+
   it('emits only the new turn when the transcript grows', async () => {
     const processor = await createProcessor();
     const entries = [
@@ -601,6 +626,36 @@ describe('PiConversationsProcessor', () => {
       'second answer',
     ]);
     expect(payloads[1].historyIndices).toEqual([1, 1]);
+  });
+
+  it('reads the conversation file past a torn line and appends the next turn after it', async () => {
+    const processor = await createProcessor();
+    const first = [userEntry('first question'), assistantEntry([{ type: 'text', text: 'first answer' }])];
+    const second = [
+      ...first,
+      userEntry('second question', '2026-08-01T10:01:00.000Z'),
+      assistantEntry([{ type: 'text', text: 'second answer' }], '2026-08-01T10:01:05.000Z'),
+    ];
+    const third = [
+      ...second,
+      userEntry('third question', '2026-08-01T10:02:00.000Z'),
+      assistantEntry([{ type: 'text', text: 'third answer' }], '2026-08-01T10:02:05.000Z'),
+    ];
+    await processor.process(buildSession(first), buildContext());
+    await processor.process(buildSession(second), buildContext());
+    const [line1, line2] = readFileSync(conversationsPath(), 'utf-8').trim().split('\n');
+    writeFileSync(conversationsPath(), `${line1}\n{"payloadId":"torn\n${line2}\n`);
+
+    const result = await processor.process(buildSession(third), buildContext());
+
+    expect(result.success).toBe(true);
+    const lines = readFileSync(conversationsPath(), 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines.slice(0, 3)).toEqual([line1, '{"payloadId":"torn', line2]);
+    expect(JSON.parse(lines[3]).payload.history.map((message: any) => message.message)).toEqual([
+      'third question',
+      'third answer',
+    ]);
   });
 
   it('completes a turn whose answer arrived after the prompt was already queued', async () => {

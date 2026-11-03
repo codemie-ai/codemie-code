@@ -111,7 +111,7 @@ describe('Gemini Metrics Processor - File Operations', () => {
       agentName: 'gemini',
       provider: 'test-provider',
       project: 'test-project',
-      startTime: Date.now(),
+      startTime: 0, // before every fixture message: the run window keeps them all
       workingDirectory: '/test',
       gitBranch: 'test',
       status: 'active',

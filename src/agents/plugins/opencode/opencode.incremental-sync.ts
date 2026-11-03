@@ -44,9 +44,10 @@ export interface StartOpenCodeIncrementalSyncOptions {
 
 /**
  * 60s rather than Codex's 30s: the Stop hook and this timer both write
- * {id}_metrics.jsonl, and MetricsSyncProcessor rewrites that file atomically
- * while MetricsWriter appends to it. A slower tick narrows the window in which
- * an appended delta can be lost to an interleaved rewrite.
+ * {id}_metrics.jsonl. MetricsWriter appends and MetricsSyncProcessor rewrites
+ * that file under its lock, the rewrite re-reading it first, so no delta is lost
+ * to an interleaved write; a slower tick only means fewer passes over a transcript
+ * and fewer uploads.
  */
 const DEFAULT_INTERVAL_MS = 60_000;
 
