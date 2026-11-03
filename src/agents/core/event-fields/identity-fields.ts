@@ -108,7 +108,7 @@ async function resolveProjectNameFromConfig(cwd: string): Promise<string> {
 }
 
 /** Walks up from `startDir` to the nearest ancestor with a local `.codemie` config; `startDir` itself if none has one. */
-async function findNearestConfigDir(startDir: string): Promise<string> {
+export async function findNearestConfigDir(startDir: string): Promise<string> {
   let dir = startDir;
   for (;;) {
     if (await ConfigLoader.hasLocalConfig(dir)) {

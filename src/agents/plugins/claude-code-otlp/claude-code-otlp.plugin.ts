@@ -21,7 +21,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { type AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, SSO_LOGIN_WAIT_MS } from '@/providers/plugins/sso/sso.detached-login.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
@@ -50,7 +50,7 @@ import {
   type SessionEnvCheckInput,
   type SubagentFile,
 } from './transcript/orchestrator.js';
-import { readForkedSkillMarker, readSubagentMeta, subagentFilePath } from './transcript/subagent-usage.js';
+import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -194,7 +194,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // the triggering hook's own transcript_path (the main transcript) and agent_id instead.
     const agentTranscriptPath = subagentFilePath(hookInput.transcript_path, hookInput.agent_id);
     const marker = await readForkedSkillMarker(agentTranscriptPath);
-    const payload = marker.skillName ? { ...hookInput, skill_name: marker.skillName } : hookInput;
+    const skillName =
+      marker.skillName || (await resolveSubagentSkill(hookInput.transcript_path, hookInput.agent_id)).skillName;
+    const payload = skillName ? { ...hookInput, skill_name: skillName } : hookInput;
     return { decision: 'forward', payload: [payload] };
   }
 
@@ -413,8 +415,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // double-count its usage right back into api_calls. agentTranscriptPath is already confirmed
     // non-empty above, so it is always a safe final fallback.
     const derivedAgentId = basename(agentTranscriptPath).replace(/^agent-/, '').replace(/\.jsonl$/, '');
-    const subagentFile: SubagentFile = {
-      agentId: hookInput.agent_id || derivedAgentId || agentTranscriptPath,
+    const agentId = hookInput.agent_id || derivedAgentId || agentTranscriptPath;
+    const candidate: SubagentFile = {
+      agentId,
       filePath: agentTranscriptPath,
       // `tool_use_id` is not declared on the SDK's SubagentStopHookInput type; the hook payload
       // wins when it carries it anyway, else fall back to the `.meta.json` sidecar.
@@ -423,15 +426,29 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       spawnDepth: meta.spawnDepth,
       description: meta.description,
       cwd: hookInput.cwd,
-      skillName: marker.skillName,
+    };
+    // Resolved from the hook's own file (the actual candidate), not only from directory discovery.
+    const resolved = marker.skillName
+      ? { skillName: marker.skillName, pending: false }
+      : await resolveSubagentSkill(hookInput.transcript_path, agentId, candidate);
+    const skillName = resolved.skillName;
+    const subagentFile: SubagentFile = {
+      ...candidate,
+      description: candidate.description || (skillName ? `/${skillName}` : undefined),
+      skillName: skillName || undefined,
+      pending: resolved.pending || undefined,
     };
 
-    const pass = await openSubagentPass(hookInput.session_id, subagentFile, envCheckInput(hookInput));
+    const pass = await openSubagentPass(
+      hookInput.session_id,
+      subagentFile,
+      envCheckInput(hookInput)
+    );
     const stopFields = resolveSubagentStopFields(subagentFile, pass.events);
     const stopPayload = {
       ...hookInput,
       ...stopFields,
-      ...(marker.skillName ? { skill_name: marker.skillName } : {}),
+      ...(skillName ? { skill_name: skillName } : {}),
     };
     return {
       decision: 'forward',
@@ -441,8 +458,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
-    const workingDir = process.cwd();
-    const config = await ConfigLoader.load(workingDir);
+    // The session's profile, not the cwd's: the hook follows the agent into subdirectories (EPMCDME-16308).
+    const profile = await resolveHookAuthProfile();
     // Settings written before the 180s prompt timeout keep the 30s default: never outwait the installed timeout.
     const timeoutMs = ((await readPromptHookTimeoutSeconds()) ?? LEGACY_HOOK_TIMEOUT_SECONDS) * 1000;
     const waitMs = Math.max(0, Math.min(SSO_LOGIN_WAIT_MS, timeoutMs - HOOK_TIMEOUT_HEADROOM_MS));
@@ -450,9 +467,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // stdout carries the hook's JSON decision, so the wait notice goes to stderr.
     return await ensureCodeMieSsoAuthOrWait(
       {
-        provider: config.provider,
-        ssoUrl: config.codeMieUrl || config.baseUrl,
-        baseUrl: config.baseUrl,
+        provider: profile.provider,
+        ssoUrl: profile.ssoUrl,
+        baseUrl: profile.baseUrl,
       },
       { waitMs, onWaitStart: (message) => process.stderr.write(message + '\n') }
     );
