@@ -101,6 +101,30 @@ export class SyncDeliveryError extends CodeMieError {
   }
 }
 
+/** Why a `git` subprocess invoked by `codemie analytics sync`'s git-repo target failed,
+ * classified from its stderr (see `classifyGitError` in `targets/git-client.ts`). */
+export type GitFailureCause =
+  | 'auth'
+  | 'host-key'
+  | 'unreachable'
+  | 'rejected'
+  | 'protected'
+  | 'timeout'
+  | 'other';
+
+/** A `git` subprocess run by the sync git-repo target failed or timed out. `message` is
+ * already redacted (no token/signature). The field is named `gitCause`, not `cause`, to
+ * avoid colliding with `Error.cause`. */
+export class SyncGitError extends CodeMieError {
+  constructor(
+    message: string,
+    public readonly gitCause: GitFailureCause
+  ) {
+    super(message);
+    this.name = 'SyncGitError';
+  }
+}
+
 export class ExportTooLargeError extends CodeMieError {
   constructor(
     public readonly bytes: number,
