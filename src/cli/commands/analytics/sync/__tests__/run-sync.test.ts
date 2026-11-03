@@ -18,6 +18,7 @@ const REPORT: SyncReport = {
 
 const BASE_SETTINGS: SyncSettings = {
   webhookUrl: 'https://example.invalid/hook?sig=FAKE',
+  format: 'json',
   includeExternal: 'windows',
   at: '03:00',
   lookbackDays: 7,

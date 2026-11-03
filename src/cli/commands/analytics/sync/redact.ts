@@ -1,20 +1,24 @@
 /**
  * Secret redaction helpers for `codemie analytics sync`.
  *
- * Webhook URLs carry a signed query parameter (`sig=`) that must never reach
- * logs, error messages, or console output. These helpers strip that value
- * out of arbitrary text and build safe error messages from unknown errors,
- * including chained `cause` errors.
+ * Webhook URLs carry a signed query parameter (`sig=`) and git repo URLs may carry
+ * `user:token@`/`user:pass@` userinfo credentials; neither must ever reach logs, error
+ * messages, or console output. These helpers strip those values out of arbitrary text and
+ * build safe error messages from unknown errors, including chained `cause` errors.
  */
 
 const MAX_CAUSE_DEPTH = 10;
 
 /**
- * Replace every `sig=<value>` query value in any URL found in `text` with
- * `sig=REDACTED`. Other query parameters are left untouched.
+ * Replace every `sig=<value>` query value in any URL found in `text` with `sig=REDACTED`,
+ * and every `scheme://user:pass@` URL userinfo with `scheme://***@`. Other query
+ * parameters, and a bare `user@host` with no password (e.g. a scp-style git URL), are left
+ * untouched.
  */
 export function redactSecrets(text: string): string {
-  return text.replace(/\bsig=[^&\s"'<>)]+/g, 'sig=REDACTED');
+  return text
+    .replace(/\bsig=[^&\s"'<>)]+/g, 'sig=REDACTED')
+    .replace(/\/\/[^/@\s]+:[^/@\s]+@/g, '//***@');
 }
 
 /**

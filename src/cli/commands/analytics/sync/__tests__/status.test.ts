@@ -8,6 +8,7 @@ const NOW = new Date('2026-10-29T12:00:00.000Z');
 
 const BASE_SETTINGS: SyncSettings = {
   webhookUrl: 'https://hooks.example.invalid/abc?sig=SUPERSECRET123',
+  format: 'json',
   includeExternal: 'windows',
   at: '03:00',
   lookbackDays: 7,
@@ -216,9 +217,9 @@ describe('runStatus', () => {
   });
 
   it('shows the default lookback label when lookbackDays is omitted', async () => {
-    const { webhookUrl, includeExternal, at } = BASE_SETTINGS;
+    const { webhookUrl, format, includeExternal, at } = BASE_SETTINGS;
     const { deps, printed } = makeDeps({
-      loadSettings: async () => ({ webhookUrl, includeExternal, at }),
+      loadSettings: async () => ({ webhookUrl, format, includeExternal, at }),
     });
 
     await runStatus(deps);

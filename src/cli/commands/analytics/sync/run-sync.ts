@@ -109,6 +109,13 @@ async function run(deps: SyncDeps, now: Date): Promise<number> {
     return 0;
   }
 
+  // Git delivery is not implemented yet (a later task); a git-only settings file is valid
+  // but this runner can only deliver to a webhook.
+  if (settings.webhookUrl === undefined) {
+    await emit(deps, now, 'fail', 'setup no webhook configured; git sync delivery is not implemented yet');
+    return 1;
+  }
+
   try {
     await deps.send(settings.webhookUrl, report);
   } catch (err) {

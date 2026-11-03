@@ -15,6 +15,7 @@ import {
 } from '../config-store.js';
 
 const FAKE_URL = 'https://example.invalid/webhook?sig=FAKE';
+const FAKE_GIT_REPO = 'https://example.invalid/team/analytics.git';
 
 describe('getSyncSettingsPath', () => {
   it('points at the collector-compatible analytics-sync.json under the CodeMie home', () => {
@@ -23,9 +24,10 @@ describe('getSyncSettingsPath', () => {
 });
 
 describe('validateInstallOptions', () => {
-  it('rejects a missing --webhook, naming the flag', () => {
+  it('rejects neither --webhook nor --git-repo given, naming both flags', () => {
     expect(() => validateInstallOptions({})).toThrow(SyncConfigError);
     expect(() => validateInstallOptions({})).toThrow(/--webhook/);
+    expect(() => validateInstallOptions({})).toThrow(/--git-repo/);
   });
 
   it('rejects an http: --webhook, naming the flag', () => {
@@ -50,9 +52,13 @@ describe('validateInstallOptions', () => {
     );
   });
 
-  it('omitting --lookback-days yields no lookbackDays key, with defaults at 03:00 / windows', () => {
+  it('rejects an unknown --format value, naming the flag', () => {
+    expect(() => validateInstallOptions({ webhook: FAKE_URL, format: 'otel' })).toThrow(/--format/);
+  });
+
+  it('omitting --lookback-days yields no lookbackDays key, with defaults at 03:00 / windows / json', () => {
     const settings = validateInstallOptions({ webhook: FAKE_URL });
-    expect(settings).toEqual({ webhookUrl: FAKE_URL, includeExternal: 'windows', at: '03:00' });
+    expect(settings).toEqual({ webhookUrl: FAKE_URL, format: 'json', includeExternal: 'windows', at: '03:00' });
     expect('lookbackDays' in settings).toBe(false);
   });
 
@@ -65,10 +71,49 @@ describe('validateInstallOptions', () => {
     });
     expect(settings).toEqual({
       webhookUrl: FAKE_URL,
+      format: 'json',
       includeExternal: 'always',
       at: '14:30',
       lookbackDays: 14
     });
+  });
+
+  it.each(['/abs', 'C:\\x', 'a/../..'])('rejects --git-path "%s", naming the flag', (gitPath) => {
+    expect(() => validateInstallOptions({ gitRepo: FAKE_GIT_REPO, gitPath })).toThrow(/--git-path/);
+  });
+
+  it('rejects a --git-repo URL with embedded credentials, naming the flag', () => {
+    expect(() => validateInstallOptions({ gitRepo: 'https://u:t@host/r.git' })).toThrow(/--git-repo/);
+  });
+
+  it('accepts a plain scp-style ssh --git-repo URL with a username but no password', () => {
+    const settings = validateInstallOptions({ gitRepo: 'git@host:org/r.git' });
+    expect(settings.git).toEqual({ repoUrl: 'git@host:org/r.git' });
+  });
+
+  it('accepts an ssh:// --git-repo URL with a username but no password', () => {
+    const settings = validateInstallOptions({ gitRepo: 'ssh://git@host/r.git' });
+    expect(settings.git).toEqual({ repoUrl: 'ssh://git@host/r.git' });
+  });
+
+  it('git-only validates to { git: { repoUrl }, format: "json" } with no webhookUrl', () => {
+    const settings = validateInstallOptions({ gitRepo: FAKE_GIT_REPO });
+    expect(settings).toEqual({
+      git: { repoUrl: FAKE_GIT_REPO },
+      format: 'json',
+      includeExternal: 'windows',
+      at: '03:00'
+    });
+    expect('webhookUrl' in settings).toBe(false);
+  });
+
+  it('normalises a --git-path and keeps a trimmed --git-branch', () => {
+    const settings = validateInstallOptions({
+      gitRepo: FAKE_GIT_REPO,
+      gitBranch: ' main ',
+      gitPath: './reports/analytics/'
+    });
+    expect(settings.git).toEqual({ repoUrl: FAKE_GIT_REPO, branch: 'main', path: 'reports/analytics' });
   });
 });
 
@@ -105,6 +150,23 @@ describe('sync settings file', () => {
       await writeSyncSettings(settings, settingsPath);
 
       await expect(loadSyncSettings(settingsPath)).resolves.toEqual(settings);
+    });
+
+    it('loads a legacy webhook-only file (no format/git) with format defaulted to json', async () => {
+      await writeFile(settingsPath, JSON.stringify({ webhookUrl: FAKE_URL, includeExternal: 'windows', at: '03:00' }), 'utf-8');
+
+      await expect(loadSyncSettings(settingsPath)).resolves.toEqual({
+        webhookUrl: FAKE_URL,
+        format: 'json',
+        includeExternal: 'windows',
+        at: '03:00'
+      });
+    });
+
+    it('returns null when the file has neither a usable webhookUrl nor a usable git.repoUrl', async () => {
+      await writeFile(settingsPath, JSON.stringify({ includeExternal: 'windows', at: '03:00' }), 'utf-8');
+
+      await expect(loadSyncSettings(settingsPath)).resolves.toBeNull();
     });
   });
 

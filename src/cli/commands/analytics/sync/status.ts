@@ -127,7 +127,9 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   deps.print(`  Run time:              ${settings.at} local`);
   deps.print(`  Lookback window:       ${lookbackText(settings)}`);
   deps.print(`  Include external:      ${settings.includeExternal}`);
-  deps.print(`  Webhook:               ${webhookHost(settings.webhookUrl)}`);
+  if (settings.webhookUrl !== undefined) {
+    deps.print(`  Webhook:               ${webhookHost(settings.webhookUrl)}`);
+  }
   deps.print(`  Last run:              ${lastRunText(lastRun)}`);
   deps.print(`  Last successful send:  ${lastSend}`);
 

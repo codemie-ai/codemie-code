@@ -21,6 +21,10 @@ describe('redactSecrets', () => {
     expect(result).toContain('sig=REDACTED');
     expect(result).not.toContain('FAKESIG');
   });
+
+  it('replaces a URL userinfo user:token@ with ***@', () => {
+    expect(redactSecrets('https://u:t@h/r')).toBe('https://***@h/r');
+  });
 });
 
 describe('errorMessage', () => {
@@ -42,11 +46,13 @@ describe('error classes', () => {
     expect(err).toBeInstanceOf(CodeMieError);
   });
 
-  it('SyncTargetMissingError names the install command, not sync config', () => {
+  it('SyncTargetMissingError names the install command and both target flags, not sync config', () => {
     const err = new SyncTargetMissingError();
     expect(err.name).toBe('SyncTargetMissingError');
     expect(err).toBeInstanceOf(CodeMieError);
     expect(err.message).toContain('codemie analytics sync install');
+    expect(err.message).toContain('--webhook <url>');
+    expect(err.message).toContain('--git-repo <url>');
     expect(err.message).not.toContain('sync config');
   });
 

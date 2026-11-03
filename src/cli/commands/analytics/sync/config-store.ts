@@ -9,13 +9,13 @@
  */
 
 import { chmod, mkdir, readFile, unlink, writeFile } from 'fs/promises';
-import { dirname } from 'path';
+import { dirname, posix as posixPath } from 'path';
 
 import { getCodemiePath } from '@/utils/paths.js';
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { redactSecrets } from './redact.js';
-import type { IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
+import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
 
 export const DEFAULT_LOOKBACK_DAYS = 7;
 export const DEFAULT_AT = '03:00';
@@ -28,15 +28,19 @@ const MAX_LOOKBACK_DAYS = 30;
 const INCLUDE_EXTERNAL_VALUES: readonly IncludeExternalPolicy[] = ['windows', 'always', 'never'];
 const INTEGER_PATTERN = /^\d+$/;
 const AT_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SYNC_FORMAT = 'json' as const;
 
 /** Absolute path to the sync settings file. */
 export function getSyncSettingsPath(): string {
   return getCodemiePath('analytics-sync.json');
 }
 
-function validateWebhookUrl(webhook: string | undefined): string {
+/** `undefined`/blank -> no webhook target given (not an error by itself — at least one of
+ * webhook/git is required overall, checked by the caller). Otherwise validates the URL is
+ * `https:`. */
+function validateWebhookUrl(webhook: string | undefined): string | undefined {
   if (webhook === undefined || webhook.trim() === '') {
-    throw new SyncConfigError('--webhook is required: pass the https:// URL the daily report is delivered to.');
+    return undefined;
   }
 
   let parsed: URL;
@@ -51,6 +55,107 @@ function validateWebhookUrl(webhook: string | undefined): string {
   }
 
   return webhook;
+}
+
+/** Whether `rawUrl` embeds `user:pass@`/`user:token@` userinfo (a password, not just a
+ * username). Matches both a URL with a scheme (`https://u:t@host/r`) and a scp-style ssh
+ * URL (`git@host:org/r.git`, `user:pass@host:org/r.git`) — the latter has no `://`. A plain
+ * `user@host` (ssh username, no password) is not flagged. */
+function hasEmbeddedCredentials(rawUrl: string): boolean {
+  const match = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?([^@/]+)@/.exec(rawUrl);
+  return match !== null && match[1].includes(':');
+}
+
+/** `undefined`/blank -> no git repo URL given. Otherwise rejects embedded credentials. */
+function validateGitRepoUrl(gitRepo: string | undefined): string | undefined {
+  if (gitRepo === undefined || gitRepo.trim() === '') {
+    return undefined;
+  }
+
+  if (hasEmbeddedCredentials(gitRepo)) {
+    throw new SyncConfigError(`--git-repo must not embed credentials: ${redactSecrets(gitRepo)}`);
+  }
+
+  return gitRepo;
+}
+
+/** `undefined`/blank -> remote default branch. Otherwise trims and requires non-empty. */
+function validateGitBranch(gitBranch: string | undefined): string | undefined {
+  if (gitBranch === undefined) {
+    return undefined;
+  }
+
+  const trimmed = gitBranch.trim();
+  if (trimmed === '') {
+    throw new SyncConfigError('--git-branch must not be empty.');
+  }
+
+  return trimmed;
+}
+
+/** `undefined`/blank -> repo root. Rejects an absolute posix path, a Windows drive/UNC
+ * path, and anything that escapes the repo once normalised. Returns a normalised
+ * posix-relative path, or `undefined` when it normalises to the repo root. */
+function validateGitPath(gitPath: string | undefined): string | undefined {
+  if (gitPath === undefined) {
+    return undefined;
+  }
+
+  const trimmed = gitPath.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+
+  if (trimmed.includes('\\') || /^[a-zA-Z]:/.test(trimmed)) {
+    throw new SyncConfigError(`--git-path must be a posix-relative path, not a Windows path: ${trimmed}`);
+  }
+
+  if (posixPath.isAbsolute(trimmed)) {
+    throw new SyncConfigError(`--git-path must be relative, not absolute: ${trimmed}`);
+  }
+
+  // `normalize` keeps a trailing slash (e.g. "a/" -> "a/", "./" -> "./"); strip it so the
+  // stored path is a plain relative segment.
+  const normalized = posixPath.normalize(trimmed).replace(/\/+$/, '');
+  if (normalized === '' || normalized === '.') {
+    return undefined;
+  }
+
+  if (normalized === '..' || normalized.startsWith('../') || posixPath.isAbsolute(normalized)) {
+    throw new SyncConfigError(`--git-path escapes the repository: ${trimmed}`);
+  }
+
+  return normalized;
+}
+
+/** `undefined` -> no git target given. Otherwise the fully-validated `GitSettings`. */
+function validateGitSettings(options: InstallOptions): GitSettings | undefined {
+  const repoUrl = validateGitRepoUrl(options.gitRepo);
+  const branch = validateGitBranch(options.gitBranch);
+  const path = validateGitPath(options.gitPath);
+
+  if (repoUrl === undefined) {
+    return undefined;
+  }
+
+  return {
+    repoUrl,
+    ...(branch !== undefined && { branch }),
+    ...(path !== undefined && { path })
+  };
+}
+
+/** Defaults to `'json'`; any other value throws, naming `--format`. */
+function validateFormat(format: string | undefined): 'json' {
+  if (format === undefined) {
+    return SYNC_FORMAT;
+  }
+
+  if (format !== SYNC_FORMAT) {
+    throw new SyncConfigError(`Invalid --format "${format}". Expected: ${SYNC_FORMAT}.`);
+  }
+
+  return SYNC_FORMAT;
 }
 
 function validateAt(at: string | undefined): string {
@@ -98,7 +203,8 @@ function validateLookbackDays(lookbackDays: string | undefined): number | undefi
 
 /**
  * Validate raw `install` CLI flags into a `SyncSettings`. Performs no I/O. Throws
- * `SyncConfigError` naming the offending flag on the first invalid value.
+ * `SyncConfigError` naming the offending flag on the first invalid value. At least one of
+ * `--webhook`/`--git-repo` is required; neither given throws naming both flags.
  *
  * `lookbackDays` is included on the result only when `--lookback-days` was given, so the
  * default ({@link DEFAULT_LOOKBACK_DAYS}) is applied at read time rather than persisted —
@@ -106,24 +212,60 @@ function validateLookbackDays(lookbackDays: string | undefined): number | undefi
  */
 export function validateInstallOptions(options: InstallOptions): SyncSettings {
   const webhookUrl = validateWebhookUrl(options.webhook);
+  const git = validateGitSettings(options);
+
+  if (webhookUrl === undefined && git === undefined) {
+    throw new SyncConfigError(
+      'At least one sync target is required: pass --webhook <url> or --git-repo <url>.'
+    );
+  }
+
+  const format = validateFormat(options.format);
   const at = validateAt(options.at);
   const includeExternal = validateIncludeExternal(options.includeExternal);
   const lookbackDays = validateLookbackDays(options.lookbackDays);
 
   return {
-    webhookUrl,
+    ...(webhookUrl !== undefined && { webhookUrl }),
+    ...(git !== undefined && { git }),
+    format,
     includeExternal,
     at,
     ...(lookbackDays !== undefined && { lookbackDays })
   };
 }
 
+/** Reads a non-empty string `git.repoUrl` out of an unknown stored value, or `undefined`
+ * when it isn't usable. */
+function readStoredGit(storedGit: unknown): GitSettings | undefined {
+  if (typeof storedGit !== 'object' || storedGit === null) {
+    return undefined;
+  }
+
+  const candidate = storedGit as Partial<GitSettings>;
+  if (typeof candidate.repoUrl !== 'string' || candidate.repoUrl.trim() === '') {
+    return undefined;
+  }
+
+  const git: GitSettings = { repoUrl: candidate.repoUrl };
+  if (typeof candidate.branch === 'string' && candidate.branch.trim() !== '') {
+    git.branch = candidate.branch;
+  }
+  if (typeof candidate.path === 'string' && candidate.path.trim() !== '') {
+    git.path = candidate.path;
+  }
+
+  return git;
+}
+
 /**
  * Load sync settings from `path` (defaults to `getSyncSettingsPath()`).
  *
- * A missing file returns `null`. Malformed JSON, JSON that is not an object, or JSON
- * missing a usable `webhookUrl` throws `SyncConfigError`. Never reads any `ANALYTICS_*`
- * environment variable.
+ * A missing file returns `null`. Malformed JSON, or JSON that is not an object, throws
+ * `SyncConfigError`. JSON with neither a usable `webhookUrl` nor a usable `git.repoUrl`
+ * returns `null` (no delivery target configured). A legacy webhook-only file written before
+ * `format`/`git` existed loads unchanged, with `format` defaulted to `'json'`. Never reads
+ * any `ANALYTICS_*` environment variable.
  */
 export async function loadSyncSettings(path: string = getSyncSettingsPath()): Promise<SyncSettings | null> {
   let raw: string;
@@ -150,12 +292,18 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
   }
 
   const stored = parsed as Partial<SyncSettings>;
-  if (typeof stored.webhookUrl !== 'string' || stored.webhookUrl.trim() === '') {
-    throw new SyncConfigError(`Sync settings at ${path} is missing a webhookUrl.`);
+  const webhookUrl =
+    typeof stored.webhookUrl === 'string' && stored.webhookUrl.trim() !== '' ? stored.webhookUrl : undefined;
+  const git = readStoredGit(stored.git);
+
+  if (webhookUrl === undefined && git === undefined) {
+    return null;
   }
 
   const settings: SyncSettings = {
-    webhookUrl: stored.webhookUrl,
+    ...(webhookUrl !== undefined && { webhookUrl }),
+    ...(git !== undefined && { git }),
+    format: SYNC_FORMAT,
     includeExternal: stored.includeExternal ?? DEFAULT_INCLUDE_EXTERNAL,
     at: stored.at ?? DEFAULT_AT
   };
