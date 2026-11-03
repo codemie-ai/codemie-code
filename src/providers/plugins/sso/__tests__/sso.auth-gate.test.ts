@@ -26,7 +26,13 @@ import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait } from '../sso.auth-ga
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { getLastSignInAt, startDetachedSsoLogin, waitForDetachedSsoLogin } from '@/providers/plugins/sso/sso.detached-login.js';
 
-const configured = { provider: 'ai-run-sso', ssoUrl: 'https://codemie.example.com', syncApiUrl: 'https://api.example.com' };
+// env: {} keeps CODEMIE_PROFILE_CONFIG / CODEMIE_URL of an enclosing CodeMie session out of the URL resolution.
+const configured = {
+  provider: 'ai-run-sso',
+  ssoUrl: 'https://codemie.example.com',
+  syncApiUrl: 'https://api.example.com',
+  env: {},
+};
 const PROD = 'https://prod.example.com';
 const PREVIEW = 'https://preview.example.com';
 
@@ -122,7 +128,7 @@ describe('ensureCodeMieSsoAuth', () => {
   });
 
   it('blocks without starting a sign-in when the provider is SSO but no url is configured', async () => {
-    const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso' });
+    const result = await ensureCodeMieSsoAuth({ provider: 'ai-run-sso', env: {} });
 
     // 'failed' (not undefined) so describeLogin tells the user to sign in, not to check an API key.
     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO credentials found', loginOutcome: 'failed' });
