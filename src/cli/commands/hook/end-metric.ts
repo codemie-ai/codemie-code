@@ -1,8 +1,10 @@
 import { logger } from '@/utils/logger.js';
+import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
+import { loadAnalyticsCookies } from './analytics-cookies.js';
 
 /** Saves the end metric's outcome on the latest copy of the record. */
 async function markEndMetric(
@@ -15,37 +17,20 @@ async function markEndMetric(
 }
 
 /**
- * The cookie header of the end metric: the config's, else the stored SSO credentials. Undefined
+ * The cookies of the end metric: the config's, else the stored SSO credentials. Undefined
  * without credentials: nothing is sent and no delivery attempt is spent — the record waits for a
  * launch that has them.
  */
-export async function endMetricCookieHeader(
+export async function endMetricCookieAuth(
   ssoUrl: string,
   config: HookProcessingConfig | undefined
-): Promise<string | undefined> {
-  let cookieHeader = config?.cookies || '';
-  if (!cookieHeader && ssoUrl) {
-    try {
-      const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-      const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
-        provider: getConfigValue('CODEMIE_PROVIDER', config),
-      }))?.credentials;
-
-      if (credentials?.cookies) {
-        cookieHeader = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-      }
-    } catch (error) {
-      logger.debug('[hook:SessionEnd] Failed to load SSO credentials:', error);
-    }
-  }
-
-  if (!cookieHeader) {
+): Promise<{ cookies: string; credentialsSuperseded?: CredentialsSupersededCheck } | undefined> {
+  const auth = await loadAnalyticsCookies('[hook:SessionEnd]', ssoUrl, config);
+  if (!auth.cookies) {
     logger.info(`[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`);
     return undefined;
   }
-  return cookieHeader;
+  return auth;
 }
 
 /**
@@ -124,8 +109,8 @@ export async function sendSessionEndMetrics(
       reason
     };
 
-    const cookieHeader = await endMetricCookieHeader(ssoUrl, config);
-    if (!cookieHeader) return;
+    const cookieAuth = await endMetricCookieAuth(ssoUrl, config);
+    if (!cookieAuth) return;
 
     // Use MetricsSender to send session end metric
     const { MetricsSender } = await import(
@@ -136,7 +121,8 @@ export async function sendSessionEndMetrics(
 
     const sender = new MetricsSender({
       baseUrl: apiUrl,
-      cookies: cookieHeader,
+      cookies: cookieAuth.cookies,
+      credentialsSuperseded: cookieAuth.credentialsSuperseded,
       timeout: 10000,
       retryAttempts: options.hookProcess ? 0 : 2,
       version: cliVersion,

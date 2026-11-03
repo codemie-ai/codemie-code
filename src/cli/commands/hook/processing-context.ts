@@ -1,6 +1,7 @@
-import { logger } from '@/utils/logger.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
+import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
 import type { HookProcessingConfig } from '../hook.js';
+import { loadAnalyticsCookies } from './analytics-cookies.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 
 /**
@@ -43,31 +44,20 @@ export async function buildProcessingContext(
 
   // Build context with SSO credentials if available
   let cookies = config?.cookies || '';
+  let credentialsSuperseded: CredentialsSupersededCheck | undefined;
 
   // If CodeMie analytics auth is configured and credentials are not provided,
   // try to load the stored SSO cookies. This also supports native providers
   // such as anthropic-subscription, where CodeMie auth is analytics-only.
   if (ssoUrl && apiUrl && !cookies) {
-    try {
-      const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-      const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
-        provider: getConfigValue('CODEMIE_PROVIDER', config),
-      }))?.credentials;
-
-      if (credentials?.cookies) {
-        cookies = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-      }
-    } catch (error) {
-      logger.debug('[hook] Failed to load SSO credentials:', error);
-    }
+    ({ cookies, credentialsSuperseded } = await loadAnalyticsCookies('[hook]', ssoUrl, config));
   }
 
   return {
     apiBaseUrl: apiUrl,
     cookies,
     apiKey,
+    ...(!apiKey && credentialsSuperseded && { credentialsSuperseded }),
     clientType,
     version: cliVersion,
     dryRun: false,

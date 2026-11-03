@@ -22,6 +22,7 @@ import { configSendPathApiUrl, getConfigValue } from './hook/config-value.js';
 import { sessionEndOptions, type SessionEndOptions } from './hook/session-end-options.js';
 import type { PidLock } from '@/utils/pid-lock.js';
 import { buildProcessingContext } from './hook/processing-context.js';
+import { loadAnalyticsCookies } from './hook/analytics-cookies.js';
 import { deliverSessionRecord, liveWrapperDelivering, nativeSessionId } from './hook/delivery.js';
 import { ensureOwnGeneration, generationStartEvent, isOtherGeneration } from './hook/own-generation.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
@@ -1222,23 +1223,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     }
 
     // Load SSO credentials if not provided in config
-    let cookieHeader = config?.cookies || '';
-    if (!cookieHeader && ssoUrl) {
-      try {
-        const { getStoredAnalyticsCredentials } = await import('../../providers/core/codemie-auth-helpers.js');
-        const credentials = (await getStoredAnalyticsCredentials(ssoUrl, config?.env, {
-          provider: getConfigValue('CODEMIE_PROVIDER', config),
-        }))?.credentials;
-
-        if (credentials?.cookies) {
-          cookieHeader = Object.entries(credentials.cookies)
-            .map(([key, value]) => `${key}=${value}`)
-            .join('; ');
-        }
-      } catch (error) {
-        logger.debug('[hook:SessionStart] Failed to load SSO credentials:', error);
-      }
-    }
+    const { cookies: cookieHeader, credentialsSuperseded } = await loadAnalyticsCookies('[hook:SessionStart]', ssoUrl, config);
 
     if (!cookieHeader) {
       if (syncApiUrl) {
@@ -1261,6 +1246,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     const sender = new MetricsSender({
       baseUrl: apiUrl,
       cookies: cookieHeader,
+      credentialsSuperseded,
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,
