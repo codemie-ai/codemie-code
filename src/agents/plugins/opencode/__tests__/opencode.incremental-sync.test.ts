@@ -104,6 +104,8 @@ describe('opencode.incremental-sync', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    // The credential lookup is profile-first; an inherited profile would replace the URL under test.
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
     discoverSessions.mockReset();
     processSession.mockReset();
     mockSync.mockReset();
@@ -119,6 +121,7 @@ describe('opencode.incremental-sync', () => {
     stopOpenCodeIncrementalSync(currentSessionId);
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   describe('toggle', () => {

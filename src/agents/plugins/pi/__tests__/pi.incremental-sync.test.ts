@@ -106,6 +106,8 @@ function options(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  // The credential lookup is profile-first; an inherited profile would replace the URL under test.
+  vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
   readPiRunLedger.mockReset();
   processSession.mockReset();
   discoverSessions.mockReset();
@@ -137,6 +139,7 @@ afterEach(async () => {
   await stopPiIncrementalSync(sessionId);
   processSession.mockReset();
   readPiRunLedger.mockReset();
+  vi.unstubAllEnvs();
 });
 
 describe('startPiIncrementalSync', () => {

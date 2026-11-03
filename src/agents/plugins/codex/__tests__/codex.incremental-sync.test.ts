@@ -49,6 +49,8 @@ let currentSessionId = '';
 
 describe('codex.incremental-sync', () => {
   beforeEach(() => {
+    // The credential lookup is profile-first; an inherited profile would replace the URL under test.
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
     discoverSessions.mockReset();
     parseSessionFile.mockReset();
     processSession.mockReset();
@@ -68,6 +70,7 @@ describe('codex.incremental-sync', () => {
     discoverSessions.mockReset();
     parseSessionFile.mockReset();
     processSession.mockReset();
+    vi.unstubAllEnvs();
   });
 
   function commonOptions() {

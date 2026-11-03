@@ -34,11 +34,14 @@ describe('ensureCodeMieSsoAuth with the real sign-in lock', () => {
     previousHome = process.env.CODEMIE_HOME;
     home = mkdtempSync(join(tmpdir(), 'codemie-auth-gate-lock-'));
     process.env.CODEMIE_HOME = home;
+    // The gate resolves the profile URL from the environment; an inherited profile would replace BASE_URL.
+    vi.stubEnv('CODEMIE_PROFILE_CONFIG', undefined);
     getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     if (previousHome === undefined) {
       delete process.env.CODEMIE_HOME;
     } else {
