@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'child_process';
-import { chmodSync, copyFileSync, cpSync, linkSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, copyFileSync, cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -145,12 +145,8 @@ function runPromptHook(
 function createClaudeShim(dir: string): string {
   const shimDir = realDir(dir);
   if (process.platform === 'win32') {
-    const target = join(shimDir, 'claude.exe');
-    try {
-      linkSync(process.execPath, target);
-    } catch {
-      copyFileSync(process.execPath, target);
-    }
+    // A copy, not a link: a hard link to the running node.exe cannot be unlinked on Windows.
+    copyFileSync(process.execPath, join(shimDir, 'claude.exe'));
   } else {
     const script = join(shimDir, 'claude');
     writeFileSync(script, '#!/bin/sh\necho 9.9.9\n', 'utf-8');
