@@ -4,8 +4,8 @@
  * Periodically deep-checks the proxy. On failure it restarts the proxy
  * IN-PROCESS on the same pinned port (Approach A). Unauthorized failures
  * (expired SSO session) cannot be fixed without an interactive login, so the
- * watcher gives up and lets the daemon record an unhealthy state instead of
- * looping forever. A large gap between timer ticks is treated as a sleep/wake
+ * watcher records an unhealthy state once, keeps watching and offers the daemon
+ * a recovery hook on each check rather than restarting in a loop. A large gap between timer ticks is treated as a sleep/wake
  * event and triggers an immediate re-check.
  */
 import { logger } from '../../../utils/logger.js';
@@ -18,6 +18,8 @@ export interface WatcherCallbacks {
   onHealthy: (result: ProxyHealthResult) => Promise<void>;
   /** Called when recovery is impossible or exhausted (record unhealthy + reason). */
   onGiveUp: (reason: string) => Promise<void>;
+  /** Called on every check that fails as unauthorized, so the owner can re-try once the user has signed in. */
+  onUnauthorized?: () => Promise<void>;
 }
 
 export interface WatcherOptions {
@@ -31,6 +33,7 @@ export class ProxyWatcher {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
   private checking = false;
+  private unauthorizedReported = false;
   private restartAttempts = 0;
   private lastTick = Date.now();
   private readonly intervalMs: number;
@@ -81,16 +84,25 @@ export class ProxyWatcher {
 
       if (result.healthy) {
         this.restartAttempts = 0;
+        this.unauthorizedReported = false;
         await this.callbacks.onHealthy(result);
         return;
       }
 
       logger.warn(`[proxy-watcher] Proxy unhealthy: ${result.reason ?? 'unknown'}`);
 
-      // Expired session cannot be recovered without interactive login.
+      // Expired session cannot be fixed by restarting, but the user can sign in at any time:
+      // record it once and keep watching so a later login is picked up.
       if (result.code === 'unauthorized') {
-        await this.callbacks.onGiveUp(result.reason ?? 'SSO session expired');
-        this.stop();
+        if (!this.unauthorizedReported) {
+          this.unauthorizedReported = true;
+          await this.callbacks.onGiveUp(result.reason ?? 'SSO session expired');
+        }
+        try {
+          await this.callbacks.onUnauthorized?.();
+        } catch (error) {
+          logger.error('[proxy-watcher] Recovery after sign-in failed', error);
+        }
         return;
       }
 
