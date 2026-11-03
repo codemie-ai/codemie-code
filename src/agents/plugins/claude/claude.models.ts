@@ -206,7 +206,7 @@ const ONE_MILLION_SUFFIX = '[1m]';
 const ONE_MILLION_SUFFIX_PATTERN = /\[1m\]$/i;
 const ONE_MILLION_TOKENS = 1_000_000;
 
-function stripOneMillionSuffix(id: string): string {
+export function stripOneMillionSuffix(id: string): string {
   return id.replace(ONE_MILLION_SUFFIX_PATTERN, '');
 }
 

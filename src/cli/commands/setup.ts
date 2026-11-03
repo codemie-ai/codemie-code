@@ -305,7 +305,7 @@ export async function handlePluginSetup(
 
       selectedModels = [...new Set(Object.values(agentModels).flatMap(set => set.models))];
       // The top-level model mirrors the first agent's active model.
-      selectedModel = Object.values(agentModels)[0].model;
+      selectedModel = Object.values(agentModels)[0].activeModel;
     }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama) — once per selected model.
@@ -335,7 +335,7 @@ export async function handlePluginSetup(
         // remove the last model an agent had.
         if (agentModels) {
           agentModels = withoutModels(agentModels, failedModelIds);
-          selectedModel = Object.values(agentModels)[0].model;
+          selectedModel = Object.values(agentModels)[0].activeModel;
         }
       }
     }
@@ -346,7 +346,7 @@ export async function handlePluginSetup(
     if (claudeAgent) {
       const supportsClaude = claudeAgent.metadata.supportedProviders.includes(providerName);
       if (supportsClaude) {
-        modelTiers = await autoSelectModelTiers(models, agentModels?.claude?.model ?? selectedModel);
+        modelTiers = await autoSelectModelTiers(models, agentModels?.claude?.activeModel ?? selectedModel);
       }
     }
 
@@ -568,7 +568,7 @@ export function withoutModels(agentModels: AgentModelsResult, removed: string[])
     const confirmedModels = set.confirmedModels?.filter(id => models.includes(id));
     result[agent] = {
       models,
-      model: models.includes(set.model) ? set.model : models[0],
+      activeModel: models.includes(set.activeModel) ? set.activeModel : models[0],
       ...(confirmedModels?.length ? { confirmedModels } : {}),
     };
   }

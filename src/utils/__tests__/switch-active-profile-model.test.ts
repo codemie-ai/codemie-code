@@ -56,7 +56,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'openai',
           model: 'a',
-          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
+          agentModels: { claude: { models: ['a', 'b'], activeModel: 'a' } },
           reasoningEffort: 'high'
         }
       }
@@ -68,7 +68,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
 
     const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
     expect(reloaded.profiles.default.model).toBe('b');
-    expect(reloaded.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], model: 'a' } });
+    expect(reloaded.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], activeModel: 'a' } });
     expect(reloaded.profiles.default.reasoningEffort).toBe('high');
   });
 
@@ -91,7 +91,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'openai',
           model: 'a',
-          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
+          agentModels: { claude: { models: ['a', 'b'], activeModel: 'a' } },
           reasoningEffort: 'high'
         }
       }
@@ -103,7 +103,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
 
     const reloadedLocal = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
     expect(reloadedLocal.profiles.default.model).toBe('b');
-    expect(reloadedLocal.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], model: 'a' } });
+    expect(reloadedLocal.profiles.default.agentModels).toEqual({ claude: { models: ['a', 'b'], activeModel: 'a' } });
     expect(reloadedLocal.profiles.default.reasoningEffort).toBe('high');
 
     const globalAfter = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
@@ -116,7 +116,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
       version: 2,
       activeProfile: 'default',
       profiles: {
-        default: { name: 'default', provider: 'openai', model: 'a', agentModels: { claude: { models: ['a', 'b'], model: 'a' } } },
+        default: { name: 'default', provider: 'openai', model: 'a', agentModels: { claude: { models: ['a', 'b'], activeModel: 'a' } } },
       },
     });
     await writeLocalConfig({
@@ -129,11 +129,11 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
     await ConfigLoader.switchActiveProfileModel('b', PROJECT_DIR, undefined, 'claude');
 
     const reloadedGlobal = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
-    expect(reloadedGlobal.profiles.default.agentModels?.claude.model).toBe('b');
+    expect(reloadedGlobal.profiles.default.agentModels?.claude.activeModel).toBe('b');
     expect(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8')).toBe(localBefore);
 
     const profile = await ConfigLoader.getProfileForModelSwitch('default', PROJECT_DIR);
-    expect(profile?.agentModels?.claude.model).toBe('b');
+    expect(profile?.agentModels?.claude.activeModel).toBe('b');
   });
 
   it('overwrites tier fields when tierOverrides is given, leaves them unchanged when omitted', async () => {
@@ -145,7 +145,7 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           name: 'default',
           provider: 'claude',
           model: 'a',
-          agentModels: { claude: { models: ['a', 'b'], model: 'a' } },
+          agentModels: { claude: { models: ['a', 'b'], activeModel: 'a' } },
           haikuModel: 'old-haiku',
           sonnetModel: 'old-sonnet',
           opusModel: 'old-opus'
@@ -192,8 +192,8 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
           provider: 'litellm',
           model: 'claude-x',
           agentModels: {
-            claude: { models: ['claude-x', 'claude-y'], model: 'claude-x' },
-            codex: { models: ['gpt-a', 'gpt-b'], model: 'gpt-a' },
+            claude: { models: ['claude-x', 'claude-y'], activeModel: 'claude-x' },
+            codex: { models: ['gpt-a', 'gpt-b'], activeModel: 'gpt-a' },
           },
         },
       },
@@ -205,8 +205,8 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
       await ConfigLoader.switchActiveProfileModel('gpt-b', PROJECT_DIR, undefined, 'codex');
 
       const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
-      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-a', 'gpt-b'], model: 'gpt-b' });
-      expect(reloaded.profiles.default.agentModels?.claude.model).toBe('claude-x');
+      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-a', 'gpt-b'], activeModel: 'gpt-b' });
+      expect(reloaded.profiles.default.agentModels?.claude.activeModel).toBe('claude-x');
       expect(reloaded.profiles.default.model).toBe('claude-x');
     });
 
@@ -216,20 +216,20 @@ describe('ConfigLoader.switchActiveProfileModel', () => {
       await ConfigLoader.switchActiveProfileModel('claude-y', PROJECT_DIR, { sonnetModel: 'claude-y' }, 'claude-acp');
 
       const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
-      expect(reloaded.profiles.default.agentModels?.claude.model).toBe('claude-y');
+      expect(reloaded.profiles.default.agentModels?.claude.activeModel).toBe('claude-y');
       expect(reloaded.profiles.default.model).toBe('claude-y');
       expect(reloaded.profiles.default.sonnetModel).toBe('claude-y');
     });
 
     it('makes a model outside the agent list its only model, dropping stale confirmations', async () => {
       const config = perAgent();
-      config.profiles.default.agentModels!.codex = { models: ['gpt-a'], model: 'gpt-a', confirmedModels: ['gpt-a'] };
+      config.profiles.default.agentModels!.codex = { models: ['gpt-a'], activeModel: 'gpt-a', confirmedModels: ['gpt-a'] };
       await writeGlobalConfig(config);
 
       await ConfigLoader.switchActiveProfileModel('gpt-new', PROJECT_DIR, undefined, 'codex');
 
       const reloaded = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8')) as MultiProviderConfig;
-      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-new'], model: 'gpt-new' });
+      expect(reloaded.profiles.default.agentModels?.codex).toEqual({ models: ['gpt-new'], activeModel: 'gpt-new' });
     });
   });
 });

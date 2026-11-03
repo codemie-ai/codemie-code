@@ -155,11 +155,11 @@ describe('createDraft / finalizeDraft / buildActiveRows', () => {
     const d = createDraft('claude', input({
       existing: {
         provider: 'litellm',
-        agentModels: { claude: { models: ['claude-x', 'typed'], model: 'typed', confirmedModels: ['typed'] } },
+        agentModels: { claude: { models: ['claude-x', 'typed'], activeModel: 'typed', confirmedModels: ['typed'] } },
       },
     }));
 
-    expect(d).toEqual({ models: ['claude-x', 'typed'], model: 'typed', extra: ['typed'], confirmed: new Set(['typed']) });
+    expect(d).toEqual({ models: ['claude-x', 'typed'], activeModel: 'typed', extra: ['typed'], confirmed: new Set(['typed']) });
   });
 
   it('preselects a legacy active model only for agents that can use it', () => {
@@ -173,7 +173,7 @@ describe('createDraft / finalizeDraft / buildActiveRows', () => {
     const existing = {
       provider: 'ai-run-sso',
       model: 'claude-x',
-      agentModels: { claude: { models: ['claude-x', 'typed'], model: 'claude-x' } },
+      agentModels: { claude: { models: ['claude-x', 'typed'], activeModel: 'claude-x' } },
     };
 
     expect(createDraft('claude', input({ existing, models: [] }))).toEqual({ models: [], extra: [], confirmed: new Set() });
@@ -184,15 +184,15 @@ describe('createDraft / finalizeDraft / buildActiveRows', () => {
     const set = finalizeDraft(
       'codex',
       input({ isRouter: id => id === 'sy-alias' }),
-      draft({ models: ['gpt-5.4', 'sy-alias'], model: 'gone', confirmed: new Set(['dropped']) })
+      draft({ models: ['gpt-5.4', 'sy-alias'], activeModel: 'gone', confirmed: new Set(['dropped']) })
     );
 
-    expect(set).toEqual({ models: ['gpt-5.4', 'sy-alias'], model: 'gpt-5.4', confirmedModels: ['sy-alias'] });
+    expect(set).toEqual({ models: ['gpt-5.4', 'sy-alias'], activeModel: 'gpt-5.4', confirmedModels: ['sy-alias'] });
   });
 
   it('omits confirmedModels when nothing needed confirming', () => {
-    expect(finalizeDraft('claude', input(), draft({ models: ['claude-x'], model: 'claude-x' })))
-      .toEqual({ models: ['claude-x'], model: 'claude-x' });
+    expect(finalizeDraft('claude', input(), draft({ models: ['claude-x'], activeModel: 'claude-x' })))
+      .toEqual({ models: ['claude-x'], activeModel: 'claude-x' });
   });
 
   it('offers the agent picked models as active-model rows', () => {
@@ -234,8 +234,8 @@ describe('runAgentModelsWizard', () => {
     const result = await runAgentModelsWizard(input(), screen);
 
     expect(result).toEqual({
-      claude: { models: ['claude-x', 'claude-y'], model: 'claude-y' },
-      codex: { models: ['gpt-5.4'], model: 'gpt-5.4' },
+      claude: { models: ['claude-x', 'claude-y'], activeModel: 'claude-y' },
+      codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' },
     });
     expect(specs.map(s => s.title)).toEqual([
       'Which agents will use this profile?',
@@ -276,7 +276,7 @@ describe('runAgentModelsWizard', () => {
 
     expect(specs[3].title).toBe('Claude Code · Models');
     expect(specs[3].selected).toEqual(['claude-x']);
-    expect(result).toEqual({ claude: { models: ['claude-x', 'claude-y'], model: 'claude-y' } });
+    expect(result).toEqual({ claude: { models: ['claude-x', 'claude-y'], activeModel: 'claude-y' } });
   });
 
   it('rebuilds the steps when the agent selection changes after going back', async () => {
@@ -288,7 +288,7 @@ describe('runAgentModelsWizard', () => {
       pick()
     );
 
-    expect(await runAgentModelsWizard(input(), screen)).toEqual({ codex: { models: ['gpt-5.4'], model: 'gpt-5.4' } });
+    expect(await runAgentModelsWizard(input(), screen)).toEqual({ codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' } });
   });
 
   it('confirms a typed model the agent rules reject', async () => {
@@ -299,7 +299,7 @@ describe('runAgentModelsWizard', () => {
     );
 
     expect(await runAgentModelsWizard(input(), screen)).toEqual({
-      claude: { models: ['gpt-x'], model: 'gpt-x', confirmedModels: ['gpt-x'] },
+      claude: { models: ['gpt-x'], activeModel: 'gpt-x', confirmedModels: ['gpt-x'] },
     });
   });
 
@@ -318,14 +318,14 @@ describe('runAgentModelsWizard', () => {
     expect(searchModel).toHaveBeenCalledTimes(1);
     expect(specs[2].selected).toEqual(['gpt-5.4', 'llama3']);
     expect(specs[2].rows.map(r => r.id)).toContain('llama3');
-    expect(result).toEqual({ opencode: { models: ['gpt-5.4', 'llama3'], model: 'llama3' } });
+    expect(result).toEqual({ opencode: { models: ['gpt-5.4', 'llama3'], activeModel: 'llama3' } });
   });
 
   it('preselects the existing agents and models on an update', async () => {
     const existing = {
       provider: 'litellm',
       model: 'gpt-5.4',
-      agentModels: { codex: { models: ['gpt-5.4'], model: 'gpt-5.4' } },
+      agentModels: { codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' } },
     };
     const { screen, specs } = scripted(pick('codex'), pick('gpt-5.4'), pick());
 
@@ -339,7 +339,7 @@ describe('runAgentModelsWizard', () => {
     const existing = {
       provider: 'ai-run-sso',
       model: 'gpt-5.4',
-      agentModels: { codex: { models: ['gpt-5.4', 'gpt-6-luna'], model: 'gpt-5.4' } },
+      agentModels: { codex: { models: ['gpt-5.4', 'gpt-6-luna'], activeModel: 'gpt-5.4' } },
     };
     const { screen, specs } = scripted(pick('codex'), pick('gpt-x'), pick());
 
@@ -391,8 +391,8 @@ describe('runAgentModelsWizard — agents that always run on their active model'
     expect(specs[2].notes?.[0]).toContain('codemie models switch --agent gemini');
     expect(specs[2].validate?.([])).toBe('Select the active model for Gemini CLI.');
     expect(result).toEqual({
-      claude: { models: ['claude-x'], model: 'claude-x' },
-      gemini: { models: ['gemini-3-flash'], model: 'gemini-3-flash' },
+      claude: { models: ['claude-x'], activeModel: 'claude-x' },
+      gemini: { models: ['gemini-3-flash'], activeModel: 'gemini-3-flash' },
     });
   });
 
@@ -404,7 +404,7 @@ describe('runAgentModelsWizard — agents that always run on their active model'
     );
 
     expect(await runAgentModelsWizard(input({ models: geminiCatalog }), screen)).toEqual({
-      gemini: { models: ['my-model'], model: 'my-model', confirmedModels: ['my-model'] },
+      gemini: { models: ['my-model'], activeModel: 'my-model', confirmedModels: ['my-model'] },
     });
   });
 
@@ -421,19 +421,19 @@ describe('runAgentModelsWizard — agents that always run on their active model'
 
     expect(specs[2].selected).toEqual(['gemini-local']);
     expect(specs[2].rows.map(r => r.id)).toContain('gemini-local');
-    expect(result).toEqual({ gemini: { models: ['gemini-local'], model: 'gemini-local' } });
+    expect(result).toEqual({ gemini: { models: ['gemini-local'], activeModel: 'gemini-local' } });
   });
 
   it('keeps only the active model of an existing set on an update', async () => {
     const existing = {
       provider: 'litellm',
       model: 'gemini-3',
-      agentModels: { gemini: { models: ['gemini-3', 'gemini-3-flash'], model: 'gemini-3' } },
+      agentModels: { gemini: { models: ['gemini-3', 'gemini-3-flash'], activeModel: 'gemini-3' } },
     };
 
     expect(createDraft('gemini', input({ models: geminiCatalog, existing }))).toEqual({
       models: ['gemini-3'],
-      model: 'gemini-3',
+      activeModel: 'gemini-3',
       extra: [],
       confirmed: new Set(),
     });

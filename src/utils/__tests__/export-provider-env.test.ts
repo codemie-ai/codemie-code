@@ -120,8 +120,8 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
 
   describe('CODEMIE_PROFILE_MODELS (multi-model profiles)', () => {
     const agentModels = {
-      claude: { models: ['a', 'b'], model: 'a' },
-      codex: { models: ['c'], model: 'c' },
+      claude: { models: ['a', 'b'], activeModel: 'a' },
+      codex: { models: ['c'], activeModel: 'c' },
     };
 
     it('exports the comma-separated union when a per-agent profile has 2+ models', () => {

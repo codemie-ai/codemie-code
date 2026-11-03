@@ -144,14 +144,14 @@ describe('AgentCLI.handleRun — per-agent models (EPMCDME-15641)', () => {
   // The top-level model mirrors the first agent (claude); codex has its own active model.
   const perAgent = {
     agentModels: {
-      claude: { models: ['claude-x'], model: 'claude-x' },
-      codex: { models: ['gpt-5.4', 'gpt-5.5'], model: 'gpt-5.4' },
+      claude: { models: ['claude-x'], activeModel: 'claude-x' },
+      codex: { models: ['gpt-5.4', 'gpt-5.5'], activeModel: 'gpt-5.4' },
     },
   };
   const incompatibleCodex = {
     agentModels: {
-      claude: { models: ['claude-x'], model: 'claude-x' },
-      codex: { models: ['claude-x'], model: 'claude-x' },
+      claude: { models: ['claude-x'], activeModel: 'claude-x' },
+      codex: { models: ['claude-x'], activeModel: 'claude-x' },
     },
   };
 

@@ -43,5 +43,3 @@ export const SEARCH_ROW_ID = '__search__';
 
 /** Rows visible at once; the list scrolls around the cursor. */
 export const VISIBLE_ROWS = 12;
-
-export const KEEP_ALIVE_INTERVAL_MS = 1000;

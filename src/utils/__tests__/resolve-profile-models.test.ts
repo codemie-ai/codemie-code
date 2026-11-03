@@ -12,9 +12,9 @@ import { resolveAgentModelSet, resolveProfileModels, withAgentModelView } from '
 const perAgent = {
   model: 'claude-x',
   agentModels: {
-    claude: { models: ['claude-x', 'claude-y'], model: 'claude-x' },
-    codex: { models: ['gpt-5.4'], model: 'gpt-5.4', confirmedModels: ['gpt-5.4'] },
-    opencode: { models: ['claude-y', 'gpt-5.4'], model: 'gpt-5.4' },
+    claude: { models: ['claude-x', 'claude-y'], activeModel: 'claude-x' },
+    codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4', confirmedModels: ['gpt-5.4'] },
+    opencode: { models: ['claude-y', 'gpt-5.4'], activeModel: 'gpt-5.4' },
   },
 };
 
@@ -47,7 +47,7 @@ describe('resolveProfileModels', () => {
 
 describe('resolveAgentModelSet', () => {
   it('returns the agent set, folding ACP variants, or undefined', () => {
-    expect(resolveAgentModelSet(perAgent, 'opencode-acp')?.model).toBe('gpt-5.4');
+    expect(resolveAgentModelSet(perAgent, 'opencode-acp')?.activeModel).toBe('gpt-5.4');
     expect(resolveAgentModelSet(perAgent, 'pi')).toBeUndefined();
     expect(resolveAgentModelSet({}, 'claude')).toBeUndefined();
   });

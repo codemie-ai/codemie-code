@@ -35,8 +35,8 @@ export function agentModelsDisplay(profile: ProviderProfile): AgentModelsDisplay
   if (!profile.agentModels) return undefined;
   return Object.entries(profile.agentModels).map(([agent, set]) => ({
     agent: getAgentDisplayName(agent),
-    model: set.model,
-    otherModels: set.models.filter(id => id !== set.model),
+    model: set.activeModel,
+    otherModels: set.models.filter(id => id !== set.activeModel),
   }));
 }
 

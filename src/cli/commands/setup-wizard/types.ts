@@ -75,7 +75,7 @@ export type AgentModelsResult = Record<string, AgentModelSet>;
 /** Work-in-progress selection for one agent. */
 export interface AgentDraft {
   models: string[];
-  model?: string;
+  activeModel?: string;
   /** Typed or searched ids added to this agent's list beyond the catalog. */
   extra: string[];
   /** Ids the user accepted despite the agent's model-name rule. */

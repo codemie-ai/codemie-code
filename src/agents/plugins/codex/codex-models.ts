@@ -6,6 +6,7 @@ import { getPlatformUrlFromEnv, getStoredPlatformCredentialsFromEnv } from '../.
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
+import { filterToProfileModels } from '../../core/profile-model-filter.js';
 
 interface CodexCatalogReasoningLevel {
   effort: 'low' | 'medium' | 'high' | 'xhigh';
@@ -503,78 +504,42 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
 }
 
 /**
- * Narrow an available-model id list to the active profile's own models
- * (CODEMIE_PROFILE_MODELS, comma-separated — set for the agent's own list on a
- * per-agent profile), keeping the configured CODEMIE_MODEL even when it is missing from
- * the allowed list (CR-003) — setupProxy assigns env.CODEMIE_MODEL right
- * before calling this, so a retirement-healed active model must survive the
- * narrowing the same way OpenCode's filterToAllowed and Pi's
- * filterEntriesToProfile already keep theirs. Falls back to the unfiltered
- * list (with a warning — CR-004) when the env var is unset or the
- * allowed-CSV intersection is empty, so Codex's --model validation never
- * ends up with zero usable models (AC22).
+ * Narrow an available-model id list to the active profile's own models, keeping the
+ * configured CODEMIE_MODEL (CR-003) — setupProxy assigns env.CODEMIE_MODEL right before
+ * calling this, so a retirement-healed active model survives the narrowing. Falls back to
+ * the unfiltered list (CR-004) so Codex's --model validation never ends up with zero usable
+ * models (AC22). Logs only: the picker narrowing below already tells the user.
  */
 export function filterAvailableModelsToProfile(
   availableModels: string[],
   env: NodeJS.ProcessEnv
 ): string[] {
-  if (!env.CODEMIE_PROFILE_MODELS) {
-    return availableModels;
-  }
-  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
-  const filtered = availableModels.filter(id => allowed.has(id));
-
-  if (filtered.length === 0) {
-    logger.warn(
-      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the available models — showing the full catalog instead'
-    );
-    return availableModels;
-  }
-
-  const configuredModel = env.CODEMIE_MODEL;
-  if (configuredModel && !filtered.includes(configuredModel) && availableModels.includes(configuredModel)) {
-    return [...filtered, configuredModel];
-  }
-
-  return filtered;
+  return filterToProfileModels(availableModels, env.CODEMIE_PROFILE_MODELS, {
+    getId: id => id,
+    activeModel: env.CODEMIE_MODEL,
+    noMatchMessage:
+      '[codex-models] CODEMIE_PROFILE_MODELS matched none of the available models — showing the full catalog instead',
+    noMatchLevel: 'warn',
+  });
 }
 
 /**
  * Narrow the ranked catalog entries used to build Codex's on-disk model_catalog_json —
  * the file native Codex's own /model picker renders from (codex.plugin.ts passes it via
- * `--config model_catalog_json=...`) — to the active profile's own models. Mirrors
- * filterAvailableModelsToProfile's semantics (CR-003 keep-selected, CR-004/AC22
- * empty-intersection fallback) but operates on RankedModel entries by `.id` instead of a
- * plain id list, since this is a separate artifact from CODEMIE_CODEX_AVAILABLE_MODELS
- * (which only gates --model flag validation, never the picker).
+ * `--config model_catalog_json=...`) — to the active profile's own models. A separate
+ * artifact from CODEMIE_CODEX_AVAILABLE_MODELS, which only gates --model flag validation.
  */
 function filterCatalogModelsToProfile(
   catalogModels: RankedModel[],
   selectedModel: string,
   env: NodeJS.ProcessEnv
 ): RankedModel[] {
-  if (!env.CODEMIE_PROFILE_MODELS) {
-    return catalogModels;
-  }
-  const allowed = new Set(env.CODEMIE_PROFILE_MODELS.split(','));
-  const filtered = catalogModels.filter(entry => allowed.has(entry.id));
-
-  if (filtered.length === 0) {
-    // AC22: the user must see that the menu could not be limited, not just the log file.
-    logger.notice(
-      '[codex-models] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog'
-    );
-    return catalogModels;
-  }
-
-  if (!filtered.some(entry => entry.id === selectedModel)) {
-    const selectedEntry = catalogModels.find(entry => entry.id === selectedModel);
-    if (selectedEntry) {
-      return [...filtered, selectedEntry];
-    }
-  }
-
-  return filtered;
+  return filterToProfileModels(catalogModels, env.CODEMIE_PROFILE_MODELS, {
+    getId: entry => entry.id,
+    activeModel: selectedModel,
+    noMatchMessage:
+      '[codex-models] None of this agent\'s profile models are in the live catalog — the /model menu shows the full catalog',
+  });
 }
 
 export function assertExplicitCodexModelAllowed(model: string, availableModels: string[]): void {

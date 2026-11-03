@@ -78,7 +78,7 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
     const result = validate(cfg({
       provider: 'ai-run-sso',
       model: 'gpt-x',
-      agentModels: { gemini: { models: ['gpt-x', 'gpt-y'], model: 'gpt-x' } },
+      agentModels: { gemini: { models: ['gpt-x', 'gpt-y'], activeModel: 'gpt-x' } },
     }));
 
     expect(result).toBe(false);
@@ -93,8 +93,8 @@ describe('AgentCLI.validateCompatibility — models switch hint', () => {
       provider: 'ai-run-sso',
       model: 'gpt-x',
       agentModels: {
-        gemini: { models: ['gpt-x'], model: 'gpt-x' },
-        codex: { models: ['gpt-x', 'gpt-y'], model: 'gpt-x' },
+        gemini: { models: ['gpt-x'], activeModel: 'gpt-x' },
+        codex: { models: ['gpt-x', 'gpt-y'], activeModel: 'gpt-x' },
       },
     }));
 
@@ -126,7 +126,7 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
       cfg({
         provider: 'ai-run-sso',
         model: 'claude-sonnet-4-5',
-        agentModels: { codex: { models: ['claude-sonnet-4-5', 'gpt-5.4'], model: 'claude-sonnet-4-5' } },
+        agentModels: { codex: { models: ['claude-sonnet-4-5', 'gpt-5.4'], activeModel: 'claude-sonnet-4-5' } },
       }),
       codex()
     );
@@ -151,7 +151,7 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
       cfg({
         provider: 'ai-run-sso',
         model: 'claude-sonnet-4-5',
-        agentModels: { codex: { models: ['claude-sonnet-4-5'], model: 'claude-sonnet-4-5' } },
+        agentModels: { codex: { models: ['claude-sonnet-4-5'], activeModel: 'claude-sonnet-4-5' } },
       }),
       codex()
     );
@@ -187,7 +187,7 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
     const config = cfg({
       provider: 'ai-run-sso',
       model: 'claude-sonnet-4-5',
-      agentModels: { codex: { models: ['gpt-5.4'], model: 'gpt-5.4' } },
+      agentModels: { codex: { models: ['gpt-5.4'], activeModel: 'gpt-5.4' } },
     });
 
     expect(validate(config, codex(), true)).toBe(true);
@@ -196,7 +196,7 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
 
   it('prints nothing for a compatible model, an unverified model, or an unrestricted agent', () => {
     const codexSet = (model: string, extra: Record<string, unknown> = {}) =>
-      cfg({ provider: 'ai-run-sso', model, agentModels: { codex: { models: [model], model, ...extra } } });
+      cfg({ provider: 'ai-run-sso', model, agentModels: { codex: { models: [model], activeModel: model, ...extra } } });
 
     expect(validate(codexSet('gpt-5.4'), codex())).toBe(true);
     expect(validate(codexSet('sy-router'), codex())).toBe(true);
@@ -205,7 +205,7 @@ describe('AgentCLI.validateCompatibility — persisted active model vs launching
       cfg({
         provider: 'ai-run-sso',
         model: 'claude-sonnet-4-5',
-        agentModels: { opencode: { models: ['claude-sonnet-4-5'], model: 'claude-sonnet-4-5' } },
+        agentModels: { opencode: { models: ['claude-sonnet-4-5'], activeModel: 'claude-sonnet-4-5' } },
       }),
       createAdapter('opencode', 'OpenCode')
     )).toBe(true);

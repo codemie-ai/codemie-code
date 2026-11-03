@@ -177,8 +177,8 @@ describe('agentsUsingModel', () => {
   it('names the agents whose own list holds the model, in profile order', () => {
     const profile = {
       agentModels: {
-        claude: { models: ['claude-x', 'shared'], model: 'claude-x' },
-        opencode: { models: ['shared'], model: 'shared' },
+        claude: { models: ['claude-x', 'shared'], activeModel: 'claude-x' },
+        opencode: { models: ['shared'], activeModel: 'shared' },
       },
     };
     expect(agentsUsingModel(profile, 'shared')).toEqual(['claude', 'opencode']);

@@ -49,10 +49,10 @@ export interface CodemieSkill {
  * Models one agent uses on a profile, chosen per agent by `codemie setup` (EPMCDME-15641).
  */
 export interface AgentModelSet {
-  /** The agent's models; never empty and always includes `model`. */
+  /** The agent's models; never empty and always includes `activeModel`. */
   models: string[];
   /** The agent's active model. */
-  model: string;
+  activeModel: string;
   /**
    * Ids accepted despite the agent's model-name rule (typed names, catalog routers).
    * Always a subset of `models`; reported as unverified instead of incompatible.

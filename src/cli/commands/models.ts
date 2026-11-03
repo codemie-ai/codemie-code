@@ -107,7 +107,7 @@ function buildAgentsColumn(agentModels: NonNullable<ProviderProfile['agentModels
     row: modelId => {
       const names = entries
         .filter(([, set]) => set.models.includes(modelId))
-        .map(([agent, set]) => ({ text: set.model === modelId ? `${agent}*` : agent, active: set.model === modelId }));
+        .map(([agent, set]) => ({ text: set.activeModel === modelId ? `${agent}*` : agent, active: set.activeModel === modelId }));
       const lines: string[] = [];
       let plain = '';
       let styled = '';
@@ -147,7 +147,7 @@ export function formatAgentModelsBlock(profile: Pick<ProviderProfile, 'agentMode
     chalk.bold('Agents:'),
     ...entries.map(({ name, set }) =>
       '  ' + chalk.white(name.padEnd(width)) +
-      [chalk.green(`${set.model} (active)`), ...set.models.filter(id => id !== set.model)].join(chalk.dim(', '))
+      [chalk.green(`${set.activeModel} (active)`), ...set.models.filter(id => id !== set.activeModel)].join(chalk.dim(', '))
     ),
   ];
 }
@@ -284,7 +284,7 @@ async function switchAgentModel(
       : await promptAgentSwitchSelection(candidates.map(name => ({
         name,
         displayName: getAgentDisplayName(name),
-        model: agentModels[name].model,
+        model: agentModels[name].activeModel,
       })));
   }
 
@@ -292,13 +292,13 @@ async function switchAgentModel(
   const displayName = getAgentDisplayName(agent);
 
   if (isActiveModelOnly(agent)) {
-    await switchActiveOnlyAgentModel(profile, profileName, agent, set.model, modelIdArg, workingDir);
+    await switchActiveOnlyAgentModel(profile, profileName, agent, set.activeModel, modelIdArg, workingDir);
     return;
   }
 
   if (set.models.length <= 1 && !modelIdArg) {
     console.log(
-      chalk.yellow(`${displayName} has a single model (${set.model}) on profile '${profileName}'. `) +
+      chalk.yellow(`${displayName} has a single model (${set.activeModel}) on profile '${profileName}'. `) +
         chalk.white('Run ') +
         chalk.cyan('codemie setup') +
         chalk.white(' → Update an existing profile to add more.')
@@ -317,7 +317,7 @@ async function switchAgentModel(
   const agentLabels = Object.fromEntries(set.models.map(id => [id, agentsUsingModel(profile, id)]));
   const targetModel = modelIdArg ?? (await promptModelSwitchSelection(
     set.models,
-    set.model,
+    set.activeModel,
     agentLabels,
     `Select ${displayName}'s active model:`
   ));
@@ -488,7 +488,7 @@ export async function runModelsList(agentArg?: string, workingDir: string = proc
   console.log(chalk.bold(`\nProvider: ${chalk.cyan(provider)}`));
   if (agentArg && agentSet) {
     console.log(chalk.bold(`Agent: ${chalk.cyan(getAgentDisplayName(agentArg))}\n`));
-    formatTable(sortUsedModelsFirst(models, agentSet.models), agentSet.models, agentSet.model);
+    formatTable(sortUsedModelsFirst(models, agentSet.models), agentSet.models, agentSet.activeModel);
   } else if (config.agentModels) {
     console.log(formatAgentModelsBlock(config).join('\n') + '\n');
     formatTable(sortUsedModelsFirst(models, resolveProfileModels(config)), [], undefined, config.agentModels);
