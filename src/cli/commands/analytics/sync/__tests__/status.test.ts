@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseLastRun, runStatus } from '../status.js';
+import { parseLastFailure, parseLastRun, runStatus } from '../status.js';
 import type { StatusDeps } from '../status.js';
 import type { SyncSettings } from '../types.js';
 
@@ -12,6 +12,16 @@ const BASE_SETTINGS: SyncSettings = {
   includeExternal: 'windows',
   at: '03:00',
   lookbackDays: 7,
+};
+
+const GIT_SETTINGS: SyncSettings = {
+  format: 'json',
+  includeExternal: 'windows',
+  at: '03:00',
+  lookbackDays: 7,
+  git: {
+    repoUrl: 'https://git-user:SUPERSECRET123@git.example.invalid/team/analytics.git',
+  },
 };
 
 interface Harness {
@@ -45,33 +55,33 @@ function lineStarting(printed: string[], label: string): string {
 
 describe('parseLastRun', () => {
   it('returns null for an empty log', () => {
-    expect(parseLastRun('')).toBeNull();
+    expect(parseLastRun('', 'webhook')).toBeNull();
   });
 
   it('returns null when no line matches the run-log format', () => {
     const log = ['some legacy collector line', 'Error: boom\n    at Object.<anonymous>'].join('\n');
-    expect(parseLastRun(log)).toBeNull();
+    expect(parseLastRun(log, 'webhook')).toBeNull();
   });
 
-  it('parses an "ok sent" line', () => {
+  it('parses an "ok sent" line as the webhook\'s when it carries no target suffix', () => {
     const log = '2026-10-29T03:00:05.000Z ok sent codemie-analytics-jane-2026-10-29.report.json 1234';
-    expect(parseLastRun(log)).toEqual({
+    expect(parseLastRun(log, 'webhook')).toEqual({
       at: '2026-10-29T03:00:05.000Z',
       outcome: 'ok sent codemie-analytics-jane-2026-10-29.report.json 1234',
     });
   });
 
   it('parses a "skip" line', () => {
-    const log = '2026-10-29T03:00:05.000Z skip no sessions in window 2026-10-22..2026-10-29';
-    expect(parseLastRun(log)).toEqual({
+    const log = '2026-10-29T03:00:05.000Z skip no sessions in window 2026-10-22..2026-10-29 target=webhook';
+    expect(parseLastRun(log, 'webhook')).toEqual({
       at: '2026-10-29T03:00:05.000Z',
       outcome: 'skip no sessions in window 2026-10-22..2026-10-29',
     });
   });
 
   it('parses a "fail <category>" line', () => {
-    const log = '2026-10-29T03:00:05.000Z fail send webhook returned 500';
-    expect(parseLastRun(log)).toEqual({
+    const log = '2026-10-29T03:00:05.000Z fail send webhook returned 500 target=webhook';
+    expect(parseLastRun(log, 'webhook')).toEqual({
       at: '2026-10-29T03:00:05.000Z',
       outcome: 'fail send webhook returned 500',
     });
@@ -85,17 +95,71 @@ describe('parseLastRun', () => {
       '    at somewhere.ts:12',
     ].join('\n');
 
-    expect(parseLastRun(log)).toEqual({ at: '2026-10-29T03:00:05.000Z', outcome: 'ok sent report.json 1234' });
+    expect(parseLastRun(log, 'webhook')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'ok sent report.json 1234',
+    });
   });
 
   it('takes the last matching line when several match', () => {
     const log = [
-      '2026-10-28T03:00:05.000Z ok sent report-28.json 1000',
-      '2026-10-29T03:00:05.000Z ok sent report-29.json 2000',
-      '2026-10-29T03:00:05.000Z ok sent report-29.json 2000',
+      '2026-10-28T03:00:05.000Z ok sent report-28.json 1000 target=webhook',
+      '2026-10-29T03:00:05.000Z ok sent report-29.json 2000 target=webhook',
+      '2026-10-29T03:00:05.000Z ok sent report-29.json 2000 target=webhook',
     ].join('\n');
 
-    expect(parseLastRun(log)).toEqual({ at: '2026-10-29T03:00:05.000Z', outcome: 'ok sent report-29.json 2000' });
+    expect(parseLastRun(log, 'webhook')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'ok sent report-29.json 2000',
+    });
+  });
+
+  it('strips the "target=" suffix from the outcome and does not leak it into display text', () => {
+    const log = '2026-10-29T03:00:05.000Z ok sent report.json 1234 target=git';
+    expect(parseLastRun(log, 'git')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'ok sent report.json 1234',
+    });
+  });
+
+  it('ignores a line belonging to a different target', () => {
+    const log = '2026-10-29T03:00:05.000Z ok sent report.json 1234 target=git';
+    expect(parseLastRun(log, 'webhook')).toBeNull();
+  });
+
+  it('shows the webhook\'s last run as the legacy line, and the git\'s last failure as the second line', () => {
+    const log = [
+      '2026-10-28T03:00:05.000Z ok sent legacy-report.json 999',
+      '2026-10-29T03:00:05.000Z fail send auth failed: invalid credentials target=git',
+    ].join('\n');
+
+    expect(parseLastRun(log, 'webhook')).toEqual({
+      at: '2026-10-28T03:00:05.000Z',
+      outcome: 'ok sent legacy-report.json 999',
+    });
+    expect(parseLastFailure(log, 'git')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'fail send auth failed: invalid credentials',
+    });
+  });
+});
+
+describe('parseLastFailure', () => {
+  it('returns null when the target has no failure line', () => {
+    const log = '2026-10-29T03:00:05.000Z ok sent report.json 1234 target=git';
+    expect(parseLastFailure(log, 'git')).toBeNull();
+  });
+
+  it('takes the last matching failure when several match', () => {
+    const log = [
+      '2026-10-28T03:00:05.000Z fail send first failure target=git',
+      '2026-10-29T03:00:05.000Z fail send second failure target=git',
+    ].join('\n');
+
+    expect(parseLastFailure(log, 'git')).toEqual({
+      at: '2026-10-29T03:00:05.000Z',
+      outcome: 'fail send second failure',
+    });
   });
 });
 
@@ -134,6 +198,8 @@ describe('runStatus', () => {
     const output = printed.join('\n');
     expect(output).toMatch(/disabled/i);
     expect(output).toMatch(/install again/i);
+    expect(output).toContain('--webhook <url>');
+    expect(output).toContain('--git-repo <url>');
   });
 
   it('shows run time, lookback, policy, webhook host only, last run and last send when enabled', async () => {
@@ -225,5 +291,62 @@ describe('runStatus', () => {
     await runStatus(deps);
 
     expect(printed.join('\n')).toContain('7 days (default)');
+  });
+
+  it('shows the git target\'s repository (redacted), branch, path, last successful push and last failure', async () => {
+    const { deps, printed } = makeDeps({
+      loadSettings: async () => GIT_SETTINGS,
+      readLog: async () => '2026-10-29T03:00:05.000Z fail send auth failed target=git',
+      readMarker: async (target) =>
+        target === 'git' ? new Date('2026-10-28T03:00:07.000Z') : null,
+    });
+
+    const code = await runStatus(deps);
+
+    expect(code).toBe(0);
+    const output = printed.join('\n');
+    expect(output).not.toContain('SUPERSECRET123');
+    expect(lineStarting(printed, 'Repository:')).toContain('git.example.invalid/team/analytics.git');
+    expect(lineStarting(printed, 'Repository:')).not.toContain('git-user');
+    expect(lineStarting(printed, 'Branch:')).toContain('default');
+    expect(lineStarting(printed, 'Path:')).toBeDefined();
+    expect(lineStarting(printed, 'Last successful push:')).toMatch(/2026-10-28T03:00:07\.000Z$/);
+    expect(lineStarting(printed, 'Last failure:')).toMatch(/fail.*auth failed/i);
+  });
+
+  it('shows the configured git branch and path instead of the defaults', async () => {
+    const { deps, printed } = makeDeps({
+      loadSettings: async () => ({
+        ...GIT_SETTINGS,
+        git: { ...GIT_SETTINGS.git!, branch: 'release', path: 'team/analytics' },
+      }),
+    });
+
+    await runStatus(deps);
+
+    expect(lineStarting(printed, 'Branch:')).toContain('release');
+    expect(lineStarting(printed, 'Path:')).toContain('team/analytics');
+  });
+
+  it('shows "never" for the git last failure when the log has none', async () => {
+    const { deps, printed } = makeDeps({
+      loadSettings: async () => GIT_SETTINGS,
+      readLog: async () => '2026-10-29T03:00:05.000Z ok sent report.json 1234 target=git',
+    });
+
+    await runStatus(deps);
+
+    expect(lineStarting(printed, 'Last failure:')).toMatch(/never$/);
+  });
+
+  it('omits the webhook lines when only the git target is configured', async () => {
+    const { deps, printed } = makeDeps({ loadSettings: async () => GIT_SETTINGS });
+
+    await runStatus(deps);
+
+    const output = printed.join('\n');
+    expect(output).not.toContain('Webhook:');
+    expect(output).not.toContain('Last run:');
+    expect(output).not.toContain('Last successful send:');
   });
 });
