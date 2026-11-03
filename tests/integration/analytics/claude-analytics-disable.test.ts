@@ -107,7 +107,7 @@ function reachedEvidenceStage(): boolean {
   const logs = join(codemieHome, 'logs');
   return (
     existsSync(logs) &&
-    readdirSync(logs).some((name) => readFileSync(join(logs, name), 'utf-8').includes('evidence record unavailable'))
+    readdirSync(logs).some((name) => readFileSync(join(logs, name), 'utf-8').includes('evidence record unavailable (no_credentials)'))
   );
 }
 
