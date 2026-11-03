@@ -29,6 +29,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: vi.fn() }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));
@@ -104,6 +105,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
 
 import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
 import { hookEventProjectNames } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-project.js';
 
@@ -1748,6 +1750,21 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     for (const key of ['command_name', 'story_marker', 'ticket_mentions', 'prompt_length']) {
       expect(forwarded).not.toHaveProperty(key);
     }
+  });
+
+  it('checks SSO against the session profile, not the config resolved from the current directory', async () => {
+    const sessionProfile = {
+      provider: 'ai-run-sso',
+      ssoUrl: 'https://prod.example',
+      baseUrl: 'https://prod.example/code-assistant-api',
+    };
+    vi.mocked(resolveHookAuthProfile).mockResolvedValueOnce(sessionProfile);
+
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledWith(sessionProfile, expect.anything());
+    // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
+    expect(resolveHookAuthProfile).toHaveBeenCalledWith();
   });
 
   it('emits no event when the SSO gate blocks the prompt', async () => {

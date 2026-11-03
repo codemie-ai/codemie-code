@@ -21,7 +21,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { type AuthGateResult, ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, SSO_LOGIN_WAIT_MS } from '@/providers/plugins/sso/sso.detached-login.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
@@ -458,8 +458,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async ensureProxyAuth(): Promise<AuthGateResult> {
-    const workingDir = process.cwd();
-    const config = await ConfigLoader.load(workingDir);
+    // The session's profile, not the cwd's: the hook follows the agent into subdirectories (EPMCDME-16308).
+    const profile = await resolveHookAuthProfile();
     // Settings written before the 180s prompt timeout keep the 30s default: never outwait the installed timeout.
     const timeoutMs = ((await readPromptHookTimeoutSeconds()) ?? LEGACY_HOOK_TIMEOUT_SECONDS) * 1000;
     const waitMs = Math.max(0, Math.min(SSO_LOGIN_WAIT_MS, timeoutMs - HOOK_TIMEOUT_HEADROOM_MS));
@@ -467,9 +467,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     // stdout carries the hook's JSON decision, so the wait notice goes to stderr.
     return await ensureCodeMieSsoAuthOrWait(
       {
-        provider: config.provider,
-        ssoUrl: config.codeMieUrl || config.baseUrl,
-        baseUrl: config.baseUrl,
+        provider: profile.provider,
+        ssoUrl: profile.ssoUrl,
+        baseUrl: profile.baseUrl,
       },
       { waitMs, onWaitStart: (message) => process.stderr.write(message + '\n') }
     );
