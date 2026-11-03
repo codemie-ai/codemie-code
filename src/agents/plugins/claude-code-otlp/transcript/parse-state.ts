@@ -67,6 +67,34 @@ export interface TranscriptParseState {
    *  copy in later bytes is skipped. An array, not a `Set`, so it survives the JSON save; absent in
    *  a state saved before it existed. */
   seenMessageUuids?: string[];
+  /** Subagents whose usage is held back until they are told from a skill fork (`fork-skill.ts`);
+   *  absent in a state saved before it existed. */
+  deferredAgentIds?: string[];
+  /** The file facts of each deferred subagent, by `agentId`: its actual transcript path (which
+   *  directory discovery may not find, or may not find yet) and the ids that resolved it, so a later
+   *  `Stop`/`SessionEnd`, also after a restart, resolves the same candidate. */
+  deferredSubagentFiles?: Record<
+    string,
+    {
+      filePath: string;
+      toolUseId?: string;
+      agentType?: string;
+      spawnDepth?: number;
+      description?: string;
+      /** Positive skill evidence already established for a resolved subagent whose file had no
+       *  content yet; kept so the late content is sent with that scope. */
+      skillName?: string;
+      /** Scope already established and sent with: later passes only append new usage (stat vs
+       *  offset) and never resolve this subagent again. Absent in older state = unsettled. */
+      settled?: boolean;
+      /** The subagent's `promptId`, once its file shows one (for the slash-fork confirmation). */
+      promptId?: string;
+      /** Its file head was read completely: no further probing. */
+      headDone?: boolean;
+      /** File size at the last incomplete head probe (probe again only after it changed). */
+      headSize?: number;
+    }
+  >;
 }
 
 /**
