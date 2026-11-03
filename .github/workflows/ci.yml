@@ -141,7 +141,6 @@ jobs:
       - name: Run integration tests
         run: npx vitest run --project cli
 
-  # Final report: execution order, per-job duration, queue time and total pipeline time
   pipeline-summary:
     name: Pipeline Summary
     runs-on: ubuntu-latest
