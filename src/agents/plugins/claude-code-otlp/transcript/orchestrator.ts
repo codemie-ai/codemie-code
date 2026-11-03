@@ -962,9 +962,11 @@ function deferredCandidates(state: TranscriptParseState): SubagentFile[] {
 /**
  * Derive the usage of subagents whose `SubagentStop` was deferred because they could not yet be
  * told from a skill fork (see `fork-skill.ts`; a scope cannot be corrected once sent). Runs on
- * `Stop`, when the evidence (a `Skill` result, an `Agent` result) may have arrived: a subagent
- * that is still pending stays deferred; one already covered by its offset stays registered too (more may be appended) until `SessionEnd`. No-op
- * when nothing is deferred. A failing subagent is skipped, state intact.
+ * `Stop`, `StopFailure` and `PreCompact`, when new evidence or usage may have arrived. Pending
+ * candidates stay deferred; covered settled candidates stay registered without re-derivation.
+ * Registration also survives `SessionEnd`: a resumed session still needs the known scope and
+ * nonstandard paths to reconstruct commands and consume later bytes. No-op without registered
+ * candidates. A failing subagent is skipped, state intact.
  */
 async function settleDeferredSubagents(
   state: TranscriptParseState,
