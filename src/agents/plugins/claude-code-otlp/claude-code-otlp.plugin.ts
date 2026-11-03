@@ -51,6 +51,12 @@ import {
   type SubagentFile,
 } from './transcript/orchestrator.js';
 import { readForkedSkillMarker, readSubagentMeta, resolveSubagentSkill, subagentFilePath } from './transcript/subagent-usage.js';
+import { ProviderRegistry } from '@/providers/index.js';
+import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
+import { oauthAccountPays, routedViaCodemie } from '@/agents/core/evidence/routing.js';
+import { loadHookConfig } from '@/agents/core/event-fields/identity-fields.js';
+import { readClaudeOrganization } from './event-fields/claude-org.js';
+import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
@@ -92,12 +98,31 @@ const HOOK_TIMEOUT_HEADROOM_MS = 15_000;
 
 export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPromptSubmitHookSpecificOutput> {
   public readonly name = CLAUDE_CODE_OTLP_AGENT_NAME;
-
-  protected extractHookContext(hookInput: HookInput): OtlpHookContext {
+  protected async extractHookContext(hookInput: HookInput): Promise<OtlpHookContext> {
+    const [settings, hookConfig] = await Promise.all([
+      readClaudeSettingsEnv(hookInput.cwd),
+      loadHookConfig(hookInput.cwd),
+    ]);
+    const config = hookConfig?.config;
+    const authType = config?.provider ? ProviderRegistry.getProvider(config.provider)?.authType : undefined;
+    const codemieProvider = authType !== 'none' && (authType === 'sso' || config?.authMethod === 'jwt');
+    const routingInput = {
+      env: process.env,
+      settingsEnv: settings.env,
+      settingsUnknown: !settings.complete,
+      codemieProvider,
+      profileBaseUrl: config?.baseUrl,
+    };
+    const evidenceInputs: EvidenceInputs = {
+      // The saved OAuth login names the payer only when the session really authenticates with it.
+      organization: oauthAccountPays({ ...routingInput, apiKeyHelper: settings.apiKeyHelper }) ? await readClaudeOrganization() : undefined,
+      routing: routedViaCodemie(routingInput),
+    };
     return {
       cwd: hookInput.cwd,
       prompt: hookInput.hook_event_name === 'UserPromptSubmit' ? hookInput.prompt : undefined,
       sessionId: hookInput.session_id,
+      evidenceInputs,
     };
   }
 

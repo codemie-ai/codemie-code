@@ -1,0 +1,1240 @@
+{
+ "generator": "synthetic payloads encoded with the OpenTelemetry protobuf encoder (opentelemetry-proto Python classes, protobuf 5.29.6); no generator script is shipped in this repository",
+ "expected_session_id": "sess-0001-fixture",
+ "expected_project": "proj-alpha",
+ "max_attributes_per_record": 256,
+ "max_snapshot_bytes": 5242880,
+ "verdict_derivation": "spec.md item 6; backend otlp.py (_log_from_record, decode_traces, _append_metric_point, _decode_metric, _note_project, parse_request) and session_binding.py check_boundary",
+ "fixtures": [
+  {
+   "file": "logs-ok-session-id-and-project.bin",
+   "signal": "logs",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 218
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 3,
+   "size": 218,
+   "sha256": "dda6a5f2e232e28b82d41551b94134477c602c3278eb853a370fb3990c3edfd4"
+  },
+  {
+   "file": "logs-ok-session_id-fallback.bin",
+   "signal": "logs",
+   "note": "log id falls back to session_id when session.id is absent",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 111
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session_id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 1,
+   "size": 111,
+   "sha256": "f991abd63826bbab210c2cf0835f9ae5e8df13386cc3308bca0d04b6c5182978"
+  },
+  {
+   "file": "logs-ok-empty-session.id-falls-back.bin",
+   "signal": "logs",
+   "note": "backend: as_str('') is falsy so session_id is used",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 129
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": ""
+    },
+    {
+     "where": "record[0.0]",
+     "key": "session_id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 129,
+   "sha256": "5b3be7829e7d9a3e3b01ae5cfff2cd4924fa310e1fdedb8040a8f06c46a3d732"
+  },
+  {
+   "file": "logs-ok-project-case-differs.bin",
+   "signal": "logs",
+   "note": "project compare is case-insensitive",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 150
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "PROJ-ALPHA"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 150,
+   "sha256": "2ed269d3266d8a578641dd2cafbd4ff1f411953bb11fc639c1f6d5fd6409af40"
+  },
+  {
+   "file": "logs-ok-project-blank-is-absent.bin",
+   "signal": "logs",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 142
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "  "
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 142,
+   "sha256": "14c5f149dc6e36b2546ce13588e3ae60b103e9a06797b093d37f1ce5f5c3833b"
+  },
+  {
+   "file": "logs-resource-only-session-id.bin",
+   "signal": "logs",
+   "note": "resource attrs are not a session source",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 131
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "resource[0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 131,
+   "sha256": "69739fb8baaf5a90db2769d76cbd3525786b3dc98c672ffbbe5f4f9d9619bad7"
+  },
+  {
+   "file": "logs-lookalike-id-in-body.bin",
+   "signal": "logs",
+   "note": "body text never counts",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 118
+    }
+   ],
+   "session_observations": [],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 118,
+   "sha256": "2e394d9c02781d607b29c936c3e69e9bfb52cdfcf129f245aaf39794317f8c40"
+  },
+  {
+   "file": "logs-mixed-ids.bin",
+   "signal": "logs",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 168
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0002-other"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 1,
+   "size": 168,
+   "sha256": "26dfce10206067d6e3bc7a8846dd16248db108eb487ba6e0605c6e35e42356b5"
+  },
+  {
+   "file": "logs-empty-string-id.bin",
+   "signal": "logs",
+   "note": "backend: '' in seen -> boundary discard",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 94
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": ""
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 94,
+   "sha256": "5014562866c75c67e1ce44bb7f427c9328df861be95536d08a36663beeab3a93"
+  },
+  {
+   "file": "logs-non-string-id-int.bin",
+   "signal": "logs",
+   "note": "int_value; backend as_str would render '12345' which differs from any real id",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 95
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "int",
+     "value": 12345
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 1,
+   "size": 95,
+   "sha256": "646cbd40b2706bfd58ec3a2489c7d755c408dc3f1d508d8c5524ee00960d4a99"
+  },
+  {
+   "file": "logs-session-id-vs-session_id-contradiction.bin",
+   "signal": "logs",
+   "note": "SPEC-STRICTER than backend: backend takes session.id and would accept; spec 6 holds it",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 145
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[0.0]",
+     "key": "session_id",
+     "type": "string",
+     "value": "sess-0002-other"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 2,
+   "size": 145,
+   "sha256": "a5f2ae2071203ea12c520084e1c111ef4d1faf3be0c6d7b6cd71f1e6c99ce0bf"
+  },
+  {
+   "file": "logs-project-conflict-two-records.bin",
+   "signal": "logs",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "project_conflict",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 245
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[0.1]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-beta"
+    }
+   ],
+   "verdict_basis": "otlp.py _note_project + spec6 project rule",
+   "max_attrs_on_a_unit": 2,
+   "size": 245,
+   "sha256": "a3e63040e3652449b804dddc7bf936f5482baf56c1352cf922949e16dd7fcf85"
+  },
+  {
+   "file": "logs-project-conflict-resource-vs-record.bin",
+   "signal": "logs",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "project_conflict",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 156
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-beta"
+    },
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "otlp.py _note_project + spec6 project rule",
+   "max_attrs_on_a_unit": 2,
+   "size": 156,
+   "sha256": "13ee693ef90af3a7c149c4b6725fbad377d94a49cccb262be3a0ac01a6c29fc5"
+  },
+  {
+   "file": "logs-257-plus-attributes.bin",
+   "signal": "logs",
+   "note": "258 attributes on one record (session.id last); spec 6 reads at most 256",
+   "generated_in_test": false,
+   "expected_verdict": "otlp_unparseable",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 4483
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "spec6: >256 attributes on one record",
+   "max_attrs_on_a_unit": 258,
+   "size": 4483,
+   "sha256": "f869ce41c052a00b4fce1c8a1d440960cebe17661f7f08500c5d5ec1afca8499"
+  },
+  {
+   "file": "logs-concatenated-3-records.bin",
+   "signal": "logs",
+   "note": "3 requests concatenated = 3 top-level resource entries (protobuf merge)",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 209
+    },
+    {
+     "start": 209,
+     "end": 418
+    },
+    {
+     "start": 418,
+     "end": 627
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[1.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[2.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "resource[1]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[1.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "resource[2]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[2.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 3,
+   "size": 627,
+   "sha256": "832b2e28bc92b166e07f7acf9d2e08a0d395b9541a11b819f04a0e5c04940551"
+  },
+  {
+   "file": "logs-concatenated-last-mismatch.bin",
+   "signal": "logs",
+   "note": "verified prefix is entries 0-1; entry 2 held",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 209
+    },
+    {
+     "start": 209,
+     "end": 418
+    },
+    {
+     "start": 418,
+     "end": 604
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "record[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[1.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "record[2.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0002-other"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "resource[1]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[1.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "resource[2]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "record[2.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 3,
+   "size": 604,
+   "sha256": "8a8b0191617b7a7b681c1e10531da24e91bc8d7cdb692924e308a2d30d3b7d04"
+  },
+  {
+   "file": "logs-truncated.bin",
+   "signal": "logs",
+   "note": "last 5 bytes cut",
+   "generated_in_test": false,
+   "expected_verdict": "otlp_unparseable",
+   "parse_ok": false,
+   "entries": [],
+   "session_observations": [],
+   "project_observations": [],
+   "size": 183,
+   "sha256": "0046f4b3242bc37a0992c23841e29aec346866d05cc97703d6dfdb7613ef916f"
+  },
+  {
+   "file": "logs-malformed-length.bin",
+   "signal": "logs",
+   "note": "top-level length varint (16383) exceeds remaining bytes",
+   "generated_in_test": false,
+   "expected_verdict": "otlp_unparseable",
+   "parse_ok": false,
+   "entries": [],
+   "session_observations": [],
+   "project_observations": [],
+   "size": 189,
+   "sha256": "f47cad3a2be7a7ad78c691277b3c5da86be5aca406ab88b54d7e2cc2350619c1"
+  },
+  {
+   "file": null,
+   "signal": "logs",
+   "note": "NOT STORED: generate in-test (body > 5,242,880 bytes)",
+   "generated_in_test": true,
+   "expected_verdict": "otlp_unparseable",
+   "size": 5242881,
+   "sha256": null,
+   "entries": [],
+   "session_observations": [],
+   "project_observations": []
+  },
+  {
+   "file": "traces-ok.bin",
+   "signal": "traces",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 349
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "span[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "span[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "span[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 349,
+   "sha256": "eccdbfabed2b6db14d26cdc3121b56f33db0c538462a56ec3b38e6edfd23a766"
+  },
+  {
+   "file": "traces-session_id-only-not-a-source.bin",
+   "signal": "traces",
+   "note": "spans read session.id only",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 163
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "span[0.0]",
+     "key": "session_id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 163,
+   "sha256": "bbd6fdfd7d5c9ec7503b703ab40fb3ccb70e68ea09ec49b46f098c826e4b8aa6"
+  },
+  {
+   "file": "traces-resource-only-session-id.bin",
+   "signal": "traces",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 142
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "resource[0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 142,
+   "sha256": "56fc231d8c521b48d5b7cd33b1370002c37c30a0e7b67331f8e1169ef84838f3"
+  },
+  {
+   "file": "traces-mixed-ids.bin",
+   "signal": "traces",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 270
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "span[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "span[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0002-other"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 1,
+   "size": 270,
+   "sha256": "41b4097b30aa709d253b327eb0c522d03ffb1f4f4b819eab553d9b7868c01901"
+  },
+  {
+   "file": "traces-project-conflict.bin",
+   "signal": "traces",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "project_conflict",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 349
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "span[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "span[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "span[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "span[0.1]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-beta"
+    }
+   ],
+   "verdict_basis": "otlp.py _note_project + spec6 project rule",
+   "max_attrs_on_a_unit": 2,
+   "size": 349,
+   "sha256": "34fffab4d4de8043b149b371e660df79032e6ddbb486ae662d46ffbdae393dc7"
+  },
+  {
+   "file": "metrics-gauge-ok.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 246
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:gauge[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:gauge[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:gauge[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 246,
+   "sha256": "f569030514ceed1537c7feab81f3eebf2c1332b9338acc72a0c9bfe4d3da5563"
+  },
+  {
+   "file": "metrics-sum-ok.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 248
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:sum[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:sum[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:sum[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 248,
+   "sha256": "e79af071cbf0731859c78e9d6fc616968530ea4c49309cec86def155c583f98c"
+  },
+  {
+   "file": "metrics-histogram-ok.bin",
+   "signal": "metrics",
+   "note": "backend stores NO rows for this kind (only notes project) so it never trips check_boundary; client still checks ids conservatively",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 325
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:histogram[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:histogram[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:histogram[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 325,
+   "sha256": "e1e595cfa0ed5420f9743be7af0a56eb544412be3b027d184d3149685e9920f0"
+  },
+  {
+   "file": "metrics-summary-ok.bin",
+   "signal": "metrics",
+   "note": "backend stores NO rows for this kind (only notes project) so it never trips check_boundary; client still checks ids conservatively",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 266
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:summary[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:summary[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:summary[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 266,
+   "sha256": "09373181cd2ee33b1641196a273d60abafcef763692bb769b7510a39bf66e296"
+  },
+  {
+   "file": "metrics-exp_histogram-ok.bin",
+   "signal": "metrics",
+   "note": "backend stores NO rows for this kind (only notes project) so it never trips check_boundary; client still checks ids conservatively",
+   "generated_in_test": false,
+   "expected_verdict": "ok",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 280
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:exponential_histogram[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:exponential_histogram[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:exponential_histogram[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "all rows carry the declared id",
+   "max_attrs_on_a_unit": 2,
+   "size": 280,
+   "sha256": "db3f2a5716f76bdd81be05583d029a11805c377bcb17596c1f9e29f4a37ddf09"
+  },
+  {
+   "file": "metrics-sum-point-missing-id.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 182
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:sum[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "resource[0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    }
+   ],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 182,
+   "sha256": "ff5c0bcc0c47aedecb6da345d43fb351782a35421b091746b1642a6670c8bce2"
+  },
+  {
+   "file": "metrics-gauge-resource-only-id.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 111
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "resource[0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 111,
+   "sha256": "327e4569d0fba9e135353c8db9ef66441773cdbb9b213ab2ec7e2619a98c64ae"
+  },
+  {
+   "file": "metrics-gauge-point-session_id-not-a-source.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_id_absent",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 111
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:gauge[0.0]",
+     "key": "session_id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: \"\" in seen",
+   "max_attrs_on_a_unit": 1,
+   "size": 111,
+   "sha256": "e1f01ed4fabc2b9969e67f15705623795a7909b267903c54d6060b2ce927400c"
+  },
+  {
+   "file": "metrics-sum-mixed-ids.bin",
+   "signal": "metrics",
+   "note": "",
+   "generated_in_test": false,
+   "expected_verdict": "session_mismatch",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 168
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:sum[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:sum[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0002-other"
+    }
+   ],
+   "project_observations": [],
+   "verdict_basis": "check_boundary: row id differs / spec6 non-string or contradiction",
+   "max_attrs_on_a_unit": 1,
+   "size": 168,
+   "sha256": "55ed760b0b47437a44510f40fde9fb65861355dd9deac4dd4db00d76d2c3239b"
+  },
+  {
+   "file": "metrics-histogram-project-conflict.bin",
+   "signal": "metrics",
+   "note": "backend notes project on histogram points even though they are not stored",
+   "generated_in_test": false,
+   "expected_verdict": "project_conflict",
+   "parse_ok": true,
+   "entries": [
+    {
+     "start": 0,
+     "end": 324
+    }
+   ],
+   "session_observations": [
+    {
+     "where": "point:histogram[0.0]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    },
+    {
+     "where": "point:histogram[0.1]",
+     "key": "session.id",
+     "type": "string",
+     "value": "sess-0001-fixture"
+    }
+   ],
+   "project_observations": [
+    {
+     "where": "point:histogram[0.0]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-alpha"
+    },
+    {
+     "where": "point:histogram[0.1]",
+     "key": "codemie_project_name",
+     "type": "string",
+     "value": "proj-beta"
+    }
+   ],
+   "verdict_basis": "otlp.py _note_project + spec6 project rule",
+   "max_attrs_on_a_unit": 2,
+   "size": 324,
+   "sha256": "b69fd90f4f3d772033802ffce7beaedcaf6efc891202fa22160dc7cc0d2de63e"
+  }
+ ]
+}
