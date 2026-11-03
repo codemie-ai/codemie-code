@@ -1622,6 +1622,30 @@ describe('claude-code-otlp connector', () => {
       expect(await readRaw(settingsPath())).toBe(foreign);
     });
 
+    it.each([
+      ['remote same-suffix endpoint', 'https://collector.example/v1/analytics/otlp'],
+      ['localhost host', 'http://localhost:4001/v1/analytics/otlp'],
+      ['https loopback', 'https://127.0.0.1:4001/v1/analytics/otlp'],
+      ['extra path prefix', 'http://127.0.0.1:4001/x/v1/analytics/otlp'],
+      ['malformed URL', 'not a url/v1/analytics/otlp'],
+    ])('never treats a user-owned destination as CodeMie-owned: %s', async (_name, endpoint) => {
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      const raw = JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: endpoint, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer user-token' } });
+      await writeFile(settingsPath(), raw);
+
+      expect(await checkClaudeCodeOtlpEndpoint(live)).toBeNull();
+      expect(await refreshClaudeCodeOtlpEndpoint(live)).toBe(false);
+      expect(await readConfiguredOtlpPort()).toBeNull();
+      expect(await readRaw(settingsPath())).toBe(raw);
+    });
+
+    it('reports a header-only mismatch', async () => {
+      await writeClaudeCodeOtlpConfig(); // :41999, key test-gateway-key-123
+
+      expect(await checkClaudeCodeOtlpEndpoint({ url: mockState.url, gatewayKey: 'rotated' }))
+        .toMatchObject({ matches: false, configured: 'http://127.0.0.1:41999/v1/analytics/otlp', expected: 'http://127.0.0.1:41999/v1/analytics/otlp' });
+    });
+
     it('reports the port Claude Code is told to export to, and a mismatch against the live daemon', async () => {
       await writeClaudeCodeOtlpConfig(); // mockState: :41999
 

@@ -287,10 +287,15 @@ export function createProxyCommand(): Command {
       console.log(`  Uptime:  ${uptime}`);
 
       if (otlpMismatch) {
+        const keyOnly = otlpMismatch.configured === otlpMismatch.expected;
         console.log(chalk.yellow(
-          `  Warning: Claude Code OTLP endpoint ${otlpMismatch.configured} does not match this daemon ` +
-          `(${otlpMismatch.expected}); native OTel is not reaching it. Start a new Claude Code session ` +
-          'or run: codemie proxy connect --claude-code-otlp'
+          keyOnly
+            ? '  Warning: the gateway key in Claude Code OTEL_EXPORTER_OTLP_HEADERS does not match this daemon; native OTel is rejected.'
+            : `  Warning: Claude Code OTLP endpoint ${otlpMismatch.configured} does not match this daemon (${otlpMismatch.expected}); native OTel is not reaching it.`
+        ));
+        console.log(chalk.yellow(
+          '           Repair: run `codemie proxy connect --claude-code-otlp` (same --scope as before; a tracked Claude Code ' +
+          'hook also re-points it), then start a NEW Claude Code session - running sessions keep the old setting.'
         ));
       }
 
