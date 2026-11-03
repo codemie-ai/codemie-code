@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-11-02
+
+### Added
+
+- Claude Code analytics can be disabled globally or per project
+
+### Fixed
+
+- Git branch is now detected in repositories that have no commits yet
+- UUID fragments and model tokens are no longer mistaken for story mentions in analytics
+- Claude runs are baselined per record, and Codex calls are counted once their output appears
+- Native `-s` flags are preserved for Codex and Gemini
+- On shutdown only the agent is signalled, so its SessionEnd hook is no longer killed
+
 ## [0.16.3] - 2026-10-30
 
 ### Added

@@ -29,6 +29,7 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitCommitsByAuthor: vi.fn(async () => []),
 }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: vi.fn(async () => ({ ok: true })) }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null) },
 }));

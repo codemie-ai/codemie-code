@@ -124,6 +124,29 @@ describe('codex rollout correlation', () => {
     expect(await endRun(adapter, runA.sessionId, runA.startedAt)).toBe(rolloutB.filePath);
   });
 
+  it('in window mode picks the rollout inside the record window, not a newer fresh one in the same cwd', async () => {
+    const t0 = Date.now() - 3 * 60 * 60_000;
+    // The run resumed an older rollout (its start predates the run); a later run in the same
+    // cwd started a fresh one after this record's window closed
+    const resumed: FakeRollout = { filePath: '/codex/rollout-resumed.jsonl', startedAt: t0 - 60 * 60_000, mtime: t0 + 5 * 60_000, cwd };
+    const later: FakeRollout = { filePath: '/codex/rollout-later.jsonl', startedAt: t0 + 20 * 60_000, mtime: t0 + 25 * 60_000, cwd };
+    const adapter = fakeAdapter([resumed, later]);
+    await writeSessionRecord('stranded-run');
+
+    const windowed = await findRolloutForRun(adapter, {
+      sessionId: 'stranded-run',
+      startedAt: t0,
+      cwd,
+      window: { until: t0 + 10 * 60_000 },
+    });
+    const lastDay = await findRolloutForRun(adapter, { sessionId: 'stranded-run', startedAt: t0, cwd });
+
+    expect(windowed?.filePath).toBe(resumed.filePath);
+    expect(lastDay?.filePath).toBe(later.filePath);
+    expect(adapter.discoverSessions).toHaveBeenNthCalledWith(1, { maxAgeDays: 1 });
+    expect(adapter.discoverSessions).toHaveBeenNthCalledWith(2, { maxAgeDays: 1, limit: 20 });
+  });
+
   it('logs when more than one rollout could belong to the run', async () => {
     const { runA, adapter } = concurrentRuns();
     await writeSessionRecord(runA.sessionId);

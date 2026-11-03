@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { MetricsDataLoader, type RawSessionData } from '../data-loader.js';
+import { AnalyticsAggregator } from '../aggregator.js';
 
 function rawSession(sessionId: string): RawSessionData {
   return {
@@ -266,5 +267,71 @@ describe('MetricsDataLoader.loadSessions — marker sidecars and malformed recor
       'claude-1',
     ]);
     expect(new MetricsDataLoader(dir).loadSessions()).toHaveLength(2);
+  });
+});
+
+describe('MetricsDataLoader.loadSessions — /clear generations', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-gen-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeRecord(name: string): void {
+    writeFileSync(
+      join(dir, name),
+      JSON.stringify({ startTime: 1000, endTime: 2000, status: 'completed', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/p' })
+    );
+  }
+
+  it('--session <uuid> selects the uuid and its generations <uuid>-<gen>, nothing else', () => {
+    const id = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    writeRecord(`completed_${id}.json`);
+    writeRecord(`completed_${id}-gen-alpha.json`);
+    writeRecord('completed_086cca74-d58d-4007-a529-fa73910c085e.json');
+
+    const sessions = new MetricsDataLoader(dir).loadSessions({ sessionId: id });
+
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([id, `${id}-gen-alpha`]);
+  });
+
+  it('a partial id still matches the whole id only', () => {
+    writeRecord('completed_eddd66b2-0e73-4167-841c-9263207870ae.json');
+
+    expect(new MetricsDataLoader(dir).loadSessions({ sessionId: 'eddd66b2' })).toHaveLength(0);
+  });
+});
+
+describe('report / export inclusion of a live session', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-active-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('an active session with metrics is exported (no end yet)', () => {
+    const id = 'aaaaaaaa-1111-4222-8333-444444444444';
+    writeFileSync(
+      join(dir, `${id}.json`),
+      JSON.stringify({ sessionId: id, startTime: 1000, status: 'active', agentName: 'claude', provider: 'ai-run-sso', workingDirectory: '/tmp/project' })
+    );
+    writeFileSync(
+      join(dir, `${id}_metrics.jsonl`),
+      JSON.stringify({ recordId: 'd1', sessionId: id, agentSessionId: id, timestamp: 2000, gitBranch: 'main', tools: { Read: 1 }, syncStatus: 'pending', syncAttempts: 0 }) + '\n'
+    );
+
+    const loaded = new MetricsDataLoader(dir).loadSessions();
+    const analytics = AnalyticsAggregator.aggregate(loaded);
+
+    expect(loaded.map((s) => [s.sessionId, s.endEvent])).toEqual([[id, undefined]]);
+    expect(analytics.totalSessions).toBe(1);
   });
 });

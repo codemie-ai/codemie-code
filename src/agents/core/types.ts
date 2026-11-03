@@ -567,9 +567,6 @@ export interface AgentMetricsConfig {
  * Controls how agents collect and process metrics
  */
 export interface MetricsConfig {
-  // Provider filter
-  enabled: (provider: string) => boolean;
-
   // Retry configuration
   retry: {
     attempts: number;
@@ -686,6 +683,8 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  endTimeFromActivity?: boolean;   // SessionEnd only: end the session at its last recorded activity, not now
+  endTime?: number;                // SessionEnd only: the session's end (epoch ms), already resolved by the caller
 }
 
 // Forward declaration for extension installer
