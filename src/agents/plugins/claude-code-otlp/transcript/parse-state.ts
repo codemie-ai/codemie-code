@@ -8,9 +8,10 @@
  * state to disk between parse passes, keyed by session id.
  */
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
+import { acquirePidLock } from '@/utils/pid-lock.js';
 import type { SessionEnvFields } from '../event-fields/session-env-fields.js';
 
 export interface OpenUsageRequest {
@@ -127,40 +128,16 @@ export async function saveParseState(sessionId: string, state: TranscriptParseSt
   await rename(tmpPath, filePath);
 }
 
-const LOCK_RETRY_MS = 25;
-const LOCK_WAIT_BUDGET_MS = 10_000;
-const EMPTY_LOCK_STALE_MS = 5_000;
-// Windows reports EPERM/EACCES/EBUSY, not EEXIST, when creating a lock whose deletion is pending.
-const LOCK_CONTENTION_CODES = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
-
 function getLockPath(sessionId: string): string {
   return `${getParseStatePath(sessionId)}.lock`;
 }
 
-/** A pid we cannot signal for any reason other than ESRCH (e.g. EPERM) is treated as alive. */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-}
-
-/** Remove the lock only if it still holds `expected`, so a lock created meanwhile is never removed. */
-async function removeLockIfUnchanged(lockPath: string, expected: string): Promise<void> {
-  if ((await readFile(lockPath, 'utf-8').catch(() => null)) === expected) {
-    await rm(lockPath, { force: true }).catch(() => {});
-  }
-}
-
 /**
  * Acquire the per-session parse-state lock across concurrent hook processes (e.g. sibling
- * `SubagentStop` fires for the same session), via an exclusive-create lock file holding the
- * owner's pid. Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
+ * `SubagentStop` fires for the same session), via {@link acquirePidLock} in `wait` mode.
+ * Each hook fire is a fresh CLI process, so an in-memory mutex won't do.
  *
- * A lock is reclaimed only when its owner pid is dead, never by age, so a slow holder keeps it.
- * If the lock is not acquired within {@link LOCK_WAIT_BUDGET_MS}, this throws rather than
+ * If the lock is not acquired within the helper's wait budget, this throws rather than
  * returning a release function; the caller skips its pass and the next hook resumes from the
  * saved offsets.
  *
@@ -171,43 +148,11 @@ export async function acquireParseStateLock(sessionId: string): Promise<() => Pr
   const lockPath = getLockPath(sessionId);
   await mkdir(dirname(lockPath), { recursive: true });
 
-  const deadline = Date.now() + LOCK_WAIT_BUDGET_MS;
-  for (;;) {
-    try {
-      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
-      break;
-    } catch (err) {
-      if (!LOCK_CONTENTION_CODES.has((err as NodeJS.ErrnoException).code ?? '')) {
-        throw err;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
-      }
-
-      const holder = await readFile(lockPath, 'utf-8').catch(() => null);
-      const holderPid = Number.parseInt(holder ?? '', 10);
-      if (holder !== null && !Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
-        await removeLockIfUnchanged(lockPath, holder);
-        continue;
-      }
-      if (holder === '') {
-        // Created but not yet written, or its creator died in between.
-        const info = await stat(lockPath).catch(() => null);
-        if (info && Date.now() - info.mtimeMs > EMPTY_LOCK_STALE_MS) {
-          await removeLockIfUnchanged(lockPath, holder);
-          continue;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
-    }
+  const lock = await acquirePidLock(lockPath, { mode: 'wait', pidOnlyLiveness: true });
+  if (!lock) {
+    throw new Error(`Timed out waiting for the parse-state lock (session ${sessionId})`);
   }
-
-  let released = false;
-  return async () => {
-    if (released) return;
-    released = true;
-    await rm(lockPath, { force: true }).catch(() => {});
-  };
+  return () => lock.release();
 }
 
 /**

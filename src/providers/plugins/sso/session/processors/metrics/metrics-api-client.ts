@@ -30,12 +30,14 @@ import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
 import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
+import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
+import { backoffWithin, boundedRequest, noteAuthFailure, throwIfStopped } from '../../bounded-request.js';
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
   response?: unknown;
   responseText?: string;
-  /** True when the server rejected the provided credentials (401/403 or an HTML SSO login page) */
+  /** True when the server rejected the provided credentials (401 or an HTML SSO login page) */
   isAuthFailure?: boolean;
 }
 
@@ -48,7 +50,8 @@ interface MetricsRequestError extends Error {
  * - Error classification (retryable vs non-retryable)
  */
 class MetricsApiClient {
-  private readonly config: Required<MetricsApiConfig>;
+  private readonly config: Required<Omit<MetricsApiConfig, 'deadlineMs' | 'abortSignal'>>;
+  private readonly bounds: SyncBounds;
 
   constructor(config: MetricsApiConfig) {
     this.config = {
@@ -56,11 +59,12 @@ class MetricsApiClient {
       cookies: config.cookies || '',
       apiKey: config.apiKey || '',
       timeout: config.timeout || 30000,
-      retryAttempts: config.retryAttempts || 3,
+      retryAttempts: config.retryAttempts ?? 3,
       retryDelays: config.retryDelays || [1000, 2000, 5000],
       version: config.version || process.env.CODEMIE_CLI_VERSION || 'unknown',
       clientType: config.clientType || 'codemie-cli'
     };
+    this.bounds = { deadlineMs: config.deadlineMs, abortSignal: config.abortSignal };
   }
 
   async sendMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
@@ -71,8 +75,9 @@ class MetricsApiClient {
         if (attempt > 0) {
           const delay = this.config.retryDelays[attempt - 1] || 5000;
           logger.debug(`[MetricsApiClient] Retry attempt ${attempt} after ${delay}ms`);
-          await this.sleep(delay);
+          await backoffWithin(delay, this.bounds);
         }
+        throwIfStopped(this.bounds);
 
         const response = await this.sendRequest(metric);
         // Server accepted our credentials — clear any stale invalid-auth marker
@@ -80,14 +85,19 @@ class MetricsApiClient {
         return response;
 
       } catch (error) {
+        if (error instanceof SyncStoppedError) {
+          logger.info(`[MetricsApiClient] Stopped (${error.reason}) at attempt ${attempt + 1}; the metric stays unsent`);
+          throw error;
+        }
         lastError = error as Error;
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : 'Unknown';
         const statusCode = (error as MetricsRequestError).statusCode;
 
-        // Record credential rejections (401/403 or HTML SSO login page) so the
+        // Record credential rejections (401 or an HTML SSO login page) so the
         // hook auth gate can prompt the user to re-authenticate
         if ((error as MetricsRequestError).isAuthFailure) {
+          noteAuthFailure(this.bounds.abortSignal);
           await markAnalyticsAuthInvalid(
             statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
             this.config.baseUrl
@@ -164,18 +174,15 @@ class MetricsApiClient {
       headers['Cookie'] = this.config.cookies;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+    const request = boundedRequest(this.config.timeout, this.bounds);
 
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers,
         body,
-        signal: controller.signal
+        signal: request.signal
       });
-
-      clearTimeout(timeoutId);
 
       const responseText = await response.text();
       const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
@@ -190,7 +197,7 @@ class MetricsApiClient {
           const error = new Error(errorMessage) as MetricsRequestError;
           error.statusCode = response.status;
           error.response = data;
-          error.isAuthFailure = response.status === 401 || response.status === 403;
+          error.isAuthFailure = response.status === 401;
           throw error;
         }
 
@@ -198,7 +205,7 @@ class MetricsApiClient {
         const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
-        error.isAuthFailure = response.status === 401 || response.status === 403;
+        error.isAuthFailure = response.status === 401;
         throw error;
       }
 
@@ -223,11 +230,16 @@ class MetricsApiClient {
       return successData;
 
     } catch (error) {
-      clearTimeout(timeoutId);
       if ((error as Error).name === 'AbortError') {
+        const stopReason = request.stopReason();
+        if (stopReason) {
+          throw new SyncStoppedError(stopReason);
+        }
         throw new Error(`Request timeout after ${this.config.timeout}ms`);
       }
       throw error;
+    } finally {
+      request.dispose();
     }
   }
 
@@ -236,10 +248,6 @@ class MetricsApiClient {
     if (!statusCode) return true;  // Network errors
     if (statusCode >= 500 || statusCode === 429) return true;  // Server errors and rate limit
     return false;  // 4xx errors (except 429)
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
@@ -257,9 +265,11 @@ function parseMetricsResponse(
     ) as MetricsRequestError;
     error.statusCode = statusCode;
     error.responseText = excerpt;
-    // An HTML page instead of JSON means the request was redirected to the SSO
-    // login page (e.g. Keycloak answers HTTP 200 + login HTML for expired cookies)
-    error.isAuthFailure = Boolean(contentType?.includes('text/html'));
+    // fetch follows the redirect of expired cookies, so the SSO login page lands as a 2xx HTML page
+    // (Keycloak answers HTTP 200 + login HTML); an HTML 4xx / 5xx is a proxy's or WAF's own error page
+    // (413, a 403 block page, a 502), a failure counted by its status, not rejected credentials
+    const isHtml = Boolean(contentType?.includes('text/html'));
+    error.isAuthFailure = statusCode === 401 || (isHtml && statusCode >= 200 && statusCode < 300);
     throw error;
   }
 }
@@ -294,10 +304,15 @@ export interface MetricsSenderOptions {
   cookies?: string;
   apiKey?: string;    // API key for localhost development (user-id header)
   timeout?: number;
+  /** RETRIES after the first request (0 = one request, no retry); default 3 */
   retryAttempts?: number;
   version?: string;
   clientType?: string;
   dryRun?: boolean;  // Dry-run mode: log metrics without sending
+  /** Epoch ms past which no attempt or backoff starts (see MetricsApiConfig.deadlineMs) */
+  deadlineMs?: number;
+  /** Aborts the request in flight and the backoff (see MetricsApiConfig.abortSignal) */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -331,7 +346,9 @@ export class MetricsSender {
       timeout: options.timeout,
       retryAttempts: options.retryAttempts,
       version: options.version,
-      clientType: options.clientType
+      clientType: options.clientType,
+      deadlineMs: options.deadlineMs,
+      abortSignal: options.abortSignal
     };
 
     this.client = new MetricsApiClient(config);
@@ -486,6 +503,7 @@ export class MetricsSender {
    * @param durationMs - Wall-clock session duration in milliseconds
    * @param error - Optional error information (for failed sessions)
    * @param activeDurationMs - Optional active duration excluding idle time
+   * @param endTime - The session's end (epoch ms); default now
    */
   async sendSessionEnd(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
@@ -493,7 +511,8 @@ export class MetricsSender {
     status: SessionEndStatus,
     durationMs: number,
     error?: SessionError,
-    activeDurationMs?: number
+    activeDurationMs?: number,
+    endTime?: number
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -517,7 +536,7 @@ export class MetricsSender {
       session_duration_ms: durationMs,
       ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
       start_time: session.startTime,
-      end_time: Date.now(),
+      end_time: endTime ?? Date.now(),
       had_errors: status.status === 'failed',
       count: 1,
 

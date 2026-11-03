@@ -110,4 +110,22 @@ describe('KimiHookTransformer', () => {
     expect(event.source).toBe('resume');
     expect(event.transcript_path).toBe(getKimiMainWirePath(process.cwd(), 'session-no-cwd'));
   });
+
+  it('keeps a given transcript_path and passes endTimeFromActivity and endTime through (the synthetic SessionEnd)', () => {
+    const payload = {
+      hook_event_name: 'SessionEnd',
+      session_id: 'session-synthetic',
+      cwd: '/Users/dave/project',
+      reason: 'interrupted',
+      transcript_path: '/kimi/sessions/x/session-synthetic/agents/main/wire.jsonl',
+      endTimeFromActivity: true,
+      endTime: 1_790_000_000_000,
+    };
+
+    const event = transformer.transform(payload);
+
+    expect(event.transcript_path).toBe('/kimi/sessions/x/session-synthetic/agents/main/wire.jsonl');
+    expect(event.endTimeFromActivity).toBe(true);
+    expect(event.endTime).toBe(1_790_000_000_000);
+  });
 });

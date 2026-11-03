@@ -19,6 +19,7 @@ import { getCodemiePath } from '../../../utils/paths.js';
 const RUN_START_GRACE_MS = 10_000;
 /** A rollout may record a start slightly before the launcher's clock reading. */
 const CLOCK_SKEW_MS = 2_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface CodexRunInfo {
   /** CodeMie session id of this run. */
@@ -27,6 +28,11 @@ export interface CodexRunInfo {
   startedAt: number;
   /** Working directory the run was launched in. */
   cwd: string;
+  /**
+   * Search the run's whole window instead of the last day's 20 newest rollouts: every rollout
+   * written since the run started whose own start is before `until` (a later run's start).
+   */
+  window?: { until?: number };
 }
 
 type RolloutSource = Pick<CodexSessionAdapter, 'discoverSessions' | 'parseSessionFile'>;
@@ -44,7 +50,12 @@ export async function findRolloutForRun(
   adapter: RolloutSource,
   run: CodexRunInfo
 ): Promise<SessionDescriptor | undefined> {
-  const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 20 });
+  const sessions = await adapter.discoverSessions(
+    run.window
+      ? { maxAgeDays: Math.ceil((Date.now() - run.startedAt + RUN_START_GRACE_MS) / DAY_MS) }
+      : { maxAgeDays: 1, limit: 20 }
+  );
+  const until = run.window?.until;
   const cwdReal = await safeRealpath(run.cwd);
   const claimed = await listClaimedRolloutFiles(run.sessionId, run.startedAt - RUN_START_GRACE_MS);
   const candidates: RolloutCandidate[] = [];
@@ -61,6 +72,7 @@ export async function findRolloutForRun(
       const projectReal = await safeRealpath(projectPath);
       if (projectReal === cwdReal) {
         const rolloutStart = Date.parse(parsed.metadata?.createdAt ?? '');
+        if (until !== undefined && !Number.isNaN(rolloutStart) && rolloutStart >= until) continue;
         candidates.push({ descriptor: session, rolloutStart: Number.isNaN(rolloutStart) ? undefined : rolloutStart });
       }
     } catch (error) {
@@ -138,20 +150,23 @@ async function listClaimedRolloutFiles(ownSessionId: string, sinceMs: number): P
  * Without this every codex session reported hadLog=false and costUSD=0. It also
  * lets the native loader recognise the rollout as CodeMie-owned instead of an
  * untracked session.
+ *
+ * @returns true when the record now names `rolloutPath`; false when there is no record yet,
+ *   the record keeps another rollout, or the save failed
  */
-export async function recordRolloutCorrelation(sessionId: string, rolloutPath: string): Promise<void> {
+export async function recordRolloutCorrelation(sessionId: string, rolloutPath: string): Promise<boolean> {
   try {
     const { SessionStore } = await import('../../core/session/SessionStore.js');
     const store = new SessionStore();
     const session = await store.loadSession(sessionId);
     if (!session) {
       logger.debug(`[codex] No session record for ${sessionId}; skipping rollout correlation`);
-      return;
+      return false;
     }
     const existing = session.correlation?.agentSessionFile;
     if (existing && existing !== rolloutPath) {
       logger.warn(`[codex] Session ${sessionId} is already correlated to another rollout; keeping it`);
-      return;
+      return false;
     }
     session.correlation = {
       ...session.correlation,
@@ -159,9 +174,11 @@ export async function recordRolloutCorrelation(sessionId: string, rolloutPath: s
       agentSessionFile: rolloutPath,
     };
     await store.saveSession(session);
+    return true;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.debug(`[codex] Failed to record rollout correlation (non-blocking): ${msg}`);
+    return false;
   }
 }
 

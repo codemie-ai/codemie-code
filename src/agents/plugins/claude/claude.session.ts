@@ -9,12 +9,12 @@ import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
-import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
 import type { AgentMetadata } from '../../core/types.js';
-import { readJSONL } from '../../core/session/utils/jsonl-reader.js';
+import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
@@ -193,7 +193,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     try {
       // Read main session JSONL file: `messages` (keep-last, for metrics, `extractMetrics`,
       // the `codemie analytics` / cost readers) and `conversationMessages` (for the conversation sync)
-      const counted = (await readJSONL<ClaudeMessage>(filePath)).filter(isCountedTranscriptLine);
+      const counted = (await readJSONLTolerant<ClaudeMessage>(filePath, '[Claude]')).filter(isCountedTranscriptLine);
       const messages = this.dedupeByUuid(counted);
       const conversationMessages = keepFirstAcrossCompaction(counted);
 
@@ -268,7 +268,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       for (const subagentFile of subagentFiles ?? []) {
         try {
           const subagentMessages = this.dedupeByUuid(
-            (await readJSONL<ClaudeMessage>(subagentFile.filePath)).filter(isCountedTranscriptLine)
+            (await readJSONLTolerant<ClaudeMessage>(subagentFile.filePath, '[Claude]')).filter(isCountedTranscriptLine)
           );
           subagents.push({
             agentId: subagentFile.agentId,
@@ -306,6 +306,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         metadata,
         messages,  // Keep-last view for metrics, extractMetrics and the codemie analytics / cost readers
         conversationMessages,  // Read by the conversation sync
+        recordTimes: messages.map((message) => message.timestamp),
         subagents: subagents.length > 0 ? subagents : undefined, // Include sub-agents if any
         ...(subagentsIncomplete && { subagentsIncomplete }),
         metrics    // Extracted metrics for metrics processor
@@ -733,7 +734,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         success: failedProcessors.length === 0,
         processors: processorResults,
         totalRecords,
-        failedProcessors
+        failedProcessors,
+        lastRecordAt: latestRecordTime(parsedSession.recordTimes, context.recordsBeforeMs)
       };
 
       logger.debug(

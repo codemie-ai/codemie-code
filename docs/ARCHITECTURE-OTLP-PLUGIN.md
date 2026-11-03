@@ -219,7 +219,7 @@ the lock they already hold, appending a `buildSessionEnvEvent()` record when som
 `openSessionEnvCheckPass(sessionId, input)` is a standalone pass (its own lock) for
 `onPostModelSwitch`/`onConfigChange`, which open no sibling pass to fold into. The fold-in exists
 because a second `acquireParseStateLock` for the same session, from the same process, can never be
-reclaimed and would stall for the full `LOCK_WAIT_BUDGET_MS` — the bug an earlier, concurrent
+reclaimed and would stall for the full `PID_LOCK_WAIT_BUDGET_MS` — the bug an earlier, concurrent
 `Promise.all` version of this had. `openPostCompactPass` is `PostCompact`'s own dedicated pass — see
 its note below |
 | `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session; `buildSubagentUsageEvent` ranks the top-level `model` by `api_calls`, skipping the `<synthetic>` API-error placeholder (`isSyntheticModel` in `transcript/synthetic-model.ts`) — the same rule `agent.session.summary`'s `primary_model` uses |

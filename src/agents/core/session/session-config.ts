@@ -14,18 +14,6 @@ import { getCodemieHome } from '@/utils/paths.js';
  */
 export const METRICS_CONFIG: MetricsConfig = {
   /**
-   * Metrics only enabled for ai-run-sso provider
-   * Can be disabled at runtime via CODEMIE_METRICS_DISABLED env var
-   */
-  enabled: (provider: string) => {
-    // Check if metrics are disabled at runtime
-    if (process.env.CODEMIE_METRICS_DISABLED === '1') {
-      return false;
-    }
-    return provider === 'ai-run-sso';
-  },
-
-  /**
    * Retry configuration for correlation
    * Exponential backoff: 500ms → 1s → 2s → 4s → 8s → 16s → 32s → 32s
    * Total wait time: ~1.6 minutes
